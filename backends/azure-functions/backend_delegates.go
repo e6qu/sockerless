@@ -239,7 +239,20 @@ func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error
 }
 
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
-	return s.BaseServer.NetworkCreate(req)
+	resp, err := s.BaseServer.NetworkCreate(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	// Provision the per-network Azure Private DNS zone when cloud-dns
+	// discovery is enabled. Other discovery kinds skip this — host-
+	// aliases is process-local; nat-gateway-only doesn't resolve peers.
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
+		if cerr := s.cloudNetworkCreate(s.ctx(), req.Name, resp.ID); cerr != nil {
+			s.Logger.Warn().Err(cerr).Str("network", req.Name).Msg("Private DNS zone provisioning failed; cross-app DNS will not work on this network")
+			resp.Warning = cerr.Error()
+		}
+	}
+	return resp, nil
 }
 
 func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest) error {
@@ -259,6 +272,11 @@ func (s *Server) NetworkPrune(filters map[string][]string) (*api.NetworkPruneRes
 }
 
 func (s *Server) NetworkRemove(id string) error {
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
+		if err := s.cloudNetworkDelete(s.ctx(), id); err != nil {
+			s.Logger.Warn().Err(err).Str("network", id).Msg("Private DNS zone teardown failed; orphaned zone")
+		}
+	}
 	return s.BaseServer.NetworkRemove(id)
 }
 

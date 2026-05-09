@@ -36,6 +36,15 @@ const (
 	// (ACA managed environment, AZF on a private endpoint) — the
 	// network layer enforces access control.
 	AccessMechanismNoneInternal AccessMechanism = "none-internal"
+
+	// AccessMechanismAzureAD binds an Azure AD service principal /
+	// managed identity to the workload and signs each invocation with
+	// an OAuth2 Bearer token whose audience matches the workload's
+	// Easy-Auth-configured tenant. Caller acquires tokens via
+	// azidentity (managed identity when running in Azure;
+	// DefaultAzureCredential otherwise). Workload validates via
+	// App Service Easy Auth (AAD provider) or its own JWT middleware.
+	AccessMechanismAzureAD AccessMechanism = "azure-ad"
 )
 
 // IsValid reports whether m is one of the documented mechanisms.
@@ -44,7 +53,8 @@ func (m AccessMechanism) IsValid() bool {
 	case AccessMechanismIAMRole,
 		AccessMechanismIDToken,
 		AccessMechanismMTLS,
-		AccessMechanismNoneInternal:
+		AccessMechanismNoneInternal,
+		AccessMechanismAzureAD:
 		return true
 	}
 	return false
@@ -59,4 +69,5 @@ var AllAccessMechanisms = []AccessMechanism{
 	AccessMechanismIDToken,
 	AccessMechanismMTLS,
 	AccessMechanismNoneInternal,
+	AccessMechanismAzureAD,
 }

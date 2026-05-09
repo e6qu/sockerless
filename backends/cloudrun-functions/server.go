@@ -141,13 +141,23 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.storageBackings.Register(core.NewMemoryDriver(64))
 
 	s.SetSelf(s)
-	// gcf uses /etc/hosts injection within multi-container revisions
-	// (SOCKERLESS_HOST_ALIASES); the host-aliases in-process driver
-	// tracks peer registrations so the pod-Service materializer can
-	// read them at container-create time. Cloud-DNS is not used by gcf
-	// (Cloud Functions Gen2 invocations are HTTP-fronted, not
-	// CNAME-discovered).
-	s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_GCF_NETWORK_DISCOVERY). Validated to one of
+	// host-aliases / nat-gateway-only by Config.Validate. cloud-dns
+	// requires the gcf NetworkState model + Cloud DNS zone wiring
+	// queued under 121b-finish-J.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryHostAliases:
+		// gcf uses /etc/hosts injection within multi-container revisions
+		// (SOCKERLESS_HOST_ALIASES); the host-aliases in-process driver
+		// tracks peer registrations so the pod-Service materializer can
+		// read them at container-create time. Default for gcf because
+		// Cloud Functions Gen2 invocations are HTTP-fronted, not
+		// CNAME-discovered.
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	}
 	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
 	mode := "cloud"

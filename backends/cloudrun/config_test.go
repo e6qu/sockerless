@@ -1,6 +1,10 @@
 package cloudrun
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sockerless/api"
+)
 
 // TestConfig_Validate_UseServiceRequiresVPCConnector —.
 // UseService=true needs a VPC connector: the whole point of the
@@ -8,7 +12,7 @@ import "testing"
 // Without one, the CNAME records we write would target a URL that
 // isn't reachable from sibling Services.
 func TestConfig_Validate_UseServiceRequiresVPCConnector(t *testing.T) {
-	c := Config{Project: "p", UseService: true}
+	c := Config{Project: "p", UseService: true, NetworkDiscovery: api.NetworkDiscoveryCloudDNS}
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected Validate to reject UseService=true without VPCConnector")
 	}

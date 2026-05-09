@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -83,6 +84,13 @@ type Config struct {
 	// non-default principal for workload IAM bindings.
 	// Set via `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT`.
 	ServiceAccount string
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. Cloudrun's native is cloud-dns; operators
+	// may override to host-aliases (in-process registry, suitable when
+	// peers share a single backend instance) or nat-gateway-only
+	// (no peer discovery). Set via SOCKERLESS_GCR_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // SharedVolume describes a workspace volume mounted via GCS that the
@@ -132,7 +140,19 @@ func ConfigFromEnv() Config {
 		SharedVolumes:       parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
 		BootstrapBinaryPath: os.Getenv("SOCKERLESS_CLOUDRUN_BOOTSTRAP"),
 		ServiceAccount:      os.Getenv("SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT"),
+		NetworkDiscovery:    networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate (any out-of-set value fails loud).
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // parseSharedVolumes parses SOCKERLESS_GCP_SHARED_VOLUMES.
@@ -237,6 +257,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
 	return c
 }
 
@@ -247,6 +268,12 @@ func (c Config) Validate() error {
 	}
 	if c.UseService && c.VPCConnector == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS")
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_GCR_NETWORK_DISCOVERY=%q not supported by cloudrun (one of cloud-dns, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
 	}
 	return nil
 }

@@ -4,54 +4,31 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-121b-azure-sim-hardening` (PR #135) — off `origin/main` at 3e39e3a.
+`docs/state-save-post-121b` (PR #136). Phase 121b finish — all 5 sub-tasks (A through E) committed; awaiting CI green.
 
-## Active — Phase 121b (single-PR scope)
+## Active — Phase 121b finish (PR #136)
 
-Mirror of Phase 121 GCP sim hardening + cross-cutting test harness restructure + new drivers + driver consolidation.
+All sub-tasks complete; PR awaiting CI:
 
-**Done:**
-- 121b-A Azure Files data plane on disk
-- 121b-B HS256-signed Azure AD JWT
-- 121b-C All 6 backends' integration `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud`. No skips/fallbacks/build tags/legacy env. Per-test `skipIfNoIntegration` deleted.
-- 121b-D Azure terraform-test darwin fail-loud
-- 121b-E `make/go-app.mk` + `make/go-lib.mk`: `test-integration` (sim) / `test-integration-cloud` (cloud). CI sets `SOCKERLESS_TEST_TARGET=sim`.
-- 121b-F In-memory storage backing driver (`core.MemoryDriver`, `BackingMemory`).
+- ✓ **121b-finish-A** Network discovery adapter consolidation into `*-common` (pattern B). cloudMapDiscovery / cloudDNSDiscovery / acaCloudDNSDiscovery moved with their underlying *Server methods.
+- ✓ **121b-finish-B** Host-aliases discovery opt-in on every backend. `Config.NetworkDiscovery` typed field; SOCKERLESS_<X>_NETWORK_DISCOVERY env var; per-backend supported set enforced at Validate.
+- ✓ **121b-finish-C** AZF DNS adapter → `private-dns-zone`. AZF NetworkState model + per-network zone provisioning at NetworkCreate time.
+- ✓ **121b-finish-D** Lambda DNS + network discovery → `cloud-map`. Lambda NetworkState{NamespaceID} + EC2/ServiceDiscovery clients + namespace lifecycle + service-mesh case in the discovery switch.
+- ✓ **121b-finish-E** AZF + ACA `id-token` access via Azure AD. New `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess` (DefaultAzureCredential, per-request bearer token).
 
-**Done (this PR, additional):**
-- 121b-G Cloudrun TestMain builds `sockerless-cloudrun-bootstrap` + sets `SOCKERLESS_CLOUDRUN_BOOTSTRAP` so `TestCloudRunJobTimeout` exercises the bootstrap timer end-to-end (test was previously hidden by build tag; 121b-C exposed the gap).
-- 121b-H Driver consolidation pattern B (live in `*-common`, shared by both backends in that cloud, value-at-construction config):
-  - `gcp-common.IDTokenAccess` (cloudrun + cloudrun-functions per-backend adapters deleted)
-  - `aws-common.IAMRoleAccess` (ecs + lambda per-backend adapters deleted)
-  - `core.NoneInternalAccess` used directly by ACA + AZF (per-backend adapters deleted)
-  - `gcp-common.CloudDNSZoneDNS` (callback-based, cloudrun adapter deleted)
-  - `aws-common.CloudMapDNS` (callback-based, ecs adapter deleted)
-  - `azure-common.PrivateDNSZoneDNS` (callback-based, aca adapter deleted)
+## After 121b finish
 
-## Stacked follow-up PR (queued)
+Phase 78 (UI polish): dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation.
 
-Each is its own mini-phase (requires per-backend NetworkState model that doesn't exist yet on target backends, or operator infra not modeled today):
-- 121b-I Register `host-aliases` discovery as opt-in on every backend (env-var selection across 6 backends).
-- 121b-J AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow.
-- 121b-K Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring.
-- 121b-L AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
-- Network discovery adapter consolidation — pass-through methods on `*Server`; consolidating requires moving the underlying methods.
+## Background — Phase 121b initial scope (PR #135, merged) recap
 
-After Phase 121b stack: Phase 78 (UI polish).
-
-## Standing rules
-
-- **Never merge PRs** — user handles merges.
-- **Never push `main`.** Branch off `origin/main`, PR it.
-- **Single work-branch rule.**
-- **State save after every task** — STATUS / PLAN / WHAT_WE_DID / DO_NEXT / BUGS.
-- **Bugs file before fix** — every CI/live failure lands in BUGS.md before analysis.
-- **No fakes / no fallbacks / no skips** — explicit config, fail loud on missing.
-- **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
-- **Backend ↔ host primitive must match.**
-- **Driver phase entry** — `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
-- **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication should consolidate into `*-common`.
-
-## Open bugs
-
-None.
+Cross-cutting work delivered in #135:
+- Azure sim cloud-faithful: Files data plane on disk, HS256-signed Azure AD JWT.
+- All 6 backends' integration `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud`.
+- In-memory storage backing driver across all 6 backends.
+- Driver consolidation pattern B (live in `*-common`).
+- GCP sim Cloud Run service URI routes through sim's own `/v2-services-invoke/` handler.
+- `gcpcommon.ParseExecResult` extracted; gcf decodes bootstrap envelope before storing logs.
+- `TagSet.Labels` propagated through pod_service; `dockerLabelsFromCloudRunService` reverses encoding.
+- `scripts/check-latest-deps.sh` (pre-push + CI gate); `make upgrade-deps` fanout; Azure SDK majors + TF providers bumped.
+- Publish workflow: dropped QEMU; per-arch native runners; tag format `<sha>-<arch>` + manifest-list.

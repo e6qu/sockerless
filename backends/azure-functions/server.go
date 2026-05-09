@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -18,7 +19,8 @@ type Server struct {
 	storageBackings *core.StorageBackingRegistry
 	ipCounter       atomic.Int32
 
-	AZF *core.StateStore[AZFState]
+	AZF          *core.StateStore[AZFState]
+	NetworkState *core.StateStore[NetworkState]
 	azfVolumeState
 	// Reverse-agent registry for docker top / cp / stat via a
 	// bootstrap running inside the function app container.
@@ -31,6 +33,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		config:         config,
 		azure:          azureClients,
 		AZF:            core.NewStateStore[AZFState](),
+		NetworkState:   core.NewStateStore[NetworkState](),
 		azfVolumeState: azfVolumeState{shares: azurecommon.NewFileShareManager(azureClients.FileShares, config.ResourceGroup, config.StorageAccount)},
 	}
 	s.ipCounter.Store(2)
@@ -62,7 +65,58 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.CloudState = &azfCloudState{server: s}
 	s.SetSelf(s)
-	s.Access = core.NoneInternalAccess{}
+
+	// Access driver. Selected via Config.Access (env: SOCKERLESS_AZF_ACCESS).
+	// none-internal (default) leaves ingress auth to function app keys.
+	// azure-ad signs each invoke with an OAuth2 bearer token via
+	// DefaultAzureCredential — paired with an Easy Auth (AAD provider)
+	// on the function app at deploy time.
+	switch config.Access {
+	case api.AccessMechanismNoneInternal:
+		s.Access = core.NoneInternalAccess{}
+	case api.AccessMechanismAzureAD:
+		s.Access = azurecommon.NewAzureADAccess(azureClients.Cred, config.AccessPrincipal)
+	}
+
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_AZF_NETWORK_DISCOVERY). Validated to one of
+	// nat-gateway-only / host-aliases / cloud-dns by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryCloudDNS:
+		s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
+			PrivateDNSRecords: azureClients.PrivateDNSRecords,
+			ContainerApps:     nil, // AZF has no per-container CNAME path; ContainerApps client is unused.
+			ResourceGroup:     config.ResourceGroup,
+			Logger:            logger,
+			LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+			GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+		})
+		s.DNS = &azurecommon.PrivateDNSZoneDNS{
+			LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSZoneName, nil
+			},
+		}
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

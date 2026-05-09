@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -49,6 +50,13 @@ type Config struct {
 	// Format: SOCKERLESS_ECS_SHARED_VOLUMES="name1=containerPath1=fsap-XXXX[=efsFilesystemID],name2=containerPath2=fsap-YYYY[=efsFilesystemID]"
 	// The trailing efsFilesystemID is optional — defaults to AgentEFSID.
 	SharedVolumes []SharedVolume
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. ECS's native is service-mesh (AWS Cloud
+	// Map). Operators may override to host-aliases (in-process
+	// registry) or nat-gateway-only (no peer discovery).
+	// Set via SOCKERLESS_ECS_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // SharedVolume describes a workspace volume mounted via EFS that the
@@ -82,7 +90,19 @@ func ConfigFromEnv() Config {
 		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		SharedVolumes:    parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES")),
+		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // parseSharedVolumes parses the SOCKERLESS_ECS_SHARED_VOLUMES env-var
@@ -192,6 +212,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh)
 	return c
 }
 
@@ -211,6 +232,12 @@ func (c Config) Validate() error {
 		// ok
 	default:
 		return fmt.Errorf("SOCKERLESS_ECS_CPU_ARCHITECTURE must be set to X86_64 or ARM64 (no default — sockerless reports the cloud workload's architecture, not its own host arch); got %q", c.CpuArchitecture)
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryServiceMesh, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_ECS_NETWORK_DISCOVERY=%q not supported by ecs (one of service-mesh, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
 	}
 	return nil
 }

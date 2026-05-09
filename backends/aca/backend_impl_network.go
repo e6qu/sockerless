@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sockerless/api"
+	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -20,7 +21,8 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 	}
 
 	var warnings []string
-	if err := s.cloudNetworkCreate(req.Name, resp.ID); err != nil {
+	provisionDNSZone := s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS
+	if err := s.cloudNetworkCreate(req.Name, resp.ID, provisionDNSZone); err != nil {
 		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create cloud network resources")
 		warnings = append(warnings, "Azure cloud network resources: "+err.Error())
 	}
@@ -117,11 +119,11 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 			}
 			// Route through the network-discovery driver. UseApp → CNAME,
 			// else A-record.
-			if cd, ok := s.NetworkDiscovery.(*acaCloudDNSDiscovery); ok {
+			if cd, ok := s.NetworkDiscovery.(*azurecommon.PrivateDNSDiscovery); ok {
 				if s.config.UseApp {
 					_ = cd.DeregisterContainerCNAME(s.ctx(), net.ID, hostname)
 				} else {
-					_ = cd.DeregisterContainerARecord(net.ID, hostname)
+					_ = cd.DeregisterContainerARecord(s.ctx(), net.ID, hostname)
 				}
 			} else {
 				_ = s.NetworkDiscovery.DeregisterContainer(s.ctx(), net.ID, hostname, containerID)

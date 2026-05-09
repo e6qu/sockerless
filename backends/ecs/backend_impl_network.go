@@ -24,9 +24,14 @@ func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreat
 		warnings = append(warnings, "VPC security group: "+err.Error())
 	}
 
-	if err := s.cloudNamespaceCreate(req.Name, resp.ID); err != nil {
-		s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Cloud Map namespace")
-		warnings = append(warnings, "Cloud Map namespace (cross-container DNS): "+err.Error())
+	// Cloud Map namespace is only useful when service-mesh discovery
+	// is selected; skip provisioning otherwise so host-aliases / nat-
+	// gateway-only deployments don't pay for unused namespaces.
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryServiceMesh {
+		if err := s.cloudNamespaceCreate(req.Name, resp.ID); err != nil {
+			s.Logger.Warn().Err(err).Str("network", req.Name).Msg("failed to create Cloud Map namespace")
+			warnings = append(warnings, "Cloud Map namespace (cross-container DNS): "+err.Error())
+		}
 	}
 
 	if len(warnings) > 0 {

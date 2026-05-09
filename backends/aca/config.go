@@ -3,8 +3,10 @@ package aca
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -42,6 +44,29 @@ type Config struct {
 	// See backends/core.CommitContainerViaAgent. Set via
 	// `SOCKERLESS_ENABLE_COMMIT=1`.
 	EnableCommit bool
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. ACA's native is cloud-dns (Azure Private
+	// DNS zones). Operators may override to host-aliases (in-process
+	// registry) or nat-gateway-only (no peer discovery).
+	// Set via SOCKERLESS_ACA_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
+
+	// Access selects the ingress-auth + caller-side signer mechanism
+	// wired into s.Access. ACA's native is none-internal (managed
+	// environment isolates traffic at the network layer). Operators
+	// may override to azure-ad to gate ACA app ingress with an Easy
+	// Auth (AAD) provider; the caller-side signer mints OAuth2 bearer
+	// tokens via DefaultAzureCredential.
+	// Set via SOCKERLESS_ACA_ACCESS.
+	Access api.AccessMechanism
+
+	// AccessPrincipal is the workload's MSI client ID or service
+	// principal AppId reported via WorkloadPrincipal. Informational —
+	// the actual signing identity comes from azidentity. Empty when
+	// the workload uses the platform-default identity.
+	// Set via SOCKERLESS_ACA_ACCESS_PRINCIPAL.
+	AccessPrincipal string
 }
 
 // ConfigFromEnv loads configuration from environment variables.
@@ -61,7 +86,32 @@ func ConfigFromEnv() Config {
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
+		Access:                accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal),
+		AccessPrincipal:       os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL"),
 	}
+}
+
+// accessFromEnv reads the operator's chosen access mechanism from env
+// or returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func accessFromEnv(envVar string, def api.AccessMechanism) api.AccessMechanism {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.AccessMechanism(v)
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // ConfigFromEnvironment creates Config from a unified config environment.
@@ -95,6 +145,9 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
+	c.Access = accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal)
+	c.AccessPrincipal = os.Getenv("SOCKERLESS_ACA_ACCESS_PRINCIPAL")
 	return c
 }
 
@@ -108,6 +161,18 @@ func (c Config) Validate() error {
 	}
 	if c.UseApp && c.Environment == "" {
 		return fmt.Errorf("SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_ENVIRONMENT — Apps need an existing managed environment with VNet integration for peer-reachable internal FQDNs")
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS, api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_ACA_NETWORK_DISCOVERY=%q not supported by aca (one of cloud-dns, host-aliases, nat-gateway-only required)", c.NetworkDiscovery)
+	}
+	switch c.Access {
+	case api.AccessMechanismNoneInternal, api.AccessMechanismAzureAD:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_ACA_ACCESS=%q not supported by aca (one of none-internal, azure-ad required)", c.Access)
 	}
 	return nil
 }

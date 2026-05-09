@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	awscommon "github.com/sockerless/aws-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -19,6 +20,7 @@ type Server struct {
 	aws             *AWSClients
 	images          *core.ImageManager
 	Lambda          *core.StateStore[LambdaState]
+	NetworkState    *core.StateStore[NetworkState]
 	reverseAgents   *reverseAgentRegistry // reverse-agent session registry
 	storageBackings *core.StorageBackingRegistry
 	ipCounter       atomic.Int32
@@ -37,6 +39,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		config:        config,
 		aws:           awsClients,
 		Lambda:        core.NewStateStore[LambdaState](),
+		NetworkState:  core.NewStateStore[NetworkState](),
 		reverseAgents: newReverseAgentRegistry(),
 	}
 	s.ipCounter.Store(2)
@@ -83,6 +86,50 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	s.SetSelf(s)
 	s.CloudState = &lambdaCloudState{server: s}
 	s.Access = awscommon.NewIAMRoleAccess(config.RoleARN)
+
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_LAMBDA_NETWORK_DISCOVERY). Validated to one of
+	// nat-gateway-only / host-aliases / service-mesh by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryServiceMesh:
+		s.NetworkDiscovery = awscommon.NewCloudMapDiscovery(awscommon.CloudMapDiscoveryConfig{
+			ServiceDiscovery: awsClients.ServiceDiscovery,
+			Logger:           logger,
+			GetNetworkNamespaceID: func(networkID string) (string, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return "", false
+				}
+				return state.NamespaceID, true
+			},
+			GetContainerServiceID: func(containerID string) (string, bool) {
+				state, ok := s.Lambda.Get(containerID)
+				if !ok {
+					return "", false
+				}
+				return state.ServiceID, true
+			},
+			SetContainerServiceID: func(containerID, serviceID string) {
+				s.Lambda.Update(containerID, func(state *LambdaState) {
+					state.ServiceID = serviceID
+				})
+			},
+		})
+		s.DNS = &awscommon.CloudMapDNS{
+			Client: awsClients.ServiceDiscovery,
+			LookupNamespaceID: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.NamespaceID, nil
+			},
+		}
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

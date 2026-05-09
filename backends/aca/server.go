@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
+	"github.com/sockerless/api"
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
@@ -64,18 +65,56 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.SetSelf(s)
 	s.CloudState = &acaCloudState{server: s}
-	// Cloud-DNS network-discovery driver wraps Azure Private DNS.
-	s.NetworkDiscovery = newACACloudDNSDiscovery(s)
-	s.DNS = &azurecommon.PrivateDNSZoneDNS{
-		LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
-			state, ok := s.resolveNetworkState(ctx, networkID)
-			if !ok {
-				return "", nil
-			}
-			return state.DNSZoneName, nil
-		},
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_ACA_NETWORK_DISCOVERY). Validated to one of
+	// cloud-dns / host-aliases / nat-gateway-only by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS:
+		s.NetworkDiscovery = azurecommon.NewPrivateDNSDiscovery(azurecommon.PrivateDNSDiscoveryConfig{
+			PrivateDNSRecords: azureClients.PrivateDNSRecords,
+			ContainerApps:     azureClients.ContainerApps,
+			ResourceGroup:     config.ResourceGroup,
+			Logger:            logger,
+			LookupNetwork: func(ctx context.Context, networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+			GetNetwork: func(networkID string) (azurecommon.PrivateDNSNetworkState, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return azurecommon.PrivateDNSNetworkState{}, false
+				}
+				return azurecommon.PrivateDNSNetworkState{DNSZoneName: state.DNSZoneName}, true
+			},
+		})
+		s.DNS = &azurecommon.PrivateDNSZoneDNS{
+			LookupZoneName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSZoneName, nil
+			},
+		}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
 	}
-	s.Access = core.NoneInternalAccess{}
+	// Access driver. Selected via Config.Access (env: SOCKERLESS_ACA_ACCESS).
+	// none-internal (default) leaves ingress auth to the network layer
+	// (managed environment isolation). azure-ad signs each invoke with
+	// an OAuth2 bearer token via DefaultAzureCredential — paired with
+	// an Easy Auth (AAD provider) on the ACA app at deploy time.
+	switch config.Access {
+	case api.AccessMechanismNoneInternal:
+		s.Access = core.NoneInternalAccess{}
+	case api.AccessMechanismAzureAD:
+		s.Access = azurecommon.NewAzureADAccess(azureClients.Cred, config.AccessPrincipal)
+	}
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

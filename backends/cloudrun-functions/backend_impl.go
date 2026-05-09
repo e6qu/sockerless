@@ -505,15 +505,23 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
 		} else {
-			body, _ := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			// Bootstrap responses are wrapped in
-			// `{"sockerlessExecResult":{"exitCode":N,"stdout":"<b64>","stderr":"<b64>"}}`.
-			// Parse the envelope so LogBuffers carries decoded subprocess
-			// output and the recorded exit code reflects the subprocess,
-			// not the HTTP wrapper status.
-			if len(body) > 0 && string(body) != "{}" {
-				if execResult, perr := gcpcommon.ParseExecResult(body); perr == nil {
+			if readErr != nil {
+				s.Logger.Error().Err(readErr).Str("function", gcfState.FunctionName).Msg("read invoke response body")
+				inv.ExitCode = 1
+				inv.Error = readErr.Error()
+			} else {
+				// Bootstrap MUST return the exec envelope shape
+				// `{"sockerlessExecResult":{"exitCode":N,"stdout":"<b64>","stderr":"<b64>"}}`.
+				// Anything else is a bug in the bootstrap or the
+				// transport — fail loudly rather than guess.
+				execResult, perr := gcpcommon.ParseExecResult(body)
+				if perr != nil {
+					s.Logger.Error().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("bootstrap response is not an exec envelope")
+					inv.ExitCode = 1
+					inv.Error = fmt.Sprintf("non-envelope response: %v", perr)
+				} else {
 					var combined []byte
 					combined = append(combined, execResult.Stdout...)
 					combined = append(combined, execResult.Stderr...)
@@ -521,16 +529,11 @@ func (s *Server) ContainerStart(ref string) error {
 						s.Store.LogBuffers.Store(id, combined)
 					}
 					inv.ExitCode = execResult.ExitCode
-				} else {
-					s.Store.LogBuffers.Store(id, body)
-					inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+					if inv.ExitCode != 0 {
+						inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
+						s.Logger.Warn().Int("status", resp.StatusCode).Int("exit", inv.ExitCode).Str("function", gcfState.FunctionName).Msg("function returned non-zero subprocess exit")
+					}
 				}
-			} else {
-				inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
-			}
-			if inv.ExitCode != 0 {
-				inv.Error = fmt.Sprintf("HTTP %d exit=%d", resp.StatusCode, inv.ExitCode)
-				s.Logger.Warn().Int("status", resp.StatusCode).Int("exit", inv.ExitCode).Str("function", gcfState.FunctionName).Msg("function returned non-zero")
 			}
 		}
 		s.Store.PutInvocationResult(id, inv)

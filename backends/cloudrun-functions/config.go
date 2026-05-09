@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
 
@@ -90,6 +91,16 @@ type Config struct {
 	// ALL_TRAFFIC, the call appears as in-VPC source and IAM-gated
 	// invoke succeeds. SOCKERLESS_GCF_VPC_CONNECTOR — empty disables.
 	VPCConnector string
+
+	// NetworkDiscovery selects the per-backend driver wired into
+	// s.NetworkDiscovery. GCF's native is host-aliases (multi-container
+	// revisions share loopback; bootstrap writes /etc/hosts at
+	// materialize time). Operators may override to nat-gateway-only
+	// (no peer discovery). Cloud-DNS isn't supported until the gcf
+	// NetworkState model + Cloud DNS zone wiring lands (queued under
+	// 121b-finish-C/J).
+	// Set via SOCKERLESS_GCF_NETWORK_DISCOVERY.
+	NetworkDiscovery api.NetworkDiscoveryKind
 }
 
 // SharedVolume mirrors `cloudrun.SharedVolume`. GCS bucket backs the
@@ -150,11 +161,23 @@ func ConfigFromEnv() Config {
 			"SOCKERLESS_GCF_BOOTSTRAP",
 			"/opt/sockerless/sockerless-gcf-bootstrap",
 		),
-		PoolMax:         envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
-		PrewarmOverlays: parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
-		SharedVolumes:   parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
-		VPCConnector:    os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
+		PoolMax:          envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
+		PrewarmOverlays:  parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
+		SharedVolumes:    parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		VPCConnector:     os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
+		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases),
 	}
+}
+
+// networkDiscoveryFromEnv reads the operator's chosen kind from env or
+// returns `def`. Validation against the per-backend supported set
+// happens in Config.Validate.
+func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.NetworkDiscoveryKind {
+	v := strings.TrimSpace(os.Getenv(envVar))
+	if v == "" {
+		return def
+	}
+	return api.NetworkDiscoveryKind(v)
 }
 
 // parsePrewarmOverlays parses SOCKERLESS_GCF_PREWARM_OVERLAYS. Format:
@@ -314,6 +337,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
+	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases)
 	return c
 }
 
@@ -324,6 +348,12 @@ func (c Config) Validate() error {
 	}
 	if c.BuildBucket == "" {
 		return fmt.Errorf("SOCKERLESS_GCP_BUILD_BUCKET is required (Cloud Functions Gen2 source archive lands here)")
+	}
+	switch c.NetworkDiscovery {
+	case api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:
+		// supported
+	default:
+		return fmt.Errorf("SOCKERLESS_GCF_NETWORK_DISCOVERY=%q not supported by gcf (one of host-aliases, nat-gateway-only required; cloud-dns wiring lives in 121b-finish-J)", c.NetworkDiscovery)
 	}
 	return nil
 }

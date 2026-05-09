@@ -95,18 +95,44 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.CloudState = &cloudRunCloudState{server: s}
-	// Cloud-DNS network-discovery driver wraps the GCP DNS + Cloud Run
-	// Services SDK paths used by the network-connect / disconnect /
-	// resolve flow.
-	s.NetworkDiscovery = newCloudDNSDiscovery(s)
-	s.DNS = &gcpcommon.CloudDNSZoneDNS{
-		LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
-			state, ok := s.resolveNetworkState(ctx, networkID)
-			if !ok {
-				return "", nil
-			}
-			return state.DNSName, nil
-		},
+	// Network-discovery driver. Selected via Config.NetworkDiscovery
+	// (env: SOCKERLESS_GCR_NETWORK_DISCOVERY). Validated to one of
+	// cloud-dns / host-aliases / nat-gateway-only by Config.Validate.
+	switch config.NetworkDiscovery {
+	case api.NetworkDiscoveryCloudDNS:
+		s.NetworkDiscovery = gcpcommon.NewCloudDNSDiscovery(gcpcommon.CloudDNSDiscoveryConfig{
+			DNS:         gcpClients.DNS,
+			RunServices: gcpClients.Services,
+			Project:     config.Project,
+			Logger:      logger,
+			LookupNetwork: func(ctx context.Context, networkID string) (gcpcommon.CloudDNSNetworkState, bool) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return gcpcommon.CloudDNSNetworkState{}, false
+				}
+				return gcpcommon.CloudDNSNetworkState{ManagedZoneName: state.ManagedZoneName, DNSName: state.DNSName}, true
+			},
+			GetNetwork: func(networkID string) (gcpcommon.CloudDNSNetworkState, bool) {
+				state, ok := s.NetworkState.Get(networkID)
+				if !ok {
+					return gcpcommon.CloudDNSNetworkState{}, false
+				}
+				return gcpcommon.CloudDNSNetworkState{ManagedZoneName: state.ManagedZoneName, DNSName: state.DNSName}, true
+			},
+		})
+		s.DNS = &gcpcommon.CloudDNSZoneDNS{
+			LookupZoneDNSName: func(ctx context.Context, networkID string) (string, error) {
+				state, ok := s.resolveNetworkState(ctx, networkID)
+				if !ok {
+					return "", nil
+				}
+				return state.DNSName, nil
+			},
+		}
+	case api.NetworkDiscoveryHostAliases:
+		s.NetworkDiscovery = core.NewHostAliasesDiscovery()
+	case api.NetworkDiscoveryNATGatewayOnly:
+		s.NetworkDiscovery = core.NoOpNetworkDiscovery{}
 	}
 	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
