@@ -14,15 +14,15 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 ## In flight — Phase 121b finish (PR #136)
 
-PR #136 started as a docs state-save after PR #135 merged; user pulled the deferred 121b items back into it so Phase 121b lands in one PR (initial #135 + finish #136). Sub-task list:
+PR #136 started as a docs state-save after PR #135 merged; user pulled the deferred 121b items back into it so Phase 121b lands in one PR (initial #135 + finish #136). Sub-tasks:
 
-- **121b-finish-A** Network discovery adapter consolidation — move `cloudMapDiscovery` / `cloudDNSDiscovery` / `acaCloudDNSDiscovery` into `*-common` (callback-based, pattern B). They're pass-throughs to `*Server` methods today; consolidating requires moving the underlying methods too.
-- **121b-finish-B** Register `host-aliases` discovery as opt-in on every backend with env-var-driven selection (`SOCKERLESS_<X>_NETWORK_DISCOVERY = cloud-map|cloud-dns|host-aliases|none`) across all 6 backends.
-- **121b-finish-C** AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow first.
-- **121b-finish-D** Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring first (config field for VPC subnets + security group).
-- **121b-finish-E** AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
+- ✓ **121b-finish-A** Network discovery adapter consolidation — moved `cloudMapDiscovery` / `cloudDNSDiscovery` / `acaCloudDNSDiscovery` into `*-common` (callback-based, pattern B). Underlying `*Server` methods (cloudServiceRegister/Deregister/Resolve + helpers) moved alongside.
+- ✓ **121b-finish-B** Registered `host-aliases` discovery as opt-in on every backend. `Config.NetworkDiscovery` typed field per backend; `SOCKERLESS_<X>_NETWORK_DISCOVERY` env var selects; Validate fails loud on unsupported kinds.
+- ✓ **121b-finish-C** AZF DNS adapter → `private-dns-zone`. AZF gained NetworkState{DNSZoneName} + per-network zone provisioning at NetworkCreate time + cloud-dns supported in the discovery switch.
+- ✓ **121b-finish-D** Lambda DNS + network discovery → `cloud-map`. Lambda gained NetworkState{NamespaceID} + LambdaState.ServiceID + EC2 + ServiceDiscovery clients + cloudNamespaceCreate/Delete + service-mesh case in the discovery switch. Validate requires `SOCKERLESS_LAMBDA_SUBNETS` when service-mesh is selected.
+- ✓ **121b-finish-E** AZF + ACA `id-token` access via Azure AD. New `api.AccessMechanismAzureAD`, `azurecommon.AzureADAccess` (DefaultAzureCredential + per-request bearer token whose scope is `<audience>/.default`). ACA + AZF gain `Config.Access` + `Config.AccessPrincipal` fields with env-var selection.
 
-Order: A → B (depends on A's consolidation), then C, D, E in parallel where the per-backend NetworkState lifts allow.
+CI green pending; PR ready for merge once it passes.
 
 After 121b finish: Phase 78 (UI polish).
 

@@ -4,17 +4,17 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`docs/state-save-post-121b` (PR #136). Started as a docs state-save after PR #135 merged; user pulled the deferred 121b items back in so Phase 121b lands in this PR.
+`docs/state-save-post-121b` (PR #136). Phase 121b finish — all 5 sub-tasks (A through E) committed; awaiting CI green.
 
 ## Active — Phase 121b finish (PR #136)
 
-Order picked so each item unblocks the next: A is mechanical and unblocks B's per-backend wiring; C and D need their respective NetworkState models lifted before the driver attaches.
+All sub-tasks complete; PR awaiting CI:
 
-- [ ] **121b-finish-A** Network discovery adapter consolidation. Move `cloudMapDiscovery` (ecs), `cloudDNSDiscovery` (cloudrun), `acaCloudDNSDiscovery` (aca) into their `*-common` packages. Pattern B — callback-based driver in `*-common`, backend-specific state passed via callbacks. Each adapter today is a pass-through to `*Server` methods (`resolveNetworkState`, `connectToService`, etc.); consolidating requires moving the underlying methods into the per-cloud common module too.
-- [ ] **121b-finish-B** Register `host-aliases` discovery as opt-in on every backend. Env-var-driven selection: `SOCKERLESS_<X>_NETWORK_DISCOVERY = cloud-map|cloud-dns|host-aliases|none`. Each backend's `server.go` reads its env var and selects via switch. Empty = backend's traditional default; unknown = fail-loud. Covers all 6 backends (ecs, lambda, cloudrun, gcf, aca, azf).
-- [ ] **121b-finish-C** AZF DNS adapter → `private-dns-zone`. Requires AZF NetworkState model (today AZF has no per-network state object) + zone creation flow. Wire `azurecommon.PrivateDNSZoneDNS` with the lookup callback.
-- [ ] **121b-finish-D** Lambda DNS + network discovery → `cloud-map`. Requires Lambda VPC-mode wiring (config field for VPC subnet IDs + security group + Cloud Map service). Wire `awscommon.CloudMapDNS` + `cloudMapDiscovery` (post-A).
-- [ ] **121b-finish-E** AZF + ACA `id-token` access via Azure AD. New `azure-common.AzureADAccess` type. AAD differs from Cloud Run id-tokens — Easy Auth is per-app config not per-call signing. Design pass first.
+- ✓ **121b-finish-A** Network discovery adapter consolidation into `*-common` (pattern B). cloudMapDiscovery / cloudDNSDiscovery / acaCloudDNSDiscovery moved with their underlying *Server methods.
+- ✓ **121b-finish-B** Host-aliases discovery opt-in on every backend. `Config.NetworkDiscovery` typed field; SOCKERLESS_<X>_NETWORK_DISCOVERY env var; per-backend supported set enforced at Validate.
+- ✓ **121b-finish-C** AZF DNS adapter → `private-dns-zone`. AZF NetworkState model + per-network zone provisioning at NetworkCreate time.
+- ✓ **121b-finish-D** Lambda DNS + network discovery → `cloud-map`. Lambda NetworkState{NamespaceID} + EC2/ServiceDiscovery clients + namespace lifecycle + service-mesh case in the discovery switch.
+- ✓ **121b-finish-E** AZF + ACA `id-token` access via Azure AD. New `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess` (DefaultAzureCredential, per-request bearer token).
 
 ## After 121b finish
 
