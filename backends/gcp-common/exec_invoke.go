@@ -104,11 +104,19 @@ func PostExecEnvelope(ctx context.Context, client *http.Client, url, bearerToken
 		return nil, fmt.Errorf("exec invoke returned status %d: %s", resp.StatusCode, truncate(respBody, 512))
 	}
 
+	return ParseExecResult(respBody)
+}
+
+// ParseExecResult decodes the bootstrap envelope JSON into an ExecResult,
+// base64-decoding the stdout + stderr fields. Used by the cloudrun-functions
+// backend's invokeFunction path that POSTs the envelope itself (non-exec
+// container start) and needs to decode the envelope without a separate
+// PostExecEnvelope round-trip.
+func ParseExecResult(respBody []byte) (*ExecResult, error) {
 	var envResp ExecEnvelopeResponse
 	if err := json.Unmarshal(respBody, &envResp); err != nil {
 		return nil, fmt.Errorf("parse exec response envelope: %w (raw=%q)", err, truncate(respBody, 256))
 	}
-
 	stdoutBytes, err := base64.StdEncoding.DecodeString(envResp.SockerlessExecResult.Stdout)
 	if err != nil {
 		return nil, fmt.Errorf("decode response stdout: %w", err)
@@ -117,7 +125,6 @@ func PostExecEnvelope(ctx context.Context, client *http.Client, url, bearerToken
 	if err != nil {
 		return nil, fmt.Errorf("decode response stderr: %w", err)
 	}
-
 	return &ExecResult{
 		ExitCode: envResp.SockerlessExecResult.ExitCode,
 		Stdout:   stdoutBytes,
