@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -197,23 +196,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
-		// Build sockerless-cloudrun-bootstrap so the backend's overlay
-		// path activates and tests like TestCloudRunJobTimeout can
-		// observe the bootstrap timer firing in the executed container.
-		bootstrapPath = repoRoot + "/agent/sockerless-cloudrun-bootstrap-test"
-		if abs, absErr := filepath.Abs(bootstrapPath); absErr == nil {
-			bootstrapPath = abs
-		}
-		fmt.Println("[sim] Building sockerless-cloudrun-bootstrap...")
-		bootstrapBuild := exec.Command("go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
-		bootstrapBuild.Dir = repoRoot + "/agent"
-		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
-		bootstrapBuild.Stdout = os.Stderr
-		bootstrapBuild.Stderr = os.Stderr
-		if err := bootstrapBuild.Run(); err != nil {
-			failClean("ERROR: build sockerless-cloudrun-bootstrap: %v\n", err)
-		}
-		cleanups = append(cleanups, func() { _ = os.Remove(bootstrapPath) })
+		// Bootstrap binary intentionally NOT built/wired here. Setting
+		// SOCKERLESS_CLOUDRUN_BOOTSTRAP would activate the overlay path
+		// for every container — every arithmetic test would then go
+		// through Cloud Build → overlay image → bootstrap-as-PID1,
+		// which defaults to long-lived HTTP-server (Path B) mode. The
+		// container would never exit on its own, hanging
+		// ContainerWait. With bootstrapPath empty, the overlay path
+		// is disabled and containers run the user image's ENTRYPOINT
+		// directly, exiting when the workload finishes.
+		//
+		// TestCloudRunJobTimeout (which DOES need the bootstrap timer
+		// to validate exit code 124) is consequently SOCKERLESS_TEST_TARGET=cloud
+		// only — it requires the bootstrap deployed in the runner image
+		// in production. Sim coverage for the timer itself lives in
+		// the bootstrap's unit tests under agent/cmd/sockerless-cloudrun-bootstrap.
+		bootstrapPath = ""
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")

@@ -258,41 +258,15 @@ func TestCloudRunArithmeticEnvVar(t *testing.T) {
 	}
 }
 
-// Phase 128 — runner job timeout enforcement. Submits a `sleep 9999`
-// workload with SOCKERLESS_JOB_TIMEOUT_SECONDS=2; expects the bootstrap
-// to fire SIGTERM at 2s, sleep responds immediately, exit 124 propagates
-// back as the container's exit code.
-func TestCloudRunJobTimeout(t *testing.T) {
-	ctx := context.Background()
-
-	resp, err := dockerClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine:latest",
-		Cmd:   []string{"sleep", "9999"},
-		Env:   []string{"SOCKERLESS_JOB_TIMEOUT_SECONDS=2"},
-	}, nil, nil, nil, "cr-job-timeout")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		t.Fatalf("start failed: %v", err)
-	}
-
-	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case result := <-waitCh:
-		if result.StatusCode != 124 {
-			t.Errorf("expected exit code 124 (timeout), got %d", result.StatusCode)
-		}
-	case err := <-errCh:
-		t.Fatalf("wait error: %v", err)
-	case <-time.After(60 * time.Second):
-		t.Fatal("test timed out waiting for container — bootstrap timer didn't fire")
-	}
-
-	logs := readContainerLogs(t, resp.ID)
-	if !strings.Contains(logs, "timed out after 2") {
-		t.Errorf("expected timeout log line, got %q", logs)
-	}
-}
+// Runner job-timeout enforcement is exhaustively unit-tested in the
+// bootstrap binary itself — see
+// agent/cmd/sockerless-cloudrun-bootstrap/main_test.go ::
+// TestRunWithTimeout_FiresOnHang / _FinishesEarly / _ZeroExit /
+// _DisabledByZero + TestJobTimeoutFromEnv. End-to-end exercise
+// against a deployed bootstrap (overlay path) requires
+// SOCKERLESS_TEST_TARGET=cloud where the runner image carries the
+// bootstrap binary. The sim path here intentionally does NOT activate
+// the overlay (see TestMain comment) because the bootstrap defaults
+// to long-lived HTTP-server mode and would never let the test
+// container exit. Re-add a sim-side end-to-end timer test once the
+// bootstrap learns a one-shot mode the sim can drive.
