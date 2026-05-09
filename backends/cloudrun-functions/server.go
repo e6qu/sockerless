@@ -138,6 +138,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — falling back to gcs-fuse for shared volumes")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 
 	s.SetSelf(s)
 	// gcf uses /etc/hosts injection within multi-container revisions

@@ -20,11 +20,9 @@ Mirror of Phase 121 GCP sim hardening, plus a no-fallback / no-skip / explicit-c
 - **121b-D — Azure terraform-test darwin fail-loud.** No more macOS skip — `t.Fatal` with a clear explanation. Run via Linux container or in CI.
 - **121b-E — Makefile + CI updates.** `make/go-app.mk` + `make/go-lib.mk` ship `test-integration` (`=sim`) + `test-integration-cloud` (`=cloud`). CI sets only `SOCKERLESS_TEST_TARGET=sim`; the legacy `SOCKERLESS_INTEGRATION` env is removed entirely from the codebase.
 
-5 new in-binary unit tests (`files_test.go` × 3 + `auth_test.go` × 2); all azure sim + sdk + cli + terraform-tests green locally.
+- **121b-F — In-memory storage backing driver.** `core.MemoryDriver` (cloud-agnostic) with `BackingMemory = "memory"` constant + `MemorySpec{ SizeMB int }` payload. Registered across all 6 backends. Each backend's translator emits the cloud-native RAM-backed primitive (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, ECS tmpfs, Lambda /tmp scratch). 5 unit tests.
 
-## Follow-up phases (queued)
-
-1. **In-memory storage backing driver** (user request 2026-05-09) — add a `core.StorageBacking` that uses the execution environment's memory as the backing for Docker/Podman volume translation. Sibling to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` (Phase 127). Available across all 6 backends as the no-cost test path; persists nothing across container lifecycles.
+5 new sim unit tests (`files_test.go` × 3 + `auth_test.go` × 2) + 5 core unit tests (`TestMemoryDriver_*`); all azure sim + sdk + cli + terraform-tests green locally.
 
 ## Standing rules
 

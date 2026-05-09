@@ -22,7 +22,10 @@ Sixth of the post-Phase-135 ordered roadmap. Two cloud-faithful upgrades to the 
 - `make/go-app.mk` + `make/go-lib.mk` — replace the old `test-integration` (SOCKERLESS_INTEGRATION=1 + `-tags integration`) with two targets: `test-integration` sets `SOCKERLESS_TEST_TARGET=sim`; `test-integration-cloud` sets `SOCKERLESS_TEST_TARGET=cloud`.
 - `.github/workflows/ci.yml` — sets `SOCKERLESS_TEST_TARGET=sim`. The legacy `SOCKERLESS_INTEGRATION` env is removed entirely from the codebase.
 
-5 new in-binary unit tests (`files_test.go` × 3, `auth_test.go` × 2). The user-requested in-memory storage backing driver is queued as the follow-up to Phase 127's expansion work.
+**In-memory storage backing driver** (user request 2026-05-09):
+- `core.MemoryDriver` — cloud-agnostic sibling to `EmptyDirDriver`. `BackingMemory = "memory"` constant + `MemorySpec{ SizeMB int }` payload + `SharedVolumeRef.MemorySizeMB` field. Registered at startup across all 6 backends (cloudrun, cloudrun-functions, ecs, lambda, aca, azure-functions). Each backend's volume translator emits the cloud-native RAM-backed primitive (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, ECS tmpfs, Lambda /tmp scratch). Operators select via `SharedVolume.Backing="memory"`.
+
+5 new sim unit tests (`files_test.go` × 3, `auth_test.go` × 2) + 5 core unit tests (`TestMemoryDriver_*`).
 
 ## 2026-05-09 — Phase 127 Storage driver expansion (PR #134, merged)
 

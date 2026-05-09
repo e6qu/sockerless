@@ -119,6 +119,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

@@ -671,8 +671,9 @@ Phase 123 shipped `emptyDir` / `gcs-sync` / `gcs-fuse` against the GCP backends.
 | `pd-ephemeral` | GCP | Compute Engine Persistent Disk attached as a Cloud Run / Cloud Run Jobs ephemeral volume (lifecycle = task lifecycle) | cloudrun, cloudrun-functions |
 | `efs-ephemeral` | AWS | EFS access point on a sockerless-managed filesystem (lifecycle = task lifecycle) | ecs, lambda |
 | `azure-files-ephemeral` | Azure | Azure Files share on a sockerless-managed storage account (lifecycle = task lifecycle) | aca, azure-functions |
+| `memory` | any | RAM-backed tmpfs inside the workload container (cloud-agnostic; translates to EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, ECS tmpfs, Lambda /tmp scratch) | all 6 backends |
 
-All three follow the project's no-idle-cost directive: the sockerless-managed parent resource (PD, EFS filesystem, Azure Files share) bills per-GiB-stored, but the per-task ephemeral attachment has zero idle cost when no work is happening. None of them require a long-lived NFS / Filestore / Memorystore.
+All four follow the project's no-idle-cost directive: the sockerless-managed parent resource (PD, EFS filesystem, Azure Files share) bills per-GiB-stored, the per-task attachment is zero-idle-cost, and `memory` has no parent at all (RAM is paid for by the running container regardless). None require a long-lived NFS / Filestore / Memorystore.
 
 ### Driver shape (extends `core.StorageBacking` + `core.BackingSpec`)
 

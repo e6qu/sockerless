@@ -38,9 +38,9 @@ In flight: **Phase 121b — Azure simulator hardening** (mirror of Phase 121 GCP
 - **121b-D — Azure terraform-test darwin fail-loud.** `simulators/azure/terraform-tests/apply_test.go` no longer skips on darwin — it `t.Fatal`s with a clear explanation (Go's cgo `crypto/x509.SystemCertPool()` reads from the macOS Security framework keychain and ignores `SSL_CERT_FILE`; run via Linux container or in CI).
 - **121b-E — Makefile + CI updates.** `make/go-app.mk` + `make/go-lib.mk` ship `test-integration` (sets `SOCKERLESS_TEST_TARGET=sim`) + `test-integration-cloud` (sets `=cloud`). CI sets `SOCKERLESS_TEST_TARGET=sim` only — the legacy `SOCKERLESS_INTEGRATION` env var is removed entirely from the codebase.
 
-Tests: 5 new in-binary unit tests (`files_test.go` × 3, `auth_test.go` × 2). All `simulators/azure` + `azure/sdk-tests` + `azure/cli-tests` + `azure/terraform-tests` green locally; every backend's integration test harness builds cleanly and fails loud on missing config.
+- **121b-F — In-memory storage backing driver.** New `core.MemoryDriver` (cloud-agnostic; sibling to `EmptyDirDriver`). `BackingMemory = "memory"` constant + `MemorySpec{ SizeMB int }` payload + `SharedVolumeRef.MemorySizeMB` field. Registered at startup across all 6 backends — operators select via `SharedVolume.Backing="memory"`. Each backend's volume translator emits the cloud-native RAM-backed primitive (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, ECS tmpfs, Lambda /tmp scratch). 5 unit tests.
 
-Follow-up: add an in-memory storage backing driver per user request 2026-05-09 (sibling to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral` from Phase 127).
+Tests: 5 new sim unit tests (`files_test.go` × 3, `auth_test.go` × 2) + 5 core unit tests (`TestMemoryDriver_*`). All `simulators/azure` + `azure/sdk-tests` + `azure/cli-tests` + `azure/terraform-tests` green locally; every backend's integration test harness builds cleanly and fails loud on missing config.
 
 Then Phase 78 per [PLAN.md § Roadmap (ordered)](PLAN.md#roadmap-ordered).
 

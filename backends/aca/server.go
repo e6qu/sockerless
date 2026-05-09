@@ -55,6 +55,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
+	s.storageBackings.Register(core.NewMemoryDriver(64))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
