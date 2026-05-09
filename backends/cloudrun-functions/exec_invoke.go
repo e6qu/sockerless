@@ -8,7 +8,6 @@ import (
 
 	"github.com/sockerless/api"
 	gcpcommon "github.com/sockerless/gcp-common"
-	"google.golang.org/api/idtoken"
 )
 
 // execStartViaInvoke implements Path B from
@@ -59,9 +58,9 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance) (io.Re
 		Env:     preExecEnv,
 	}
 
-	client, err := idtoken.NewClient(s.ctx(), gcfState.FunctionURL)
+	client, err := s.Access.AuthenticatedClient(s.ctx(), gcfState.FunctionURL)
 	if err != nil {
-		return nil, fmt.Errorf("idtoken.NewClient(%s): %w", gcfState.FunctionURL, err)
+		return nil, err
 	}
 	client.Timeout = 10 * time.Minute
 

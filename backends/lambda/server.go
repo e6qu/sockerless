@@ -78,6 +78,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	}
 	s.SetSelf(s)
 	s.CloudState = &lambdaCloudState{server: s}
+	s.Access = newIAMRoleAccess(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

@@ -10,7 +10,6 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	"github.com/sockerless/api"
 	gcpcommon "github.com/sockerless/gcp-common"
-	"google.golang.org/api/idtoken"
 )
 
 // execStartViaInvoke implements Path B from
@@ -67,15 +66,15 @@ func (s *Server) execStartViaInvoke(execID string, exec api.ExecInstance, _ api.
 		Env:     preExecEnv,
 	}
 
-	// idtoken.NewClient mints + auto-attaches a Google ID token whose
-	// audience is the Service URL. Cloud Run rejects unauthenticated
-	// invokes by default; without this Authorization header the POST
-	// returns 401/403 and exec fails before the bootstrap sees it.
+	// Access driver mints + attaches a Google ID token whose audience
+	// is the Service URL. Cloud Run rejects unauthenticated invokes by
+	// default; without this Authorization header the POST returns
+	// 401/403 and exec fails before the bootstrap sees it.
 	// Service-account ADC required (user creds can't sign ID tokens —
 	// same constraint as gcf invokeFunction).
-	client, err := idtoken.NewClient(s.ctx(), url)
+	client, err := s.Access.AuthenticatedClient(s.ctx(), url)
 	if err != nil {
-		return nil, fmt.Errorf("idtoken.NewClient(%s): %w", url, err)
+		return nil, err
 	}
 	client.Timeout = 10 * time.Minute
 

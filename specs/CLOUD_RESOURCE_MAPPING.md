@@ -593,6 +593,75 @@ The driver does NOT replace `NetworkDiscoveryDriver.ResolveName` — that's the 
 5. Workload-host materializer reads `s.DNS.SearchDomain(networkID)` for each network the container joins; sets `SOCKERLESS_DNS_SEARCH_DOMAIN` env on the container.
 6. Bootstrap (`agent/cmd/sockerless-{cloudrun,gcf}-bootstrap`) reads `SOCKERLESS_DNS_SEARCH_DOMAIN` and writes the `search` line to `/etc/resolv.conf` at startup.
 
+## Access driver
+
+Sibling to `NetworkDiscoveryDriver` and `DNSDriver`. Two coupled questions:
+
+1. **Workload principal** — what cloud-native identity does the workload run as? (IAM role ARN, GCP service-account email, Azure managed-identity client-id.)
+2. **Caller-side ingress auth** — when the dispatcher (or a sibling backend) invokes the workload's HTTP endpoint, what credential does the caller mint?
+
+These two pair: a workload that runs as service-account `X` is reachable by callers that present an ID token whose `aud` matches the workload's URL and whose IAM bindings include `X` as the runner. A workload that runs as IAM role `R` is reachable through SigV4-signed AWS API calls from callers whose IAM principal can `lambda:InvokeFunction` / `ecs:RunTask`. ACA + AZF default to private VPC ingress (no per-call credential).
+
+### Mechanisms
+
+| Mechanism | Workload principal | Per-call credential |
+|---|---|---|
+| `iam-role` | AWS IAM role ARN (ECS TaskRole, Lambda execution role) | SigV4 (handled at SDK layer; caller-side client returns `http.DefaultClient`) |
+| `id-token` | GCP service-account email | Google ID token JWT minted via `google.golang.org/api/idtoken` (audience = workload URL) |
+| `mTLS` | TLS client cert | mutual TLS handshake (transport-level; no per-request header) |
+| `none-internal` | platform default | none (private VPC ingress) |
+
+### Today's per-backend mapping
+
+| Backend | Mechanism | Workload principal source |
+|---|---|---|
+| ECS | `iam-role` | `SOCKERLESS_ECS_TASK_ROLE_ARN` → `ecs.RegisterTaskDefinition.TaskRoleArn` |
+| Lambda | `iam-role` | function execution role (per-function config) |
+| Cloud Run | `id-token` | `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT` → `Service.Spec.Template.Spec.ServiceAccount` |
+| Cloud Functions (gcf) | `id-token` | `SOCKERLESS_GCF_SERVICE_ACCOUNT` → `Function.ServiceAccountEmail` |
+| ACA | `none-internal` | platform default (Azure-managed identity wired separately) |
+| AZF | `none-internal` | platform default |
+
+### Interface (`backends/core/access_driver.go`)
+
+```go
+type AccessDriver interface {
+    // Mechanism returns the cloud-product-specific ingress mechanism
+    // (iam-role / id-token / mTLS / none-internal).
+    Mechanism() api.AccessMechanism
+
+    // WorkloadPrincipal returns the cloud-native identity the workload
+    // runs as (IAM role ARN, GCP service-account email, Azure managed-id
+    // client-id). Empty string means platform default.
+    WorkloadPrincipal() string
+
+    // AuthenticatedClient returns an http.Client that signs requests for
+    // `audience`. id-token: client mints + attaches a short-lived JWT
+    // valid for `audience`. iam-role: returns http.DefaultClient (SigV4
+    // happens at SDK layer; this client is for non-AWS-SDK paths).
+    // mTLS: returns a client preconfigured with the backend's mTLS
+    // material. none-internal: returns http.DefaultClient.
+    AuthenticatedClient(ctx context.Context, audience string) (*http.Client, error)
+}
+```
+
+The driver does NOT mint workload-side credentials (the workload picks those up from cloud metadata services using its bound principal). It only models the *caller-side* signer plus a typed declaration of *which mechanism* the backend uses.
+
+### Operator selection
+
+`SOCKERLESS_<BACKEND>_ACCESS_MECHANISM=<iam-role|id-token|mTLS|none-internal>`. Empty → backend default (table above); unknown → backend startup error (no silent fallback).
+
+### Migration
+
+1. New `api/access_driver.go` — `AccessMechanism` enum.
+2. New `backends/core/access_driver.go` — interface + registry + `NoneInternalAccess` default.
+3. Per-backend adapter (lives next to other driver adapters since they close over the same per-`*Server` cloud state):
+   - `cloudrun` + `cloudrun-functions` → `idTokenAccess` (wraps `idtoken.NewClient`).
+   - `ecs` + `lambda` → `iamRoleAccess` (returns `http.DefaultClient`; principal sourced from per-backend config).
+   - `aca` + `azure-functions` → `noneInternalAccess`.
+4. `BaseServer.Access` field; defaults to `NoneInternalAccess{}`; backend startup overrides.
+5. Every existing `idtoken.NewClient(ctx, url)` callsite (cloudrun: `exec_invoke.go`, `start_service.go`; cloudrun-functions: `exec_invoke.go`, `pod_service.go`, `containers.go`) migrated to `s.Access.AuthenticatedClient(ctx, url)`.
+
 ## Volume provisioning per backend
 
 Real per-cloud volume provisioning: ECS + Lambda → EFS access points; Cloud Run + GCF → GCS buckets; ACA + AZF → Azure Files shares. Host-path binds remain rejected (no host filesystem in the cloud).

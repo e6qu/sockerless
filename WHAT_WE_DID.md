@@ -6,7 +6,29 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 125 DNS driver (PR pending)
+## 2026-05-09 — Phase 126 Access driver (PR pending)
+
+Fourth of the post-Phase-135 ordered roadmap. Adds the abstraction for "what cloud-native principal does the workload run as, and what credential does a caller mint to invoke it?" Both halves are bound by IAM at the cloud platform layer; this driver wraps them so the HTTP invocation paths stay uniform across clouds.
+
+**Mechanisms** (4): `iam-role` (AWS IAM role + SigV4 at SDK layer), `id-token` (GCP service-account + Google ID token JWT), `mTLS` (transport-level mutual TLS — slot reserved for future use), `none-internal` (private VPC ingress; no per-call credential).
+
+**Shipped on this PR:**
+- `api/access_driver.go` — `AccessMechanism` enum + `IsValid()` + `AllAccessMechanisms` set.
+- `backends/core/access_driver.go` — `AccessDriver` interface (`Mechanism()` + `WorkloadPrincipal() string` + `AuthenticatedClient(ctx, audience) (*http.Client, error)`), registry, `NoneInternalAccess` default, `ParseAccessMechanismEnv()` strict no-fallback semantics.
+- 4 unit tests (api enum + core registry + default + parse env).
+
+**Per-backend adapters**:
+- cloudrun → `idTokenAccess` — `AuthenticatedClient` calls `idtoken.NewClient(ctx, audience)`. `WorkloadPrincipal` reads the new `Config.ServiceAccount` (from `SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT`).
+- cloudrun-functions → `idTokenAccess` — same shape; `WorkloadPrincipal` reads `Config.ServiceAccount` (already wired from `SOCKERLESS_GCF_SERVICE_ACCOUNT`).
+- ECS → `iamRoleAccess` — `AuthenticatedClient` returns `http.DefaultClient` (SigV4 happens at SDK layer for AWS-SDK paths). `WorkloadPrincipal` reads `Config.TaskRoleARN`.
+- Lambda → `iamRoleAccess` — same shape; `WorkloadPrincipal` reads `Config.RoleARN`.
+- ACA + AZF → `noneInternalAccess` — `WorkloadPrincipal` empty; client is `http.DefaultClient`. Azure managed-identity wiring would attach here once the ACA/AZF backends grow explicit principal config.
+
+`core.BaseServer.Access` field defaults to `NoneInternalAccess{}` and is overridden at backend startup.
+
+**Callsite migration — every `idtoken.NewClient`**: cloudrun (`exec_invoke.go`, `start_service.go` × 2) and cloudrun-functions (`exec_invoke.go`, `containers.go`, `pod_service.go` × 2) all flow through `s.Access.AuthenticatedClient(ctx, audience)`. The `idtoken` package import is removed from both backends; only the access-adapter files import it. The free-function `invokeFunction` in cloudrun-functions became a method on `*Server` so it has `s.Access` in scope.
+
+## 2026-05-09 — Phase 125 DNS driver (PR #132, merged)
 
 Third of the post-Phase-135 ordered roadmap. Adds the abstraction for "what DNS suffix do short-name lookups inside a network resolve under?" — distinct from Phase 124's discovery (which records the per-name endpoints) and from the cloud-network driver (which allocates the underlying VPC).
 

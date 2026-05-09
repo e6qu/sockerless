@@ -500,7 +500,7 @@ func (s *Server) ContainerStart(ref string) error {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
-		} else if resp, err := invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
+		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
