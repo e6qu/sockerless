@@ -4,49 +4,33 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`docs/state-save-post-121b-finish` (PR #137). Started as a docs state-save after Phase 121b finish (#136); user re-scoped the same PR to carry Phase 78 (UI polish) so the branch carries both.
+`docs/state-save-post-121b-finish` (PR #137). Per user direction this PR keeps growing — Phase 78 (UI polish, complete) + Phase 79+ (admin orchestration, in progress) all land here.
 
-## Active — Phase 78 UI polish (PR #137)
+## Resume here
 
-Across the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub):
+**Phase 79 step 2: `sockerless.yaml` topology store.**
 
-- ✓ **Dark mode + design tokens.** `useTheme` + `ThemeToggle` (sidebar footer).
-- ✓ **Error UX.** `ToastProvider` (top-right stack) + `useToast` + `useReportError`; `InlineError` (in-page banner) wired into every list page with Retry.
-- ✓ **Container detail modal.** Native `<dialog>`-backed `Modal` + row-click on the Containers page.
-- ✓ **Auto-refresh.** TanStack Query polling already set; visibility-pause was already correct (default).
-- ✓ **Accessibility.** DataTable sort headers as buttons + `aria-sort`, clickable rows keyboard-activatable, AppShell skip-link + landmark labels, Spinner role.
-- ✓ **Performance.** DataTable hover via CSS selectors, not inline handlers; bundle sizes verified.
-- ✓ **Documentation.** Workspace + core READMEs.
+Where we are: `Instance` type + tests landed (`cmd/sockerless-admin/instance.go`, `instance_test.go`). Existing `ProjectConfig` still uses one-JSON-per-project at `~/.sockerless/admin/projects/*.json` and the SimPort + BackendPort tuple shape.
 
-CI green pending; PR ready for merge once it passes.
+Next:
 
-## Queued (after 78)
+1. Add `Topology` struct (`{ Projects []ProjectConfig; Ports PortConfig }`) and YAML marshaller in `cmd/sockerless-admin/topology_store.go`.
+2. Each `ProjectConfig` gains `Instances []Instance` (additive — old SimPort/BackendPort fields stay for back-compat).
+3. Loader logic: if `./sockerless.yaml` exists → use it. Else if `~/.sockerless/admin/projects/*.json` exist → read them, derive instances via `DeriveLegacyInstances`, write `./sockerless.yaml`, leave the JSONs alone for now.
+4. Tests: round-trip YAML, legacy-migration produces expected instance list.
 
-- **Phases 91–94 — Real per-cloud volume provisioning.** Lifts the runner-task `emptyDir` fallback to real-workload provisioning of pd-ephemeral / efs-ephemeral / azure-files-ephemeral. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
-- **Live-cloud validation track.** Per-backend live-cloud sweeps:
-  - Lambda live (deferred from Phase 86).
-  - Cloud Run Services / ACA Apps live (closed in code 2026-04-21 behind UseService/UseApp; live-cloud pending).
-  - AZF + cloud-dns on Azure live (new in #136).
-  - Lambda + service-mesh on AWS live (new in #136).
-  - ACA / AZF + Azure AD access on Azure live (new in #136).
+Then phases 79.3–79.6 (REST endpoints, make targets, port allocator, migration) per [PLAN.md](PLAN.md).
 
-## Background — Phase 121b recap (#135 + #136, merged)
+## Invariants (re-state on every commit)
 
-Initial scope (#135):
-- Azure sim cloud-faithful (Files data plane on disk, HS256-signed Azure AD JWT).
-- All-6-backends test harness restructured to `SOCKERLESS_TEST_TARGET=sim|cloud`.
-- In-memory storage backing driver across all 6 backends.
-- Driver consolidation pattern B (live in `*-common`).
-- GCP sim Cloud Run service URI routes through sim's own `/v2-services-invoke/` handler.
-- `gcpcommon.ParseExecResult` extracted; gcf decodes bootstrap envelope.
-- `TagSet.Labels` propagated through pod_service.
-- `scripts/check-latest-deps.sh` (pre-push + CI gate); `make upgrade-deps` fanout.
-- Publish workflow: dropped QEMU; per-arch native runners; `<sha>-<arch>` + manifest-list.
+- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars).
+- **No fallbacks.** Unknown config values fail-loud. No silent defaults.
+- **CI green per commit.** Each commit on PR #137 must be independently testable.
+- **Test target gating.** All backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud` (no skip).
 
-Finish (#136):
-- Network-discovery adapter consolidation into `*-common`.
-- Host-aliases discovery opt-in on every backend.
-- AZF NetworkState model + per-network Private DNS zone.
-- Lambda NetworkState + EC2/ServiceDiscovery clients + Cloud Map namespace lifecycle.
-- New `api.AccessMechanismAzureAD` + `azurecommon.AzureADAccess`.
-- DNS driver + cloud-side resource provisioning gated on matching NetworkDiscovery.
+## After PR #137
+
+- Phases 91–94 — real per-cloud volume provisioning (lifts `emptyDir` → real `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`).
+- Live-cloud validation track — Lambda live, Cloud Run Services + ACA Apps live, AZF cloud-dns + Lambda service-mesh + ACA/AZF Azure AD live.
+
+See [PLAN.md](PLAN.md) for full sub-task lists.

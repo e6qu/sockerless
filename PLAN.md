@@ -9,14 +9,14 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 1. **Docker API fidelity** — match Docker's REST API exactly.
 2. **Real execution** — sims and backends actually run commands; no stubs, fakes, or mocks.
 3. **External validation** — proven by unmodified external test suites.
-4. **No new frontend abstractions** — Docker REST API is the only interface.
-5. **Driver-first handlers** — handler code routes through driver interfaces.
-6. **LLM-editable files** — source files under 400 lines.
-7. **State persistence** — every task ends with a state save (PLAN / STATUS / WHAT_WE_DID / DO_NEXT / BUGS / memory).
-8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
-9. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
-10. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
-11. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
+4. **Driver-first handlers** — handler code routes through driver interfaces.
+5. **LLM-editable files** — source files under 400 lines.
+6. **State persistence** — every task ends with a state save.
+7. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
+8. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
+9. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
+10. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
+11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub, frontend-docker remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
 
 ## Closed phases (PR index)
 
@@ -26,7 +26,6 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 |---|---|---|
 | #112–123 | 86–123 | Sim parity; stateless backends; FaaS pod overlays; storage-backing driver pilot; **8/8 runner cells GREEN.** |
 | #125 | CI reorg | Workflows reorganized: zero auto-fire on main; live-tests-{cloud}. |
-| #127 | 129#4 + 130–132 | Orphan pod-Service GC; sim parity prep (`generateIdToken` + Compute Disks); bleephub workflows + oauth REST + UI. |
 | #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration. |
 | #129 | 135 | Sim host model + 3-tier coverage + native arm64 CI runners. |
 | #130 | 128 | Runner job timeout (bootstrap timer + cloud-native cap; SIGTERM → 30s → SIGKILL → exit 124). |
@@ -37,66 +36,62 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #135 | 121b (initial) | Azure sim hardening, all-6-backends test harness restructure, in-memory storage, driver consolidation pattern B, GCP sim Cloud Run invoke routing, GCF envelope decode + label round-trip, drop QEMU. |
 | #136 | 121b (finish) | Network-discovery adapter consolidation; host-aliases opt-in everywhere; AZF cloud-dns + Lambda service-mesh wiring; Azure AD access driver; pair DNS + cloud-side provisioning to NetworkDiscovery. |
 
-## Roadmap (ordered)
+## Roadmap (ordered) — all phases below land on PR #137 unless noted
 
-### 1. Phase 78 — UI polish (in flight, PR #137)
+### Phase 78 — UI polish ✓ complete
 
-Dark mode, design tokens, error handling UX, container detail modal, auto-refresh, performance audit, accessibility, E2E smoke, documentation. Touches the 12 UI packages (core + 6 cloud backends + docker backend + docker frontend + admin + bleephub). PR #137 then grows to cover Phases 79–86 below (admin orchestration), per user direction.
+Dark mode, error UX, Container detail modal, accessibility, perf, documentation. See `WHAT_WE_DID.md` for details.
 
-### 2. Phase 79 — Topology + admin config service (PR #137)
+### Phase 79 — Topology + admin config service (in progress)
 
-**Invariant — components stay decoupled from admin / UI.** Every sim, backend, bleephub, and frontend remains independently configurable (its own env vars / Config.Validate), independently buildable (`make -C <dir> build`), independently executable (run the binary directly with normal env), and usable without any UI. Admin orchestration is purely additive — admin owns its own metadata about what it started, but components never know admin exists. Concretely: no admin-required env vars on components, no startup registration, no "I'm being managed" hooks. Anything admin needs from a component goes through the public surface that component already exposes (`/v1/health`, `/v1/info`, env vars).
+Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
 
-Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model is preserved (each project = isolated topology). Existing per-project JSONs migrate to the new shape on first start.
+- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation.
+- Step 2: `sockerless.yaml` topology store.
+- Step 3: REST endpoints (`/v1/admin/topology`, `/v1/admin/instances/{key}/{start|stop|rebuild}`).
+- Step 4: `make start-component` / `stop-component` / `rebuild-component` granular targets; existing `stack-X-Y` become wrappers.
+- Step 5: Free-port helper + auto-allocation from `ports.ranges`.
+- Step 6: One-shot migration of existing JSONs into `sockerless.yaml`.
 
-- Topology schema + parser + writer.
-- Admin REST endpoints: `GET/PUT /v1/admin/topology`, `GET /v1/admin/instances`, `POST /v1/admin/instances/{key}/{start|stop|rebuild}`.
-- New make targets: `make start-component KIND=… NAME=… PORT=…` etc; existing `stack-X-Y` become wrappers.
-- Free-port helper + auto-allocation from configured pools (`ports.ranges` per kind).
+### Phase 80 — Admin UI: topology page + per-instance lifecycle
 
-### 3. Phase 80 — Admin UI: topology page + per-instance lifecycle (PR #137)
+Replace ProjectsPage with a project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form; edit / delete; port registry view (allocated + free ranges).
 
-Replace ProjectsPage with a project + instance tree:
-- Per-project drawer; per-instance Start/Stop/Rebuild controls.
-- "Add instance" form (kind + name + port + per-component config).
-- Edit / delete instance.
-- Port registry view (allocated + free ranges).
+### Phase 81 — Per-instance logs + live troubleshooting console
 
-### 4. Phase 81 — Per-instance logs + live troubleshooting console (PR #137)
+Live log tail per instance via SSE from admin (reads `.stack-pids/<name>.log`). Combined-timeline view (sim + backend interleaved). API console panel: send arbitrary HTTP requests against an instance, inspect request/response.
 
-- Live log tail per instance via SSE from admin (reads `.stack-pids/<name>.log`).
-- Combined-timeline view (sim + backend interleaved, colour-coded).
-- API console panel: send arbitrary HTTP requests against an instance, inspect request/response (the "live envelope" view).
-
-### 5. Phase 82 — Cloud-resources rollup in admin (PR #137)
+### Phase 82 — Cloud-resources rollup in admin
 
 AdminCloudResources page aggregates resources across all running backend + sim instances. Group by cloud / by service product / by sockerless instance.
 
-### 6. Phase 83 — Sim UI parity (PR #137)
+### Phase 83 — Sim UI parity
 
-Lift sim UIs to match backend UIs: Containers/Resources/Metrics pages, ToastProvider, ErrorBoundary, ThemeToggle, log tailer, API console. Refactor sim Apps onto the same shell shape `BackendApp` uses.
+Lift sim UIs to match backend UIs: Containers / Resources / Metrics pages, ToastProvider, ErrorBoundary, ThemeToggle, log tailer, API console. Refactor sim Apps onto the same shell shape `BackendApp` uses.
 
-### 7. Phase 84 — Per-instance state isolation + persistence (PR #137)
+### Phase 84 — Per-instance state isolation + persistence
 
-Sims gain optional persistent state under `./.sockerless-state/<project>/<instance>/`. Multiple sim instances of the same cloud coexist with isolated, durable state across restarts. Closes the "separation between sims" requirement.
+Sims gain optional persistent state (env-var-driven, `SIM_STATE_DIR=…`) under `./.sockerless-state/<project>/<instance>/`. Multiple sim instances of the same cloud coexist with isolated, durable state across restarts.
 
-### 8. Phase 85 — Config edit + hot reload (PR #137)
+### Phase 85 — Config edit + hot reload
 
-Per-config-key annotation: hot-reloadable vs restart-required. Admin UI edits write back to `sockerless.yaml`; admin triggers reload or restart based on annotation.
+Admin-side annotation per-config-key: hot-reloadable vs restart-required. Admin UI edits write back to `sockerless.yaml`; admin triggers reload or restart based on annotation. Annotation lives in admin metadata, not on the component.
 
-### 9. Phase 86 — Health + supervision surface (PR #137)
+### Phase 86 — Health + supervision surface
 
-Mark instance unhealthy on (process exit | `/v1/health` non-2xx | no response within 5s). Admin UI shows the failing signal + last-N log lines + diagnostic links. No auto-restart (operator-driven recovery).
+Mark instance unhealthy on ANY of: process exit, `/v1/health` non-2xx, no `/v1/health` response within 5s. Admin UI shows failing signal + last-N log lines + diagnostic links. No auto-restart (operator-driven recovery).
 
-### 10. Phases 91–94 — Real per-cloud volume provisioning
+## After PR #137
 
-Queued. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend. Today's path is the `core.StorageBackingRegistry` + per-cloud drivers shipped in #134 (`pd-ephemeral`, `efs-ephemeral`, `azure-files-ephemeral`); 91–94 lift the real-workload provisioning that those drivers describe (versus the `emptyDir` fallback for the runner-task pattern).
+### Phases 91–94 — Real per-cloud volume provisioning
 
-### 11. Live-cloud validation track
+Lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
 
-Per-backend live-cloud sweeps separate from the unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
-- Lambda live track (deferred from Phase 86).
-- Cloud Run Services / ACA Apps (closed in code 2026-04-21 behind `UseService`/`UseApp` flags; live-cloud pending).
+### Live-cloud validation track
+
+Per-backend live-cloud sweeps separate from unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
+- Lambda live (deferred from Phase 86).
+- Cloud Run Services / ACA Apps live (closed in code 2026-04-21 behind UseService/UseApp).
 - AZF + cloud-dns on Azure live (new in #136).
 - Lambda + service-mesh on AWS live (new in #136).
 - ACA / AZF + Azure AD access on Azure live (new in #136).

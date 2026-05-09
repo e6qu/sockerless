@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 78 + 79 (in flight, PR #137)
+
+**Phase 78 (UI polish, complete).** `useTheme` + `ThemeToggle` (sidebar footer; localStorage + prefers-color-scheme + dark default). `ToastProvider` mounted by `BackendApp` / `SimulatorApp` / admin / bleephub; `useToast` / `useReportError` / `useToastQueryErrors`. `InlineError` for in-page errors with Retry. `Modal` (native `<dialog>`-backed) + `ContainerDetailModal` opening from row click. Accessibility pass (DataTable sort headers as buttons + `aria-sort`, clickable rows keyboard-activatable, AppShell skip-link + `aside`/`nav` labels + `main id+tabIndex`, Spinner role). Admin mutations toast on success+failure. `ui/README.md` documents `make stack-X-Y` / `stack-status` / `stack-down` start/stop, default ports, and per-package vite-dev mode. Admin Toast wiring; vitest infra: jsdom origin pinned + `localStorage`/`matchMedia` polyfills + cleanup() between tests.
+
+**Phase 79 step 1 (in progress).** `Instance` type for admin orchestration (`cmd/sockerless-admin/instance.go`). Per-kind validate (sim / backend / bleephub / frontend-docker; required cloud + backend fields per kind; port > 0; name regex match). `DeriveLegacyInstances` bridges old `ProjectConfig{SimPort, BackendPort}` shape to a `[sim, backend]` Instance list so existing project JSONs continue to enumerate without manual migration.
+
+Critical invariant established: components stay decoupled from admin / UI. Sims, backends, bleephub, frontend-docker remain independently configurable / buildable / runnable. Admin reads only `/v1/health`, `/v1/info`, env vars — no admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+
 ## 2026-05-10 — Phase 121b finish (PR #136, merged)
 
 Completes Phase 121b with the items the initial PR (#135) deferred. Cross-cutting work delivered:
