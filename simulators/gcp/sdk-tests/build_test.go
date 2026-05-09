@@ -26,7 +26,7 @@ import (
 // (which doesn't easily accept endpoint overrides).
 func TestCloudBuild_DockerBuildAndPush(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for Cloud Build test")
+		t.Fatalf("docker CLI required for Cloud Build test (no fallback): %v", err)
 	}
 
 	project := "cb-test-project"
@@ -76,7 +76,7 @@ func TestCloudBuild_DockerBuildAndPush(t *testing.T) {
 // regular env var; docker build tolerates unused env vars.
 func TestCloudBuild_SecretEnvExpansion(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for Cloud Build test")
+		t.Fatalf("docker CLI required for Cloud Build test (no fallback): %v", err)
 	}
 
 	project := "cb-secret-project"
@@ -131,7 +131,7 @@ func TestCloudBuild_SecretEnvExpansion(t *testing.T) {
 // than silently dropping the secret env var).
 func TestCloudBuild_MissingSecretFails(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for Cloud Build test")
+		t.Fatalf("docker CLI required for Cloud Build test (no fallback): %v", err)
 	}
 	project := "cb-missing-secret-project"
 	bucket := "cb-missing-secret-bucket"

@@ -38,7 +38,7 @@ const pollInterval = 10 * time.Second
 func ghRepo(t *testing.T) string {
 	v := os.Getenv("SOCKERLESS_GH_REPO")
 	if v == "" {
-		t.Skip("SOCKERLESS_GH_REPO not set")
+		t.Fatal("SOCKERLESS_GH_REPO required for live GitHub runner cell test (no fallback)")
 	}
 	return v
 }
@@ -46,7 +46,7 @@ func ghRepo(t *testing.T) string {
 func glProject(t *testing.T) string {
 	v := os.Getenv("SOCKERLESS_GL_PROJECT")
 	if v == "" {
-		t.Skip("SOCKERLESS_GL_PROJECT not set")
+		t.Fatal("SOCKERLESS_GL_PROJECT required for live GitLab runner cell test (no fallback)")
 	}
 	return v
 }

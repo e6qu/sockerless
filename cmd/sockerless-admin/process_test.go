@@ -68,7 +68,7 @@ func TestRingBufferRequestFewer(t *testing.T) {
 
 func TestProcessManagerStartStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("sleep binary not available on windows")
+		t.Fatal("sleep binary required on this platform; tests assume a Unix-like host (no fallback)")
 	}
 
 	reg := NewRegistry()

@@ -971,7 +971,7 @@ func TestCancelCompletedWorkflow409(t *testing.T) {
 
 	wfID, _ := result["workflowId"].(string)
 	if wfID == "" {
-		t.Skip("no workflow ID returned")
+		t.Fatal("workflow dispatch did not return an ID — upstream bug, not a skip condition (no fallback)")
 	}
 
 	// Force complete it

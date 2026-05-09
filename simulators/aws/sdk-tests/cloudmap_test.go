@@ -244,7 +244,7 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 // each other by service name via Docker's embedded DNS.
 func TestECS_CrossTaskDNS(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for cross-task DNS test")
+		t.Fatalf("docker CLI required for cross-task DNS test (no fallback): %v", err)
 	}
 
 	cm := cmClient()

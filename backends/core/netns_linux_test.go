@@ -9,7 +9,7 @@ import (
 
 func TestNetnsManagerAvailableWithoutRoot(t *testing.T) {
 	if os.Getuid() == 0 {
-		t.Skip("test requires non-root")
+		t.Fatal("netns mount permission test must run as non-root (no fallback; rerun without sudo)")
 	}
 	m := NewNetnsManager()
 	if m.Available() {
@@ -19,7 +19,7 @@ func TestNetnsManagerAvailableWithoutRoot(t *testing.T) {
 
 func TestNetnsManagerCreateDelete(t *testing.T) {
 	if os.Getuid() != 0 {
-		t.Skip("requires root/CAP_NET_ADMIN")
+		t.Fatal("network-namespace test requires root or CAP_NET_ADMIN (no fallback; rerun with sudo or `setcap cap_net_admin+ep $(go env GOPATH)/bin/test`)")
 	}
 	m := NewNetnsManager()
 
@@ -46,7 +46,7 @@ func TestNetnsManagerCreateDelete(t *testing.T) {
 
 func TestNetnsManagerVethPair(t *testing.T) {
 	if os.Getuid() != 0 {
-		t.Skip("requires root/CAP_NET_ADMIN")
+		t.Fatal("network-namespace test requires root or CAP_NET_ADMIN (no fallback; rerun with sudo or `setcap cap_net_admin+ep $(go env GOPATH)/bin/test`)")
 	}
 	m := NewNetnsManager()
 

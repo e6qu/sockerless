@@ -178,7 +178,7 @@ func TestCloudMap_RegisterAndListInstances(t *testing.T) {
 // embedded DNS.
 func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker CLI required for cross-task DNS test")
+		t.Fatalf("docker CLI required for cross-task DNS test (no fallback): %v", err)
 	}
 
 	// Namespace — backs a real Docker network sim-<nsId>

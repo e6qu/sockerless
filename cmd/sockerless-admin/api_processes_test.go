@@ -34,7 +34,7 @@ func TestHandleProcessList(t *testing.T) {
 
 func TestHandleProcessStartStop(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("sleep binary not available on windows")
+		t.Fatal("sleep binary required on this platform; tests assume a Unix-like host (no fallback)")
 	}
 
 	reg := NewRegistry()
@@ -118,7 +118,7 @@ func TestHandleProcessLogs(t *testing.T) {
 
 func TestProcessStopThenStartRace(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("sleep binary not available on windows")
+		t.Fatal("sleep binary required on this platform; tests assume a Unix-like host (no fallback)")
 	}
 
 	pm := NewProcessManager(nil)
