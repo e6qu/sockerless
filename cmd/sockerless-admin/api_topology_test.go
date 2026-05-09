@@ -17,7 +17,7 @@ func setupTopologyServer(t *testing.T) (*TopologyManager, *http.ServeMux) {
 		t.Fatalf("load: %v", err)
 	}
 	mux := http.NewServeMux()
-	registerTopologyAPI(mux, mgr)
+	registerTopologyAPI(mux, mgr, nil) // lifecycle = nil; tests don't shell make
 	return mgr, mux
 }
 
@@ -90,6 +90,40 @@ func TestAPITopologyPutInvalid(t *testing.T) {
 				t.Errorf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestAPILifecycleNilLifecycle(t *testing.T) {
+	mgr, mux := setupTopologyServer(t)
+	_ = mgr.Replace(Topology{Projects: []ProjectConfig{
+		{Name: "p", Instances: []Instance{
+			{Name: "s", Kind: InstanceKindBleephub, Port: 5500},
+		}},
+	}})
+	for _, action := range []string{"start", "stop", "rebuild"} {
+		req := httptest.NewRequest("POST", "/api/v1/topology/projects/p/instances/s/"+action, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 503; body=%s", action, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestAPIAllocatePort(t *testing.T) {
+	_, mux := setupTopologyServer(t)
+	req := httptest.NewRequest("POST", "/api/v1/topology/allocate-port?kind=bleephub", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	// Bad kind → 400.
+	req2 := httptest.NewRequest("POST", "/api/v1/topology/allocate-port?kind=garbage", nil)
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("bad kind: status = %d, want 400", w2.Code)
 	}
 }
 

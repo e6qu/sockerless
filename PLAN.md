@@ -43,16 +43,16 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Dark mode, error UX, Container detail modal, accessibility, perf, documentation. See `WHAT_WE_DID.md` for details.
 
-### Phase 79 — Topology + admin config service (in progress)
+### Phase 79 — Topology + admin config service ✓ complete (PR #138)
 
 Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
 
-- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation (in #137, merged).
-- ⏳ Step 2: `sockerless.yaml` topology store. **← current.**
-- Step 3: REST endpoints (`/v1/admin/topology`, `/v1/admin/instances/{key}/{start|stop|rebuild}`).
-- Step 4: `make start-component` / `stop-component` / `rebuild-component` granular targets; existing `stack-X-Y` become wrappers.
-- Step 5: Free-port helper + auto-allocation from `ports.ranges`.
-- Step 6: One-shot migration of existing JSONs into `sockerless.yaml`.
+- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation (#137).
+- ✓ Step 2: `sockerless.yaml` topology store + `MigrateLegacyProjects` (#138).
+- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (#138).
+- ✓ Step 4: `make/components.mk` granular targets; `stack-X-Y` rewritten as composition (#138).
+- ✓ Step 5: `TopologyManager.AllocatePort` from `ports.ranges` (#138).
+- ✓ Step 6: lifecycle REST endpoints shell `make {start,stop,rebuild}-component` (#138).
 
 ### Phase 80 — Admin UI: topology page + per-instance lifecycle
 

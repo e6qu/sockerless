@@ -8,24 +8,17 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Resume here
 
-**Phase 79 step 4: granular `make` targets.**
+**Phase 79 complete on this branch (PR #138). Phase 80 next.**
 
-State of play on this branch:
+Phase 79 ships in PR #138:
 - ✓ Step 1: `Instance` type (in #137).
-- ✓ Step 2: `Topology` struct + YAML store + `MigrateLegacyProjects`.
-- ✓ Step 3: `TopologyManager` singleton + REST endpoints (`GET /api/v1/topology`, `PUT /api/v1/topology`, `GET /api/v1/topology/instances`, `GET /api/v1/topology/projects/{project}/instances/{instance}`). Bootstrap calls `LoadOrMigrate` so admin reads the yaml or migrates from legacy on first start.
+- ✓ Step 2: `Topology` struct + YAML store at `sockerless.yaml` + `MigrateLegacyProjects`.
+- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (`/api/v1/topology`).
+- ✓ Step 4: `make/components.mk` granular targets (`start-component`, `stop-component`, `rebuild-component`, `logs-component`, `status-components`, `stop-components`); `stack-X-Y` macros rewritten as composition of `rebuild-component` + `start-component`.
+- ✓ Step 5: `TopologyManager.AllocatePort` walks the configured pool, skips claimed + in-use ports.
+- ✓ Step 6: lifecycle REST endpoints (`POST /api/v1/topology/projects/{p}/instances/{i}/{start|stop|rebuild}`) shell `make {start,stop,rebuild}-component`. Per-instance config map serialised to `.stack-pids/<name>.env` and passed via `ENV_FILE=` so admin can hand any env vars to the component without admin needing to know what they mean.
 
-Next (step 4):
-
-1. Add `make/components.mk` with granular targets:
-   - `make start-component KIND=sim CLOUD=aws NAME=my-sim PORT=4500`
-   - `make stop-component NAME=my-sim`
-   - `make rebuild-component KIND=sim CLOUD=aws`
-   - `make logs-component NAME=my-sim`
-2. Existing `make stack-X-Y` targets in `make/stack.mk` rewrite as wrappers that compose `start-component` calls.
-3. PID + log files keyed by component name in `.stack-pids/<name>.{pid,log}`.
-
-Then 79.5 (free-port helper + auto-allocation) and 79.6 (admin lifecycle endpoints invoke the new make targets) per [PLAN.md](PLAN.md).
+**Next: Phase 80 — admin UI: topology page + per-instance lifecycle.** Replace ProjectsPage with a project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form (kind + name + port + per-component config); edit/delete; port registry view (allocated + free ranges).
 
 ## Invariants (re-state on every commit)
 
