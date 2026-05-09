@@ -208,7 +208,16 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		step("starting simulator-gcp")
 		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
 		simCmd := exec.Command(simBinary)
-		simCmd.Env = append(os.Environ(), "SIM_LISTEN_ADDR="+simAddr)
+		simCmd.Env = append(os.Environ(),
+			"SIM_LISTEN_ADDR="+simAddr,
+			// The sim's Cloud Build executor runs `docker build` for the
+			// overlay image. The Dockerfile FROM references the user's
+			// image by its raw name (e.g. `sockerless-eval-arithmetic:test`)
+			// — buildkit always tries the registry first which 401s for
+			// the local-only test image. Classic builder falls back to
+			// the local daemon cache where the image was just tagged.
+			"DOCKER_BUILDKIT=0",
+		)
 		simCmd.Stdout = os.Stderr
 		simCmd.Stderr = os.Stderr
 		if err := simCmd.Start(); err != nil {
