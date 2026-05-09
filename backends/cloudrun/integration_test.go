@@ -276,6 +276,16 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker client: %v\n", err)
 	}
 
+	// Pre-load the eval-arithmetic image into the backend's image
+	// store via `docker save | dockerClient.ImageLoad`. The backend's
+	// Store.ResolveImage(ref) then finds the image with its full
+	// Config (Entrypoint=/usr/local/bin/eval-arithmetic) so the
+	// overlay path can preserve it into SOCKERLESS_USER_ENTRYPOINT
+	// for the bootstrap to exec. Mirrors the cloudrun-functions setup.
+	if err := preloadImageIntoBackendCloudrun(evalImageName); err != nil {
+		failClean("ERROR: preload eval-arithmetic into backend: %v\n", err)
+	}
+
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
@@ -642,4 +652,35 @@ func writeFakeSAJSONCloudrun(tokenURI string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// preloadImageIntoBackendCloudrun pipes `docker save <ref>` into
+// `dockerClient.ImageLoad`. The backend's ImageLoad handler parses
+// the tar and registers the image with full Config in Store.Images,
+// so subsequent overlay-path Container Creates preserve the image's
+// ENTRYPOINT/CMD. Mirror of cloudrun-functions/preloadImageIntoBackend.
+func preloadImageIntoBackendCloudrun(ref string) error {
+	saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer saveCancel()
+	save := exec.CommandContext(saveCtx, "docker", "save", ref)
+	stdout, err := save.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("docker save stdout pipe: %w", err)
+	}
+	if err := save.Start(); err != nil {
+		return fmt.Errorf("docker save start: %w", err)
+	}
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer loadCancel()
+	resp, err := dockerClient.ImageLoad(loadCtx, stdout)
+	if err != nil {
+		_ = save.Wait()
+		return fmt.Errorf("dockerClient.ImageLoad: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if err := save.Wait(); err != nil {
+		return fmt.Errorf("docker save wait: %w", err)
+	}
+	return nil
 }

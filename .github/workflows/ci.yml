@@ -39,8 +39,9 @@ jobs:
         run: bash scripts/check-latest-deps.sh
 
   test:
-    # Native linux/arm64 runner — matches sim's primary capacity contract
-    # (Phase 135b). Avoids QEMU emulation overhead + flake modes on amd64.
+    # Native linux/arm64 runner — matches the sim's primary capacity
+    # contract. Workloads are linux/arm64; running on a native arm64
+    # runner means no QEMU emulation anywhere in CI.
     runs-on: ubuntu-24.04-arm
     env:
       # Every backend's TestMain builds + runs its simulator binary,
@@ -112,8 +113,8 @@ jobs:
         run: cd tests && go test -v -timeout 5m ./...
 
   sim:
-    # Native linux/arm64 runner — sim's primary capacity (Phase 135b).
-    # Avoids QEMU emulation; matches Apple Silicon dev hosts.
+    # Native linux/arm64 runner — matches the sim's primary capacity
+    # contract (Apple Silicon dev hosts also arm64). No QEMU.
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
