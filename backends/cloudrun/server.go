@@ -99,6 +99,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// Services SDK paths used by the network-connect / disconnect /
 	// resolve flow.
 	s.NetworkDiscovery = newCloudDNSDiscovery(s)
+	s.DNS = newCloudDNSZoneDNS(s)
 
 	// Storage backing registry. EmptyDirDriver always available;
 	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);

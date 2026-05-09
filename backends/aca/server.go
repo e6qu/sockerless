@@ -62,6 +62,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.CloudState = &acaCloudState{server: s}
 	// Cloud-DNS network-discovery driver wraps Azure Private DNS.
 	s.NetworkDiscovery = newACACloudDNSDiscovery(s)
+	s.DNS = newPrivateDNSZoneDNS(s)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

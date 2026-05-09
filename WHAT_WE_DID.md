@@ -6,7 +6,31 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* we did each phase, what was surprising, what blocked. Per-bug detail belongs in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-09 — Phase 124 Network discovery driver foundation (PR pending)
+## 2026-05-09 — Phase 125 DNS driver (PR pending)
+
+Third of the post-Phase-135 ordered roadmap. Adds the abstraction for "what DNS suffix do short-name lookups inside a network resolve under?" — distinct from Phase 124's discovery (which records the per-name endpoints) and from the cloud-network driver (which allocates the underlying VPC).
+
+**Categories** (5): `cloud-map` (AWS Cloud Map private namespace), `cloud-dns-zone` (GCP Cloud DNS managed private zone), `service-discovery` (k8s-style API resolver, reserved for future ACA / EKS work), `private-dns-zone` (Azure Private DNS zone), `none` (no managed suffix; default).
+
+**Shipped on this PR:**
+- `api/dns_driver.go` — `DNSMechanism` enum + `IsValid()` + `AllDNSMechanisms` set.
+- `backends/core/dns_driver.go` — `DNSDriver` interface (`SearchDomain(ctx, networkID) (string, error)` + `Mechanism()`), registry, `NoOpDNS` default for `none`, `ParseDNSMechanismEnv()` strict no-fallback semantics, `DNSSearchDomainEnvIfSet(userEnv, suffix)` helper that yields the env line iff the user hasn't overridden it.
+- 7 unit tests (api enum + core registry + parse env + env-if-set).
+
+**Per-backend adapters + wiring**: Same shape as Phase 124 — each backend ships a thin adapter close-over its `*Server` and reads the per-network state set up by network/discovery drivers:
+
+- cloudrun → `cloudDNSZoneDNS` (reads `state.DNSName`).
+- ECS → `cloudMapDNS` (`servicediscovery.GetNamespace` on `state.NamespaceID`).
+- ACA → `privateDNSZoneDNS` (reads `state.DNSZoneName`).
+- cloudrun-functions / lambda / azure-functions → `NoOpDNS` default (no per-network DNS yet).
+
+`core.BaseServer.DNS` field defaults to `NoOpDNS{}` and is overridden at backend startup.
+
+**Callsite migration — every `ContainerCreate`**: cloudrun, ECS, ACA, GCF, Lambda, AZF each call `s.DNS.SearchDomain(ctx, networkID)` right after the network endpoint is set, then append `core.DNSSearchDomainEnvIfSet(config.Env, suffix)` to both `config.Env` and the persisted `container.Config.Env`. NoOp DNS returns empty → no env injection, so the FaaS backends are inert until they grow real DNS adapters.
+
+**Bootstrap migration**: cloudrun + gcf bootstraps gain `envDNSSearchDomain` const + `writeDNSSearchDomain(raw)` helper. Called right after `writeHostAliases` in main(). The helper extends an existing `search` line in `/etc/resolv.conf` (or adds one), idempotent against the same suffix, no-op on empty. So short-name lookups (`pg.tf-net.local` → `pg`) inside a network resolve to the per-name records the network-discovery driver registered under the same suffix.
+
+## 2026-05-09 — Phase 124 Network discovery driver foundation (PR #131, merged)
 
 Second of the post-Phase-135 ordered roadmap. Adds the abstraction layer for "how do containers in the same user-defined network discover and reach each other by name?" — distinct from the existing `CloudNetworkDriver` (VPC/IP allocation).
 
@@ -26,7 +50,7 @@ Second of the post-Phase-135 ordered roadmap. Adds the abstraction layer for "ho
 - gcf → `core.HostAliasesDiscovery` (host-aliases kind, in-process).
 - Lambda + AZF → no-op default (nat-gateway-only).
 
-Cloudrun's `NetworkConnect` A-record callsite migrated to the driver-mediated call as the proof-of-wire end-to-end. The CNAME path (`UseService` flow) and ECS/ACA inline call sites stay on direct method calls for now — the driver wraps the same impl, so flipping them to driver-mediated calls is a mechanical follow-up.
+Every `cloudServiceRegister/Deregister/Resolve` callsite across cloudrun, ECS and ACA was migrated to the driver-mediated call (`s.NetworkDiscovery.RegisterContainer/DeregisterContainer/ResolveContainer`). The interface signature widened to include an explicit `containerID` so Cloud Map (which keys deregister by container-ID) and DNS-zone backends (which key by hostname) both fit the same shape.
 
 ## 2026-05-09 — Phase 128 Runner job timeout (PR #130, merged)
 
