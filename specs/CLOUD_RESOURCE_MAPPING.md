@@ -4,6 +4,25 @@ Authoritative mapping between Docker / Podman concepts and the cloud resources t
 
 This document is the source of truth for the stateless-backend invariant.
 
+## Contents
+
+1. [Universal rules](#universal-rules)
+2. [Simulator host model (Phase 135)](#simulator-host-model-phase-135)
+3. [Docker / Podman API → cloud + drivers — quick reference](#docker--podman-api--cloud--drivers--quick-reference)
+4. [CI runner requirements — what each runner needs from sockerless](#ci-runner-requirements--what-each-runner-needs-from-sockerless)
+   - GitLab runner docker executor
+   - GitHub Actions runner — `container:` directive
+   - GitHub runner: default model is NOT ephemeral; we need it ephemeral
+   - GitHub runner: cannot self-spawn jobs (needs separate dispatcher), except k8s-deployed ACA
+   - gitlab-runner vs github-runner — runner-pattern compatibility matrix
+   - Per-cloud `github-runner-dispatcher` (Phase 110a / 122 / 122b)
+   - Other CI/CD systems — comparison (Azure DevOps, Jenkins, Drone, Buildkite, CircleCI, Tekton, Argo, Concourse, TeamCity, Bitbucket Pipelines, GoCD, Semaphore, Travis, Bamboo, Earthly, Dagger, Cloud Build, AWS CodeBuild, Harness, Spinnaker)
+5. [Per-cloud detailed mapping](#mapping-per-cloud) (AWS ECS / Lambda · GCP Cloud Run / GCF · Azure ACA / AZF · Local Docker)
+6. [Drivers — generic + per-cloud](#driver-pattern-as-a-generalization-target) (storage backing · network discovery · DNS · access · volume provisioning)
+7. [Docker / Podman API coverage matrix](#docker--podman-api-coverage-matrix) (the full per-method table — drilled-down version of #3)
+8. [Cross-cutting concerns](#per-invocation-container-state) (per-invocation state · job lifecycle · stateless invariant · recovery contract · acceptable gaps)
+9. [Implementation patterns](#sockerless-sanctioned-cloud-image-builders) (builders · pods on FaaS · image cache · lessons learned)
+
 > **Companion specs:**
 > - [BACKEND_STATE.md](BACKEND_STATE.md) — the stateless principle, identity model, tagging conventions
 > - [SIMULATOR_RECOVERY.md](SIMULATOR_RECOVERY.md) — recovery on restart, PID re-attachment, simulator-side tag handling
@@ -74,6 +93,214 @@ Pure data services (S3, GCS, Storage, DynamoDB, KMS, Key Vault data plane) are *
 ### Workload reachability — Docker bridge
 
 Workloads in Docker reach the sim's listener via `host.docker.internal:<sim-port>`. On Linux Docker the sim translates this via `ExtraHosts: "host.docker.internal:host-gateway"`. Real-cloud link-local addresses (`169.254.169.254`, `metadata.google.internal`) are also mapped to host-gateway so workloads that hard-code those addresses reach the sim's metadata endpoints without code changes.
+
+---
+
+## Docker / Podman API → cloud + drivers — quick reference
+
+One-screen view of every Docker/Podman concept and what backs it on each cloud, with the driver category that owns the resolution. The full per-method table (with status flags + notes) lives in [§ Docker / Podman API coverage matrix](#docker--podman-api-coverage-matrix). The **Driver column** points at which `core.<X>Driver` interface mediates the choice — operators select it via env (`SOCKERLESS_<BACKEND>_<X>=...`); per-cloud impls live in `<cloud>-common/`.
+
+### Container lifecycle
+
+| Docker concept | AWS ECS | AWS Lambda | GCP Cloud Run (Service) | GCP CRF / GCF | Azure ACA (App) | Azure Functions | Local Docker | Driver |
+|---|---|---|---|---|---|---|---|---|
+| ContainerCreate / Start / Stop | Fargate task (RunTask / StopTask) | `lambda.CreateFunction` (image-mode) + Invoke | Cloud Run Service revision (CreateService) | Cloud Run Function gen2 (CreateFunction) | Container App (CreateOrUpdate) | Function App (CreateOrUpdate) | Docker daemon | n/a (kind-specific) |
+| ContainerLogs / Attach (read) | CloudWatch Logs streams | CloudWatch Logs | Cloud Logging | Cloud Logging | Log Analytics | Log Analytics | Docker daemon | n/a |
+| ContainerExec / Attach (write) | SSM Session Manager (`ExecuteCommand`) | reverse-agent over WebSocket | reverse-agent OR HTTP envelope POST (Path B) | HTTP envelope POST against the Function URL | ACA console exec API OR reverse-agent | reverse-agent over WebSocket | Docker daemon | `ExecDriver` per-backend (reverse-agent vs cloud-native) |
+| Container restart | RunTask with new revision | re-Invoke (or new revision for image swap) | RunRevision | new Function generation | new App revision | new Function App revision | Docker restart | n/a |
+
+### Networks (peer discovery, ingress auth, search domain)
+
+| Docker concept | AWS ECS | AWS Lambda | GCP Cloud Run | GCP CRF / GCF | Azure ACA | Azure Functions | Driver |
+|---|---|---|---|---|---|---|---|
+| `NetworkCreate` (per-network identity) | VPC SG + Cloud Map namespace | (no peer net by default; opt-in service-mesh) | Cloud DNS managed zone | (host-aliases by default) | NSG + Azure Private DNS zone | (no peer net by default; opt-in cloud-dns) | n/a |
+| Peer-discovery (resolve sibling by name) | Cloud Map A/CNAME records | (none) → opt-in `service-mesh` (Cloud Map) | Cloud DNS A records (`<svc>.<network>.internal`) OR CNAMEs to Service URI when `UseService=true` | host-aliases (`/etc/hosts` injection per-pod) | Private DNS A/CNAME records | (none) → opt-in `cloud-dns` (Private DNS) | **`NetworkDiscoveryDriver`** — `host-aliases` / `cloud-dns` / `service-mesh` / `nat-gateway-only`. Per-backend env: `SOCKERLESS_<X>_NETWORK_DISCOVERY`. |
+| DNS search domain inside container | Cloud Map namespace name | n/a (when service-mesh) | Cloud DNS zone DNS-name | n/a | Private DNS zone name | n/a (when cloud-dns) | **`DNSDriver`** — `cloud-map` / `cloud-dns-zone` / `private-dns-zone` / `none`. Auto-paired with NetworkDiscovery. |
+| Ingress authentication on the workload's HTTP surface | IAM role + SigV4 (SDK auto-signs) | IAM role + SigV4 | Google ID token (audience = workload URL) | Google ID token | none-internal (managed-environment isolation) OR Azure AD (Easy Auth) | none-internal OR Azure AD | **`AccessDriver`** — `iam-role` / `id-token` / `mTLS` / `none-internal` / `azure-ad`. Per-backend env: `SOCKERLESS_<X>_ACCESS`. |
+
+### Volumes (per-cloud bind-mount + named-volume targets)
+
+| Docker concept | AWS ECS | AWS Lambda | GCP Cloud Run | GCP CRF / GCF | Azure ACA | Azure Functions | Driver |
+|---|---|---|---|---|---|---|---|
+| Named volume (persistent, cross-restart) | EFS access point | EFS access point (Lambda-in-VPC) | GCS bucket via `Volume.Gcs{Bucket}` | GCS bucket | Azure Files share | Azure Files share | **`StorageBackingDriver`** — `efs-ephemeral` / `pd-ephemeral` / `azure-files-ephemeral` / `gcs-fuse` / `gcs-sync` / `emptyDir` / `memory`. Per-volume `Backing` field (operator picks; no fallback). |
+| Bind mount (`-v /h:/c`) | rejected — Fargate has no host filesystem | rewritten to a SharedVolume entry when host path matches a configured access point | rewritten to a SharedVolume entry when host path matches a configured GCS bucket | same | rewritten to a SharedVolume Azure Files share | same | (handled by per-backend `volume_translator.go`) |
+| Cross-stage workspace persistence (CI runners) | EFS access point shared across all sub-tasks | EFS access point | tar-pack persist via GCS object (`SOCKERLESS_PERSIST_VOLUMES`) — bootstrap saves on exit, restores on next start | same | (Phase 91 work: same pattern via Azure Files) | same | (`StorageBackingDriver` `gcs-sync` for per-step granularity) |
+
+### Build (`docker build`) + registry
+
+| Docker concept | AWS | GCP | Azure | Driver |
+|---|---|---|---|---|
+| `ImageBuild` | AWS CodeBuild → ECR | Cloud Build → Artifact Registry | ACR Tasks → ACR | `core.CloudBuildService` interface; per-cloud impl in `<cloud>-common/build.go`. |
+| `ImagePull` | ECR with optional Pull-Through Cache | Artifact Registry with Remote Repositories | ACR with Cache Rules | `<cloud>-common.<X>AuthProvider` for token mint. |
+| `ImagePush` | ECR | Artifact Registry | ACR | same |
+| Multi-arch manifest assembly | OCI distribution v2 PUT via `core.AssembleMultiArchManifest` | same | same | `core.AssembleMultiArchManifest` shared helper (Apache 2.0) — accepts a per-cloud `tokenForRepo(repo) (string, error)` callback. |
+
+### Lifecycle / management
+
+| Docker concept | All cloud backends | Driver |
+|---|---|---|
+| `Info` (`docker info`) | reports backend kind + region + VPC / Resource Group + per-backend identity | n/a |
+| `SystemEvents` | sockerless emits its own events; cloud-side audit-log replay is a future phase | n/a |
+| `AuthLogin` | per-cloud registry token | `<cloud>-common.<X>AuthProvider` |
+
+For per-method status flags (✓ / ⚠ / ✗) see the full coverage matrix below at [§ Docker / Podman API coverage matrix](#docker--podman-api-coverage-matrix).
+
+---
+
+## CI runner requirements — what each runner needs from sockerless
+
+This section consolidates everything sockerless must provide for the two CI runners we target — GitLab runner (docker executor) and GitHub Actions runner (`container:` directive). The detailed lifecycle per-step state machines + bug history are below in [§ Runner job lifecycle (docker executor) — required cloud primitives](#runner-job-lifecycle-docker-executor--required-cloud-primitives); this section is the contract summary.
+
+### GitLab runner — docker executor
+
+What it needs:
+
+1. **Long-lived containers.** GitLab runner spawns a build container with `OpenStdin=true` + cmd=`/bin/bash` and reuses it across all stages of one job (helper container too, plus any service containers). Sockerless backend MUST keep the cloud primitive alive between stages — Cloud Run Service / ACA App / Fargate task with `tail -f`-style entrypoint. Cloud Run Job / Lambda Invoke / one-shot Function don't fit.
+2. **Hijacked `ContainerAttach` with bidirectional stdin/stdout.** GitLab runner does NOT use `/exec/...` — it uses `ContainerAttach` with `Stream=true Stdin=true Stdout=true Stderr=true` per stage; sends the stage script over stdin, reads stdout until EOF, then `StopKillWait` (graceful stop, container reused for next stage). Sockerless's read-only `AttachViaCloudLogs` does NOT fit; backend must wire a real bidirectional stream.
+3. **Same container ID reachable across attach + start cycling.** Between stages 3 → 4 → 5 of the state machine the same container ID must remain valid for repeated `ContainerStart` (already-running case must register fresh stdin pipe + kick a new invoke goroutine).
+4. **Service containers (postgres etc.) reachable on `localhost:<port>` from the build container.** Multi-container Cloud Run Service revision (loopback per-revision) / multi-container ACA App / multi-container Fargate task. Bare `network: bridge` doesn't fit.
+5. **Workspace persistence across stages.** `/builds` must survive stage transitions. GCS object tar-pack persist (cloudrun + gcf via `SOCKERLESS_PERSIST_VOLUMES`) or EFS access point (ECS / Lambda).
+6. **Cleanup on job completion.** All containers + services teardown via `ContainerStop` + `ContainerRemove`.
+
+### GitHub Actions runner — `container:` directive
+
+What it needs:
+
+1. **Long-lived job container** with cmd=`tail -f /dev/null` + `OpenStdin=false`. Same long-lived primitive requirement as GitLab runner.
+2. **`docker exec` per step.** Each step → one `docker exec` against the long-lived container. Sockerless's HTTP envelope POST (Path B, see [§ Lessons](#lesson-8--lambda-execstartviainvoke-path-b-for-invocation-based-exec)) maps directly to `DockerExec`.
+3. **stdcopy-framed exec response.** `DockerExec` non-TTY response demands 8-byte stream-frame headers (`0x01` stdout / `0x02` stderr). Bare HTTP body breaks the runner with `Unrecognized input header: 115`. Backend wraps response via `writeMuxFrame` helper.
+4. **Per-step workspace state propagation between runner-task and JOB pod-Service.** GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` on the runner-task and `docker exec sh /__w/_temp/<uuid>.sh`. Both sides must see the same files. Today's path: GCS object sync via the `gcs-sync` storage backing driver — sockerless-backend tars on exec, bootstrap untars + runs + tars, sockerless-backend untars response. No FUSE in the data path.
+5. **Service containers** on the same per-job network (same long-lived multi-container primitive).
+6. **`/var/run/docker.sock` mount on the JOB container** — github-runner unconditionally mounts this so user steps can do nested `docker run`. On Cloud Run / GCF / ACA / AZF there's no docker socket; sockerless drops the mount silently AND the user step that needs nested docker fails at runtime. Documented limitation.
+
+### GitHub runner: default model is NOT ephemeral — we need it ephemeral
+
+GitHub Actions self-hosted runner registered in the default mode is **persistent** — once registered it processes job after job until manually removed. After a job completes the runner stays online, polls for the next job, and reuses the same `_work/` directory.
+
+**Sockerless requires ephemeral mode.** Each runner instance MUST process exactly one job, then exit cleanly so the dispatcher can reap it and spawn a fresh container for the next queued job. This is non-negotiable for the cloud-burst pattern:
+- A persistent runner inside a Cloud Run Job / ACA Job / Lambda Invoke would be killed by the platform's max-runtime cap mid-job.
+- Cross-job state in `_work/` would leak secrets + cache between unrelated workflows — a security boundary violation.
+- The cost model assumes pay-per-job; persistent idle runners waste regional CPU quota.
+
+**How to enable ephemeral mode:**
+- **Self-hosted runner config:** pass `--ephemeral` to `config.sh` at registration time. The runner exits with code 0 after the first job's `Job completed` message instead of polling for the next.
+- **Per-spawn registration token:** ephemeral runners need a fresh `runners/registration-token` mint per spawn. The dispatcher (see below) handles this — `pkg/scopes` checks the PAT at startup, `pkg/poller` mints per-spawn.
+- **Runner image bootstrap.sh:** `./config.sh --url $RUNNER_REPO --token $RUNNER_REG_TOKEN --name $RUNNER_NAME --ephemeral --unattended --replace` then `./run.sh` then exit. (Phase 110a runner Dockerfiles do this.)
+- **Dispatcher cleanup:** the dispatcher's cleanup loop also reaps `offline` runners on the GitHub side via `gh api .../actions/runners` — ephemeral runners go offline as they exit and need to be deregistered to avoid zombie entries cluttering the org's runner list.
+
+### GitHub runner: cannot self-spawn jobs — needs a separate dispatcher
+
+GitHub Actions runner does not poll for queued workflow_jobs and create runner instances itself. The runner is a worker that processes ONE job; spawning is somebody else's problem. This is the inverse of GitLab runner, which has a built-in `gitlab-runner` daemon that polls + dispatches.
+
+**Sockerless ships a separate `github-runner-dispatcher-<cloud>` per cloud control plane.** The dispatcher polls `GET /repos/{r}/actions/runs?status=queued` every 15s, mints a registration token per queued job, and spawns a runner container via the cloud's native primitive (Cloud Run Jobs / ACA Jobs / docker daemon / Lambda).
+
+**One exception: GitHub Actions Runner Controller (ARC) in Kubernetes — including k8s-deployed ACA — handles dispatch internally.** ARC runs inside k8s and uses the `ActionsRunnerController` CRD to scale runner pods up/down based on queued workflow_jobs. When sockerless deploys against a k8s-backed ACA environment that uses ARC, the dispatcher is NOT needed — ARC owns dispatch + ephemeral-mode runner pod lifecycle. Outside that one case (i.e. our standard ECS / Lambda / Cloud Run / GCF / ACA Job / AZF deployments), the per-cloud `github-runner-dispatcher-<cloud>` is required.
+
+The contrast with GitLab is sharp:
+
+| Concern | GitLab runner | GitHub Actions runner |
+|---|---|---|
+| Polling for queued jobs | built into `gitlab-runner` daemon | NOT in the runner — needs external dispatcher (or ARC in k8s) |
+| Ephemeral by default? | `--max-builds 1` config option (essentially ephemeral after one job) | ❌ no — must opt in via `--ephemeral` |
+| Registration token | one long-lived runner token | one short-lived per-spawn token (dispatcher mints) |
+| Sockerless responsibility | runner image carries `gitlab-runner` + the sockerless backend; daemon dispatches via `DOCKER_HOST=tcp://localhost:3375` | dispatcher handles spawn; runner image carries `actions-runner` in `--ephemeral` mode + the sockerless backend |
+
+### gitlab-runner vs github-runner — runner-pattern compatibility matrix (2026-05-06)
+
+See [§ gitlab-runner vs github-runner — runner-pattern compatibility matrix](#gitlab-runner-vs-github-runner--runner-pattern-compatibility-matrix-2026-05-06) below for the full per-row matrix. Summary: both runners are now supported on cloudrun + gcf via the multi-container Cloud Run Service revision pattern + `Typed.Exec` envelope-POST + `gcs-sync` workspace driver. ECS + Lambda inherit from the original Phase 110 stack.
+
+### Per-cloud `github-runner-dispatcher` (Phase 110a / 122 / 122b)
+
+Three Go modules turn queued GitHub Actions workflow_jobs into per-job ephemeral runner containers, one variant per cloud control plane. See [§ Per-cloud github-runner-dispatcher](#per-cloud-github-runner-dispatcher-phase-110a--122--122b) below for the per-cloud spawn shape, IAM, state recovery, and cleanup details.
+
+### Other CI/CD systems — comparison
+
+Sockerless is `DOCKER_HOST`-shaped, so any runner that delegates per-step container execution to a Docker daemon can be pointed at it. The shape varies wildly across systems — long-lived poller vs. orchestrator-spawned, ephemeral vs. persistent, self-spawning vs. needing a dispatcher. Summary first, then per-system detail.
+
+| System | Runner shape | Spawn responsibility | Ephemeral by default? | Sockerless fit | Status in our matrix |
+|---|---|---|---|---|---|
+| GitLab runner (docker executor) | long-lived poller daemon | self-spawning (the daemon dispatches per-job containers) | per-job (containers, not the daemon) | direct — daemon → `DOCKER_HOST` | covered above |
+| GitHub Actions runner | per-job worker (runs one job, polls for next) | external — needs dispatcher (or ARC in k8s) | ❌ default; ✓ via `--ephemeral` | needs `github-runner-dispatcher-<cloud>` | covered above |
+| Azure DevOps Pipelines agent | long-lived poller worker | external — needs orchestrator (or AKS pool autoscaler) | ❌ default; ✓ via `--once` | needs `azdo-agent-dispatcher-<cloud>` (not yet shipped) | future phase |
+| Jenkins controller + agents | controller is long-lived; agents are spawned by controller | controller self-spawns via `docker-plugin` / `kubernetes` plugin / `docker-swarm` plugin | per-job (when using cloud plugins) | direct — controller's `docker-plugin` → `DOCKER_HOST` | works today; no harness yet |
+| CircleCI self-hosted runner (v2) | k8s-pod-per-task | CircleCI control plane spawns pods | ✓ pod-per-task | k8s-only — out of scope unless ACA-on-k8s deployment | not in scope |
+| Drone CI runner (docker) | long-lived poller daemon | self-spawning (similar to gitlab-runner docker executor) | per-step (containers) | direct — runner → `DOCKER_HOST` | works today; no harness yet |
+| Buildkite agent | long-lived poller; plugins (docker / k8s) handle per-step containers | self-spawning when using `docker` plugin | per-step (when using `docker` plugin) | direct — agent's `docker` plugin → `DOCKER_HOST` | works today; no harness yet |
+| Tekton | k8s-native, talks to k8s API directly | k8s controller spawns pods | ✓ pod-per-task | k8s-only — does NOT use Docker API | not applicable |
+| Concourse CI | worker spawns Garden containers (NOT Docker) | worker self-spawns | per-build | not directly compatible — Garden ≠ Docker API | not in scope |
+| Argo Workflows | k8s-native; spawns pods per step | k8s controller | ✓ | k8s-only | not applicable |
+| TeamCity (JetBrains) | long-lived agent (`buildAgent`) | external — server schedules onto registered agents | ❌ default; ✓ via `--max-build-count` to a tear-down hook | direct — agent's `Docker Wrapper` build feature → `DOCKER_HOST` | works today; no harness yet |
+| Bitbucket Pipelines self-hosted runner | per-job worker (Docker-in-Docker mode) | external — Bitbucket Cloud schedules to runners | ✓ per-job runner | direct — runner shells `docker` against `DOCKER_HOST` | works today; no harness yet |
+| GoCD agent | long-lived agent | external — server dispatches | ❌ default | direct — `docker-pipeline-plugin` → `DOCKER_HOST` | works today; no harness yet |
+| Semaphore CI self-hosted agent | long-lived poller | self-spawning per-step containers | per-step (containers) | direct — agent's docker integration → `DOCKER_HOST` | works today; no harness yet |
+| Travis CI Enterprise worker | long-lived poller daemon (`travis-worker`) | self-spawning containers | per-build | direct — worker → `DOCKER_HOST` | works today; declining usage |
+| Bamboo (Atlassian, EOL Mar 2024) | long-lived agent | external — server dispatches | ❌ default | direct via Docker tasks → `DOCKER_HOST` | works today; product end-of-life |
+| Earthly | client + buildkit daemon (NOT a runner) | n/a — local + remote BuildKit | n/a | tangential — Earthly talks BuildKit gRPC, not Docker API | not applicable |
+| Dagger | client + BuildKit-based engine (NOT a runner) | n/a | n/a | tangential — Dagger talks BuildKit gRPC, not Docker API | not applicable |
+| GCP Cloud Build | managed worker pool (per-build VM) | GCP control plane | ✓ per-build | not applicable — closed managed service, no `DOCKER_HOST` retargeting | not in scope |
+| AWS CodeBuild | managed worker pool (per-build container/VM) | AWS control plane | ✓ per-build | not applicable — closed managed service | not in scope (sockerless USES it for image builds) |
+| Azure Pipelines Microsoft-hosted | managed worker pool | AzDO control plane | ✓ per-build | not applicable | not in scope |
+| Harness CI Delegate | long-lived k8s pod (delegate) | external — Harness control plane | per-build (pod) | k8s-only | out of scope |
+| Spinnaker | CD orchestrator (deployments, not builds) | n/a | n/a | not a CI runner | not applicable |
+| ArgoCD | GitOps CD (k8s-native) | n/a | n/a | not a CI runner | not applicable |
+| FluxCD | GitOps CD (k8s-native) | n/a | n/a | not a CI runner | not applicable |
+
+#### Azure DevOps Pipelines self-hosted agent
+
+What it is: long-lived agent (`vsts-agent`) that polls Azure DevOps service for pipeline jobs. Closest analog to GitHub Actions runner; same constraints apply.
+
+- **Container Jobs feature** (`pool.container:` in YAML) — agent shells out to Docker on the agent host to run each job (or step) inside a container image. This is the path that maps cleanly to sockerless: agent gets `DOCKER_HOST=tcp://localhost:3375` (or wherever the sockerless daemon listens), every container the agent spawns lands on the configured cloud backend.
+- **Default model is NOT ephemeral.** The agent registers with `config.sh`, processes jobs in a loop, polls between jobs, retains `_work/` across jobs. Same security boundary problem as the GitHub runner: cross-job secret leakage, max-runtime overruns when running inside a Cloud Run Job / ACA Job / Lambda invoke.
+- **Ephemeral mode:** pass `--once` to `run.sh` (note: NOT `--ephemeral` like GitHub — Microsoft chose a different flag name). Agent processes one job and exits. For unattended config use `config.sh --unattended --replace --auth pat --token $AZP_TOKEN --pool $POOL --agent $NAME` then `./run.sh --once`.
+- **Spawning:** the agent does not self-spawn job containers at scale. Microsoft's recommended scale-out pattern is "Azure Pipelines agents on AKS" using KEDA + `pipeline-agent-scaledobject`, which is k8s-only and roughly the AzDO equivalent of ARC. Outside k8s, you need an external dispatcher polling `GET https://dev.azure.com/{org}/_apis/distributedtask/pools/{poolId}/jobrequests` for queued jobs and spawning per-job runners. **Sockerless would need an `azdo-agent-dispatcher-<cloud>` analog to `github-runner-dispatcher-<cloud>`** — not yet shipped, but the design is mechanical: same per-cloud spawn shape (Cloud Run Job / ACA Job / Lambda Invoke / Fargate task), poll loop swaps the GitHub `workflow_jobs` query for the AzDO `jobrequests` query, registration token swap PAT → AzDO PAT.
+- **Authentication:** Azure DevOps PAT scoped to "Agent Pools (read, manage)". Per-spawn registration is allowed; `config.sh --replace` overwrites a stale registration with the same name.
+- **Workspace:** `$AGENT_WORKFOLDER/_work/<pipeline-id>/` — same persistence question as GitHub: needs `gcs-sync` / EFS / Azure Files when split across cloud-spawned ephemeral containers.
+
+| Concern | GitHub Actions runner | Azure DevOps Pipelines agent |
+|---|---|---|
+| Ephemeral flag | `--ephemeral` to `config.sh` | `--once` to `run.sh` |
+| Self-spawning | ❌ — needs dispatcher | ❌ — needs dispatcher (or AKS+KEDA) |
+| K8s self-managing variant | ARC | AKS+KEDA scaledobject |
+| Registration token | per-spawn `runners/registration-token` | long-lived PAT (per-spawn `--replace` overwrites) |
+| Workspace dir | `$RUNNER_WORK/` | `$AGENT_WORKFOLDER/_work/` |
+| Container Jobs flag | `container:` in `jobs.<id>` | `container:` in `pool.` or per-step `target.container:` |
+
+#### Jenkins (controller + agents)
+
+What it is: a long-lived **controller** (formerly "master") that schedules builds onto **agents**. Agents are the runners; they can be permanent (always-online machines) or **cloud-provisioned** via plugins. Two paths fit sockerless:
+
+1. **`docker-plugin`** — Jenkins controller's "Docker Cloud" config points at a Docker daemon URL. When a queued build matches a label whose template is configured in that cloud, the controller calls `POST /containers/create` on that daemon to spawn a one-shot agent container that connects back via JNLP/SSH. Set `DOCKER_HOST=tcp://sockerless:3375` (or the cloud equivalent) — sockerless dispatches the agent container to ECS / Cloud Run / ACA. After the build the controller calls `POST /containers/{id}/stop` + `DELETE /containers/{id}`. Per-build ephemeral by design.
+2. **"Docker Pipeline" `withDockerContainer`** — used inside a `Jenkinsfile` to wrap a stage in `docker.image('foo').inside { … }`. Translates to `docker run` against whatever Docker daemon the controlling agent talks to. Same `DOCKER_HOST` retargeting works.
+
+What sockerless gives Jenkins:
+- Long-lived agent containers via the `docker-plugin` cloud (Cloud Run Service revision / ACA App / Fargate task, all keep-alive shapes that already fit the GitLab runner pattern from above).
+- Bidirectional JNLP/SSH stream from the agent back to the controller — needs the same `Stream=true Stdin=true` Attach support sockerless wires for the GitLab runner. Note: Jenkins JNLP agent connects OUT to the controller's JNLP port, so attach-as-bridge isn't strictly required if the agent container can route to the controller (network-discovery driver decision).
+- Workspace `$JENKINS_HOME/workspace/<job>` lives inside the agent container — survives the build only. Inter-build caching uses the controller's stash/unstash or external storage; orthogonal to sockerless.
+
+What sockerless does NOT have to provide:
+- Spawning logic — Jenkins controller does that itself.
+- An ephemeral wrapper — the `docker-plugin` cloud already creates per-build containers.
+- Ingress auth — Jenkins agents authenticate to the controller via JNLP secret, not via the cloud's auth driver.
+
+Status today: works against any sockerless backend that supports the GitLab runner pattern (Cloud Run Service revision, ACA App, Fargate task). No Jenkins-specific dispatcher needed. No harness or capability-matrix row in the repo yet — would be a thin wrapper around the existing `docker-plugin` test recipes.
+
+#### Drone CI runner (docker runner)
+
+Drone's `drone-runner-docker` is structurally identical to gitlab-runner docker executor: long-lived daemon polls for jobs, spawns per-step containers via the local Docker daemon, tears down on completion. Set `DRONE_RUNNER_NAME` + `DOCKER_HOST=tcp://sockerless:3375` in the runner config and the runner's per-step containers land on the configured cloud backend.
+
+Same constraints as GitLab runner: long-lived primitive (Cloud Run Service revision / ACA App / Fargate task) for per-step containers, bidirectional `Attach`, workspace persistence via `gcs-sync` or EFS. No additional sockerless-side work.
+
+#### Buildkite agent (with `docker` plugin)
+
+The Buildkite agent is a long-lived poller. Its `docker` plugin (`plugins/docker`) wraps each step in `docker run`, so retargeting the agent's `DOCKER_HOST` works exactly like the GitLab runner case. Buildkite also has a `kubernetes` plugin which, like Tekton / ARC, is k8s-native and out of scope for the sockerless `DOCKER_HOST` path.
+
+#### CircleCI self-hosted runner (v2)
+
+CircleCI v2 self-hosted runner is k8s-native — it expects to run as pods inside a Kubernetes cluster and uses the k8s API directly to spawn task pods. There is no Docker-API path. Out of scope for sockerless's current backends, except (in principle) a k8s-deployed ACA environment.
+
+#### Tekton, Argo Workflows, Concourse
+
+Tekton + Argo are k8s-native — they talk to the k8s API directly, never Docker. Concourse uses the Garden container runtime (its own protocol, not Docker). None of these fit the `DOCKER_HOST` retargeting model. Listed for completeness only.
 
 ---
 
