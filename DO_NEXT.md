@@ -1,42 +1,51 @@
 # Do Next
 
-**Resume pointer for the next session.** Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
+Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
 ## Branch
 
-`phase-121b-azure-sim-hardening` — off `origin/main` at 3e39e3a (PR #134 merged 2026-05-09). Single work-branch rule: everything stacks here, no side branches.
+`phase-121b-azure-sim-hardening` (PR #135) — off `origin/main` at 3e39e3a.
 
-## Ordered roadmap (do them in this order)
+## Active — Phase 121b (single-PR scope)
 
-1. **Phase 78 — UI polish** (dark mode, design tokens, error UX, container detail modal, accessibility).
+Mirror of Phase 121 GCP sim hardening + cross-cutting test harness restructure + new drivers + driver consolidation.
 
-## Active — Phase 121b (Azure sim hardening + Azure backend test-harness restructure, ready for PR + CI)
+**Done:**
+- 121b-A Azure Files data plane on disk
+- 121b-B HS256-signed Azure AD JWT
+- 121b-C All 6 backends' integration `TestMain` requires `SOCKERLESS_TEST_TARGET=sim|cloud`. No skips/fallbacks/build tags/legacy env. Per-test `skipIfNoIntegration` deleted.
+- 121b-D Azure terraform-test darwin fail-loud
+- 121b-E `make/go-app.mk` + `make/go-lib.mk`: `test-integration` (sim) / `test-integration-cloud` (cloud). CI sets `SOCKERLESS_TEST_TARGET=sim`.
+- 121b-F In-memory storage backing driver (`core.MemoryDriver`, `BackingMemory`).
 
-Mirror of Phase 121 GCP sim hardening, plus a no-fallback / no-skip / explicit-config restructure of the Azure backend integration test harnesses. All sub-tasks shipped:
+**In progress (this PR):**
+- 121b-G Cloudrun TestMain: build + reference `sockerless-cloudrun-bootstrap` so `TestCloudRunJobTimeout` exercises the bootstrap timer end-to-end (the test was previously hidden by the build tag; 121b-C exposed the gap).
+- 121b-H Driver consolidation, pattern B (live in `*-common`, shared by both backends in that cloud, value-at-construction config):
+  - `gcp-common.IDTokenAccess` ← cloudrun + cloudrun-functions thin wrappers
+  - `aws-common.IAMRoleAccess` ← ecs + lambda
+  - `core.NoneInternalAccess` (already cloud-agnostic; keep here)
+  - DNS adapters (`cloudMapDNS`, `cloudDNSZoneDNS`, `privateDNSZoneDNS`) → `*-common`
+  - Network discovery adapters (`cloudMapDiscovery`, `cloudDNSDiscovery`, `acaCloudDNSDiscovery`) → `*-common`
+- 121b-I Register `host-aliases` discovery as opt-in on every backend.
+- 121b-J AZF DNS adapter → `private-dns-zone` (mirror ACA).
+- 121b-K Lambda DNS + network discovery → `cloud-map` (mirror ECS).
+- 121b-L AZF + ACA `id-token` access via Azure AD (`azidentity.DefaultAzureCredential`; audience required via `SOCKERLESS_<BACKEND>_AAD_AUDIENCE`; operator owns Easy Auth setup).
 
-- **121b-A — Azure Files data plane on disk.** `simulators/azure/files.go` previously returned mock XML for every file/directory operation. New `handleAzureFilesPath` services the real Azure Files REST verbs (PUT directory, PUT file, PUT range, GET, HEAD, DELETE) and persists everything under `FileShareHostDir(account, share)`. End-to-end consistency between data-plane writers and ACA / AZF workload mounts.
-- **121b-B — HS256-signed Azure AD JWT.** `simulators/azure/auth.go` previously emitted `alg:none` tokens. New `mintAzureSimJWT` produces a real-shape Azure AD access token (HS256 + `kid` header + full claim set). JWKS publishes the `kid`.
-- **121b-C — All 6 backends' integration test harness restructured.** No `SOCKERLESS_INTEGRATION` gate, no skip, no fallback, no `//go:build integration` build tag. Every backend's `TestMain` (ACA, AZF, ECS, Lambda, Cloud Run, Cloud Run Functions) requires `SOCKERLESS_TEST_TARGET=sim|cloud` + `docker` + `go` on PATH; sim path builds + starts the per-cloud simulator on a free port and pre-creates fixed sim fixtures; cloud path requires explicit `SOCKERLESS_ENDPOINT_URL` + per-backend ARM/IAM env vars. Per-test `skipIfNoIntegration` helpers deleted across the board.
-- **121b-D — Azure terraform-test darwin fail-loud.** No more macOS skip — `t.Fatal` with a clear explanation. Run via Linux container or in CI.
-- **121b-E — Makefile + CI updates.** `make/go-app.mk` + `make/go-lib.mk` ship `test-integration` (`=sim`) + `test-integration-cloud` (`=cloud`). CI sets only `SOCKERLESS_TEST_TARGET=sim`; the legacy `SOCKERLESS_INTEGRATION` env is removed entirely from the codebase.
-
-- **121b-F — In-memory storage backing driver.** `core.MemoryDriver` (cloud-agnostic) with `BackingMemory = "memory"` constant + `MemorySpec{ SizeMB int }` payload. Registered across all 6 backends. Each backend's translator emits the cloud-native RAM-backed primitive (EmptyDir{Medium: MEMORY} on Cloud Run / GCF / ACA, ECS tmpfs, Lambda /tmp scratch). 5 unit tests.
-
-5 new sim unit tests (`files_test.go` × 3 + `auth_test.go` × 2) + 5 core unit tests (`TestMemoryDriver_*`); all azure sim + sdk + cli + terraform-tests green locally.
+After Phase 121b ships: Phase 78 (UI polish — dark mode, design tokens, error UX, container detail modal, accessibility).
 
 ## Standing rules
 
-- **Never merge PRs** — user handles all merges. Push only.
+- **Never merge PRs** — user handles merges.
 - **Never push `main`.** Branch off `origin/main`, PR it.
-- **Single work-branch rule** — everything stacks here; no side branches.
+- **Single work-branch rule.**
 - **State save after every task** — STATUS / PLAN / WHAT_WE_DID / DO_NEXT / BUGS.
-- **Bugs file before fix** — every CI / live failure lands in BUGS.md as a one-liner before any analysis or fix attempt. Header counts updated in the same edit.
-- **No fakes / no fallbacks** — every gap is a real bug; cross-cloud sweep on every find.
+- **Bugs file before fix** — every CI/live failure lands in BUGS.md before analysis.
+- **No fakes / no fallbacks / no skips** — explicit config, fail loud on missing.
 - **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
-- **Backend ↔ host primitive must match** — ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, etc.
-- **Sim binary arch ≠ workload arch** — sim runs host-native; workloads carry arch config (default `linux/arm64`); never `os/exec` workloads from a sim handler. (`feedback_sim_workload_arch.md` + `feedback_sim_host_model.md`)
-- **Driver phase entry** — start with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
+- **Backend ↔ host primitive must match.**
+- **Driver phase entry** — `specs/CLOUD_RESOURCE_MAPPING.md` design pass before code.
+- **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication should consolidate into `*-common`.
 
 ## Open bugs
 
-None. Detail in [BUGS.md](BUGS.md).
+None.

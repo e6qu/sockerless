@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -105,7 +106,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
 	}
 
-	var endpointURL, project string
+	var endpointURL, project, bootstrapPath string
 	switch target {
 	case "sim":
 		simDir := repoRoot + "/simulators/gcp"
@@ -145,9 +146,28 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		endpointURL = simURL
 		project = "sim-project"
 
+		// Build sockerless-cloudrun-bootstrap so the backend's overlay
+		// path activates and tests like TestCloudRunJobTimeout can
+		// observe the bootstrap timer firing in the executed container.
+		bootstrapPath = repoRoot + "/agent/sockerless-cloudrun-bootstrap-test"
+		if abs, absErr := filepath.Abs(bootstrapPath); absErr == nil {
+			bootstrapPath = abs
+		}
+		fmt.Println("[sim] Building sockerless-cloudrun-bootstrap...")
+		bootstrapBuild := exec.Command("go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
+		bootstrapBuild.Dir = repoRoot + "/agent"
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
+		bootstrapBuild.Stdout = os.Stderr
+		bootstrapBuild.Stderr = os.Stderr
+		if err := bootstrapBuild.Run(); err != nil {
+			failClean("ERROR: build sockerless-cloudrun-bootstrap: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { _ = os.Remove(bootstrapPath) })
+
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
 		project = requireEnv("SOCKERLESS_GCR_PROJECT")
+		bootstrapPath = requireEnv("SOCKERLESS_CLOUDRUN_BOOTSTRAP")
 	}
 
 	backendDir := repoRoot + "/backends/cloudrun"
@@ -171,6 +191,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT="+project,
+		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
