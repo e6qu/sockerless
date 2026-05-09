@@ -6,6 +6,7 @@
 package cloudrun
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -106,7 +107,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
 	}
 
-	var endpointURL, project, bootstrapPath string
+	var endpointURL, project, bootstrapPath, buildBucket string
 	switch target {
 	case "sim":
 		simDir := repoRoot + "/simulators/gcp"
@@ -145,6 +146,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 		endpointURL = simURL
 		project = "sim-project"
+		buildBucket = "sockerless-test-build"
+
+		// Pre-create the GCS bucket the backend uses for Cloud Build
+		// context uploads (overlay path). Real GCS doesn't auto-create
+		// buckets; the backend doesn't either.
+		if err := createGCSBucketCloudrun(simURL, project, buildBucket); err != nil {
+			failClean("ERROR: create GCS bucket %s: %v\n", buildBucket, err)
+		}
 
 		// Build sockerless-cloudrun-bootstrap so the backend's overlay
 		// path activates and tests like TestCloudRunJobTimeout can
@@ -168,6 +177,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
 		project = requireEnv("SOCKERLESS_GCR_PROJECT")
 		bootstrapPath = requireEnv("SOCKERLESS_CLOUDRUN_BOOTSTRAP")
+		buildBucket = requireEnv("SOCKERLESS_GCP_BUILD_BUCKET")
 	}
 
 	backendDir := repoRoot + "/backends/cloudrun"
@@ -192,6 +202,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT="+project,
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
+		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -510,4 +521,29 @@ func filterBuildEnv(env []string, extra ...string) []string {
 		filtered = append(filtered, e)
 	}
 	return append(filtered, extra...)
+}
+
+// createGCSBucketCloudrun is the cloudrun-side mirror of the GCF
+// helper. Pre-creates the GCS bucket the backend uses for Cloud Build
+// context uploads (overlay path).
+func createGCSBucketCloudrun(simURL, project, bucket string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body := []byte(fmt.Sprintf(`{"name":%q}`, bucket))
+	url := fmt.Sprintf("%s/storage/v1/b?project=%s", simURL, project)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create bucket %s: %d: %s", bucket, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
 }

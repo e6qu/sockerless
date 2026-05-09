@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 )
@@ -56,7 +55,7 @@ func TestExecShellScript(t *testing.T) {
 		t.Fatalf("exec create failed: %v", err)
 	}
 
-	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{})
+	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec attach failed: %v", err)
 	}

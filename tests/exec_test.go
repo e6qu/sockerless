@@ -3,7 +3,6 @@ package tests
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -68,7 +67,7 @@ func TestExecStart(t *testing.T) {
 	}
 
 	// Start exec
-	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, types.ExecStartCheck{})
+	resp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
 	if err != nil {
 		t.Fatalf("exec start failed: %v", err)
 	}
