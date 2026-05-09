@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -331,10 +331,10 @@ func (p *acaCloudState) resolveActiveExecution(ctx context.Context, jobName stri
 			return "", err
 		}
 		for _, exec := range page.Value {
-			if exec.Status == nil {
+			if exec.Properties.Status == nil {
 				continue
 			}
-			status := *exec.Status
+			status := *exec.Properties.Status
 			if status == armappcontainers.JobExecutionRunningStateRunning || status == armappcontainers.JobExecutionRunningStateProcessing {
 				if exec.Name != nil {
 					return *exec.Name, nil
@@ -548,7 +548,7 @@ func (p *acaCloudState) resolveJobState(ctx context.Context, job *armappcontaine
 		for _, exec := range page.Value {
 			if latest == nil {
 				latest = exec
-			} else if exec.StartTime != nil && latest.StartTime != nil && exec.StartTime.After(*latest.StartTime) {
+			} else if exec.Properties.StartTime != nil && latest.Properties.StartTime != nil && exec.Properties.StartTime.After(*latest.Properties.StartTime) {
 				latest = exec
 			}
 		}
@@ -564,16 +564,16 @@ func (p *acaCloudState) resolveJobState(ctx context.Context, job *armappcontaine
 
 // mapExecutionStatus converts an ACA Job execution to Docker container state.
 func mapExecutionStatus(exec *armappcontainers.JobExecution) api.ContainerState {
-	if exec.Status == nil {
+	if exec.Properties.Status == nil {
 		return api.ContainerState{Status: "created"}
 	}
 
-	switch *exec.Status {
+	switch *exec.Properties.Status {
 	case armappcontainers.JobExecutionRunningStateRunning,
 		armappcontainers.JobExecutionRunningStateProcessing:
 		startedAt := ""
-		if exec.StartTime != nil {
-			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		if exec.Properties.StartTime != nil {
+			startedAt = exec.Properties.StartTime.Format(time.RFC3339Nano)
 		}
 		return api.ContainerState{
 			Status:    "running",
@@ -583,12 +583,12 @@ func mapExecutionStatus(exec *armappcontainers.JobExecution) api.ContainerState 
 
 	case armappcontainers.JobExecutionRunningStateSucceeded:
 		startedAt := ""
-		if exec.StartTime != nil {
-			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		if exec.Properties.StartTime != nil {
+			startedAt = exec.Properties.StartTime.Format(time.RFC3339Nano)
 		}
 		finishedAt := ""
-		if exec.EndTime != nil {
-			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		if exec.Properties.EndTime != nil {
+			finishedAt = exec.Properties.EndTime.Format(time.RFC3339Nano)
 		}
 		return api.ContainerState{
 			Status:     "exited",
@@ -600,29 +600,29 @@ func mapExecutionStatus(exec *armappcontainers.JobExecution) api.ContainerState 
 	case armappcontainers.JobExecutionRunningStateFailed,
 		armappcontainers.JobExecutionRunningStateDegraded:
 		startedAt := ""
-		if exec.StartTime != nil {
-			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		if exec.Properties.StartTime != nil {
+			startedAt = exec.Properties.StartTime.Format(time.RFC3339Nano)
 		}
 		finishedAt := ""
-		if exec.EndTime != nil {
-			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		if exec.Properties.EndTime != nil {
+			finishedAt = exec.Properties.EndTime.Format(time.RFC3339Nano)
 		}
 		return api.ContainerState{
 			Status:     "exited",
 			ExitCode:   1,
-			Error:      string(*exec.Status),
+			Error:      string(*exec.Properties.Status),
 			StartedAt:  startedAt,
 			FinishedAt: finishedAt,
 		}
 
 	case armappcontainers.JobExecutionRunningStateStopped:
 		startedAt := ""
-		if exec.StartTime != nil {
-			startedAt = exec.StartTime.Format(time.RFC3339Nano)
+		if exec.Properties.StartTime != nil {
+			startedAt = exec.Properties.StartTime.Format(time.RFC3339Nano)
 		}
 		finishedAt := ""
-		if exec.EndTime != nil {
-			finishedAt = exec.EndTime.Format(time.RFC3339Nano)
+		if exec.Properties.EndTime != nil {
+			finishedAt = exec.Properties.EndTime.Format(time.RFC3339Nano)
 		}
 		return api.ContainerState{
 			Status:     "exited",

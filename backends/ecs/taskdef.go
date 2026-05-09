@@ -121,12 +121,15 @@ func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecst
 		}
 	}
 
-	// Resolve each named-volume bind spec to an EFS access point on
-	// the sockerless-managed filesystem. ContainerCreate has already
-	// rejected host-path bind specs (`/h:/c`); everything left is
-	// `volName:/mnt[:ro]`. Each volume gets one ECS Volume + one
-	// MountPoint entry; the task role needs
-	// `elasticfilesystem:ClientMount/ClientWrite` to actually mount.
+	// Resolve each named-volume bind spec via the storage-backing
+	// registry. ContainerCreate has already rejected host-path bind
+	// specs (`/h:/c`); everything left is `volName:/mnt[:ro]`. Each
+	// volume flows through s.storageBackings.Resolve(ref.Backing) +
+	// driver.CloudSpec(ref) + translateBackingSpecToECSVolume — see
+	// volume_translator.go. Today every ECS SharedVolume defaults to
+	// `efs-ephemeral`; the registry path makes additional backings
+	// (e.g. `memory`) opt-in via SharedVolume.Backing without
+	// touching this materialiser.
 	var volumes []ecstypes.Volume
 	var mountPoints []ecstypes.MountPoint
 	if len(ci.Container.HostConfig.Binds) > 0 {
@@ -135,35 +138,15 @@ func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecst
 			return containerDef, nil, fmt.Errorf("ensure EFS filesystem: %w", err)
 		}
 		for _, bind := range ci.Container.HostConfig.Binds {
-			parts := strings.SplitN(bind, ":", 3)
-			if len(parts) < 2 {
+			vol, mount, err := s.resolveBindToVolume(ctx, bind, fsID)
+			if err != nil {
+				return containerDef, nil, err
+			}
+			if vol == nil {
 				continue
 			}
-			volName := parts[0]
-			apID, err := s.accessPointForVolume(ctx, volName)
-			if err != nil {
-				return containerDef, nil, fmt.Errorf("resolve access point for volume %q: %w", volName, err)
-			}
-			volumes = append(volumes, ecstypes.Volume{
-				Name: aws.String(volName),
-				EfsVolumeConfiguration: &ecstypes.EFSVolumeConfiguration{
-					FileSystemId:      aws.String(fsID),
-					TransitEncryption: ecstypes.EFSTransitEncryptionEnabled,
-					AuthorizationConfig: &ecstypes.EFSAuthorizationConfig{
-						AccessPointId: aws.String(apID),
-						Iam:           ecstypes.EFSAuthorizationConfigIAMEnabled,
-					},
-				},
-			})
-			readOnly := false
-			if len(parts) == 3 && parts[2] == "ro" {
-				readOnly = true
-			}
-			mountPoints = append(mountPoints, ecstypes.MountPoint{
-				SourceVolume:  aws.String(volName),
-				ContainerPath: aws.String(parts[1]),
-				ReadOnly:      aws.Bool(readOnly),
-			})
+			volumes = append(volumes, *vol)
+			mountPoints = append(mountPoints, *mount)
 		}
 	}
 

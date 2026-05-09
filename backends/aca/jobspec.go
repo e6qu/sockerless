@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -107,7 +107,6 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	var specs []*armappcontainers.Container
 	volSeen := make(map[string]struct{})
 	var volumes []*armappcontainers.Volume
-	storageType := armappcontainers.StorageTypeAzureFile
 	for _, ci := range containers {
 		cs, mounts := s.buildContainerSpec(ci)
 		specs = append(specs, cs)
@@ -119,15 +118,11 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[volName]; done {
 				continue
 			}
-			share, err := s.shareForVolume(ctx, volName)
+			vol, err := s.resolveVolumeForName(ctx, volName)
 			if err != nil {
-				return armappcontainers.Job{}, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+				return armappcontainers.Job{}, err
 			}
-			volumes = append(volumes, &armappcontainers.Volume{
-				Name:        ptr(volName),
-				StorageType: &storageType,
-				StorageName: ptr(share),
-			})
+			volumes = append(volumes, vol)
 			volSeen[volName] = struct{}{}
 		}
 	}

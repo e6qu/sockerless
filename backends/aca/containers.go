@@ -3,7 +3,7 @@ package aca
 import (
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 )
 
 // pollExecutionExit monitors an ACA Job execution and updates container state when it completes.
@@ -27,10 +27,10 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}
-					if exec.Status == nil {
+					if exec.Properties.Status == nil {
 						continue
 					}
-					switch *exec.Status {
+					switch *exec.Properties.Status {
 					case armappcontainers.JobExecutionRunningStateSucceeded,
 						armappcontainers.JobExecutionRunningStateFailed,
 						armappcontainers.JobExecutionRunningStateDegraded,

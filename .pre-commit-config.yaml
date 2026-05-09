@@ -105,3 +105,11 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
+
+      - id: check-latest-deps
+        name: Check Go modules + Terraform providers are on latest versions
+        entry: bash scripts/check-latest-deps.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
