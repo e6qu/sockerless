@@ -53,6 +53,7 @@ Admin owns the source of truth for "what instances exist". `sockerless.yaml` at 
 - ✓ Step 4: `make/components.mk` granular targets; `stack-X-Y` rewritten as composition (#138).
 - ✓ Step 5: `TopologyManager.AllocatePort` from `ports.ranges` (#138).
 - ✓ Step 6: lifecycle REST endpoints shell `make {start,stop,rebuild}-component` (#138).
+- ✓ Step 7: surgical CRUD endpoints (project + instance add/remove/edit) + per-instance status endpoint + `docs/ADMIN_ORCHESTRATION.md` (#138).
 
 ### Phase 80 — Admin UI: topology page + per-instance lifecycle
 

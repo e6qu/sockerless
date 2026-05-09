@@ -35,6 +35,12 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/stop", handleInstanceStop(mgr, lifecycle))
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/rebuild", handleInstanceRebuild(mgr, lifecycle))
 	mux.HandleFunc("POST /api/v1/topology/allocate-port", handleAllocatePort(mgr))
+	mux.HandleFunc("POST /api/v1/topology/projects", handleProjectAdd(mgr))
+	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}", handleProjectRemove(mgr))
+	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances", handleInstanceAdd(mgr))
+	mux.HandleFunc("PUT /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceUpdate(mgr))
+	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceRemove(mgr))
+	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/status", handleInstanceStatus(mgr))
 }
 
 func handleTopologyGet(mgr *TopologyManager) http.HandlerFunc {
@@ -202,5 +208,118 @@ func handleAllocatePort(mgr *TopologyManager) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"kind": kind, "port": port})
+	}
+}
+
+// crudErrorStatus maps TopologyManager mutation errors to HTTP statuses.
+// Validation = 400, conflict (already exists) = 409, missing = 404.
+func crudErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "already exists"):
+		return http.StatusConflict
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.HasPrefix(msg, "validate:"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func handleProjectAdd(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var p ProjectConfig
+		if err := decodeJSON(r.Body, &p); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+			return
+		}
+		if err := mgr.AddProject(p); err != nil {
+			writeJSON(w, crudErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, p)
+	}
+}
+
+func handleProjectRemove(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		if err := mgr.RemoveProject(project); err != nil {
+			writeJSON(w, crudErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"removed": project})
+	}
+}
+
+func handleInstanceAdd(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		var inst Instance
+		if err := decodeJSON(r.Body, &inst); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+			return
+		}
+		if err := mgr.AddInstance(project, inst); err != nil {
+			writeJSON(w, crudErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusCreated, InstanceRef{Project: project, Instance: inst})
+	}
+}
+
+func handleInstanceUpdate(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		instanceName := r.PathValue("instance")
+		var inst Instance
+		if err := decodeJSON(r.Body, &inst); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+			return
+		}
+		if inst.Name != instanceName {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "body name " + inst.Name + " must equal path name " + instanceName + " (renames go through delete + add)",
+			})
+			return
+		}
+		if err := mgr.UpdateInstance(project, inst); err != nil {
+			writeJSON(w, crudErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, InstanceRef{Project: project, Instance: inst})
+	}
+}
+
+func handleInstanceRemove(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		instanceName := r.PathValue("instance")
+		if err := mgr.RemoveInstance(project, instanceName); err != nil {
+			writeJSON(w, crudErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"removed": project + "/" + instanceName})
+	}
+}
+
+func handleInstanceStatus(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		instanceName := r.PathValue("instance")
+		ref, ok := mgr.FindInstance(project, instanceName)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"error": "instance " + project + "/" + instanceName + " not found",
+			})
+			return
+		}
+		status := readInstanceStatus(ref.Instance)
+		status.Project = ref.Project
+		writeJSON(w, http.StatusOK, status)
 	}
 }

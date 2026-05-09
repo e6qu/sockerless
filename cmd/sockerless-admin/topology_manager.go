@@ -89,17 +89,9 @@ func (m *TopologyManager) Get() Topology {
 // current topology. Returns an error without mutating state if validation
 // or the write fails.
 func (m *TopologyManager) Replace(next Topology) error {
-	if err := next.Validate(); err != nil {
-		return fmt.Errorf("validate: %w", err)
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := SaveTopology(m.path, &next); err != nil {
-		return fmt.Errorf("save: %w", err)
-	}
-	cp := deepCopyTopology(&next)
-	m.current = &cp
-	return nil
+	return m.replaceLocked(next)
 }
 
 // Path returns the file path the manager reads/writes (for diagnostics).
@@ -143,6 +135,140 @@ func (m *TopologyManager) FindInstance(project, instance string) (InstanceRef, b
 		}
 	}
 	return InstanceRef{}, false
+}
+
+// AddProject appends p to the topology and persists. Project name
+// must not already exist.
+func (m *TopologyManager) AddProject(p ProjectConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.current.Projects {
+		if existing.Name == p.Name {
+			return fmt.Errorf("project %q already exists", p.Name)
+		}
+	}
+	next := deepCopyTopology(m.current)
+	next.Projects = append(next.Projects, p)
+	return m.replaceLocked(next)
+}
+
+// RemoveProject deletes a project + all its instances. Returns an
+// error if the project is unknown.
+func (m *TopologyManager) RemoveProject(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	idx := -1
+	for i, p := range m.current.Projects {
+		if p.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("project %q not found", name)
+	}
+	next := deepCopyTopology(m.current)
+	next.Projects = append(next.Projects[:idx], next.Projects[idx+1:]...)
+	return m.replaceLocked(next)
+}
+
+// AddInstance appends inst to project's instance list. Project must
+// exist; instance name must be unique within the project.
+func (m *TopologyManager) AddInstance(project string, inst Instance) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pi := -1
+	for i, p := range m.current.Projects {
+		if p.Name == project {
+			pi = i
+			break
+		}
+	}
+	if pi < 0 {
+		return fmt.Errorf("project %q not found", project)
+	}
+	for _, existing := range m.current.Projects[pi].Instances {
+		if existing.Name == inst.Name {
+			return fmt.Errorf("instance %q already exists in project %q", inst.Name, project)
+		}
+	}
+	next := deepCopyTopology(m.current)
+	next.Projects[pi].Instances = append(next.Projects[pi].Instances, inst)
+	return m.replaceLocked(next)
+}
+
+// RemoveInstance deletes an instance from a project.
+func (m *TopologyManager) RemoveInstance(project, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pi := -1
+	for i, p := range m.current.Projects {
+		if p.Name == project {
+			pi = i
+			break
+		}
+	}
+	if pi < 0 {
+		return fmt.Errorf("project %q not found", project)
+	}
+	ii := -1
+	for j, inst := range m.current.Projects[pi].Instances {
+		if inst.Name == name {
+			ii = j
+			break
+		}
+	}
+	if ii < 0 {
+		return fmt.Errorf("instance %q not found in project %q", name, project)
+	}
+	next := deepCopyTopology(m.current)
+	next.Projects[pi].Instances = append(next.Projects[pi].Instances[:ii], next.Projects[pi].Instances[ii+1:]...)
+	return m.replaceLocked(next)
+}
+
+// UpdateInstance replaces an existing instance in-place. The new
+// Instance.Name must equal the current name (renames go through
+// remove + add to keep the UI's URL stable).
+func (m *TopologyManager) UpdateInstance(project string, inst Instance) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pi := -1
+	for i, p := range m.current.Projects {
+		if p.Name == project {
+			pi = i
+			break
+		}
+	}
+	if pi < 0 {
+		return fmt.Errorf("project %q not found", project)
+	}
+	ii := -1
+	for j, existing := range m.current.Projects[pi].Instances {
+		if existing.Name == inst.Name {
+			ii = j
+			break
+		}
+	}
+	if ii < 0 {
+		return fmt.Errorf("instance %q not found in project %q", inst.Name, project)
+	}
+	next := deepCopyTopology(m.current)
+	next.Projects[pi].Instances[ii] = inst
+	return m.replaceLocked(next)
+}
+
+// replaceLocked validates next, persists it, and adopts it. Caller
+// must already hold m.mu (write lock).
+func (m *TopologyManager) replaceLocked(next Topology) error {
+	if err := next.Validate(); err != nil {
+		return fmt.Errorf("validate: %w", err)
+	}
+	if err := SaveTopology(m.path, &next); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	cp := deepCopyTopology(&next)
+	m.current = &cp
+	return nil
 }
 
 func deepCopyTopology(t *Topology) Topology {
