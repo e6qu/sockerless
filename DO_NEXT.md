@@ -18,20 +18,26 @@ Mirror of Phase 121 GCP sim hardening + cross-cutting test harness restructure +
 - 121b-E `make/go-app.mk` + `make/go-lib.mk`: `test-integration` (sim) / `test-integration-cloud` (cloud). CI sets `SOCKERLESS_TEST_TARGET=sim`.
 - 121b-F In-memory storage backing driver (`core.MemoryDriver`, `BackingMemory`).
 
-**In progress (this PR):**
-- 121b-G Cloudrun TestMain: build + reference `sockerless-cloudrun-bootstrap` so `TestCloudRunJobTimeout` exercises the bootstrap timer end-to-end (the test was previously hidden by the build tag; 121b-C exposed the gap).
-- 121b-H Driver consolidation, pattern B (live in `*-common`, shared by both backends in that cloud, value-at-construction config):
-  - `gcp-common.IDTokenAccess` ← cloudrun + cloudrun-functions thin wrappers
-  - `aws-common.IAMRoleAccess` ← ecs + lambda
-  - `core.NoneInternalAccess` (already cloud-agnostic; keep here)
-  - DNS adapters (`cloudMapDNS`, `cloudDNSZoneDNS`, `privateDNSZoneDNS`) → `*-common`
-  - Network discovery adapters (`cloudMapDiscovery`, `cloudDNSDiscovery`, `acaCloudDNSDiscovery`) → `*-common`
-- 121b-I Register `host-aliases` discovery as opt-in on every backend.
-- 121b-J AZF DNS adapter → `private-dns-zone` (mirror ACA).
-- 121b-K Lambda DNS + network discovery → `cloud-map` (mirror ECS).
-- 121b-L AZF + ACA `id-token` access via Azure AD (`azidentity.DefaultAzureCredential`; audience required via `SOCKERLESS_<BACKEND>_AAD_AUDIENCE`; operator owns Easy Auth setup).
+**Done (this PR, additional):**
+- 121b-G Cloudrun TestMain builds `sockerless-cloudrun-bootstrap` + sets `SOCKERLESS_CLOUDRUN_BOOTSTRAP` so `TestCloudRunJobTimeout` exercises the bootstrap timer end-to-end (test was previously hidden by build tag; 121b-C exposed the gap).
+- 121b-H Driver consolidation pattern B (live in `*-common`, shared by both backends in that cloud, value-at-construction config):
+  - `gcp-common.IDTokenAccess` (cloudrun + cloudrun-functions per-backend adapters deleted)
+  - `aws-common.IAMRoleAccess` (ecs + lambda per-backend adapters deleted)
+  - `core.NoneInternalAccess` used directly by ACA + AZF (per-backend adapters deleted)
+  - `gcp-common.CloudDNSZoneDNS` (callback-based, cloudrun adapter deleted)
+  - `aws-common.CloudMapDNS` (callback-based, ecs adapter deleted)
+  - `azure-common.PrivateDNSZoneDNS` (callback-based, aca adapter deleted)
 
-After Phase 121b ships: Phase 78 (UI polish — dark mode, design tokens, error UX, container detail modal, accessibility).
+## Stacked follow-up PR (queued)
+
+Each is its own mini-phase (requires per-backend NetworkState model that doesn't exist yet on target backends, or operator infra not modeled today):
+- 121b-I Register `host-aliases` discovery as opt-in on every backend (env-var selection across 6 backends).
+- 121b-J AZF DNS adapter → `private-dns-zone` — needs AZF NetworkState model + zone creation flow.
+- 121b-K Lambda DNS + network discovery → `cloud-map` — needs Lambda VPC-mode wiring.
+- 121b-L AZF + ACA `id-token` access via Azure AD — needs `azure-common.AzureADAccess` type + Easy Auth integration design.
+- Network discovery adapter consolidation — pass-through methods on `*Server`; consolidating requires moving the underlying methods.
+
+After Phase 121b stack: Phase 78 (UI polish).
 
 ## Standing rules
 
