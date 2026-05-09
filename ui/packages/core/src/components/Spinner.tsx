@@ -10,7 +10,7 @@ export interface SpinnerProps {
 
 export function Spinner({ label = "Loading" }: SpinnerProps) {
   return (
-    <div className="flex items-center justify-center px-4 py-10">
+    <div role="status" aria-live="polite" aria-busy="true" className="flex items-center justify-center px-4 py-10">
       <div
         className="flex items-center gap-3 font-mono uppercase tracking-[0.2em]"
         style={{ color: "var(--color-fg-muted)", fontSize: "0.7rem" }}

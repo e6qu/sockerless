@@ -93,11 +93,15 @@ export function DataTable<T>({
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const sort = header.column.getIsSorted();
+                  const canSort = header.column.getCanSort();
+                  const ariaSort: React.AriaAttributes["aria-sort"] =
+                    sort === "asc" ? "ascending" : sort === "desc" ? "descending" : canSort ? "none" : undefined;
                   return (
                     <th
                       key={header.id}
-                      onClick={header.column.getToggleSortingHandler()}
-                      className="cursor-pointer select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
+                      scope="col"
+                      aria-sort={ariaSort}
+                      className="select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
                       style={{
                         fontSize: "0.62rem",
                         fontWeight: 500,
@@ -108,20 +112,35 @@ export function DataTable<T>({
                         whiteSpace: "nowrap",
                       }}
                     >
-                      <span className="inline-flex items-center gap-1">
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(
-                              header.column.columnDef.header,
-                              header.getContext(),
-                            )}
-                        <span
-                          aria-hidden
-                          style={{ opacity: sort ? 1 : 0.25, fontSize: "0.7em" }}
+                      {header.isPlaceholder ? null : canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className="inline-flex items-center gap-1"
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            padding: 0,
+                            color: "inherit",
+                            font: "inherit",
+                            letterSpacing: "inherit",
+                            textTransform: "inherit",
+                            cursor: "pointer",
+                          }}
                         >
-                          {sort === "asc" ? "↑" : sort === "desc" ? "↓" : "↕"}
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span
+                            aria-hidden
+                            style={{ opacity: sort ? 1 : 0.25, fontSize: "0.7em" }}
+                          >
+                            {sort === "asc" ? "↑" : sort === "desc" ? "↓" : "↕"}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          {flexRender(header.column.columnDef.header, header.getContext())}
                         </span>
-                      </span>
+                      )}
                     </th>
                   );
                 })}
@@ -147,6 +166,19 @@ export function DataTable<T>({
                 <tr
                   key={row.id}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onRowClick(row.original);
+                          }
+                        }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
+                  role={onRowClick ? "button" : undefined}
+                  aria-label={onRowClick ? "Open row detail" : undefined}
                   data-row-index={i}
                   className="reveal"
                   style={{
