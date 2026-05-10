@@ -38,6 +38,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #137 | 78 + 79 step 1 | UI polish (dark mode toggle, Toast / InlineError, Modal + ContainerDetail, a11y, perf, READMEs) + admin `Instance` type. |
 | #138 | 79 (full) + 87 plan | `sockerless.yaml` topology + `TopologyManager` + CRUD REST + lifecycle endpoints + `make/components.mk` granular targets + port allocator + Phase 87 observability plan (OTel+VictoriaLogs+Jaeger Stack A) + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation (Docker/Podman→cloud quick reference, CI runner requirements, multi-system CI/CD comparison). |
 | #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
+| #140 (open) | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
 
 ## Roadmap (ordered)
 
@@ -61,17 +62,32 @@ Admin owns the source of truth for "what instances exist". `sockerless.yaml` at 
 
 Topology page at `/ui/topology`: project + instance tree, per-instance status badge polled every 2s, per-instance Start/Stop/Rebuild buttons, per-kind add/edit instance modal (sim/backend/bleephub), add/delete project modal, auto-allocate port from configured pool, port registry view (configured ranges + claimed ports). Replaced legacy ProjectsPage + ProjectCreatePage. See `docs/ADMIN_ORCHESTRATION.md` § Admin UI — Topology page.
 
-### Phase 81 — Per-instance logs + live troubleshooting console
+### Phase 81 — Per-instance logs + live troubleshooting console ✓ complete (PR #140 open)
 
-Live log tail per instance via SSE from admin (reads `.stack-pids/<name>.log`). Combined-timeline view (sim + backend interleaved). API console panel: send arbitrary HTTP requests against an instance, inspect request/response.
+`GET /api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N` reads `.stack-pids/<name>.log`. Without `follow`: last N lines as JSON. With `follow=1`: SSE stream (seeded with last N, then one event per new line; keep-alive comments, truncation re-opens).
 
-### Phase 82 — Cloud-resources rollup in admin
+`POST /api/v1/topology/projects/{p}/instances/{i}/proxy` server-side dial to `http://localhost:<inst.Port>` so the API console panel avoids browser CORS.
 
-AdminCloudResources page aggregates resources across all running backend + sim instances. Group by cloud / by service product / by sockerless instance.
+UI: `/ui/topology/:project/:instance/logs` (live SSE tail with pause/resume/clear/seed-size). `/ui/topology/:project/console` (combined timeline subscribing to all per-instance streams, tagged + sorted by parsed timestamp or arrival; API console with method/path/headers/body fired through the proxy).
+
+### Phase 82 — Cloud-resources rollup in admin ✓ complete (PR #140 open)
+
+`GET /api/v1/topology/resources` aggregates `/internal/v1/resources` across every running backend instance in the topology, attributing each row with project + instance + cloud + backend. Sims excluded by design (they expose cloud APIs directly, not a uniform resource list). Per-source status surfaced so "0 resources" stays distinct from "couldn't query".
+
+UI: `/ui/topology/resources` with grouping toggle (instance / cloud / service product / flat), active-only toggle, failed-sources banner, per-row status badge + cleaned-up tag.
 
 ### Phase 83 — Sim UI parity
 
-Lift sim UIs to match backend UIs: Containers / Resources / Metrics pages, ToastProvider, ErrorBoundary, ThemeToggle, log tailer, API console. Refactor sim Apps onto the same shell shape `BackendApp` uses.
+**Shell parity already exists.** `SimulatorApp` (in `@sockerless/ui-core`) wraps `ErrorBoundary` + `ToastProvider` + `BrowserRouter` + `AppShell` (which includes `ThemeToggle` in the nav). Sims already use it.
+
+**Page parity is the gap.** Each sim page is 20–30 LOC of `<h2>` + `<DataTable>` — sketches compared to admin pages. Phase 83 work:
+
+1. Polish every sim page (sim-aws / sim-gcp / sim-azure × ~6 pages each) to use `PageHeading` with kicker / italic title / meta, `ErrorPanel` for `isError` paths, admin's design language (card sections, font-display titles, font-mono kickers).
+2. Extract a `<ResourceListPage>` to `@sockerless/ui-core` so each sim page collapses to a config call — net code drop expected.
+3. Document that Phase 81 SSE tail + API console at `/ui/topology/:p/:i/logs` and `/ui/topology/:p/console` already work for sims when launched via admin orchestration (`make stack-X-Y`).
+4. Retire legacy `/ui/resources` (superseded by `/ui/topology/resources`) and `/ui/projects/:name/logs` (superseded by `/ui/topology/:p/console`) — keep their backing endpoints since `--backend name=addr` CLI components still register through them, but unlink from nav.
+
+Out of scope: do NOT add Containers / Resources / Metrics pages to sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs (ECS tasks, Lambda functions, S3 buckets) directly.
 
 ### Phase 84 — Per-instance state isolation + persistence
 

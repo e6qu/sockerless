@@ -1,4 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
+import { Link } from "react-router";
 import {
   useMutation,
   useQuery,
@@ -209,13 +210,30 @@ export function TopologyPage() {
         title={<>Topology</>}
         meta={`${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalInstances} instance${totalInstances === 1 ? "" : "s"}`}
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setProjectFormOpen(true)}
-          >
-            + project
-          </Button>
+          <div className="inline-flex items-center gap-2">
+            <Link
+              to="/ui/topology/resources"
+              style={{
+                fontSize: "0.7rem",
+                fontFamily: "var(--font-mono)",
+                padding: "0.3rem 0.7rem",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-xs)",
+                color: "var(--color-fg-muted)",
+                textDecoration: "none",
+                letterSpacing: "0.05em",
+              }}
+            >
+              cloud resources
+            </Link>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setProjectFormOpen(true)}
+            >
+              + project
+            </Button>
+          </div>
         }
       />
 
@@ -386,6 +404,21 @@ function ProjectCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to={`/ui/topology/${encodeURIComponent(project.name)}/console`}
+            style={{
+              fontSize: "0.7rem",
+              fontFamily: "var(--font-mono)",
+              padding: "0.25rem 0.6rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              textDecoration: "none",
+              letterSpacing: "0.05em",
+            }}
+          >
+            console
+          </Link>
           <Button variant="secondary" size="sm" onClick={onAddInstance}>
             + instance
           </Button>
@@ -526,6 +559,21 @@ function InstanceRow({
           >
             rebuild
           </Button>
+          <Link
+            to={`/ui/topology/${encodeURIComponent(project)}/${encodeURIComponent(instance.name)}/logs`}
+            style={{
+              fontSize: "0.7rem",
+              fontFamily: "var(--font-mono)",
+              padding: "0.25rem 0.6rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              textDecoration: "none",
+              letterSpacing: "0.05em",
+            }}
+          >
+            logs
+          </Link>
           <Button variant="ghost" size="sm" onClick={onEdit}>
             edit
           </Button>
