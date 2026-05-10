@@ -35,8 +35,9 @@ func NewInstanceLifecycle(repoRoot string, timeout time.Duration) *InstanceLifec
 
 // Start invokes `make start-component` with the per-instance
 // arguments derived from inst + simPort (resolved by caller from the
-// instance's Sim ref, when applicable).
-func (l *InstanceLifecycle) Start(ctx context.Context, inst Instance, simPort int) error {
+// instance's Sim ref, when applicable). project scopes admin-managed
+// per-instance state directories.
+func (l *InstanceLifecycle) Start(ctx context.Context, project string, inst Instance, simPort int) error {
 	args := []string{
 		"start-component",
 		"KIND=" + string(inst.Kind),
@@ -52,14 +53,69 @@ func (l *InstanceLifecycle) Start(ctx context.Context, inst Instance, simPort in
 	if inst.Kind == InstanceKindBackend && simPort > 0 {
 		args = append(args, "SIM_PORT="+strconv.Itoa(simPort))
 	}
-	if len(inst.Config) > 0 {
+
+	// Compose the env map admin actually writes to .stack-pids/<n>.env.
+	// Operator config wins over admin-managed entries — this lets an
+	// operator override SIM_DATA_DIR if they want a non-default path,
+	// e.g. mounting state on a separate volume. Admin only fills in
+	// fields the operator hasn't set.
+	managed := managedEnvFor(project, inst, l.stateRoot())
+	cfg := mergeConfig(managed, inst.Config)
+
+	if len(cfg) > 0 {
 		envFile := envFilePath(l.repoRoot, inst.Name)
-		if err := writeEnvFile(envFile, inst.Config); err != nil {
+		if err := writeEnvFile(envFile, cfg); err != nil {
 			return fmt.Errorf("write env file: %w", err)
 		}
 		args = append(args, "ENV_FILE="+envFile)
 	}
 	return l.runMake(ctx, args...)
+}
+
+// stateRoot returns the directory under which per-instance state
+// directories live. Resolves to <repoRoot>/.sockerless-state/, or
+// <cwd>/.sockerless-state/ when repoRoot is empty (the typical case
+// where admin runs from the repo root).
+func (l *InstanceLifecycle) stateRoot() string {
+	root := l.repoRoot
+	if root == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
+	}
+	return filepath.Join(root, ".sockerless-state")
+}
+
+// managedEnvFor returns the env entries admin synthesises per kind.
+// Sim instances get SIM_DATA_DIR pointing at
+// <stateRoot>/<project>/<instance>/ so multiple sim instances of the
+// same cloud coexist with isolated state. Operator opts into
+// persistence by adding SIM_PERSIST=true to the instance Config —
+// admin doesn't force it; per the components-decoupled invariant,
+// persistence is a behaviour choice, not an admin-imposed default.
+func managedEnvFor(project string, inst Instance, stateRoot string) map[string]string {
+	if inst.Kind != InstanceKindSim {
+		return nil
+	}
+	return map[string]string{
+		"SIM_DATA_DIR": filepath.Join(stateRoot, project, inst.Name),
+	}
+}
+
+// mergeConfig overlays operator-provided values on top of
+// admin-managed defaults. nil maps are treated as empty.
+func mergeConfig(managed, operator map[string]string) map[string]string {
+	if len(managed) == 0 && len(operator) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(managed)+len(operator))
+	for k, v := range managed {
+		out[k] = v
+	}
+	for k, v := range operator {
+		out[k] = v
+	}
+	return out
 }
 
 // Stop invokes `make stop-component NAME=<inst.Name>`.
