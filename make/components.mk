@@ -21,8 +21,9 @@ include $(CURDIR)/make/colors.mk
 COMPONENTS_PID_DIR := $(CURDIR)/.stack-pids
 COMPONENTS_STATE_DIR := $(CURDIR)/.sockerless-state
 
-.PHONY: start-component stop-component rebuild-component logs-component \
-        status-components stop-components purge-state purge-state-all
+.PHONY: start-component stop-component rebuild-component reload-component \
+        logs-component status-components stop-components \
+        purge-state purge-state-all
 
 # component-binary returns the on-disk binary path for KIND/CLOUD/BACKEND.
 define component-binary
@@ -131,6 +132,22 @@ stop-component:
 	  printf "$(COLOR_DIM)$(NAME): pid=$$pid already dead$(COLOR_RESET)\n"; \
 	fi; \
 	rm -f $(COMPONENTS_PID_DIR)/$(NAME).pid
+
+# reload-component sends SIGHUP to NAME's PID. Components that handle
+# SIGHUP re-read their config (via .stack-pids/<NAME>.env, freshly
+# rewritten by admin); components that don't handle SIGHUP ignore it.
+# No-op when the PID is dead — operator should restart instead.
+reload-component:
+	@if [ -z "$(NAME)" ]; then echo "reload-component: NAME required"; exit 1; fi
+	@if [ ! -f $(COMPONENTS_PID_DIR)/$(NAME).pid ]; then \
+	  printf "$(COLOR_DIM)$(NAME): no pidfile$(COLOR_RESET)\n"; exit 0; \
+	fi
+	@pid=$$(cat $(COMPONENTS_PID_DIR)/$(NAME).pid); \
+	if ps -p $$pid > /dev/null 2>&1; then \
+	  kill -HUP $$pid && printf "  reloaded $(NAME) pid=$$pid\n"; \
+	else \
+	  printf "$(COLOR_DIM)$(NAME): pid=$$pid already dead — restart instead$(COLOR_RESET)\n"; exit 1; \
+	fi
 
 # rebuild-component runs `make build` in the component's dir. KIND
 # (+ CLOUD or BACKEND) determines which dir.

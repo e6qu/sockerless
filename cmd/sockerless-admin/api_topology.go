@@ -17,6 +17,9 @@ import (
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/proxy
 //	GET    /api/v1/topology/resources
+//	GET    /api/v1/topology/config-metadata
+//	PUT    /api/v1/topology/projects/{project}/instances/{instance}/config
+//	POST   /api/v1/topology/projects/{project}/instances/{instance}/reload
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
@@ -50,6 +53,9 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/proxy", handleInstanceProxy(mgr, proxyClient))
 	rollupClient := &http.Client{Timeout: 5 * time.Second}
 	mux.HandleFunc("GET /api/v1/topology/resources", handleTopologyResources(mgr, rollupClient))
+	mux.HandleFunc("GET /api/v1/topology/config-metadata", handleConfigMetadata())
+	mux.HandleFunc("PUT /api/v1/topology/projects/{project}/instances/{instance}/config", handleInstanceConfigUpdate(mgr))
+	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/reload", handleInstanceReload(mgr, lifecycle))
 }
 
 func handleTopologyGet(mgr *TopologyManager) http.HandlerFunc {
