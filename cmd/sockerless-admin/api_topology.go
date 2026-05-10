@@ -10,6 +10,7 @@ import (
 //
 // Routes:
 //
+//	GET    /api/v1/observability
 //	GET    /api/v1/topology
 //	PUT    /api/v1/topology
 //	GET    /api/v1/topology/instances
