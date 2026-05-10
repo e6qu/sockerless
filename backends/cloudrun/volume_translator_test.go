@@ -1,6 +1,7 @@
 package cloudrun
 
 import (
+	"strings"
 	"testing"
 
 	core "github.com/sockerless/backend-core"
@@ -56,5 +57,28 @@ func TestRunpbVolumeFromBackingMemoryNilSpec(t *testing.T) {
 	}
 	if got.GetEmptyDir() == nil {
 		t.Errorf("expected EmptyDir volume type")
+	}
+}
+
+func TestRunpbVolumeFromBackingPDEphemeralRejected(t *testing.T) {
+	// Cloud Run Services don't expose PD as a volume primitive.
+	// Translator rejects loudly with concrete pointers at gcs-fuse /
+	// gcs-sync alternatives + the GCE-backend bookmark.
+	spec := core.BackingSpec{
+		Kind: core.BackingPDEphemeral,
+		PDEphemeral: &core.PDEphemeralSpec{
+			DiskSizeGB: 10,
+			Zone:       "us-central1-a",
+		},
+	}
+	_, err := runpbVolumeFromBackingSpec("ws", spec)
+	if err == nil {
+		t.Fatal("expected error for BackingPDEphemeral on Cloud Run")
+	}
+	msg := err.Error()
+	for _, want := range []string{"pd-ephemeral", "Cloud Run", "gcs-fuse"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q: %s", want, msg)
+		}
 	}
 }

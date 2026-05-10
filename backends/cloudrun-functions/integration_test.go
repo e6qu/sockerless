@@ -131,11 +131,15 @@ func TestMain(m *testing.M) {
 	evalImageName = "sockerless-eval-arithmetic:test"
 	step("docker build " + evalImageName + " (linux/arm64)")
 	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM golang:1.25-alpine AS build
+	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
+	// limit), not docker.io. Docker Hub throttles unauthenticated
+	// pulls aggressively; ECR Public Gallery mirrors the Docker
+	// Library images without that constraint.
+	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
@@ -168,9 +172,15 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// the local cache instead of attempting an anonymous AR token fetch
 	// (which 403s on CI for nonexistent AR projects).
 	step("docker pull alpine:latest + AR-tag")
-	fmt.Println("[sim] Pre-pulling alpine:latest...")
-	if out, err := exec.Command("docker", "pull", "alpine:latest").CombinedOutput(); err != nil {
+	fmt.Println("[sim] Pre-pulling alpine:latest from ECR Public Gallery...")
+	// Pull from public.ecr.aws (no anonymous-pull rate limit), then
+	// re-tag to the Docker Hub form the backend expects.
+	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to pull alpine:latest: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to retag alpine:latest: %v\n%s", err, out)
 		os.Exit(1)
 	}
 	alpineARTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/alpine:latest"

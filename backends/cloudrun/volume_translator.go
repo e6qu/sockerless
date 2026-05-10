@@ -85,6 +85,24 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 				},
 			},
 		}, nil
+
+	case core.BackingPDEphemeral:
+		// Cloud Run Services don't expose Compute Engine PD as a
+		// first-class volume primitive. The runpb.Volume union has
+		// EmptyDir / Secret / CloudSqlInstance / Gcs / Nfs — no PD.
+		// Real implementation would require sockerless to manage
+		// `disks.create` + revision-update for `disks.attach` (the
+		// Cloud Run Admin API doesn't have a PD attach surface as of
+		// this writing). See specs/CLOUD_RESOURCE_MAPPING.md line
+		// 567 for the design bookmark.
+		return nil, fmt.Errorf(
+			"volume %q: backing %q not supported on Cloud Run — "+
+				"Cloud Run Services lack a first-class PD volume primitive. "+
+				"Use Backing: gcs-fuse (with MountOptions per BUG-944) for "+
+				"cross-task workspace sharing, or Backing: gcs-sync for "+
+				"per-step granularity. A future GCE-style backend would unlock "+
+				"real PD attach (specs/CLOUD_RESOURCE_MAPPING.md line 567)",
+			name, spec.Kind)
 	}
 	return nil, fmt.Errorf("volume %q: unsupported backing kind %q", name, spec.Kind)
 }
