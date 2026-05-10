@@ -6,6 +6,55 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 83 sim UI parity (`phase-83-sim-ui-parity` branch)
+
+Five-commit branch: shared `ResourceListPage` component → sim-aws / gcp / azure refactor → legacy admin page retirement.
+
+**Audit first.** Spent the first 10 minutes reading the actual sim and admin code instead of trusting the original Phase 83 brief. Found:
+
+- The original brief said "lift sim UIs onto BackendApp shell" — but `BackendApp` carries Docker-domain pages (Containers / Resources / Metrics) that don't apply to sims. Sims model cloud APIs (ECS tasks, Lambda functions, S3 buckets), so the page taxonomy is necessarily different.
+- Shell parity was *already there* — `SimulatorApp` already wraps `ErrorBoundary` + `ToastProvider` + `BrowserRouter` + `AppShell` (which itself includes `ThemeToggle`). The sim apps were not the problem.
+- The actual gap: each sim page was 20–30 LOC of `<h2>` + `<DataTable>`, no `PageHeading`, no error UX, no filter input, no count meta. Compared to admin pages they looked like sketches.
+
+DO_NEXT.md was rewritten on the back of that audit before implementing anything.
+
+**Shared component.** `ResourceListPage<T>` lives in `@sockerless/ui-core/components`. Owns the `useQuery` so each call site collapses to props:
+
+```tsx
+<ResourceListPage<ECSTask>
+  kicker="aws · simulator · ecs"
+  title={<>Tasks</>}
+  countNoun="task"
+  columns={columns}
+  queryKey={["ecs-tasks"]}
+  queryFn={fetchECSTasks}
+  filterPlaceholder="Filter tasks…"
+  emptyMessage="No ECS tasks tracked."
+/>
+```
+
+Renders `PageHeading` (kicker / italic title / "{count} {noun}" meta auto-pluralised) + `Spinner` on initial load + `InlineError` with a `Button` retry on failure (driven by react-query's `refetch`) + `DataTable` on success. Refresh defaults to 5 s polling; pass `false` or `0` to disable. `meta` and `actions` slots accept overrides.
+
+5 vitest cases cover: rows + heading on success, singular vs plural meta, error path with retry, meta override hides the default count, actions slot.
+
+**Sweep.** 13 sim pages refactored across simulator-aws / simulator-gcp / simulator-azure. Each Overview page also gained a `PageHeading` with kicker / italic title / status badge actions (was a bare `<h2>` + flex row). Drive-by fix on every Overview: `MetricsCard` was renamed `label`→`title` at some point, but the OverviewPages still passed `label` — broken since the rename, TypeScript caught it the moment the build ran against the new component. 15 MetricsCard call sites fixed.
+
+LOC delta sim-aws: 155 → 196 (+25%). Increase comes from explicit kickers / empty messages / filter placeholders that each old page lacked. Filter input + retry-on-error + count meta are now automatic, not per-page boilerplate. The "code drop expected" line in the original Phase 83 brief was wishful — real outcome is design parity + uniform behavior, with a small line increase. Same shape across all three sims.
+
+**Legacy retirement.** Three admin pages were orphaned in the Phase 79/80 sweep: `Topology` became the source of truth, but `/ui/resources` (legacy registry-backed), `/ui/projects/:name` (legacy project detail), and `/ui/projects/:name/logs` (legacy combined-component logs) were left in the routes. Phase 81 + 82 made the replacements concrete (per-instance logs, project console, cloud-resources rollup), so deleting the originals is unblocked.
+
+Removed:
+
+- 3 page components (`ResourcesPage`, `ProjectDetailPage`, `ProjectLogsPage`).
+- 3 vitest files for those pages.
+- 9 `AdminApiClient` methods (`projects`, `projectGet`, `projectCreate`, `projectStart`, `projectStop`, `projectDelete`, `projectLogs`, `projectConnection`, `resources`).
+- 4 type aliases (`AdminResource`, `ProjectConfig`, `ProjectStatus`, `ProjectConnection`, `CreateProjectRequest`).
+- The `Resources` nav item.
+
+Backing Go endpoints stay intact for components added via the `--backend name=addr` CLI flag (legacy registry, not topology-driven). UI tests went from 73 → 62 (−11 from the deleted pages, +0 from the refactor since shared component testing lives in core).
+
+**Granular commit shape.** Five commits (one per chunk: shared component, three sim-package refactors, retirement). CI cycle pending after the first push.
+
 ## 2026-05-10 — Phase 81 + Phase 82 + state save (PR #140)
 
 Single PR landing two phases on the topology surface from #138 / #139. Operator workflow reads as: *open `/ui/topology` → click an instance's "logs" → live SSE tail; click a project's "console" → multi-instance combined feed + arbitrary HTTP request panel; click "cloud resources" → see what every running backend has provisioned.*

@@ -6,28 +6,26 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `state-save-post-pr139` — PR #140 awaiting CI / review / merge. |
-| In-flight | Phase 81 (per-instance logs + live console) + Phase 82 (cloud-resources rollup) shipped on PR #140 alongside the post-#139 state save. |
-| Last merged | PR #139 — Phase 80 admin UI Topology page (2026-05-10). |
+| Active branch | `phase-83-sim-ui-parity` — Phase 83 work in flight (5 commits). |
+| In-flight | Phase 83 — sim UI parity. Shared `ResourceListPage` extracted; sim-aws / sim-gcp / sim-azure pages refactored onto it; legacy `/ui/resources` + `/ui/projects/:name/*` admin pages retired. |
+| Last merged | PR #140 — Phase 81 + 82 (logs/console + cloud-resources rollup) (2026-05-10). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open. |
 | Live infra | None up. |
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
 
-## Next branch — Phase 83 (sim UI parity)
+## Phase 83 — in flight on `phase-83-sim-ui-parity`
 
-After #140 merges, start a new branch. Goal: lift `ui/packages/sim-{aws,gcp,azure}` onto the same `BackendApp` shell shape backend UIs use, then retire the legacy `/ui/resources` and `/ui/projects/:name/logs` pages.
+Five commits land Phase 83 in granular chunks:
 
-Concrete deliverables:
+1. `phase 83: add shared ResourceListPage to @sockerless/ui-core` — new component owns the useQuery + PageHeading + Spinner/InlineError/DataTable wiring so per-service sim pages collapse to a columns config + queryFn.
+2. `phase 83: refactor simulator-aws pages onto ResourceListPage` — six pages on the shared component + design language. Drive-by `label`→`title` MetricsCard fix.
+3. `phase 83: refactor simulator-gcp pages onto ResourceListPage` — same pattern.
+4. `phase 83: refactor simulator-azure pages onto ResourceListPage` — same pattern + accessorFn type tightening.
+5. `phase 83: retire legacy admin pages superseded by topology` — `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` deleted. Companion `AdminApiClient.project*` + `resources()` methods + `AdminResource` / `ProjectStatus` / `ProjectConnection` / `CreateProjectRequest` types deleted. Backing Go endpoints stay for legacy `--backend name=addr` registry path.
 
-1. Containers / Resources / Metrics pages on each sim, mounted via the shared `BackendApp` shell (kicker / nav / dark mode / toast).
-2. `ToastProvider` + `ErrorBoundary` at each sim's app root.
-3. `ThemeToggle` in the AppShell nav.
-4. Reuse Phase 81 infrastructure: SSE log tail + API console panel work for sims unchanged because both endpoints key on topology-instance name, not kind.
-5. Retire `/ui/resources` (legacy registry-backed) once `/ui/topology/resources` covers the same use cases. `/ui/projects/:name/logs` similarly retires once topology-driven SSE is wired into project pages.
-
-Sim package sizes today: sim-aws 247 LOC, sim-gcp 228 LOC, sim-azure 221 LOC, frontend-docker 185 LOC vs admin 5.4k. Net code should drop after the consolidation, not grow.
+Net: 13 sim pages on the shared component (5 tests added in core, 11 tests removed in admin from page deletions); 3 admin pages + 9 client methods + 4 type aliases gone; admin UI tests 73 → 62.
 
 ## Phases after 83
 
@@ -42,7 +40,7 @@ After 87: phases 91–94 (real per-cloud volume provisioning), live-cloud valida
 
 | Date | PR | Headline |
 |---|---|---|
-| 2026-05-10 | #140 (open) | Phase 81 + Phase 82 — SSE log endpoint + single-instance tail UI + instance proxy endpoint + combined timeline + API console UI; cloud-resources rollup endpoint + UI with instance/cloud/service/flat groupings + failed-sources banner. |
+| 2026-05-10 | #140 | Phase 81 + Phase 82 — SSE log endpoint + single-instance tail UI + instance proxy endpoint + combined timeline + API console UI; cloud-resources rollup endpoint + UI with instance/cloud/service/flat groupings + failed-sources banner. |
 | 2026-05-10 | #139 | Phase 80 — admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status, Start/Stop/Rebuild, port registry. |
 | 2026-05-10 | #138 | Phase 79 — `sockerless.yaml` topology store, `TopologyManager`, CRUD REST surface, `make/components.mk` lifecycle targets, port allocator. + Phase 87 plan + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation. |
 | 2026-05-10 | #137 | Phase 78 UI polish (dark mode, Toast/InlineError, Modal, a11y, perf, READMEs) + Phase 79 step 1 (`Instance` type). |

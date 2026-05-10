@@ -38,7 +38,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #137 | 78 + 79 step 1 | UI polish (dark mode toggle, Toast / InlineError, Modal + ContainerDetail, a11y, perf, READMEs) + admin `Instance` type. |
 | #138 | 79 (full) + 87 plan | `sockerless.yaml` topology + `TopologyManager` + CRUD REST + lifecycle endpoints + `make/components.mk` granular targets + port allocator + Phase 87 observability plan (OTel+VictoriaLogs+Jaeger Stack A) + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation (Docker/Podman→cloud quick reference, CI runner requirements, multi-system CI/CD comparison). |
 | #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
-| #140 (open) | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
+| #140 | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
 
 ## Roadmap (ordered)
 
@@ -76,18 +76,15 @@ UI: `/ui/topology/:project/:instance/logs` (live SSE tail with pause/resume/clea
 
 UI: `/ui/topology/resources` with grouping toggle (instance / cloud / service product / flat), active-only toggle, failed-sources banner, per-row status badge + cleaned-up tag.
 
-### Phase 83 — Sim UI parity
+### Phase 83 — Sim UI parity ✓ in flight (`phase-83-sim-ui-parity` branch)
 
-**Shell parity already exists.** `SimulatorApp` (in `@sockerless/ui-core`) wraps `ErrorBoundary` + `ToastProvider` + `BrowserRouter` + `AppShell` (which includes `ThemeToggle` in the nav). Sims already use it.
+`@sockerless/ui-core` gains a shared `ResourceListPage<T>` component owning the useQuery + heading + Spinner/InlineError-with-Retry/DataTable wiring. Each per-service sim page (ECS tasks, Lambda functions, Cloud Run jobs, ACR registries, …) collapses to a columns config + queryFn — automatic filter input, count meta, error retry, kicker styling, empty-state message all included.
 
-**Page parity is the gap.** Each sim page is 20–30 LOC of `<h2>` + `<DataTable>` — sketches compared to admin pages. Phase 83 work:
+Sweep: 13 sim pages refactored across simulator-aws / simulator-gcp / simulator-azure. OverviewPage gets `PageHeading` with kicker / meta / status badge in actions slot. Drive-by fix: `MetricsCard` was renamed `label`→`title` at some point but the OverviewPages still passed `label` (broken since the rename — TypeScript caught it).
 
-1. Polish every sim page (sim-aws / sim-gcp / sim-azure × ~6 pages each) to use `PageHeading` with kicker / italic title / meta, `ErrorPanel` for `isError` paths, admin's design language (card sections, font-display titles, font-mono kickers).
-2. Extract a `<ResourceListPage>` to `@sockerless/ui-core` so each sim page collapses to a config call — net code drop expected.
-3. Document that Phase 81 SSE tail + API console at `/ui/topology/:p/:i/logs` and `/ui/topology/:p/console` already work for sims when launched via admin orchestration (`make stack-X-Y`).
-4. Retire legacy `/ui/resources` (superseded by `/ui/topology/resources`) and `/ui/projects/:name/logs` (superseded by `/ui/topology/:p/console`) — keep their backing endpoints since `--backend name=addr` CLI components still register through them, but unlink from nav.
+Legacy `/ui/resources` (registry-backed) + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired — orphaned by the Phase 79/80 sweep, replacements landed in Phase 81/82. Companion `AdminApiClient.project*` + `resources()` methods and 4 type aliases removed. Backing Go endpoints stay for `--backend name=addr` CLI users.
 
-Out of scope: do NOT add Containers / Resources / Metrics pages to sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs (ECS tasks, Lambda functions, S3 buckets) directly.
+Out of scope (deliberate): no Containers / Resources / Metrics pages on sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs directly.
 
 ### Phase 84 — Per-instance state isolation + persistence
 
