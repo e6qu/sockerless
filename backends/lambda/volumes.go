@@ -9,6 +9,7 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	awscommon "github.com/sockerless/aws-common"
+	core "github.com/sockerless/backend-core"
 )
 
 // EFS-backed named-volume provisioning for Lambda.
@@ -164,10 +165,31 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 		}
 	}
 
-	fsc := lambdatypes.FileSystemConfig{
-		Arn:            aws.String(canonicalARN),
-		LocalMountPath: aws.String(LambdaSharedMountPath),
+	// Framework dispatch: produce the FileSystemConfig via the
+	// per-bind translator so the BackingMemory / unknown-kind
+	// rejection arms surface uniformly with the other backends. Today
+	// Lambda always uses BackingEFSEphemeral (only registered driver
+	// that produces a FileSystemConfig); the dispatch keeps the
+	// extension point in place for future per-volume Backing override
+	// (Phase 91+ open for SharedVolume.Backing).
+	driver, err := s.storageBackings.Resolve(core.BackingEFSEphemeral)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve efs-ephemeral driver: %w", err)
 	}
+	spec, err := driver.CloudSpec(core.SharedVolumeRef{
+		Name:             resolved[0].volName,
+		Backing:          core.BackingEFSEphemeral,
+		EFSFileSystemID:  s.config.AgentEFSID,
+		EFSAccessPointID: canonicalARN,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("efs-ephemeral CloudSpec: %w", err)
+	}
+	fscPtr, err := translateBackingSpecToLambda(spec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("translate to FileSystemConfig: %w", err)
+	}
+	fsc := *fscPtr
 
 	// Build BIND_LINKS entries as `<dst>=<mount-target>`. Each Docker
 	// bind's destination becomes a symlink the bootstrap creates before

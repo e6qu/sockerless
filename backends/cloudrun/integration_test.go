@@ -95,11 +95,15 @@ func TestMain(m *testing.M) {
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM golang:1.25-alpine AS build
+	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
+	// limit), not docker.io. Docker Hub throttles unauthenticated
+	// pulls aggressively (toomanyrequests/429); ECR Public Gallery
+	// mirrors the Docker Library images without that constraint.
+	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
@@ -122,8 +126,13 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	// Same for alpine — tests that don't use eval-arithmetic still
 	// pass plain "alpine:latest" which the backend rewrites to AR.
-	if out, err := exec.Command("docker", "pull", "alpine:latest").CombinedOutput(); err != nil {
+	// Pull from ECR Public Gallery to dodge Docker Hub rate limits;
+	// re-tag as the Docker-Hub-shaped name the backend expects.
+	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
 		failClean("ERROR: docker pull alpine: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
+		failClean("ERROR: docker tag alpine docker-hub-form: %v\n%s", err, out)
 	}
 	alpineARTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
 	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {

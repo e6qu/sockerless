@@ -99,6 +99,18 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 				},
 			},
 		}, nil
+
+	case core.BackingPDEphemeral:
+		// Cloud Functions Gen2 sits on Cloud Run Services under the
+		// hood — same PD-not-supported constraint. See cloudrun
+		// translator + specs/CLOUD_RESOURCE_MAPPING.md line 567.
+		return nil, fmt.Errorf(
+			"volume %q: backing %q not supported on Cloud Functions — "+
+				"Gen2 functions run on Cloud Run Services which lack a first-class "+
+				"PD volume primitive. Use Backing: gcs-fuse (with MountOptions per "+
+				"BUG-944) for cross-task workspace sharing or Backing: gcs-sync for "+
+				"per-step granularity",
+			name, spec.Kind)
 	}
 	return nil, fmt.Errorf("volume %q: unsupported backing kind %q", name, spec.Kind)
 }

@@ -6,6 +6,22 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 91 (consolidated) — Lambda framework + GCP PD reject + ECR Gallery (`phase-91c-lambda-backingspec-migration` branch)
+
+Two implementation commits + state save. Per user direction, all remaining Phase 91 work consolidated here — no more sub-phase splits.
+
+**The user pushed back on splitting.** I had been carving Phase 91 into 91 / 91b / 91c / 91c.1 / 91d sub-phases as the audit revealed each cloud's distinct shape. The user said "stop splitting phase 91 into sub-phases, keep it all on a single PR". Right call — by the time I'd shipped 91 (cloudrun+gcf BackingMemory) and 91b (ECS+ACA+AZF BackingMemory), the remaining work (Lambda framework migration, cloudrun+gcf BackingPDEphemeral reject) was small enough to coexist on one branch.
+
+**Three pieces in this PR:**
+
+1. **Lambda framework migration.** `fileSystemConfigsForBinds` previously built `FileSystemConfig{Arn, LocalMountPath}` inline from `accessPointForVolume(...)` + `accessPointARN(...)`. The migration: collapse the canonical AP ARN through `storageBackings.Resolve(BackingEFSEphemeral) → driver.CloudSpec(SharedVolumeRef{...}) → translateBackingSpecToLambda(spec)`. Lambda-specific constraints (single-FSC-per-function, `/mnt/[A-Za-z0-9_.\-]+` path constraint, sub-path collapse) stay in `fileSystemConfigsForBinds` as caller-side aggregation rules; they don't belong in the per-spec translator. Lambda joins the other 5 backends in unified framework dispatch.
+
+2. **BackingPDEphemeral rejection on cloudrun + gcf.** Cloud Run Services don't expose Compute Engine PD as a first-class volume primitive — `runpb.Volume` has EmptyDir / Secret / CloudSqlInstance / Gcs / Nfs but no PD. Real implementation would require a Cloud Run Admin API surface that doesn't exist for Services today (the spec notes this at line 567). Translator rejects loudly with concrete pointers: `Backing: gcs-fuse` (MountOptions per BUG-944) for cross-task workspace sharing, `Backing: gcs-sync` for per-step granularity, GCE-backend bookmark for real PD attach. GCF rejection mirrors cloudrun (Gen2 sits on Cloud Run Services).
+
+3. **ECR Public Gallery as Docker Hub alternative.** Cloudrun + gcf integration TestMain hit Docker Hub anonymous-pull rate limits during local + CI runs. User pointed at `public.ecr.aws/docker/library/*` which mirrors the Docker Library images without the 100-pulls-per-6h anonymous quota. Multi-stage Dockerfile FROM lines + `docker pull` calls switched. Saved the operator hint as `feedback_ecr_gallery_alt.md` for future similar throttling cases.
+
+**The deeper observation.** Phases 91 + 91b + 91c together prove that a "cloud-agnostic backing model" is honest only when it maps to actual cloud-native primitives. `BackingMemory` is the easiest case — Cloud Run / Cloud Run Functions / ACA all expose EmptyDir-style tmpfs as a first-class volume type, so the dispatch is clean. ECS exposes the same idea at a different layer (LinuxParameters.Tmpfs[] on container-def, not Volumes on task-def) → reject loudly. AZF doesn't expose tmpfs at all → reject loudly. Lambda is the framework outlier (`fileSystemConfigsForBinds` predates BackingSpec); migration in this PR brings it into the fold. `BackingPDEphemeral` is even more honest: Cloud Run Services lack the primitive entirely, so the operator's request can't be honored on-cloud — explicit rejection with alternatives is more useful than silent fallback.
+
 ## 2026-05-10 — Phase 91b BackingMemory on ECS / ACA / AZF (`phase-91b-backingmemory-ecs-lambda` branch)
 
 One implementation commit + state save. Continues Phase 91's BackingMemory work across the AWS + Azure backends. The pattern that emerged was per-cloud divergent — exactly why splitting was the right call.
