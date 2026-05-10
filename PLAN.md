@@ -41,6 +41,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #140 | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
 | #141 | 83 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure onto the shared component + design language; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired. |
 | #142 | 84 + BUG-985 + BUG-986 | Phase 84 — sim shared `NewServer` returns `(*Server, error)` + `MakeStore` log.Fatalf on per-table failure (no silent in-memory degradation when persistence requested). Admin `SIM_DATA_DIR` injection per topology instance. Cross-cloud isolation tests. `make purge-state` operator targets. |
+| #143 | 85 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload/Restart prompt. |
 
 ## Roadmap (ordered)
 
@@ -108,9 +109,13 @@ Admin curates a `ConfigKeyMeta` table — 3 hot-reloadable keys (SIM_LOG_LEVEL, 
 
 UI: `<ConfigEditModal>` opens from a "config" button on every InstanceRow. Per-row hot/restart badges. Save → footer offers Reload / Reload (partial) + Restart / Close based on what classified server-side.
 
-### Phase 86 — Health + supervision surface
+### Phase 86 — Health + supervision surface ✓ in flight (`phase-86-health-supervision`)
 
-Mark instance unhealthy on ANY of: process exit, `/v1/health` non-2xx, no `/v1/health` response within 5s. Admin UI shows failing signal + last-N log lines + diagnostic links. No auto-restart (operator-driven recovery).
+`start-component` wraps the binary in a watcher subshell that records exit code + RFC-3339-utc timestamp to `.stack-pids/<n>.exit` when the binary terminates. `InstanceStatus` gains `Exit` + `CrashedSinceStart` fields. `probeHealth` timeout bumped 1 s → 5 s.
+
+`GET /api/v1/topology/projects/{p}/instances/{i}/diagnostics?lines=N` returns status + last N log lines in one shot (default 50, cap 1000). UI: `<UnhealthyDiagnosticPanel>` collapsible panel under InstanceRow rendered only when `shouldRender(status)` is true (unhealthy / crashed_since_start / process gone with pidfile). Polls /diagnostics every 10 s only on broken rows; cost is bounded.
+
+No auto-restart — operator-driven recovery via the existing Restart / Reload / Stop buttons. Component-side handling is unchanged.
 
 ### Phase 87 — Centralized observability (logs + traces) — Stack A
 

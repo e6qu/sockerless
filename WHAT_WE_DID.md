@@ -6,6 +6,45 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 86 health + supervision surface (`phase-86-health-supervision` branch)
+
+Three implementation commits + state save. The brief from PLAN.md said "mark unhealthy on ANY of: process exit / non-2xx /v1/health / probe timeout" — reading the existing code showed half of it already worked (signal-0 PID probe + `/v1/health` polling + 1 s timeout from Phase 79 step 7). The actual Phase 86 work was fixing two gaps:
+
+1. **No exit-code capture.** `start-component` ran the binary and recorded the PID, full stop. When the binary exited — operator-driven kill or crash — the only signal was the PID file pointing at a dead PID. The UI couldn't distinguish "operator stopped this cleanly" from "this crashed at 12:00:00 with exit 137".
+2. **No diagnostic surface for unhealthy rows.** The TopologyPage's per-row `StatusBadge` showed "unhealthy" but offered no way to see why short of clicking through to logs.
+
+**Exit-code capture.** Wrote a watcher-subshell pattern in the `start-component` make target:
+
+```sh
+( cd $$dir && \
+    env $$envline ./$$bin $$flag :$(PORT) > $$logfile 2>&1 &
+    bin_pid=$$!
+    echo $$bin_pid > $$pidfile
+    ( wait $$bin_pid; code=$$?
+      printf '%d %s\n' $$code "$(date)" > $$exitfile ) &
+)
+```
+
+The pidfile still points at the binary (so the existing SIGHUP / SIGTERM paths via `reload-component` and `stop-component` still target the binary directly). The watcher waits in the background and writes the exit record only when the binary actually terminates. Stale exit records are cleared at the start of each `start-component` so we don't see yesterday's exit reading after a successful restart.
+
+**CrashedSinceStart distinction.** When the binary dies on its own, the watcher writes `.exit` and the pidfile is left in place — `readInstanceStatus` sees `pid > 0 && !alive && exit != nil` and flags `CrashedSinceStart=true`. When the operator runs `stop-component`, the make target removes the pidfile, so the same logic produces `pid=0 && !alive` (the watcher's exit record may still arrive afterwards, but nothing flags it as a crash). This separates "this thing died unexpectedly" from "operator stopped this cleanly" without any change to stop-component's contract.
+
+**5-second probe.** Bumped the `probeHealth` timeout from 1 s to 5 s. Operator-grade reality: a backend doing real work may not answer `/v1/health` inside a second while completing in-flight requests. 5 s matches the brief and the existing `--no-skip` philosophy (don't lie about health when the answer is "give me a moment").
+
+**Diagnostic panel.** New `<UnhealthyDiagnosticPanel>` mounts inside InstanceRow when `shouldRender(status)` is true:
+
+- `health === "unhealthy"`
+- `crashed_since_start`
+- `!running && pid > 0` (process gone but no exit record — the watcher missed something or was killed alongside the binary)
+
+Healthy / cleanly-stopped rows mount nothing — the diagnostic poll fires only on actually-broken instances, so the cost is bounded to the rows the operator cares about.
+
+The panel surfaces the failing-signal header (with prose-y reason), exit info if present, the health_detail line (e.g. "HTTP 503"), the last 50 log lines via the new bundled `/diagnostics` endpoint (one fetch instead of chaining `/status` + `/logs`), and three actions: deep link to live tail, deep link to project console, refresh.
+
+**Diagnostic endpoint shape.** `GET /api/v1/topology/.../diagnostics?lines=N` returns `{status, log_lines, log_path}`. Default N=50, cap 1000. Reuses the Phase 81 `readLastLines` helper. The cap stops degenerate `?lines=99999` queries; an operator who needs more opens the live tail at `/ui/topology/:p/:i/logs`.
+
+**What this phase explicitly does NOT do.** No auto-restart (deferred — Phase 86 is the *surface*, not the recovery). No paging / alerting integration (operator-driven). No multi-instance health rollup (that's the natural Phase 87 observability shape). No ContainerRow-level health probe (component-decoupled invariant: admin reads what components already expose).
+
 ## 2026-05-10 — Phase 85 config edit + hot reload (`phase-85-config-edit-hot-reload` branch)
 
 Two implementation commits + state save. Tight scope by design — the original Phase 85 plan listed four discrete pieces (annotation, edit endpoint, reload endpoint, UI), but the first three are tightly coupled (metadata informs response, response drives UX) so they ship as one commit; the UI is its own commit because TypeScript / vitest scaffolding lives in a different package.

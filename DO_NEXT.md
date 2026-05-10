@@ -4,54 +4,56 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-85-config-edit-hot-reload` — Phase 85 work in flight (2 implementation commits + state save). Open a PR when ready; PR #142 already merged.
+`phase-86-health-supervision` — Phase 86 work in flight (3 implementation commits + state save). Open a PR when ready; PR #143 already merged.
 
 ## Status
 
-Phase 85 implementation is done on this branch. After it lands, **Phase 86 — health + supervision surface** is the next pickup. See bottom of this file for the Phase 86 brief.
+Phase 86 implementation is done on this branch. After it lands, **Phase 87 — centralized observability (Stack A)** is the next pickup. See bottom of this file for the Phase 87 brief — most of the design is already locked in PLAN.md.
 
-## Resume here — Phase 85 (config edit + hot reload) — implementation done
+## Resume here — Phase 86 (health + supervision surface) — implementation done
 
-Branch has 2 implementation commits + state save ready to PR:
+Branch has 3 implementation commits + state save ready to PR:
 
-1. `phase 85: config edit + reload endpoints + curated metadata` — three pieces in one commit (tightly coupled): `config_metadata.go` curated table + `ClassifyChanges` helper, `PUT /api/v1/topology/projects/{p}/instances/{i}/config` (writes via `UpdateInstance`, returns classification), `POST /api/v1/topology/projects/{p}/instances/{i}/reload` (shells new `make reload-component`, kill -HUP via PID file). 9 unit tests + 7 endpoint tests.
-2. `phase 85: ConfigEditModal + per-row hot/restart badges` — new `<ConfigEditModal>` opens from a "config" button on InstanceRow. Per-row hot/restart badges. Save → server classifies → footer offers Reload / Reload (partial) + Restart / Close based on what changed. 6 vitest cases.
+1. `phase 86: capture exit codes + bump probe timeout to 5s` — `start-component` records `.stack-pids/<n>.exit` on binary termination via a watcher subshell; `InstanceStatus` gains `Exit` + `CrashedSinceStart` fields; probe timeout 1 s → 5 s. 7 admin tests.
+2. `phase 86: diagnostic endpoint bundling status + tail logs` — `GET /api/v1/topology/.../diagnostics?lines=N` returns status + last N lines (default 50, cap 1000) in one fetch. 6 endpoint tests.
+3. `phase 86: UnhealthyDiagnosticPanel + per-row mount gate` — collapsible panel mounts under InstanceRow only when `shouldRender(status)` is true. Surfaces reason header + exit info + health_detail + last 50 log lines + deep links + refresh button. 10 vitest cases.
 
-When ready: `git push -u origin phase-85-config-edit-hot-reload && gh pr create`. CI ~7 min.
+When ready: `git push -u origin phase-86-health-supervision && gh pr create`. CI ~7 min.
 
-**What this does NOT change.** No SIGHUP handling on components — Phase 85 ships the signal path only; component absorption is per-binary. No InstanceForm refactor — full-instance edit (name/kind/cloud/port/sim) stays as-is; ConfigEditModal handles the config-only flow because the metadata-driven UX only makes sense in that narrow context.
+**What this does NOT change.** No auto-restart (explicitly deferred). No alerting / paging integration. No multi-instance health rollup (Phase 87's observability stack is the right place for that).
 
-## Phase 86 — Health + supervision surface (next pickup)
+## Phase 87 — Centralized observability — Stack A (next pickup)
 
-**Goal.** Admin marks an instance unhealthy when its process exits, when `/v1/health` returns non-2xx, or when the probe doesn't complete within 5 s. UI surfaces the failing signal + last-N log lines + diagnostic links. **No auto-restart** — operator-driven recovery.
+**Goal.** Every sockerless component (sim, backend, bleephub, admin) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries. The Phase 86 file-tail-based diagnostic panel becomes one of two paths the UI offers — the file-tail stays for the no-OTel case; the OTel path activates when the operator opts in.
 
-**Today.** `instance_status.go` already implements `readInstanceStatus(inst)` returning `{Project, Name, Running, PID, Health, HealthDetail}`:
+**Stack** (all Apache 2.0):
 
-- `Running`: signal-0 PID probe (per-OS).
-- `Health`: 1 s `/v1/health` probe; "ok" / "unhealthy" / "unknown".
-- `HealthDetail`: probe error string when unhealthy.
+- OpenTelemetry Collector receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.
+- VictoriaLogs UI on `:9428`, retention 7 d.
+- Jaeger all-in-one UI on `:16686`, retention 72 h.
 
-The `/api/v1/topology/projects/{p}/instances/{i}/status` endpoint serves it (Phase 79 step 7). The TopologyPage already polls every 2 s and shows the StatusBadge + health_detail.
+**Invariant preserved.** Components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's behaviour (zerolog → stdout). No admin coupling, no required env var, no startup registration.
 
-**What's missing for Phase 86.**
+**Sub-steps (already in PLAN.md — copying for convenience):**
 
-1. **Diagnostic-on-unhealthy.** When Health is unhealthy or Running is false unexpectedly (PID file present but process gone), the UI should show:
-   - Last N lines of `.stack-pids/<n>.log` (Phase 81 SSE endpoint already has the read path — non-follow mode returns last N lines as JSON).
-   - Direct link to `/ui/topology/:p/:i/logs` for full tail.
-   - Direct link to `/ui/topology/:p/console` to poke at the instance.
-   - Recent exit code if the process exited (read from a new `.stack-pids/<n>.exit` file written by `start-component`?).
-2. **Capture exit code.** `make start-component` currently runs the binary and writes the PID; if the process exits, nothing's recorded. Need to capture the exit code so the UI can show "exited(<code>) at <ts>" instead of bare "stopped". Likely via a wrapper script or a small Go helper.
-3. **Unhealthy threshold.** 5 s timeout from the brief is bigger than the current 1 s. Bump probe timeout — may need to adjust how often `readInstanceStatus` is called too (don't block the page render on slow probes).
-4. **UI.** New `<UnhealthyDiagnosticPanel>` rendered when `health === "unhealthy"` or process gone unexpectedly. Lives on TopologyPage InstanceRow (collapsible) or its own modal.
+1. `backends/core/otel/` — wraps `go.opentelemetry.io/otel` SDK setup (logs + traces + resource attrs). Reads `OTEL_EXPORTER_OTLP_ENDPOINT` + service name. Used by every component's `main.go` in 3 lines.
+2. HTTP middleware — wrap each backend / sim mux with `otelhttp.NewHandler` so spans land per request automatically.
+3. zerolog → OTel logs bridge — existing `zerolog.Logger` calls also export to the OTel logs SDK. No log-line API changes.
+4. `make stack-observability-{up,down,status}` in `make/stack.mk`. Runs collector + VictoriaLogs + Jaeger as background processes; PIDs in `.stack-pids/observability/`. Default config emits to `./.sockerless-state/observability/{logs,traces}/` with rotation + 5 GB total cap.
+5. Admin UI integration — per-instance "View logs" + "View traces" deep links (filter by `service.name = <instance-name>`). Inline log tail (Phase 81) + diagnostic panel (Phase 86) still work for the no-OTel path.
+6. Documentation — `ui/README.md` + new `docs/OBSERVABILITY.md` cover both modes.
 
-**Out of scope.** No auto-restart — explicitly deferred. No alerting. No multi-instance rollup of health (that's Phase 87 observability territory).
+**If Stack A turns out unsuitable.** Same component code (OTLP) works against OpenObserve (AGPL) or SigNoz (MIT) — only `make/stack.mk` changes. The component-side bridge is OTel SDK, not collector-specific.
 
 **Files to touch (rough):**
 
-- `cmd/sockerless-admin/instance_status.go` — bump probe timeout to 5 s; add exit-code field if file present.
-- `cmd/sockerless-admin/api_topology.go` — extend the status response shape.
-- `make/components.mk` — wrap start-component to capture exit code on process termination.
-- `ui/packages/admin/src/pages/TopologyPage.tsx` + new `<UnhealthyDiagnosticPanel>` component.
+- `backends/core/otel/setup.go` (new) — SDK wrapper.
+- `backends/core/otel/zerolog_bridge.go` (new) — logs bridge.
+- Each `*/main.go` (admin, sims × 3, backends × 7, bleephub) — 3-line OTel init at startup.
+- `make/stack.mk` — `stack-observability-{up,down,status}` targets.
+- `cmd/sockerless-admin/api_topology_diagnostics.go` — extend to include OTel deep links when endpoint env is set.
+- `ui/packages/admin/src/components/UnhealthyDiagnosticPanel.tsx` — render OTel deep links when surfaced.
+- `docs/OBSERVABILITY.md` (new).
 
 ## Invariants (re-state on every commit)
 
