@@ -15,6 +15,7 @@ import (
 //	GET    /api/v1/topology/instances
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
+//	GET    /api/v1/topology/projects/{project}/instances/{instance}/diagnostics
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/proxy
 //	GET    /api/v1/topology/resources
 //	GET    /api/v1/topology/config-metadata
@@ -49,6 +50,7 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceRemove(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/status", handleInstanceStatus(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/logs", handleInstanceLogs(mgr))
+	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/diagnostics", handleInstanceDiagnostics(mgr))
 	proxyClient := &http.Client{Timeout: proxyTimeout + 5*time.Second}
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/proxy", handleInstanceProxy(mgr, proxyClient))
 	rollupClient := &http.Client{Timeout: 5 * time.Second}
