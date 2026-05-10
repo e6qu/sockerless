@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 // registerTopologyAPI wires the sockerless.yaml topology surface.
@@ -14,6 +15,7 @@ import (
 //	GET    /api/v1/topology/instances
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
+//	POST   /api/v1/topology/projects/{project}/instances/{instance}/proxy
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
@@ -43,6 +45,8 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceRemove(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/status", handleInstanceStatus(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/logs", handleInstanceLogs(mgr))
+	proxyClient := &http.Client{Timeout: proxyTimeout + 5*time.Second}
+	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/proxy", handleInstanceProxy(mgr, proxyClient))
 }
 
 func handleTopologyGet(mgr *TopologyManager) http.HandlerFunc {
