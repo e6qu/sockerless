@@ -27,17 +27,6 @@ export interface AdminContainer {
   backend: string;
 }
 
-export interface AdminResource {
-  containerId: string;
-  backend: string;
-  resourceType: string;
-  resourceId: string;
-  instanceId: string;
-  createdAt: string;
-  cleanedUp: boolean;
-  status?: string;
-}
-
 export interface ContextInfo {
   name: string;
   active: boolean;
@@ -94,46 +83,6 @@ export interface ComponentMetrics {
 
 export type CloudType = "aws" | "gcp" | "azure";
 export type BackendType = "ecs" | "lambda" | "cloudrun" | "gcf" | "aca" | "azf";
-
-export interface ProjectConfig {
-  name: string;
-  cloud: CloudType;
-  backend: BackendType;
-  log_level: string;
-  sim_port: number;
-  backend_port: number;
-  frontend_port: number;
-  frontend_mgmt_port: number;
-  created_at: string;
-}
-
-export interface ProjectStatus extends ProjectConfig {
-  status: string;
-  sim_status: string;
-  backend_status: string;
-  frontend_status: string;
-}
-
-export interface ProjectConnection {
-  docker_host: string;
-  env_export: string;
-  podman_connection: string;
-  simulator_addr: string;
-  backend_addr: string;
-  frontend_addr: string;
-  frontend_mgmt_addr: string;
-}
-
-export interface CreateProjectRequest {
-  name: string;
-  cloud: CloudType;
-  backend: BackendType;
-  log_level?: string;
-  sim_port?: number;
-  backend_port?: number;
-  frontend_port?: number;
-  frontend_mgmt_port?: number;
-}
 
 export type InstanceKind = "sim" | "backend" | "bleephub";
 
@@ -283,11 +232,6 @@ export class AdminApiClient {
     return this.request("/api/v1/containers");
   }
 
-  resources(active?: boolean): Promise<AdminResource[]> {
-    const qs = active ? "?active=true" : "";
-    return this.request(`/api/v1/resources${qs}`);
-  }
-
   contexts(): Promise<ContextInfo[]> {
     return this.request("/api/v1/contexts");
   }
@@ -333,51 +277,6 @@ export class AdminApiClient {
   componentProvider(name: string): Promise<ProviderInfo> {
     return this.request(
       `/api/v1/components/${encodeURIComponent(name)}/provider`,
-    );
-  }
-
-  // Projects
-  projects(): Promise<ProjectStatus[]> {
-    return this.request("/api/v1/projects");
-  }
-
-  projectGet(name: string): Promise<ProjectStatus> {
-    return this.request(`/api/v1/projects/${encodeURIComponent(name)}`);
-  }
-
-  projectCreate(req: CreateProjectRequest): Promise<ProjectStatus> {
-    return this.postJSON("/api/v1/projects", req);
-  }
-
-  projectStart(name: string): Promise<ProjectStatus> {
-    return this.post(`/api/v1/projects/${encodeURIComponent(name)}/start`);
-  }
-
-  projectStop(name: string): Promise<ProjectStatus> {
-    return this.post(`/api/v1/projects/${encodeURIComponent(name)}/stop`);
-  }
-
-  projectDelete(name: string): Promise<{ deleted: string }> {
-    return this.del(`/api/v1/projects/${encodeURIComponent(name)}`);
-  }
-
-  projectLogs(
-    name: string,
-    component?: string,
-    lines?: number,
-  ): Promise<string[]> {
-    const params = new URLSearchParams();
-    if (component) params.set("component", component);
-    if (lines) params.set("lines", String(lines));
-    const qs = params.toString() ? `?${params.toString()}` : "";
-    return this.request(
-      `/api/v1/projects/${encodeURIComponent(name)}/logs${qs}`,
-    );
-  }
-
-  projectConnection(name: string): Promise<ProjectConnection> {
-    return this.request(
-      `/api/v1/projects/${encodeURIComponent(name)}/connection`,
     );
   }
 
