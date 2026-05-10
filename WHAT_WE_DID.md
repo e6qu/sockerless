@@ -6,6 +6,47 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 84 per-instance state isolation + BUG-985 (`phase-84-instance-state-isolation` branch)
+
+Three implementation commits + state save. The phase brief was "make multiple sim instances of the same cloud coexist with isolated state across restarts" — the work split into one bug-fix and one wiring task once I started reading the existing code.
+
+**BUG-985 surfaced during the audit.** Before touching anything, I read `simulators/aws/shared/server.go` and `config.go` to understand the persistence layer. Found this in `NewServer`:
+
+```go
+if cfg.Persist {
+    db, err := OpenDB(dataDir)
+    if err != nil {
+        logger.Error().Err(err).Msg("...falling back to in-memory")
+    } else {
+        srv.db = db
+        ...
+    }
+}
+```
+
+The operator set `SIM_PERSIST=true` because they want durable state. If `OpenDB` fails (bad path, missing fs perms, full disk), the simulator silently runs in-memory and loses everything across restarts. Per the no-fallbacks principle this is a bug. Filed as BUG-985 and fixed in the same patch — `NewServer` now returns `(*Server, error)`, sim main.go calls `log.Fatalf`. Mirrored across all three sims (`shared/` is duplicated per cloud — they're not the same Go package, so the fix lands in three identical-shape commits-worth of changes folded into one diff).
+
+There's a similar latent issue at `MakeStore` (line 132-141 of `state_sqlite.go`) — falls back to in-memory when `NewSQLiteStore` fails per-table. I considered rolling the fix into the same PR but held off to keep this PR focused; it's a candidate for a follow-up BUG-986.
+
+**Admin SIM_DATA_DIR injection.** `InstanceLifecycle.Start(ctx, project, inst, simPort)` now writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for sim instances. The path scheme matches the spec: project-scoped + instance-scoped, so two sim-aws instances under different projects don't collide. New helpers:
+
+- `managedEnvFor(project, inst, stateRoot)` — admin-synthesised env entries per kind. Sim gets `SIM_DATA_DIR`; backend / bleephub get nothing (their state isn't filesystem-scoped).
+- `mergeConfig(managed, operator)` — overlays operator-provided `Instance.Config` on top of admin defaults. Operator wins so a field operator who wants state on `/mnt/big-disk/` can override.
+
+Decision: admin does NOT inject `SIM_PERSIST=true`. Per the components-decoupled invariant, persistence is a behaviour choice the operator makes — admin only fills in path coordination concerns. The result: a sim launched without `SIM_PERSIST=true` runs in-memory regardless of `SIM_DATA_DIR` (which becomes a no-op), and the operator's intent is unambiguous in `sockerless.yaml`.
+
+**Cross-cloud isolation tests.** 5 cases × 3 clouds = 15 tests, in each cloud's `shared/state_isolation_test.go`:
+
+1. `TestPersistenceIsolatedAcrossDataDirs` — two SQLite stores at admin-shaped paths (`<root>/<project>/<instance>/`), write to one, verify no leak.
+2. `TestPersistenceSurvivesReopen` — close + reopen the DB at the same path; entries persist. Combined with #1 this is what makes per-instance state usable: stop+restart picks up where it left off without leaking to neighbours.
+3. `TestNewServerPersistFailLoud` — BUG-985 regression guard. `DataDir` under a regular file (mkdir → ENOTDIR) returns an error; server is nil.
+4. `TestNewServerPersistHappy` — happy path: persistence on, writable dir, `srv.DB() != nil`.
+5. `TestNewServerNoPersist` — persistence off, no disk touch, `DB()` returns nil.
+
+The test file is duplicated in each cloud's `shared/` because each is its own Go package (importable as `github.com/sockerless/simulator` from outside but distinct compilation units). The cross-cloud sweep workflow rule lands here.
+
+**What this phase explicitly does NOT do.** No refactor of `Persist` / `OpenDB` (out of scope per the original plan). No changes to `make/components.mk` — `start-component` already sources `.stack-pids/<n>.env`, so admin's env file write is sufficient. No `make purge-state` target — out of scope; operators wipe `.sockerless-state/` directly when they want a clean slate.
+
 ## 2026-05-10 — Phase 83 sim UI parity (`phase-83-sim-ui-parity` branch)
 
 Five-commit branch: shared `ResourceListPage` component → sim-aws / gcp / azure refactor → legacy admin page retirement.
