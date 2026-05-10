@@ -13,6 +13,7 @@ import (
 //	PUT    /api/v1/topology
 //	GET    /api/v1/topology/instances
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}
+//	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
@@ -41,6 +42,7 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("PUT /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceUpdate(mgr))
 	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceRemove(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/status", handleInstanceStatus(mgr))
+	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/logs", handleInstanceLogs(mgr))
 }
 
 func handleTopologyGet(mgr *TopologyManager) http.HandlerFunc {
