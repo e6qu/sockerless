@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 var version = "dev"
@@ -104,7 +106,17 @@ func main() {
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	})
 
-	srv := &http.Server{Addr: *addr, Handler: mux}
+	tracerShutdown, err := InitTracer("sockerless-admin")
+	if err != nil {
+		log.Fatalf("init tracer: %v", err)
+	}
+	defer func() { _ = tracerShutdown(context.Background()) }()
+
+	// otelhttp.NewHandler at the outermost layer captures every
+	// admin API + UI request as a span. Spans emit to a no-op
+	// tracer unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+	handler := otelhttp.NewHandler(mux, "sockerless-admin")
+	srv := &http.Server{Addr: *addr, Handler: handler}
 
 	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)

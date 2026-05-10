@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -36,6 +37,12 @@ func main() {
 	// Stash listen addr so cloud-product translators can wire
 	// IDENTITY_ENDPOINT + IMDS env onto workload containers.
 	simListenAddr = cfg.ListenAddr
+
+	shutdown, err := sim.InitTracer("sockerless-sim-azure")
+	if err != nil {
+		log.Fatalf("init tracer: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	srv, err := sim.NewServer(cfg)
 	if err != nil {

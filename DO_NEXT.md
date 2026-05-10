@@ -4,40 +4,32 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-87-observability` — Phase 87 work in flight (4 implementation commits + state save). Open a PR when ready; PR #144 already merged.
+`phase-87b-component-otel-wiring` — Phase 87b in flight (2 implementation commits + state save). Open a PR when ready; PR #145 already merged.
 
 ## Status
 
-Phase 87 first-PR implementation is done on this branch. After it lands, **Phase 87b — component-side OTel SDK wiring** is the next pickup. See bottom of this file for the Phase 87b brief.
+Phase 87b implementation is done on this branch. After it lands, the optional **Phase 87c — zerolog → OTel logs bridge** is available, then phases 91–94 (volume provisioning) + live-cloud validation track.
 
-## Resume here — Phase 87 (observability — Stack A) — implementation done
+## Resume here — Phase 87b (component-side OTel SDK wiring) — implementation done
 
-Branch has 4 implementation commits + state save ready to PR:
+Branch has 2 implementation commits + state save ready to PR:
 
-1. `phase 87: stack-observability make targets + collector config` — `make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger as background processes. Default collector config scrapes `.stack-pids/*.log` via filelog receiver so logs flow without binary changes.
-2. `phase 87: GET /api/v1/observability config endpoint` — admin reads `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` env vars at boot; returns `{enabled, logs_dashboard, traces_dashboard, ...}` so the UI knows when to render deep-link chips. 7 unit tests.
-3. `phase 87: VictoriaLogs / Jaeger deep links in diagnostic panel` — `<UnhealthyDiagnosticPanel>` fetches `/api/v1/observability` (cached) and renders chips when enabled; falls back to file-tail-only when disabled. 2 new vitest cases.
-4. `phase 87: docs/OBSERVABILITY.md` — two-mode operator guide.
+1. `phase 87b: wire core.InitTracer into 6 backend main.go files` — ecs / lambda / cloudrun / gcf / aca / azf each gain a 4-line OTel init at startup. otelhttp middleware was already in `backends/core/server.go`; this commit makes it actually emit by initialising the tracer.
+2. `phase 87b: wire OTel SDK + otelhttp on sims + admin` — 3 sims gain `shared/otel.go` + outermost `otelhttp.NewHandler` + 4-line init in main.go. Admin gains a duplicated InitTracer helper (separate Go module without backend-core dep) + otelhttp wrap on the mux. 11 new tracer tests.
 
-When ready: `git push -u origin phase-87-observability && gh pr create`. CI ~7 min.
+When ready: `git push -u origin phase-87b-component-otel-wiring && gh pr create`. CI ~7 min.
 
-**What this does NOT change.** No SDK wiring on components — Phase 87 only ships the *stack* + admin integration. Logs work day-1 via the filelog receiver scraping `.stack-pids/*.log`. Traces require Phase 87b component-side wiring.
+bleephub already wired since Phase 86 baseline — no changes there.
 
-## Phase 87b — Component-side OTel SDK wiring (next pickup)
+**What this does NOT change.** No zerolog → OTel logs bridge — operators in OTLP mode rely on the collector's filelog receiver scraping `.stack-pids/*.log` (Phase 87). Bridge is the optional Phase 87c if operators want OTLP-only emission.
 
-**Goal.** Each component's `main.go` initialises the OTel SDK when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in its env, then wraps its mux with `otelhttp.NewHandler` for per-request spans. zerolog log lines also flow via OTel logs SDK so OTLP-mode operators don't need the filelog receiver fallback.
+## Phase 87c — zerolog → OTel logs bridge (optional next pickup)
 
-**Design.** Existing `backends/core/otel.go` already has `InitTracer(serviceName) (shutdown, error)` (used by `backends/docker/cmd/main.go`). Phase 87b extends:
+**Goal.** Each component's zerolog calls also export to the OTel logs SDK so OTLP-mode operators don't need the filelog receiver fallback. Bridge is *optional* — the filelog receiver path from Phase 87 covers logs without binary changes; the bridge is for operators who want a single OTLP transport.
 
-1. Rename `InitTracer` → `InitObservability` returning a multi-shutdown function. Add OTel logs SDK setup alongside the existing trace SDK setup.
-2. New `backends/core/otel_zerolog.go`: zerolog Hook that mirrors every log entry to the OTel logs provider. zerolog API doesn't change for callers.
-3. Per-component `main.go` updates (3 lines each): `shutdown := core.InitObservability("<service-name>"); defer shutdown(ctx)`.
-4. Per-component `mux := http.NewServeMux(); handler := otelhttp.NewHandler(mux, "sockerless-<service>")`.
-5. Sims + admin + bleephub: same shape but they don't import `backends/core` today. Either:
-   - Add a new top-level `pkg/otel` module that all of them import (cleanest), or
-   - Duplicate the small init helper in each module (matches the per-cloud `shared/` pattern).
+**Design.** Each component creates a zerolog hook that mirrors every event to the OTel logs provider. zerolog API doesn't change for callers — same `logger.Info().Str("k", "v").Msg("...")` shape.
 
-**Files to touch.** ~12 `main.go` files (admin + 3 sims + 7 backends + bleephub). One new shared package or three duplicates of the init helper.
+**Files to touch.** Same 4 modules Phase 87b touched (backends/core + sim shared × 3 + admin) plus bleephub. New `otel_zerolog.go` per module + 1 line in each Init wiring to register the hook.
 
 **Out of scope still.** Per-binary metrics export (counters / histograms). Custom span attributes beyond what `otelhttp` adds automatically.
 
