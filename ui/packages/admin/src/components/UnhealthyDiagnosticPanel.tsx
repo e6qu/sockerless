@@ -1,7 +1,11 @@
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { LogViewer, Spinner } from "@sockerless/ui-core/components";
-import { AdminApiClient, type InstanceStatus } from "../api.js";
+import {
+  AdminApiClient,
+  buildObservabilityURL,
+  type InstanceStatus,
+} from "../api.js";
 
 const api = new AdminApiClient();
 
@@ -38,6 +42,22 @@ export function UnhealthyDiagnosticPanel({
     staleTime: 5000,
   });
 
+  // Observability config is admin-boot static — fetch via react-query
+  // so multiple panels share one cached entry. shareable cache key
+  // matches TopologyPage if it ever wants to read the same value.
+  const { data: obs } = useQuery({
+    queryKey: ["observability"],
+    queryFn: () => api.observability(),
+    staleTime: 5 * 60_000,
+  });
+
+  const logsURL = obs?.enabled
+    ? buildObservabilityURL(obs.logs_dashboard, obs.logs_service_param, instanceName)
+    : "";
+  const tracesURL = obs?.enabled
+    ? buildObservabilityURL(obs.traces_dashboard, obs.traces_service_param, instanceName)
+    : "";
+
   const reason = describeReason(status);
 
   return (
@@ -66,34 +86,36 @@ export function UnhealthyDiagnosticPanel({
         <span className="ml-auto inline-flex items-center gap-2">
           <Link
             to={`/ui/topology/${encodeURIComponent(project)}/${encodeURIComponent(instanceName)}/logs`}
-            style={{
-              fontSize: "0.65rem",
-              fontFamily: "var(--font-mono)",
-              padding: "0.2rem 0.5rem",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-xs)",
-              color: "var(--color-fg-muted)",
-              textDecoration: "none",
-              letterSpacing: "0.05em",
-            }}
+            style={chipStyle}
           >
             full logs
           </Link>
           <Link
             to={`/ui/topology/${encodeURIComponent(project)}/console`}
-            style={{
-              fontSize: "0.65rem",
-              fontFamily: "var(--font-mono)",
-              padding: "0.2rem 0.5rem",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-xs)",
-              color: "var(--color-fg-muted)",
-              textDecoration: "none",
-              letterSpacing: "0.05em",
-            }}
+            style={chipStyle}
           >
             console
           </Link>
+          {logsURL && (
+            <a
+              href={logsURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ ...chipStyle, color: "var(--color-accent)" }}
+            >
+              VictoriaLogs ↗
+            </a>
+          )}
+          {tracesURL && (
+            <a
+              href={tracesURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ ...chipStyle, color: "var(--color-accent)" }}
+            >
+              Jaeger ↗
+            </a>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -164,6 +186,17 @@ export function shouldRender(status: InstanceStatus | undefined): boolean {
   if (!status.running && status.pid > 0) return true;
   return false;
 }
+
+const chipStyle = {
+  fontSize: "0.65rem",
+  fontFamily: "var(--font-mono)",
+  padding: "0.2rem 0.5rem",
+  border: "1px solid var(--color-border)",
+  borderRadius: "var(--radius-xs)",
+  color: "var(--color-fg-muted)",
+  textDecoration: "none",
+  letterSpacing: "0.05em",
+} as const;
 
 function describeReason(status: InstanceStatus): string {
   if (status.crashed_since_start) {
