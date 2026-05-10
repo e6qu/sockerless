@@ -473,4 +473,30 @@ export class AdminApiClient {
       `/api/v1/topology/allocate-port?kind=${encodeURIComponent(kind)}`,
     );
   }
+
+  topologyInstanceProxy(
+    project: string,
+    name: string,
+    req: ProxyRequest,
+  ): Promise<ProxyResponse> {
+    return this.postJSON(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/proxy`,
+      req,
+    );
+  }
+}
+
+export interface ProxyRequest {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+export interface ProxyResponse {
+  status: number;
+  status_text: string;
+  headers: Record<string, string>;
+  body: string;
+  duration_ms: number;
 }

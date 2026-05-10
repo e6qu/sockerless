@@ -387,6 +387,21 @@ function ProjectCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to={`/ui/topology/${encodeURIComponent(project.name)}/console`}
+            style={{
+              fontSize: "0.7rem",
+              fontFamily: "var(--font-mono)",
+              padding: "0.25rem 0.6rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              textDecoration: "none",
+              letterSpacing: "0.05em",
+            }}
+          >
+            console
+          </Link>
           <Button variant="secondary" size="sm" onClick={onAddInstance}>
             + instance
           </Button>

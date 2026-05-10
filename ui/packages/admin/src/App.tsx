@@ -18,6 +18,7 @@ import { ProcessDetailPage } from "./pages/ProcessDetailPage.js";
 import { CleanupPage } from "./pages/CleanupPage.js";
 import { TopologyPage } from "./pages/TopologyPage.js";
 import { InstanceLogsPage } from "./pages/InstanceLogsPage.js";
+import { ProjectConsolePage } from "./pages/ProjectConsolePage.js";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage.js";
 import { ProjectLogsPage } from "./pages/ProjectLogsPage.js";
 
@@ -63,6 +64,10 @@ export function App() {
             <Route
               path="/ui/topology/:project/:instance/logs"
               element={<InstanceLogsPage />}
+            />
+            <Route
+              path="/ui/topology/:project/console"
+              element={<ProjectConsolePage />}
             />
             <Route path="/ui/projects/:name" element={<ProjectDetailPage />} />
             <Route
