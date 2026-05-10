@@ -19,9 +19,10 @@
 include $(CURDIR)/make/colors.mk
 
 COMPONENTS_PID_DIR := $(CURDIR)/.stack-pids
+COMPONENTS_STATE_DIR := $(CURDIR)/.sockerless-state
 
 .PHONY: start-component stop-component rebuild-component logs-component \
-        status-components stop-components
+        status-components stop-components purge-state purge-state-all
 
 # component-binary returns the on-disk binary path for KIND/CLOUD/BACKEND.
 define component-binary
@@ -169,3 +170,29 @@ stop-components: ## stop every running per-component process
 	  [ -f "$$pidfile" ] || continue ; \
 	  $(MAKE) -s stop-component NAME=$$(basename $$pidfile .pid) ; \
 	done
+
+# purge-state wipes the on-disk state directory for one instance.
+# Stop-component intentionally leaves state untouched so an operator
+# can stop / restart without losing data; this target is the explicit
+# opposite. Requires PROJECT + NAME so accidental wholesale wipes need
+# the dedicated `purge-state-all` target below.
+purge-state: ## wipe .sockerless-state/<PROJECT>/<NAME>/ (sim instance state)
+	@if [ -z "$(PROJECT)" ] || [ -z "$(NAME)" ]; then \
+	  echo "purge-state: PROJECT and NAME both required"; exit 1; \
+	fi
+	@dir=$(COMPONENTS_STATE_DIR)/$(PROJECT)/$(NAME); \
+	if [ -d "$$dir" ]; then \
+	  rm -rf "$$dir" && printf "  purged $(PROJECT)/$(NAME)\n"; \
+	else \
+	  printf "$(COLOR_DIM)$(PROJECT)/$(NAME): no state dir$(COLOR_RESET)\n"; \
+	fi
+
+# purge-state-all wipes every per-instance state dir under
+# .sockerless-state/. Destructive; intended for a clean-slate
+# operator workflow (e.g. before re-running an integration sweep).
+purge-state-all: ## wipe every .sockerless-state/<project>/<instance>/
+	@if [ ! -d $(COMPONENTS_STATE_DIR) ]; then \
+	  printf "$(COLOR_DIM)No state to purge.$(COLOR_RESET)\n"; exit 0; \
+	fi
+	@rm -rf $(COMPONENTS_STATE_DIR) && \
+	  printf "  purged $(COMPONENTS_STATE_DIR)\n"
