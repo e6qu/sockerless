@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, StatusBadge, Spinner } from "@sockerless/ui-core/components";
+import {
+  ResourceListPage,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
 import { fetchLogEntries, type LogEntry } from "../api.js";
 
-const columns: ColumnDef<LogEntry, any>[] = [
+const columns: ColumnDef<LogEntry, unknown>[] = [
   { accessorKey: "timestamp", header: "Timestamp" },
   {
     accessorKey: "severity",
@@ -15,12 +17,16 @@ const columns: ColumnDef<LogEntry, any>[] = [
 ];
 
 export function LoggingPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["log-entries"], queryFn: fetchLogEntries, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">Cloud Logging</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<LogEntry>
+      kicker="gcp · simulator · logging"
+      title={<>Entries</>}
+      countNoun="entry"
+      columns={columns}
+      queryKey={["log-entries"]}
+      queryFn={fetchLogEntries}
+      filterPlaceholder="Filter entries…"
+      emptyMessage="No log entries tracked."
+    />
   );
 }
