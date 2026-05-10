@@ -6,33 +6,28 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-87c-zerolog-otel-bridge` — Phase 87c (full scope) in flight on PR #150. |
-| In-flight | Phase 87c — zerolog → OTel logs bridge across **all 12 components**: 7 backends (`backends/core` bridge) + 3 sims + bleephub + admin (own bridge code per module since they don't share `backends/core`). Each binary uses `zerolog.MultiLevelWriter(consoleW, obs.LogWriter)` (admin uses `io.MultiWriter` + `TextLogWriter` since it's stdlib `log`, not zerolog). |
-| Last merged | PR #149 — Phase 91 consolidated (2026-05-10). |
+| Active branch | `phase-87d-92-observability-closeout-gcs-sync` — Phase 87d closeout + Phase 92 bundled, in flight. |
+| In-flight | Phase 87d — trace context propagation across admin + bleephub HTTP clients (otelhttp.NewTransport on every plain `&http.Client{}`); MeterProvider + runtime metrics across all 12 components (auto-emits HTTP request count/duration/size from the existing otelhttp.NewHandler + Go runtime metrics); `make stack-observability-validate` end-to-end harness. Phase 92 — gcs-fuse deregistered on cloudrun + gcf with translator reject pointing at gcs-sync (Cloud Run rejects cache-TTL flags so gcs-fuse is broken for cross-task workspaces — BUG-987 closes the original BUG-944 documentation). |
+| Last merged | PR #150 — Phase 87c full scope (2026-05-10). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 986 fixed. |
+| Bugs | 0 open · 987 fixed. |
 | Live infra | None up. |
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
 
-## Phase 87c — in flight on `phase-87c-zerolog-otel-bridge` (PR #150)
+## Phase 87d + 92 — in flight on `phase-87d-92-observability-closeout-gcs-sync`
 
-Closes the observability story for **every** sockerless process — every log line now flows through BOTH stderr AND the OTel logs SDK when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+**Phase 87d closes Phase 87.** Three real gaps the audit surfaced after the bridge work merged:
 
-`backends/core/otel.go` (used by 7 backends):
-- New `InitObservability(serviceName) (*Observability, error)` returns `{LogWriter, Shutdown}` (or zero value with no-op shutdown when OTel disabled). `InitTracer` stays for backward compat.
-- New `OTelLogWriter` implements `io.Writer` so it slots into `zerolog.MultiLevelWriter(consoleW, otelW)`. Parses each JSON line and emits an OTel log Record. Maps zerolog level → severity, message → body, time → timestamp; promotes other fields to attributes.
+1. **Trace context propagation** — admin's 7 plain `&http.Client{}` sites (proxyClient, rollupClient, health-poll, component proxy, project-manager health-wait, sim bootstrap, instance probe) and bleephub's 2 (GitHub Actions tarball fetch, webhook dispatch) now use `otelhttp.NewTransport(http.DefaultTransport)` so outgoing requests carry the `traceparent` header. `tracedHTTPClient(timeout)` helper added in admin's `otel.go` for clean reuse. Global propagator (`TraceContext + Baggage`) set inside each of the 5 `InitObservability` implementations — 12 components covered.
+2. **MeterProvider + runtime metrics** — `InitObservability` now also creates a MeterProvider with the OTLP HTTP metric exporter, so `otelhttp.NewHandler`'s built-in HTTP request count / duration / size flow (they were emitted into a no-op meter until now). `runtime.Start` from `go.opentelemetry.io/contrib/instrumentation/runtime` wires Go runtime metrics (goroutines, GC pauses, heap size). 2 new tests in `backends/core/otel_test.go`.
+3. **`make stack-observability-validate`** — manual operator-grade end-to-end check. Polls VictoriaLogs + Jaeger until ≥1 log line and ≥1 trace land for the requested service (default `sockerless-backend-docker`), with configurable timeout (`OBS_VALIDATE_TIMEOUT_S`, default 30s) and service override (`OBS_VALIDATE_SERVICE`). Documented in `docs/OBSERVABILITY.md` § Validation.
 
-Mirrored bridges (separate Go modules — can't import `backends/core`):
-- `simulators/{aws,gcp,azure}/shared/otel.go` — full `Observability`. `Config.LogWriter` field plumbs through `NewServer` into the existing zerolog setup.
-- `bleephub/otel.go` — full `Observability`; `cmd/main.go` uses `MultiLevelWriter`.
-- `cmd/sockerless-admin/otel.go` — `Observability` adds `TextLogWriter` (stdlib `log` is flat text, not zerolog JSON); `main.go` wires `log.SetOutput(io.MultiWriter(os.Stderr, TextLogWriter))`.
+**Phase 92 closes BUG-944 + ships BUG-987.** `Backing: gcs-fuse` on cloudrun + gcf produced silently broken cross-task workspaces because Cloud Run rejects the cache-TTL gcsfuse flags as unrecognized (`metadata-cache:ttl-secs`, `metadata-cache:negative-ttl-secs`). Without those flags the 5s negative-cache hides freshly-written files from sibling containers. Real fix: deregister `GCSFuseDriver` on cloudrun + gcf, translator rejects `BackingGCSFuse` with a concrete pointer at `gcs-sync` (per-exec tar/untar, no FUSE, strong consistency). Driver code stays in `backends/gcp-common/storage_gcsfuse.go` for hypothetical future backends without the flag-allowlist constraint.
 
-5 new core tests. 12 components covered. Components-decoupled invariant intact.
+## Phases after 87d / 92
 
-## Phases after 87c
-
-- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. Multi-day cloud-API work.
+- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. Bookmarked: Cloud Run lacks the primitive entirely (`runpb.Volume` has no PersistentDisk field). Implementation requires either a sockerless GCE-style backend or a future Cloud Run feature.
 - **Live-cloud validation track** — Lambda / Cloud Run Services / ACA Apps / AZF cloud-dns / Lambda service-mesh / ACA-AZF Azure AD.
 
 ## Recently shipped
