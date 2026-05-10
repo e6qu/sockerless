@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -85,6 +89,13 @@ func InitObservability(serviceName string) (*Observability, error) {
 	)
 	otel.SetTracerProvider(tp)
 
+	// Set the global propagator so otelhttp.NewTransport-wrapped
+	// outgoing clients carry the W3C traceparent header. Without
+	// this, admin → backend hops start a fresh trace each time.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+
 	logExp, err := otlploghttp.New(context.Background())
 	if err != nil {
 		_ = tp.Shutdown(context.Background())
@@ -96,10 +107,26 @@ func InitObservability(serviceName string) (*Observability, error) {
 	)
 	global.SetLoggerProvider(lp)
 
+	metricExp, err := otlpmetrichttp.New(context.Background())
+	if err != nil {
+		_ = tp.Shutdown(context.Background())
+		_ = lp.Shutdown(context.Background())
+		return nil, err
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetMeterProvider(mp)
+
+	// Go runtime metrics (goroutines, GC pauses, heap size).
+	// Runs as a background goroutine; no-op once mp shuts down.
+	_ = runtime.Start(runtime.WithMinimumReadMemStatsInterval(15 * time.Second))
+
 	return &Observability{
 		LogWriter: &OTelLogWriter{logger: lp.Logger(serviceName)},
 		Shutdown: func(ctx context.Context) error {
-			return errors.Join(tp.Shutdown(ctx), lp.Shutdown(ctx))
+			return errors.Join(tp.Shutdown(ctx), lp.Shutdown(ctx), mp.Shutdown(ctx))
 		},
 	}, nil
 }

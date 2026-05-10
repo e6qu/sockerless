@@ -52,9 +52,9 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/status", handleInstanceStatus(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/logs", handleInstanceLogs(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/diagnostics", handleInstanceDiagnostics(mgr))
-	proxyClient := &http.Client{Timeout: proxyTimeout + 5*time.Second}
+	proxyClient := tracedHTTPClient(proxyTimeout + 5*time.Second)
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/proxy", handleInstanceProxy(mgr, proxyClient))
-	rollupClient := &http.Client{Timeout: 5 * time.Second}
+	rollupClient := tracedHTTPClient(5 * time.Second)
 	mux.HandleFunc("GET /api/v1/topology/resources", handleTopologyResources(mgr, rollupClient))
 	mux.HandleFunc("GET /api/v1/topology/config-metadata", handleConfigMetadata())
 	mux.HandleFunc("PUT /api/v1/topology/projects/{project}/instances/{instance}/config", handleInstanceConfigUpdate(mgr))

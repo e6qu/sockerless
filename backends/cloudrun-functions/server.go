@@ -123,19 +123,18 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.CloudState = &gcfCloudState{server: s}
 
 	// Storage backing registry. EmptyDirDriver always registered;
-	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
-	// GCSSyncDriver registered when the GCS client constructs
-	// successfully — its absence is logged but not fatal so backends
-	// without GCS access still boot for unit tests.
+	// GCSSyncDriver registered when the GCS client constructs successfully
+	// — its absence is logged but not fatal so backends without GCS access
+	// still boot for unit tests. gcs-fuse is deliberately NOT registered:
+	// Gen2 functions run on Cloud Run Services which rejects the cache-TTL
+	// gcsfuse flags needed for cross-task safety (BUG-944) — the translator
+	// rejects gcs-fuse with a pointer at gcs-sync.
 	s.storageBackings = core.NewStorageBackingRegistry()
-	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
-		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-	})
 	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {
 		s.storageBackings.Register(syncDriver)
 		logger.Info().Str("backing", "gcs-sync").Msg("registered storage backing driver")
 	} else {
-		logger.Warn().Err(err).Msg("gcs-sync driver init failed — falling back to gcs-fuse for shared volumes")
+		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
 	s.storageBackings.Register(core.NewMemoryDriver(64))

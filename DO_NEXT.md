@@ -4,24 +4,28 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-87c-zerolog-otel-bridge` — Phase 87c full scope on PR #150 (open). 7 backends + 3 sims + bleephub + admin all bridged. Awaiting CI + user merge.
+`phase-87d-92-observability-closeout-gcs-sync` — Phase 87 closeout (87d) + Phase 92 (gcs-fuse → gcs-sync) bundled. 6 commits ready to push as a PR. **Do NOT auto-merge — wait for user.**
 
 ## Status
 
-Phase 87c (consolidated, full scope per user direction "keep all phase 87 on a single PR") is implementation-complete on this branch. After this merges, queue: Phase 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → live-cloud validation track.
+Phase 87d closes the three remaining gaps the audit surfaced after PR #150 merged: trace propagation across admin + bleephub HTTP clients, MeterProvider + runtime metrics across all 12 components, and a `make stack-observability-validate` end-to-end harness. Phase 92 ships BUG-987: deregister `Backing: gcs-fuse` on cloudrun + gcf because Cloud Run rejects the cache-TTL flags it needs to be safe across tasks; translator points operators at `gcs-sync` instead.
 
-## Resume here — Phase 87c (full scope) on PR #150
+## Resume here — Phase 87d + 92 bundle
 
-Branch has 2 implementation commits + state save ready/landed:
+Branch has 6 commits ready to push:
 
-1. `phase 87c: zerolog OTel bridge across 7 backends` — `backends/core/otel.go` gains `InitObservability` + `OTelLogWriter`. 7 backend `main.go` use `MultiLevelWriter(consoleW, obs.LogWriter)`.
-2. `phase 87c: zerolog OTel bridge across sims + admin + bleephub` — bridge mirrored into `simulators/{aws,gcp,azure}/shared/otel.go` (with `Config.LogWriter` plumbed through `NewServer`), `bleephub/otel.go`, `cmd/sockerless-admin/otel.go` (adds `TextLogWriter` for stdlib `log`).
+1. `phase 87d: trace context propagation across admin + bleephub HTTP clients` — 9 client construction sites wrapped with otelhttp.NewTransport; global propagator set inside InitObservability.
+2. `phase 87d: OTel MeterProvider + runtime metrics across all components` — 5 InitObservability impls extended; runtime.Start emits Go runtime metrics; 2 new core tests.
+3. `phase 87d: stack-observability-validate make target` — manual operator-grade harness in make/stack.mk + docs/OBSERVABILITY.md § Validation.
+4. `phase 92: deregister gcs-fuse on cloudrun + gcf, reject in translator (BUG-944)` — registry change + translator reject arms + 2 new tests + reused PD-ephemeral test cleanup.
+5. `phase 92: docs + BUG-944 closure` — specs/CLOUD_RESOURCE_MAPPING.md + BUGS.md (BUG-987 = 987 filed/fixed).
+6. `docs: state save for Phase 87d + 92` — this commit.
 
-CI running on PR #150. **Do NOT auto-merge — wait for user.**
+CI runs after `git push -u origin phase-87d-92-observability-closeout-gcs-sync && gh pr create`. **Do NOT auto-merge — wait for user.**
 
-## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf (later)
+## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf
 
-Sockerless-managed Compute Engine PD `disks.create`/`attach`/`delete` per task. Cloud Run Services don't expose PD volume attach as a first-class primitive — operator-side work + sim-side work. Multi-day cloud-API effort.
+**Bookmarked indefinitely.** `runpb.Volume` protobuf has no PersistentDisk field; Cloud Run Admin API doesn't expose PD attach as a first-class primitive. Implementation requires either a future GCE-style sockerless backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c) stays in place.
 
 
 ## Invariants (re-state on every commit)

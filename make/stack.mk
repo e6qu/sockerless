@@ -27,7 +27,8 @@ STACK_BLEEPHUB_PORT := 5555
         stack-azure-aca stack-azure-azf \
         stack-up stack-down stack-status \
         stack-bleephub-up \
-        stack-observability-up stack-observability-down stack-observability-status
+        stack-observability-up stack-observability-down \
+        stack-observability-status stack-observability-validate
 
 # Phase 87 — observability stack (OTel Collector + VictoriaLogs +
 # Jaeger). All Apache 2.0. Independent from stack-X-Y; either can run
@@ -209,6 +210,67 @@ stack-observability-status: ## show observability stack PIDs
 	    printf "  $(COLOR_RED)○ %-15s$(COLOR_RESET) pid=%s (dead)\n" "$$name" "$$pid"; \
 	  fi ; \
 	done
+
+# stack-observability-validate is the canonical "is the OTel pipeline
+# actually working end-to-end?" check. It assumes the stack is up
+# (run `make stack-observability-up` first) and a sockerless component
+# is running with OTEL_EXPORTER_OTLP_ENDPOINT pointed at the local
+# collector. The target then polls VictoriaLogs and Jaeger until at
+# least one log line and one trace span land for the requested service
+# (default: sockerless-backend-docker).
+#
+# Usage:
+#   make stack-observability-up
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:$(STACK_OBS_OTLP_HTTP) \
+#     make stack-docker-up   # or run any backend manually
+#   curl http://localhost:3375/v1/version  # generate at least one request
+#   make stack-observability-validate
+#
+# OBS_VALIDATE_SERVICE overrides the service.name being checked.
+# OBS_VALIDATE_TIMEOUT_S sets the per-poll timeout in seconds (default 30).
+OBS_VALIDATE_SERVICE  ?= sockerless-backend-docker
+OBS_VALIDATE_TIMEOUT_S ?= 30
+stack-observability-validate: ## assert telemetry lands in VictoriaLogs + Jaeger
+	@if [ ! -d $(STACK_OBS_PID_DIR) ]; then \
+	  printf "$(COLOR_RED)Observability stack not running. Run 'make stack-observability-up' first.$(COLOR_RESET)\n"; \
+	  exit 1; \
+	fi
+	@printf "$(COLOR_CYAN)▸ Validating telemetry pipeline for service.name=$(OBS_VALIDATE_SERVICE)$(COLOR_RESET)\n"
+	@printf "  $(COLOR_DIM)VictoriaLogs query: http://localhost:$(STACK_OBS_VICTORIALOGS_UI)/select/logsql/query?query=service.name:%22$(OBS_VALIDATE_SERVICE)%22$(COLOR_RESET)\n"
+	@deadline=$$(( $$(date +%s) + $(OBS_VALIDATE_TIMEOUT_S) )); \
+	 logs_seen=0 ; traces_seen=0 ; \
+	 while [ $$(date +%s) -lt $$deadline ]; do \
+	   if [ $$logs_seen -eq 0 ]; then \
+	     count=$$(curl -fsSG "http://localhost:$(STACK_OBS_VICTORIALOGS_UI)/select/logsql/query" \
+	       --data-urlencode "query=service.name:\"$(OBS_VALIDATE_SERVICE)\"" \
+	       --data-urlencode "limit=1" 2>/dev/null | wc -l | tr -d ' '); \
+	     if [ "$$count" -gt 0 ]; then \
+	       printf "  $(COLOR_GREEN)✓ VictoriaLogs: %s log line(s) for $(OBS_VALIDATE_SERVICE)$(COLOR_RESET)\n" "$$count"; \
+	       logs_seen=1; \
+	     fi; \
+	   fi; \
+	   if [ $$traces_seen -eq 0 ]; then \
+	     traces=$$(curl -fsS "http://localhost:$(STACK_OBS_JAEGER_UI)/api/traces?service=$(OBS_VALIDATE_SERVICE)&limit=1" 2>/dev/null \
+	       | grep -c '"traceID"' || true); \
+	     if [ "$$traces" -gt 0 ]; then \
+	       printf "  $(COLOR_GREEN)✓ Jaeger: %s trace(s) for $(OBS_VALIDATE_SERVICE)$(COLOR_RESET)\n" "$$traces"; \
+	       traces_seen=1; \
+	     fi; \
+	   fi; \
+	   if [ $$logs_seen -eq 1 ] && [ $$traces_seen -eq 1 ]; then \
+	     printf "$(COLOR_GREEN)Observability pipeline healthy.$(COLOR_RESET)\n"; \
+	     exit 0; \
+	   fi; \
+	   sleep 2; \
+	 done; \
+	 if [ $$logs_seen -eq 0 ]; then \
+	   printf "  $(COLOR_RED)✗ VictoriaLogs: no log lines for $(OBS_VALIDATE_SERVICE) within $(OBS_VALIDATE_TIMEOUT_S)s$(COLOR_RESET)\n"; \
+	 fi; \
+	 if [ $$traces_seen -eq 0 ]; then \
+	   printf "  $(COLOR_RED)✗ Jaeger: no traces for $(OBS_VALIDATE_SERVICE) within $(OBS_VALIDATE_TIMEOUT_S)s$(COLOR_RESET)\n"; \
+	 fi; \
+	 printf "$(COLOR_RED)Observability pipeline UNHEALTHY. Check $(STACK_OBS_PID_DIR)/*.log + the running component's logs.$(COLOR_RESET)\n"; \
+	 exit 1
 
 stack-down: ## stop all running stack processes
 	@if [ ! -d $(STACK_PID_DIR) ]; then \

@@ -137,15 +137,14 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Access = gcpcommon.NewIDTokenAccess(config.ServiceAccount)
 
 	// Storage backing registry. EmptyDirDriver always available;
-	// GCSFuseDriver kept for legacy SharedVolumes (tar-pack persist);
 	// GCSSyncDriver registered when the GCS client constructs
-	// successfully. No-fallbacks directive: SharedVolumes with an
-	// unrecognized Backing fail at resolve time rather than silently
-	// selecting a default.
+	// successfully (the Cloud Run primitive for cross-task workspaces).
+	// gcs-fuse is deliberately NOT registered here — Cloud Run rejects
+	// the cache-TTL flags it needs to be safe (BUG-944), so the
+	// translator rejects gcs-fuse with a pointer at gcs-sync. No-fallbacks
+	// directive: SharedVolumes with an unrecognized Backing fail at resolve
+	// time rather than silently selecting a default.
 	s.storageBackings = core.NewStorageBackingRegistry()
-	s.storageBackings.Register(&gcpcommon.GCSFuseDriver{
-		MountOptions: gcpcommon.RunnerWorkspaceMountOptions(),
-	})
 	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {
 		s.storageBackings.Register(syncDriver)
 		logger.Info().Str("backing", "gcs-sync").Msg("registered storage backing driver")

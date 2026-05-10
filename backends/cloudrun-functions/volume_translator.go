@@ -86,19 +86,15 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		return v, nil
 
 	case core.BackingGCSFuse:
-		if spec.GCS == nil || spec.GCS.Bucket == "" {
-			return nil, fmt.Errorf("gcs-fuse backing for volume %q missing bucket", name)
-		}
-		return &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       spec.GCS.Bucket,
-					MountOptions: append([]string{}, spec.GCS.MountOptions...),
-					ReadOnly:     spec.GCS.ReadOnly,
-				},
-			},
-		}, nil
+		// Cloud Functions Gen2 sits on Cloud Run Services under the
+		// hood — same gcsfuse cache-TTL rejection per BUG-944. See
+		// cloudrun translator for the full rationale.
+		return nil, fmt.Errorf(
+			"volume %q: backing %q is unsupported on Cloud Functions — "+
+				"Gen2 runs on Cloud Run Services which rejects the cache-TTL "+
+				"gcsfuse flags needed for cross-task safety (BUG-944). "+
+				"Use Backing: gcs-sync instead (per-exec tar sync, no FUSE)",
+			name, spec.Kind)
 
 	case core.BackingPDEphemeral:
 		// Cloud Functions Gen2 sits on Cloud Run Services under the
@@ -107,9 +103,8 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		return nil, fmt.Errorf(
 			"volume %q: backing %q not supported on Cloud Functions — "+
 				"Gen2 functions run on Cloud Run Services which lack a first-class "+
-				"PD volume primitive. Use Backing: gcs-fuse (with MountOptions per "+
-				"BUG-944) for cross-task workspace sharing or Backing: gcs-sync for "+
-				"per-step granularity",
+				"PD volume primitive. Use Backing: gcs-sync for cross-task "+
+				"workspace sharing",
 			name, spec.Kind)
 	}
 	return nil, fmt.Errorf("volume %q: unsupported backing kind %q", name, spec.Kind)

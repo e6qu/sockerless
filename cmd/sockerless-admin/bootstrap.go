@@ -33,7 +33,7 @@ func BootstrapSimulator(cloud CloudType, backend BackendType, simAddr, projectNa
 
 	c := client
 	if c == nil {
-		c = &http.Client{Timeout: 10 * time.Second}
+		c = tracedHTTPClient(10 * time.Second)
 	}
 	resp, err := c.Do(req)
 	if err != nil {

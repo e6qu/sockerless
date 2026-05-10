@@ -8,6 +8,8 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -155,6 +157,66 @@ func TestOTelLogWriter_Write_BadJSON(t *testing.T) {
 	}
 	if n != len("not json") {
 		t.Errorf("n = %d", n)
+	}
+}
+
+func TestInitObservabilitySetsPropagator(t *testing.T) {
+	// Reset to a known-empty propagator first so we can detect the change.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+	obs, err := InitObservability("test-service")
+	if err != nil {
+		t.Fatalf("InitObservability: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = obs.Shutdown(ctx)
+	}()
+
+	// Confirm a TraceContext propagator is now installed by injecting
+	// a synthetic span context into a header carrier and verifying the
+	// traceparent header lands.
+	prop := otel.GetTextMapPropagator()
+	carrier := propagation.MapCarrier{}
+	prop.Inject(context.Background(), carrier)
+	// An empty/no-op propagator wouldn't write anything; the composite
+	// TraceContext propagator will at least register Fields() containing
+	// "traceparent".
+	found := false
+	for _, f := range prop.Fields() {
+		if f == "traceparent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected traceparent in propagator fields, got %v", prop.Fields())
+	}
+}
+
+func TestInitObservabilitySetsMeterProvider(t *testing.T) {
+	otel.SetMeterProvider(metricnoop.NewMeterProvider())
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+	obs, err := InitObservability("test-service")
+	if err != nil {
+		t.Fatalf("InitObservability: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = obs.Shutdown(ctx)
+	}()
+
+	// The global MeterProvider should no longer be the noop one we set
+	// before the call. We can't equality-check (sdkmetric is internal
+	// to the SDK) but we can confirm Meter() returns a non-nil instance
+	// that produces a counter without panicking — the noop SDK does too,
+	// so we just assert the instance changed type by Type-asserting against
+	// the noop interface.
+	mp := otel.GetMeterProvider()
+	if _, isNoop := mp.(metricnoop.MeterProvider); isNoop {
+		t.Error("expected real MeterProvider after InitObservability, got noop")
 	}
 }
 

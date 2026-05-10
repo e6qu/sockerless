@@ -32,7 +32,7 @@ func NewProjectManager(pm *ProcessManager, reg *Registry, storeDir string) *Proj
 		reg:      reg,
 		ports:    NewPortAllocator(),
 		storeDir: storeDir,
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   tracedHTTPClient(10 * time.Second),
 	}
 }
 

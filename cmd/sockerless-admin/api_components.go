@@ -7,7 +7,7 @@ import (
 
 // registerAPI registers all admin API routes.
 func registerAPI(mux *http.ServeMux, reg *Registry, procMgr *ProcessManager, projectMgr *ProjectManager) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := tracedHTTPClient(5 * time.Second)
 
 	mux.HandleFunc("GET /api/v1/components", handleComponents(reg))
 	mux.HandleFunc("GET /api/v1/components/{name}/health", handleComponentProxy(reg, client, "health"))
