@@ -6,34 +6,42 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-87b-component-otel-wiring` — Phase 87b in flight (2 implementation commits + state save). |
-| In-flight | Phase 87b — component-side OTel SDK wiring. core.InitTracer wired into 6 backend main.go files + new sim/admin InitTracer helpers + otelhttp.NewHandler on sim/admin muxes. |
-| Last merged | PR #145 — Phase 87 (Stack A first PR) (2026-05-10). |
+| Active branch | `phase-91-pd-ephemeral-volumes` — Phase 91 in flight (1 implementation commit + state save). |
+| In-flight | Phase 91 — `BackingMemory` translator on cloudrun + gcf. Closes the gap where Phase 127's MemoryDriver was registered but no translator handled the `BackingMemory` case. |
+| Last merged | PR #146 — Phase 87b component-side OTel SDK wiring (2026-05-10). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 986 fixed. |
 | Live infra | None up. |
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
 
-## Phase 87b — in flight on `phase-87b-component-otel-wiring`
+## Phase 91 — in flight on `phase-91-pd-ephemeral-volumes`
 
-Two implementation commits + state save. Spans now flow from every Go binary into Jaeger when OTEL_EXPORTER_OTLP_ENDPOINT is set. Logs already worked from Phase 87 via the collector's filelog receiver scraping .stack-pids/*.log.
+One implementation commit + state save. Audit-driven scope.
 
-1. `phase 87b: wire core.InitTracer into 6 backend main.go files` — ecs / lambda / cloudrun / gcf / aca / azf each gain a 4-line OTel init at startup (mirroring docker's existing pattern from Phase 86). otelhttp middleware was already in `backends/core/server.go`; this commit makes it actually emit by initialising the tracer. Service names: `sockerless-backend-{name}`.
-2. `phase 87b: wire OTel SDK + otelhttp on sims + admin` — 3 sims gain `shared/otel.go` (new InitTracer helper) + otelhttp.NewHandler at the outermost middleware layer + 4-line init in each main.go. Admin gains a duplicated InitTracer helper (separate Go module without backend-core dep) + otelhttp.NewHandler wrapping the mux. 11 new tracer tests.
+The original Phase 91 brief was "lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`". The audit found:
 
-bleephub was already fully wired (InitTracer + otelhttp) since Phase 86 baseline — no changes needed.
+- `efs-ephemeral` is already wired on ECS (Phase 127); Lambda's inline EFS path predates the BackingSpec framework.
+- `azure-files-ephemeral` is already wired on ACA + AZF.
+- `pd-ephemeral` on Cloud Run is bookmarked at the spec level — Cloud Run Services don't have a first-class PD volume attach primitive (`specs/CLOUD_RESOURCE_MAPPING.md` line 567-568). Real implementation requires multi-day Compute Engine API lifecycle work.
 
-## Phases after 87b
+The audit-discovered gap: `BackingMemory` (Phase 127) had its driver registered in all 6 backends but no translator handled the `case core.BackingMemory` arm. Operators picking `Backing: memory` would hit "unsupported backing kind" despite the driver claiming support.
 
-- **Phase 87c (optional)** — zerolog → OTel logs bridge so OTLP-mode operators don't depend on the filelog receiver fallback. Adds OTel logs SDK across the 4 affected modules (backends/core, bleephub, sims/shared × 3, admin). Skipped from Phase 87b to keep the dep churn contained — filelog covers the immediate need.
+`phase 91: BackingMemory translator on cloudrun + gcf` — adds the `case core.BackingMemory` arm to both translators, mapping to `EmptyDir{Medium: MEMORY}` with `SizeLimit` forwarded from `spec.Memory.SizeMB`. 5 tests. Phase 91b/c/d follow-ups will add the same arm to ECS / Lambda / ACA / AZF translators.
 
-After 87b/c: phases 91–94 (real per-cloud volume provisioning), live-cloud validation track (Lambda / Cloud Run Services / ACA Apps / AZF cloud-dns / Lambda service-mesh / ACA-AZF Azure AD).
+## Phases after 91
+
+- **Phase 91b** — BackingMemory translator on ECS + Lambda. Each cloud's tmpfs primitive differs (ECS LinuxParameters.Tmpfs vs Lambda /tmp).
+- **Phase 91c** — BackingMemory translator on ACA + AZF.
+- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf (Compute Engine PD `disks.create`/`attach`/`delete`).
+- **Phase 87c (optional)** — zerolog → OTel logs bridge so OTLP-mode operators don't depend on filelog. Skipped from 87b to keep dep churn contained.
+- **Live-cloud validation track** — Lambda / Cloud Run Services / ACA Apps / AZF cloud-dns / Lambda service-mesh / ACA-AZF Azure AD.
 
 ## Recently shipped
 
 | Date | PR | Headline |
 |---|---|---|
+| 2026-05-10 | #146 | Phase 87b — wire OTel SDK across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go + otelhttp.NewHandler on sim/admin muxes. Spans flow from every Go binary into Jaeger when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
 | 2026-05-10 | #145 | Phase 87 (Stack A first PR) — `make stack-observability-{up,down,status}` (otel-collector + VictoriaLogs + Jaeger), filelog receiver scraping `.stack-pids/*.log`, `GET /api/v1/observability` endpoint, VictoriaLogs/Jaeger deep-link chips on the diagnostic panel, `docs/OBSERVABILITY.md`. |
 | 2026-05-10 | #144 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
 | 2026-05-10 | #143 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload / Restart prompt. |

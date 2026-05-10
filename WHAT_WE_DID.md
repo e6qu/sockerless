@@ -6,6 +6,24 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 91 BackingMemory translator on cloudrun + gcf (`phase-91-pd-ephemeral-volumes` branch)
+
+One implementation commit + state save. Audit-driven scope.
+
+**The audit reframed the phase.** Branch was created as `phase-91-pd-ephemeral-volumes` to match PLAN.md's "lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`". Reading the existing code revealed that two of those three are already wired:
+
+- `efs-ephemeral` was wired on ECS in Phase 127. Lambda's inline EFS path (predating the BackingSpec framework) is functionally equivalent.
+- `azure-files-ephemeral` was wired on ACA + AZF in Phase 127.
+- `pd-ephemeral` on Cloud Run was always a bookmark. The spec at line 567-568 calls this out: Cloud Run Services lack first-class PD volume attach; real implementation requires sockerless to manage Compute Engine `disks.create`/`attach`/`delete` per task. Multi-day cloud-API work, deferred to Phase 91d.
+
+The actual gap the audit surfaced: `BackingMemory` (Phase 127) had its driver registered in all 6 backends — `core.NewMemoryDriver(64)` — but no per-backend volume translator handled the `case core.BackingMemory` arm. An operator setting `Backing: memory` on a SharedVolume hit "unsupported backing kind" from the translator's default case despite the driver framework claiming support. Framework-vs-translator mismatch.
+
+**This PR's deliverable.** Close the gap on cloudrun + gcf — the two backends most likely to use a memory backing for runner-task workspaces. Adds `case core.BackingMemory:` to `runpbVolumeFromBackingSpec` in both translators. Mapping: Cloud Run's tmpfs primitive is `EmptyDir{Medium: MEMORY}`; `spec.Memory.SizeMB > 0` forwards to the `SizeLimit` field as `<N>Mi` (Cloud Run's accepted format); `SizeMB == 0` leaves SizeLimit blank so the cloud uses the container's memory limit as the cap.
+
+**Why split 91/91b/91c/91d** instead of one big PR. Each cloud's tmpfs primitive differs. ECS exposes tmpfs at the *container-def* layer (`LinuxParameters.Tmpfs[]`), not the *task-def* layer where Volumes live — wiring on ECS is cross-layer plumbing, not a parallel translator addition. Lambda has no volume primitive for RAM mounts at all (`/tmp` is per-invocation scratch, 512 MB–10 GB). ACA + AZF need their own translator extensions. Per-cloud separation keeps reviews focused.
+
+**5 tests** assert SizeMB→SizeLimit composition, SizeMB=0 → no SizeLimit, nil Memory spec → EmptyDir without limit. Pure-function translator; no live-cloud calls.
+
 ## 2026-05-10 — Phase 87b component-side OTel SDK wiring (`phase-87b-component-otel-wiring` branch)
 
 Two implementation commits + state save. Trace emission for every Go binary in the project — backends, sims, admin. Logs already worked from Phase 87 via the collector's filelog receiver scraping `.stack-pids/*.log`.
