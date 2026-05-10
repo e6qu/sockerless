@@ -42,7 +42,10 @@ func main() {
 	// onto workload containers.
 	simListenAddr = cfg.ListenAddr
 
-	srv := sim.NewServer(cfg)
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		log.Fatalf("simulator startup: %v", err)
+	}
 
 	// Register AWS JSON services (X-Amz-Target header routing)
 	awsRouter := sim.NewAWSRouter()

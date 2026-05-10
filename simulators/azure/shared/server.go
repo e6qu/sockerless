@@ -33,7 +33,13 @@ type Server struct {
 }
 
 // NewServer creates a new simulator server with the given configuration.
-func NewServer(cfg Config) *Server {
+//
+// Returns an error when persistence is requested (cfg.Persist=true)
+// but the data directory cannot be opened. Operator asked for durable
+// state; degrading silently to in-memory would mask misconfiguration
+// (bad path, perms, full disk) and produce silent data loss across
+// restarts (BUG-985).
+func NewServer(cfg Config) (*Server, error) {
 	level, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		level = zerolog.InfoLevel
@@ -82,6 +88,7 @@ func NewServer(cfg Config) *Server {
 		handler: handler,
 	}
 
+	// Persistence opens fail loud — operator asked for durable state.
 	if cfg.Persist {
 		dataDir := cfg.DataDir
 		if dataDir == "" {
@@ -89,15 +96,14 @@ func NewServer(cfg Config) *Server {
 		}
 		db, err := OpenDB(dataDir)
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to open SQLite database, falling back to in-memory")
-		} else {
-			srv.db = db
-			srv.tracker = NewProcessTracker(dataDir)
-			logger.Info().Str("path", dataDir+"/simulator.db").Msg("SQLite persistence enabled")
+			return nil, fmt.Errorf("open persistence at %s: %w", dataDir, err)
 		}
+		srv.db = db
+		srv.tracker = NewProcessTracker(dataDir)
+		logger.Info().Str("path", dataDir+"/simulator.db").Msg("SQLite persistence enabled")
 	}
 
-	return srv
+	return srv, nil
 }
 
 // DB returns the SQLite database connection, or nil if persistence is disabled.

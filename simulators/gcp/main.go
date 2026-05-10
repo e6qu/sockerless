@@ -44,7 +44,10 @@ func main() {
 	// GCE_METADATA_HOST + sidecar URLs onto workload containers.
 	simListenAddr = cfg.ListenAddr
 
-	srv := sim.NewServer(cfg)
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		log.Fatalf("simulator startup: %v", err)
+	}
 
 	// Initialise the regional CPU quota tracker before route registration —
 	// CreateService / UpdateService / CreateFunction handlers debit against
