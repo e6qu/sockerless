@@ -6,6 +6,22 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 91b BackingMemory on ECS / ACA / AZF (`phase-91b-backingmemory-ecs-lambda` branch)
+
+One implementation commit + state save. Continues Phase 91's BackingMemory work across the AWS + Azure backends. The pattern that emerged was per-cloud divergent — exactly why splitting was the right call.
+
+**ACA: clean cloud-native match.** Azure Container Apps revisions support `StorageTypeEmptyDir` as a first-class volume type (the SDK enum literally enumerates it alongside `StorageTypeAzureFile`). One-line addition to the translator's switch arm; no architectural friction.
+
+**ECS: explicit reject.** ECS task-def Volumes don't expose a tmpfs primitive at all — RAM-backed mounts live at `ContainerDefinition.LinuxParameters.Tmpfs[]` (container-def, not task-def). Two layers, two different shapes. The choice was: silently substitute `Host{}` (disk-backed) volume with a misleading "memory" label, OR reject loudly. Chose rejection — the operator's expectation when picking `Backing: memory` is RAM, not disk; lying about that would surprise them at runtime when the cache they thought was in RAM was actually paging through disk. Error message points at the right primitive (`LinuxParameters.Tmpfs`) + the alternative (`Backing: emptyDir` for disk-backed task-scoped scratch).
+
+**AZF: explicit reject.** Azure Functions WebApps storage surface (`AzureStorageInfoValue`) is BYOS-only — no tmpfs primitive at that layer. Per-invocation `/tmp` is the closest analogue but isn't a Docker-style mount. Same rejection logic as ECS, pointer to `/tmp`.
+
+**Lambda: deferred.** Lambda's volume path predates the BackingSpec framework — `volumes.go::fileSystemConfigsForBinds` builds `lambdatypes.FileSystemConfig` directly from `awscommon.EFSManager` without ever calling `storageBackings.Resolve`. Wiring `BackingMemory` requires first migrating Lambda to the framework. That's a separate refactor PR (Phase 91c) and shouldn't be bundled with translator extensions — different blast radius.
+
+**The deeper observation.** Phase 91 + 91b together prove the cloud-agnostic backing model only goes as deep as the cloud-native primitives it maps onto. `BackingMemory` works cleanly on Cloud Run / Cloud Run Functions / ACA because all three expose `EmptyDir{Memory}` as a first-class volume type. ECS exposes the same idea at a different layer (LinuxParameters), and AZF doesn't expose it at all. The rejection arms aren't a failure of the framework — they're the framework being honest that the operator's request can't be honored on that cloud, with concrete pointers at what to do instead.
+
+**5 new tests** across ECS / ACA / AZF: ECS rejection error contains the right pointers; ECS EFS path still works (regression guard); ACA EmptyDir maps cleanly; ACA AzureFile path still works; AZF rejection points at `/tmp`.
+
 ## 2026-05-10 — Phase 91 BackingMemory translator on cloudrun + gcf (`phase-91-pd-ephemeral-volumes` branch)
 
 One implementation commit + state save. Audit-driven scope.

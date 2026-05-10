@@ -53,6 +53,20 @@ func translateBackingSpecToAZFStorage(spec core.BackingSpec, mountPath, accessKe
 			AccessKey:   to.Ptr(accessKey),
 			MountPath:   to.Ptr(mountPath),
 		}, nil
+
+	case core.BackingMemory:
+		// Azure Functions (Flex Consumption / Premium) doesn't expose
+		// a tmpfs primitive via WebApps' AzureStorageInfoValue
+		// surface — that layer is BYOS-only. Per-invocation `/tmp`
+		// is the closest analogue but isn't a Docker-style mount.
+		// Fail loudly rather than silently fall through; operators
+		// wanting RAM-backed scratch should write to /tmp directly
+		// from their function code.
+		return nil, fmt.Errorf(
+			"azf translator: backing %q not supported via WebApps storage — "+
+				"Azure Functions has no tmpfs volume primitive. "+
+				"Use per-invocation /tmp scratch space inside the function instead",
+			spec.Kind)
 	}
 	return nil, fmt.Errorf("azf translator: backing %q not supported on AZF", spec.Kind)
 }

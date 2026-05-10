@@ -45,6 +45,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #144 | 86 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
 | #145 | 87 | Phase 87 (Stack A first PR) — observability stack make targets, collector config with filelog receiver, /api/v1/observability endpoint, VictoriaLogs/Jaeger UI deep-link chips, docs/OBSERVABILITY.md. |
 | #146 | 87b | Phase 87b — wire OTel SDK + otelhttp.NewHandler across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go. Trace emission for every Go binary when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
+| #147 | 91 | Phase 91 — `BackingMemory` translator on cloudrun + gcf. `EmptyDir{Medium: MEMORY}` + `SizeLimit` from `spec.Memory.SizeMB`. |
 
 ## Roadmap (ordered)
 
@@ -156,11 +157,11 @@ If Stack A turns out unsuitable: same component code (OTLP) works against OpenOb
 
 Lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
 
-**Phase 91 ✓ in flight (`phase-91-pd-ephemeral-volumes`)** — `BackingMemory` translator on cloudrun + gcf. Audit found the actual gap: Phase 127's MemoryDriver was registered in every backend's storageBackings registry, but no translator handled the `case core.BackingMemory` arm — operators selecting `Backing: memory` hit "unsupported backing kind". `pd-ephemeral` on Cloud Run is bookmarked at the spec level (Cloud Run Services lack first-class PD attach); real implementation deferred to Phase 91d.
+**Phase 91 ✓ shipped (PR #147)** — `BackingMemory` translator on cloudrun + gcf. Audit found the actual gap: Phase 127's MemoryDriver was registered in every backend's storageBackings registry, but no translator handled the `case core.BackingMemory` arm.
 
-**Phase 91b** — `BackingMemory` translator on ECS + Lambda.
+**Phase 91b ✓ in flight (`phase-91b-backingmemory-ecs-lambda`)** — `BackingMemory` translator on ECS / ACA / AZF. ACA gets clean `StorageTypeEmptyDir`; ECS + AZF reject loudly (no tmpfs primitive at the volume layer in either cloud). Lambda deferred to Phase 91c.
 
-**Phase 91c** — `BackingMemory` translator on ACA + AZF.
+**Phase 91c** — Lambda volume framework migration. `volumes.go::fileSystemConfigsForBinds` predates BackingSpec; migrate to `storageBackings.Resolve`, then `BackingMemory` rejection arrives free.
 
 **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf (Compute Engine `disks.create`/`attach`/`delete`).
 
