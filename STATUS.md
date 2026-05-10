@@ -6,39 +6,38 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-91b-backingmemory-ecs-lambda` — Phase 91b in flight (1 implementation commit + state save). |
-| In-flight | Phase 91b — `BackingMemory` translator on ECS (reject loudly, points at LinuxParameters.Tmpfs) + ACA (`StorageTypeEmptyDir`) + AZF (reject loudly, points at /tmp). Lambda deferred to Phase 91d (pre-BackingSpec migration needed first). |
-| Last merged | PR #147 — Phase 91 BackingMemory cloudrun + gcf (2026-05-10). |
+| Active branch | `phase-87c-zerolog-otel-bridge` — Phase 87c (backends portion) in flight. |
+| In-flight | Phase 87c — zerolog → OTel logs bridge. `backends/core/otel.go` gains `InitObservability` + `OTelLogWriter`. 7 backends migrated to use `zerolog.MultiLevelWriter(consoleW, obs.LogWriter)` so each event flows to BOTH stderr AND OTLP. Sims + admin + bleephub deferred (different Go modules). |
+| Last merged | PR #149 — Phase 91 consolidated (2026-05-10). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 986 fixed. |
 | Live infra | None up. |
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
 
-## Phase 91b — in flight on `phase-91b-backingmemory-ecs-lambda`
+## Phase 87c — in flight on `phase-87c-zerolog-otel-bridge` (backends portion)
 
-One implementation commit + state save. Continues Phase 91's BackingMemory work across AWS + Azure backends.
+One implementation commit + state save. Closes the observability story for the 7 sockerless backends — every zerolog log line now flows through BOTH stderr (operator-visible via ConsoleWriter) AND the OTel logs SDK when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
-`phase 91b: BackingMemory translator on ECS / ACA / AZF`:
+`backends/core/otel.go`:
+- New `InitObservability(serviceName) (*Observability, error)` returns `{LogWriter, Shutdown}` (or zero value with no-op shutdown when OTel disabled). `InitTracer` stays for backward compat.
+- New `OTelLogWriter` implements `io.Writer` so it slots into `zerolog.MultiLevelWriter(consoleW, otelW)`. Parses each JSON line and emits an OTel log Record. Maps zerolog level → severity, message → body, time → timestamp; promotes other fields to attributes.
 
-- **ACA**: clean match → `armappcontainers.Volume{StorageType: EmptyDir}` (Azure Container Apps revisions support `StorageTypeEmptyDir` as a first-class volume type).
-- **ECS**: explicit reject. ECS task-def Volumes don't expose a tmpfs primitive — RAM-backed mounts live at `ContainerDefinition.LinuxParameters.Tmpfs[]` (container-def layer), not the Volumes layer (task-def). Translator rejects loudly pointing at tmpfs + `Backing: emptyDir` alternative; no silent fallback to Host{} disk-backed.
-- **AZF**: explicit reject. Azure Functions WebApps `AzureStorageInfoValue` surface is BYOS-only; no tmpfs primitive at that layer. Rejection points at per-invocation `/tmp`.
-- **Lambda**: out of scope. Lambda's volume path predates the BackingSpec framework (uses inline EFS in `volumes.go::fileSystemConfigsForBinds`, never calls `storageBackings.Resolve`). Migration to BackingSpec is a separate refactor queued as Phase 91d.
+7 backends migrated (docker / ecs / lambda / cloudrun / gcf / aca / azf). 5 new core tests.
 
-5 new tests across ECS / ACA / AZF.
+**Phase 87c.1 (sims + admin + bleephub)** — duplicate the bridge in their separate Go modules. Mechanical work; queued for follow-up since these modules don't import backends/core.
 
-## Phases after 91b
+## Phases after 87c
 
-- **Phase 91c** — Lambda volume framework migration. Lambda's `volumes.go::fileSystemConfigsForBinds` uses inline EFS pre-dating the BackingSpec framework; doesn't call `storageBackings.Resolve`. Migrate to the framework, then `BackingMemory` rejection arrives free.
-- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. Sockerless-managed Compute Engine PD `disks.create`/`attach`/`delete` per task. Multi-day cloud-API work.
-- **Phase 87c (optional)** — zerolog → OTel logs bridge so OTLP-mode operators don't depend on filelog. Skipped from 87b to keep dep churn contained.
+- **Phase 87c.1** — Bridge in sim shared/ × 3 + admin + bleephub modules.
+- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. Multi-day cloud-API work.
 - **Live-cloud validation track** — Lambda / Cloud Run Services / ACA Apps / AZF cloud-dns / Lambda service-mesh / ACA-AZF Azure AD.
 
 ## Recently shipped
 
 | Date | PR | Headline |
 |---|---|---|
+| 2026-05-10 | #149 | Phase 91 (consolidated) — Lambda volume_translator scaffolding + framework migration; cloudrun + gcf reject `BackingPDEphemeral` with concrete pointers; integration TestMain switched to public.ecr.aws to dodge Docker Hub throttling. |
 | 2026-05-10 | #148 | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. ACA `StorageTypeEmptyDir`; ECS + AZF reject loudly with concrete pointers. |
 | 2026-05-10 | #147 | Phase 91 — `BackingMemory` translator on cloudrun + gcf (`EmptyDir{Memory}` + `SizeLimit` from `spec.Memory.SizeMB`). Closes the framework-vs-translator gap on the GCP backends. |
 | 2026-05-10 | #146 | Phase 87b — wire OTel SDK across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go + otelhttp.NewHandler on sim/admin muxes. Spans flow from every Go binary into Jaeger when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
