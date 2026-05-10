@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -129,14 +130,26 @@ func (s *SQLiteStore[T]) Update(id string, fn func(*T)) bool {
 	return true
 }
 
-// MakeStore returns a SQLiteStore if db is non-nil, or a MemoryStore otherwise.
+// MakeStore returns a SQLiteStore if db is non-nil, or a MemoryStore
+// otherwise.
+//
+// When db is non-nil but NewSQLiteStore fails (CREATE TABLE rejected
+// by SQLite — typically corruption or fs perms post-OpenDB), the
+// process exits via log.Fatalf rather than silently dropping that one
+// table back to memory while its neighbours stay durable. Half-
+// persistent state would surface as confusing "some data lost on
+// restart" reports later (BUG-986).
+//
+// All 100+ call sites are register*-time, so log.Fatalf here is the
+// equivalent of a startup error — operator sees the message and the
+// failing table name immediately, no degraded-mode running.
 func MakeStore[T any](db *sql.DB, table string) Store[T] {
 	if db != nil {
 		s, err := NewSQLiteStore[T](db, table)
 		if err == nil {
 			return s
 		}
-		// Fall back to memory on error
+		log.Fatalf("MakeStore[%s]: %v", table, err)
 	}
 	return NewStateStore[T]()
 }

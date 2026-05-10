@@ -1,6 +1,6 @@
 # Known Bugs
 
-**985 filed · 985 fixed · 0 open · 1 false positive.**
+**986 filed · 986 fixed · 0 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -26,8 +26,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history
 
-985 bugs filed and fixed across phases 86–135 + Phase 84 (PRs #112–134, plus the Phase 84 PR). PRs #135–#141 (phases 121b finish, 78, 79, 80, 81, 82, 83) added no new bugs; Phase 84 surfaced 1. Per-bug detail in `git log` / linked PR. Recent ranges:
+986 bugs filed and fixed across phases 86–135 + Phase 84 (PRs #112–134, plus the Phase 84 PR). PRs #135–#141 (phases 121b finish, 78, 79, 80, 81, 82, 83) added no new bugs; Phase 84 surfaced 2 silent-fallback bugs (985 + 986) and fixed both. Per-bug detail in `git log` / linked PR. Recent ranges:
 
+- **986** (Phase 84) — sim shared `MakeStore[T]` silently fell back to in-memory `MemoryStore` when per-table `NewSQLiteStore` failed (`if err == nil { ... } // fall back to memory`). Same shape as BUG-985 but at the per-table layer: even when persistence opened cleanly, a single broken table would silently drop that store back to memory while neighbours stay durable — half-persistent state. Fix: `MakeStore` calls `log.Fatalf` on `NewSQLiteStore` failure; signature unchanged so the 106 call sites across the three sims aren't touched.
 - **985** (Phase 84) — sim shared `NewServer` silently fell back to in-memory storage when `SIM_PERSIST=true` but `OpenDB` failed. Operator-requested persistence must fail loud; in-memory fallback masks misconfiguration (bad path, perms, full disk) and produces silent data loss across restarts. Fix: `NewServer` returns `(*Server, error)`, callers `log.Fatalf` on persistence open failure.
 - **975–984** (PR #129) — Phase 135 sim host model + native arm64 CI runners.
 - **973–974** (PR #128) — Sim test stability (`Eventually` polling).
