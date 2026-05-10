@@ -388,6 +388,44 @@ export class AdminApiClient {
     const qs = active ? "?active=true" : "";
     return this.request(`/api/v1/topology/resources${qs}`);
   }
+
+  topologyConfigMetadata(): Promise<{ keys: ConfigKeyMeta[] }> {
+    return this.request("/api/v1/topology/config-metadata");
+  }
+
+  topologyInstanceConfig(
+    project: string,
+    name: string,
+    config: Record<string, string>,
+  ): Promise<ConfigUpdateResponse> {
+    return this.putJSON(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/config`,
+      config,
+    );
+  }
+
+  topologyInstanceReload(
+    project: string,
+    name: string,
+  ): Promise<{ status: string }> {
+    return this.post(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/reload`,
+    );
+  }
+}
+
+export interface ConfigKeyMeta {
+  name: string;
+  hot_reloadable: boolean;
+  doc?: string;
+}
+
+export interface ConfigUpdateResponse {
+  project: string;
+  instance: string;
+  hot_reloadable_changes: string[];
+  restart_required_changes: string[];
+  config: Record<string, string>;
 }
 
 export interface RollupSource {

@@ -40,6 +40,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
 | #140 | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
 | #141 | 83 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure onto the shared component + design language; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired. |
+| #142 | 84 + BUG-985 + BUG-986 | Phase 84 — sim shared `NewServer` returns `(*Server, error)` + `MakeStore` log.Fatalf on per-table failure (no silent in-memory degradation when persistence requested). Admin `SIM_DATA_DIR` injection per topology instance. Cross-cloud isolation tests. `make purge-state` operator targets. |
 
 ## Roadmap (ordered)
 
@@ -97,9 +98,15 @@ Operator workflow: `make purge-state PROJECT=<p> NAME=<i>` (single-instance) and
 
 Cross-cloud sweep: 5 test cases mirrored across simulators/{aws,gcp,azure}/shared/ — cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard, persist happy path, no-persist path.
 
-### Phase 85 — Config edit + hot reload
+### Phase 85 — Config edit + hot reload ✓ in flight (`phase-85-config-edit-hot-reload`)
 
-Admin-side annotation per-config-key: hot-reloadable vs restart-required. Admin UI edits write back to `sockerless.yaml`; admin triggers reload or restart based on annotation. Annotation lives in admin metadata, not on the component.
+Admin curates a `ConfigKeyMeta` table — 3 hot-reloadable keys (SIM_LOG_LEVEL, SOCKERLESS_LOG_LEVEL, SIM_PULL_POLICY) + 14 annotated restart-required keys + safe default (restart-required) for unknown keys. Metadata lives admin-side, NOT on the component.
+
+`PUT /api/v1/topology/projects/{p}/instances/{i}/config` writes Instance.Config and returns the change classification so the UI prompts in one round trip.
+
+`POST /api/v1/topology/projects/{p}/instances/{i}/reload` shells `make reload-component` (kill -HUP via PID file). Component-side handling of SIGHUP is the component's concern — Phase 85 ships the signal path; component absorption is per-binary.
+
+UI: `<ConfigEditModal>` opens from a "config" button on every InstanceRow. Per-row hot/restart badges. Save → footer offers Reload / Reload (partial) + Restart / Close based on what classified server-side.
 
 ### Phase 86 — Health + supervision surface
 

@@ -22,6 +22,7 @@ import {
   type TopologyProject,
 } from "../api.js";
 import { ErrorPanel } from "../components/ErrorPanel.js";
+import { ConfigEditModal } from "../components/ConfigEditModal.js";
 import { InstanceForm } from "../components/InstanceForm.js";
 import { ProjectForm } from "../components/ProjectForm.js";
 
@@ -42,6 +43,11 @@ interface PendingDelete {
 interface InstanceEditTarget {
   project: TopologyProject;
   instance?: TopologyInstance;
+}
+
+interface ConfigEditTarget {
+  project: string;
+  instance: TopologyInstance;
 }
 
 /**
@@ -74,9 +80,16 @@ export function TopologyPage() {
   const [instanceForm, setInstanceForm] = useState<InstanceEditTarget | null>(
     null,
   );
+  const [configEdit, setConfigEdit] = useState<ConfigEditTarget | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
     null,
   );
+
+  const { data: configMetadata } = useQuery({
+    queryKey: ["config-metadata"],
+    queryFn: () => api.topologyConfigMetadata(),
+    staleTime: 60_000,
+  });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["topology"] });
@@ -193,6 +206,21 @@ export function TopologyPage() {
       reportError(err, `Failed to rebuild ${vars.name}`),
   });
 
+  const reloadInstanceMutation = useMutation({
+    mutationFn: ({
+      project,
+      name,
+    }: {
+      project: string;
+      name: string;
+    }) => api.topologyInstanceReload(project, name),
+    onSuccess: (_d, vars) => {
+      invalidate();
+      push({ tone: "success", title: `Reloaded ${vars.name}` });
+    },
+    onError: (err, vars) => reportError(err, `Failed to reload ${vars.name}`),
+  });
+
   if (isLoading) return <Spinner label="loading topology" />;
   if (isError) return <ErrorPanel message={error?.message} />;
   if (!topology) return <Spinner label="loading topology" />;
@@ -255,6 +283,9 @@ export function TopologyPage() {
               }
               onEditInstance={(inst) =>
                 setInstanceForm({ project: p, instance: inst })
+              }
+              onConfigEdit={(inst) =>
+                setConfigEdit({ project: p.name, instance: inst })
               }
               onDeleteInstance={(inst) =>
                 setPendingDelete({
@@ -330,6 +361,23 @@ export function TopologyPage() {
         />
       )}
 
+      {configEdit && (
+        <ConfigEditModal
+          open={!!configEdit}
+          onClose={() => setConfigEdit(null)}
+          project={configEdit.project}
+          instance={configEdit.instance}
+          metadata={configMetadata?.keys ?? []}
+          onReload={async (project, name) => {
+            await reloadInstanceMutation.mutateAsync({ project, name });
+          }}
+          onRestart={async (project, name) => {
+            await stopInstanceMutation.mutateAsync({ project, name });
+            await startInstanceMutation.mutateAsync({ project, name });
+          }}
+        />
+      )}
+
       <ConfirmDeleteModal
         pending={pendingDelete}
         onCancel={() => setPendingDelete(null)}
@@ -360,6 +408,7 @@ function ProjectCard({
   project,
   onAddInstance,
   onEditInstance,
+  onConfigEdit,
   onDeleteInstance,
   onDeleteProject,
   onStart,
@@ -370,6 +419,7 @@ function ProjectCard({
   project: TopologyProject;
   onAddInstance: () => void;
   onEditInstance: (inst: TopologyInstance) => void;
+  onConfigEdit: (inst: TopologyInstance) => void;
   onDeleteInstance: (inst: TopologyInstance) => void;
   onDeleteProject: () => void;
   onStart: (inst: TopologyInstance) => void;
@@ -443,6 +493,7 @@ function ProjectCard({
               project={project.name}
               instance={inst}
               onEdit={() => onEditInstance(inst)}
+              onConfigEdit={() => onConfigEdit(inst)}
               onDelete={() => onDeleteInstance(inst)}
               onStart={() => onStart(inst)}
               onStop={() => onStop(inst)}
@@ -460,6 +511,7 @@ function InstanceRow({
   project,
   instance,
   onEdit,
+  onConfigEdit,
   onDelete,
   onStart,
   onStop,
@@ -469,6 +521,7 @@ function InstanceRow({
   project: string;
   instance: TopologyInstance;
   onEdit: () => void;
+  onConfigEdit: () => void;
   onDelete: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -574,6 +627,9 @@ function InstanceRow({
           >
             logs
           </Link>
+          <Button variant="ghost" size="sm" onClick={onConfigEdit}>
+            config
+          </Button>
           <Button variant="ghost" size="sm" onClick={onEdit}>
             edit
           </Button>

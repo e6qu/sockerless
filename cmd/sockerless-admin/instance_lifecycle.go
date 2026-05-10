@@ -123,6 +123,26 @@ func (l *InstanceLifecycle) Stop(ctx context.Context, inst Instance) error {
 	return l.runMake(ctx, "stop-component", "NAME="+inst.Name)
 }
 
+// Reload re-renders the env file and signals the component via
+// `make reload-component NAME=…`. The make target sends SIGHUP to
+// the recorded PID; component-side handling of SIGHUP is the
+// component's concern. No-op components (i.e. those that ignore
+// SIGHUP) silently succeed at the make level — admin's contract is
+// "signal sent", not "config absorbed".
+func (l *InstanceLifecycle) Reload(ctx context.Context, inst Instance) error {
+	// Re-render the env file so a subsequent restart picks up the
+	// latest values. Reload doesn't fork the process, so the running
+	// component still sees the env it was started with — but the
+	// next start-component will see the updated file.
+	if len(inst.Config) > 0 {
+		envFile := envFilePath(l.repoRoot, inst.Name)
+		if err := writeEnvFile(envFile, inst.Config); err != nil {
+			return fmt.Errorf("write env file: %w", err)
+		}
+	}
+	return l.runMake(ctx, "reload-component", "NAME="+inst.Name)
+}
+
 // Rebuild invokes `make rebuild-component KIND=… [CLOUD=…] [BACKEND=…]`.
 func (l *InstanceLifecycle) Rebuild(ctx context.Context, inst Instance) error {
 	args := []string{"rebuild-component", "KIND=" + string(inst.Kind)}
