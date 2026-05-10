@@ -36,6 +36,8 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #135 | 121b (initial) | Azure sim hardening, all-6-backends test harness restructure, in-memory storage, driver consolidation pattern B, GCP sim Cloud Run invoke routing, GCF envelope decode + label round-trip, drop QEMU. |
 | #136 | 121b (finish) | Network-discovery adapter consolidation; host-aliases opt-in everywhere; AZF cloud-dns + Lambda service-mesh wiring; Azure AD access driver; pair DNS + cloud-side provisioning to NetworkDiscovery. |
 | #137 | 78 + 79 step 1 | UI polish (dark mode toggle, Toast / InlineError, Modal + ContainerDetail, a11y, perf, READMEs) + admin `Instance` type. |
+| #138 | 79 (full) + 87 plan | `sockerless.yaml` topology + `TopologyManager` + CRUD REST + lifecycle endpoints + `make/components.mk` granular targets + port allocator + Phase 87 observability plan (OTel+VictoriaLogs+Jaeger Stack A) + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation (Docker/Podman→cloud quick reference, CI runner requirements, multi-system CI/CD comparison). |
+| #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
 
 ## Roadmap (ordered)
 
@@ -55,9 +57,9 @@ Admin owns the source of truth for "what instances exist". `sockerless.yaml` at 
 - ✓ Step 6: lifecycle REST endpoints shell `make {start,stop,rebuild}-component` (#138).
 - ✓ Step 7: surgical CRUD endpoints (project + instance add/remove/edit) + per-instance status endpoint + `docs/ADMIN_ORCHESTRATION.md` (#138).
 
-### Phase 80 — Admin UI: topology page + per-instance lifecycle
+### Phase 80 — Admin UI: topology page + per-instance lifecycle ✓ complete (PR #139)
 
-Replace ProjectsPage with a project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form; edit / delete; port registry view (allocated + free ranges).
+Topology page at `/ui/topology`: project + instance tree, per-instance status badge polled every 2s, per-instance Start/Stop/Rebuild buttons, per-kind add/edit instance modal (sim/backend/bleephub), add/delete project modal, auto-allocate port from configured pool, port registry view (configured ranges + claimed ports). Replaced legacy ProjectsPage + ProjectCreatePage. See `docs/ADMIN_ORCHESTRATION.md` § Admin UI — Topology page.
 
 ### Phase 81 — Per-instance logs + live troubleshooting console
 

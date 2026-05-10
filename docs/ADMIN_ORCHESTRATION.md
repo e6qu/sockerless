@@ -112,6 +112,28 @@ Admin reads + writes `<cwd>/sockerless.yaml` by convention (matches how `make` f
 
 `TopologyManager` serialises every read + write through an `RWMutex`. `Get` returns a defensive deep copy so HTTP handlers can't race each other. `Replace` and the surgical CRUD methods (`AddProject`, `RemoveInstance`, etc.) take the write lock for the validate + persist + swap.
 
+## Admin UI — Topology page
+
+The admin UI's `/ui/topology` page is the operator front door for `sockerless.yaml`. Everything the REST surface exposes is wired through this page; you should never need to hand-edit the YAML for a routine change.
+
+What it shows:
+
+- **Project tree.** One card per project; expanding a project shows every instance with kind / cloud / backend / port / sim-ref summary.
+- **Per-instance status.** Each row polls `GET /api/v1/topology/projects/{p}/instances/{i}/status` every 2 s while the page is open. The status badge shows `ok` (running + `/v1/health` 2xx), `unhealthy` (running + non-2xx or timeout, with the failure reason), `unknown` (running but no health probe answered), or `stopped` (no live PID).
+- **Port registry.** A side card lists configured `ports.ranges[<kind>]` next to every claimed port across all projects (sorted by port number) so you can see at a glance what's free.
+
+What it can do:
+
+- **Add project / delete project.** "+ project" opens a single-field modal; "delete project" prompts a confirmation modal. Deleting a project does NOT stop running processes — stop instances first if you want a clean teardown.
+- **Add / edit / delete instance.** "+ instance" opens a per-kind form (sim → cloud + port; backend → cloud + backend + port + optional sim ref; bleephub → port). The form includes an "auto-allocate" button that calls `POST /api/v1/topology/allocate-port?kind=<kind>` and fills the port field. Edit lets you change everything except the name + kind (rename = delete + add); the env-config table is fully editable.
+- **Start / Stop / Rebuild per instance.** Buttons in each row POST to the lifecycle endpoints, which in turn shell `make {start|stop|rebuild}-component`. Toast feedback on success + failure; the row's status badge picks up the new state on the next poll tick.
+
+What it does NOT do (intentional, per components-decoupled invariant):
+
+- It doesn't talk to the component beyond `/v1/health`, `/v1/info`, and the env vars the component already documents.
+- It doesn't surface component-private metrics inline; use `/ui/components/<name>` for that (Phase 81 work pulls component-side logs into a dedicated tail).
+- It doesn't auto-restart unhealthy instances. Health flagging is operator-driven recovery only.
+
 ## What admin is *not* responsible for
 
 - **Generating components.** Admin doesn't compile binaries inline — `rebuild-component` shells `make build` for the relevant module. The per-component build remains operator-controllable from outside admin.

@@ -75,7 +75,7 @@ export function ProjectDetailPage() {
     mutationFn: () => api.projectDelete(name!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate("/ui/projects");
+      navigate("/ui/topology");
     },
   });
 

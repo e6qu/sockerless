@@ -4,21 +4,20 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-79-topology-store`. PR #137 merged 2026-05-10 (Phase 78 polish + Phase 79 step 1 — Instance type). New branch carries Phase 79 step 2 onward.
+`state-save-post-pr138` — PR #139 (open). Carries the post-#138 state save + the full Phase 80 admin UI Topology page. CI to verify after push.
 
 ## Resume here
 
-**Phase 79 complete on this branch (PR #138). Phase 80 next.**
+**Phase 80 shipping on PR #139.** Admin UI now has `/ui/topology`:
+- Project + instance tree with per-instance status polled every 2s (calls `GET /api/v1/topology/projects/{p}/instances/{i}/status`).
+- Per-row Start / Stop / Rebuild (POST to lifecycle endpoints).
+- Per-kind add/edit instance modal (sim/backend/bleephub) with auto-allocate-port button.
+- Add/delete project modal with confirmation.
+- Port registry card (configured ranges + claimed ports).
 
-Phase 79 ships in PR #138:
-- ✓ Step 1: `Instance` type (in #137).
-- ✓ Step 2: `Topology` struct + YAML store at `sockerless.yaml` + `MigrateLegacyProjects`.
-- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (`/api/v1/topology`).
-- ✓ Step 4: `make/components.mk` granular targets (`start-component`, `stop-component`, `rebuild-component`, `logs-component`, `status-components`, `stop-components`); `stack-X-Y` macros rewritten as composition of `rebuild-component` + `start-component`.
-- ✓ Step 5: `TopologyManager.AllocatePort` walks the configured pool, skips claimed + in-use ports.
-- ✓ Step 6: lifecycle REST endpoints (`POST /api/v1/topology/projects/{p}/instances/{i}/{start|stop|rebuild}`) shell `make {start,stop,rebuild}-component`. Per-instance config map serialised to `.stack-pids/<name>.env` and passed via `ENV_FILE=` so admin can hand any env vars to the component without admin needing to know what they mean.
+Replaces legacy `ProjectsPage` + `ProjectCreatePage` (deleted). `/ui/projects/:name` (ProjectDetailPage) + `/ui/projects/:name/logs` (ProjectLogsPage) still served until Phase 81 absorbs them.
 
-**Next: Phase 80 — admin UI: topology page + per-instance lifecycle.** Replace ProjectsPage with a project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form (kind + name + port + per-component config); edit/delete; port registry view (allocated + free ranges).
+**Next after #139 lands: Phase 81 — per-instance logs + live troubleshooting console.** Live tail per instance via SSE from admin (reads `.stack-pids/<name>.log`); combined-timeline view (sim + backend interleaved); API console panel (arbitrary HTTP requests against an instance).
 
 ## Invariants (re-state on every commit)
 
