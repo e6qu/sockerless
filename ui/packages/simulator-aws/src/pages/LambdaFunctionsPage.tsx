@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, StatusBadge, Spinner } from "@sockerless/ui-core/components";
+import {
+  ResourceListPage,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
 import { fetchLambdaFunctions, type LambdaFunction } from "../api.js";
 
-const columns: ColumnDef<LambdaFunction, any>[] = [
+const columns: ColumnDef<LambdaFunction, unknown>[] = [
   { accessorKey: "name", header: "Name" },
   { accessorKey: "runtime", header: "Runtime" },
   {
@@ -17,12 +19,16 @@ const columns: ColumnDef<LambdaFunction, any>[] = [
 ];
 
 export function LambdaFunctionsPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["lambda-functions"], queryFn: fetchLambdaFunctions, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">Lambda Functions</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<LambdaFunction>
+      kicker="aws · simulator · lambda"
+      title={<>Functions</>}
+      countNoun="function"
+      columns={columns}
+      queryKey={["lambda-functions"]}
+      queryFn={fetchLambdaFunctions}
+      filterPlaceholder="Filter functions…"
+      emptyMessage="No Lambda functions tracked."
+    />
   );
 }

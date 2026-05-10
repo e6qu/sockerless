@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, StatusBadge, Spinner } from "@sockerless/ui-core/components";
+import {
+  ResourceListPage,
+  StatusBadge,
+} from "@sockerless/ui-core/components";
 import { fetchECSTasks, type ECSTask } from "../api.js";
 
-const columns: ColumnDef<ECSTask, any>[] = [
+const columns: ColumnDef<ECSTask, unknown>[] = [
   { accessorKey: "taskArn", header: "Task ARN" },
   {
     accessorKey: "status",
@@ -17,12 +19,16 @@ const columns: ColumnDef<ECSTask, any>[] = [
 ];
 
 export function ECSTasksPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["ecs-tasks"], queryFn: fetchECSTasks, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">ECS Tasks</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<ECSTask>
+      kicker="aws · simulator · ecs"
+      title={<>Tasks</>}
+      countNoun="task"
+      columns={columns}
+      queryKey={["ecs-tasks"]}
+      queryFn={fetchECSTasks}
+      filterPlaceholder="Filter tasks…"
+      emptyMessage="No ECS tasks tracked."
+    />
   );
 }
