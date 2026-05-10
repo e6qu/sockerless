@@ -4,56 +4,43 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-86-health-supervision` — Phase 86 work in flight (3 implementation commits + state save). Open a PR when ready; PR #143 already merged.
+`phase-87-observability` — Phase 87 work in flight (4 implementation commits + state save). Open a PR when ready; PR #144 already merged.
 
 ## Status
 
-Phase 86 implementation is done on this branch. After it lands, **Phase 87 — centralized observability (Stack A)** is the next pickup. See bottom of this file for the Phase 87 brief — most of the design is already locked in PLAN.md.
+Phase 87 first-PR implementation is done on this branch. After it lands, **Phase 87b — component-side OTel SDK wiring** is the next pickup. See bottom of this file for the Phase 87b brief.
 
-## Resume here — Phase 86 (health + supervision surface) — implementation done
+## Resume here — Phase 87 (observability — Stack A) — implementation done
 
-Branch has 3 implementation commits + state save ready to PR:
+Branch has 4 implementation commits + state save ready to PR:
 
-1. `phase 86: capture exit codes + bump probe timeout to 5s` — `start-component` records `.stack-pids/<n>.exit` on binary termination via a watcher subshell; `InstanceStatus` gains `Exit` + `CrashedSinceStart` fields; probe timeout 1 s → 5 s. 7 admin tests.
-2. `phase 86: diagnostic endpoint bundling status + tail logs` — `GET /api/v1/topology/.../diagnostics?lines=N` returns status + last N lines (default 50, cap 1000) in one fetch. 6 endpoint tests.
-3. `phase 86: UnhealthyDiagnosticPanel + per-row mount gate` — collapsible panel mounts under InstanceRow only when `shouldRender(status)` is true. Surfaces reason header + exit info + health_detail + last 50 log lines + deep links + refresh button. 10 vitest cases.
+1. `phase 87: stack-observability make targets + collector config` — `make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger as background processes. Default collector config scrapes `.stack-pids/*.log` via filelog receiver so logs flow without binary changes.
+2. `phase 87: GET /api/v1/observability config endpoint` — admin reads `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` env vars at boot; returns `{enabled, logs_dashboard, traces_dashboard, ...}` so the UI knows when to render deep-link chips. 7 unit tests.
+3. `phase 87: VictoriaLogs / Jaeger deep links in diagnostic panel` — `<UnhealthyDiagnosticPanel>` fetches `/api/v1/observability` (cached) and renders chips when enabled; falls back to file-tail-only when disabled. 2 new vitest cases.
+4. `phase 87: docs/OBSERVABILITY.md` — two-mode operator guide.
 
-When ready: `git push -u origin phase-86-health-supervision && gh pr create`. CI ~7 min.
+When ready: `git push -u origin phase-87-observability && gh pr create`. CI ~7 min.
 
-**What this does NOT change.** No auto-restart (explicitly deferred). No alerting / paging integration. No multi-instance health rollup (Phase 87's observability stack is the right place for that).
+**What this does NOT change.** No SDK wiring on components — Phase 87 only ships the *stack* + admin integration. Logs work day-1 via the filelog receiver scraping `.stack-pids/*.log`. Traces require Phase 87b component-side wiring.
 
-## Phase 87 — Centralized observability — Stack A (next pickup)
+## Phase 87b — Component-side OTel SDK wiring (next pickup)
 
-**Goal.** Every sockerless component (sim, backend, bleephub, admin) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries. The Phase 86 file-tail-based diagnostic panel becomes one of two paths the UI offers — the file-tail stays for the no-OTel case; the OTel path activates when the operator opts in.
+**Goal.** Each component's `main.go` initialises the OTel SDK when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in its env, then wraps its mux with `otelhttp.NewHandler` for per-request spans. zerolog log lines also flow via OTel logs SDK so OTLP-mode operators don't need the filelog receiver fallback.
 
-**Stack** (all Apache 2.0):
+**Design.** Existing `backends/core/otel.go` already has `InitTracer(serviceName) (shutdown, error)` (used by `backends/docker/cmd/main.go`). Phase 87b extends:
 
-- OpenTelemetry Collector receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.
-- VictoriaLogs UI on `:9428`, retention 7 d.
-- Jaeger all-in-one UI on `:16686`, retention 72 h.
+1. Rename `InitTracer` → `InitObservability` returning a multi-shutdown function. Add OTel logs SDK setup alongside the existing trace SDK setup.
+2. New `backends/core/otel_zerolog.go`: zerolog Hook that mirrors every log entry to the OTel logs provider. zerolog API doesn't change for callers.
+3. Per-component `main.go` updates (3 lines each): `shutdown := core.InitObservability("<service-name>"); defer shutdown(ctx)`.
+4. Per-component `mux := http.NewServeMux(); handler := otelhttp.NewHandler(mux, "sockerless-<service>")`.
+5. Sims + admin + bleephub: same shape but they don't import `backends/core` today. Either:
+   - Add a new top-level `pkg/otel` module that all of them import (cleanest), or
+   - Duplicate the small init helper in each module (matches the per-cloud `shared/` pattern).
 
-**Invariant preserved.** Components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's behaviour (zerolog → stdout). No admin coupling, no required env var, no startup registration.
+**Files to touch.** ~12 `main.go` files (admin + 3 sims + 7 backends + bleephub). One new shared package or three duplicates of the init helper.
 
-**Sub-steps (already in PLAN.md — copying for convenience):**
+**Out of scope still.** Per-binary metrics export (counters / histograms). Custom span attributes beyond what `otelhttp` adds automatically.
 
-1. `backends/core/otel/` — wraps `go.opentelemetry.io/otel` SDK setup (logs + traces + resource attrs). Reads `OTEL_EXPORTER_OTLP_ENDPOINT` + service name. Used by every component's `main.go` in 3 lines.
-2. HTTP middleware — wrap each backend / sim mux with `otelhttp.NewHandler` so spans land per request automatically.
-3. zerolog → OTel logs bridge — existing `zerolog.Logger` calls also export to the OTel logs SDK. No log-line API changes.
-4. `make stack-observability-{up,down,status}` in `make/stack.mk`. Runs collector + VictoriaLogs + Jaeger as background processes; PIDs in `.stack-pids/observability/`. Default config emits to `./.sockerless-state/observability/{logs,traces}/` with rotation + 5 GB total cap.
-5. Admin UI integration — per-instance "View logs" + "View traces" deep links (filter by `service.name = <instance-name>`). Inline log tail (Phase 81) + diagnostic panel (Phase 86) still work for the no-OTel path.
-6. Documentation — `ui/README.md` + new `docs/OBSERVABILITY.md` cover both modes.
-
-**If Stack A turns out unsuitable.** Same component code (OTLP) works against OpenObserve (AGPL) or SigNoz (MIT) — only `make/stack.mk` changes. The component-side bridge is OTel SDK, not collector-specific.
-
-**Files to touch (rough):**
-
-- `backends/core/otel/setup.go` (new) — SDK wrapper.
-- `backends/core/otel/zerolog_bridge.go` (new) — logs bridge.
-- Each `*/main.go` (admin, sims × 3, backends × 7, bleephub) — 3-line OTel init at startup.
-- `make/stack.mk` — `stack-observability-{up,down,status}` targets.
-- `cmd/sockerless-admin/api_topology_diagnostics.go` — extend to include OTel deep links when endpoint env is set.
-- `ui/packages/admin/src/components/UnhealthyDiagnosticPanel.tsx` — render OTel deep links when surfaced.
-- `docs/OBSERVABILITY.md` (new).
 
 ## Invariants (re-state on every commit)
 

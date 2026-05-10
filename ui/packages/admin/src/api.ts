@@ -435,6 +435,34 @@ export class AdminApiClient {
       `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/diagnostics?lines=${lines}`,
     );
   }
+
+  observability(): Promise<ObservabilityConfig> {
+    return this.request("/api/v1/observability");
+  }
+}
+
+export interface ObservabilityConfig {
+  enabled: boolean;
+  logs_dashboard?: string;
+  traces_dashboard?: string;
+  logs_service_param?: string;
+  traces_service_param?: string;
+}
+
+/** Builds a dashboard URL with the instance name as a query filter. */
+export function buildObservabilityURL(
+  dashboard: string | undefined,
+  param: string | undefined,
+  serviceName: string,
+): string {
+  if (!dashboard || !serviceName) return dashboard ?? "";
+  try {
+    const url = new URL(dashboard, window.location.origin);
+    url.searchParams.set(param ?? "service.name", serviceName);
+    return url.toString();
+  } catch {
+    return dashboard;
+  }
 }
 
 export interface ConfigKeyMeta {

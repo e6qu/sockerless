@@ -34,6 +34,33 @@ const baseStatus: InstanceStatus = {
   health: "ok",
 };
 
+function mockObservability(enabled: boolean, urls?: { logs?: string; traces?: string }) {
+  // The panel fetches /api/v1/observability; route those calls to a
+  // synthetic config so we can assert on the rendered links.
+  const cfg = enabled
+    ? {
+        enabled: true,
+        logs_dashboard: urls?.logs ?? "http://logs.local/",
+        traces_dashboard: urls?.traces ?? "http://traces.local/",
+        logs_service_param: "service.name",
+        traces_service_param: "service",
+      }
+    : { enabled: false };
+  // Default response covers /diagnostics; observability matched here.
+  mockFetch.mockImplementation((url: string) => {
+    if (String(url).includes("/api/v1/observability")) {
+      return Promise.resolve(jsonResponse(cfg));
+    }
+    return Promise.resolve(
+      jsonResponse({
+        status: { ...baseStatus },
+        log_lines: [],
+        log_path: "",
+      }),
+    );
+  });
+}
+
 function renderPanel(status: InstanceStatus) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -141,5 +168,30 @@ describe("UnhealthyDiagnosticPanel", () => {
     await waitFor(() => {
       expect(screen.getByText(/Admin API error 500/)).toBeInTheDocument();
     });
+  });
+
+  it("renders VictoriaLogs / Jaeger deep links when observability is enabled", async () => {
+    mockObservability(true);
+    renderPanel({ ...baseStatus, health: "unhealthy" });
+    await waitFor(() => {
+      const logs = screen.getByText(/VictoriaLogs ↗/);
+      const traces = screen.getByText(/Jaeger ↗/);
+      const logsHref = logs.getAttribute("href") ?? "";
+      const tracesHref = traces.getAttribute("href") ?? "";
+      expect(logsHref).toContain("service.name=sim-aws");
+      expect(tracesHref).toContain("service=sim-aws");
+    });
+  });
+
+  it("hides deep links when observability is disabled", async () => {
+    mockObservability(false);
+    renderPanel({ ...baseStatus, health: "unhealthy" });
+    await waitFor(() => {
+      // Diagnostic fetch resolves; verify the panel rendered normally
+      // (full logs link is always there) and the OTel chips are not.
+      expect(screen.getByText(/full logs/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/VictoriaLogs ↗/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Jaeger ↗/)).not.toBeInTheDocument();
   });
 });
