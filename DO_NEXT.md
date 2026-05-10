@@ -4,37 +4,24 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-91c-lambda-backingspec-migration` — Phase 91 consolidation in flight (2 implementation commits + state save). Open a PR when ready; PR #148 already merged.
+`phase-87c-zerolog-otel-bridge` — Phase 87c full scope on PR #150 (open). 7 backends + 3 sims + bleephub + admin all bridged. Awaiting CI + user merge.
 
 ## Status
 
-Phase 91 (consolidated) implementation is done on this branch. Per user direction, all remaining 91 work landed here as one PR — no more sub-phase splits. After this lands, queue: Phase 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
+Phase 87c (consolidated, full scope per user direction "keep all phase 87 on a single PR") is implementation-complete on this branch. After this merges, queue: Phase 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → live-cloud validation track.
 
-## Resume here — Phase 91 (consolidated) — implementation done
+## Resume here — Phase 87c (full scope) on PR #150
 
-Branch has 2 implementation commits + state save ready to PR:
+Branch has 2 implementation commits + state save ready/landed:
 
-1. `phase 91c: Lambda volume_translator.go scaffolding + BackingMemory reject` — per-bind translator dispatch shape mirroring ECS / ACA / AZF / cloudrun / gcf. `BackingEFSEphemeral` → `FileSystemConfig{Arn, LocalMountPath}`; `BackingMemory` → loud reject; unknown → generic. 5 tests.
-2. `phase 91 (consolidated): Lambda framework migration + GCP PD reject + ECR Gallery` — three coupled changes:
-   - Lambda's `fileSystemConfigsForBinds` migrated onto `s.storageBackings.Resolve(BackingEFSEphemeral) → translator`. Lambda joins the other 5 backends in framework dispatch.
-   - cloudrun + gcf reject `BackingPDEphemeral` with concrete pointers (`gcs-fuse` MountOptions per BUG-944, `gcs-sync`, GCE-backend bookmark per spec line 567). 2 tests.
-   - Cloudrun + gcf integration TestMain switched to `public.ecr.aws/docker/library/{alpine,golang}` to dodge Docker Hub anonymous-pull throttling (saved as memory feedback_ecr_gallery_alt.md).
+1. `phase 87c: zerolog OTel bridge across 7 backends` — `backends/core/otel.go` gains `InitObservability` + `OTelLogWriter`. 7 backend `main.go` use `MultiLevelWriter(consoleW, obs.LogWriter)`.
+2. `phase 87c: zerolog OTel bridge across sims + admin + bleephub` — bridge mirrored into `simulators/{aws,gcp,azure}/shared/otel.go` (with `Config.LogWriter` plumbed through `NewServer`), `bleephub/otel.go`, `cmd/sockerless-admin/otel.go` (adds `TextLogWriter` for stdlib `log`).
 
-When ready: `git push -u origin phase-91c-lambda-backingspec-migration && gh pr create`. CI ~7 min.
+CI running on PR #150. **Do NOT auto-merge — wait for user.**
 
 ## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf (later)
 
 Sockerless-managed Compute Engine PD `disks.create`/`attach`/`delete` per task. Cloud Run Services don't expose PD volume attach as a first-class primitive — operator-side work + sim-side work. Multi-day cloud-API effort.
-
-## Phase 87c — zerolog → OTel logs bridge (optional next pickup)
-
-**Goal.** Each component's zerolog calls also export to the OTel logs SDK so OTLP-mode operators don't need the filelog receiver fallback. Bridge is *optional* — the filelog receiver path from Phase 87 covers logs without binary changes; the bridge is for operators who want a single OTLP transport.
-
-**Design.** Each component creates a zerolog hook that mirrors every event to the OTel logs provider. zerolog API doesn't change for callers — same `logger.Info().Str("k", "v").Msg("...")` shape.
-
-**Files to touch.** Same 4 modules Phase 87b touched (backends/core + sim shared × 3 + admin) plus bleephub. New `otel_zerolog.go` per module + 1 line in each Init wiring to register the hook.
-
-**Out of scope still.** Per-binary metrics export (counters / histograms). Custom span attributes beyond what `otelhttp` adds automatically.
 
 
 ## Invariants (re-state on every commit)
