@@ -16,6 +16,7 @@ import (
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/proxy
+//	GET    /api/v1/topology/resources
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
@@ -47,6 +48,8 @@ func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *In
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}/logs", handleInstanceLogs(mgr))
 	proxyClient := &http.Client{Timeout: proxyTimeout + 5*time.Second}
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/proxy", handleInstanceProxy(mgr, proxyClient))
+	rollupClient := &http.Client{Timeout: 5 * time.Second}
+	mux.HandleFunc("GET /api/v1/topology/resources", handleTopologyResources(mgr, rollupClient))
 }
 
 func handleTopologyGet(mgr *TopologyManager) http.HandlerFunc {
