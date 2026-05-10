@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -84,6 +85,13 @@ func InitObservability(serviceName string) (*Observability, error) {
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
+
+	// Set the global propagator so otelhttp.NewTransport-wrapped
+	// outgoing clients carry the W3C traceparent header. Without
+	// this, admin → backend hops start a fresh trace each time.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
 
 	logExp, err := otlploghttp.New(context.Background())
 	if err != nil {

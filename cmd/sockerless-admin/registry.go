@@ -95,7 +95,7 @@ func healthEndpoint(typ string) string {
 // PollLoop polls all components' health endpoints at the given interval.
 // It stops when the done channel is closed.
 func (r *Registry) PollLoop(interval time.Duration, done <-chan struct{}) {
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := tracedHTTPClient(3 * time.Second)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // ActionCache stores downloaded action tarballs in memory.
@@ -150,7 +152,8 @@ func fetchActionTarball(nameWithOwner, ref string) (*ActionCacheEntry, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", nameWithOwner, ref)
 
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout:   60 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")

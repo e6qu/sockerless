@@ -154,7 +154,7 @@ func probeHealth(port int) (ok bool, detail string) {
 	if err != nil {
 		return false, ""
 	}
-	client := &http.Client{Timeout: probeHealthTimeout}
+	client := tracedHTTPClient(probeHealthTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err.Error()

@@ -4,20 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
+
+// tracedHTTPClient returns an *http.Client whose RoundTripper is wrapped by
+// otelhttp.NewTransport. Outgoing requests carry the W3C traceparent /
+// tracestate headers from the active span context, so admin → backend hops
+// join the same trace instead of starting fresh.
+//
+// When OTEL_EXPORTER_OTLP_ENDPOINT is unset the propagator is a no-op, so
+// this is safe to use unconditionally.
+func tracedHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+}
 
 // InitTracer sets up an OpenTelemetry TracerProvider with an OTLP HTTP exporter
 // if OTEL_EXPORTER_OTLP_ENDPOINT is set. Otherwise returns a no-op shutdown function.
@@ -76,6 +93,10 @@ func InitObservability(serviceName string) (*Observability, error) {
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
+
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
 
 	logExp, err := otlploghttp.New(context.Background())
 	if err != nil {
