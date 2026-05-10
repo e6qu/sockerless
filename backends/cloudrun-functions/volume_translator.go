@@ -68,6 +68,23 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 			VolumeType: &runpb.Volume_EmptyDir{EmptyDir: &runpb.EmptyDirVolumeSource{Medium: medium}},
 		}, nil
 
+	case core.BackingMemory:
+		// memory == cloud-agnostic RAM-backed mount. Cloud Run
+		// Functions Gen2 backs this with EmptyDir Memory medium on
+		// the underlying Cloud Run Service. SizeMB → SizeLimit when
+		// set; zero = container's memory limit.
+		v := &runpb.Volume{
+			Name: name,
+			VolumeType: &runpb.Volume_EmptyDir{EmptyDir: &runpb.EmptyDirVolumeSource{
+				Medium: runpb.EmptyDirVolumeSource_MEMORY,
+			}},
+		}
+		if spec.Memory != nil && spec.Memory.SizeMB > 0 {
+			v.VolumeType.(*runpb.Volume_EmptyDir).EmptyDir.SizeLimit =
+				fmt.Sprintf("%dMi", spec.Memory.SizeMB)
+		}
+		return v, nil
+
 	case core.BackingGCSFuse:
 		if spec.GCS == nil || spec.GCS.Bucket == "" {
 			return nil, fmt.Errorf("gcs-fuse backing for volume %q missing bucket", name)
