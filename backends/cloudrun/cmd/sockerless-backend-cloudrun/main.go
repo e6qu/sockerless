@@ -22,15 +22,23 @@ func main() {
 		level = zerolog.InfoLevel
 	}
 
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+	obs, err := core.InitObservability("sockerless-backend-cloudrun")
+	if err != nil {
+		bootLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr})
+		bootLogger.Fatal().Err(err).Msg("failed to init observability")
+	}
+	defer func() { _ = obs.Shutdown(context.Background()) }()
+
+	var output zerolog.LevelWriter
+	consoleW := zerolog.ConsoleWriter{Out: os.Stderr}
+	if obs.LogWriter != nil {
+		output = zerolog.MultiLevelWriter(consoleW, obs.LogWriter)
+	} else {
+		output = zerolog.MultiLevelWriter(consoleW)
+	}
+	logger := zerolog.New(output).
 		Level(level).
 		With().Timestamp().Str("component", "backend-cloudrun").Logger()
-
-	shutdown, err := core.InitTracer("sockerless-backend-cloudrun")
-	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to init tracer")
-	}
-	defer func() { _ = shutdown(context.Background()) }()
 
 	var config backend.Config
 	if cfg, env, _, err := core.ActiveEnvironmentWithConfig(); err == nil {

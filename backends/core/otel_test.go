@@ -100,3 +100,80 @@ func spanNames(spans tracetest.SpanStubs) []string {
 	}
 	return names
 }
+
+func TestInitObservabilityNoEndpoint(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	obs, err := InitObservability("test-service")
+	if err != nil {
+		t.Fatalf("InitObservability: %v", err)
+	}
+	if obs.LogWriter != nil {
+		t.Errorf("LogWriter should be nil when OTel disabled, got %v", obs.LogWriter)
+	}
+	if err := obs.Shutdown(context.Background()); err != nil {
+		t.Errorf("no-op shutdown should return nil, got %v", err)
+	}
+}
+
+func TestInitObservabilityWithEndpoint(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+	obs, err := InitObservability("test-service")
+	if err != nil {
+		t.Fatalf("InitObservability: %v", err)
+	}
+	if obs.LogWriter == nil {
+		t.Errorf("LogWriter should be non-nil when OTel enabled")
+	}
+	// Cancelled context — don't wait for the OTLP exporter to flush.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = obs.Shutdown(ctx)
+}
+
+func TestOTelLogWriter_Write_Nil(t *testing.T) {
+	// Nil receiver should be a graceful no-op so callers don't have
+	// to special-case "OTel disabled" before passing the writer to a
+	// MultiLevelWriter.
+	var w *OTelLogWriter
+	n, err := w.Write([]byte(`{"level":"info","message":"hi"}`))
+	if err != nil {
+		t.Errorf("nil writer should not error: %v", err)
+	}
+	if n != len(`{"level":"info","message":"hi"}`) {
+		t.Errorf("n = %d, want full length", n)
+	}
+}
+
+func TestOTelLogWriter_Write_BadJSON(t *testing.T) {
+	// Unparseable line is silently dropped — the consoleWriter half
+	// of MultiLevelWriter still gets it, so the operator sees the
+	// raw line on stderr.
+	w := &OTelLogWriter{}
+	n, err := w.Write([]byte("not json"))
+	if err != nil {
+		t.Errorf("bad JSON should not error: %v", err)
+	}
+	if n != len("not json") {
+		t.Errorf("n = %d", n)
+	}
+}
+
+func TestZerologLevelToOTel(t *testing.T) {
+	cases := map[string]string{
+		"trace":   "TRACE",
+		"debug":   "DEBUG",
+		"info":    "INFO",
+		"warn":    "WARN",
+		"warning": "WARN",
+		"error":   "ERROR",
+		"fatal":   "FATAL",
+		"panic":   "PANIC",
+		"weird":   "weird",
+	}
+	for in, wantText := range cases {
+		_, gotText := zerologLevelToOTel(in)
+		if gotText != wantText {
+			t.Errorf("zerologLevelToOTel(%q) text = %q, want %q", in, gotText, wantText)
+		}
+	}
+}
