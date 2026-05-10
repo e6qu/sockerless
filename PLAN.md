@@ -42,6 +42,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #141 | 83 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure onto the shared component + design language; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired. |
 | #142 | 84 + BUG-985 + BUG-986 | Phase 84 — sim shared `NewServer` returns `(*Server, error)` + `MakeStore` log.Fatalf on per-table failure (no silent in-memory degradation when persistence requested). Admin `SIM_DATA_DIR` injection per topology instance. Cross-cloud isolation tests. `make purge-state` operator targets. |
 | #143 | 85 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload/Restart prompt. |
+| #144 | 86 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
 
 ## Roadmap (ordered)
 
@@ -117,9 +118,11 @@ UI: `<ConfigEditModal>` opens from a "config" button on every InstanceRow. Per-r
 
 No auto-restart — operator-driven recovery via the existing Restart / Reload / Stop buttons. Component-side handling is unchanged.
 
-### Phase 87 — Centralized observability (logs + traces) — Stack A
+### Phase 87 — Centralized observability (logs + traces) — Stack A ✓ in flight (`phase-87-observability`)
 
-**Goal:** every sockerless component (sim, backend, bleephub, admin) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries.
+**First-PR scope** (this branch): observability stack itself + admin UI integration. `make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger. Default collector config has a `filelog` receiver scraping `.stack-pids/*.log` so logs flow into VictoriaLogs **without any binary changes** (pidfile-named log file becomes `service.name`). `GET /api/v1/observability` exposes `{enabled, logs_dashboard, traces_dashboard, ...}` driven by `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` env vars admin reads at boot. UI deep-link chips on the diagnostic panel render when enabled. `docs/OBSERVABILITY.md` documents both modes (no-OTel default + OTel opt-in) + stack swap to OpenObserve / SigNoz.
+
+**Phase 87b** (follow-up branch): wire OTel SDK into each component's `main.go`. `backends/core/otel.go` extended to logs export + zerolog → OTel logs bridge. Each backend / sim / admin / bleephub `main.go` gains 3 lines (read `OTEL_EXPORTER_OTLP_ENDPOINT`, init SDK, defer shutdown). `otelhttp.NewHandler` wraps each mux. Once components emit OTLP, traces light up in Jaeger automatically; logs already work via the filelog receiver.
 
 **Stack A — Apache 2.0 throughout, three binaries:**
 - **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.

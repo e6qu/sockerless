@@ -6,6 +6,29 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 87 observability — Stack A first PR (`phase-87-observability` branch)
+
+Four implementation commits + state save. The original Phase 87 plan listed 6 sub-steps; reading the existing code split it into two PRs along a natural seam:
+
+- **First PR (this branch)**: ship the *stack* (otel-collector + VictoriaLogs + Jaeger) + admin UI integration + docs. Logs work day-1 via the collector's filelog receiver scraping `.stack-pids/*.log`, no binary changes.
+- **Phase 87b (follow-up)**: wire the OTel SDK into each component's `main.go` so traces emit to OTLP. zerolog→OTel logs bridge so OTLP-mode operators don't depend on the filelog fallback.
+
+**Why split.** The component-side wiring means touching ~12 main.go files and either adding a shared `pkg/otel` module or duplicating the helper across the existing per-module `shared/` pattern. Doing it alongside the stack would have ballooned the PR. Splitting also lets operators get value from the stack (filelog-scraped logs in VictoriaLogs) before any binary touch.
+
+**Filelog receiver is the cleverness.** The collector's filelog receiver watches `.stack-pids/*.log` and ships every line to VictoriaLogs tagged with `service.name = <pidfile-basename>`. So even without component-side OTLP wiring, every sockerless binary's stdout is searchable in VictoriaLogs grouped by service. Phase 86's file-tail-based diagnostic panel and the operator-grade VictoriaLogs UI feed off the same source. When Phase 87b lands, the filelog path is the redundant fallback (collector dedupes by source).
+
+**Why a static observability config endpoint.** `GET /api/v1/observability` reads `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` at admin boot. The UI fetches it once with a 5-min staleTime. Operators bring up the observability stack with `make stack-observability-up`, then export the dashboard URLs before starting admin. Empty / unset → UI hides the chips → file-tail-only experience from Phase 86. Either URL set → chips render with the instance name as a query filter.
+
+**URL-filter shape.** VictoriaLogs canonical filter is `service.name=<value>`; Jaeger canonical is `service=<value>`. Both overridable via `OTEL_LOGS_SERVICE_PARAM` / `OTEL_TRACES_SERVICE_PARAM` for operators using a custom collector pipeline that writes the service identifier to a different attribute.
+
+**Make-target shape.** `make stack-observability-{up,down,status}` mirrors the existing `stack-up` pattern but writes PIDs into `.stack-pids/observability/` instead of `.stack-pids/`. The two stacks are independent — `stack-down` doesn't kill the observability stack, and the observability stack survives a cell `stack-down` so debugging across stack restarts is uninterrupted.
+
+**State directories** under `.sockerless-state/observability/{logs,traces}/` align with Phase 84's convention. `make purge-state-all` (Phase 84) wipes them alongside other instance state.
+
+**Stack swap is make-work.** The brief in PLAN.md noted that the same component-side OTel SDK works against OpenObserve (AGPL) or SigNoz (MIT) — only `make/stack.mk` changes. This PR doesn't pin the operator to Stack A; future PRs can ship `make stack-observability-openobserve-{up,down,status}` etc. as parallel targets. Components emit OTLP either way.
+
+**What this PR explicitly does NOT do.** No SDK wiring on components. No metrics export (sockerless's existing zerolog setup doesn't carry per-binary counters/histograms today; that's a Phase 87b+ design question). No alerting / paging integration. No dashboards beyond what VictoriaLogs/Jaeger ship by default.
+
 ## 2026-05-10 — Phase 86 health + supervision surface (`phase-86-health-supervision` branch)
 
 Three implementation commits + state save. The brief from PLAN.md said "mark unhealthy on ANY of: process exit / non-2xx /v1/health / probe timeout" — reading the existing code showed half of it already worked (signal-0 PID probe + `/v1/health` polling + 1 s timeout from Phase 79 step 7). The actual Phase 86 work was fixing two gaps:
