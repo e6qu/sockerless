@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -106,11 +107,14 @@ func main() {
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	})
 
-	tracerShutdown, err := InitTracer("sockerless-admin")
+	obs, err := InitObservability("sockerless-admin")
 	if err != nil {
-		log.Fatalf("init tracer: %v", err)
+		log.Fatalf("init observability: %v", err)
 	}
-	defer func() { _ = tracerShutdown(context.Background()) }()
+	defer func() { _ = obs.Shutdown(context.Background()) }()
+	if obs.TextLogWriter != nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, obs.TextLogWriter))
+	}
 
 	// otelhttp.NewHandler at the outermost layer captures every
 	// admin API + UI request as a span. Spans emit to a no-op

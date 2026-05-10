@@ -32,6 +32,13 @@ type Config struct {
 	// Persist enables SQLite-backed state persistence.
 	// Set via SIM_PERSIST=true. Default false (in-memory only).
 	Persist bool
+
+	// LogWriter, when non-nil, is added alongside the ConsoleWriter
+	// in a MultiLevelWriter so each zerolog event also flows to OTel
+	// logs via the OTelLogWriter bridge. main.go assigns this from
+	// InitObservability when the operator brought up the OTel stack
+	// (Phase 87c). Unset = today's stderr-only behaviour.
+	LogWriter *OTelLogWriter
 }
 
 // ConfigFromEnv loads configuration from environment variables.

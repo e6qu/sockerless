@@ -46,7 +46,14 @@ func NewServer(cfg Config) (*Server, error) {
 		level = zerolog.InfoLevel
 	}
 
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+	var output zerolog.LevelWriter
+	consoleW := zerolog.ConsoleWriter{Out: os.Stderr}
+	if cfg.LogWriter != nil {
+		output = zerolog.MultiLevelWriter(consoleW, cfg.LogWriter)
+	} else {
+		output = zerolog.MultiLevelWriter(consoleW)
+	}
+	logger := zerolog.New(output).
 		Level(level).
 		With().
 		Timestamp().

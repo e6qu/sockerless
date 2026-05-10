@@ -45,11 +45,12 @@ func main() {
 	// GCE_METADATA_HOST + sidecar URLs onto workload containers.
 	simListenAddr = cfg.ListenAddr
 
-	shutdown, err := sim.InitTracer("sockerless-sim-gcp")
+	obs, err := sim.InitObservability("sockerless-sim-gcp")
 	if err != nil {
-		log.Fatalf("init tracer: %v", err)
+		log.Fatalf("init observability: %v", err)
 	}
-	defer func() { _ = shutdown(context.Background()) }()
+	defer func() { _ = obs.Shutdown(context.Background()) }()
+	cfg.LogWriter = obs.LogWriter
 
 	srv, err := sim.NewServer(cfg)
 	if err != nil {

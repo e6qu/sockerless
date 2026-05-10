@@ -23,17 +23,26 @@ func main() {
 	if err != nil {
 		level = zerolog.InfoLevel
 	}
-	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+
+	obs, err := bleephub.InitObservability("bleephub")
+	if err != nil {
+		bootLogger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr})
+		bootLogger.Fatal().Err(err).Msg("failed to init observability")
+	}
+	defer func() { _ = obs.Shutdown(context.Background()) }()
+
+	var output zerolog.LevelWriter
+	consoleW := zerolog.ConsoleWriter{Out: os.Stderr}
+	if obs.LogWriter != nil {
+		output = zerolog.MultiLevelWriter(consoleW, obs.LogWriter)
+	} else {
+		output = zerolog.MultiLevelWriter(consoleW)
+	}
+	logger := zerolog.New(output).
 		With().Timestamp().Str("service", "bleephub").Logger().
 		Level(level)
 
 	logger.Info().Str("version", version).Str("commit", commit).Msg("starting")
-
-	shutdown, err := bleephub.InitTracer("bleephub")
-	if err != nil {
-		logger.Fatal().Err(err).Msg("failed to init tracer")
-	}
-	defer func() { _ = shutdown(context.Background()) }()
 
 	srv := bleephub.NewServer(*addr, logger)
 	if err := srv.ListenAndServe(); err != nil {
