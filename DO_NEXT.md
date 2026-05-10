@@ -4,20 +4,24 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`state-save-post-pr138` — PR #139 (open). Carries the post-#138 state save + the full Phase 80 admin UI Topology page. CI to verify after push.
+`main` (clean). PR #139 merged 2026-05-10 (Phase 80 admin UI Topology page + state save post-#138). Start a new branch for Phase 81.
 
 ## Resume here
 
-**Phase 80 shipping on PR #139.** Admin UI now has `/ui/topology`:
-- Project + instance tree with per-instance status polled every 2s (calls `GET /api/v1/topology/projects/{p}/instances/{i}/status`).
-- Per-row Start / Stop / Rebuild (POST to lifecycle endpoints).
-- Per-kind add/edit instance modal (sim/backend/bleephub) with auto-allocate-port button.
-- Add/delete project modal with confirmation.
-- Port registry card (configured ranges + claimed ports).
+**Phase 81 — per-instance logs + live troubleshooting console.**
 
-Replaces legacy `ProjectsPage` + `ProjectCreatePage` (deleted). `/ui/projects/:name` (ProjectDetailPage) + `/ui/projects/:name/logs` (ProjectLogsPage) still served until Phase 81 absorbs them.
+Three deliverables on top of the Phase 79/80 surface that already exists:
 
-**Next after #139 lands: Phase 81 — per-instance logs + live troubleshooting console.** Live tail per instance via SSE from admin (reads `.stack-pids/<name>.log`); combined-timeline view (sim + backend interleaved); API console panel (arbitrary HTTP requests against an instance).
+1. **SSE log tail.** New endpoint `GET /api/v1/topology/projects/{p}/instances/{i}/logs?follow=1` reads `.stack-pids/<name>.log` and streams new lines via Server-Sent Events. Without `follow=1`, returns the last N lines (default 200) as a JSON array. Honour `?lines=<N>` for both modes.
+2. **Combined-timeline view.** Multi-instance log view in admin UI: pick any subset of instances within a project; merged stream sorts by timestamp prefix when present, otherwise interleaves by arrival order. Each line tagged with the instance name. Pause / resume / clear controls.
+3. **API console panel.** Free-form HTTP request against any running instance: pick instance → endpoint base resolved from `Instance.Port` → method + path + headers + body inputs → fire → render response (status + headers + body, with JSON pretty-print + copy buttons).
+
+Wiring location:
+- New Go file `cmd/sockerless-admin/api_topology_logs.go` for the SSE handler.
+- New UI route `/ui/topology/:project/:instance/logs` for single-instance tail; `/ui/topology/:project/console` for the multi-instance combined view + API console panel.
+- ProjectLogsPage (`/ui/projects/:name/logs`) currently uses the legacy `/api/v1/projects/{p}/logs` endpoint — leave for now; Phase 83 (sim UI parity) sweep will retire it.
+
+Component-decoupled invariant still applies: SSE reads admin's own `.stack-pids/<name>.log` (admin's bookkeeping), not anything component-side. The API console talks to the instance's existing public surface; instances don't grow new endpoints to support admin.
 
 ## Invariants (re-state on every commit)
 
