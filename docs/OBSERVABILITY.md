@@ -65,6 +65,35 @@ make stack-aws-ecs
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
+## Validation — is the pipeline actually working?
+
+Use `make stack-observability-validate` to confirm telemetry actually
+reaches both backends:
+
+```bash
+make stack-observability-up
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+  ./backends/docker/cmd/sockerless-backend-docker -addr :3375 &
+curl http://localhost:3375/v1/version          # generate one request
+make stack-observability-validate
+```
+
+The target polls VictoriaLogs (`/select/logsql/query?query=service.name:"<svc>"`)
+and Jaeger (`/api/traces?service=<svc>`) until both return at least one
+record, or the timeout expires (default 30 s). Override the service or
+timeout with:
+
+```bash
+OBS_VALIDATE_SERVICE=sockerless-backend-cloudrun \
+OBS_VALIDATE_TIMEOUT_S=60 \
+  make stack-observability-validate
+```
+
+This is a manual operator-grade check, not run in CI (CI doesn't
+bring up the observability stack). Run it after enabling OTLP on a
+new component, after upgrading the OTel collector, or whenever a
+diagnostic panel chip looks suspicious.
+
 ## Admin UI integration
 
 When `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` are set, the
