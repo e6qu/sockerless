@@ -26,6 +26,12 @@ func main() {
 		Level(level).
 		With().Timestamp().Str("component", "backend-azf").Logger()
 
+	shutdown, err := core.InitTracer("sockerless-backend-azf")
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to init tracer")
+	}
+	defer func() { _ = shutdown(context.Background()) }()
+
 	var config backend.Config
 	if cfg, env, _, err := core.ActiveEnvironmentWithConfig(); err == nil {
 		sim, _ := cfg.ResolveSimulator(env)
