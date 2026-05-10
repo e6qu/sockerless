@@ -4,21 +4,29 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-79-topology-store`. PR #137 merged 2026-05-10 (Phase 78 polish + Phase 79 step 1 — Instance type). New branch carries Phase 79 step 2 onward.
+`main` (clean). PR #138 merged 2026-05-10 (Phase 79 complete + Phase 87 plan + cloud-resource-mapping consolidation). Start a new branch for Phase 80.
 
 ## Resume here
 
-**Phase 79 complete on this branch (PR #138). Phase 80 next.**
+**Phase 80 — admin UI: topology page + per-instance lifecycle.**
 
-Phase 79 ships in PR #138:
-- ✓ Step 1: `Instance` type (in #137).
-- ✓ Step 2: `Topology` struct + YAML store at `sockerless.yaml` + `MigrateLegacyProjects`.
-- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (`/api/v1/topology`).
-- ✓ Step 4: `make/components.mk` granular targets (`start-component`, `stop-component`, `rebuild-component`, `logs-component`, `status-components`, `stop-components`); `stack-X-Y` macros rewritten as composition of `rebuild-component` + `start-component`.
-- ✓ Step 5: `TopologyManager.AllocatePort` walks the configured pool, skips claimed + in-use ports.
-- ✓ Step 6: lifecycle REST endpoints (`POST /api/v1/topology/projects/{p}/instances/{i}/{start|stop|rebuild}`) shell `make {start,stop,rebuild}-component`. Per-instance config map serialised to `.stack-pids/<name>.env` and passed via `ENV_FILE=` so admin can hand any env vars to the component without admin needing to know what they mean.
+Backend surface (already shipped in #138):
+- `GET /api/v1/topology` — full topology read.
+- `PUT /api/v1/topology` — full topology replace (validated).
+- `GET /api/v1/topology/instances` — flat list of `{project, instance}` refs.
+- `POST /api/v1/topology/projects` / `DELETE /api/v1/topology/projects/{p}` — surgical project add/remove.
+- `POST /api/v1/topology/projects/{p}/instances` / `GET|PUT|DELETE /api/v1/topology/projects/{p}/instances/{i}` — surgical instance CRUD.
+- `POST /api/v1/topology/projects/{p}/instances/{i}/{start|stop|rebuild}` — lifecycle (shells `make`).
+- `GET /api/v1/topology/projects/{p}/instances/{i}/status` — per-instance status (running, PID, health).
+- `POST /api/v1/topology/allocate-port` — allocate a free port from `ports.ranges[<kind>]`.
 
-**Next: Phase 80 — admin UI: topology page + per-instance lifecycle.** Replace ProjectsPage with a project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form (kind + name + port + per-component config); edit/delete; port registry view (allocated + free ranges).
+Phase 80 build (UI only):
+1. Replace `ProjectsPage` in admin UI with project + instance tree view.
+2. Per-instance Start / Stop / Rebuild buttons (POST to lifecycle endpoints, toast on success/failure).
+3. "Add project" + "Add instance" forms — instance form renders per-kind fields (sim → cloud + port; backend → cloud + backend kind + sim-port + port; bleephub → port). Auto-allocate-port button.
+4. Edit / delete per instance + per project (with confirmation).
+5. Port registry view — show `ports.ranges` configured ranges + which ports are claimed by which instance.
+6. Per-instance status row (running / health) via the status endpoint, polled every 2s when the instance row is expanded.
 
 ## Invariants (re-state on every commit)
 

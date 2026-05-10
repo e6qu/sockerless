@@ -6,6 +6,33 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 79 (full) + Phase 87 plan + docs consolidation (PR #138, merged)
+
+**Phase 79 complete: admin orchestration backend.** `sockerless.yaml` at repo root carries the full topology. `Topology` struct (`topology_store.go`): `projects[]` × `instances[]`, port pool global. YAML marshal + atomic save (tmp + rename). `MigrateLegacyProjects` reads existing `~/.sockerless/admin/projects/*.json` (when YAML absent), derives `[sim, backend]` instances via `DeriveLegacyInstances`, writes `sockerless.yaml`.
+
+`TopologyManager` singleton (`topology_manager.go`): owns the in-memory copy under RWMutex; defensive deep-copy on Get; `replaceLocked` consolidates validate + persist + swap. Surgical APIs: `AddProject`, `RemoveProject`, `AddInstance`, `RemoveInstance`, `UpdateInstance`, `FindInstance`, `Instances` (flat `InstanceRef` list).
+
+`AllocatePort(kind)` (`topology_ports.go`) walks `ports.ranges[<kind>]` pool, skips claimed + bound ports (signal-0 PID probe + listen test), fails loud on no-range / exhausted.
+
+REST surface (`api_topology.go`): GET/PUT topology; GET instances list; GET/POST/PUT/DELETE per-instance; POST start/stop/rebuild; POST allocate-port; POST projects; DELETE projects/{p}; GET status. `crudErrorStatus` maps "already exists"→409, "not found"→404, "validate:..."→400, else 500.
+
+Lifecycle (`instance_lifecycle.go`) shells `make {start,stop,rebuild}-component`. Per-instance Config map serialised to `.stack-pids/<name>.env`, passed via `ENV_FILE=`. Admin doesn't need to know component env schema. PID + log keyed by component name (`.stack-pids/<NAME>.{pid,log,env}`).
+
+Per-instance status (`instance_status.go` + `instance_status_unix.go`): `InstanceStatus{Project, Name, Running, PID, Health, HealthDetail}`. Signal-0 PID probe split per-OS (Windows door open). Health: ANY of (process exit | `/v1/health` non-2xx | 1s timeout) → unhealthy. No auto-restart.
+
+`make/components.mk` granular targets: `start-component KIND=… NAME=… PORT=… [CLOUD=…] [BACKEND=…] [SIM_PORT=…] [ENV_FILE=…]`; `stop-component`, `rebuild-component`, `logs-component`; `status-components` / `stop-components` sweep targets. `make/stack.mk` `stack-X-Y` macros rewritten as composition of `rebuild-component` + `start-component` (`STACK_SIM_CLOUD_<be>` lookup map).
+
+`docs/ADMIN_ORCHESTRATION.md` documents schema, REST surface, make targets, env-file convention, and the explicit "what admin is NOT responsible for" list (no startup hooks, no required env vars, no implicit defaults).
+
+**Phase 87 plan added.** Centralized observability via Stack A (all Apache 2.0): OpenTelemetry Collector receiving OTLP at `:4317`, fanning out to VictoriaLogs (`:9428` UI, 7d retention) for logs and Jaeger all-in-one (`:16686` UI, 72h retention) for traces. Components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (decoupled-from-admin invariant preserved). Sub-steps in PLAN.md: `backends/core/otel/` SDK wrapper → `otelhttp.NewHandler` middleware → zerolog→OTel-logs bridge → `make stack-observability-{up,down,status}` → admin UI deep links → docs. Open-source-only constraint (MPL incompatible with AGPLv3 ruled out Vector / SigNoz proper); Stack A is fully Apache 2.0 + swappable for AGPL alternatives without component code changes.
+
+**Docs sweep + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation.** New top-level Contents TOC. Two new sections inserted between "Universal rules" and "Mapping per cloud" without removing existing content:
+
+- *Docker / Podman API → cloud + drivers — quick reference*: per-endpoint summary tables (container lifecycle, networks, volumes, build/registry, lifecycle/management) cross-referencing the existing detailed Docker API coverage matrix lower in the file.
+- *CI runner requirements — what each runner needs from sockerless*: GitLab runner contract, GitHub Actions runner contract, explicit subsections for "GitHub runner default is NOT ephemeral; we need it ephemeral" (covers `--ephemeral` flag, per-spawn registration token, dispatcher cleanup) and "GitHub runner cannot self-spawn jobs (needs separate dispatcher)" (covers ARC-in-k8s exception that maps to k8s-deployed ACA). Plus a multi-system CI/CD comparison covering Azure DevOps Pipelines, Jenkins, Drone, Buildkite, CircleCI, Tekton, Argo Workflows, Concourse, TeamCity, Bitbucket Pipelines, GoCD, Semaphore, Travis, Bamboo, Earthly, Dagger, Cloud Build, AWS CodeBuild, Harness, Spinnaker, ArgoCD, FluxCD — distinguishing direct fits (Docker-API-shaped), k8s-only systems, closed managed services, and BuildKit/IaC categories.
+
+**Bogus `frontend-docker` InstanceKind dropped.** Speculatively added in step 1; no Go binary backs it (only a UI package). Removed from enum, make targets, port ranges, route handlers, docs per no-fakes principle.
+
 ## 2026-05-10 — Phase 78 + 79 step 1 (PR #137, merged)
 
 **Phase 78 (UI polish).** `useTheme` + `ThemeToggle` (sidebar footer; localStorage + prefers-color-scheme + dark default). `ToastProvider` mounted by `BackendApp` / `SimulatorApp` / admin / bleephub; `useToast` / `useReportError` / `useToastQueryErrors`. `InlineError` for in-page errors with Retry. `Modal` (native `<dialog>`-backed) + `ContainerDetailModal` opening from row click. Accessibility pass (DataTable sort headers as buttons + `aria-sort`, clickable rows keyboard-activatable, AppShell skip-link + `aside`/`nav` labels + `main id+tabIndex`, Spinner role). Admin mutations toast on success+failure. `ui/README.md` documents `make stack-X-Y` / `stack-status` / `stack-down` start/stop, default ports, and per-package vite-dev mode. Admin Toast wiring; vitest infra: jsdom origin pinned + `localStorage`/`matchMedia` polyfills + cleanup() between tests.
