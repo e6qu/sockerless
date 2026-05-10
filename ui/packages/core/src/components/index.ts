@@ -14,6 +14,8 @@ export { ErrorBoundary } from "./ErrorBoundary.js";
 export { Spinner } from "./Spinner.js";
 export { DataTable } from "./DataTable.js";
 export type { DataTableProps } from "./DataTable.js";
+export { ResourceListPage } from "./ResourceListPage.js";
+export type { ResourceListPageProps } from "./ResourceListPage.js";
 export { BackendApp } from "./BackendApp.js";
 export type { BackendAppProps } from "./BackendApp.js";
 export { BackendInfoCard } from "./BackendInfoCard.js";

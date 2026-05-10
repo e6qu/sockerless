@@ -1,9 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, Spinner } from "@sockerless/ui-core/components";
+import { ResourceListPage } from "@sockerless/ui-core/components";
 import { fetchCloudRunJobs, type CloudRunJob } from "../api.js";
 
-const columns: ColumnDef<CloudRunJob, any>[] = [
+const columns: ColumnDef<CloudRunJob, unknown>[] = [
   { accessorKey: "name", header: "Name" },
   { accessorKey: "createTime", header: "Created" },
   { accessorKey: "executionCount", header: "Executions", sortDescFirst: true },
@@ -11,12 +10,16 @@ const columns: ColumnDef<CloudRunJob, any>[] = [
 ];
 
 export function CloudRunJobsPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["cloudrun-jobs"], queryFn: fetchCloudRunJobs, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">Cloud Run Jobs</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<CloudRunJob>
+      kicker="gcp · simulator · cloudrun"
+      title={<>Jobs</>}
+      countNoun="job"
+      columns={columns}
+      queryKey={["cloudrun-jobs"]}
+      queryFn={fetchCloudRunJobs}
+      filterPlaceholder="Filter jobs…"
+      emptyMessage="No Cloud Run jobs tracked."
+    />
   );
 }

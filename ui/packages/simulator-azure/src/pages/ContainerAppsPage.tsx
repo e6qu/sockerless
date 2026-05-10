@@ -1,9 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, Spinner } from "@sockerless/ui-core/components";
+import { ResourceListPage } from "@sockerless/ui-core/components";
 import { fetchContainerAppJobs, type ContainerAppJob } from "../api.js";
 
-const columns: ColumnDef<ContainerAppJob, any>[] = [
+const columns: ColumnDef<ContainerAppJob, unknown>[] = [
   { accessorKey: "name", header: "Name" },
   { accessorKey: "location", header: "Location" },
   { accessorKey: "type", header: "Type" },
@@ -11,12 +10,16 @@ const columns: ColumnDef<ContainerAppJob, any>[] = [
 ];
 
 export function ContainerAppsPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["ca-jobs"], queryFn: fetchContainerAppJobs, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">Container Apps Jobs</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<ContainerAppJob>
+      kicker="azure · simulator · container apps"
+      title={<>Jobs</>}
+      countNoun="job"
+      columns={columns}
+      queryKey={["ca-jobs"]}
+      queryFn={fetchContainerAppJobs}
+      filterPlaceholder="Filter jobs…"
+      emptyMessage="No Container App jobs tracked."
+    />
   );
 }

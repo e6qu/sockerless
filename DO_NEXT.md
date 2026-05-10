@@ -4,37 +4,45 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`state-save-post-pr139` — PR #140 (Phase 81 + Phase 82 + state save post-#139) awaiting CI / review / merge. Once merged, start a new branch for Phase 83.
+`phase-83-sim-ui-parity` — Phase 83 work in flight (5 commits). Open a PR when ready; PR #140 already merged.
 
-## Resume here — Phase 83 (sim UI parity)
+## Status
 
-**State of the sim UIs today** (from `ui/packages/simulator-{aws,gcp,azure}/`):
+Phase 83 implementation is done on this branch. After it lands, **Phase 84 — per-instance state isolation + persistence** is the next pickup. See bottom of this file for the Phase 84 brief.
 
-- Shell parity is already there — `SimulatorApp` (`@sockerless/ui-core/components`) wraps `ErrorBoundary` + `ToastProvider` + `BrowserRouter` + `AppShell` (which itself includes `ThemeToggle` in the nav). So shell, error boundary, toast plumbing, dark mode all exist.
-- Page parity is the gap — the sim pages are 20–30 LOC each (`<h2>` + `<DataTable>`), no `PageHeading` / kicker style, no error UX, no toast wiring on (currently nonexistent) mutations. Compared to the admin pages they look like sketches.
+## Resume here — Phase 83 (sim UI parity) — implementation done
 
-**Phase 83 deliverables, ordered.**
+Branch has 5 commits ready to PR:
 
-1. **Sim page polish.** Sweep every sim page (`simulator-aws`: ECSTasks, Lambda, ECR, S3, LogGroups, Overview; `simulator-gcp`: ArtifactRegistry, CloudFunctions, CloudRunJobs, GCSBuckets, Logging, Overview; `simulator-azure`: ACRRegistries, AzureFunctions, ContainerApps, Monitor, StorageAccounts, Overview). Replace bare `<h2>` with `PageHeading` (kicker like `aws · simulator · ecs`, italic `<>Tasks</>` title, meta showing row count). Add `ErrorPanel` for `isError` paths (currently silently render empty). Match the admin design language: card-style sections, font-display titles, font-mono uppercase tracking-[0.18em] kickers.
-2. **Lift reusable bits to `@sockerless/ui-core`.** The four 25-LOC sim pages all do the same thing: `useQuery` + `DataTable` + nothing. Extract a `<ResourceListPage>` shared component that takes `{ kicker, title, columns, queryKey, queryFn, refetchInterval, emptyMessage }` and emits the heading + spinner + error + table. Each sim page collapses to a config call. Net code drop > add even after the polish.
-3. **Reuse Phase 81 surface for sims.** SSE log tail and API console at `/ui/topology/:p/:i/logs` + `/ui/topology/:p/console` already accept any topology instance regardless of kind, so sims get them free — but only when launched via admin orchestration. Sims launched by `make stack-X-Y` register in `sockerless.yaml`, so this is the working path; document it.
-4. **Retire legacy pages once topology covers them.**
-   - `/ui/resources` (legacy registry-backed) — superseded by `/ui/topology/resources`. Delete the route + page once the new one is verified in operator workflow.
-   - `/ui/projects/:name/logs` (legacy combined-component logs) — superseded by `/ui/topology/:p/console` (combined timeline). Delete after the same verification.
-   - `cmd/sockerless-admin/api_components.go` and the legacy registry path can stay; it's still useful for components added via CLI flag (`--backend name=addr`) that bypass `sockerless.yaml`. The UI nav just stops linking to the legacy pages.
-5. **Document.** `ui/README.md` gets a "Sim UIs" section pointing operators at the per-sim cloud-API browser pages; admin orchestration docs note that sim instance logs / console are reachable from `/ui/topology/...`.
+1. `phase 83: add shared ResourceListPage to @sockerless/ui-core` — new component + 5 vitest cases.
+2. `phase 83: refactor simulator-aws pages onto ResourceListPage` — 6 pages.
+3. `phase 83: refactor simulator-gcp pages onto ResourceListPage` — 6 pages.
+4. `phase 83: refactor simulator-azure pages onto ResourceListPage` — 6 pages.
+5. `phase 83: retire legacy admin pages superseded by topology` — `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` deleted; companion API client methods + types removed.
 
-**Out of scope for Phase 83.** Don't add Containers / Resources / Metrics pages to sims — those are *backend* concepts (Docker container lifecycle, sockerless-tracked cloud resources, backend metrics). Sims model the cloud APIs (ECS tasks, Lambda functions, S3 buckets) directly; those domain pages already exist and just need polish.
+When ready: `git push -u origin phase-83-sim-ui-parity` then `gh pr create`. CI cycle is ~7 min; verify all 11 checks green before merging.
 
-**Quick start when picking up.**
+## Phase 84 — Per-instance state isolation + persistence (next pickup)
 
-```bash
-git checkout main && git pull
-git checkout -b phase-83-sim-ui-parity
-cd ui/packages/simulator-aws/src/pages
-# inspect ECSTasksPage.tsx alongside admin's TopologyResourcesPage.tsx
-# the latter is the design target, the former is the starting point
-```
+**Goal.** Sims gain optional persistent state across restarts, multiple sim instances of the same cloud coexist with isolated state.
+
+**Today.** Sims already accept `SOCKERLESS_<X>_DATA_DIR` for SQLite persistence (see `simulators/aws/shared/server.go:OpenDB`). The defaults land everything under `/tmp/sockerless-sim-<provider>/` — that's *one* shared dir per cloud, so two sim-aws instances would collide.
+
+**Phase 84 deliverables.**
+
+1. **Topology-driven SIM_STATE_DIR.** When admin starts a sim instance via `make start-component`, set `SIM_STATE_DIR=$(CURDIR)/.sockerless-state/<project>/<instance>/`. The make target sources `.stack-pids/<name>.env` so per-instance config flows through; just add `SIM_STATE_DIR` to the env file admin writes.
+2. **Sim-side wiring.** Each `simulator-{aws,gcp,azure}` reads `SIM_STATE_DIR` (or its existing `SOCKERLESS_<X>_DATA_DIR`) before falling back to the `/tmp` default. Per the no-fallbacks principle, when admin orchestrates, the env var is always set; the `/tmp` default is for stand-alone manual use only.
+3. **Multi-instance test.** `simulators/aws/instance_isolation_test.go` (or similar) brings up two sim-aws instances on different ports + state dirs, asserts a resource created in instance A doesn't show up in instance B.
+4. **Volume cleanup.** `make stop-component KIND=sim NAME=<n>` should NOT auto-delete `.sockerless-state/<project>/<instance>/` — operators choose when to wipe state. Add a separate `make purge-state` target for explicit cleanup.
+
+**Out of scope.** Don't refactor the existing `Persist` / `OpenDB` paths. Phase 84 is purely about path resolution + isolation, not storage backend changes.
+
+**Files to touch (rough):**
+
+- `cmd/sockerless-admin/instance_lifecycle.go` — write `SIM_STATE_DIR` into the env file when kind=sim.
+- `make/components.mk` — passthrough or default for `SIM_STATE_DIR` if not set.
+- `simulators/{aws,gcp,azure}/shared/server.go` — read `SIM_STATE_DIR` first, fall back to existing per-cloud var, then to `/tmp`.
+- `simulators/{aws,gcp,azure}/<integration>_test.go` — multi-instance isolation test.
 
 ## Invariants (re-state on every commit)
 

@@ -1,9 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable, Spinner } from "@sockerless/ui-core/components";
+import { ResourceListPage } from "@sockerless/ui-core/components";
 import { fetchStorageAccounts, type StorageAccount } from "../api.js";
 
-const columns: ColumnDef<StorageAccount, any>[] = [
+const columns: ColumnDef<StorageAccount, unknown>[] = [
   { accessorKey: "name", header: "Name" },
   { accessorKey: "kind", header: "Kind" },
   { accessorKey: "location", header: "Location" },
@@ -11,12 +10,16 @@ const columns: ColumnDef<StorageAccount, any>[] = [
 ];
 
 export function StorageAccountsPage() {
-  const { data, isLoading } = useQuery({ queryKey: ["storage-accounts"], queryFn: fetchStorageAccounts, refetchInterval: 5000 });
-  if (isLoading) return <Spinner />;
   return (
-    <div>
-      <h2 className="mb-4 text-2xl font-bold">Storage Accounts</h2>
-      <DataTable columns={columns} data={data ?? []} />
-    </div>
+    <ResourceListPage<StorageAccount>
+      kicker="azure · simulator · storage"
+      title={<>Accounts</>}
+      countNoun="account"
+      columns={columns}
+      queryKey={["storage-accounts"]}
+      queryFn={fetchStorageAccounts}
+      filterPlaceholder="Filter accounts…"
+      emptyMessage="No storage accounts tracked."
+    />
   );
 }
