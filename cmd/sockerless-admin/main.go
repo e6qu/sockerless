@@ -51,6 +51,10 @@ func main() {
 	reg := NewRegistry()
 	procMgr := NewProcessManager(reg)
 	projectMgr := NewProjectManager(procMgr, reg, defaultProjectStoreDir())
+	topologyMgr := NewTopologyManager(DefaultTopologyPath(), defaultProjectStoreDir())
+	if err := topologyMgr.LoadOrMigrate(); err != nil {
+		log.Fatalf("topology load failed: %v", err)
+	}
 
 	// 1. Load from config file
 	if *configPath != "" {
@@ -90,6 +94,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerAPI(mux, reg, procMgr, projectMgr)
+	registerTopologyAPI(mux, topologyMgr, NewInstanceLifecycle("", 0))
 	registerUI(mux)
 
 	// Redirect / to /ui/

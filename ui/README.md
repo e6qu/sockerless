@@ -62,7 +62,7 @@ make stack-status         # show which components are running + their PIDs
 make stack-down           # stop every running stack process and clean up .stack-pids/
 ```
 
-Each `stack-*-*` target builds the three components, starts them as background processes, and writes their PIDs to `.stack-pids/` so `stack-down` can find them later. Logs land in `.stack-pids/sim.log`, `.stack-pids/backend.log`, `.stack-pids/admin.log`.
+Each `stack-*-*` target builds the three components, starts them as background processes, and writes their PIDs to `.stack-pids/` so `stack-down` can find them later. Internally these targets compose `make start-component` calls (see below + `docs/ADMIN_ORCHESTRATION.md`). Logs land in `.stack-pids/sim.log`, `.stack-pids/backend.log`, `.stack-pids/admin.log`.
 
 Default ports (overridable via env in `make/stack.mk`):
 - AWS sim `:4566`, GCP sim `:4567`, Azure sim `:4568`
@@ -71,6 +71,26 @@ Default ports (overridable via env in `make/stack.mk`):
 - bleephub `:5555` (separate target: `make stack-bleephub-up`)
 
 Open the admin UI at `http://localhost:9090/ui/` once `stack-status` reports it green.
+
+### Arbitrary topology (multiple sims / backends / bleephubs)
+
+For richer topologies, use the granular per-component targets — admin's REST surface drives these too:
+
+```sh
+make start-component KIND=sim     CLOUD=aws  NAME=sim-1     PORT=4566
+make start-component KIND=sim     CLOUD=gcp  NAME=sim-2     PORT=4567
+make start-component KIND=backend CLOUD=aws  BACKEND=ecs    NAME=ecs-1 PORT=3375 SIM_PORT=4566
+make start-component KIND=bleephub             NAME=bleep-1   PORT=5555
+
+make logs-component  NAME=ecs-1 LINES=200
+make stop-component  NAME=ecs-1
+make rebuild-component KIND=backend CLOUD=aws BACKEND=ecs
+
+make status-components       # show every running component
+make stop-components         # SIGTERM every running component
+```
+
+Persist the topology in `sockerless.yaml` at the repo root and admin will reconcile + drive lifecycle automatically. See `docs/ADMIN_ORCHESTRATION.md` for the full schema + REST surface.
 
 ## Working on a single UI package (vite hot reload)
 

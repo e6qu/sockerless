@@ -46,31 +46,31 @@ stack-azure-aca: ## start sim-azure + backend-aca + admin
 stack-azure-azf: ## start sim-azure + backend-azf + admin
 	@$(MAKE) -s stack-up STACK_SIM=azure STACK_BE=azf STACK_BE_DIR=backends/azure-functions
 
-# stack-up — internal target. Build all 3 components, then start them
-# as background processes whose PIDs are recorded in .stack-pids/.
+# Cloud lookup per backend (used by stack-up to derive the cloud
+# argument for rebuild-component / start-component).
+STACK_SIM_CLOUD_ecs       := aws
+STACK_SIM_CLOUD_lambda    := aws
+STACK_SIM_CLOUD_cloudrun  := gcp
+STACK_SIM_CLOUD_gcf       := gcp
+STACK_SIM_CLOUD_aca       := azure
+STACK_SIM_CLOUD_azf       := azure
+
+# stack-up — internal target. Composes per-component start-component
+# calls (from make/components.mk) so the legacy 1-sim + 1-backend +
+# admin shape stays available even after Phase 79's per-instance
+# orchestration lands. Each component lives at .stack-pids/<name>.
 stack-up:
 	@if [ -z "$(STACK_SIM)" ] || [ -z "$(STACK_BE)" ]; then \
 	  echo "stack-up requires STACK_SIM and STACK_BE"; exit 1; \
 	fi
-	@mkdir -p $(STACK_PID_DIR)
-	@printf "$(COLOR_CYAN)▸ Building sim-$(STACK_SIM)$(COLOR_RESET)\n"
-	@$(MAKE) -s -C simulators/$(STACK_SIM) build
-	@printf "$(COLOR_CYAN)▸ Building backend-$(STACK_BE)$(COLOR_RESET)\n"
-	@$(MAKE) -s -C $(STACK_BE_DIR) build
+	@$(MAKE) -s rebuild-component KIND=sim CLOUD=$(STACK_SIM)
+	@$(MAKE) -s rebuild-component KIND=backend CLOUD=$(STACK_SIM_CLOUD_$(STACK_BE)) BACKEND=$(STACK_BE)
 	@printf "$(COLOR_CYAN)▸ Building admin$(COLOR_RESET)\n"
 	@$(MAKE) -s -C cmd/sockerless-admin build
-	@printf "$(COLOR_CYAN)▸ Starting sim-$(STACK_SIM) on :$(STACK_SIM_PORT_$(STACK_SIM))$(COLOR_RESET)\n"
-	@cd simulators/$(STACK_SIM) && \
-	  ./simulator-$(STACK_SIM) -addr :$(STACK_SIM_PORT_$(STACK_SIM)) \
-	    > $(STACK_PID_DIR)/sim.log 2>&1 & \
-	  echo $$! > $(STACK_PID_DIR)/sim.pid
+	@$(MAKE) -s start-component KIND=sim CLOUD=$(STACK_SIM) NAME=sim PORT=$(STACK_SIM_PORT_$(STACK_SIM))
 	@sleep 1
-	@printf "$(COLOR_CYAN)▸ Starting backend-$(STACK_BE) on :$(STACK_BE_PORT) → http://localhost:$(STACK_SIM_PORT_$(STACK_SIM))$(COLOR_RESET)\n"
-	@cd $(STACK_BE_DIR) && \
-	  SOCKERLESS_ENDPOINT_URL=http://localhost:$(STACK_SIM_PORT_$(STACK_SIM)) \
-	  ./sockerless-backend-$(STACK_BE) --addr :$(STACK_BE_PORT) \
-	    > $(STACK_PID_DIR)/backend.log 2>&1 & \
-	  echo $$! > $(STACK_PID_DIR)/backend.pid
+	@$(MAKE) -s start-component KIND=backend CLOUD=$(STACK_SIM_CLOUD_$(STACK_BE)) BACKEND=$(STACK_BE) \
+	  NAME=backend PORT=$(STACK_BE_PORT) SIM_PORT=$(STACK_SIM_PORT_$(STACK_SIM))
 	@sleep 1
 	@printf "$(COLOR_CYAN)▸ Starting admin on :$(STACK_ADMIN_PORT)$(COLOR_RESET)\n"
 	@cd cmd/sockerless-admin && \

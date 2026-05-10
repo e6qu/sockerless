@@ -16,7 +16,7 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 8. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
 9. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
 10. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
-11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub, frontend-docker remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
 
 ## Closed phases (PR index)
 
@@ -35,23 +35,25 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #134 | 127 | Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
 | #135 | 121b (initial) | Azure sim hardening, all-6-backends test harness restructure, in-memory storage, driver consolidation pattern B, GCP sim Cloud Run invoke routing, GCF envelope decode + label round-trip, drop QEMU. |
 | #136 | 121b (finish) | Network-discovery adapter consolidation; host-aliases opt-in everywhere; AZF cloud-dns + Lambda service-mesh wiring; Azure AD access driver; pair DNS + cloud-side provisioning to NetworkDiscovery. |
+| #137 | 78 + 79 step 1 | UI polish (dark mode toggle, Toast / InlineError, Modal + ContainerDetail, a11y, perf, READMEs) + admin `Instance` type. |
 
-## Roadmap (ordered) — all phases below land on PR #137 unless noted
+## Roadmap (ordered)
 
-### Phase 78 — UI polish ✓ complete
+### Phase 78 — UI polish ✓ complete (#137)
 
 Dark mode, error UX, Container detail modal, accessibility, perf, documentation. See `WHAT_WE_DID.md` for details.
 
-### Phase 79 — Topology + admin config service (in progress)
+### Phase 79 — Topology + admin config service ✓ complete (PR #138)
 
-Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub / frontend-docker, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
+Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
 
-- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation.
-- Step 2: `sockerless.yaml` topology store.
-- Step 3: REST endpoints (`/v1/admin/topology`, `/v1/admin/instances/{key}/{start|stop|rebuild}`).
-- Step 4: `make start-component` / `stop-component` / `rebuild-component` granular targets; existing `stack-X-Y` become wrappers.
-- Step 5: Free-port helper + auto-allocation from `ports.ranges`.
-- Step 6: One-shot migration of existing JSONs into `sockerless.yaml`.
+- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation (#137).
+- ✓ Step 2: `sockerless.yaml` topology store + `MigrateLegacyProjects` (#138).
+- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (#138).
+- ✓ Step 4: `make/components.mk` granular targets; `stack-X-Y` rewritten as composition (#138).
+- ✓ Step 5: `TopologyManager.AllocatePort` from `ports.ranges` (#138).
+- ✓ Step 6: lifecycle REST endpoints shell `make {start,stop,rebuild}-component` (#138).
+- ✓ Step 7: surgical CRUD endpoints (project + instance add/remove/edit) + per-instance status endpoint + `docs/ADMIN_ORCHESTRATION.md` (#138).
 
 ### Phase 80 — Admin UI: topology page + per-instance lifecycle
 
@@ -81,7 +83,31 @@ Admin-side annotation per-config-key: hot-reloadable vs restart-required. Admin 
 
 Mark instance unhealthy on ANY of: process exit, `/v1/health` non-2xx, no `/v1/health` response within 5s. Admin UI shows failing signal + last-N log lines + diagnostic links. No auto-restart (operator-driven recovery).
 
-## After PR #137
+### Phase 87 — Centralized observability (logs + traces) — Stack A
+
+**Goal:** every sockerless component (sim, backend, bleephub, admin) emits structured logs + traces to a local OpenTelemetry pipeline. Admin UI deep-links to per-instance log + trace queries.
+
+**Stack A — Apache 2.0 throughout, three binaries:**
+- **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.
+- **VictoriaLogs** (Apache 2.0) for logs. Built-in UI on `:9428`. `--retentionPeriod=7d` cap.
+- **Jaeger** all-in-one (Apache 2.0) for traces. Built-in UI on `:16686`. `--badger.span-store-ttl=72h` cap.
+
+**Invariant preserved:** components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's behaviour (zerolog → stdout). No admin coupling, no required env var, no startup registration.
+
+Sub-steps:
+
+1. **`backends/core/otel/`** — wraps go.opentelemetry.io/otel SDK setup (logs + traces + resource attrs). Reads `OTEL_EXPORTER_OTLP_ENDPOINT` + service name. Used by every component's `main.go` in 3 lines.
+2. **HTTP middleware** — wrap each backend / sim mux with `otelhttp.NewHandler` so spans land per request automatically.
+3. **zerolog → OTel logs bridge** — existing `zerolog.Logger` calls also export to the OTel logs SDK. No log-line API changes.
+4. **`make stack-observability-{up,down,status}`** in `make/stack.mk`. Runs collector + VictoriaLogs + Jaeger as background processes; PIDs in `.stack-pids/observability/`. Default config emits to `./.sockerless-state/observability/{logs,traces}/` with rotation + 5 GB total cap.
+5. **Admin UI integration** — per-instance "View logs" + "View traces" deep links (filter by `service.name = <instance-name>`). Inline log tail (Phase 81) still works for the no-OTel path.
+6. **Documentation** — `ui/README.md` + new `docs/OBSERVABILITY.md` cover both modes.
+
+**Order vs other phases:** lands after Phase 86. Phase 86 ships with file-tail source for "show last-N log lines on unhealthy"; Phase 87 promotes to OTel-source when the collector is up.
+
+If Stack A turns out unsuitable: same component code (OTLP) works against OpenObserve (AGPL) or SigNoz (MIT) — only `make/stack.mk` changes.
+
+## Future phases
 
 ### Phases 91–94 — Real per-cloud volume provisioning
 

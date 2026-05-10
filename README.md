@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-120.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-121.8k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-12.6k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-58.8k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-59.5k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -248,7 +248,9 @@ The pattern works for any app + any standardized target.
 
 ### Stack orchestration
 
-`make stack-<cloud>-<backend>` builds and starts simulator + backend + admin in concert, recording PIDs in `.stack-pids/` for clean teardown:
+Two layers, both writing PID + log files under `.stack-pids/<name>.{pid,log}` so `stack-status` / `stack-down` find every component.
+
+**Pre-canned stacks** — the common 1-sim + 1-backend + admin shape:
 
 | Target | Stack |
 |---|---|
@@ -262,7 +264,19 @@ The pattern works for any app + any standardized target.
 | `make stack-status` | show running components |
 | `make stack-down` | stop all running components, clean PIDs |
 
-Logs land in `.stack-pids/{sim,backend,admin,bleephub}.log`.
+**Granular per-component lifecycle** — for arbitrary topologies (any number of sims + backends + bleephubs in any combination); admin's REST surface drives these too. See `docs/ADMIN_ORCHESTRATION.md` for the `sockerless.yaml` schema that admin reads.
+
+| Target | Purpose |
+|---|---|
+| `make start-component KIND=sim CLOUD=aws NAME=… PORT=…` | start one sim |
+| `make start-component KIND=backend CLOUD=… BACKEND=… NAME=… PORT=… SIM_PORT=…` | start one backend (SIM_PORT links to a running sim's port) |
+| `make start-component KIND=bleephub NAME=… PORT=…` | start one bleephub |
+| `make stop-component NAME=…` | SIGTERM the named component |
+| `make rebuild-component KIND=… [CLOUD=…] [BACKEND=…]` | `make build` for that component's dir |
+| `make logs-component NAME=… [LINES=200]` | tail one component's log |
+| `make status-components` / `make stop-components` | sweep across every running component |
+
+Logs land in `.stack-pids/<NAME>.log` (one per component instance). The pre-canned `stack-X-Y` macros use `sim` / `backend` / `admin` as the names, so back-compat with `stack-status` / `stack-down` is preserved.
 
 ### Per-app shortcuts
 

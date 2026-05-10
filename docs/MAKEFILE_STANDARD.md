@@ -313,6 +313,8 @@ stack-status:
 
 Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
 
+> **As-implemented note (Phase 79).** The pre-canned `stack-X-Y` macros above survive and behave the same way for operators, but their bodies have been rewritten to compose per-component targets from `make/components.mk` (`make start-component KIND=… NAME=… PORT=…` etc). See `docs/ADMIN_ORCHESTRATION.md` for the per-component lifecycle surface admin uses to spawn arbitrary topologies (0..N of every kind across multiple projects). PID + log files are now keyed by component NAME (`.stack-pids/<NAME>.{pid,log}`) rather than by role, so admin can manage multiple sims / backends / bleephubs side by side.
+
 ## Migration plan
 
 1. Land `make/` directory with `colors.mk`, `go-app.mk`, `go-lib.mk`, `ui-app.mk`, `stack.mk` first.

@@ -146,6 +146,7 @@ _fanout:
 
 # ── Stack orchestration ─────────────────────────────────────────────
 
+include make/components.mk
 include make/stack.mk
 
 # ── Legacy aliases ──────────────────────────────────────────────────

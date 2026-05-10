@@ -22,16 +22,12 @@ const (
 	// Multiple may run; each gets its own port + state. Doesn't carry
 	// Cloud / Backend.
 	InstanceKindBleephub InstanceKind = "bleephub"
-	// InstanceKindFrontendDocker is the docker-frontend admin UI.
-	// Mostly orthogonal to a project but listed for completeness when
-	// operators want a per-project frontend.
-	InstanceKindFrontendDocker InstanceKind = "frontend-docker"
 )
 
 // IsValidInstanceKind reports whether k is one of the supported kinds.
 func IsValidInstanceKind(k InstanceKind) bool {
 	switch k {
-	case InstanceKindSim, InstanceKindBackend, InstanceKindBleephub, InstanceKindFrontendDocker:
+	case InstanceKindSim, InstanceKindBackend, InstanceKindBleephub:
 		return true
 	}
 	return false
@@ -42,7 +38,6 @@ var AllInstanceKinds = []InstanceKind{
 	InstanceKindSim,
 	InstanceKindBackend,
 	InstanceKindBleephub,
-	InstanceKindFrontendDocker,
 }
 
 // validInstanceNameRE constrains instance names to the same shape as
@@ -59,10 +54,9 @@ func IsValidInstanceName(name string) bool {
 // from the admin UI; collectively they make up the project.
 //
 // The Cloud + Backend fields are kind-specific:
-//   - InstanceKindSim:             Cloud required;     Backend ignored.
-//   - InstanceKindBackend:         Cloud + Backend required; Sim optional.
-//   - InstanceKindBleephub:        Cloud + Backend ignored.
-//   - InstanceKindFrontendDocker:  Cloud + Backend ignored.
+//   - InstanceKindSim:      Cloud required;     Backend ignored.
+//   - InstanceKindBackend:  Cloud + Backend required; Sim optional.
+//   - InstanceKindBleephub: Cloud + Backend ignored.
 //
 // Config holds the per-instance environment variables passed to the
 // process at start time (e.g. SOCKERLESS_GCR_NETWORK_DISCOVERY).

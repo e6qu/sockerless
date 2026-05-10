@@ -36,14 +36,26 @@ const (
 )
 
 // ProjectConfig defines a project configuration.
+//
+// Two shapes coexist during the Phase 79 migration:
+//   - Legacy: a project = (1 sim + 1 backend) tuple. Carried by
+//     SimPort / BackendPort. Existing on-disk JSONs use this.
+//   - Modern: a project = a list of independently lifecyclable
+//     Instances (0..N of each kind). Carried by Instances.
+//
+// Both fields can coexist on a single ProjectConfig — the loader
+// derives Instances from SimPort/BackendPort when Instances is empty
+// (DeriveLegacyInstances) so transitional reads work either way. New
+// admin writes populate Instances.
 type ProjectConfig struct {
-	Name        string      `json:"name"`
-	Cloud       CloudType   `json:"cloud"`
-	Backend     BackendType `json:"backend"`
-	LogLevel    string      `json:"log_level"`
-	SimPort     int         `json:"sim_port"`
-	BackendPort int         `json:"backend_port"`
-	CreatedAt   string      `json:"created_at"`
+	Name        string      `json:"name" yaml:"name"`
+	Cloud       CloudType   `json:"cloud,omitempty" yaml:"cloud,omitempty"`
+	Backend     BackendType `json:"backend,omitempty" yaml:"backend,omitempty"`
+	LogLevel    string      `json:"log_level,omitempty" yaml:"log_level,omitempty"`
+	SimPort     int         `json:"sim_port,omitempty" yaml:"sim_port,omitempty"`
+	BackendPort int         `json:"backend_port,omitempty" yaml:"backend_port,omitempty"`
+	CreatedAt   string      `json:"created_at,omitempty" yaml:"created_at,omitempty"`
+	Instances   []Instance  `json:"instances,omitempty" yaml:"instances,omitempty"`
 }
 
 // ProjectStatus combines config with runtime status.
