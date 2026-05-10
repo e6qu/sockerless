@@ -53,6 +53,18 @@ func translateBackingSpecToACAVolume(name, share string, spec core.BackingSpec) 
 			StorageType: &t,
 			StorageName: ptr(share),
 		}, nil
+
+	case core.BackingMemory:
+		// Azure Container Apps revisions support EmptyDir as a
+		// first-class storage type — direct match for the cloud-
+		// agnostic memory backing. StorageName is unused for
+		// EmptyDir; size-cap honoring is left to the cloud (ACA
+		// scopes EmptyDir to the container's memory limit).
+		t := armappcontainers.StorageTypeEmptyDir
+		return &armappcontainers.Volume{
+			Name:        ptr(name),
+			StorageType: &t,
+		}, nil
 	}
 	return nil, fmt.Errorf("aca translator: backing %q not supported on ACA", spec.Kind)
 }

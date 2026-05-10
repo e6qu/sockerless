@@ -85,6 +85,23 @@ func translateBackingSpecToECSVolume(name string, spec core.BackingSpec) (*ecsty
 				},
 			},
 		}, nil
+
+	case core.BackingMemory:
+		// ECS doesn't expose a RAM-backed volume primitive at the
+		// task-def Volumes layer — tmpfs lives at the
+		// ContainerDefinition.LinuxParameters.Tmpfs[] layer instead.
+		// Fail loudly rather than silently substitute a Host{}
+		// (disk-backed) volume; operators wanting RAM-backed scratch
+		// should configure tmpfs on the container def directly, or
+		// pick `Backing: emptyDir` if they want disk-backed
+		// task-scoped scratch space.
+		return nil, fmt.Errorf(
+			"ecs translator: backing %q not supported via task-def Volumes — "+
+				"ECS expresses RAM-backed mounts via "+
+				"ContainerDefinition.LinuxParameters.Tmpfs[] (container-def layer), "+
+				"not Volumes (task-def layer). For task-scoped disk scratch use "+
+				"`Backing: emptyDir` instead",
+			spec.Kind)
 	}
 	return nil, fmt.Errorf("ecs translator: backing %q not supported on ECS", spec.Kind)
 }
