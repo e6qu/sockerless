@@ -43,6 +43,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #142 | 84 + BUG-985 + BUG-986 | Phase 84 — sim shared `NewServer` returns `(*Server, error)` + `MakeStore` log.Fatalf on per-table failure (no silent in-memory degradation when persistence requested). Admin `SIM_DATA_DIR` injection per topology instance. Cross-cloud isolation tests. `make purge-state` operator targets. |
 | #143 | 85 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload/Restart prompt. |
 | #144 | 86 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
+| #145 | 87 | Phase 87 (Stack A first PR) — observability stack make targets, collector config with filelog receiver, /api/v1/observability endpoint, VictoriaLogs/Jaeger UI deep-link chips, docs/OBSERVABILITY.md. |
 
 ## Roadmap (ordered)
 
@@ -118,11 +119,15 @@ UI: `<ConfigEditModal>` opens from a "config" button on every InstanceRow. Per-r
 
 No auto-restart — operator-driven recovery via the existing Restart / Reload / Stop buttons. Component-side handling is unchanged.
 
-### Phase 87 — Centralized observability (logs + traces) — Stack A ✓ in flight (`phase-87-observability`)
+### Phase 87 — Centralized observability (logs + traces) — Stack A ✓ shipped (PR #145)
 
-**First-PR scope** (this branch): observability stack itself + admin UI integration. `make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger. Default collector config has a `filelog` receiver scraping `.stack-pids/*.log` so logs flow into VictoriaLogs **without any binary changes** (pidfile-named log file becomes `service.name`). `GET /api/v1/observability` exposes `{enabled, logs_dashboard, traces_dashboard, ...}` driven by `OTEL_LOGS_DASHBOARD` / `OTEL_TRACES_DASHBOARD` env vars admin reads at boot. UI deep-link chips on the diagnostic panel render when enabled. `docs/OBSERVABILITY.md` documents both modes (no-OTel default + OTel opt-in) + stack swap to OpenObserve / SigNoz.
+`make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger. Default collector config scrapes `.stack-pids/*.log` so logs flow without binary changes. `GET /api/v1/observability` + UI deep-link chips on the diagnostic panel. `docs/OBSERVABILITY.md`.
 
-**Phase 87b** (follow-up branch): wire OTel SDK into each component's `main.go`. `backends/core/otel.go` extended to logs export + zerolog → OTel logs bridge. Each backend / sim / admin / bleephub `main.go` gains 3 lines (read `OTEL_EXPORTER_OTLP_ENDPOINT`, init SDK, defer shutdown). `otelhttp.NewHandler` wraps each mux. Once components emit OTLP, traces light up in Jaeger automatically; logs already work via the filelog receiver.
+### Phase 87b — Component-side OTel SDK wiring ✓ in flight (`phase-87b-component-otel-wiring`)
+
+Trace emission for every Go binary. `core.InitTracer` wired into 6 backend main.go files (ecs / lambda / cloudrun / gcf / aca / azf — docker already had it from Phase 86). New `simulator.InitTracer` in each per-cloud sim shared package + `otelhttp.NewHandler` at the outermost middleware layer + 4-line init in each sim main.go. Admin gains its own duplicated `InitTracer` helper (separate Go module without backend-core dep) + otelhttp wrap on the mux. bleephub already wired since Phase 86. 11 new tracer tests.
+
+**Phase 87c (optional)** — zerolog → OTel logs bridge so OTLP-mode operators don't depend on the filelog receiver fallback. Skipped from 87b to keep dep churn contained.
 
 **Stack A — Apache 2.0 throughout, three binaries:**
 - **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.

@@ -6,6 +6,25 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 87b component-side OTel SDK wiring (`phase-87b-component-otel-wiring` branch)
+
+Two implementation commits + state save. Trace emission for every Go binary in the project — backends, sims, admin. Logs already worked from Phase 87 via the collector's filelog receiver scraping `.stack-pids/*.log`.
+
+**Discovered during the audit.**
+
+- `backends/core/server.go` already wraps the mux with `otelhttp.NewHandler` (line 501) — so all 7 backends *had* HTTP-level instrumentation, but the spans were going into a no-op tracer because only `backends/docker/cmd/main.go` actually called `core.InitTracer`. The 6 other backends just needed the 4-line init at startup. Cheapest possible win.
+- Sims had OTel as transitive deps (pulled in by something else) but didn't use them. Adding `otelhttp.NewHandler` at the outermost middleware layer + a new `shared/otel.go` per cloud + 4 lines in each main.go was the full work.
+- Admin's go.mod had zero OTel deps — separate Go module without backend-core. Two paths: introduce a shared `pkg/otel` module, or duplicate the helper in admin. Duplication won (matches the per-cloud `shared/` pattern; small code).
+- bleephub was already fully wired (`InitTracer` + `otelhttp.NewHandler`) since the Phase 86 baseline — no changes needed.
+
+**Helper-duplication choice.** The phase plan in DO_NEXT.md offered two options: shared `pkg/otel` package or per-module duplication. Picked duplication. Reasons: each `InitTracer` is ~30 LOC including imports — small enough that DRY-ing it across module boundaries pulls in more complexity than it saves. The shape is identical across all 4 copies (backends/core, sim/aws/shared, sim/gcp/shared, sim/azure/shared, admin), and divergence is unlikely because the function only knows about `OTEL_EXPORTER_OTLP_ENDPOINT` + service name. If someone wants to extend it later (say, register a zerolog hook per Phase 87c), they touch all 4 — same blast radius as a shared module.
+
+**Why otelhttp.NewHandler is outermost.** The wrap order matters. By placing it at the outermost layer, per-request spans cover the full middleware stack — auth, logging, request-id, route handling — instead of just the post-routing path. Operators see complete latency including any expensive middleware work. Existing middlewares run *inside* the span, so their structured log output naturally correlates by trace ID once Phase 87c bridges zerolog into OTel logs.
+
+**No-op safety.** All four `InitTracer` helpers return a no-op shutdown function when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. So binaries that never see the env var (default operator workflow without `make stack-observability-up`) pay zero runtime cost — no exporter goroutines, no batching, no extra allocations beyond the otelhttp middleware's built-in noop tracer fast path.
+
+**What this phase explicitly does NOT do.** No zerolog → OTel logs bridge (Phase 87c, optional — filelog receiver covers logs already). No metrics export (counters / histograms). No custom span attributes beyond what otelhttp emits.
+
 ## 2026-05-10 — Phase 87 observability — Stack A first PR (`phase-87-observability` branch)
 
 Four implementation commits + state save. The original Phase 87 plan listed 6 sub-steps; reading the existing code split it into two PRs along a natural seam:
