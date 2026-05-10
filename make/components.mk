@@ -98,6 +98,7 @@ start-component:
 	  printf "$(COLOR_DIM)$(NAME): already running (pid=$$pid)$(COLOR_RESET)\n"; exit 0; \
 	fi
 	@printf "$(COLOR_CYAN)▸ start $(NAME) (kind=$(KIND) port=$(PORT))$(COLOR_RESET)\n"
+	@rm -f $(COMPONENTS_PID_DIR)/$(NAME).exit
 	@bin=$(call component-binary,$(KIND),$(CLOUD),$(BACKEND)); \
 	dir=$(call component-build-dir,$(KIND),$(CLOUD),$(BACKEND)); \
 	flag=$(call component-flag,$(KIND)); \
@@ -112,10 +113,19 @@ start-component:
 	if [ -n "$(ENV_FILE)" ] && [ -f "$(ENV_FILE)" ]; then \
 	  envline="$$envline $$(grep -v '^#' $(ENV_FILE) | xargs)"; \
 	fi; \
-	(cd $$dir && \
-	  env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
-	    > $(COMPONENTS_PID_DIR)/$(NAME).log 2>&1 & \
-	  echo $$! > $(COMPONENTS_PID_DIR)/$(NAME).pid)
+	pidfile=$(COMPONENTS_PID_DIR)/$(NAME).pid; \
+	exitfile=$(COMPONENTS_PID_DIR)/$(NAME).exit; \
+	logfile=$(COMPONENTS_PID_DIR)/$(NAME).log; \
+	( cd $$dir && \
+	    env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
+	      > $$logfile 2>&1 & \
+	    bin_pid=$$! ; \
+	    echo $$bin_pid > $$pidfile ; \
+	    ( wait $$bin_pid ; \
+	      code=$$? ; \
+	      printf '%d %s\n' $$code "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > $$exitfile ) \
+	    > /dev/null 2>&1 & \
+	  )
 	@printf "  pid=$$(cat $(COMPONENTS_PID_DIR)/$(NAME).pid) log=$(COMPONENTS_PID_DIR)/$(NAME).log\n"
 
 # stop-component sends SIGTERM to NAME's PID + removes the pidfile.

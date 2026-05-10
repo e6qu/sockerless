@@ -128,6 +128,11 @@ export interface InstanceRef {
 
 export type HealthState = "ok" | "unhealthy" | "unknown";
 
+export interface InstanceExit {
+  code: number;
+  at: string;
+}
+
 export interface InstanceStatus {
   project: string;
   name: string;
@@ -135,6 +140,14 @@ export interface InstanceStatus {
   pid: number;
   health: HealthState;
   health_detail?: string;
+  exit?: InstanceExit;
+  crashed_since_start?: boolean;
+}
+
+export interface InstanceDiagnostics {
+  status: InstanceStatus;
+  log_lines: string[];
+  log_path: string;
 }
 
 /** Error thrown when the admin API returns a non-ok response. */
@@ -410,6 +423,16 @@ export class AdminApiClient {
   ): Promise<{ status: string }> {
     return this.post(
       `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/reload`,
+    );
+  }
+
+  topologyInstanceDiagnostics(
+    project: string,
+    name: string,
+    lines = 50,
+  ): Promise<InstanceDiagnostics> {
+    return this.request(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/diagnostics?lines=${lines}`,
     );
   }
 }
