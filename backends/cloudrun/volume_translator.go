@@ -72,19 +72,19 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		return v, nil
 
 	case core.BackingGCSFuse:
-		if spec.GCS == nil || spec.GCS.Bucket == "" {
-			return nil, fmt.Errorf("gcs-fuse backing for volume %q missing bucket", name)
-		}
-		return &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_Gcs{
-				Gcs: &runpb.GCSVolumeSource{
-					Bucket:       spec.GCS.Bucket,
-					MountOptions: append([]string{}, spec.GCS.MountOptions...),
-					ReadOnly:     spec.GCS.ReadOnly,
-				},
-			},
-		}, nil
+		// Cloud Run wraps gcsfuse and rejects the cache-TTL flags
+		// (`metadata-cache:ttl-secs`, `metadata-cache:negative-ttl-secs`)
+		// that are MANDATORY for safe cross-task workspace use — without
+		// them, the default 5s negative-cache hides freshly-written files
+		// from sibling containers. Backing: gcs-sync sidesteps FUSE
+		// entirely (per-exec tar/untar against a single GCS object) and
+		// has strong consistency. See BUG-944 + storage_gcsfuse.go.
+		return nil, fmt.Errorf(
+			"volume %q: backing %q is unsupported on Cloud Run — "+
+				"Cloud Run rejects the cache-TTL gcsfuse flags needed for "+
+				"cross-task safety (BUG-944). Use Backing: gcs-sync instead "+
+				"(per-exec tar sync, no FUSE)",
+			name, spec.Kind)
 
 	case core.BackingPDEphemeral:
 		// Cloud Run Services don't expose Compute Engine PD as a
@@ -98,10 +98,9 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		return nil, fmt.Errorf(
 			"volume %q: backing %q not supported on Cloud Run — "+
 				"Cloud Run Services lack a first-class PD volume primitive. "+
-				"Use Backing: gcs-fuse (with MountOptions per BUG-944) for "+
-				"cross-task workspace sharing, or Backing: gcs-sync for "+
-				"per-step granularity. A future GCE-style backend would unlock "+
-				"real PD attach (specs/CLOUD_RESOURCE_MAPPING.md line 567)",
+				"Use Backing: gcs-sync for cross-task workspace sharing. "+
+				"A future GCE-style backend would unlock real PD attach "+
+				"(specs/CLOUD_RESOURCE_MAPPING.md line 567)",
 			name, spec.Kind)
 	}
 	return nil, fmt.Errorf("volume %q: unsupported backing kind %q", name, spec.Kind)
