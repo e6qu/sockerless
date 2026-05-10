@@ -4,38 +4,37 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-91-pd-ephemeral-volumes` — Phase 91 in flight (1 implementation commit + state save). Open a PR when ready; PR #146 already merged.
+`phase-91b-backingmemory-ecs-lambda` — Phase 91b in flight (1 implementation commit + state save). Open a PR when ready; PR #147 already merged.
 
 ## Status
 
-Phase 91 implementation is done on this branch. After it lands, follow-ups in order: Phase 91b (BackingMemory on ECS+Lambda) → 91c (BackingMemory on ACA+AZF) → 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
+Phase 91b implementation is done on this branch. ACA done (clean EmptyDir match); ECS + AZF reject loudly with clear error messages; Lambda deferred to Phase 91c. After this lands, queue: Phase 91c (Lambda volume framework migration) → 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
 
-## Resume here — Phase 91 (BackingMemory cloudrun + gcf) — implementation done
+## Resume here — Phase 91b (BackingMemory ECS / ACA / AZF) — implementation done
 
 Branch has 1 implementation commit + state save ready to PR:
 
-1. `phase 91: BackingMemory translator on cloudrun + gcf` — adds `case core.BackingMemory` arm to both translators, mapping to `EmptyDir{Medium: MEMORY}` with `SizeLimit` from `spec.Memory.SizeMB`. 5 unit tests.
+1. `phase 91b: BackingMemory translator on ECS / ACA / AZF` — ACA gets clean `armappcontainers.Volume{StorageType: EmptyDir}`; ECS rejects loudly pointing at LinuxParameters.Tmpfs (cross-layer mismatch); AZF rejects loudly pointing at per-invocation /tmp. 5 new tests.
 
-When ready: `git push -u origin phase-91-pd-ephemeral-volumes && gh pr create`. CI ~7 min.
+When ready: `git push -u origin phase-91b-backingmemory-ecs-lambda && gh pr create`. CI ~7 min.
 
-**Audit-driven scope.** The original Phase 91 brief was "lift `emptyDir` fallback to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`". Reading the existing code:
+**Why Lambda was deferred.** Lambda's `volumes.go::fileSystemConfigsForBinds` uses inline EFS predating the BackingSpec framework — never calls `storageBackings.Resolve`. Wiring `BackingMemory` requires migrating Lambda to the framework first. That's a separate refactor PR (Phase 91c) and shouldn't be bundled with translator extensions.
 
-- `efs-ephemeral` is already wired on ECS (Phase 127). Lambda's inline EFS path predates the BackingSpec framework.
-- `azure-files-ephemeral` is already wired on ACA + AZF.
-- `pd-ephemeral` on Cloud Run is bookmarked — Cloud Run Services lack first-class PD attach (`specs/CLOUD_RESOURCE_MAPPING.md` line 567-568). Real implementation requires multi-day Compute Engine API lifecycle work and is queued as Phase 91d.
+## Phase 91c — Lambda volume framework migration (next pickup)
 
-The actual audit-discovered gap was `BackingMemory`: Phase 127 added the driver + registered it in all 6 backends, but no translator handled the case. This PR closes that gap on cloudrun + gcf.
-
-## Phase 91b — BackingMemory on ECS + Lambda (next pickup)
-
-**Goal.** Same translator extension on the AWS backends.
+**Goal.** Migrate Lambda's volume path from the pre-BackingSpec inline EFS pattern to the unified `storageBackings.Resolve` framework that ECS / ACA / AZF / cloudrun / gcf already use. Once migrated, `BackingMemory` rejection arrives for free (Lambda has no RAM-mount primitive — `/tmp` is per-invocation scratch).
 
 **Files to touch.**
 
-- `backends/ecs/volume_translator.go` — add `case core.BackingMemory` mapping to `ecstypes.Volume{Name, Host{}}` with the container-side mount as `LinuxParameters.Tmpfs[]` for true RAM-backed mount. Trade-off: ECS volumes are at the task-def layer; tmpfs is at the container-def layer. Decide whether `BackingMemory` on ECS emits a Volume (host-vol shape) or rejects with "use container tmpfs" error.
-- `backends/lambda/...` — Lambda has no real volume primitive for ephemeral RAM-backed mounts; `/tmp` is per-invocation scratch (512 MB–10 GB). `BackingMemory` may have to reject with a clear error pointing at /tmp.
+- `backends/lambda/volumes.go` — `fileSystemConfigsForBinds` currently builds `lambdatypes.FileSystemConfig` directly from `awscommon.EFSManager`. Wrap into a `BackingEFSEphemeral` driver path so the framework dispatches.
+- `backends/lambda/volume_translator.go` (new) — same shape as ECS: per-bind resolve through registry, translate `BackingSpec` to `lambdatypes.FileSystemConfig`. Add `case core.BackingMemory:` rejection arm.
+- `backends/lambda/server.go` — already registers `EFSEphemeralDriver` + `MemoryDriver`; verify nothing changes here.
 
-**Test plan.** Mirror the cloudrun/gcf tests. ECS test expects either Volume or specific error. Lambda test expects rejection.
+**Test plan.** Mirror the ECS pattern: existing EFS path still works (regression guard); BackingMemory rejection error message points at `/tmp`.
+
+## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf (later)
+
+Sockerless-managed Compute Engine PD `disks.create`/`attach`/`delete` per task. Cloud Run Services don't expose PD volume attach as a first-class primitive — operator-side work + sim-side work. Multi-day cloud-API effort.
 
 ## Phase 87c — zerolog → OTel logs bridge (optional next pickup)
 
