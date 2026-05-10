@@ -146,7 +146,7 @@ func handleInstanceStart(mgr *TopologyManager, lifecycle *InstanceLifecycle) htt
 		if !ok {
 			return
 		}
-		if err := lifecycle.Start(r.Context(), ref.Instance, simPort); err != nil {
+		if err := lifecycle.Start(r.Context(), ref.Project, ref.Instance, simPort); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}

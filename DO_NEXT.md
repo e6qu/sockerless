@@ -4,45 +4,48 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-83-sim-ui-parity` — Phase 83 work in flight (5 commits). Open a PR when ready; PR #140 already merged.
+`phase-84-instance-state-isolation` — Phase 84 work in flight (3 implementation commits + state save). Open a PR when ready; PR #141 already merged.
 
 ## Status
 
-Phase 83 implementation is done on this branch. After it lands, **Phase 84 — per-instance state isolation + persistence** is the next pickup. See bottom of this file for the Phase 84 brief.
+Phase 84 implementation is done on this branch. After it lands, **Phase 85 — config edit + hot reload** is the next pickup. See bottom of this file for the Phase 85 brief.
 
-## Resume here — Phase 83 (sim UI parity) — implementation done
+## Resume here — Phase 84 (per-instance state isolation) — implementation done
 
-Branch has 5 commits ready to PR:
+Branch has 5 implementation commits + state save ready to PR:
 
-1. `phase 83: add shared ResourceListPage to @sockerless/ui-core` — new component + 5 vitest cases.
-2. `phase 83: refactor simulator-aws pages onto ResourceListPage` — 6 pages.
-3. `phase 83: refactor simulator-gcp pages onto ResourceListPage` — 6 pages.
-4. `phase 83: refactor simulator-azure pages onto ResourceListPage` — 6 pages.
-5. `phase 83: retire legacy admin pages superseded by topology` — `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` deleted; companion API client methods + types removed.
+1. `phase 84 / BUG-985: sim NewServer fails loud on persistence open` — sim shared `NewServer(cfg) *Server` → `(*Server, error)`.
+2. `phase 84: admin injects SIM_DATA_DIR per topology instance` — `InstanceLifecycle.Start` gains `project string`, new `managedEnvFor` + `mergeConfig` helpers, 5 admin tests.
+3. `phase 84: multi-instance isolation tests across 3 sims` — 5 test cases × 3 clouds = 15 tests.
+4. `phase 84 / BUG-986: MakeStore fails loud on per-table failure` — log.Fatalf inside `MakeStore` so half-persistent state isn't possible across a restart.
+5. `phase 84: make purge-state operator targets` — `make purge-state PROJECT=<p> NAME=<i>` and `make purge-state-all`.
 
-When ready: `git push -u origin phase-83-sim-ui-parity` then `gh pr create`. CI cycle is ~7 min; verify all 11 checks green before merging.
+When ready: PR opened as #142 (already pushed). CI cycle ~7 min.
 
-## Phase 84 — Per-instance state isolation + persistence (next pickup)
+**What this does NOT change.** No refactor of `Persist` / `OpenDB`. No `start-component` change in make/components.mk — the env file already flows through.
 
-**Goal.** Sims gain optional persistent state across restarts, multiple sim instances of the same cloud coexist with isolated state.
+## Phase 85 — Config edit + hot reload (next pickup)
 
-**Today.** Sims already accept `SOCKERLESS_<X>_DATA_DIR` for SQLite persistence (see `simulators/aws/shared/server.go:OpenDB`). The defaults land everything under `/tmp/sockerless-sim-<provider>/` — that's *one* shared dir per cloud, so two sim-aws instances would collide.
+**Goal.** Admin UI can edit instance config and trigger reload-or-restart based on whether the touched key is hot-reloadable.
 
-**Phase 84 deliverables.**
+**Today.** `Instance.Config` is a `map[string]string` rendered into `.stack-pids/<n>.env` at start. Edits via the UI today require a manual stop + edit + start cycle — there's no in-place reload.
 
-1. **Topology-driven SIM_STATE_DIR.** When admin starts a sim instance via `make start-component`, set `SIM_STATE_DIR=$(CURDIR)/.sockerless-state/<project>/<instance>/`. The make target sources `.stack-pids/<name>.env` so per-instance config flows through; just add `SIM_STATE_DIR` to the env file admin writes.
-2. **Sim-side wiring.** Each `simulator-{aws,gcp,azure}` reads `SIM_STATE_DIR` (or its existing `SOCKERLESS_<X>_DATA_DIR`) before falling back to the `/tmp` default. Per the no-fallbacks principle, when admin orchestrates, the env var is always set; the `/tmp` default is for stand-alone manual use only.
-3. **Multi-instance test.** `simulators/aws/instance_isolation_test.go` (or similar) brings up two sim-aws instances on different ports + state dirs, asserts a resource created in instance A doesn't show up in instance B.
-4. **Volume cleanup.** `make stop-component KIND=sim NAME=<n>` should NOT auto-delete `.sockerless-state/<project>/<instance>/` — operators choose when to wipe state. Add a separate `make purge-state` target for explicit cleanup.
+**Phase 85 deliverables.**
 
-**Out of scope.** Don't refactor the existing `Persist` / `OpenDB` paths. Phase 84 is purely about path resolution + isolation, not storage backend changes.
+1. **Config-key annotation.** Admin-side metadata: per-key entry `{name, hot_reloadable: bool, restart_required: bool, doc: string}`. Lives in admin code (not on the component) — per the components-decoupled invariant, admin owns the operator's mental model.
+2. **Edit endpoint.** `PUT /api/v1/topology/projects/{p}/instances/{i}/config` writes back to `sockerless.yaml` via `TopologyManager.UpdateInstance`. Returns `{updated, hot_reloadable_changes, restart_required_changes}` so the UI can decide.
+3. **Reload endpoint.** `POST /api/v1/topology/projects/{p}/instances/{i}/reload` re-renders the env file and signals the component (SIGHUP for processes that handle it; otherwise no-op + return error). Components without a SIGHUP handler return 501 — the UI falls through to a restart prompt.
+4. **UI.** Edit modal on `/ui/topology` that reads annotation metadata, marks restart-required keys, applies the right action.
+
+**Out of scope.** Don't add SIGHUP handling to components in this phase — the reload endpoint just signals; whether the component does anything is its concern. Phase 85's contract is "admin sends the signal", not "components hot-reload everything".
 
 **Files to touch (rough):**
 
-- `cmd/sockerless-admin/instance_lifecycle.go` — write `SIM_STATE_DIR` into the env file when kind=sim.
-- `make/components.mk` — passthrough or default for `SIM_STATE_DIR` if not set.
-- `simulators/{aws,gcp,azure}/shared/server.go` — read `SIM_STATE_DIR` first, fall back to existing per-cloud var, then to `/tmp`.
-- `simulators/{aws,gcp,azure}/<integration>_test.go` — multi-instance isolation test.
+- `cmd/sockerless-admin/config_metadata.go` (new) — per-key metadata table.
+- `cmd/sockerless-admin/api_topology.go` — add the two endpoints.
+- `cmd/sockerless-admin/instance_lifecycle.go` — `Reload(inst)` shells `make reload-component` or sends SIGHUP via PID file.
+- `make/components.mk` — `reload-component KIND= NAME=` target.
+- `ui/packages/admin/src/pages/TopologyPage.tsx` + `InstanceForm.tsx` — surface the annotated config + reload-vs-restart action.
 
 ## Invariants (re-state on every commit)
 

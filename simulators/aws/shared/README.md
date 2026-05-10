@@ -63,7 +63,10 @@ Loaded from environment variables via `sim.ConfigFromEnv(provider)`:
 
 ```go
 cfg := sim.ConfigFromEnv("aws")
-srv := sim.NewServer(cfg)
+srv, err := sim.NewServer(cfg)
+if err != nil {
+    log.Fatalf("simulator startup: %v", err)
+}
 
 // Register service handlers
 srv.Handle("/ecs/", ecsHandler)

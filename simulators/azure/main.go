@@ -37,7 +37,10 @@ func main() {
 	// IDENTITY_ENDPOINT + IMDS env onto workload containers.
 	simListenAddr = cfg.ListenAddr
 
-	srv := sim.NewServer(cfg)
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		log.Fatalf("simulator startup: %v", err)
+	}
 
 	// Clean double slashes in request paths. The azurerm v3 provider (via
 	// go-azure-sdk) appends a trailing slash to the resourceManager endpoint,

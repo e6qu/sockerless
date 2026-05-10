@@ -39,6 +39,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #138 | 79 (full) + 87 plan | `sockerless.yaml` topology + `TopologyManager` + CRUD REST + lifecycle endpoints + `make/components.mk` granular targets + port allocator + Phase 87 observability plan (OTel+VictoriaLogs+Jaeger Stack A) + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation (Docker/Podman→cloud quick reference, CI runner requirements, multi-system CI/CD comparison). |
 | #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
 | #140 | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
+| #141 | 83 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure onto the shared component + design language; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired. |
 
 ## Roadmap (ordered)
 
@@ -86,9 +87,15 @@ Legacy `/ui/resources` (registry-backed) + `/ui/projects/:name` + `/ui/projects/
 
 Out of scope (deliberate): no Containers / Resources / Metrics pages on sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs directly.
 
-### Phase 84 — Per-instance state isolation + persistence
+### Phase 84 — Per-instance state isolation + persistence ✓ in flight (`phase-84-instance-state-isolation`)
 
-Sims gain optional persistent state (env-var-driven, `SIM_STATE_DIR=…`) under `./.sockerless-state/<project>/<instance>/`. Multiple sim instances of the same cloud coexist with isolated, durable state across restarts.
+Admin's `InstanceLifecycle.Start` writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for sim instances. Multiple sim instances of the same cloud coexist with isolated state across restarts. Operator opts into persistence by adding `SIM_PERSIST=true` to the instance Config — admin doesn't force it.
+
+BUG-985 + BUG-986 fixed in the same patch: both silent in-memory fallbacks in the sim shared layer (`NewServer` on `OpenDB` failure, `MakeStore` on `NewSQLiteStore` per-table failure). `NewServer` now returns `(*Server, error)`; `MakeStore` calls `log.Fatalf`. Sim main.go on the OpenDB path calls `log.Fatalf`. Operator-requested persistence fails loud at the start instead of silently degrading.
+
+Operator workflow: `make purge-state PROJECT=<p> NAME=<i>` (single-instance) and `make purge-state-all` for clean-slate sweeps. `stop-component` deliberately preserves state.
+
+Cross-cloud sweep: 5 test cases mirrored across simulators/{aws,gcp,azure}/shared/ — cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard, persist happy path, no-persist path.
 
 ### Phase 85 — Config edit + hot reload
 
