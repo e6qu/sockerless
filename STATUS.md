@@ -10,18 +10,20 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | In-flight | Phase 84 — per-instance sim state isolation. BUG-985 fix (sim NewServer fails loud on persistence open) + admin `SIM_DATA_DIR` injection per topology instance + cross-cloud isolation tests. |
 | Last merged | PR #141 — Phase 83 sim UI parity (2026-05-10). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 985 fixed (BUG-985 added in this branch). |
+| Bugs | 0 open · 986 fixed (BUG-985 + BUG-986 added in this branch). |
 | Live infra | None up. |
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
 
 ## Phase 84 — in flight on `phase-84-instance-state-isolation`
 
-Three implementation commits + state save:
+Five implementation commits + state save:
 
 1. `phase 84 / BUG-985: sim NewServer fails loud on persistence open` — sim shared `NewServer(cfg) *Server` → `(*Server, error)`. The previous code logged a "falling back to in-memory" warning when `SIM_PERSIST=true` and `OpenDB` failed; that masked misconfiguration (bad path, perms, full disk) and caused silent data loss across restarts. Now the error is wrapped and returned; sim main.go calls `log.Fatalf`. Mirrored across simulators/{aws,gcp,azure}/shared/server.go.
 2. `phase 84: admin injects SIM_DATA_DIR per topology instance` — `InstanceLifecycle.Start` gains `project string` and writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for `kind=sim`. New `managedEnvFor` + `mergeConfig` helpers; operator-provided Instance.Config wins on conflict. Operator opts into persistence by setting `SIM_PERSIST=true` in instance Config — admin doesn't force it (components-decoupled invariant).
-3. `phase 84: multi-instance isolation tests across 3 sims` — 5 test cases in each cloud's `shared/` package: cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard (NewServer returns error when `mkdir` fails), persist happy path, no-persist path.
+3. `phase 84: multi-instance isolation tests across 3 sims` — 5 test cases in each cloud's `shared/` package: cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard, persist happy path, no-persist path.
+4. `phase 84 / BUG-986: MakeStore fails loud on per-table failure` — same shape as BUG-985 but at the per-table layer. Silent fallback to memory on `NewSQLiteStore` failure would have produced half-persistent state across restarts. Fix: `log.Fatalf` inside `MakeStore`; signature unchanged so the 106 call sites aren't touched.
+5. `phase 84: make purge-state operator targets` — `make purge-state PROJECT=<p> NAME=<i>` and `make purge-state-all`. `stop-component` still leaves state untouched; this target is the explicit opposite.
 
 ## Phases after 84
 

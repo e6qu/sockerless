@@ -12,15 +12,17 @@ Phase 84 implementation is done on this branch. After it lands, **Phase 85 — c
 
 ## Resume here — Phase 84 (per-instance state isolation) — implementation done
 
-Branch has 3 implementation commits + 1 state-save commit ready to PR:
+Branch has 5 implementation commits + state save ready to PR:
 
-1. `phase 84 / BUG-985: sim NewServer fails loud on persistence open` — sim shared `NewServer(cfg) *Server` → `(*Server, error)`. The previous code logged a "falling back to in-memory" warning when `SIM_PERSIST=true` and `OpenDB` failed; that masked misconfiguration and caused silent data loss. Mirrored across simulators/{aws,gcp,azure}/shared/server.go + the three main.go files now log.Fatalf on non-nil error. Shared/README.md examples updated.
-2. `phase 84: admin injects SIM_DATA_DIR per topology instance` — `InstanceLifecycle.Start` gains `project string` and writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for `kind=sim`. New `managedEnvFor` + `mergeConfig` helpers; operator config wins on conflict. 5 admin tests added.
-3. `phase 84: multi-instance isolation tests across 3 sims` — 5 test cases × 3 clouds = 15 tests covering cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard, persist happy path, no-persist path.
+1. `phase 84 / BUG-985: sim NewServer fails loud on persistence open` — sim shared `NewServer(cfg) *Server` → `(*Server, error)`.
+2. `phase 84: admin injects SIM_DATA_DIR per topology instance` — `InstanceLifecycle.Start` gains `project string`, new `managedEnvFor` + `mergeConfig` helpers, 5 admin tests.
+3. `phase 84: multi-instance isolation tests across 3 sims` — 5 test cases × 3 clouds = 15 tests.
+4. `phase 84 / BUG-986: MakeStore fails loud on per-table failure` — log.Fatalf inside `MakeStore` so half-persistent state isn't possible across a restart.
+5. `phase 84: make purge-state operator targets` — `make purge-state PROJECT=<p> NAME=<i>` and `make purge-state-all`.
 
-When ready: `git push -u origin phase-84-instance-state-isolation` then `gh pr create`. CI cycle is ~7 min; verify all 11 checks green before merging.
+When ready: PR opened as #142 (already pushed). CI cycle ~7 min.
 
-**What this does NOT change.** No refactor of `Persist` / `OpenDB`. No changes to make/components.mk — admin's env file is sufficient since the make target already sources `.stack-pids/<n>.env`. No `make purge-state` target — out of scope; operators wipe `.sockerless-state/` directly when they want a clean slate.
+**What this does NOT change.** No refactor of `Persist` / `OpenDB`. No `start-component` change in make/components.mk — the env file already flows through.
 
 ## Phase 85 — Config edit + hot reload (next pickup)
 

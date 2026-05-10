@@ -26,7 +26,7 @@ if cfg.Persist {
 
 The operator set `SIM_PERSIST=true` because they want durable state. If `OpenDB` fails (bad path, missing fs perms, full disk), the simulator silently runs in-memory and loses everything across restarts. Per the no-fallbacks principle this is a bug. Filed as BUG-985 and fixed in the same patch — `NewServer` now returns `(*Server, error)`, sim main.go calls `log.Fatalf`. Mirrored across all three sims (`shared/` is duplicated per cloud — they're not the same Go package, so the fix lands in three identical-shape commits-worth of changes folded into one diff).
 
-There's a similar latent issue at `MakeStore` (line 132-141 of `state_sqlite.go`) — falls back to in-memory when `NewSQLiteStore` fails per-table. I considered rolling the fix into the same PR but held off to keep this PR focused; it's a candidate for a follow-up BUG-986.
+A similar latent issue lived at `MakeStore` (line 132-141 of `state_sqlite.go`) — silent fallback to in-memory when `NewSQLiteStore` fails per-table. Filed as BUG-986 and folded into the same PR after the user asked for the "out of scope" items to ship together. Failure mode would have been *half-persistent state* across a restart: some tables survive, some silently drop back to memory, no operator signal. Fix: `MakeStore` calls `log.Fatalf` on `NewSQLiteStore` failure. Signature unchanged so the 106 call sites across the three sims aren't touched — every caller is at sim init time, so `log.Fatalf` is the equivalent of a startup error with the failing table name visible in the message.
 
 **Admin SIM_DATA_DIR injection.** `InstanceLifecycle.Start(ctx, project, inst, simPort)` now writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for sim instances. The path scheme matches the spec: project-scoped + instance-scoped, so two sim-aws instances under different projects don't collide. New helpers:
 
@@ -45,7 +45,14 @@ Decision: admin does NOT inject `SIM_PERSIST=true`. Per the components-decoupled
 
 The test file is duplicated in each cloud's `shared/` because each is its own Go package (importable as `github.com/sockerless/simulator` from outside but distinct compilation units). The cross-cloud sweep workflow rule lands here.
 
-**What this phase explicitly does NOT do.** No refactor of `Persist` / `OpenDB` (out of scope per the original plan). No changes to `make/components.mk` — `start-component` already sources `.stack-pids/<n>.env`, so admin's env file write is sufficient. No `make purge-state` target — out of scope; operators wipe `.sockerless-state/` directly when they want a clean slate.
+**Operator workflow target.** Initially I left `make purge-state` out of scope ("operators wipe `.sockerless-state/` directly"), but folded it in alongside BUG-986 once the user asked for the deferred items to ship together:
+
+- `make purge-state PROJECT=<p> NAME=<i>` — wipe one instance's state dir.
+- `make purge-state-all` — wipe everything under `.sockerless-state/`.
+
+PROJECT + NAME both required on the single-instance form so a stray invocation can't nuke an unrelated dir; the clean-slate workflow goes through `purge-state-all` explicitly. `stop-component` still leaves state untouched — that's the design — and `purge-state` is the explicit opposite.
+
+**What this phase still does NOT do.** No refactor of the `Persist` / `OpenDB` paths (the architectural shape stays — only the failure mode changes). No `start-component` change in `make/components.mk` — it already sources `.stack-pids/<n>.env`, so admin's env file write is sufficient.
 
 ## 2026-05-10 — Phase 83 sim UI parity (`phase-83-sim-ui-parity` branch)
 
