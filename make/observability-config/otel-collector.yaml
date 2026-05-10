@@ -1,0 +1,86 @@
+# OpenTelemetry Collector — Phase 87 Stack A.
+#
+# Receivers:
+#   - otlp: 4317 (gRPC) + 4318 (HTTP) for components that emit OTLP
+#     directly. Wired in Phase 87b across each binary.
+#   - filelog: scrapes .stack-pids/*.log so log lines flow into
+#     VictoriaLogs even when the source binary doesn't speak OTLP.
+#     The pidfile-named log file becomes the service.name attribute,
+#     making `.stack-pids/sim-aws.log` searchable as service=sim-aws.
+#
+# Exporters:
+#   - otlphttp/logs → VictoriaLogs OTLP HTTP endpoint at :9428.
+#   - otlp/traces → Jaeger OTLP gRPC at :4319 (Jaeger's own port to
+#     avoid colliding with the receiver above).
+#
+# Pipelines wire receivers → processors → exporters by signal type.
+# Memory limiter caps total collector RSS at 512 MB; batch processor
+# coalesces ingested data into 1 s windows.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+  filelog:
+    include:
+      - ${SOCKERLESS_STATE_PIDS_DIR}/*.log
+    start_at: end
+    include_file_name: true
+    operators:
+      # Pull the source filename ("sim-aws.log") into log.file.name and
+      # promote a service.name resource attribute from it so VictoriaLogs
+      # can group + filter by component.
+      - type: regex_parser
+        regex: ^(?P<body>.*)$
+        parse_from: body
+      - type: copy
+        from: attributes["log.file.name"]
+        to: resource["service.name"]
+      - type: regex_parser
+        parse_from: resource["service.name"]
+        regex: ^(?P<svc>[^.]+)\.log$
+      - type: move
+        from: attributes.svc
+        to: resource["service.name"]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  otlphttp/logs:
+    endpoint: http://127.0.0.1:9428/insert/opentelemetry
+    tls:
+      insecure: true
+
+  otlp/traces:
+    endpoint: 127.0.0.1:4319
+    tls:
+      insecure: true
+
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    logs:
+      receivers: [otlp, filelog]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/logs]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/traces]
