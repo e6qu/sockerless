@@ -4,24 +4,38 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-87b-component-otel-wiring` — Phase 87b in flight (2 implementation commits + state save). Open a PR when ready; PR #145 already merged.
+`phase-91-pd-ephemeral-volumes` — Phase 91 in flight (1 implementation commit + state save). Open a PR when ready; PR #146 already merged.
 
 ## Status
 
-Phase 87b implementation is done on this branch. After it lands, the optional **Phase 87c — zerolog → OTel logs bridge** is available, then phases 91–94 (volume provisioning) + live-cloud validation track.
+Phase 91 implementation is done on this branch. After it lands, follow-ups in order: Phase 91b (BackingMemory on ECS+Lambda) → 91c (BackingMemory on ACA+AZF) → 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
 
-## Resume here — Phase 87b (component-side OTel SDK wiring) — implementation done
+## Resume here — Phase 91 (BackingMemory cloudrun + gcf) — implementation done
 
-Branch has 2 implementation commits + state save ready to PR:
+Branch has 1 implementation commit + state save ready to PR:
 
-1. `phase 87b: wire core.InitTracer into 6 backend main.go files` — ecs / lambda / cloudrun / gcf / aca / azf each gain a 4-line OTel init at startup. otelhttp middleware was already in `backends/core/server.go`; this commit makes it actually emit by initialising the tracer.
-2. `phase 87b: wire OTel SDK + otelhttp on sims + admin` — 3 sims gain `shared/otel.go` + outermost `otelhttp.NewHandler` + 4-line init in main.go. Admin gains a duplicated InitTracer helper (separate Go module without backend-core dep) + otelhttp wrap on the mux. 11 new tracer tests.
+1. `phase 91: BackingMemory translator on cloudrun + gcf` — adds `case core.BackingMemory` arm to both translators, mapping to `EmptyDir{Medium: MEMORY}` with `SizeLimit` from `spec.Memory.SizeMB`. 5 unit tests.
 
-When ready: `git push -u origin phase-87b-component-otel-wiring && gh pr create`. CI ~7 min.
+When ready: `git push -u origin phase-91-pd-ephemeral-volumes && gh pr create`. CI ~7 min.
 
-bleephub already wired since Phase 86 baseline — no changes there.
+**Audit-driven scope.** The original Phase 91 brief was "lift `emptyDir` fallback to `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`". Reading the existing code:
 
-**What this does NOT change.** No zerolog → OTel logs bridge — operators in OTLP mode rely on the collector's filelog receiver scraping `.stack-pids/*.log` (Phase 87). Bridge is the optional Phase 87c if operators want OTLP-only emission.
+- `efs-ephemeral` is already wired on ECS (Phase 127). Lambda's inline EFS path predates the BackingSpec framework.
+- `azure-files-ephemeral` is already wired on ACA + AZF.
+- `pd-ephemeral` on Cloud Run is bookmarked — Cloud Run Services lack first-class PD attach (`specs/CLOUD_RESOURCE_MAPPING.md` line 567-568). Real implementation requires multi-day Compute Engine API lifecycle work and is queued as Phase 91d.
+
+The actual audit-discovered gap was `BackingMemory`: Phase 127 added the driver + registered it in all 6 backends, but no translator handled the case. This PR closes that gap on cloudrun + gcf.
+
+## Phase 91b — BackingMemory on ECS + Lambda (next pickup)
+
+**Goal.** Same translator extension on the AWS backends.
+
+**Files to touch.**
+
+- `backends/ecs/volume_translator.go` — add `case core.BackingMemory` mapping to `ecstypes.Volume{Name, Host{}}` with the container-side mount as `LinuxParameters.Tmpfs[]` for true RAM-backed mount. Trade-off: ECS volumes are at the task-def layer; tmpfs is at the container-def layer. Decide whether `BackingMemory` on ECS emits a Volume (host-vol shape) or rejects with "use container tmpfs" error.
+- `backends/lambda/...` — Lambda has no real volume primitive for ephemeral RAM-backed mounts; `/tmp` is per-invocation scratch (512 MB–10 GB). `BackingMemory` may have to reject with a clear error pointing at /tmp.
+
+**Test plan.** Mirror the cloudrun/gcf tests. ECS test expects either Volume or specific error. Lambda test expects rejection.
 
 ## Phase 87c — zerolog → OTel logs bridge (optional next pickup)
 

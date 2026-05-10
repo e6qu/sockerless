@@ -44,6 +44,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #143 | 85 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload/Restart prompt. |
 | #144 | 86 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
 | #145 | 87 | Phase 87 (Stack A first PR) — observability stack make targets, collector config with filelog receiver, /api/v1/observability endpoint, VictoriaLogs/Jaeger UI deep-link chips, docs/OBSERVABILITY.md. |
+| #146 | 87b | Phase 87b — wire OTel SDK + otelhttp.NewHandler across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go. Trace emission for every Go binary when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
 
 ## Roadmap (ordered)
 
@@ -154,6 +155,14 @@ If Stack A turns out unsuitable: same component code (OTLP) works against OpenOb
 ### Phases 91–94 — Real per-cloud volume provisioning
 
 Lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
+
+**Phase 91 ✓ in flight (`phase-91-pd-ephemeral-volumes`)** — `BackingMemory` translator on cloudrun + gcf. Audit found the actual gap: Phase 127's MemoryDriver was registered in every backend's storageBackings registry, but no translator handled the `case core.BackingMemory` arm — operators selecting `Backing: memory` hit "unsupported backing kind". `pd-ephemeral` on Cloud Run is bookmarked at the spec level (Cloud Run Services lack first-class PD attach); real implementation deferred to Phase 91d.
+
+**Phase 91b** — `BackingMemory` translator on ECS + Lambda.
+
+**Phase 91c** — `BackingMemory` translator on ACA + AZF.
+
+**Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf (Compute Engine `disks.create`/`attach`/`delete`).
 
 ### Live-cloud validation track
 

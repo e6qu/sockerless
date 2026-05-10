@@ -10,7 +10,7 @@
 
 [![Go](https://img.shields.io/badge/Go-123.3k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-16.1k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-61.7k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-61.8k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -107,7 +107,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-8.6k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
-![cloudrun](https://img.shields.io/badge/cloudrun-5.9k-5BC0DE)
+![cloudrun](https://img.shields.io/badge/cloudrun-6k-5BC0DE)
 ![aca](https://img.shields.io/badge/aca-4.2k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-5.9k-5BC0DE)
