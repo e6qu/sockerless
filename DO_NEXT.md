@@ -4,33 +4,23 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`phase-91b-backingmemory-ecs-lambda` — Phase 91b in flight (1 implementation commit + state save). Open a PR when ready; PR #147 already merged.
+`phase-91c-lambda-backingspec-migration` — Phase 91 consolidation in flight (2 implementation commits + state save). Open a PR when ready; PR #148 already merged.
 
 ## Status
 
-Phase 91b implementation is done on this branch. ACA done (clean EmptyDir match); ECS + AZF reject loudly with clear error messages; Lambda deferred to Phase 91c. After this lands, queue: Phase 91c (Lambda volume framework migration) → 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
+Phase 91 (consolidated) implementation is done on this branch. Per user direction, all remaining 91 work landed here as one PR — no more sub-phase splits. After this lands, queue: Phase 91d (real pd-ephemeral lifecycle on cloudrun+gcf) → Phase 87c (optional zerolog→OTel bridge) → live-cloud validation track.
 
-## Resume here — Phase 91b (BackingMemory ECS / ACA / AZF) — implementation done
+## Resume here — Phase 91 (consolidated) — implementation done
 
-Branch has 1 implementation commit + state save ready to PR:
+Branch has 2 implementation commits + state save ready to PR:
 
-1. `phase 91b: BackingMemory translator on ECS / ACA / AZF` — ACA gets clean `armappcontainers.Volume{StorageType: EmptyDir}`; ECS rejects loudly pointing at LinuxParameters.Tmpfs (cross-layer mismatch); AZF rejects loudly pointing at per-invocation /tmp. 5 new tests.
+1. `phase 91c: Lambda volume_translator.go scaffolding + BackingMemory reject` — per-bind translator dispatch shape mirroring ECS / ACA / AZF / cloudrun / gcf. `BackingEFSEphemeral` → `FileSystemConfig{Arn, LocalMountPath}`; `BackingMemory` → loud reject; unknown → generic. 5 tests.
+2. `phase 91 (consolidated): Lambda framework migration + GCP PD reject + ECR Gallery` — three coupled changes:
+   - Lambda's `fileSystemConfigsForBinds` migrated onto `s.storageBackings.Resolve(BackingEFSEphemeral) → translator`. Lambda joins the other 5 backends in framework dispatch.
+   - cloudrun + gcf reject `BackingPDEphemeral` with concrete pointers (`gcs-fuse` MountOptions per BUG-944, `gcs-sync`, GCE-backend bookmark per spec line 567). 2 tests.
+   - Cloudrun + gcf integration TestMain switched to `public.ecr.aws/docker/library/{alpine,golang}` to dodge Docker Hub anonymous-pull throttling (saved as memory feedback_ecr_gallery_alt.md).
 
-When ready: `git push -u origin phase-91b-backingmemory-ecs-lambda && gh pr create`. CI ~7 min.
-
-**Why Lambda was deferred.** Lambda's `volumes.go::fileSystemConfigsForBinds` uses inline EFS predating the BackingSpec framework — never calls `storageBackings.Resolve`. Wiring `BackingMemory` requires migrating Lambda to the framework first. That's a separate refactor PR (Phase 91c) and shouldn't be bundled with translator extensions.
-
-## Phase 91c — Lambda volume framework migration (next pickup)
-
-**Goal.** Migrate Lambda's volume path from the pre-BackingSpec inline EFS pattern to the unified `storageBackings.Resolve` framework that ECS / ACA / AZF / cloudrun / gcf already use. Once migrated, `BackingMemory` rejection arrives for free (Lambda has no RAM-mount primitive — `/tmp` is per-invocation scratch).
-
-**Files to touch.**
-
-- `backends/lambda/volumes.go` — `fileSystemConfigsForBinds` currently builds `lambdatypes.FileSystemConfig` directly from `awscommon.EFSManager`. Wrap into a `BackingEFSEphemeral` driver path so the framework dispatches.
-- `backends/lambda/volume_translator.go` (new) — same shape as ECS: per-bind resolve through registry, translate `BackingSpec` to `lambdatypes.FileSystemConfig`. Add `case core.BackingMemory:` rejection arm.
-- `backends/lambda/server.go` — already registers `EFSEphemeralDriver` + `MemoryDriver`; verify nothing changes here.
-
-**Test plan.** Mirror the ECS pattern: existing EFS path still works (regression guard); BackingMemory rejection error message points at `/tmp`.
+When ready: `git push -u origin phase-91c-lambda-backingspec-migration && gh pr create`. CI ~7 min.
 
 ## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf (later)
 

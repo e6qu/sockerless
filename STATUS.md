@@ -39,6 +39,7 @@ One implementation commit + state save. Continues Phase 91's BackingMemory work 
 
 | Date | PR | Headline |
 |---|---|---|
+| 2026-05-10 | #148 | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. ACA `StorageTypeEmptyDir`; ECS + AZF reject loudly with concrete pointers. |
 | 2026-05-10 | #147 | Phase 91 — `BackingMemory` translator on cloudrun + gcf (`EmptyDir{Memory}` + `SizeLimit` from `spec.Memory.SizeMB`). Closes the framework-vs-translator gap on the GCP backends. |
 | 2026-05-10 | #146 | Phase 87b — wire OTel SDK across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go + otelhttp.NewHandler on sim/admin muxes. Spans flow from every Go binary into Jaeger when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
 | 2026-05-10 | #145 | Phase 87 (Stack A first PR) — `make stack-observability-{up,down,status}` (otel-collector + VictoriaLogs + Jaeger), filelog receiver scraping `.stack-pids/*.log`, `GET /api/v1/observability` endpoint, VictoriaLogs/Jaeger deep-link chips on the diagnostic panel, `docs/OBSERVABILITY.md`. |
