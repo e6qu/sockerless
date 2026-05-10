@@ -210,13 +210,30 @@ export function TopologyPage() {
         title={<>Topology</>}
         meta={`${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalInstances} instance${totalInstances === 1 ? "" : "s"}`}
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setProjectFormOpen(true)}
-          >
-            + project
-          </Button>
+          <div className="inline-flex items-center gap-2">
+            <Link
+              to="/ui/topology/resources"
+              style={{
+                fontSize: "0.7rem",
+                fontFamily: "var(--font-mono)",
+                padding: "0.3rem 0.7rem",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-xs)",
+                color: "var(--color-fg-muted)",
+                textDecoration: "none",
+                letterSpacing: "0.05em",
+              }}
+            >
+              cloud resources
+            </Link>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setProjectFormOpen(true)}
+            >
+              + project
+            </Button>
+          </div>
         }
       />
 

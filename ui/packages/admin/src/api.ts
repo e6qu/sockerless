@@ -484,6 +484,42 @@ export class AdminApiClient {
       req,
     );
   }
+
+  topologyResources(active?: boolean): Promise<RollupResponse> {
+    const qs = active ? "?active=true" : "";
+    return this.request(`/api/v1/topology/resources${qs}`);
+  }
+}
+
+export interface RollupSource {
+  project: string;
+  instance: string;
+  cloud?: string;
+  backend?: string;
+  port: number;
+  ok: boolean;
+  error?: string;
+  resource_count: number;
+}
+
+export interface RollupResource {
+  project: string;
+  instance: string;
+  cloud?: string;
+  backend?: string;
+  port: number;
+  container_id?: string;
+  resource_type: string;
+  resource_id: string;
+  instance_id?: string;
+  created_at?: string;
+  cleaned_up: boolean;
+  status?: string;
+}
+
+export interface RollupResponse {
+  sources: RollupSource[];
+  resources: RollupResource[];
 }
 
 export interface ProxyRequest {
