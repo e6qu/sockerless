@@ -130,7 +130,7 @@ No auto-restart — operator-driven recovery via the existing Restart / Reload /
 
 Trace emission for every Go binary. `core.InitTracer` wired into 6 backend main.go files (ecs / lambda / cloudrun / gcf / aca / azf — docker already had it from Phase 86). New `simulator.InitTracer` in each per-cloud sim shared package + `otelhttp.NewHandler` at the outermost middleware layer + 4-line init in each sim main.go. Admin gains its own duplicated `InitTracer` helper (separate Go module without backend-core dep) + otelhttp wrap on the mux. bleephub already wired since Phase 86. 11 new tracer tests.
 
-**Phase 87c (optional)** — zerolog → OTel logs bridge so OTLP-mode operators don't depend on the filelog receiver fallback. Skipped from 87b to keep dep churn contained.
+**Phase 87c** ✓ in flight (`phase-87c-zerolog-otel-bridge`, PR #150) — zerolog → OTel logs bridge across all 12 components. `backends/core/otel.go` adds `InitObservability` + `OTelLogWriter`; 7 backends use it. Mirrored bridge in each `simulators/{aws,gcp,azure}/shared/otel.go` (separate Go module — `Config.LogWriter` threaded through `NewServer`), `bleephub/otel.go`, and `cmd/sockerless-admin/otel.go` (adds `TextLogWriter` for stdlib `log`). Components-decoupled invariant intact: emission gated on `OTEL_EXPORTER_OTLP_ENDPOINT`; no admin/UI dep injected. 5 new core tests.
 
 **Stack A — Apache 2.0 throughout, three binaries:**
 - **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.

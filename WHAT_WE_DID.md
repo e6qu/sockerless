@@ -6,6 +6,22 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 87c — zerolog → OTel logs bridge across all 12 components (`phase-87c-zerolog-otel-bridge` branch, PR #150)
+
+Two implementation commits + state save. Closes the observability story for every sockerless process: each log line now flows through BOTH stderr (operator-visible via `ConsoleWriter`) AND the OTel logs SDK when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. With the env var unset, behaviour is identical to today — preserves the components-decoupled invariant.
+
+**The user pushed back on splitting (again).** I had been carving Phase 87c into 87c (backends) + 87c.1 (sims+admin+bleephub) since they live in separate Go modules. The user said "do not split phase 87 into further sub/micro-phases" and "keep all phase 87 on a single PR". Right call — even though the modules are separate, the work is mechanical mirroring of the same bridge code; reviewer load on one PR is the same as two PRs minus the re-review cost.
+
+**Three bridge variants ended up shipping.** Looked the same on paper but the binaries differ:
+
+1. `backends/core` (used by 7 backends) — full `Observability{LogWriter, Shutdown}` + `OTelLogWriter` parsing zerolog JSON line-by-line. zerolog level → OTel severity, `message` → body, other keys → attributes.
+2. `simulators/{aws,gcp,azure}/shared/otel.go` + `bleephub/otel.go` — same shape mirrored, since neither imports `backends/core` (separate Go modules with `replace` directives or none at all). `Config.LogWriter` field threaded through `NewServer` lets the sim main.go assign the writer before the simulator's logger is built.
+3. `cmd/sockerless-admin/otel.go` — admin uses **stdlib `log`**, not zerolog. Stdlib emits flat text lines, not JSON. Added `TextLogWriter` that records each line at INFO severity with the trimmed text as body. Wired via `log.SetOutput(io.MultiWriter(os.Stderr, TextLogWriter))`.
+
+**The shared/ go.mod gotcha.** `simulators/{aws,gcp,azure}/shared/` each have their own `go.mod` (module `github.com/sockerless/simulator`, with the parent sim module using a `replace` directive). First commit hit golangci-lint failures because `go mod tidy` in the parent sim module didn't pull the new OTel logs deps into the shared/ module's go.sum. Had to run `go mod tidy` in each shared/ submodule explicitly. Same lesson as Phase 87b but I'd forgotten the structure — now noted.
+
+**Components-decoupled invariant preserved.** Emission gated entirely on `OTEL_EXPORTER_OTLP_ENDPOINT`. No admin or UI dep injected into any backend / sim / bleephub. Each separate Go module owns its own bridge code.
+
 ## 2026-05-10 — Phase 91 (consolidated) — Lambda framework + GCP PD reject + ECR Gallery (`phase-91c-lambda-backingspec-migration` branch)
 
 Two implementation commits + state save. Per user direction, all remaining Phase 91 work consolidated here — no more sub-phase splits.
