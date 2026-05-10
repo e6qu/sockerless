@@ -26,7 +26,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history
 
-984 bugs filed and fixed across phases 86–135 (PRs #112–134). Per-bug detail in `git log` / linked PR. Recent ranges:
+984 bugs filed and fixed across phases 86–135 (PRs #112–134). PRs #135–#140 (phases 121b finish, 78, 79, 80, 81, 82) added no new bugs — UI / topology / admin-orchestration work, not cell debugging or live-cloud failures. Per-bug detail in `git log` / linked PR. Recent ranges:
 
 - **975–984** (PR #129) — Phase 135 sim host model + native arm64 CI runners.
 - **973–974** (PR #128) — Sim test stability (`Eventually` polling).

@@ -78,7 +78,16 @@ UI: `/ui/topology/resources` with grouping toggle (instance / cloud / service pr
 
 ### Phase 83 — Sim UI parity
 
-Lift sim UIs to match backend UIs: Containers / Resources / Metrics pages, ToastProvider, ErrorBoundary, ThemeToggle, log tailer, API console. Refactor sim Apps onto the same shell shape `BackendApp` uses.
+**Shell parity already exists.** `SimulatorApp` (in `@sockerless/ui-core`) wraps `ErrorBoundary` + `ToastProvider` + `BrowserRouter` + `AppShell` (which includes `ThemeToggle` in the nav). Sims already use it.
+
+**Page parity is the gap.** Each sim page is 20–30 LOC of `<h2>` + `<DataTable>` — sketches compared to admin pages. Phase 83 work:
+
+1. Polish every sim page (sim-aws / sim-gcp / sim-azure × ~6 pages each) to use `PageHeading` with kicker / italic title / meta, `ErrorPanel` for `isError` paths, admin's design language (card sections, font-display titles, font-mono kickers).
+2. Extract a `<ResourceListPage>` to `@sockerless/ui-core` so each sim page collapses to a config call — net code drop expected.
+3. Document that Phase 81 SSE tail + API console at `/ui/topology/:p/:i/logs` and `/ui/topology/:p/console` already work for sims when launched via admin orchestration (`make stack-X-Y`).
+4. Retire legacy `/ui/resources` (superseded by `/ui/topology/resources`) and `/ui/projects/:name/logs` (superseded by `/ui/topology/:p/console`) — keep their backing endpoints since `--backend name=addr` CLI components still register through them, but unlink from nav.
+
+Out of scope: do NOT add Containers / Resources / Metrics pages to sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs (ECS tasks, Lambda functions, S3 buckets) directly.
 
 ### Phase 84 — Per-instance state isolation + persistence
 
