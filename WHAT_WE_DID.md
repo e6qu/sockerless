@@ -6,6 +6,26 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 85 config edit + hot reload (`phase-85-config-edit-hot-reload` branch)
+
+Two implementation commits + state save. Tight scope by design — the original Phase 85 plan listed four discrete pieces (annotation, edit endpoint, reload endpoint, UI), but the first three are tightly coupled (metadata informs response, response drives UX) so they ship as one commit; the UI is its own commit because TypeScript / vitest scaffolding lives in a different package.
+
+**Why not extend the existing InstanceForm.** The first instinct was "edit-mode InstanceForm gains hot/restart badges and the post-save Reload prompt". That muddles the contract: InstanceForm handles the full-instance edit (name/kind locked, port/cloud/sim editable) which has a different invariant from a config-only edit. The metadata-driven badges only make sense when the operator is changing Config — anywhere else they're noise. So a separate `<ConfigEditModal>` component, triggered by a new "config" button on each InstanceRow, keeps the two flows orthogonal.
+
+**Curated metadata, not introspection.** Admin owns a static `ConfigKeyMeta` table. 3 hot-reloadable keys (SIM_LOG_LEVEL, SOCKERLESS_LOG_LEVEL, SIM_PULL_POLICY — log levels + pull policy, all things components re-read from env per-request); 14 annotated restart-required keys (binding addresses, persistence dirs, cloud resource layout); unknown keys default to restart-required (the safe default).
+
+The metadata lives admin-side, NOT on the component. Per the components-decoupled invariant, components don't grow a "describe my config" endpoint. The cost: admin's metadata drifts behind component reality between releases — when a new SOCKERLESS_X key shows up, admin treats it as restart-required until someone annotates it. The benefit: zero coupling, clear ownership of the operator's mental model.
+
+**ClassifyChanges shape.** `ClassifyChanges(prev, next map[string]string) (hot, restart []string)` — handles added, removed, and changed keys uniformly. A removed key counts as a change of its annotation; an unchanged key is skipped. Sort the slices so the UI gets stable output.
+
+**Reload semantics.** `POST .../reload` re-renders `.stack-pids/<n>.env` and shells `make reload-component NAME=<n>`, which `kill -HUP`s the recorded PID. The component side may or may not handle SIGHUP — Phase 85's contract is "signal sent", not "config absorbed". Reload of a dead PID is an error (stop + start would be the operator's recourse). Re-rendering the env file always happens, so a follow-up restart picks up the latest values whether the component absorbs SIGHUP or not.
+
+**Restart trumps reload in the UI.** If any restart-required key changed, the post-save footer offers Restart as the primary, with "Reload (partial)" as an escape hatch — reload alone wouldn't pick up restart-required changes. If only hot keys changed, just Reload. If nothing changed (operator hit Save without editing anything), just Close.
+
+**Test coverage.** Backend: 9 metadata unit tests (annotation lookup, classification across all four cases — hot, restart, mixed, removed) + 7 endpoint tests (metadata GET, PUT classification + persistence + identity-noop, 404, 400, reload 503/404). UI: 6 vitest cases (rows render with badges, all three save outcomes, Reload click flow, save-error inline + toast).
+
+**What this phase explicitly does NOT do.** No SIGHUP handling on the components — that's per-binary work, deferred. No InstanceForm refactor. No automatic reload-on-save (operator confirms which action to take in the post-save footer).
+
 ## 2026-05-10 — Phase 84 per-instance state isolation + BUG-985 (`phase-84-instance-state-isolation` branch)
 
 Three implementation commits + state save. The phase brief was "make multiple sim instances of the same cloud coexist with isolated state across restarts" — the work split into one bug-fix and one wiring task once I started reading the existing code.
