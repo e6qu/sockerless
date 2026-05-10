@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // ServiceHandler handles requests for a single simulated cloud service.
@@ -62,11 +63,16 @@ func NewServer(cfg Config) (*Server, error) {
 		})
 	})
 
-	// Build middleware chain
+	// Build middleware chain. otelhttp.NewHandler is outermost so
+	// per-request spans see the post-routing path; the existing
+	// middlewares run inside the span. Spans emit to a no-op tracer
+	// unless main.go calls InitTracer with OTEL_EXPORTER_OTLP_ENDPOINT
+	// set in the env (Phase 87b).
 	var handler http.Handler = mux
 	handler = AuthPassthroughMiddleware(cfg.Provider)(handler)
 	handler = LoggingMiddleware(logger, cfg.Provider)(handler)
 	handler = RequestIDMiddleware(cfg.Provider)(handler)
+	handler = otelhttp.NewHandler(handler, "sockerless-sim-"+cfg.Provider)
 
 	// Initialize container runtime (Docker/Podman) — required for execution
 	runtime := os.Getenv("SIM_RUNTIME")

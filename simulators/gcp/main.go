@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -43,6 +44,12 @@ func main() {
 	// Stash the listen addr so cloud-product host translators can wire
 	// GCE_METADATA_HOST + sidecar URLs onto workload containers.
 	simListenAddr = cfg.ListenAddr
+
+	shutdown, err := sim.InitTracer("sockerless-sim-gcp")
+	if err != nil {
+		log.Fatalf("init tracer: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	srv, err := sim.NewServer(cfg)
 	if err != nil {

@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -41,6 +42,12 @@ func main() {
 	// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4
 	// onto workload containers.
 	simListenAddr = cfg.ListenAddr
+
+	shutdown, err := sim.InitTracer("sockerless-sim-aws")
+	if err != nil {
+		log.Fatalf("init tracer: %v", err)
+	}
+	defer func() { _ = shutdown(context.Background()) }()
 
 	srv, err := sim.NewServer(cfg)
 	if err != nil {
