@@ -4,29 +4,20 @@ Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BU
 
 ## Branch
 
-`main` (clean). PR #138 merged 2026-05-10 (Phase 79 complete + Phase 87 plan + cloud-resource-mapping consolidation). Start a new branch for Phase 80.
+`state-save-post-pr138` — PR #139 (open). Carries the post-#138 state save + the full Phase 80 admin UI Topology page. CI to verify after push.
 
 ## Resume here
 
-**Phase 80 — admin UI: topology page + per-instance lifecycle.**
+**Phase 80 shipping on PR #139.** Admin UI now has `/ui/topology`:
+- Project + instance tree with per-instance status polled every 2s (calls `GET /api/v1/topology/projects/{p}/instances/{i}/status`).
+- Per-row Start / Stop / Rebuild (POST to lifecycle endpoints).
+- Per-kind add/edit instance modal (sim/backend/bleephub) with auto-allocate-port button.
+- Add/delete project modal with confirmation.
+- Port registry card (configured ranges + claimed ports).
 
-Backend surface (already shipped in #138):
-- `GET /api/v1/topology` — full topology read.
-- `PUT /api/v1/topology` — full topology replace (validated).
-- `GET /api/v1/topology/instances` — flat list of `{project, instance}` refs.
-- `POST /api/v1/topology/projects` / `DELETE /api/v1/topology/projects/{p}` — surgical project add/remove.
-- `POST /api/v1/topology/projects/{p}/instances` / `GET|PUT|DELETE /api/v1/topology/projects/{p}/instances/{i}` — surgical instance CRUD.
-- `POST /api/v1/topology/projects/{p}/instances/{i}/{start|stop|rebuild}` — lifecycle (shells `make`).
-- `GET /api/v1/topology/projects/{p}/instances/{i}/status` — per-instance status (running, PID, health).
-- `POST /api/v1/topology/allocate-port` — allocate a free port from `ports.ranges[<kind>]`.
+Replaces legacy `ProjectsPage` + `ProjectCreatePage` (deleted). `/ui/projects/:name` (ProjectDetailPage) + `/ui/projects/:name/logs` (ProjectLogsPage) still served until Phase 81 absorbs them.
 
-Phase 80 build (UI only):
-1. Replace `ProjectsPage` in admin UI with project + instance tree view.
-2. Per-instance Start / Stop / Rebuild buttons (POST to lifecycle endpoints, toast on success/failure).
-3. "Add project" + "Add instance" forms — instance form renders per-kind fields (sim → cloud + port; backend → cloud + backend kind + sim-port + port; bleephub → port). Auto-allocate-port button.
-4. Edit / delete per instance + per project (with confirmation).
-5. Port registry view — show `ports.ranges` configured ranges + which ports are claimed by which instance.
-6. Per-instance status row (running / health) via the status endpoint, polled every 2s when the instance row is expanded.
+**Next after #139 lands: Phase 81 — per-instance logs + live troubleshooting console.** Live tail per instance via SSE from admin (reads `.stack-pids/<name>.log`); combined-timeline view (sim + backend interleaved); API console panel (arbitrary HTTP requests against an instance).
 
 ## Invariants (re-state on every commit)
 

@@ -16,14 +16,13 @@ import { ContextsPage } from "./pages/ContextsPage.js";
 import { ProcessesPage } from "./pages/ProcessesPage.js";
 import { ProcessDetailPage } from "./pages/ProcessDetailPage.js";
 import { CleanupPage } from "./pages/CleanupPage.js";
-import { ProjectsPage } from "./pages/ProjectsPage.js";
-import { ProjectCreatePage } from "./pages/ProjectCreatePage.js";
+import { TopologyPage } from "./pages/TopologyPage.js";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage.js";
 import { ProjectLogsPage } from "./pages/ProjectLogsPage.js";
 
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/ui/" },
-  { label: "Projects", to: "/ui/projects" },
+  { label: "Topology", to: "/ui/topology" },
   { label: "Components", to: "/ui/components" },
   { label: "Processes", to: "/ui/processes" },
   { label: "Containers", to: "/ui/containers" },
@@ -59,8 +58,7 @@ export function App() {
               path="/ui/components/:name"
               element={<ComponentDetailPage />}
             />
-            <Route path="/ui/projects" element={<ProjectsPage />} />
-            <Route path="/ui/projects/new" element={<ProjectCreatePage />} />
+            <Route path="/ui/topology" element={<TopologyPage />} />
             <Route path="/ui/projects/:name" element={<ProjectDetailPage />} />
             <Route
               path="/ui/projects/:name/logs"

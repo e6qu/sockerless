@@ -135,6 +135,59 @@ export interface CreateProjectRequest {
   frontend_mgmt_port?: number;
 }
 
+export type InstanceKind = "sim" | "backend" | "bleephub";
+
+export interface TopologyInstance {
+  name: string;
+  kind: InstanceKind;
+  cloud?: CloudType;
+  backend?: BackendType;
+  port: number;
+  sim?: string;
+  config?: Record<string, string>;
+}
+
+export interface TopologyProject {
+  name: string;
+  cloud?: CloudType;
+  backend?: BackendType;
+  log_level?: string;
+  sim_port?: number;
+  backend_port?: number;
+  created_at?: string;
+  instances?: TopologyInstance[];
+}
+
+export interface PortRange {
+  from: number;
+  to: number;
+}
+
+export interface PortConfig {
+  ranges?: Partial<Record<InstanceKind, PortRange>>;
+}
+
+export interface Topology {
+  projects?: TopologyProject[];
+  ports?: PortConfig;
+}
+
+export interface InstanceRef {
+  project: string;
+  instance: TopologyInstance;
+}
+
+export type HealthState = "ok" | "unhealthy" | "unknown";
+
+export interface InstanceStatus {
+  project: string;
+  name: string;
+  running: boolean;
+  pid: number;
+  health: HealthState;
+  health_detail?: string;
+}
+
 /** Error thrown when the admin API returns a non-ok response. */
 export class AdminApiError extends Error {
   constructor(
@@ -170,6 +223,19 @@ export class AdminApiClient {
   private async postJSON<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(path, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new AdminApiError(res.status, res.statusText, text);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  private async putJSON<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(path, {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -312,6 +378,99 @@ export class AdminApiClient {
   projectConnection(name: string): Promise<ProjectConnection> {
     return this.request(
       `/api/v1/projects/${encodeURIComponent(name)}/connection`,
+    );
+  }
+
+  topology(): Promise<Topology> {
+    return this.request("/api/v1/topology");
+  }
+
+  topologyReplace(t: Topology): Promise<Topology> {
+    return this.putJSON("/api/v1/topology", t);
+  }
+
+  topologyInstances(): Promise<InstanceRef[]> {
+    return this.request("/api/v1/topology/instances");
+  }
+
+  topologyAddProject(p: TopologyProject): Promise<TopologyProject> {
+    return this.postJSON("/api/v1/topology/projects", p);
+  }
+
+  topologyRemoveProject(name: string): Promise<{ removed: string }> {
+    return this.del(`/api/v1/topology/projects/${encodeURIComponent(name)}`);
+  }
+
+  topologyAddInstance(
+    project: string,
+    inst: TopologyInstance,
+  ): Promise<InstanceRef> {
+    return this.postJSON(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances`,
+      inst,
+    );
+  }
+
+  topologyUpdateInstance(
+    project: string,
+    inst: TopologyInstance,
+  ): Promise<InstanceRef> {
+    return this.putJSON(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(inst.name)}`,
+      inst,
+    );
+  }
+
+  topologyRemoveInstance(
+    project: string,
+    name: string,
+  ): Promise<{ removed: string }> {
+    return this.del(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}`,
+    );
+  }
+
+  topologyInstanceStart(
+    project: string,
+    name: string,
+  ): Promise<{ status: string }> {
+    return this.post(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/start`,
+    );
+  }
+
+  topologyInstanceStop(
+    project: string,
+    name: string,
+  ): Promise<{ status: string }> {
+    return this.post(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/stop`,
+    );
+  }
+
+  topologyInstanceRebuild(
+    project: string,
+    name: string,
+  ): Promise<{ status: string }> {
+    return this.post(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/rebuild`,
+    );
+  }
+
+  topologyInstanceStatus(
+    project: string,
+    name: string,
+  ): Promise<InstanceStatus> {
+    return this.request(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/status`,
+    );
+  }
+
+  topologyAllocatePort(
+    kind: InstanceKind,
+  ): Promise<{ kind: InstanceKind; port: number }> {
+    return this.post(
+      `/api/v1/topology/allocate-port?kind=${encodeURIComponent(kind)}`,
     );
   }
 }

@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` (clean — no in-flight branch) |
-| In-flight phases | None — Phase 79 closed in PR #138 (2026-05-10). Phase 80 next. |
+| Active branch | `state-save-post-pr138` (open: PR #139, includes state save + Phase 80) |
+| In-flight phases | Phase 80 — admin UI Topology page on PR #139. |
 | Last merged | PR #138 — Phase 79 (full topology store + REST + lifecycle) + Phase 87 plan + cloud-resource-mapping consolidation (2026-05-10) |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open. |
@@ -15,7 +15,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 **Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`).
 
-**Next: Phase 80 — admin UI topology page + per-instance lifecycle.** Replace ProjectsPage with project + instance tree; per-instance Start/Stop/Rebuild controls; "Add instance" form (kind + name + port + per-component config); edit/delete; port registry view (allocated + free ranges). All backend pieces are in place — Phase 80 is a pure UI-side build on the existing `/api/v1/topology/*` surface.
+**Phase 80 in flight on PR #139** — admin UI Topology page at `/ui/topology` shipping in the same PR as the state save. Replaces legacy ProjectsPage + ProjectCreatePage. Project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port from configured pool, port registry view. See `docs/ADMIN_ORCHESTRATION.md` § Admin UI — Topology page.
 
 After 80: Phases 81–87 (logs+console, cloud-resources rollup, sim-UI parity, per-instance state, config edit, health surface, observability). Full sub-task list in [PLAN.md](PLAN.md).
 

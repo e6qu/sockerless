@@ -6,6 +6,34 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-10 — Phase 80 admin UI topology page + state save (PR #139)
+
+Bundles the post-#138 state save with full Phase 80 delivery on a single PR.
+
+**Phase 80 (admin UI topology page).** New `/ui/topology` route is the operator front door for `sockerless.yaml`. Pure UI build on top of the `/api/v1/topology/*` REST surface shipped in #138 — no business logic in the admin client beyond querying / posting / surfacing errors.
+
+Page composition:
+
+- **Project tree.** One card per project; expanding shows every instance with kind / cloud / backend / port / sim-ref summary (`InstanceRow`). Empty topology renders a centered "no projects configured" stub.
+- **Per-instance status.** Each `InstanceRow` runs its own `useQuery` against `GET /api/v1/topology/projects/{p}/instances/{i}/status` with `refetchInterval: 2000`. `StatusBadge` shows `ok` / `unhealthy` / `unknown` / `stopped`; `health_detail` (the failed-probe reason) renders inline when present.
+- **Per-instance lifecycle buttons.** Start / Stop / Rebuild POST to the matching lifecycle endpoint. Per-mutation `isPending` + `variables.name` gate the right row's buttons so you can't double-click a slow start. Toast feedback via `useReportError` / `useToast`.
+- **Per-project actions.** "+ instance" opens `InstanceForm`; "delete project" opens the `ConfirmDeleteModal` (project removal is destructive — sockerless.yaml entry only; running processes are NOT stopped, the modal copy says so explicitly).
+- **Port registry card.** Side panel listing configured `ports.ranges[<kind>]` next to every claimed port across all projects (sorted by port number). Memoised over `topology` so the list re-renders only when topology changes.
+
+Form components:
+
+- **`ProjectForm`** (`components/ProjectForm.tsx`) — minimal modal with one text input. Project's cloud / backend fields are intentionally NOT exposed; those are legacy fields used only by the per-project tuple shape, and modern usage is per-Instance.
+- **`InstanceForm`** (`components/InstanceForm.tsx`) — per-kind fields rendered via visibility flags driven off the `kind` select. `sim` shows cloud + port; `backend` adds backend dropdown (cloud-scoped: aws → ecs|lambda; gcp → cloudrun|gcf; azure → aca|azf) + sim-ref dropdown (lists same-project sims); `bleephub` is port-only. "Auto-allocate" button calls `POST /api/v1/topology/allocate-port?kind=<kind>` and fills the port field. Env-config table is fully editable with add/remove rows; empty rows are stripped on submit. Edit mode disables name + kind (rename = delete + add).
+
+Plumbing:
+
+- New API client methods on `AdminApiClient`: `topology`, `topologyReplace`, `topologyInstances`, `topologyAddProject`, `topologyRemoveProject`, `topologyAddInstance`, `topologyUpdateInstance`, `topologyRemoveInstance`, `topologyInstanceStart` / `Stop` / `Rebuild`, `topologyInstanceStatus`, `topologyAllocatePort`. Added `putJSON` helper alongside the existing `postJSON` / `del`.
+- Nav: `Projects` → `Topology` (route `/ui/topology`). `ProjectsPage` + `ProjectCreatePage` files deleted with their tests (no fallback / back-compat per the no-fakes directive). `ProjectDetailPage` updated to navigate back to `/ui/topology` on delete.
+- Tests: `__tests__/TopologyPage.test.tsx` covers heading + project + instance render, port registry render, project-form open, instance-form open with project pre-selected, empty state, Start button visible for stopped instances, confirm-dialog open path. 13 admin test files / 48 tests pass.
+- Docs: `docs/ADMIN_ORCHESTRATION.md` gains an "Admin UI — Topology page" section (what it shows, what it does, what it intentionally doesn't do).
+
+**State save for #138** (also in this PR): STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / PLAN.md updated to reflect PR #138 merged and Phase 80 in flight.
+
 ## 2026-05-10 — Phase 79 (full) + Phase 87 plan + docs consolidation (PR #138, merged)
 
 **Phase 79 complete: admin orchestration backend.** `sockerless.yaml` at repo root carries the full topology. `Topology` struct (`topology_store.go`): `projects[]` × `instances[]`, port pool global. YAML marshal + atomic save (tmp + rename). `MigrateLegacyProjects` reads existing `~/.sockerless/admin/projects/*.json` (when YAML absent), derives `[sim, backend]` instances via `DeriveLegacyInstances`, writes `sockerless.yaml`.
