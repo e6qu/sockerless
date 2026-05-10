@@ -1,4 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
+import { Link } from "react-router";
 import {
   useMutation,
   useQuery,
@@ -526,6 +527,21 @@ function InstanceRow({
           >
             rebuild
           </Button>
+          <Link
+            to={`/ui/topology/${encodeURIComponent(project)}/${encodeURIComponent(instance.name)}/logs`}
+            style={{
+              fontSize: "0.7rem",
+              fontFamily: "var(--font-mono)",
+              padding: "0.25rem 0.6rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              textDecoration: "none",
+              letterSpacing: "0.05em",
+            }}
+          >
+            logs
+          </Link>
           <Button variant="ghost" size="sm" onClick={onEdit}>
             edit
           </Button>
