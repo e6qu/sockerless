@@ -25,6 +25,10 @@ import { ErrorPanel } from "../components/ErrorPanel.js";
 import { ConfigEditModal } from "../components/ConfigEditModal.js";
 import { InstanceForm } from "../components/InstanceForm.js";
 import { ProjectForm } from "../components/ProjectForm.js";
+import {
+  UnhealthyDiagnosticPanel,
+  shouldRender as shouldRenderDiagnostics,
+} from "../components/UnhealthyDiagnosticPanel.js";
 
 const api = new AdminApiClient();
 
@@ -638,6 +642,15 @@ function InstanceRow({
           </Button>
         </div>
       </div>
+      {shouldRenderDiagnostics(status) && (
+        <div className="mt-3 -mx-4">
+          <UnhealthyDiagnosticPanel
+            project={project}
+            instanceName={instance.name}
+            status={status!}
+          />
+        </div>
+      )}
     </li>
   );
 }
