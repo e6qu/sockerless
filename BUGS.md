@@ -2,7 +2,7 @@
 
 **987 filed · 987 fixed · 0 open · 1 false positive.**
 
-Standing rule: every CI / live-cloud failure lands here with a one-liner before any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
+Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
 Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
@@ -23,14 +23,15 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 - **No fakes / no fallbacks / no skips.** Synthetic exit codes, silent shims, fake-data fallbacks, conditional `t.Skip` for missing config — all file as bugs and get real fixes. Tests run or fail loud; never skip silently.
 - **Cross-cloud sweep on every find.** When a pattern is found in one backend, the same code paths in the other 5 backends / 3 sims get checked in the same commit.
 - **Pattern B for cloud-specific drivers.** Within a cloud, drivers consolidate into `*-common`; cross-cloud duplication is fine and expected.
+- **Doc-only fixes are unsafe when the cloud rejects the config.** BUG-944/987: a documented MountOptions requirement that Cloud Run rejects is no fix. Verify cloud-acceptable, not just sockerless-controllable.
+- **HTTP 500 reserved for unexpected panics.** Never return 5xx as a designed failure path; use exit-code header / envelope.
 
-## Resolved history
+## Resolved history (compressed)
 
-987 bugs filed and fixed across phases 86–135 + Phase 84 + Phase 92. Per-bug detail in `git log` / linked PR. Recent ranges:
+987 bugs filed and fixed across phases 86–135 + Phase 84 + Phase 87 + Phase 92. Per-bug detail in `git log` / linked PR. Recent ranges:
 
-- **987** (Phase 92) — `Backing: gcs-fuse` on cloudrun + gcf produced silently broken cross-task workspaces. The cache-TTL gcsfuse mount flags (`metadata-cache:ttl-secs`, `metadata-cache:negative-ttl-secs`) are mandatory for safe cross-task reads, but Cloud Run rejects them as "unrecognized" — only `implicit-dirs / o / file-mode / dir-mode / uid / gid` are allowed. The 5s negative-cache default hid freshly-written files from sibling containers; runner-task → sub-task script handoff failed with stale `_temp/event.json`. The original "fix" (BUG-944) was a documented MountOptions requirement that turned out unenforceable. Real fix: deregister `GCSFuseDriver` on cloudrun + gcf, reject `BackingGCSFuse` in the translator with a concrete pointer at `gcs-sync` (per-exec tar/untar — strong consistency, no FUSE).
-- **986** (Phase 84) — sim shared `MakeStore[T]` silently fell back to in-memory `MemoryStore` when per-table `NewSQLiteStore` failed (`if err == nil { ... } // fall back to memory`). Same shape as BUG-985 but at the per-table layer: even when persistence opened cleanly, a single broken table would silently drop that store back to memory while neighbours stay durable — half-persistent state. Fix: `MakeStore` calls `log.Fatalf` on `NewSQLiteStore` failure; signature unchanged so the 106 call sites across the three sims aren't touched.
-- **985** (Phase 84) — sim shared `NewServer` silently fell back to in-memory storage when `SIM_PERSIST=true` but `OpenDB` failed. Operator-requested persistence must fail loud; in-memory fallback masks misconfiguration (bad path, perms, full disk) and produces silent data loss across restarts. Fix: `NewServer` returns `(*Server, error)`, callers `log.Fatalf` on persistence open failure.
+- **987** (Phase 92, PR #151) — `Backing: gcs-fuse` on cloudrun + gcf produced silently broken cross-task workspaces. Cache-TTL gcsfuse mount flags rejected by Cloud Run; deregister `GCSFuseDriver` and reject `BackingGCSFuse` in the translator with a concrete pointer at `gcs-sync`. Closes the documentation-fix-without-enforcement gap from BUG-944.
+- **985–986** (Phase 84, PR #142) — sim shared `NewServer` + `MakeStore[T]` silently fell back to in-memory storage when persistence-open failed. Operator-requested persistence must fail loud. Fix: return error / `log.Fatalf`.
 - **975–984** (PR #129) — Phase 135 sim host model + native arm64 CI runners.
 - **973–974** (PR #128) — Sim test stability (`Eventually` polling).
 - **949 + 972** (PR #123) — GCF `os/exec` workload → `sim.StartContainerSync`; cloudrun/gcf AR-proxy gate on `endpointURL`.
@@ -40,3 +41,4 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 - **786–819** (PR #118) — Round-8/9 AWS sweep; stateless invariant; real layer mirror.
 - **770–785** (PR #117) — Round-7 AWS sweep.
 - **661–769** (PRs #112–115) — Sim parity; stateless backends; FaaS invocation tracking; reverse-agent exec/cp/diff; Docker pod synthesis.
+- **86–660** — Foundation work prior to live-cloud cell validation.

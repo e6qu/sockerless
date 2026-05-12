@@ -1,41 +1,66 @@
 # Do Next
 
-Roadmap [PLAN.md](PLAN.md) · status [STATUS.md](STATUS.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
+Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
-## Branch
+## Where we are
 
-`phase-87d-92-observability-closeout-gcs-sync` — Phase 87 closeout (87d) + Phase 92 (gcs-fuse → gcs-sync) bundled. 6 commits ready to push as a PR. **Do NOT auto-merge — wait for user.**
+`main` is clean. PR #151 (Phase 87d + 92) and PR #152 (`docs/POD_MATERIALIZATION.md`) merged 2026-05-11/12. No phase currently in flight.
 
-## Status
+Three resumable tracks below. Pick one, branch from `origin/main`, single-branch rule applies. Never auto-merge.
 
-Phase 87d closes the three remaining gaps the audit surfaced after PR #150 merged: trace propagation across admin + bleephub HTTP clients, MeterProvider + runtime metrics across all 12 components, and a `make stack-observability-validate` end-to-end harness. Phase 92 ships BUG-987: deregister `Backing: gcs-fuse` on cloudrun + gcf because Cloud Run rejects the cache-TTL flags it needs to be safe across tasks; translator points operators at `gcs-sync` instead.
+## Track A — Phase 153: bleephub ↔ GitHub API signature parity ⭐ next planned
 
-## Resume here — Phase 87d + 92 bundle
+Goal: every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. Audit details + acceptance criteria in [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-Branch has 6 commits ready to push:
+Branch: `phase-153-bleephub-github-api-parity` off `origin/main`.
 
-1. `phase 87d: trace context propagation across admin + bleephub HTTP clients` — 9 client construction sites wrapped with otelhttp.NewTransport; global propagator set inside InitObservability.
-2. `phase 87d: OTel MeterProvider + runtime metrics across all components` — 5 InitObservability impls extended; runtime.Start emits Go runtime metrics; 2 new core tests.
-3. `phase 87d: stack-observability-validate make target` — manual operator-grade harness in make/stack.mk + docs/OBSERVABILITY.md § Validation.
-4. `phase 92: deregister gcs-fuse on cloudrun + gcf, reject in translator (BUG-944)` — registry change + translator reject arms + 2 new tests + reused PD-ephemeral test cleanup.
-5. `phase 92: docs + BUG-944 closure` — specs/CLOUD_RESOURCE_MAPPING.md + BUGS.md (BUG-987 = 987 filed/fixed).
-6. `docs: state save for Phase 87d + 92` — this commit.
+Order of operations (lands as one PR per single-branch rule, even if large):
 
-CI runs after `git push -u origin phase-87d-92-observability-closeout-gcs-sync && gh pr create`. **Do NOT auto-merge — wait for user.**
+1. **Read [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md) end-to-end.** Audit groups the gaps into 7 buckets; spec lists them. Don't redo the audit.
+2. **Store + types first.** Extend `bleephub/gh_apps_store.go`: `Suspended*` + `SelectedRepoIDs` + `OAuthApp` (client_id-keyed) + per-installation app webhook config. Wire to `Store.NewStore`.
+3. **Token prefixes.** `gho_` for OAuth user-to-server (web flow), `ghu_` for App user-to-server (device + OAuth-with-app), `ghr_` for refresh, `ghs_` (existing) for server-to-server installation. Update `gh_oauth.go::createTokenLocked` + middleware.
+4. **Missing endpoints.** Add `GET /apps/{slug}`, `GET /orgs/{org}/installation`, `GET /users/{username}/installation`, `PUT|DELETE /app/installations/{id}/suspended`, `GET /installation/repositories`, `PUT|DELETE /user/installations/{id}/repositories/{repo_id}`, `GET|POST /repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}[/attempts]`, app-level webhook surface `GET|PATCH /app/hook/config` + `GET /app/hook/deliveries[/{id}][/attempts]`, `POST|PATCH|DELETE /applications/{client_id}/token`, `DELETE /applications/{client_id}/grant`.
+5. **Checks API.** `POST|GET|PATCH /repos/{o}/{r}/check-runs[/{id}]`, `GET /repos/{o}/{r}/commits/{sha}/check-runs|check-suites`, suite endpoints.
+6. **Webhook payload fields + headers.** All payloads carry `installation: {id, node_id}` when associated; add `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-Type`, `X-GitHub-Hook-Installation-Target-ID`, `X-Hub-Signature` (SHA1). Emit `installation`, `installation_repositories`, `installation_target`, `github_app_authorization` events.
+7. **Permission enforcement.** Decorator that reads `ctxInstallation`'s token permissions and gates write endpoints (repo, issues, pulls, checks, secrets). 403 on insufficient scope.
+8. **JSON shape.** Add `*_url` fields (`hooks_url`, `html_url`, `repositories_url`, `access_tokens_url`, `events_url`, `installations_count`, `suspended_at`, `suspended_by`, `single_file_name`, etc.) to `appToJSON` + `installationToJSON`.
+9. **UI.** Per-installation CRUD on AppsPage; permissions/events form on app create; PEM viewer after create; OAuthPage gains token revoke/check; webhook deliveries page.
+10. **Tests.** Every new endpoint, header, payload field, redelivery, suspend cycle, OAuth token revoke + check, check-run lifecycle. `go test ./...` green in `bleephub/`.
+11. **State save.** Update STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md / `_tasks/done/`.
 
-## Phase 91d — Real pd-ephemeral lifecycle on cloudrun + gcf
+Acceptance: `bleephub` answers every endpoint listed in `specs/BLEEPHUB_GITHUB_API_PARITY.md § Endpoint inventory` with the documented status codes, headers, and JSON shapes. The probot reference test suite (or octokit-app) round-trips without modification against `http://localhost:5555` modulo base URL.
 
-**Bookmarked indefinitely.** `runpb.Volume` protobuf has no PersistentDisk field; Cloud Run Admin API doesn't expose PD attach as a first-class primitive. Implementation requires either a future GCE-style sockerless backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c) stays in place.
+## Track B — Live-cloud validation track
 
+Outstanding live-cloud sweeps separate from sim CI. Each is one branch, one PR.
+
+- **Lambda live** (deferred from Phase 86) — runs `make test-integration-cloud` for `lambda` with real AWS account.
+- **Cloud Run Services + ACA Apps live** — `UseService` / `UseApp` paths closed in code 2026-04-21; needs cloud validation.
+- **AZF + cloud-dns on Azure live** (new in #136).
+- **Lambda + service-mesh on AWS live** (new in #136).
+- **ACA / AZF + Azure AD access on Azure live** (new in #136).
+
+Common shape: `make stack-{sim,backend}-up` → `make test-integration-cloud TARGET=<backend>` → file bugs as they surface (BUGS.md before any fix attempt) → cross-cloud sweep on every find. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
+
+## Track C — Phase 91d (bookmarked)
+
+Real `pd-ephemeral` lifecycle on cloudrun + gcf. **Bookmarked indefinitely.** Cloud Run lacks the protobuf field; implementation requires either a future GCE-style sockerless backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c, PR #149) stays in place. Don't reopen until one of those preconditions changes.
 
 ## Invariants (re-state on every commit)
 
-- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). For Phase 87 observability: components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's stdout behaviour.
-- **No fallbacks.** Unknown config values fail-loud. No silent defaults.
-- **CI green per commit.** Each commit must be independently testable.
-- **Test target gating.** All backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud` (no skip).
+- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub.
+- **No fallbacks.** Unknown config values fail-loud.
+- **CI green per commit.** Each commit independently testable.
+- **Test target gating.** All backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`.
 - **No docs-only PRs.** Pair docs updates with implementation work on the same branch / PR.
+- **Never auto-merge.** Push the PR, wait for user.
+- **Single-branch rule.** All in-flight work lands on one branch per phase.
 
-## Roadmap
+## Session-resume checklist
 
-Phases 79.2 → 80 → 81 → 82 ✓ all in #140. Next: 83 → 84 → 85 → 86 → 87. After 87: 91–94 (real per-cloud volume provisioning) + the live-cloud validation track (Lambda live, Cloud Run Services / ACA Apps live, AZF cloud-dns live, Lambda service-mesh live, ACA/AZF Azure AD live). See [PLAN.md](PLAN.md) for sub-steps. Will likely split into multiple PRs once natural seams appear (e.g. Phase 87 — observability — is independent and can land standalone).
+1. `git status` + `git log --oneline -5 origin/main` to confirm where main is.
+2. Read STATUS.md (snapshot) + this file (concrete actions).
+3. For the chosen track, branch from `origin/main` with the prescribed name.
+4. Run `go test ./...` from the relevant module to establish a green baseline before changes.
+5. File BUGS.md entries for anything that surfaces, fix in the same session.
+6. State-save before pushing: STATUS.md, this file, WHAT_WE_DID.md, MEMORY.md, BUGS.md headers.
