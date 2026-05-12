@@ -4,6 +4,66 @@ bleephub is a self-contained Go reimplementation of GitHub's server-side surface
 
 The runner-server protocol uses GHES-style `/_apis/` paths over five internal services. The REST + GraphQL API uses GHES-style `/api/v3/` (REST) and `/api/graphql`. Both are served from the same binary on the same port.
 
+## Quick start — bleephub + `gh` CLI in 5 steps
+
+`gh` is HTTPS-only against any non-`github.com` host, and it identifies the target by **hostname** (no base URL flag). The `--hostname` argument on `gh auth login` is what wires it up; once that and `GH_HOST` are set, every `gh` command builds `https://<host>/api/v3/...` automatically and bleephub serves it.
+
+```bash
+# 1. Build (UI first so the Go binary embeds it; both steps optional if you only need the API)
+cd ui/packages/bleephub && bun install && bun run build      # → ui/packages/bleephub/dist/
+cd ../../../bleephub && make build                           # → ./sockerless-bleephub (embeds dist/)
+
+# 2. Generate + trust a localhost TLS cert (gh requires HTTPS)
+openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
+  -keyout /tmp/bph.key -out /tmp/bph.crt \
+  -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+# macOS — trust the cert system-wide:
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain /tmp/bph.crt
+# Linux (Debian/Ubuntu):
+# sudo cp /tmp/bph.crt /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates
+
+# 3. Start bleephub on :443 with TLS  (use :8443 + --hostname localhost:8443 below if you prefer no sudo)
+sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
+  ./sockerless-bleephub --addr :443 &
+
+# 4. Point gh at bleephub — --hostname is the key flag
+echo "bph_0000000000000000000000000000000000000000" \
+  | gh auth login --hostname localhost --with-token
+export GH_HOST=localhost                                     # make it the default host
+
+# 5. Use real gh verbs against bleephub
+gh repo create demo --public
+gh issue create --repo admin/demo --title "first" --body "hi"
+gh issue list --repo admin/demo
+gh release create v1.0.0 --repo admin/demo --title "v1"
+```
+
+For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, gh CLI, harness) run [`make bleephub-gh-docker-test`](#integration-tests). For the full walkthrough — supported `gh` commands, endpoints without native verbs, token prefixes, body coercion, troubleshooting — see [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md).
+
+### bleephub UI
+
+The Go binary embeds the React SPA at `/ui/` via `go embed` (build tag `!noui`, on by default). After step 3 above, open:
+
+- `https://localhost/ui/` — bleephub dashboard. Routes (left nav): **Overview**, **Workflows** (+ per-run detail), **Runners**, **Repos**, **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
+- Auth: the UI hard-codes the seeded admin PAT (`bph_0000…`) on its API calls. There's no login form — anyone who can reach `/ui/` has admin in the current implementation. If you front bleephub with auth, do it at the reverse proxy.
+
+For UI hacking without rebuilding the Go binary on every change:
+
+```bash
+# In one terminal: keep bleephub running from step 3 above.
+# In another:
+cd ui/packages/bleephub
+bun install                         # one-time
+bun run dev                         # Vite dev server on :5173 with HMR
+# Then open http://localhost:5173/ui/ — Vite proxies /internal + /health
+# to localhost:5555. For other API paths during dev, add them to
+# `server.proxy` in vite.config.ts (or load the UI from bleephub's own
+# /ui/ once you've rebuilt with `bun run build` && `make build`).
+```
+
+To rebuild the embedded copy (production-style) re-run `bun run build` then `make build` in `bleephub/`.
+
 ## What it implements
 
 ### Runner protocol (`/_apis/`)
