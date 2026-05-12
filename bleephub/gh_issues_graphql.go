@@ -235,6 +235,26 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return m, nil
 				},
 			},
+			// ProjectV2 items — gh CLI's `gh issue view` queries Issue.projectItems
+			// as a second round-trip. Bleephub doesn't model Projects v2; return
+			// an empty connection so the query type-checks + resolves cleanly.
+			"projectItems": &graphql.Field{
+				Type: projectV2ItemConnectionType(),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{
+						"totalCount": 0,
+						"nodes":      []interface{}{},
+						"pageInfo": map[string]interface{}{
+							"hasNextPage": false,
+							"endCursor":   nil,
+						},
+					}, nil
+				},
+			},
 			"comments": &graphql.Field{
 				Type: commentConnectionType,
 				Args: graphql.FieldConfigArgument{
@@ -1217,6 +1237,74 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 // Schema-stub resolvers — return a default for fields that gh CLI queries
 // but bleephub doesn't model (edit history, moderation, reactions).
 // Errors-free responses unblock gh's queries; the contract returns defaults.
+// projectV2ItemConnectionType returns a singleton stub for GitHub Projects v2
+// queries gh CLI's `gh issue view` performs. bleephub doesn't model Projects
+// v2; this returns a queryable but always-empty connection.
+//
+// Defined as a function (not a top-level var) so it's lazily-constructed —
+// graphql-go panics if types are constructed before the parent type is built.
+var projectV2ItemConnectionTypeMemo *graphql.Object
+
+func projectV2ItemConnectionType() *graphql.Object {
+	if projectV2ItemConnectionTypeMemo != nil {
+		return projectV2ItemConnectionTypeMemo
+	}
+	projectV2Type := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2",
+		Fields: graphql.Fields{
+			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
+		},
+	})
+	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldSingleSelectValue",
+		Fields: graphql.Fields{
+			"optionId": &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"name":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+		},
+	})
+	itemFieldValueUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "ProjectV2ItemFieldValue",
+		Types: []*graphql.Object{singleSelectValueType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			return singleSelectValueType
+		},
+	})
+	projectV2ItemType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2Item",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"project": &graphql.Field{
+				Type:    projectV2Type,
+				Resolve: alwaysNil,
+			},
+			"fieldValueByName": &graphql.Field{
+				Type: itemFieldValueUnion,
+				Args: graphql.FieldConfigArgument{
+					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				},
+				Resolve: alwaysNil,
+			},
+		},
+	})
+	projectV2ItemPageInfoType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemPageInfo",
+		Fields: graphql.Fields{
+			"hasNextPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"endCursor":   &graphql.Field{Type: graphql.String},
+		},
+	})
+	projectV2ItemConnectionTypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemConnection",
+		Fields: graphql.Fields{
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemType)},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(projectV2ItemPageInfoType)},
+		},
+	})
+	return projectV2ItemConnectionTypeMemo
+}
+
 func alwaysFalse(graphql.ResolveParams) (interface{}, error)       { return false, nil }
 func alwaysNil(graphql.ResolveParams) (interface{}, error)         { return nil, nil }
 func emptyList(graphql.ResolveParams) (interface{}, error)         { return []interface{}{}, nil }
