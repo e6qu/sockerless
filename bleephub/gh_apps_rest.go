@@ -109,18 +109,36 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Optional permissions override from request body
+	// Optional permissions + repo-subset override from request body
 	perms := inst.Permissions
+	var repoIDs []int
 	var body struct {
-		Permissions map[string]string `json:"permissions"`
+		Permissions   map[string]string `json:"permissions"`
+		RepositoryIDs []int             `json:"repository_ids"`
+		Repositories  []string          `json:"repositories"`
 	}
 	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Permissions != nil {
-			perms = body.Permissions
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if body.Permissions != nil {
+				perms = body.Permissions
+			}
+			repoIDs = body.RepositoryIDs
+			if len(repoIDs) == 0 && len(body.Repositories) > 0 {
+				for _, name := range body.Repositories {
+					if repo := s.store.GetRepo(inst.TargetLogin, name); repo != nil {
+						repoIDs = append(repoIDs, repo.ID)
+					}
+				}
+			}
 		}
 	}
 
-	token := s.store.CreateInstallationToken(inst.ID, app.ID, perms)
+	if inst.SuspendedAt != nil {
+		writeGHError(w, http.StatusForbidden, "This installation has been suspended.")
+		return
+	}
+
+	token := s.store.CreateInstallationToken(inst.ID, app.ID, perms, repoIDs)
 	writeJSON(w, http.StatusCreated, installationTokenToJSON(token))
 }
 

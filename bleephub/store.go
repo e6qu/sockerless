@@ -75,9 +75,17 @@ type Store struct {
 	HookDeliveries     map[int][]*WebhookDelivery    // hookID → deliveries
 	Apps               map[int]*App                  // id → app
 	AppsBySlug         map[string]*App               // slug → app
+	AppsByClientID     map[string]*App               // OAuth client_id → app
+	OAuthApps          map[string]*OAuthApp          // OAuth client_id → OAuth app (distinct from GitHub App)
 	Installations      map[int]*Installation         // id → installation
 	InstallationTokens map[string]*InstallationToken // token value → token
+	UserToServerTokens map[string]*UserToServerToken // gho_/ghu_ token value → token
+	RefreshTokens      map[string]*RefreshToken      // ghr_ token value → refresh token
+	AppHookDeliveries  map[int][]*WebhookDelivery    // appID → app-level webhook deliveries
 	ManifestCodes      map[string]int                // code → appID (one-time-use)
+	CheckRuns          map[int64]*CheckRun           // id → check run
+	CheckSuites        map[int64]*CheckSuite         // id → check suite
+	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
 	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
@@ -98,6 +106,8 @@ type Store struct {
 	NextDeliveryID     int
 	NextAppID          int
 	NextInstallationID int
+	NextCheckRunID     int64
+	NextCheckSuiteID   int64
 	mu                 sync.RWMutex
 }
 
@@ -198,9 +208,17 @@ func NewStore() *Store {
 		HookDeliveries:     make(map[int][]*WebhookDelivery),
 		Apps:               make(map[int]*App),
 		AppsBySlug:         make(map[string]*App),
+		AppsByClientID:     make(map[string]*App),
+		OAuthApps:          make(map[string]*OAuthApp),
 		Installations:      make(map[int]*Installation),
 		InstallationTokens: make(map[string]*InstallationToken),
+		UserToServerTokens: make(map[string]*UserToServerToken),
+		RefreshTokens:      make(map[string]*RefreshToken),
+		AppHookDeliveries:  make(map[int][]*WebhookDelivery),
 		ManifestCodes:      make(map[string]int),
+		CheckRuns:          make(map[int64]*CheckRun),
+		CheckSuites:        make(map[int64]*CheckSuite),
+		CheckSuitePrefs:    make(map[string][]*CheckSuitePref),
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
@@ -221,6 +239,8 @@ func NewStore() *Store {
 		NextDeliveryID:     1,
 		NextAppID:          1,
 		NextInstallationID: 1,
+		NextCheckRunID:     1,
+		NextCheckSuiteID:   1,
 	}
 }
 

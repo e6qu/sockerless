@@ -116,7 +116,7 @@ func TestRevokeInstallationToken_DeletesAndReturns204(t *testing.T) {
 	s.registerGHAppsRoutes()
 	app := s.store.CreateApp(1, "test-app", "", nil, nil)
 	inst := s.store.CreateInstallation(app.ID, "User", 1, "admin", nil, nil)
-	tok := s.store.CreateInstallationToken(inst.ID, app.ID, nil)
+	tok := s.store.CreateInstallationToken(inst.ID, app.ID, nil, nil)
 
 	req := httptest.NewRequest("DELETE", "/api/v3/installation/token", nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
