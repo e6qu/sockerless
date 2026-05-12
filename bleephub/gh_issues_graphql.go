@@ -225,7 +225,14 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				Type: issueMilestoneType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
-					return i["milestone"], nil
+					m, ok := i["milestone"].(map[string]interface{})
+					if !ok || m == nil {
+						// graphql-go's NonNull checks fire even on a nil-valued
+						// map[string]interface{}; return untyped nil so the field
+						// resolves to null cleanly.
+						return nil, nil
+					}
+					return m, nil
 				},
 			},
 			"comments": &graphql.Field{
@@ -474,26 +481,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
-	// issueOrPullRequest — gh issue view uses this
-	repoType.AddFieldConfig("issueOrPullRequest", &graphql.Field{
-		Type: issueType,
-		Args: graphql.FieldConfigArgument{
-			"number": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
-		},
-		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
-			repoID, _ := repo["databaseId"].(int)
-			number, _ := p.Args["number"].(int)
-
-			issue := s.store.GetIssueByNumber(repoID, number)
-			if issue == nil {
-				return nil, nil
-			}
-			result := issueToGQL(issue, s.store)
-			result["__typename"] = "Issue"
-			return result, nil
-		},
-	})
+	// issueOrPullRequest is defined in addPullRequestFieldsToSchema (after the
+	// PullRequest type exists), so it can return a union of Issue|PullRequest.
+	// gh CLI's `gh issue view <N>` uses `...on Issue` + `...on PullRequest`
+	// fragments which require a real union return type.
 
 	repoType.AddFieldConfig("labels", &graphql.Field{
 		Type: labelConnectionType,
@@ -1226,6 +1217,7 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 // Schema-stub resolvers — return a default for fields that gh CLI queries
 // but bleephub doesn't model (edit history, moderation, reactions).
 // Errors-free responses unblock gh's queries; the contract returns defaults.
-func alwaysFalse(graphql.ResolveParams) (interface{}, error) { return false, nil }
-func alwaysNil(graphql.ResolveParams) (interface{}, error)   { return nil, nil }
-func emptyList(graphql.ResolveParams) (interface{}, error)   { return []interface{}{}, nil }
+func alwaysFalse(graphql.ResolveParams) (interface{}, error)       { return false, nil }
+func alwaysNil(graphql.ResolveParams) (interface{}, error)         { return nil, nil }
+func emptyList(graphql.ResolveParams) (interface{}, error)         { return []interface{}{}, nil }
+func alwaysEmptyString(graphql.ResolveParams) (interface{}, error) { return "", nil }

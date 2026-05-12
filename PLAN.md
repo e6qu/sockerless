@@ -69,6 +69,60 @@ Eight gap buckets covered:
 
 Acceptance: `make bleephub-gh-docker-test` exercises Phase 153 surface end-to-end through the real `gh` binary in Docker, including `gh repo create`, `gh issue create`, `gh pr create`. `go test ./...` green in `bleephub/`. UI surfaces installation CRUD + suspend + repo selection + PEM viewer + OAuth Apps + suspend/delete.
 
+### Phase 154 — Broad GitHub API sweep (planned, post-153)
+
+After Phase 153 ships, sweep the rest of the GitHub API surface so the typical `gh` / `octokit` / `probot` workflow runs end-to-end against bleephub without surprise rejections. Audit-first: cross-reference real GitHub's OpenAPI spec against the current `gh_*.go` handlers + GraphQL schema, file per-surface gap tickets, prioritize by gh-CLI hit-rate (commands operators actually run).
+
+Surfaces in scope:
+
+1. **GitHub Apps (deeper)** — `installation_target` + `github_app_authorization` events; new_permissions_accepted flow; per-installation per-permission grant matrix; webhook redelivery with attempt tracking; manifest creation preflight redirect; marketplace stub.
+2. **Orgs** — members API (list, add, remove, role change), teams API depth (parent teams, sync to IdP groups), audit log, security manager role, org-level secrets + variables, dependency-graph.
+3. **Installing apps in orgs** — `POST /orgs/{org}/installations` if exposed, install URL flow, org-admin approval, repository_selection at org install time.
+4. **OIDC** — Actions OIDC token issuance (`ACTIONS_ID_TOKEN_REQUEST_URL` / `_TOKEN`), JWKS endpoint, claims (sub: `repo:owner/name:ref:refs/heads/main`, audience, environment claim), cloud IdP trust contracts.
+5. **Webhooks (extras)** — org-level webhooks, enterprise-level, `meta`/`security_advisory`/`secret_scanning_alert` events.
+6. **Pipelines + jobs API** — full Actions REST: workflow runs / jobs / steps shape parity, logs download endpoints, artifacts download with redirect, rerun + cancel endpoints, attempt tracking.
+7. **Triggering pipelines** — `workflow_dispatch` with inputs validation against `on.workflow_dispatch.inputs`, `repository_dispatch` with client_payload, event-from-API parity.
+8. **Users API** — followers/following/blocked, user emails, gpg/ssh keys, status, sponsorship listing.
+9. **Groups (teams + IdP)** — team membership, IdP group sync surface (`PATCH /orgs/{org}/teams/{slug}/team-sync/group-mappings`).
+10. **SSO integration** — SAML SSO header on PATs, SCIM 2.0 provisioning endpoints (`/scim/v2/...`), enforced-SSO redirects.
+11. **GitHub Pages** — `/repos/{o}/{r}/pages` GET/POST/PUT/DELETE + builds endpoint + deployments.
+12. **Deployments + Environments** — full deployments API (statuses, deployment_status events), Environments (protection rules, reviewers, secrets, deployment branch policies), branch protection rules.
+13. **Issue + PR comments depth** — issue comments full CRUD + reactions; PR review comments (inline / file-line / range), review threads, resolving + reopening threads (`POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies`, `gh pr review --thread`, `resolveReviewThread` / `unresolveReviewThread` GraphQL mutations), suggested-changes (`suggestion` syntax), comment edit history, multi-line code suggestions, threading mutations from gh CLI's PR view.
+14. **Reactions API** — `/repos/{o}/{r}/issues/{n}/reactions` + `/comments/{id}/reactions` + `/pulls/{n}/comments/{id}/reactions` POST/DELETE/GET; full eight reaction types (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`); reaction groups on Issue/PR/IssueComment/PRComment GraphQL types with real counts (today returns empty `[]`); reactions on releases + commits + discussions.
+15. **Webhook events parity** — full event coverage matching real GH's webhook event index: `branch_protection_rule`, `check_run`/`check_suite` (Apps wire it; need the event delivery), `code_scanning_alert`, `commit_comment`, `create`/`delete` (branch/tag), `dependabot_alert`, `deploy_key`, `deployment`/`deployment_status`, `discussion`/`discussion_comment`, `fork`, `gollum` (wiki), `label`, `member`/`membership`, `meta`, `milestone`, `package`, `page_build`, `project`/`projects_v2*`, `public`, `pull_request_review`/`pull_request_review_comment`/`pull_request_review_thread`, `push` (already), `release`, `repository`/`repository_dispatch`/`repository_import`/`repository_ruleset`, `secret_scanning_alert`, `security_advisory`, `sponsorship`, `star`, `status`, `team`/`team_add`, `watch`, `workflow_dispatch`/`workflow_job`/`workflow_run`. Per-event payload shape verified against real GH samples. Delivery filtering honors `events` field on hook config including wildcard (`*`).
+
+Acceptance per surface: `gh <verb>` (or octokit equivalent) round-trips against bleephub. The Phase 153 Docker harness gets new sub-blocks per surface. Each surface ships as a P154.X sub-commit on a single branch / PR.
+
+### Phase 155 — Documentation refresh: bleephub-specific docs
+
+After Phase 154 ships, sweep every doc that references bleephub and re-align:
+
+- `bleephub/README.md` — fully reflect the Apps + OAuth Apps surface, persistence flag, gh CLI compatibility, and the supported subset of the GitHub webhook event index.
+- `specs/BLEEPHUB_GITHUB_API_PARITY.md` — collapse "✓ shipped" rows into a closing changelog; raise the bar for what "parity" means after Phase 154.
+- `docs/RUNNERS.md` § GitHub runner contract — point at bleephub for local mode; confirm runner-protocol surface still matches the official `actions/runner` v2.32x.
+- `docs/runner-capability-matrix.md` — row for every Phase 153/154 capability (Apps, OAuth, Checks, Pages, Deployments, Environments, SSO).
+- `ARCHITECTURE.md` — bleephub block reflects persistence + Apps subsystem.
+- `ui/packages/bleephub/README.md` (if missing, create) — what each tab does, what each new dialog covers, how to seed test data.
+- Add `docs/BLEEPHUB_GH_CLI.md` walking operators through `gh auth login` against a local bleephub + the supported subset of `gh` commands.
+
+Acceptance: every claim in those docs round-trips through the Docker harness; no doc references missing endpoints or vanished UI elements.
+
+### Phase 156 — Documentation refresh: project-wide
+
+Sweep every other top-level doc and confirm it's still accurate after Phases 153–155:
+
+- `README.md` (root) — module sizes, badges, quick-start, supported-clouds table, contributor section.
+- `ARCHITECTURE.md` — backends inventory, driver framework (storage / network / DNS / access), sim host model, observability stack.
+- `specs/CLOUD_RESOURCE_MAPPING.md` — re-verify Docker→cloud mapping per backend.
+- `docs/OBSERVABILITY.md` — Stack A description, validation harness, metric / trace / log channels.
+- `docs/ADMIN_ORCHESTRATION.md` — `sockerless.yaml` schema, REST surface, lifecycle endpoints, config edit + hot reload.
+- `docs/MAKEFILE_STANDARD.md` — per-app Makefile contract.
+- `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walkthrough.
+- `docs/RUNNERS.md` + `docs/GITLAB_RUNNER_DOCKER.md` + `docs/GITLAB_RUNNER_SAAS.md` + `docs/GITHUB_RUNNER.md` + `docs/GITHUB_RUNNER_SAAS.md` — runner setup paths.
+- `docs/ECS_LIVE_SETUP.md` / `docs/ECS_SERVICES_DESIGN.md` / `docs/LAMBDA_EXEC_DESIGN.md` — live-cloud setup + design notes.
+
+Acceptance: every doc page links to existing files; CLI examples copy-paste run against current `main`; no "Phase 8X TODO" placeholders remain unaddressed.
+
 ### Live-cloud validation track
 
 Per-backend live-cloud sweeps separate from unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:

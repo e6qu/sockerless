@@ -34,6 +34,37 @@ After BUG-989 fixed:
 
 ## Resumable tracks after Phase 153 merges
 
+### Track A2 — Phase 154 — Broad GitHub API sweep (next phase)
+
+User-requested follow-up after Phase 153 closes. Audit-first sweep of GitHub API surfaces gh CLI / octokit / probot hit. Spec lives in PLAN.md § "Phase 154 — Broad GitHub API sweep (planned, post-153)". Fifteen surface areas:
+
+1. GitHub Apps (deeper) — installation_target, github_app_authorization, new_permissions_accepted, marketplace stub.
+2. Orgs — members, teams (parent teams, IdP sync), audit log, security manager, org secrets/variables, dep graph.
+3. Installing apps in orgs — org install URL flow, repository_selection at install time.
+4. OIDC — Actions OIDC tokens + JWKS + claims (sub, audience, environment).
+5. Webhooks (extras) — org-level, enterprise-level, meta / security_advisory / secret_scanning_alert.
+6. Pipelines + jobs API — full Actions REST: runs/jobs/steps, logs download, artifacts download, rerun/cancel/attempts.
+7. Triggering pipelines — workflow_dispatch validation, repository_dispatch with client_payload.
+8. Users API — followers/following/blocked, emails, gpg/ssh keys, status, sponsorship.
+9. Groups (teams + IdP) — team membership, IdP group sync surface.
+10. SSO integration — SAML SSO header on PATs, SCIM 2.0 provisioning, enforced-SSO redirects.
+11. GitHub Pages — `/repos/{o}/{r}/pages` + builds + deployments.
+12. Deployments + Environments — full deployments API + Environments (protection rules, reviewers, secrets, branch policies), branch protection.
+13. Issue + PR comments depth — issue comments full CRUD + reactions; PR review comments (inline / file-line / range), review threads, resolve+reopen, suggested-changes, comment edit history.
+14. Reactions API — full eight reaction types + reaction groups on Issue/PR/comments with real counts.
+15. Webhook events parity — full event coverage (branch_protection_rule, check_run, code_scanning_alert, deployment, discussion, label, milestone, project, release, status, watch, workflow_run, etc.). Per-event payload shape verified against real GH samples.
+
+Branch: `phase-154-github-api-sweep` (off `origin/main` once #153 merges). Audit-first: file per-surface gap tickets, prioritize by gh CLI hit-rate.
+
+### Track A3 — Phase 155 / 156 — Docs refresh
+
+User-requested after Phase 154 closes:
+
+- **Phase 155** — bleephub-specific docs: bleephub/README.md, specs/BLEEPHUB_GITHUB_API_PARITY.md, docs/RUNNERS.md § GitHub runner contract, docs/runner-capability-matrix.md, ARCHITECTURE.md (bleephub block), ui/packages/bleephub/README.md, new docs/BLEEPHUB_GH_CLI.md.
+- **Phase 156** — project-wide docs: root README, ARCHITECTURE.md, specs/CLOUD_RESOURCE_MAPPING.md, docs/OBSERVABILITY.md, docs/ADMIN_ORCHESTRATION.md, docs/MAKEFILE_STANDARD.md, docs/POD_MATERIALIZATION.md, runner docs, ECS / Lambda design docs.
+
+Acceptance: every claim verified; CLI examples copy-paste-run against current `main`.
+
 ### Track B — Live-cloud validation
 
 Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell. Teardown self-sufficient.
