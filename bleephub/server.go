@@ -107,6 +107,9 @@ func (s *Server) registerRoutes() {
 	// /applications/{client_id}/* (gh_apps_oauth_mgmt.go) + OAuth Apps mgmt
 	s.registerGHAppsOAuthMgmtRoutes()
 
+	// Checks API (gh_checks_rest.go)
+	s.registerGHChecksRoutes()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
