@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `docs-cleanup-actionable` — Phase 153 (bleephub↔GitHub API parity + SQLite persistence + real `gh` CLI compatibility) **complete on PR #153, awaiting user merge**. |
-| In-flight | Phase 153 — all 13 sub-tasks shipped. Docker harness 50/50 PASS. PR #153 ready. **Do NOT auto-merge.** |
-| Last merged | PR #152 — `docs/POD_MATERIALIZATION.md` (2026-05-12). |
+| Active branch | `phase-154-github-api-sweep` — Phase 154 broad GitHub API sweep in flight on PR #154. **User-authorized merge-on-green for #154/#155/#156.** |
+| In-flight | Phase 154 — P154.1 (reactions) → P154.12 (long-tail) shipped on PR #154. Awaiting CI. |
+| Last merged | PR #153 — Phase 153 bleephub↔GitHub API parity + SQLite persistence + gh CLI compat (2026-05-12). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 990 fixed. |
 | Live infra | None up. |
@@ -26,7 +26,16 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Backend ↔ host primitive must match.** ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, GCF in CRF, ACA in ACA, AZF in AZF.
 - **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y".
 
-## Phase 153 progress (`docs-cleanup-actionable` branch / PR #153)
+## Phase 154 progress (`phase-154-github-api-sweep` branch / PR #154)
+
+| Sub-task | Commit | What |
+|---|---|---|
+| P154.1 + P154.2 | `8c2fd907` | Reactions API + Releases API |
+| P154.3 + P154.4 | `dec13e9a` | Actions extras (repository_dispatch, run logs zip, timing) + Deployments + Environments |
+| P154.5 | `ac0357cb` | PR review comments (inline / file-line / replies / threads) |
+| P154.6 + P154.7-12 | `ef8f437f` | Thread resolve/unresolve + Users keys/follow + Actions OIDC + Pages + Branch protection + Org audit + Marketplace |
+
+## Phase 153 closed (PR #153 merged 2026-05-12 as `fadf851f`)
 
 12 commits shipped. Per-sub-task:
 
@@ -52,6 +61,7 @@ CI runs after each push on PR #153. Two consecutive green CI runs on `297484f` a
 
 | Date | PR | Headline |
 |---|---|---|
+| 2026-05-12 | #153 | Phase 153 — bleephub ↔ GitHub API parity + SQLite persistence + real gh CLI compat. 13 sub-tasks; Docker harness 50/50 PASS. |
 | 2026-05-12 | #152 | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
 | 2026-05-11 | #151 | Phase 87d closeout + Phase 92 — trace propagation + MeterProvider + runtime metrics; `Backing: gcs-fuse` deregistered. |
 | 2026-05-10 | #150 | Phase 87c — zerolog → OTel logs bridge across all 12 components. |
