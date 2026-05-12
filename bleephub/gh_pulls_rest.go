@@ -11,14 +11,14 @@ import (
 )
 
 func (s *Server) registerGHPullRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls", s.handleCreatePullRequest)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls", s.requirePerm("pull_requests", permWrite, s.handleCreatePullRequest))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls", s.handleListPullRequests)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}", s.handleGetPullRequest)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{number}", s.handleUpdatePullRequest)
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/merge", s.handleMergePullRequest)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.handleCreatePRReview)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{number}", s.requirePerm("pull_requests", permWrite, s.handleUpdatePullRequest))
+	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/merge", s.requirePerm("contents", permWrite, s.handleMergePullRequest))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.requirePerm("pull_requests", permWrite, s.handleCreatePRReview))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.handleListPRReviews)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.handleRequestReviewers)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm("pull_requests", permWrite, s.handleRequestReviewers))
 }
 
 func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request) {

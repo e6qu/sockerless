@@ -8,13 +8,15 @@ import (
 )
 
 func (s *Server) registerGHHookRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks", s.handleCreateHook)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks", s.handleListHooks)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}", s.handleGetHook)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/hooks/{id}", s.handleUpdateHook)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/hooks/{id}", s.handleDeleteHook)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries", s.handleListHookDeliveries)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/pings", s.handlePingHook)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm("administration", permWrite, s.handleCreateHook))
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm("administration", permRead, s.handleListHooks))
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm("administration", permRead, s.handleGetHook))
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm("administration", permWrite, s.handleUpdateHook))
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm("administration", permWrite, s.handleDeleteHook))
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries", s.requirePerm("administration", permRead, s.handleListHookDeliveries))
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}", s.requirePerm("administration", permRead, s.handleGetHookDelivery))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}/attempts", s.requirePerm("administration", permWrite, s.handleRedeliverHookDelivery))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/pings", s.requirePerm("administration", permWrite, s.handlePingHook))
 }
 
 func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
@@ -236,6 +238,82 @@ func mustMarshal(v interface{}) []byte {
 		panic("mustMarshal: " + err.Error())
 	}
 	return b
+}
+
+// handleGetHookDelivery — GET /repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}.
+// Real GitHub: returns the full delivery with request + response payloads.
+func (s *Server) handleGetHookDelivery(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
+	hookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	deliveryID, err := strconv.Atoi(r.PathValue("delivery_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	hook := s.store.GetHook(repoKey, hookID)
+	if hook == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	for _, d := range s.store.ListDeliveries(hookID) {
+		if d.ID == deliveryID {
+			writeJSON(w, http.StatusOK, deliveryFullJSON(d))
+			return
+		}
+	}
+	writeGHError(w, http.StatusNotFound, "Not Found")
+}
+
+// handleRedeliverHookDelivery — POST /repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}/attempts.
+func (s *Server) handleRedeliverHookDelivery(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
+	hookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	deliveryID, err := strconv.Atoi(r.PathValue("delivery_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	hook := s.store.GetHook(repoKey, hookID)
+	if hook == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var original *WebhookDelivery
+	for _, d := range s.store.ListDeliveries(hookID) {
+		if d.ID == deliveryID {
+			original = d
+			break
+		}
+	}
+	if original == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	payloadBytes := mustMarshal(original.Request.Payload)
+	go func() {
+		delivery := s.doDeliverAttempt(hook, original.Event, original.Action, original.GUID, payloadBytes, true)
+		s.store.AddDelivery(delivery)
+	}()
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": deliveryID, "redelivery": true})
 }
 
 func hookToJSON(h *Webhook) map[string]interface{} {
