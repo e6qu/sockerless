@@ -6,7 +6,51 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-12 — Phase 153 bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat (`docs-cleanup-actionable` branch, PR #153 in flight)
+## 2026-05-13 — Phase 156 project-wide docs refresh + bleephub `gh` CLI clarity pass (PR #156, merged)
+
+Companion to #155. Survey of every top-level doc found the project-wide surface substantially current — bleephub-specific text was already aligned by #155 + the ARCHITECTURE.md service-group table edit. Two concrete fixes landed:
+
+- **README.md** — broadened the bleephub one-liner in the project layout from "GitHub Actions runner service API" to a description that names REST + GraphQL + smart-HTTP git + Apps/OAuth Apps + gh CLI compat. The narrow phrasing dated to before #153.
+- **docs/OBSERVABILITY.md** — fixed the `make stack-observability-validate` walk-through path. The docker backend Makefile builds with `GO_PACKAGE := ./cmd` + `go build -o $(APP_NAME)`, which lands the binary in `backends/docker/sockerless-backend-docker`, not the cmd/ subdirectory.
+
+User then pushed back on the `gh` CLI section asking specifically: *do we need a base URL?* Answer is no — `gh` takes a hostname, not a URL, and derives `https://<host>/api/v3/` by GHES convention. That mental gap was load-bearing enough to deserve dedicated doc real estate, so a second commit landed:
+
+- **bleephub/README.md** — new 5-step Quick start (build → self-signed cert + system trust → start with TLS → `gh auth login --hostname` → use real `gh` verbs) plus a UI subsection grounded in the actual SPA routes (Overview / Workflows / Runners / Repos / Apps / OAuth / Metrics — verified against `App.tsx`, not invented).
+- **docs/BLEEPHUB_GH_CLI.md** — explicit "mental model — `--hostname`, not a base URL" lead block with the GHES URL-derivation table, HTTPS-only consequence, and `host:port` escape hatch (`gh auth login --hostname localhost:8443` works, keys hosts.yml by the full host:port string).
+
+Pre-push hook caught `google.golang.org/api v0.278.0 → v0.279.0` upstream drift across the four GCP modules; bumped in the same branch rather than skipping the hook.
+
+User pattern this phase: the survey agent reported "everything CURRENT" suspiciously quickly. Spot-checked anyway — confirmed README's bleephub one-liner needed broadening (agent missed it because the agent's frame was "is the doc accurate?", not "does it match current scope?"). Lesson: when an agent's survey looks too clean, sample-verify against the latest commits, not just against the doc's internal consistency.
+
+User pattern: after merging #156, the standing four-PR merge authorization expired. Back to "user merges every PR" default.
+
+## 2026-05-12 — Phase 155 bleephub-specific docs refresh (PR #155, merged)
+
+Companion to #154. Doc refresh limited to the bleephub blast radius — three files modified, one new:
+
+- **bleephub/README.md** — full rewrite reflecting Phases 153 + 154: Reactions, Releases, Deployments + Environments, PR review comments + threads, GitHub Apps + OAuth Apps as separate entities, Checks, Actions OIDC + JWKS, Pages, branch protection, gh CLI direct compat, SQLite persistence, token-prefix taxonomy, `requirePerm(scope, level)` enforcement, source-layout table.
+- **docs/BLEEPHUB_GH_CLI.md** (new) — operator walkthrough: one-time auth, supported commands table, endpoints with no native verb, token-prefix table, body coercion explanation, end-to-end smoke recipe, troubleshooting.
+- **specs/BLEEPHUB_GITHUB_API_PARITY.md** — status flipped to "shipped through Phase 154"; shipped Apps/OAuth/Webhooks/Checks tables collapsed; Phase 154 surfaces inventory added; implementation-order section refreshed; non-goals carry-forward updated.
+- **ARCHITECTURE.md** — bleephub service-group table now calls out reactions/releases/deployments/Checks/Apps/OAuth/OIDC/Pages/branch-protection surfaces + persistence row; gh CLI compat cross-link added.
+
+No code, no tests touched. Straight docs PR.
+
+## 2026-05-12 — Phase 154 broad GitHub API sweep (PR #154, merged)
+
+15-surface-area sweep, audit-first against gh CLI hit-rate. Shipped six granular commits closing the gaps the audit found:
+
+- **Reactions API** — full 8-content support (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`) across 5 parent types (issues, issue comments, PR review comments, commit comments, releases). Idempotent POST keyed by (parent_type, parent_id, user_id, content). `reactions{url, total_count, +1, ...}` summary block embedded on parent JSON.
+- **Releases API** — create / list / get-by-id / get-by-tag / latest / update / delete + `generate-notes` + release reactions. Full HATEOAS URLs. `release:published` webhook event. Hit a Go 1.22 mux ambiguity (`releases/tags/{tag}` vs `releases/{release_id}/reactions` both match `/releases/tags/reactions`) — resolved with a `handleReleaseTwoSegDispatch` that routes by `p1` value at runtime.
+- **Actions extras** — `repository_dispatch`, run logs zip, rerun-failed-jobs, timing, artifacts stubs. The audit found these missing despite the workflow run surface being otherwise complete.
+- **Deployments + Environments** — full deployment + status + environment surface. `deployment` and `deployment_status` webhook events with `attachInstallationBlock`. Environments lazy-created on first deployment to that env.
+- **PR review comments** — inline / file-line / range / threads with replies via dedicated `/replies` endpoint OR `in_reply_to` body field. `GET /pulls/{n}/review-threads` returns threads with `isResolved`. REST helpers for resolve/unresolve. Same mux-ambiguity pattern as releases: `pulls/{number}/comments` vs `pulls/comments/{comment_id}` resolved with `handlePRCommentTwoSegDispatch`.
+- **Long-tail** — Users keys, Actions OIDC + JWKS + discovery (RS256-signed JWT with canonical claims: sub, aud, repository, repository_owner, ref, run_id, run_number, sha, actor, environment, jti, exp), Pages, Branch protection, Org audit log, Marketplace stubs.
+
+Hit two route conflicts that Go 1.22's mux refused as ambiguous — both resolved by dispatcher pattern (single handler, route by first segment value). Real GH uses Rails routing which doesn't care about ambiguity; Go's stricter mux is the right call but cost an extra layer of indirection in two places.
+
+Real `gh` CLI Docker harness held at 50/50 PASS throughout the phase. New surfaces validated via `gh api` for endpoints without native verbs.
+
+## 2026-05-12 — Phase 153 bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat (PR #153, merged at `fadf851f`)
 
 13-sub-task phase. 12 commits shipped, P153.13 in flight. Beyond the original "parity" scope, the user folded in two more pieces at the end:
 

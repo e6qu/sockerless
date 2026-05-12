@@ -1,6 +1,6 @@
 # Known Bugs
 
-**990 filed · 990 fixed · 0 open · 1 false positive.**
+**991 filed · 990 fixed · 1 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,6 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| 991 | P1 | `backends/docker` + `backends/core/handle_containers.go` | `docker run --rm` fails: CLI's wait flow sends `POST /containers/{id}/wait?condition=removed` *before* `/start`; `handleContainerWait` non-CloudState path checks `s.Store.Containers.Get(id)` directly, sees the container isn't in the docker backend's local store (it lives in the real Docker daemon, not in sockerless's Store), and returns 200 with StatusCode=0 immediately. The CLI then treats wait-completed-before-start as a crash and aborts with `error waiting for container: ... No such container: <id>`. **Fix shape**: when the local Store has no record AND `s.self != nil` AND the backend is a passthrough (docker), delegate to `s.self.ContainerWait(id, condition)` so the wait flows through to the real daemon. Surfaced 2026-05-13 during Phase 157 docs sample-capture for `backends/docker`. Staged as Phase 158 in PLAN.md. |
 
 ## False positives
 
@@ -30,7 +31,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history (compressed)
 
-989 bugs filed and fixed across phases 86–135 + Phase 84 + Phase 87 + Phase 92 + Phase 153.
+990 bugs filed and fixed across phases 86–156.
+
+Phases 154 / 155 / 156 closed zero new bugs — broad GitHub API sweep + docs refresh shipped without surfacing regressions. The `google.golang.org/api` v0.278.0 → v0.279.0 bump on PR #156 was upstream dep drift flagged by the `check-latest-deps` pre-push hook, not a sockerless bug.
 
 - **988 + 990** (Phase 153 P153.13) — `gh repo list` + `gh issue list` rejected GraphQL enum names (`CREATED_AT`, `DESC`, `PUBLIC`, `OWNER`). Bleephub declared the args as `String`; gh sends them as enums. Fixed by adding `RepositoryPrivacy` / `RepositoryAffiliation` / `RepositoryOrderField` / `OrderDirection` / `IssueOrderField` / `IssueOrderDirection` enums + adding `repositoryOwner(login)` polymorphic query that gh's repo list uses.
 - **989** (Phase 153 P153.13) — `gh issue view` failed because `issueOrPullRequest` returned just `Issue`, not a union with `PullRequest`; PR type missed `milestone`/`comments(last:)`; `PRCommentConnection` missed `nodes`; Issue.milestone resolver returned nil-typed empty map triggering Milestone.number NonNull; Issue.projectItems unimplemented (gh queries Projects v2 as a second round-trip). Fixed by declaring a real `IssueOrPullRequest` union, adding the missing PR fields, returning explicit nil for missing milestones, and adding empty-connection stubs for the Projects v2 surface. Per-bug detail in `git log` / linked PR. Recent ranges:
