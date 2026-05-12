@@ -30,6 +30,14 @@ type Server struct {
 }
 
 // NewServer creates a bleephub server with all routes registered.
+//
+// Honors two persistence-related env vars:
+//   - BLEEPHUB_DATA_DIR  — directory for SQLite DB + artifact store.
+//   - BLEEPHUB_PERSIST   — when "true", enables SQLite-backed state.
+//     Operator-requested persistence that fails to open will log.Fatalf
+//     (BUG-985/986 pattern). State buckets persisted: users, tokens, apps,
+//     oauth_apps, installations, installation_tokens, user_to_server_tokens,
+//     refresh_tokens, repos. Git storage stays in-memory.
 func NewServer(addr string, logger zerolog.Logger) *Server {
 	maxWF := 10
 	if v := os.Getenv("BLEEPHUB_MAX_WORKFLOWS"); v != "" {
@@ -55,7 +63,20 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		metrics:                NewMetrics(),
 		maxConcurrentWorkflows: maxWF,
 	}
-	s.store.SeedDefaultUser()
+
+	// Wire persistence if BLEEPHUB_PERSIST=true. Fail-loud on open failure.
+	persist := MustNewPersistence()
+	if persist != nil {
+		if err := s.store.SetPersistence(persist); err != nil {
+			logger.Fatal().Err(err).Msg("failed to load persisted state")
+		}
+		s.logger.Info().Str("data_dir", dataDir).Msg("bleephub persistence enabled (SQLite)")
+	}
+
+	// Seed default user only if the store didn't load one from disk.
+	if s.store.LookupUserByLogin("admin") == nil {
+		s.store.SeedDefaultUser()
+	}
 	s.initGraphQLSchema()
 	s.registerRoutes()
 	return s

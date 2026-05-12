@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -126,6 +127,9 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 		st.AppsByClientID = make(map[string]*App)
 	}
 	st.AppsByClientID[app.ClientID] = app
+	if st.persist != nil {
+		_ = st.persist.Put("apps", strconv.Itoa(id), app)
+	}
 	return app
 }
 
@@ -139,6 +143,9 @@ func (st *Store) UpdateAppHookConfig(appID int, fn func(a *App)) bool {
 	}
 	fn(app)
 	app.UpdatedAt = time.Now()
+	if st.persist != nil {
+		_ = st.persist.Put("apps", strconv.Itoa(appID), app)
+	}
 	return true
 }
 
@@ -184,6 +191,9 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 		UpdatedAt:           now,
 	}
 	st.Installations[id] = inst
+	if st.persist != nil {
+		_ = st.persist.Put("installations", strconv.Itoa(id), inst)
+	}
 	return inst
 }
 
@@ -230,7 +240,18 @@ func (st *Store) DeleteInstallation(id int) bool {
 		return false
 	}
 	delete(st.Installations, id)
+	if st.persist != nil {
+		_ = st.persist.Delete("installations", strconv.Itoa(id))
+	}
 	return true
+}
+
+// persistInstallation writes-through to disk. Caller must hold st.mu.
+func (st *Store) persistInstallation(inst *Installation) {
+	if st.persist == nil || inst == nil {
+		return
+	}
+	_ = st.persist.Put("installations", strconv.Itoa(inst.ID), inst)
 }
 
 // SuspendInstallation marks the installation suspended. Returns false if not found
@@ -249,6 +270,7 @@ func (st *Store) SuspendInstallation(id int, by *User) bool {
 	inst.SuspendedAt = &now
 	inst.SuspendedBy = by
 	inst.UpdatedAt = now
+	st.persistInstallation(inst)
 	return true
 }
 
@@ -267,6 +289,7 @@ func (st *Store) UnsuspendInstallation(id int) bool {
 	inst.SuspendedAt = nil
 	inst.SuspendedBy = nil
 	inst.UpdatedAt = time.Now()
+	st.persistInstallation(inst)
 	return true
 }
 
@@ -285,6 +308,7 @@ func (st *Store) SetInstallationRepositorySelection(id int, mode string, repoIDs
 		inst.SelectedRepoIDs = nil
 	}
 	inst.UpdatedAt = time.Now()
+	st.persistInstallation(inst)
 	return true
 }
 
@@ -365,6 +389,9 @@ func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL
 		UpdatedAt:    now,
 	}
 	st.OAuthApps[clientID] = app
+	if st.persist != nil {
+		_ = st.persist.Put("oauth_apps", clientID, app)
+	}
 	return app
 }
 
@@ -428,6 +455,9 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 		AppID:          appID,
 	}
 	st.InstallationTokens[tokenStr] = token
+	if st.persist != nil {
+		_ = st.persist.Put("installation_tokens", tokenStr, token)
+	}
 	return token
 }
 
@@ -441,6 +471,9 @@ func (st *Store) RevokeInstallationToken(tokenStr string) bool {
 		return false
 	}
 	delete(st.InstallationTokens, tokenStr)
+	if st.persist != nil {
+		_ = st.persist.Delete("installation_tokens", tokenStr)
+	}
 	return true
 }
 

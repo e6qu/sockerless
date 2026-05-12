@@ -72,6 +72,10 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.GitStorages[fullName] = storer
 	_, _ = git.Init(storer, nil)
 
+	if st.persist != nil {
+		_ = st.persist.Put("repos", fmt.Sprintf("%d", repo.ID), repo)
+	}
+
 	return repo
 }
 
@@ -91,6 +95,9 @@ func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	}
 	fn(repo)
 	repo.UpdatedAt = time.Now()
+	if st.persist != nil {
+		_ = st.persist.Put("repos", fmt.Sprintf("%d", repo.ID), repo)
+	}
 	return true
 }
 
@@ -107,6 +114,9 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.Repos, repo.ID)
 	delete(st.ReposByName, fullName)
 	delete(st.GitStorages, fullName)
+	if st.persist != nil {
+		_ = st.persist.Delete("repos", fmt.Sprintf("%d", repo.ID))
+	}
 	return true
 }
 

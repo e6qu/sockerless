@@ -92,8 +92,14 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 		}
 		tok.RefreshTokenValue = rt.Token
 		st.RefreshTokens[rt.Token] = rt
+		if st.persist != nil {
+			_ = st.persist.Put("refresh_tokens", rt.Token, rt)
+		}
 	}
 	st.UserToServerTokens[tokenStr] = tok
+	if st.persist != nil {
+		_ = st.persist.Put("user_to_server_tokens", tokenStr, tok)
+	}
 	return tok, rt
 }
 
@@ -117,8 +123,14 @@ func (st *Store) RevokeUserToServerToken(tokenStr string) bool {
 		return false
 	}
 	delete(st.UserToServerTokens, tokenStr)
+	if st.persist != nil {
+		_ = st.persist.Delete("user_to_server_tokens", tokenStr)
+	}
 	if tok.RefreshTokenValue != "" {
 		delete(st.RefreshTokens, tok.RefreshTokenValue)
+		if st.persist != nil {
+			_ = st.persist.Delete("refresh_tokens", tok.RefreshTokenValue)
+		}
 	}
 	return true
 }

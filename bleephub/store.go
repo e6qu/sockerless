@@ -3,12 +3,16 @@ package bleephub
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5/storage/memory"
 )
+
+// loadJSON is a thin wrapper to keep error wrapping uniform across persistence loaders.
+func loadJSON(raw []byte, v interface{}) error { return json.Unmarshal(raw, v) }
 
 // User represents a GitHub user account.
 type User struct {
@@ -108,6 +112,7 @@ type Store struct {
 	NextInstallationID int
 	NextCheckRunID     int64
 	NextCheckSuiteID   int64
+	persist            *Persistence
 	mu                 sync.RWMutex
 }
 
@@ -244,6 +249,167 @@ func NewStore() *Store {
 	}
 }
 
+// SetPersistence wires a Persistence layer onto the Store. Call once at
+// startup before any concurrent access; subsequent Create/Update/Delete
+// mutations will write through to the underlying SQLite db.
+//
+// If persist is non-nil, this also loads existing rows from disk into the
+// in-memory maps. Idempotent — safe to call against an empty database.
+//
+// BUG-985 invariant: open-failure must be caught at the persistence-open
+// site (MustNewPersistence) so the operator gets a fail-loud signal
+// before we even get here.
+func (st *Store) SetPersistence(p *Persistence) error {
+	if p == nil {
+		return nil
+	}
+	st.mu.Lock()
+	st.persist = p
+	st.mu.Unlock()
+	return st.loadFromPersistence()
+}
+
+// loadFromPersistence repopulates the in-memory maps from disk.
+//
+// Loads buckets:
+//
+//	users, tokens, apps, oauth_apps, installations, installation_tokens,
+//	user_to_server_tokens, refresh_tokens, repos.
+//
+// Other state (workflows, sessions, agents, ephemeral codes) deliberately
+// stays in-memory only — operator restart implies abandoning in-flight runs.
+func (st *Store) loadFromPersistence() error {
+	if st.persist == nil {
+		return nil
+	}
+	if err := st.loadBucket("users", func(raw []byte) error {
+		var u User
+		if err := loadJSON(raw, &u); err != nil {
+			return err
+		}
+		st.Users[u.ID] = &u
+		st.UsersByLogin[u.Login] = &u
+		if u.ID >= st.NextUser {
+			st.NextUser = u.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("tokens", func(raw []byte) error {
+		var t Token
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.Tokens[t.Value] = &t
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("apps", func(raw []byte) error {
+		var a App
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.Apps[a.ID] = &a
+		st.AppsBySlug[a.Slug] = &a
+		st.AppsByClientID[a.ClientID] = &a
+		if a.ID >= st.NextAppID {
+			st.NextAppID = a.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("oauth_apps", func(raw []byte) error {
+		var a OAuthApp
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.OAuthApps[a.ClientID] = &a
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("installations", func(raw []byte) error {
+		var inst Installation
+		if err := loadJSON(raw, &inst); err != nil {
+			return err
+		}
+		st.Installations[inst.ID] = &inst
+		if inst.ID >= st.NextInstallationID {
+			st.NextInstallationID = inst.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("installation_tokens", func(raw []byte) error {
+		var t InstallationToken
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.InstallationTokens[t.Token] = &t
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("user_to_server_tokens", func(raw []byte) error {
+		var t UserToServerToken
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.UserToServerTokens[t.Token] = &t
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("refresh_tokens", func(raw []byte) error {
+		var t RefreshToken
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.RefreshTokens[t.Token] = &t
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("repos", func(raw []byte) error {
+		var r Repo
+		if err := loadJSON(raw, &r); err != nil {
+			return err
+		}
+		// Owner is encoded as User pointer; ensure linkage to the loaded user.
+		if r.Owner != nil {
+			if owner := st.Users[r.Owner.ID]; owner != nil {
+				r.Owner = owner
+			}
+		}
+		st.Repos[r.ID] = &r
+		st.ReposByName[r.FullName] = &r
+		if r.ID >= st.NextRepo {
+			st.NextRepo = r.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (st *Store) loadBucket(name string, fn func(raw []byte) error) error {
+	rows, err := st.persist.List(name)
+	if err != nil {
+		return fmt.Errorf("load %s: %w", name, err)
+	}
+	for _, raw := range rows {
+		if err := fn(raw); err != nil {
+			return fmt.Errorf("decode %s row: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // SeedDefaultUser creates the default admin user and token.
 func (st *Store) SeedDefaultUser() {
 	st.mu.Lock()
@@ -266,6 +432,9 @@ func (st *Store) SeedDefaultUser() {
 	st.Users[u.ID] = u
 	st.UsersByLogin[u.Login] = u
 	st.NextUser++
+	if st.persist != nil {
+		_ = st.persist.Put("users", fmt.Sprintf("%d", u.ID), u)
+	}
 
 	t := &Token{
 		Value:     "bph_0000000000000000000000000000000000000000",
@@ -274,6 +443,9 @@ func (st *Store) SeedDefaultUser() {
 		CreatedAt: now,
 	}
 	st.Tokens[t.Value] = t
+	if st.persist != nil {
+		_ = st.persist.Put("tokens", t.Value, t)
+	}
 }
 
 // LookupToken returns the token and associated user, or nil if not found.
