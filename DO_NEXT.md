@@ -4,33 +4,23 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-`docs-cleanup-actionable` branch / PR #153. Phase 153 (bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compatibility) in flight on the same branch. **12 of 13 sub-tasks shipped**, P153.13 final stretch. Audit + acceptance criteria: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
+PR #153 (`docs-cleanup-actionable` branch) — Phase 153 (bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compatibility) **complete**. 13/13 sub-tasks shipped. Docker harness 50/50 PASS via `make bleephub-gh-docker-test`. Awaiting CI green.
 
-## Resume here — Phase 153 closeout
+## ⚠ One-time merge authorization (user-granted 2026-05-12)
 
-Phase 153 is nearly done. 13/13 sub-tasks shipped, **one open bug** blocking final acceptance:
+User explicitly authorized auto-merge for **PR #153 and the follow-up PRs #154, #155, #156** once CI passes on each. This overrides the default "never auto-merge" invariant for these four PRs only — it does NOT extend to future PRs. After #156 merges, the default rule resumes.
 
-### BUG-989 — `gh issue view` Issue|PullRequest union
+For each:
+1. Push the final commit on the phase branch.
+2. Wait for `gh pr checks <N>` to show every required check green.
+3. If a check fails, **fix the underlying issue** (do not bend the test). Push the fix. Re-poll.
+4. Once all checks pass: `gh pr merge <N> --squash --delete-branch` (or `--merge` if branch history matters — verify the repo's merge style first).
+5. `git checkout main && git pull --ff-only` to sync local main.
+6. Branch for the next phase off the refreshed main.
 
-`gh issue view <N> --repo o/r` exits non-zero because bleephub's GraphQL `repository.issueOrPullRequest` returns just `Issue`, not a union of `Issue | PullRequest`. gh CLI's query uses `...on Issue` + `...on PullRequest` fragments which fail to type-check on a non-union return.
+## Resume here — after Phase 153 merges
 
-**Fix steps** (single commit on the same branch / PR #153):
-
-1. Read `bleephub/gh_issues_graphql.go:475` (`repoType.AddFieldConfig("issueOrPullRequest", ...)`).
-2. Read `bleephub/gh_pulls_graphql.go:242` (the `PullRequest` type definition).
-3. Build a `graphql.NewUnion("IssueOrPullRequest", []*graphql.Object{issueType, pullRequestType}, ResolveType: ...)`.
-4. Switch `issueOrPullRequest` field's `Type:` from `issueType` to the new union.
-5. The Resolver must return either an Issue map or a PR map; pick by looking up `s.store.GetIssueByNumber` then falling through to `s.store.GetPullRequestByNumber`.
-6. Add the IssueComment-equivalent fields to whatever PR comment type gh hits (`reactionGroups`, `includesCreatedEdit`, `isMinimized`, `minimizedReason`) — apply the same `alwaysFalse` / `alwaysNil` / `emptyList` stub pattern from gh_issues_graphql.go.
-7. Add `last` arg to `PullRequest.comments` connection.
-8. Add `nodes` to `PRCommentConnection` (gh_pulls_graphql.go:207).
-9. Re-run `make bleephub-gh-docker-test` — expect 50/50 PASS.
-
-After BUG-989 fixed:
-
-- Verify `go test ./...` green in bleephub/.
-- Update STATUS.md / DO_NEXT.md / BUGS.md to mark BUG-989 fixed.
-- Wait for user merge. **Never auto-merge.**
+Phase 153 done. Next phase in queue:
 
 ## Resumable tracks after Phase 153 merges
 

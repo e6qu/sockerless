@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `docs-cleanup-actionable` — docs streamline + **Phase 153 bleephub↔GitHub API parity** + **bleephub SQLite persistence** + **real `gh` CLI compatibility** all in flight on the same branch + PR #153. |
-| In-flight | Phase 153 — P153.1 → P153.12 shipped (12 commits). P153.13 (real `gh` CLI Docker harness + `gh repo create` / `gh issue create` end-to-end) in progress. |
+| Active branch | `docs-cleanup-actionable` — Phase 153 (bleephub↔GitHub API parity + SQLite persistence + real `gh` CLI compatibility) **complete on PR #153, awaiting user merge**. |
+| In-flight | Phase 153 — all 13 sub-tasks shipped. Docker harness 50/50 PASS. PR #153 ready. **Do NOT auto-merge.** |
 | Last merged | PR #152 — `docs/POD_MATERIALIZATION.md` (2026-05-12). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1 open (BUG-989: gh issue view GraphQL union) · 989 fixed. |
+| Bugs | 0 open · 990 fixed. |
 | Live infra | None up. |
 
 ## Invariants
@@ -44,7 +44,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | P153.10 | `297484f` | UI: permissions/events form, PEM + secrets viewer, OAuth Apps tab, suspend/delete |
 | P153.11 | `c586b18` | Phase 153 added to gh CLI test script + state save |
 | P153.12 | `192c627` | SQLite persistence — KV-style table, 9 buckets persisted, fail-loud on open |
-| P153.13 | `dfdf3db` + `b538d5c` | Real `gh` CLI Docker harness wired (`make bleephub-gh-docker-test`); GitHub-spec body tolerance (`flexBool` / `flexInt` etc.); native `gh repo create` / view / list, `gh issue create` / list pass. Only `gh issue view` still fails — tracked as BUG-989 (Issue\|PullRequest union missing). |
+| P153.13 | `0fd5549` + `b3685ef` + `dfdf3db` + `b538d5c` | Real `gh` CLI Docker harness (`make bleephub-gh-docker-test`) — 50/50 PASS. GitHub-spec body tolerance (`flexBool`/`flexInt`/...); GraphQL parity (enums + `repositoryOwner` + Issue\|PullRequest union + `Issue.projectItems` stub + PR fields). Native `gh repo create`/view/list, `gh issue create`/view/list all pass; closed BUG-988/989/990. |
 
 CI runs after each push on PR #153. Two consecutive green CI runs on `297484f` and `192c627`. Never auto-merge — user merges.
 
