@@ -6,38 +6,30 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 `docs-cleanup-actionable` branch / PR #153. Phase 153 (bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compatibility) in flight on the same branch. **12 of 13 sub-tasks shipped**, P153.13 final stretch. Audit + acceptance criteria: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-## Resume here — Phase 153 P153.13 final steps
+## Resume here — Phase 153 closeout
 
-P153.13 is "make `gh` CLI work directly against bleephub, with the same body shapes real GitHub accepts". Three concrete pieces:
+Phase 153 is nearly done. 13/13 sub-tasks shipped, **one open bug** blocking final acceptance:
 
-1. **Bleephub accepts what real GitHub accepts.** Done partially: `gh_request_decode.go` introduces `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` types + `coerceBool` helper. Applied to:
-   - `handleCreateRepo` (Private, AutoInit)
-   - `handleUpdateRepo` (private, archived — via coerceBool)
-   - `handleCreatePullRequest` (Draft)
-   - `handleCreateHook` + `handleUpdateHook` (Active)
-   - `handleCreateInstallationMgmt` (TargetID)
-   - `handleCreateInstallationToken` (RepositoryIDs)
+### BUG-989 — `gh issue view` Issue|PullRequest union
 
-   **TODO sweep**: every remaining bool/int field in request structs across `gh_*.go` handlers. Quick grep:
-   ```bash
-   grep -nE '\b(bool|int|int64)\b' bleephub/gh_*.go | grep -v _test | grep 'json:'
-   ```
-   Apply `flex*` variants to any field a `gh` CLI invocation might hit. Acceptance: zero `400 Problems parsing JSON` from the Docker harness.
+`gh issue view <N> --repo o/r` exits non-zero because bleephub's GraphQL `repository.issueOrPullRequest` returns just `Issue`, not a union of `Issue | PullRequest`. gh CLI's query uses `...on Issue` + `...on PullRequest` fragments which fail to type-check on a non-union return.
 
-2. **Real `gh` commands in the test harness.** `bleephub/test/run-gh-test.sh` currently calls `gh api $URL -f key=val` (low-level HTTP). Convert to real `gh` commands:
-   - `gh auth login -h localhost --with-token < /tmp/token` (or set `GH_HOST=localhost`)
-   - `gh repo create gh-test-repo --public --description "..."` (not `gh api /user/repos`)
-   - `gh issue create --title "..." --body "..." --repo admin/gh-test-repo`
-   - `gh pr create --title "..." --body "..." --head feat --base main`
-   - `gh release create v1.0.0` (if releases endpoint exists; otherwise add it)
-   - Keep the Phase 153 parity probes that use `gh api` for endpoints `gh` doesn't expose as native commands (`apps/{slug}`, `/applications/{cid}/token`, suspend).
+**Fix steps** (single commit on the same branch / PR #153):
 
-3. **CI integration.** Wire `make bleephub-gh-docker-test` into `.github/workflows/ci.yml`. Docker is available there; rough cost is ~60s for the image build + ~10s for the test run.
+1. Read `bleephub/gh_issues_graphql.go:475` (`repoType.AddFieldConfig("issueOrPullRequest", ...)`).
+2. Read `bleephub/gh_pulls_graphql.go:242` (the `PullRequest` type definition).
+3. Build a `graphql.NewUnion("IssueOrPullRequest", []*graphql.Object{issueType, pullRequestType}, ResolveType: ...)`.
+4. Switch `issueOrPullRequest` field's `Type:` from `issueType` to the new union.
+5. The Resolver must return either an Issue map or a PR map; pick by looking up `s.store.GetIssueByNumber` then falling through to `s.store.GetPullRequestByNumber`.
+6. Add the IssueComment-equivalent fields to whatever PR comment type gh hits (`reactionGroups`, `includesCreatedEdit`, `isMinimized`, `minimizedReason`) — apply the same `alwaysFalse` / `alwaysNil` / `emptyList` stub pattern from gh_issues_graphql.go.
+7. Add `last` arg to `PullRequest.comments` connection.
+8. Add `nodes` to `PRCommentConnection` (gh_pulls_graphql.go:207).
+9. Re-run `make bleephub-gh-docker-test` — expect 50/50 PASS.
 
-### After P153.13 final
+After BUG-989 fixed:
 
-- Final commit. Push. Verify CI green.
-- Update PR #153 title + body to reflect the full Phase 153 scope (docs + parity + persistence + gh CLI).
+- Verify `go test ./...` green in bleephub/.
+- Update STATUS.md / DO_NEXT.md / BUGS.md to mark BUG-989 fixed.
 - Wait for user merge. **Never auto-merge.**
 
 ## Resumable tracks after Phase 153 merges
@@ -70,7 +62,7 @@ Phase 153 ships SQLite for users / tokens / apps / oauth_apps / installations / 
 | P153.10 — UI updates | ✓ | `297484f` |
 | P153.11 — state save + gh-CLI probes | ✓ | `c586b18` |
 | P153.12 — SQLite persistence | ✓ | `192c627` |
-| **P153.13 — real gh CLI compatibility** | **in flight** | flex types in `gh_request_decode.go`; wire `make bleephub-gh-docker-test`; convert `run-gh-test.sh` to real `gh` commands |
+| P153.13 — real gh CLI compatibility | mostly shipped | `b538d5c` + `dfdf3db`. Native `gh repo create / view / list` + `gh issue create / list` pass. `gh issue view` still fails (BUG-989 — Issue\|PullRequest union missing). |
 
 ## Invariants (re-state on every commit)
 
