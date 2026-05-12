@@ -78,7 +78,7 @@ backends/
   cloudrun-functions/         GCP Cloud Functions
   aca/                        Azure Container Apps Jobs
   azure-functions/            Azure Functions
-bleephub/                     GitHub Actions runner service API (official runner support)
+bleephub/                     Local GitHub server: runner service API + REST + GraphQL + smart-HTTP git + Apps/OAuth Apps (gh CLI compat)
 cmd/sockerless/               CLI tool (context management, server control)
 cmd/sockerless-admin/         Admin dashboard server (aggregates all components)
 ui/                           React SPA monorepo (Bun, Vite, Tailwind, TanStack)

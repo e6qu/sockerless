@@ -73,7 +73,7 @@ reaches both backends:
 ```bash
 make stack-observability-up
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
-  ./backends/docker/cmd/sockerless-backend-docker -addr :3375 &
+  ./backends/docker/sockerless-backend-docker -addr :3375 &
 curl http://localhost:3375/v1/version          # generate one request
 make stack-observability-validate
 ```

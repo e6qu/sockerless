@@ -2,30 +2,40 @@
 
 bleephub speaks the same REST + GraphQL surface as GitHub Enterprise Server (`/api/v3/` path prefix, `/api/graphql` endpoint, GHES service routing). The `gh` CLI works against it directly — no shims, no `gh api` URL hackery, no flags.
 
+## The mental model — `--hostname`, not a base URL
+
+`gh` does **not** take a base-URL argument. It identifies a target by **hostname** and derives the URLs from it using a fixed rule:
+
+| Host | API base | GraphQL |
+|---|---|---|
+| `github.com` | `https://api.github.com/` | `https://api.github.com/graphql` |
+| anything else | `https://<host>/api/v3/` | `https://<host>/api/graphql` |
+
+So when you run `gh auth login --hostname localhost --with-token`, `gh` writes a record to `~/.config/gh/hosts.yml` under the key `localhost` and from that point on builds every API call as `https://localhost/api/v3/...`. bleephub serves both `/api/v3/` and `/api/graphql` — that's the entire wiring story.
+
+Two consequences:
+
+- **`gh` is HTTPS-only against any non-`github.com` host.** Plain HTTP on `:5555` will not work with `gh auth login`. Run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` (the Docker harness does this; bare-metal recipe in [`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)).
+- **Use `host:port` in `--hostname` if you can't bind to 443.** `gh auth login --hostname localhost:8443 --with-token` and `export GH_HOST=localhost:8443` both work — `gh` keys the hosts.yml entry by the full `host:port` string and derives `https://localhost:8443/api/v3/...`.
+
 ## One-time auth
 
-bleephub serves on `:5555` by default (HTTP). For TLS in production / integration tests, run with `BPH_TLS_CERT` + `BPH_TLS_KEY` and use HTTPS.
-
 ```bash
-# Plain HTTP (sim mode, dev)
-export BLEEPHUB_HOST=localhost:5555
+# Pick the host:port string that matches how bleephub is listening.
+# :443 needs root to bind; :8443 (or any other) is fine for dev.
+export BLEEPHUB_HOST=localhost:8443     # or just `localhost` if you used :443
 
-# TLS (integration tests bind to :443)
-export BLEEPHUB_HOST=localhost
-```
-
-bleephub seeds a default admin user with a static PAT (`bph_0000000000000000000000000000000000000000`). Other tokens can be minted via the OAuth flow or `POST /api/v3/bleephub/apps/{id}/installations/.../access_tokens`.
-
-```bash
-# Use the seeded admin PAT
+# bleephub seeds a default admin user with a static PAT.
 TOKEN="bph_0000000000000000000000000000000000000000"
 
-# Tell gh that bleephub is a GHES-like host:
+# Register bleephub as a GHES host — --hostname is THE key flag here.
 echo "$TOKEN" | gh auth login --hostname "$BLEEPHUB_HOST" --with-token
 
-# Optional: make it the default host so you don't have to pass --host
+# Make it the default host so you don't have to pass --hostname on every call.
 export GH_HOST="$BLEEPHUB_HOST"
 ```
+
+Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or `POST /api/v3/bleephub/apps/{id}/installations/.../access_tokens` — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
 
 That's it. `gh` is now authenticated against bleephub.
 
@@ -110,6 +120,8 @@ For a comprehensive smoke test, run [`make bleephub-gh-docker-test`](../bleephub
 ## When things go wrong
 
 - **`gh auth login` keeps asking for credentials.** Make sure you used `--with-token` and the token is non-empty. `GH_TOKEN` env also works as a fallback.
+- **`gh` is hitting `github.com` instead of bleephub.** You forgot `--hostname <bleephub-host>` on `gh auth login`, or `GH_HOST` isn't exported. `gh` only routes to bleephub if the hostname is in `~/.config/gh/hosts.yml` AND either `GH_HOST` matches it or every command passes `--hostname` explicitly.
+- **`gh auth login` fails with `dial tcp [::1]:443: connection refused` / `x509: cannot validate ...`.** bleephub is on a plain-HTTP port, or its cert isn't trusted. `gh` is HTTPS-only — run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` and trust the CA system-wide. If you can't bind to `:443`, use `:8443` and `gh auth login --hostname localhost:8443`.
 - **`gh repo list` returns empty / 404.** GraphQL queries depend on the `repositoryOwner` resolver — confirm bleephub is current (Phase 154+).
 - **`gh issue view` returns "fragment cannot be spread"-style errors.** Should be impossible on Phase 153+ (the `IssueOrPullRequest` union is wired). File a BUG.md entry if seen.
 - **`gh api -f` returns 400.** Should not happen on Phase 153+ (`flexBool`/`flexInt` decoders handle string-coerced inputs). File a bug.
