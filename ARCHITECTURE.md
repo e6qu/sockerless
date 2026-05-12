@@ -511,10 +511,11 @@ bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTT
 | **Broker** | Session creation, message long-poll (30s), job delivery via Go channels |
 | **Run service** | Job acquire/renew/complete lifecycle |
 | **Timeline & logs** | Step status tracking, log upload, web console output |
-| **GitHub API** | REST + GraphQL (repos, orgs, teams, users) for `gh` CLI and runner context |
+| **GitHub API** | REST + GraphQL — repos, orgs, teams, users, issues, PRs, PR review comments + threads, reactions, releases, deployments + environments, Checks, GitHub Apps + installations + permission-scoped installation tokens, OAuth Apps, webhooks + deliveries, Actions OIDC (`/token` + `/.well-known/jwks`), Pages, branch protection, marketplace. Direct `gh` CLI compatibility; see [docs/BLEEPHUB_GH_CLI.md](docs/BLEEPHUB_GH_CLI.md) |
 | **Git HTTP** | Smart HTTP protocol (`go-git`) for `actions/checkout` |
+| **Persistence** | Optional SQLite write-through (`BLEEPHUB_PERSIST=true`) — users, tokens, apps, oauth_apps, installations, installation_tokens, user_to_server_tokens, refresh_tokens, repos |
 
-**Current scope:** Full GitHub Actions workflow execution — multi-job workflows with `needs:` dependencies, matrix strategies (`strategy.matrix`), secrets injection, expression evaluation (`${{ }}` syntax), concurrency groups with cancel-in-progress, persistent artifacts, and `uses:` actions (docker container actions). Both `run:` (script) and `uses: docker://` steps are supported. Output passing between steps and jobs works via `$GITHUB_OUTPUT`.
+**Current scope:** Full GitHub Actions workflow execution — multi-job workflows with `needs:` dependencies, matrix strategies (`strategy.matrix`), secrets injection, expression evaluation (`${{ }}` syntax), concurrency groups with cancel-in-progress, persistent artifacts, and `uses:` actions (docker container actions). Both `run:` (script) and `uses: docker://` steps are supported. Output passing between steps and jobs works via `$GITHUB_OUTPUT`. GitHub Apps installation tokens (`ghs_`), user-to-server tokens (`ghu_`), and OAuth user tokens (`gho_`) flow through `requirePerm(scope, level)` enforcement on write-class endpoints. See [bleephub/README.md](bleephub/README.md) and [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md) for the per-endpoint inventory.
 
 ---
 
