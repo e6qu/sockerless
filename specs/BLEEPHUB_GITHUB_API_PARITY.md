@@ -1,6 +1,10 @@
-# bleephub ↔ GitHub API signature parity (Phase 153)
+# bleephub ↔ GitHub API signature parity
 
-Status: planned. Branch: `phase-153-bleephub-github-api-parity` (off `origin/main`). Audit date: 2026-05-12.
+Status: **shipped through Phase 154**. Original audit date: 2026-05-12.
+
+History:
+- Phase 153 — initial parity sweep (PR #153, merged 2026-05-12 as `fadf851f`).
+- Phase 154 — broad API sweep covering Reactions, Releases, Deployments, Environments, PR review comments, OIDC, Pages, Branch protection, Org audit log, Marketplace (PR #154, merged 2026-05-12 as `9e03621c`).
 
 > **Goal:** every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. A client built against GitHub or GHES should round-trip against bleephub by swapping the base URL only.
 
@@ -22,74 +26,34 @@ Rationale: the official `actions/runner` is GHES-aware (`/_apis/` is a GHES path
 
 Each row: path · method · auth (P=PAT, J=App JWT, S=ghs_ installation token, U=ghu_ user-to-server, O=gho_ OAuth user-to-server, A=anonymous) · status today.
 
-### GitHub Apps
+### GitHub Apps — all shipped Phase 153
 
-| Path | Method | Auth | Today |
-|---|---|---|---|
-| `/api/v3/app-manifests/{code}/conversions` | POST | A | ✓ |
-| `/api/v3/app` | GET | J | ✓ |
-| `/api/v3/apps/{app_slug}` | GET | A | ❌ missing |
-| `/api/v3/app/installations` | GET | J | ✓ |
-| `/api/v3/app/installations/{id}` | GET | J | ✓ |
-| `/api/v3/app/installations/{id}` | DELETE | J | ✓ |
-| `/api/v3/app/installations/{id}/access_tokens` | POST | J | ✓ |
-| `/api/v3/app/installations/{id}/suspended` | PUT | J | ❌ missing |
-| `/api/v3/app/installations/{id}/suspended` | DELETE | J | ❌ missing |
-| `/api/v3/app/hook/config` | GET | J | ❌ missing |
-| `/api/v3/app/hook/config` | PATCH | J | ❌ missing |
-| `/api/v3/app/hook/deliveries` | GET | J | ❌ missing |
-| `/api/v3/app/hook/deliveries/{id}` | GET | J | ❌ missing |
-| `/api/v3/app/hook/deliveries/{id}/attempts` | POST | J | ❌ missing |
-| `/api/v3/orgs/{org}/installation` | GET | P/U | ❌ missing |
-| `/api/v3/users/{username}/installation` | GET | P/U | ❌ missing |
-| `/api/v3/repos/{owner}/{repo}/installation` | GET | P/U | ✓ |
-| `/api/v3/installation/repositories` | GET | S | ❌ missing |
-| `/api/v3/installation/token` | DELETE | S | ✓ |
-| `/api/v3/user/installations` | GET | P/U | ✓ |
-| `/api/v3/user/installations/{id}/repositories` | GET | P/U | ✓ |
-| `/api/v3/user/installations/{id}/repositories/{repo_id}` | PUT | U | ❌ missing |
-| `/api/v3/user/installations/{id}/repositories/{repo_id}` | DELETE | U | ❌ missing |
-| `/api/v3/bleephub/apps` | POST | P | ✓ (sim-only management) |
-| `/api/v3/bleephub/apps/{app_id}/installations` | POST | P | ✓ (sim-only management) |
+Every Apps endpoint in the original audit is now implemented + tested. See `bleephub/gh_apps_rest.go`, `gh_apps_user_tokens.go`, `gh_app_hooks_rest.go`, `gh_apps_oauth_mgmt.go`, `gh_apps_perms.go`.
 
-### OAuth applications
+### OAuth applications — all shipped Phase 153 (P153.5)
 
-| Path | Method | Auth | Today |
-|---|---|---|---|
-| `/login/oauth/authorize` | GET | A | ✓ |
-| `/login/oauth/authorize` | POST | A | ✓ |
-| `/login/oauth/access_token` | POST | A | ✓ |
-| `/login/device/code` | POST | A | ✓ |
-| `/login/device` | GET | A | ✓ |
-| `/api/v3/applications/{client_id}/token` | POST | Basic(cid:cs) | ❌ missing (check token) |
-| `/api/v3/applications/{client_id}/token` | PATCH | Basic(cid:cs) | ❌ missing (reset token) |
-| `/api/v3/applications/{client_id}/token` | DELETE | Basic(cid:cs) | ❌ missing (revoke token) |
-| `/api/v3/applications/{client_id}/token/scoped` | POST | Basic(cid:cs) | ❌ missing (scope user-to-server) |
-| `/api/v3/applications/{client_id}/grant` | DELETE | Basic(cid:cs) | ❌ missing (revoke grant) |
+`/api/v3/applications/{client_id}/*` family (check / reset / revoke / scope / grant). See `bleephub/gh_apps_oauth_mgmt.go`.
 
-### Webhooks (repo + app level)
+### Webhooks + Checks API — all shipped Phase 153
 
-| Path | Method | Auth | Today |
-|---|---|---|---|
-| `/api/v3/repos/{o}/{r}/hooks` | POST/GET | P | ✓ |
-| `/api/v3/repos/{o}/{r}/hooks/{id}` | GET/PATCH/DELETE | P | ✓ |
-| `/api/v3/repos/{o}/{r}/hooks/{id}/pings` | POST | P | ✓ |
-| `/api/v3/repos/{o}/{r}/hooks/{id}/deliveries` | GET | P | ✓ (summary fields only) |
-| `/api/v3/repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}` | GET | P | ❌ missing (full request/response payload) |
-| `/api/v3/repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}/attempts` | POST | P | ❌ missing (redelivery) |
+Per-repo + app-level webhooks with full delivery view + redelivery (P153.4 + P153.7). Full Checks API (P153.8). See `bleephub/gh_hooks_rest.go`, `gh_app_hooks_rest.go`, `gh_checks_rest.go`.
 
-### Checks API (App-owned)
+### Phase 154 — additional surfaces shipped
 
-| Path | Method | Auth | Today |
-|---|---|---|---|
-| `/api/v3/repos/{o}/{r}/check-runs` | POST | S | ❌ missing |
-| `/api/v3/repos/{o}/{r}/check-runs/{id}` | GET/PATCH | S | ❌ missing |
-| `/api/v3/repos/{o}/{r}/check-runs/{id}/annotations` | GET | S | ❌ missing |
-| `/api/v3/repos/{o}/{r}/commits/{sha}/check-runs` | GET | S/P | ❌ missing |
-| `/api/v3/repos/{o}/{r}/commits/{sha}/check-suites` | GET | S/P | ❌ missing |
-| `/api/v3/repos/{o}/{r}/check-suites` | POST | S | ❌ missing |
-| `/api/v3/repos/{o}/{r}/check-suites/preferences` | PATCH | S | ❌ missing |
-| `/api/v3/repos/{o}/{r}/check-suites/{id}` | GET | S/P | ❌ missing |
+| Surface | Commit | Files |
+|---|---|---|
+| Reactions (8 content types × 5 parent types) | P154.1 | `gh_reactions.go` |
+| Releases (CRUD + latest + by-tag + generate-notes + reactions) | P154.2 | `gh_releases.go` |
+| Actions extras (repository_dispatch, run logs zip, rerun-failed-jobs, timing) | P154.3 | `gh_actions_extras.go` |
+| Deployments + Environments | P154.4 | `gh_deployments.go` |
+| PR review comments (inline / file-line / threads / replies) | P154.5 | `gh_pr_comments.go` |
+| PR thread resolve/unresolve REST | P154.6 | `gh_pr_threads.go` |
+| Users API extras (keys, gpg, emails, follow) | P154.7 | `gh_misc_endpoints.go` |
+| Actions OIDC + JWKS + discovery | P154.8 | `gh_misc_endpoints.go` |
+| GitHub Pages | P154.9 | `gh_misc_endpoints.go` |
+| Branch protection | P154.10 | `gh_misc_endpoints.go` |
+| Org audit log | P154.11 | `gh_misc_endpoints.go` |
+| Marketplace listing | P154.12 | `gh_misc_endpoints.go` |
 
 ## Semantic gaps
 
@@ -153,24 +117,42 @@ Fix: extend serialisers to construct full URLs using `s.baseURL(r)` plus the can
 8. **UI**: AppsPage gains per-installation CRUD + suspend / unsuspend + repo selection editor + permissions/events form on app create + PEM viewer + installation token mint dialog. OAuthPage gains token check + revoke. New WebhookDeliveriesPage.
 9. **External reference clients**: probot's reference setup (or octokit-app) round-trips against `http://localhost:5555/api/v3/` modulo base URL. Concretely: app create → installation create → installation token mint → mutate an issue with that token (permission gate verifies) → webhook fires with `installation:{id}` → delivery visible at `/app/hook/deliveries`. Recorded as an integration test under `bleephub/test/`.
 
-## Implementation order (single branch, multiple commits)
+## Implementation order — shipped
 
+Phase 153 (PR #153, merged 2026-05-12 as `fadf851f`):
 1. Store + types (Installation suspend / repo-selection / OAuthApp / per-app webhook).
 2. Token prefixes + middleware updates.
-3. Missing Apps + OAuth endpoints (paths from inventory above).
+3. Missing Apps + OAuth endpoints.
 4. App-level webhook config + deliveries.
 5. Permission enforcement decorator.
 6. Webhook payload `installation` field + headers + installation event emission.
 7. Checks API.
 8. Full JSON shape (URL fields).
 9. UI updates.
-10. Tests, including the probot round-trip integration test.
-11. State save (STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md).
+10. Tests, gh CLI Docker harness end-to-end.
+11. State save.
+12. SQLite persistence (BLEEPHUB_PERSIST + write-through buckets).
+13. Real `gh` CLI compatibility (flex decoders + GraphQL enums + union + Issue.projectItems stub).
 
-## Non-goals
+Phase 154 (PR #154, merged 2026-05-12 as `9e03621c`):
+1. Reactions API.
+2. Releases API.
+3. Actions extras (repository_dispatch, logs zip, timing).
+4. Deployments + Environments.
+5. PR review comments (inline / threads / replies).
+6. Thread resolve/unresolve REST.
+7-12. Users / OIDC / Pages / Branch protection / Org audit / Marketplace.
 
-- GitHub Marketplace / billing / plans.
+## Non-goals (carried forward through P155)
+
 - Fine-grained PATs (`github_pat_`).
 - Multiple GitHub Apps per `client_id` (1:1 mapping in bleephub).
 - SAML / SSO enforcement on installation tokens (Enterprise-only behavior).
 - Codespaces / Copilot / Dependabot endpoints (separate domains, not in scope).
+- Per-installation audit log content (shape-only empty endpoint).
+- Full Projects v2 (only an empty connection stub for `gh issue view` compatibility).
+- Real GitHub Marketplace billing (sim returns a single Free plan).
+
+## Future audits
+
+When a real consumer reports a 404 or a shape mismatch against bleephub, open an issue + spec the gap here under a new "Phase 1xx" header. Don't preemptively expand without a real signal — the surface is large; depth-where-needed beats breadth-everywhere.
