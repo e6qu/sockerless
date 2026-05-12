@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func (s *Server) registerGHAppsRoutes() {
@@ -173,6 +175,7 @@ func (s *Server) handleDeleteAppInstallation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.store.DeleteInstallation(id)
+	s.emitInstallationEvent(app, "deleted", inst)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -252,6 +255,9 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 	}
 
 	inst := s.store.CreateInstallation(appID, req.TargetType, req.TargetID, req.TargetLogin, req.Permissions, req.Events)
+	if inst != nil {
+		s.emitInstallationEvent(app, "created", inst)
+	}
 	writeJSON(w, http.StatusCreated, installationToJSON(inst))
 }
 
@@ -617,11 +623,55 @@ func filterReposBySelection(all []*Repo, inst *Installation, tok *InstallationTo
 	return out
 }
 
-// emitInstallationEvent / emitInstallationRepositoriesEvent — declared
-// here so the handlers compile. Implementations land in P153.4/7 along
-// with the app-level webhook surface.
-func (s *Server) emitInstallationEvent(_ *App, _ string, _ *Installation)                      {}
-func (s *Server) emitInstallationRepositoriesEvent(_ *App, _ string, _ *Installation, _ []int) {}
+// emitInstallationEvent fires an `installation` webhook (action one of:
+// created | deleted | suspend | unsuspend | new_permissions_accepted) to
+// the app's configured webhook URL, and records the delivery on the
+// app-level deliveries queue.
+func (s *Server) emitInstallationEvent(app *App, action string, inst *Installation) {
+	if app == nil || app.WebhookURL == "" || !app.WebhookActive {
+		return
+	}
+	sender := s.store.LookupUserByLogin(inst.TargetLogin)
+	payload := buildInstallationEventPayload(app, action, inst, sender)
+	go s.deliverAppWebhook(app, "installation", action, inst.ID, mustMarshal(payload))
+}
+
+// emitInstallationRepositoriesEvent fires an `installation_repositories`
+// webhook (action: added | removed).
+func (s *Server) emitInstallationRepositoriesEvent(app *App, action string, inst *Installation, repoIDsChanged []int) {
+	if app == nil || app.WebhookURL == "" || !app.WebhookActive {
+		return
+	}
+	sender := s.store.LookupUserByLogin(inst.TargetLogin)
+	payload := buildInstallationRepositoriesEventPayload(app, action, inst, repoIDsChanged, sender)
+	go s.deliverAppWebhook(app, "installation_repositories", action, inst.ID, mustMarshal(payload))
+}
+
+// deliverAppWebhook is the app-level analogue of deliverWebhook: same
+// retry shape, but records to AppHookDeliveries.
+func (s *Server) deliverAppWebhook(app *App, event, action string, installationID int, payloadBytes []byte) {
+	hook := &Webhook{
+		ID:     -app.ID, // negative ID flags an app-level hook (middleware reads ID < 0)
+		URL:    app.WebhookURL,
+		Secret: app.WebhookSecret,
+		Events: app.WebhookEvents,
+		Active: app.WebhookActive,
+	}
+	guid := uuid.New().String()
+	backoffs := []time.Duration{0, 1 * time.Second, 5 * time.Second}
+	for attempt, backoff := range backoffs {
+		if attempt > 0 {
+			time.Sleep(backoff)
+		}
+		delivery := s.doDeliverAttempt(hook, event, action, guid, payloadBytes, attempt > 0)
+		delivery.AppID = app.ID
+		delivery.InstallationID = installationID
+		s.store.AddAppDelivery(app.ID, delivery)
+		if delivery.StatusCode >= 200 && delivery.StatusCode < 300 {
+			return
+		}
+	}
+}
 
 // handleRevokeInstallationToken — DELETE /api/v3/installation/token.
 // Real GitHub: 204 No Content; the token used in the request's

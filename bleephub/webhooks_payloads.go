@@ -1,9 +1,71 @@
 package bleephub
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// attachInstallationBlock injects `installation: {id, node_id}` at the top
+// level of every event payload, mirroring what real GH does for events
+// delivered through an App installation.
+func attachInstallationBlock(payload map[string]interface{}, inst *Installation) map[string]interface{} {
+	if inst == nil {
+		return payload
+	}
+	payload["installation"] = map[string]interface{}{
+		"id":      inst.ID,
+		"node_id": fmt.Sprintf("MDIzOkluc3RhbGxhdGlvbiVk%d", inst.ID),
+	}
+	return payload
+}
+
+// buildInstallationEventPayload builds the top-level `installation` event payload
+// (action: created | deleted | suspend | unsuspend | new_permissions_accepted).
+func buildInstallationEventPayload(app *App, action string, inst *Installation, sender *User) map[string]interface{} {
+	repos := []map[string]interface{}{}
+	return map[string]interface{}{
+		"action":       action,
+		"installation": installationToJSON(inst),
+		"repositories": repos,
+		"sender":       senderPayload(sender),
+		"app_id":       app.ID,
+	}
+}
+
+// buildInstallationRepositoriesEventPayload builds installation_repositories
+// (action: added | removed).
+func buildInstallationRepositoriesEventPayload(app *App, action string, inst *Installation, repoIDsChanged []int, sender *User) map[string]interface{} {
+	changes := []map[string]interface{}{}
+	for _, id := range repoIDsChanged {
+		changes = append(changes, map[string]interface{}{"id": id})
+	}
+	out := map[string]interface{}{
+		"action":               action,
+		"installation":         installationToJSON(inst),
+		"repository_selection": inst.RepositorySelection,
+		"sender":               senderPayload(sender),
+	}
+	switch action {
+	case "added":
+		out["repositories_added"] = changes
+		out["repositories_removed"] = []map[string]interface{}{}
+	case "removed":
+		out["repositories_added"] = []map[string]interface{}{}
+		out["repositories_removed"] = changes
+	}
+	return out
+}
+
+// quiet unused-import linter
+var _ = json.Marshal
 
 func buildPushPayload(repo *Repo, sender *User, ref, before, after string) map[string]interface{} {
-	return map[string]interface{}{
+	return buildPushPayloadWithInstallation(repo, sender, ref, before, after, nil)
+}
+
+func buildPushPayloadWithInstallation(repo *Repo, sender *User, ref, before, after string, inst *Installation) map[string]interface{} {
+	return attachInstallationBlock(map[string]interface{}{
 		"ref":         ref,
 		"before":      before,
 		"after":       after,
@@ -15,7 +77,7 @@ func buildPushPayload(repo *Repo, sender *User, ref, before, after string) map[s
 		"head_commit": nil,
 		"repository":  repoPayload(repo),
 		"sender":      senderPayload(sender),
-	}
+	}, inst)
 }
 
 func buildPullRequestPayload(repo *Repo, pr *PullRequest, sender *User, action string) map[string]interface{} {
@@ -48,13 +110,27 @@ func buildPullRequestPayload(repo *Repo, pr *PullRequest, sender *User, action s
 		prJSON["closed_at"] = pr.ClosedAt.UTC().Format(time.RFC3339)
 	}
 
-	return map[string]interface{}{
+	return buildPullRequestPayloadInner(action, pr, prJSON, repo, sender, nil)
+}
+
+// buildPullRequestPayloadWithInstallation — used by triggerWorkflowsForEvent
+// when a webhook delivery is associated with an app installation. Wraps
+// buildPullRequestPayload with the installation:{id} top-level block.
+//
+//nolint:unused // wired into the emit path; callers land in the workflow-trigger commit
+func buildPullRequestPayloadWithInstallation(repo *Repo, pr *PullRequest, sender *User, action string, inst *Installation) map[string]interface{} {
+	p := buildPullRequestPayload(repo, pr, sender, action)
+	return attachInstallationBlock(p, inst)
+}
+
+func buildPullRequestPayloadInner(action string, pr *PullRequest, prJSON map[string]interface{}, repo *Repo, sender *User, inst *Installation) map[string]interface{} {
+	return attachInstallationBlock(map[string]interface{}{
 		"action":       action,
 		"number":       pr.Number,
 		"pull_request": prJSON,
 		"repository":   repoPayload(repo),
 		"sender":       senderPayload(sender),
-	}
+	}, inst)
 }
 
 func buildIssuesPayload(repo *Repo, issue *Issue, sender *User, action string) map[string]interface{} {
@@ -76,12 +152,19 @@ func buildIssuesPayload(repo *Repo, issue *Issue, sender *User, action string) m
 		issueJSON["closed_at"] = issue.ClosedAt.UTC().Format(time.RFC3339)
 	}
 
-	return map[string]interface{}{
+	return attachInstallationBlock(map[string]interface{}{
 		"action":     action,
 		"issue":      issueJSON,
 		"repository": repoPayload(repo),
 		"sender":     senderPayload(sender),
-	}
+	}, nil)
+}
+
+// buildIssuesPayloadWithInstallation wraps buildIssuesPayload, injecting installation:{id}.
+//
+//nolint:unused // wired into the emit path; callers land in the workflow-trigger commit
+func buildIssuesPayloadWithInstallation(repo *Repo, issue *Issue, sender *User, action string, inst *Installation) map[string]interface{} {
+	return attachInstallationBlock(buildIssuesPayload(repo, issue, sender, action), inst)
 }
 
 func buildPingPayload(repo *Repo, hook *Webhook) map[string]interface{} {
