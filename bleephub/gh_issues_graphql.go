@@ -352,6 +352,24 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
+	// IssueOrderField + OrderDirection enums — gh CLI sends enum names like
+	// CREATED_AT / DESC, not strings.
+	issueOrderFieldEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueOrderField",
+		Values: graphql.EnumValueConfigMap{
+			"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+			"UPDATED_AT": &graphql.EnumValueConfig{Value: "UPDATED_AT"},
+			"COMMENTS":   &graphql.EnumValueConfig{Value: "COMMENTS"},
+		},
+	})
+	issueOrderDirectionEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueOrderDirection",
+		Values: graphql.EnumValueConfigMap{
+			"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
+			"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+		},
+	})
+
 	repoType.AddFieldConfig("issues", &graphql.Field{
 		Type: issueConnectionType,
 		Args: graphql.FieldConfigArgument{
@@ -363,8 +381,8 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "IssueOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
-					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},
-					"direction": &graphql.InputObjectFieldConfig{Type: graphql.String},
+					"field":     &graphql.InputObjectFieldConfig{Type: issueOrderFieldEnum},
+					"direction": &graphql.InputObjectFieldConfig{Type: issueOrderDirectionEnum},
 				},
 			})},
 		},
