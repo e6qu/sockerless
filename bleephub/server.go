@@ -137,6 +137,12 @@ func (s *Server) registerRoutes() {
 	// Releases API (gh_releases.go)
 	s.registerGHReleasesRoutes()
 
+	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
+	s.registerGHActionsExtrasRoutes()
+
+	// Deployments + Environments (gh_deployments.go)
+	s.registerGHDeploymentsRoutes()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()

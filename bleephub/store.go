@@ -92,6 +92,7 @@ type Store struct {
 	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
 	Reactions          *ReactionStore                // P154.1 — reactions across all parent types
 	Releases           *ReleaseStore                 // P154.2 — release CRUD
+	Deployments        *DeploymentStore              // P154.4 — deployments + statuses + environments
 	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
@@ -228,6 +229,7 @@ func NewStore() *Store {
 		CheckSuitePrefs:    make(map[string][]*CheckSuitePref),
 		Reactions:          newReactionStore(),
 		Releases:           newReleaseStore(),
+		Deployments:        newDeploymentStore(),
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
