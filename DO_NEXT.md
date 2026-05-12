@@ -4,54 +4,57 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-`main` is clean. PR #151 (Phase 87d + 92) and PR #152 (`docs/POD_MATERIALIZATION.md`) merged 2026-05-11/12. No phase currently in flight.
+`docs-cleanup-actionable` branch / PR #153. Phase 153 (bleephub ↔ GitHub API parity) **in flight on the same branch + PR** at the user's direction. Audit + acceptance criteria: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-Three resumable tracks below. Pick one, branch from `origin/main`, single-branch rule applies. Never auto-merge.
+## Resume here — Phase 153, remaining sub-tasks
 
-## Track A — Phase 153: bleephub ↔ GitHub API signature parity ⭐ next planned
+10/13 sub-tasks shipped. CI runs on every push. **Never auto-merge.**
 
-Goal: every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. Audit details + acceptance criteria in [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
+| Sub-task | Status | What |
+|---|---|---|
+| P153.1 — store + types | ✓ `e87239e0` | Installation suspend/repo-selection, OAuth Apps, gho_/ghu_/ghr_ tokens, Checks store |
+| P153.2 — token prefixes + middleware | ✓ `dc3ceb3c` | gho_/ghu_/ghr_ recognised; default mint ghp_ |
+| P153.3 — missing Apps endpoints | ✓ `c019df94` | apps/{slug}, suspend, org/user installation, repo-sel mgmt, installation/repositories |
+| P153.4 — app webhook config + deliveries | ✓ `bba640b5` | /app/hook/config + /app/hook/deliveries |
+| P153.5 — OAuth /applications/{cid}/* | ✓ `fab271b2` | check/reset/revoke token, revoke grant, OAuth app mgmt |
+| P153.6 — perm enforcement | ✓ `2fb5e06d` | requirePerm decorator on write endpoints; repo hook redelivery |
+| P153.7 — webhook installation field + events | ✓ `d5cfb272` | installation:{id}, X-GitHub-Hook-* headers, installation/installation_repositories events |
+| P153.8 — Checks API | ✓ `93d52950` | check-runs + check-suites + annotations |
+| P153.9 — HATEOAS url fields | ✓ `5f97511b` | *_url + suspended_at + single_file_name on app/installation JSON |
+| P153.10 — UI updates | ✓ `297484f`  | perms/events form, PEM viewer, OAuth Apps tab, suspend/delete |
+| **P153.11 — state save + gh CLI tests** | **in flight** | Phase 153 added to bleephub/test/run-gh-test.sh; STATUS/PLAN/DO_NEXT/WHAT_WE_DID updated |
+| P153.12 — SQLite persistence | **next** | Mirror sim pattern: `BLEEPHUB_PERSIST=true` gates persistence; SQLite-backed stores for users/tokens/apps/installations/hooks/orgs/teams/issues/PRs. Fail-loud on persistence-open failure (BUG-985 pattern). Git storage stays in-memory for now |
+| P153.13 — gh CLI smoke + parity tests | partial | Phase 153 parity probes appended to existing run-gh-test.sh (`make bleephub-gh-test`); real `gh` binary in Docker |
 
-Branch: `phase-153-bleephub-github-api-parity` off `origin/main`.
+### Concrete next actions on this branch
 
-Order of operations (lands as one PR per single-branch rule, even if large):
+1. **Wait for CI** to confirm green on `297484f` / `5f97511b`. `gh run list --branch docs-cleanup-actionable -L 1`.
+2. **P153.11 final** — commit + push the docs updates (STATUS / DO_NEXT / WHAT_WE_DID) + the new gh-CLI test additions.
+3. **P153.12 SQLite persistence**:
+   - Read `simulators/aws/shared/server.go::NewServer` for the canonical persistence pattern (env-gated, log.Fatalf on open failure — BUG-985/986).
+   - Add `BLEEPHUB_PERSIST=true` + extend `BLEEPHUB_DATA_DIR` to gate SQLite.
+   - SQLite-backed implementations of: users + tokens + apps + installations + installation_tokens + user_to_server_tokens + refresh_tokens + oauth_apps + orgs + teams + memberships + repos + issues + labels + milestones + comments + pull_requests + pr_reviews + hooks + hook_deliveries + app_hook_deliveries + check_runs + check_suites + workflow_files + workflows + manifest_codes + auth_codes + device_codes.
+   - Git storage (go-git) stays in-memory for now — switching to filesystem.Storage is a separate phase.
+   - Tests: regression guard for `BLEEPHUB_PERSIST=true` + bad path → fail loud. Happy path: restart preserves apps/installations/repos/issues.
+4. **P153.13 final** — `make bleephub-gh-test` (Docker harness) passes the new Phase 153 parity probes end-to-end. If anything fails, fix in-line.
+5. **Open the PR for merge review**. PR #153 already exists. Update its title from `docs:` to something like `phase 153: bleephub ↔ GitHub API parity (+ docs streamline)`.
 
-1. **Read [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md) end-to-end.** Audit groups the gaps into 7 buckets; spec lists them. Don't redo the audit.
-2. **Store + types first.** Extend `bleephub/gh_apps_store.go`: `Suspended*` + `SelectedRepoIDs` + `OAuthApp` (client_id-keyed) + per-installation app webhook config. Wire to `Store.NewStore`.
-3. **Token prefixes.** `gho_` for OAuth user-to-server (web flow), `ghu_` for App user-to-server (device + OAuth-with-app), `ghr_` for refresh, `ghs_` (existing) for server-to-server installation. Update `gh_oauth.go::createTokenLocked` + middleware.
-4. **Missing endpoints.** Add `GET /apps/{slug}`, `GET /orgs/{org}/installation`, `GET /users/{username}/installation`, `PUT|DELETE /app/installations/{id}/suspended`, `GET /installation/repositories`, `PUT|DELETE /user/installations/{id}/repositories/{repo_id}`, `GET|POST /repos/{o}/{r}/hooks/{id}/deliveries/{delivery_id}[/attempts]`, app-level webhook surface `GET|PATCH /app/hook/config` + `GET /app/hook/deliveries[/{id}][/attempts]`, `POST|PATCH|DELETE /applications/{client_id}/token`, `DELETE /applications/{client_id}/grant`.
-5. **Checks API.** `POST|GET|PATCH /repos/{o}/{r}/check-runs[/{id}]`, `GET /repos/{o}/{r}/commits/{sha}/check-runs|check-suites`, suite endpoints.
-6. **Webhook payload fields + headers.** All payloads carry `installation: {id, node_id}` when associated; add `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-Type`, `X-GitHub-Hook-Installation-Target-ID`, `X-Hub-Signature` (SHA1). Emit `installation`, `installation_repositories`, `installation_target`, `github_app_authorization` events.
-7. **Permission enforcement.** Decorator that reads `ctxInstallation`'s token permissions and gates write endpoints (repo, issues, pulls, checks, secrets). 403 on insufficient scope.
-8. **JSON shape.** Add `*_url` fields (`hooks_url`, `html_url`, `repositories_url`, `access_tokens_url`, `events_url`, `installations_count`, `suspended_at`, `suspended_by`, `single_file_name`, etc.) to `appToJSON` + `installationToJSON`.
-9. **UI.** Per-installation CRUD on AppsPage; permissions/events form on app create; PEM viewer after create; OAuthPage gains token revoke/check; webhook deliveries page.
-10. **Tests.** Every new endpoint, header, payload field, redelivery, suspend cycle, OAuth token revoke + check, check-run lifecycle. `go test ./...` green in `bleephub/`.
-11. **State save.** Update STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md / `_tasks/done/`.
+## Track B (after Phase 153 merges) — Live-cloud validation
 
-Acceptance: `bleephub` answers every endpoint listed in `specs/BLEEPHUB_GITHUB_API_PARITY.md § Endpoint inventory` with the documented status codes, headers, and JSON shapes. The probot reference test suite (or octokit-app) round-trips without modification against `http://localhost:5555` modulo base URL.
-
-## Track B — Live-cloud validation track
-
-Outstanding live-cloud sweeps separate from sim CI. Each is one branch, one PR.
-
-- **Lambda live** (deferred from Phase 86) — runs `make test-integration-cloud` for `lambda` with real AWS account.
-- **Cloud Run Services + ACA Apps live** — `UseService` / `UseApp` paths closed in code 2026-04-21; needs cloud validation.
-- **AZF + cloud-dns on Azure live** (new in #136).
-- **Lambda + service-mesh on AWS live** (new in #136).
-- **ACA / AZF + Azure AD access on Azure live** (new in #136).
-
-Common shape: `make stack-{sim,backend}-up` → `make test-integration-cloud TARGET=<backend>` → file bugs as they surface (BUGS.md before any fix attempt) → cross-cloud sweep on every find. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
+Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell. Teardown self-sufficient.
 
 ## Track C — Phase 91d (bookmarked)
 
-Real `pd-ephemeral` lifecycle on cloudrun + gcf. **Bookmarked indefinitely.** Cloud Run lacks the protobuf field; implementation requires either a future GCE-style sockerless backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c, PR #149) stays in place. Don't reopen until one of those preconditions changes.
+Real `pd-ephemeral` lifecycle on cloudrun + gcf. Cloud Run lacks the protobuf field. Don't reopen until cloud capability changes.
 
 ## Invariants (re-state on every commit)
 
 - **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub.
 - **No fallbacks.** Unknown config values fail-loud.
+- **GitHub Apps + OAuth Apps are separate concepts.** Distinct entities, distinct token prefixes.
+- **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
 - **CI green per commit.** Each commit independently testable.
-- **Test target gating.** All backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`.
+- **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`.
 - **No docs-only PRs.** Pair docs updates with implementation work on the same branch / PR.
 - **Never auto-merge.** Push the PR, wait for user.
 - **Single-branch rule.** All in-flight work lands on one branch per phase.
@@ -59,8 +62,8 @@ Real `pd-ephemeral` lifecycle on cloudrun + gcf. **Bookmarked indefinitely.** Cl
 ## Session-resume checklist
 
 1. `git status` + `git log --oneline -5 origin/main` to confirm where main is.
-2. Read STATUS.md (snapshot) + this file (concrete actions).
-3. For the chosen track, branch from `origin/main` with the prescribed name.
-4. Run `go test ./...` from the relevant module to establish a green baseline before changes.
+2. `git checkout docs-cleanup-actionable && git pull` if continuing Phase 153.
+3. Read STATUS.md (snapshot) + this file (concrete actions).
+4. `cd bleephub && go test ./...` to establish green before changes.
 5. File BUGS.md entries for anything that surfaces, fix in the same session.
-6. State-save before pushing: STATUS.md, this file, WHAT_WE_DID.md, MEMORY.md, BUGS.md headers.
+6. State-save before pushing: STATUS.md, this file, WHAT_WE_DID.md, MEMORY.md.
