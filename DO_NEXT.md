@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-PR #153 (`docs-cleanup-actionable` branch) — Phase 153 (bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compatibility) **complete**. 13/13 sub-tasks shipped. Docker harness 50/50 PASS via `make bleephub-gh-docker-test`. Awaiting CI green.
+PR #154 (`phase-154-github-api-sweep` branch) — Phase 154 broad GitHub API sweep, 12 sub-task commits shipped. PR #153 merged as `fadf851f` 2026-05-12. PR #154 awaiting CI green → merge (user-authorized).
 
 ## ⚠ One-time merge authorization (user-granted 2026-05-12)
 

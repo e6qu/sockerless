@@ -131,6 +131,28 @@ func (s *Server) registerRoutes() {
 	// Checks API (gh_checks_rest.go)
 	s.registerGHChecksRoutes()
 
+	// Reactions API (gh_reactions.go)
+	s.registerGHReactionsRoutes()
+
+	// Releases API (gh_releases.go)
+	s.registerGHReleasesRoutes()
+
+	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
+	s.registerGHActionsExtrasRoutes()
+
+	// Deployments + Environments (gh_deployments.go)
+	s.registerGHDeploymentsRoutes()
+
+	// PR review comments (gh_pr_comments.go) — inline / file-line / threads
+	s.registerGHPRCommentsRoutes()
+
+	// PR thread resolve/unresolve (gh_pr_threads.go)
+	s.registerGHPRThreadsRoutes()
+
+	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
+	// Pages, branch protection, org members, marketplace.
+	s.registerGHMiscEndpoints()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
