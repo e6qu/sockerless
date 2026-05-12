@@ -302,9 +302,13 @@ func (st *Store) CreateToken(userID int, scopes string) *Token {
 	return st.createTokenLocked(userID, scopes)
 }
 
-// generateTokenValue creates a bph_-prefixed random token string.
+// generateTokenValue creates a ghp_-prefixed random token string (classic PAT).
+// Real GitHub uses ghp_ for classic PATs; bleephub matches the prefix so SDK
+// clients that branch on prefix recognise the token shape. The seeded admin
+// user keeps its bph_-prefixed token (see SeedDefaultUser) for backwards
+// compatibility with existing tests + integrations.
 func generateTokenValue() string {
 	b := make([]byte, 20)
 	_, _ = rand.Read(b)
-	return fmt.Sprintf("bph_%s", hex.EncodeToString(b))
+	return fmt.Sprintf("ghp_%s", hex.EncodeToString(b))
 }
