@@ -4,109 +4,124 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-PR #154 (`phase-154-github-api-sweep` branch) — Phase 154 broad GitHub API sweep, 12 sub-task commits shipped. PR #153 merged as `fadf851f` 2026-05-12. PR #154 awaiting CI green → merge (user-authorized).
+Phase 157 (component ⇄ reference-adaptor docs sweep) starting on `phase-157-component-adaptor-docs`, off `origin/main` post-#156 merge.
 
-## ⚠ One-time merge authorization (user-granted 2026-05-12)
+PRs #153 → #154 → #155 → #156 all merged 2026-05-12 → 2026-05-13. Standing merge authorization is **spent** — every Phase 157 commit goes through the normal "push, wait for user merge" loop.
 
-User explicitly authorized auto-merge for **PR #153 and the follow-up PRs #154, #155, #156** once CI passes on each. This overrides the default "never auto-merge" invariant for these four PRs only — it does NOT extend to future PRs. After #156 merges, the default rule resumes.
+## Phase 157 — Component ⇄ reference-adaptor docs sweep
 
-For each:
-1. Push the final commit on the phase branch.
-2. Wait for `gh pr checks <N>` to show every required check green.
-3. If a check fails, **fix the underlying issue** (do not bend the test). Push the fix. Re-poll.
-4. Once all checks pass: `gh pr merge <N> --squash --delete-branch` (or `--merge` if branch history matters — verify the repo's merge style first).
-5. `git checkout main && git pull --ff-only` to sync local main.
-6. Branch for the next phase off the refreshed main.
+### Frame
 
-## Resume here — after Phase 153 merges
+Every component in this repo is paired with an external **reference adaptor**. The adaptor is simultaneously:
 
-Phase 153 done. Next phase in queue:
+- **Validation** — test harnesses drive the real adaptor against the component.
+- **Utility** — adaptor is how end-users actually invoke the component.
+- **Reference** — adaptor's docs/behaviour define what "correct" means for the component.
 
-## Resumable tracks after Phase 153 merges
+Doc structure per component (lead with the adaptor, not the binary):
 
-### Track A2 — Phase 154 — Broad GitHub API sweep (next phase)
+```
+# <component>
 
-User-requested follow-up after Phase 153 closes. Audit-first sweep of GitHub API surfaces gh CLI / octokit / probot hit. Spec lives in PLAN.md § "Phase 154 — Broad GitHub API sweep (planned, post-153)". Fifteen surface areas:
+## Reference adaptor
+This component is measured against <upstream tool>, version <X+>.
+The contract: anything <upstream tool> does against <upstream service>,
+it must do against this component.
 
-1. GitHub Apps (deeper) — installation_target, github_app_authorization, new_permissions_accepted, marketplace stub.
-2. Orgs — members, teams (parent teams, IdP sync), audit log, security manager, org secrets/variables, dep graph.
-3. Installing apps in orgs — org install URL flow, repository_selection at install time.
-4. OIDC — Actions OIDC tokens + JWKS + claims (sub, audience, environment).
-5. Webhooks (extras) — org-level, enterprise-level, meta / security_advisory / secret_scanning_alert.
-6. Pipelines + jobs API — full Actions REST: runs/jobs/steps, logs download, artifacts download, rerun/cancel/attempts.
-7. Triggering pipelines — workflow_dispatch validation, repository_dispatch with client_payload.
-8. Users API — followers/following/blocked, emails, gpg/ssh keys, status, sponsorship.
-9. Groups (teams + IdP) — team membership, IdP group sync surface.
-10. SSO integration — SAML SSO header on PATs, SCIM 2.0 provisioning, enforced-SSO redirects.
-11. GitHub Pages — `/repos/{o}/{r}/pages` + builds + deployments.
-12. Deployments + Environments — full deployments API + Environments (protection rules, reviewers, secrets, branch policies), branch protection.
-13. Issue + PR comments depth — issue comments full CRUD + reactions; PR review comments (inline / file-line / range), review threads, resolve+reopen, suggested-changes, comment edit history.
-14. Reactions API — full eight reaction types + reaction groups on Issue/PR/comments with real counts.
-15. Webhook events parity — full event coverage (branch_protection_rule, check_run, code_scanning_alert, deployment, discussion, label, milestone, project, release, status, watch, workflow_run, etc.). Per-event payload shape verified against real GH samples.
+## Validation
+Test harness: <path>. Last green: <N/N PASS>.
 
-Branch: `phase-154-github-api-sweep` (off `origin/main` once #153 merges). Audit-first: file per-surface gap tickets, prioritize by gh CLI hit-rate.
+## Wiring the adaptor
+<2–5 lines of env / config>
 
-### Track A3 — Phase 155 / 156 — Docs refresh
+## Sample
+$ <command>
+<real captured output>
 
-User-requested after Phase 154 closes:
+## What's out of scope
+<deferred items>
+```
 
-- **Phase 155** — bleephub-specific docs: bleephub/README.md, specs/BLEEPHUB_GITHUB_API_PARITY.md, docs/RUNNERS.md § GitHub runner contract, docs/runner-capability-matrix.md, ARCHITECTURE.md (bleephub block), ui/packages/bleephub/README.md, new docs/BLEEPHUB_GH_CLI.md.
-- **Phase 156** — project-wide docs: root README, ARCHITECTURE.md, specs/CLOUD_RESOURCE_MAPPING.md, docs/OBSERVABILITY.md, docs/ADMIN_ORCHESTRATION.md, docs/MAKEFILE_STANDARD.md, docs/POD_MATERIALIZATION.md, runner docs, ECS / Lambda design docs.
+### Adaptor matrix
 
-Acceptance: every claim verified; CLI examples copy-paste-run against current `main`.
+| Component | Reference adaptor | Validation entry point |
+|---|---|---|
+| `backends/docker` | docker CLI / podman CLI / Docker Go SDK | `tests/` (Docker SDK e2e, 59 tests) |
+| `backends/ecs` | aws CLI/SDK + Terraform aws (cloud); docker CLI (frontend) | `simulators/aws/sdk-tests` + Docker SDK e2e |
+| `backends/lambda` | aws CLI/SDK + Terraform aws; docker CLI | same |
+| `backends/cloudrun` | gcloud + Go SDK + Terraform google; docker CLI | `simulators/gcp/sdk-tests` |
+| `backends/cloudrun-functions` | gcloud + Go SDK + Terraform google; docker CLI | same |
+| `backends/aca` | az + Go SDK + Terraform azurerm; docker CLI | `simulators/azure/sdk-tests` |
+| `backends/azure-functions` | az + Go SDK + Terraform azurerm; docker CLI | same |
+| `simulators/aws` | aws CLI + AWS Go SDK + Terraform aws | `simulators/aws/{sdk-tests,terraform-tests}` |
+| `simulators/gcp` | gcloud + Go SDK + Terraform google | `simulators/gcp/{sdk-tests,terraform-tests}` |
+| `simulators/azure` | az + Go SDK + Terraform azurerm | `simulators/azure/{sdk-tests,terraform-tests}` |
+| `bleephub` | gh CLI | `bleephub/test/run-gh-test.sh` (✅ already documented in #155 + #156) |
+| `cmd/sockerless` (CLI) | itself — CLI is adaptor for backends | `cmd/sockerless/*_test.go` |
+| `cmd/sockerless-admin` | browser / REST clients against `/v1/*` | `cmd/sockerless-admin/*_test.go` |
 
-### Track B — Live-cloud validation
+### Commit layout
 
-Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell. Teardown self-sufficient.
+Single branch `phase-157-component-adaptor-docs`. Granular commits so CI runs per increment, reverts are surgical:
 
-### Track C — Phase 91d (bookmarked indefinitely)
+1. **State save** (this commit set: STATUS / DO_NEXT / PLAN / BUGS / WHAT_WE_DID).
+2. `backends/docker` — simplest case, no cloud connector.
+3. `backends/{ecs,lambda}` — AWS cluster.
+4. `backends/{cloudrun,cloudrun-functions}` — GCP cluster.
+5. `backends/{aca,azure-functions}` — Azure cluster.
+6. `simulators/{aws,gcp,azure}` — per-simulator READMEs.
+7. `simulators/README.md` — the **end-to-end showcase** (3 loop variants).
+8. `cmd/sockerless/README.md` + `cmd/sockerless-admin/README.md` — CLI + admin updates.
+
+### Defaults (assumed unless user redirects)
+
+- **Podman**: documented as "drop-in via `DOCKER_HOST`," not a separate adaptor track.
+- **One doc per component**, leading with the adaptor section (not the binary).
+- **Real captured output** in every sample block — run each command, paste actual output. Truncate `terraform apply` to headline + diff stats + final `Apply complete!`.
+
+### Acceptance bar
+
+- Every connector example is **copy-pasteable** against current `main`.
+- Every "expected output" block reflects what the binary actually prints (run it, paste it, don't guess).
+- Every prereq links to the upstream install doc.
+- End-to-end showcase: 3 working variants, each ≤15 lines of bash from zero to a `docker run` round-trip through a simulator.
+- No "Phase 8X TODO" dangling placeholders in any touched doc.
+
+### Out of scope
+
+- Live-cloud cells — covered by `docs/ECS_LIVE_SETUP.md` and the live tracks.
+- Any code changes — docs only (state save is "docs" in this context).
+- bleephub — just got two full passes in #155 + #156.
+
+## Resumable tracks after Phase 157 merges
+
+### Track A — Live-cloud validation
+
+Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
+
+### Track B — Phase 91d (bookmarked indefinitely)
 
 Real `pd-ephemeral` lifecycle on cloudrun + gcf. Cloud Run lacks the protobuf field. Don't reopen until cloud capability changes.
 
-### Track D — Bleephub persistence expansion
+### Track C — bleephub persistence expansion
 
-Phase 153 ships SQLite for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. Extending to issues / PRs / hooks / hook deliveries / check_runs / check_suites / labels / milestones / comments / secrets / orgs / teams / memberships is a separate phase once a real use case surfaces. Git storage (go-git) → `filesystem.Storage` is its own phase.
-
-## Per-sub-task status (Phase 153, in-flight)
-
-| Sub-task | Status | Commit / Notes |
-|---|---|---|
-| P153.1 — store + types | ✓ | `e87239e` |
-| P153.2 — token prefixes + middleware | ✓ | `dc3ceb3` |
-| P153.3 — missing Apps endpoints | ✓ | `c019df9` |
-| P153.4 — app webhook config + deliveries | ✓ | `bba640b` |
-| P153.5 — OAuth /applications/{cid}/* | ✓ | `fab271b` |
-| P153.6 — perm enforcement | ✓ | `2fb5e06` |
-| P153.7 — webhook installation field + events | ✓ | `d5cfb27` |
-| P153.8 — Checks API | ✓ | `93d5295` |
-| P153.9 — HATEOAS url fields | ✓ | `5f97511` |
-| P153.10 — UI updates | ✓ | `297484f` |
-| P153.11 — state save + gh-CLI probes | ✓ | `c586b18` |
-| P153.12 — SQLite persistence | ✓ | `192c627` |
-| P153.13 — real gh CLI compatibility | mostly shipped | `b538d5c` + `dfdf3db`. Native `gh repo create / view / list` + `gh issue create / list` pass. `gh issue view` still fails (BUG-989 — Issue\|PullRequest union missing). |
-
-## Invariants (re-state on every commit)
-
-- **Components stay decoupled.** No admin-required env vars on sims/backends/bleephub.
-- **Maximally compatible with real GitHub.** Bleephub accepts everything real GitHub accepts; no fallbacks for legacy bleephub behavior.
-- **The `gh` CLI works directly against bleephub.** No URL-hackery shims in production code; tests use real commands.
-- **No fallbacks.** Unknown config values fail-loud.
-- **GitHub Apps + OAuth Apps are separate concepts.** Distinct entities, distinct token prefixes.
-- **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
-- **Persistence is opt-in + fail-loud.** `log.Fatalf` on persistence-open failure.
-- **CI green per commit.** Each commit independently testable.
-- **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`.
-- **No docs-only PRs.** Pair docs updates with implementation work on the same branch / PR.
-- **Never auto-merge.** Push the PR, wait for user.
-- **Single-branch rule.** All in-flight work lands on one branch per phase.
+Phases 153–156 ship SQLite for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. Extending to issues / PRs / hooks / hook deliveries / check_runs / check_suites / labels / milestones / comments / secrets / orgs / teams / memberships is a separate phase once a real use case surfaces. Git storage (go-git) → `filesystem.Storage` is its own phase.
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout docs-cleanup-actionable && git pull` to land on the in-flight branch.
-2. `git log --oneline -10` to see what's already shipped on this branch.
-3. Read STATUS.md (snapshot) + this file (concrete next actions).
-4. `cd bleephub && go test ./...` to confirm green baseline.
-5. `make bleephub-gh-docker-test` to confirm Docker harness still passes (assumes Docker daemon).
-6. Resume P153.13 sweep + commit + push.
-7. File BUGS.md entries for anything that surfaces; fix in the same session.
-8. State-save before pushing: STATUS.md, this file, WHAT_WE_DID.md, MEMORY.md.
+1. `git fetch origin && git checkout phase-157-component-adaptor-docs && git pull` (or `git checkout main && git pull --ff-only` if 157 has merged).
+2. `git log --oneline -10` to see what's already on the branch.
+3. Read STATUS.md (snapshot) + this file (concrete next actions) + the **adaptor matrix** above.
+4. `go test ./...` in any touched module to confirm green baseline.
+5. Pick the next un-committed row from the commit layout; write that doc; commit; push; let CI run.
+6. File BUGS.md entries for anything that surfaces; fix in the same session.
+7. State-save before pushing: STATUS.md + this file + WHAT_WE_DID.md + MEMORY.md.
+
+## Invariants snapshot (full list in STATUS.md)
+
+- Never auto-merge; user merges every PR.
+- Components decoupled from admin / UI.
+- No fakes / no fallbacks / no silent shims.
+- Backend ↔ host primitive must match.
+- `gh` CLI is the reference adaptor for bleephub; HTTPS-only, `--hostname` is the wiring flag.
+- `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for the cloud-mapping table.

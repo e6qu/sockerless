@@ -6,67 +6,69 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-154-github-api-sweep` — Phase 154 broad GitHub API sweep in flight on PR #154. **User-authorized merge-on-green for #154/#155/#156.** |
-| In-flight | Phase 154 — P154.1 (reactions) → P154.12 (long-tail) shipped on PR #154. Awaiting CI. |
-| Last merged | PR #153 — Phase 153 bleephub↔GitHub API parity + SQLite persistence + gh CLI compat (2026-05-12). |
+| Active branch | `phase-157-component-adaptor-docs` — starting fresh off `origin/main` 2026-05-13. |
+| In-flight | Phase 157 — component ⇄ reference-adaptor docs sweep. State save is the first commit; per-component docs land as subsequent commits. |
+| Last merged | PR #156 — Phase 156 project-wide docs refresh + bleephub `gh` CLI quick-start + GCP dep bump (2026-05-13). |
+| Standing merge auth | **Expired.** PRs #153/#154/#155/#156 were the one-time set; default "never auto-merge" rule is back. User merges every PR going forward. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 990 fixed. |
 | Live infra | None up. |
 
-## Invariants
+## Invariants (carry across compactions / fresh sessions)
+
+### Process
+
+- **Never auto-merge PRs.** Push, wait for `gh pr checks` green, ping user. One-time exceptions don't carry forward.
+- **Single-branch rule.** All in-flight work for one phase lands on one branch; many granular commits, one PR.
+- **State save every task.** STATUS.md + DO_NEXT.md + WHAT_WE_DID.md + MEMORY.md + this file's `_tasks/done/`.
+- **Test all the time.** `go test ./...` in every touched module; harness-touch re-runs the harness; terraform-touch runs `terragrunt validate`.
+- **Branch hygiene.** Rebase phase branch on `origin/main` before pushing; sync local `main` after merge.
+- **Pre-push hooks own the truth.** If the `check-latest-deps` hook flags dep drift, bump deps in the same branch — never skip the hook.
+
+### Architecture
 
 - **Components stay decoupled from admin / UI.** Sims, backends, bleephub run independently via env vars; admin reads only `/v1/health`, `/v1/info`, env. No admin-required env vars on components, no startup registration.
-- **Bleephub is maximally compatible with the GitHub REST/GraphQL API.** If GitHub accepts it, bleephub accepts it — including string-coerced booleans/integers in JSON bodies (what `gh api -f key=value` sends). This is the GitHub API spec; not a fallback.
-- **The `gh` CLI must work directly against bleephub.** Tests use real `gh repo create` / `gh issue create` / `gh pr create` against the running bleephub, not `gh api` URL hackery.
-- **GitHub Apps and OAuth Apps are separate concepts.** Distinct store entries, distinct token prefixes (`gho_` vs `ghu_` vs `ghs_` vs `ghr_` vs `ghp_`), parallel surfaces on `/applications/{client_id}/...`.
-- **Installation tokens are immutable snapshots.** Bumping installation perms post-mint does NOT auto-upgrade existing tokens (mirrors real GH).
-- **Persistence is opt-in + fail-loud.** `BLEEPHUB_PERSIST=true` enables SQLite. Open-failure `log.Fatalf`s (BUG-985/986 pattern); never silently falls back to in-memory.
-- **No fakes / no fallbacks.** Unknown values fail loud. Operator-requested persistence + auth never silently degrade.
-- **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud` — no implicit skip.
 - **Backend ↔ host primitive must match.** ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, GCF in CRF, ACA in ACA, AZF in AZF.
-- **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y".
+- **No fakes / no fallbacks.** Unknown values fail loud. Operator-requested persistence + auth never silently degrade.
+- **Persistence is opt-in + fail-loud.** `BLEEPHUB_PERSIST=true` / `SIM_PERSIST=true` → SQLite. Open-failure `log.Fatalf` (BUG-985/986 pattern); never silent in-memory fallback.
+- **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`; never implicit skip.
+- **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y."
 
-## Phase 154 progress (`phase-154-github-api-sweep` branch / PR #154)
+### bleephub-specific (closed in Phases 153–156)
 
-| Sub-task | Commit | What |
+- **`gh` CLI is the reference adaptor.** If it works against `api.github.com`, it must work against bleephub. Test harness uses native `gh repo create / view / list`, `gh issue create / view / list / close / reopen`, `gh pr create / view / list / review / merge`, `gh release create`. No `gh api` URL hackery for happy path.
+- **`gh` is HTTPS-only against non-`github.com` hosts.** Quick-start in `bleephub/README.md` covers the self-signed-cert + system-trust path; `host:port` in `--hostname` works if you can't bind `:443`.
+- **GitHub Apps and OAuth Apps are separate concepts.** Distinct store entries, distinct token prefixes (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`bph_`).
+- **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
+- **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
+
+## Phase 157 — Component ⇄ reference-adaptor docs sweep (in flight)
+
+Frame: every component in this repo has an **external "adaptor"** (docker CLI / aws CLI / gcloud / az / Terraform providers / gh CLI / browser) that simultaneously **validates** the component (tests drive the real adaptor), is the **utility** users actually invoke, and is the **reference** for what "correct" means.
+
+Each component gets a doc section showing:
+
+1. **Reference adaptor + minimum version.**
+2. **Validation entry point** (test path that drives the real adaptor + last-green count).
+3. **Wiring** (env / endpoint / creds) in ≤5 lines.
+4. **Sample command + real captured output.**
+5. **What's out of scope** (what the adaptor exercises that we don't support).
+
+Headline deliverable: `simulators/README.md` end-to-end showcase — three loop variants (AWS sim ↔ ECS backend, GCP sim ↔ Cloud Run backend, Azure sim ↔ ACA backend) each terminating in `docker run alpine echo hi` round-tripping through a real simulator.
+
+Full plan in [PLAN.md § Phase 157](PLAN.md). Component matrix in [DO_NEXT.md](DO_NEXT.md).
+
+## Recently closed phases
+
+| PR | Phase | Headline |
 |---|---|---|
-| P154.1 + P154.2 | `8c2fd907` | Reactions API + Releases API |
-| P154.3 + P154.4 | `dec13e9a` | Actions extras (repository_dispatch, run logs zip, timing) + Deployments + Environments |
-| P154.5 | `ac0357cb` | PR review comments (inline / file-line / replies / threads) |
-| P154.6 + P154.7-12 | `ef8f437f` | Thread resolve/unresolve + Users keys/follow + Actions OIDC + Pages + Branch protection + Org audit + Marketplace |
+| #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP dep bump. |
+| #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md`. |
+| #154 | 154 | Broad GitHub API sweep — reactions, releases, deployments + environments, PR review comments + threads, Checks, Actions OIDC + JWKS, Pages, branch protection. Real `gh` CLI Docker harness 50/50 PASS. |
+| #153 | 153 | bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat (13 sub-tasks). |
+| #152 | docs | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
+| #151 | 87d + 92 | Trace propagation + MeterProvider + runtime metrics + `make stack-observability-validate`; `Backing: gcs-fuse` deregistered on cloudrun + gcf. |
+| #150 | 87c | zerolog → OTel logs bridge across all 12 components. |
+| #149 | 91 | Lambda volume_translator framework migration; cloudrun + gcf reject `BackingPDEphemeral`. |
 
-## Phase 153 closed (PR #153 merged 2026-05-12 as `fadf851f`)
-
-12 commits shipped. Per-sub-task:
-
-| Sub-task | Commit | What |
-|---|---|---|
-| P153.1 | `e87239e` | Store + types: Installation suspend/repo-selection, OAuth Apps, UserToServerToken (gho_/ghu_/ghr_), Checks API store |
-| P153.2 | `dc3ceb3` | Middleware recognises gho_/ghu_/ghr_; default mint switches bph_ → ghp_ |
-| P153.3 | `c019df9` | apps/{slug}, suspend/unsuspend, orgs/{org}/installation, users/{u}/installation, repo-selection mgmt, installation/repositories |
-| P153.4 | `bba640b` | App-level webhook config + deliveries (`/app/hook/config` + `/app/hook/deliveries`) |
-| P153.5 | `fab271b` | `/applications/{client_id}/token` family + OAuth App management endpoints |
-| P153.6 | `2fb5e06` | `requirePerm(scope, level)` decorator gates write-class endpoints; repo hook redelivery |
-| P153.7 | `d5cfb27` | `installation:{id}` payload field + X-GitHub-Hook-* headers + X-Hub-Signature SHA1 + installation/installation_repositories events |
-| P153.8 | `93d5295` | Checks API (check-runs + check-suites + annotations) |
-| P153.9 | `5f97511` | HATEOAS `*_url` fields on appToJSON + installationToJSON |
-| P153.10 | `297484f` | UI: permissions/events form, PEM + secrets viewer, OAuth Apps tab, suspend/delete |
-| P153.11 | `c586b18` | Phase 153 added to gh CLI test script + state save |
-| P153.12 | `192c627` | SQLite persistence — KV-style table, 9 buckets persisted, fail-loud on open |
-| P153.13 | `0fd5549` + `b3685ef` + `dfdf3db` + `b538d5c` | Real `gh` CLI Docker harness (`make bleephub-gh-docker-test`) — 50/50 PASS. GitHub-spec body tolerance (`flexBool`/`flexInt`/...); GraphQL parity (enums + `repositoryOwner` + Issue\|PullRequest union + `Issue.projectItems` stub + PR fields). Native `gh repo create`/view/list, `gh issue create`/view/list all pass; closed BUG-988/989/990. |
-
-CI runs after each push on PR #153. Two consecutive green CI runs on `297484f` and `192c627`. Never auto-merge — user merges.
-
-## Recently shipped (older PRs in WHAT_WE_DID.md)
-
-| Date | PR | Headline |
-|---|---|---|
-| 2026-05-12 | #153 | Phase 153 — bleephub ↔ GitHub API parity + SQLite persistence + real gh CLI compat. 13 sub-tasks; Docker harness 50/50 PASS. |
-| 2026-05-12 | #152 | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
-| 2026-05-11 | #151 | Phase 87d closeout + Phase 92 — trace propagation + MeterProvider + runtime metrics; `Backing: gcs-fuse` deregistered. |
-| 2026-05-10 | #150 | Phase 87c — zerolog → OTel logs bridge across all 12 components. |
-| 2026-05-10 | #149 | Phase 91 (consolidated) — Lambda volume_translator framework migration; cloudrun + gcf reject `BackingPDEphemeral`. |
-| 2026-05-10 | #148 | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. |
-| 2026-05-10 | #147 | Phase 91 — `BackingMemory` translator on cloudrun + gcf. |
-| 2026-05-10 | #146 | Phase 87b — component-side OTel SDK wiring. |
-| 2026-05-10 | #145 | Phase 87 — observability stack. |
+Older PRs (#112–#148) headline-summarised in [PLAN.md § Closed phases](PLAN.md). Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

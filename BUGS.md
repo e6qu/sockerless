@@ -30,7 +30,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history (compressed)
 
-989 bugs filed and fixed across phases 86–135 + Phase 84 + Phase 87 + Phase 92 + Phase 153.
+990 bugs filed and fixed across phases 86–156.
+
+Phases 154 / 155 / 156 closed zero new bugs — broad GitHub API sweep + docs refresh shipped without surfacing regressions. The `google.golang.org/api` v0.278.0 → v0.279.0 bump on PR #156 was upstream dep drift flagged by the `check-latest-deps` pre-push hook, not a sockerless bug.
 
 - **988 + 990** (Phase 153 P153.13) — `gh repo list` + `gh issue list` rejected GraphQL enum names (`CREATED_AT`, `DESC`, `PUBLIC`, `OWNER`). Bleephub declared the args as `String`; gh sends them as enums. Fixed by adding `RepositoryPrivacy` / `RepositoryAffiliation` / `RepositoryOrderField` / `OrderDirection` / `IssueOrderField` / `IssueOrderDirection` enums + adding `repositoryOwner(login)` polymorphic query that gh's repo list uses.
 - **989** (Phase 153 P153.13) — `gh issue view` failed because `issueOrPullRequest` returned just `Issue`, not a union with `PullRequest`; PR type missed `milestone`/`comments(last:)`; `PRCommentConnection` missed `nodes`; Issue.milestone resolver returned nil-typed empty map triggering Milestone.number NonNull; Issue.projectItems unimplemented (gh queries Projects v2 as a second round-trip). Fixed by declaring a real `IssueOrPullRequest` union, adding the missing PR fields, returning explicit nil for missing milestones, and adding empty-connection stubs for the Projects v2 surface. Per-bug detail in `git log` / linked PR. Recent ranges:
