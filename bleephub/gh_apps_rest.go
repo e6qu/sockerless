@@ -11,16 +11,26 @@ func (s *Server) registerGHAppsRoutes() {
 	// GitHub App API endpoints
 	s.mux.HandleFunc("POST /api/v3/app-manifests/{code}/conversions", s.handleManifestConversion)
 	s.mux.HandleFunc("GET /api/v3/app", s.handleGetAuthenticatedApp)
+	s.mux.HandleFunc("GET /api/v3/apps/{app_slug}", s.handleGetAppBySlug)
 	s.mux.HandleFunc("GET /api/v3/app/installations", s.handleListAppInstallations)
 	s.mux.HandleFunc("GET /api/v3/app/installations/{id}", s.handleGetAppInstallation)
 	s.mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", s.handleCreateInstallationToken)
 	s.mux.HandleFunc("DELETE /api/v3/app/installations/{id}", s.handleDeleteAppInstallation)
+	s.mux.HandleFunc("PUT /api/v3/app/installations/{id}/suspended", s.handleSuspendInstallation)
+	s.mux.HandleFunc("DELETE /api/v3/app/installations/{id}/suspended", s.handleUnsuspendInstallation)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/installation", s.handleGetRepoInstallation)
+	s.mux.HandleFunc("GET /api/v3/orgs/{org}/installation", s.handleGetOrgInstallation)
+	s.mux.HandleFunc("GET /api/v3/users/{username}/installation", s.handleGetUserInstallation)
 
 	// Phase 132 — installations from the authenticated user's perspective.
 	s.mux.HandleFunc("GET /api/v3/user/installations", s.handleListUserInstallations)
 	s.mux.HandleFunc("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
+	s.mux.HandleFunc("PUT /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleAddUserInstallationRepo)
+	s.mux.HandleFunc("DELETE /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleRemoveUserInstallationRepo)
 	s.mux.HandleFunc("DELETE /api/v3/installation/token", s.handleRevokeInstallationToken)
+
+	// Phase 153 — installation-token-scoped repositories list.
+	s.mux.HandleFunc("GET /api/v3/installation/repositories", s.handleListInstallationRepositories)
 
 	// Management endpoints for testing
 	s.mux.HandleFunc("POST /api/v3/bleephub/apps", s.handleCreateApp)
@@ -364,6 +374,254 @@ func (s *Server) handleListUserInstallationRepos(w http.ResponseWriter, r *http.
 		"repositories":         repoJSON,
 	})
 }
+
+// handleGetAppBySlug — GET /api/v3/apps/{app_slug}.
+// Real GitHub: anonymous-readable public app lookup. Returns the public
+// fields (no PEM, no client_secret). 404 when the slug doesn't match.
+func (s *Server) handleGetAppBySlug(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("app_slug")
+	app := s.store.GetAppBySlug(slug)
+	if app == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, appToJSON(app, false))
+}
+
+// handleSuspendInstallation — PUT /api/v3/app/installations/{id}/suspended.
+// JWT-auth (App). 204 on success, 409 if already suspended.
+func (s *Server) handleSuspendInstallation(w http.ResponseWriter, r *http.Request) {
+	app := ghAppFromContext(r.Context())
+	if app == nil {
+		writeGHError(w, http.StatusUnauthorized, "A JSON web token could not be decoded")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if inst.AppID != app.ID {
+		writeGHError(w, http.StatusForbidden, "Installation does not belong to this app")
+		return
+	}
+	if !s.store.SuspendInstallation(id, &User{Login: app.Slug + "[bot]", Type: "Bot", ID: -app.ID}) {
+		writeGHError(w, http.StatusConflict, "Installation already suspended")
+		return
+	}
+	s.emitInstallationEvent(app, "suspend", inst)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleUnsuspendInstallation — DELETE /api/v3/app/installations/{id}/suspended.
+// JWT-auth (App). 204 on success, 409 if not suspended.
+func (s *Server) handleUnsuspendInstallation(w http.ResponseWriter, r *http.Request) {
+	app := ghAppFromContext(r.Context())
+	if app == nil {
+		writeGHError(w, http.StatusUnauthorized, "A JSON web token could not be decoded")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if inst.AppID != app.ID {
+		writeGHError(w, http.StatusForbidden, "Installation does not belong to this app")
+		return
+	}
+	if !s.store.UnsuspendInstallation(id) {
+		writeGHError(w, http.StatusConflict, "Installation not suspended")
+		return
+	}
+	s.emitInstallationEvent(app, "unsuspend", inst)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetOrgInstallation — GET /api/v3/orgs/{org}/installation.
+// User-auth. Returns the installation associated with the org (any App's installation
+// where target_login = {org}, target_type = "Organization").
+func (s *Server) handleGetOrgInstallation(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	org := r.PathValue("org")
+	for _, inst := range s.snapshotInstallations() {
+		if inst.TargetLogin == org && inst.TargetType == "Organization" {
+			writeJSON(w, http.StatusOK, installationToJSON(inst))
+			return
+		}
+	}
+	writeGHError(w, http.StatusNotFound, "Not Found")
+}
+
+// handleGetUserInstallation — GET /api/v3/users/{username}/installation.
+// User-auth. Returns the installation associated with the user (target_type = "User").
+func (s *Server) handleGetUserInstallation(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	username := r.PathValue("username")
+	for _, inst := range s.snapshotInstallations() {
+		if inst.TargetLogin == username && inst.TargetType == "User" {
+			writeJSON(w, http.StatusOK, installationToJSON(inst))
+			return
+		}
+	}
+	writeGHError(w, http.StatusNotFound, "Not Found")
+}
+
+// handleAddUserInstallationRepo — PUT /api/v3/user/installations/{id}/repositories/{repo_id}.
+// User-auth. Adds a repo to a "selected"-mode installation's allow-list. Auto-switches mode
+// to "selected" if it was "all" (real GH requires the mode to already be "selected" — bleephub
+// is permissive in the sim). 204 on success.
+func (s *Server) handleAddUserInstallationRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	instID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	repoID, err := strconv.Atoi(r.PathValue("repo_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid repository ID")
+		return
+	}
+	added, ok := s.store.AddInstallationRepo(instID, repoID)
+	if !ok {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if inst := s.store.GetInstallation(instID); inst != nil && added {
+		if app := s.store.GetApp(inst.AppID); app != nil {
+			s.emitInstallationRepositoriesEvent(app, "added", inst, []int{repoID})
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRemoveUserInstallationRepo — DELETE /api/v3/user/installations/{id}/repositories/{repo_id}.
+func (s *Server) handleRemoveUserInstallationRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	instID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	repoID, err := strconv.Atoi(r.PathValue("repo_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid repository ID")
+		return
+	}
+	removed, ok := s.store.RemoveInstallationRepo(instID, repoID)
+	if !ok {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if inst := s.store.GetInstallation(instID); inst != nil && removed {
+		if app := s.store.GetApp(inst.AppID); app != nil {
+			s.emitInstallationRepositoriesEvent(app, "removed", inst, []int{repoID})
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListInstallationRepositories — GET /api/v3/installation/repositories.
+// Installation-token-scoped (ghs_) repo list. Real GitHub: returns the repos the
+// installation has access to. When the token was minted with a repository_ids
+// subset, only those repos are returned.
+func (s *Server) handleListInstallationRepositories(w http.ResponseWriter, r *http.Request) {
+	tok := ghInstallationTokenFromContext(r.Context())
+	inst := ghInstallationFromContext(r.Context())
+	if tok == nil || inst == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	allRepos := s.store.ListReposByOwner(inst.TargetLogin)
+	filtered := filterReposBySelection(allRepos, inst, tok)
+	page := paginateAndLink(w, r, filtered)
+	base := s.baseURL(r)
+	repoJSON := make([]map[string]interface{}, 0, len(page))
+	for _, repo := range page {
+		repoJSON = append(repoJSON, repoToJSON(repo, base))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_count":          len(filtered),
+		"repository_selection": inst.RepositorySelection,
+		"repositories":         repoJSON,
+	})
+}
+
+// snapshotInstallations returns a slice copy of every installation under
+// a single RLock; lets handlers iterate without holding the store lock.
+func (s *Server) snapshotInstallations() []*Installation {
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	out := make([]*Installation, 0, len(s.store.Installations))
+	for _, inst := range s.store.Installations {
+		out = append(out, inst)
+	}
+	return out
+}
+
+// filterReposBySelection applies the installation's repository_selection mode
+// + token-scoped repository_ids subset.
+func filterReposBySelection(all []*Repo, inst *Installation, tok *InstallationToken) []*Repo {
+	allowed := map[int]struct{}{}
+	if inst.RepositorySelection == "selected" {
+		for _, id := range inst.SelectedRepoIDs {
+			allowed[id] = struct{}{}
+		}
+	} else {
+		for _, r := range all {
+			allowed[r.ID] = struct{}{}
+		}
+	}
+	if len(tok.RepositoryIDs) > 0 {
+		narrowed := map[int]struct{}{}
+		for _, id := range tok.RepositoryIDs {
+			if _, ok := allowed[id]; ok {
+				narrowed[id] = struct{}{}
+			}
+		}
+		allowed = narrowed
+	}
+	out := make([]*Repo, 0, len(all))
+	for _, r := range all {
+		if _, ok := allowed[r.ID]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// emitInstallationEvent / emitInstallationRepositoriesEvent — declared
+// here so the handlers compile. Implementations land in P153.4/7 along
+// with the app-level webhook surface.
+func (s *Server) emitInstallationEvent(_ *App, _ string, _ *Installation)                      {}
+func (s *Server) emitInstallationRepositoriesEvent(_ *App, _ string, _ *Installation, _ []int) {}
 
 // handleRevokeInstallationToken — DELETE /api/v3/installation/token.
 // Real GitHub: 204 No Content; the token used in the request's
