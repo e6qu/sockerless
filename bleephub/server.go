@@ -101,6 +101,9 @@ func (s *Server) registerRoutes() {
 	// GitHub Apps API (gh_apps_rest.go)
 	s.registerGHAppsRoutes()
 
+	// GitHub Apps webhook config + deliveries (gh_app_hooks_rest.go)
+	s.registerGHAppHookRoutes()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
