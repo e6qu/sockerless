@@ -1,6 +1,6 @@
 # Known Bugs
 
-**991 filed · 990 fixed · 1 open · 1 false positive.**
+**992 filed · 991 fixed · 1 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| 991 | P1 | `backends/docker` + `backends/core/handle_containers.go` | `docker run --rm` fails: CLI's wait flow sends `POST /containers/{id}/wait?condition=removed` *before* `/start`; `handleContainerWait` non-CloudState path checks `s.Store.Containers.Get(id)` directly, sees the container isn't in the docker backend's local store (it lives in the real Docker daemon, not in sockerless's Store), and returns 200 with StatusCode=0 immediately. The CLI then treats wait-completed-before-start as a crash and aborts with `error waiting for container: ... No such container: <id>`. **Fix shape**: when the local Store has no record AND `s.self != nil` AND the backend is a passthrough (docker), delegate to `s.self.ContainerWait(id, condition)` so the wait flows through to the real daemon. Surfaced 2026-05-13 during Phase 157 docs sample-capture for `backends/docker`. Staged as Phase 158 in PLAN.md. |
+| 992 | P2 | `backends/docker` + `backends/core/handle_*.go` | `docker images` / `docker volume ls` / `docker network ls` / similar list endpoints return `[]` against passthrough backends even when the upstream daemon has resources. Same handler shape as BUG-991: handlers read `s.Store.X.List()` directly instead of delegating to `s.self.XList()`. Affects only the docker passthrough today (cloud backends populate Store via `CloudState` polling). **Fix shape**: handlers that enumerate resources should call `s.self.X` and merge with Store/CloudState; for pure-passthrough backends without Store rows, `s.self.X` returns the upstream daemon's view. Cross-cloud sweep on every find. Staged as Phase 159 in PLAN.md. |
 
 ## False positives
 
@@ -31,9 +31,11 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history (compressed)
 
-990 bugs filed and fixed across phases 86–156.
+991 bugs filed and fixed across phases 86–158.
 
-Phases 154 / 155 / 156 closed zero new bugs — broad GitHub API sweep + docs refresh shipped without surfacing regressions. The `google.golang.org/api` v0.278.0 → v0.279.0 bump on PR #156 was upstream dep drift flagged by the `check-latest-deps` pre-push hook, not a sockerless bug.
+- **991** (Phase 158) — Classic fallback-hiding-bug. `docker run --rm` against `backends/docker` returned `error waiting for container: No such container` because `handleContainerWait`'s non-CloudState branch checked `s.Store.Containers.Get(id)` directly and short-circuited to 200/StatusCode=0 on `condition=removed`. The wait fires *before* start in the docker CLI's foreground flow, so the local Store lookup races and lies. Fixed by replacing the Store-direct branch with `s.self.ContainerInspect(ref)` (which delegates to upstream on passthrough backends) + `s.self.ContainerWait` for the actual block. Also removed the parallel `condition=removed → StatusCode: 0` fallback in `BaseServer.ContainerWait` itself — callers wanting "already removed = success" semantics must `Inspect` first themselves, never return success on a missing resource. Surfaced 2026-05-13 during Phase 157 docs sample-capture; the symptom directly motivated Phase 158's vibe-coding-anti-pattern doc + skill work.
+
+Phases 154 / 155 / 156 / 157 closed zero new bugs — broad GitHub API sweep + docs refresh + component-adaptor sweep shipped without surfacing regressions. The `google.golang.org/api` v0.278.0 → v0.279.0 bump on PR #156 was upstream dep drift flagged by the `check-latest-deps` pre-push hook, not a sockerless bug.
 
 - **988 + 990** (Phase 153 P153.13) — `gh repo list` + `gh issue list` rejected GraphQL enum names (`CREATED_AT`, `DESC`, `PUBLIC`, `OWNER`). Bleephub declared the args as `String`; gh sends them as enums. Fixed by adding `RepositoryPrivacy` / `RepositoryAffiliation` / `RepositoryOrderField` / `OrderDirection` / `IssueOrderField` / `IssueOrderDirection` enums + adding `repositoryOwner(login)` polymorphic query that gh's repo list uses.
 - **989** (Phase 153 P153.13) — `gh issue view` failed because `issueOrPullRequest` returned just `Issue`, not a union with `PullRequest`; PR type missed `milestone`/`comments(last:)`; `PRCommentConnection` missed `nodes`; Issue.milestone resolver returned nil-typed empty map triggering Milestone.number NonNull; Issue.projectItems unimplemented (gh queries Projects v2 as a second round-trip). Fixed by declaring a real `IssueOrPullRequest` union, adding the missing PR fields, returning explicit nil for missing milestones, and adding empty-connection stubs for the Projects v2 surface. Per-bug detail in `git log` / linked PR. Recent ranges:

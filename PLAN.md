@@ -72,13 +72,30 @@ Component matrix + commit layout in [DO_NEXT.md § Phase 157](DO_NEXT.md). Out o
 
 bleephub ↔ GitHub API parity (153) + broad GitHub API sweep (154) + bleephub docs (155) + project-wide docs (156). Headlines in the PR index above; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Spec at [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-### Phase 158 — `docker run --rm` round-trip on `backends/docker` (planned, post-157)
+### Phase 158 — BUG-991 fix + vibe-coding catalogue + Claude skills (in flight)
 
-Surfaced during Phase 157 docs sample-capture (BUG-991). `docker run --rm` against the `backends/docker` passthrough returns `error waiting for container: No such container` because `handleContainerWait`'s non-CloudState branch checks `s.Store.Containers` directly — the docker backend doesn't track containers in its local store (they live in the real Docker daemon), so `condition=removed` short-circuits to 200/StatusCode=0 before `/start` even fires.
+Three pieces on one branch:
 
-Fix shape: delegate to `s.self.ContainerWait(id, condition)` when the local Store has no record AND `s.self != nil`. The docker backend's `ContainerWait` already correctly forwards to `s.docker.ContainerWait`, so once the dispatch reaches `self`, the round-trip completes against the real daemon. Verify against `tests/` Docker SDK suite (currently 59 tests; this fix should not change count but may light up a previously skipped `--rm` assertion). Cross-cloud sweep: check the same non-CloudState path is exercised by any other backend before merging.
+1. **BUG-991 fix** — `handleContainerWait`'s non-CloudState branch + `BaseServer.ContainerWait`'s `condition=removed` fallback both replaced. Handler now calls `s.self.ContainerInspect` to verify existence (delegates to upstream on passthrough backends), then `s.self.ContainerWait` for the actual block. Removed silent-success on missing-resource per "no fallback-hiding-bugs."
+2. **`docs/VIBE_CODING.md`** — sourced anti-pattern catalogue (23 patterns, ~20 primary sources), each pattern mapped to a sockerless-specific failure mode + policy + bug-ID where applicable. Lives as the project's contract on what "vibe-coding done responsibly" means here.
+3. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** — three project-local Claude skills that operationalise the catalogue. Skeptical-of-imports approach: all three written from scratch against this repo, no external skill imports.
 
-Acceptance: `DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:3.20 echo hi` prints `hi` and exits 0 against `backends/docker`; existing test suite green.
+Acceptance: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker` (verified manually 2026-05-13). `go test ./...` green. New files validated by pre-commit hooks.
+
+### Phase 159 — Passthrough-list-endpoints sweep (planned, post-158)
+
+BUG-992 surfaced during the BUG-991 investigation. The same handler shape as BUG-991 affects every list endpoint that reads `s.Store.X.List()` directly without delegating to `s.self.XList()`:
+
+- `GET /images/json` — `handle_images.go:264 handleImageList`
+- `GET /volumes` — same pattern
+- `GET /networks` — same pattern
+- Possibly more (audit per `MEMORY.md` § cross-cloud sweep)
+
+For passthrough backends (docker) these return `[]` even when the upstream daemon has resources, because the local Store is empty.
+
+Fix shape: handlers enumerate resources via `s.self.X` first (which on passthrough delegates upstream, on cloud reads CloudState), then merge with Store entries if both have content. Cross-cloud sweep on every find.
+
+Acceptance: `docker images`, `docker volume ls`, `docker network ls` return the upstream daemon's actual resources against `backends/docker`. Existing tests green. Cloud backends unaffected (they populate Store via CloudState).
 
 ### Live-cloud validation track
 

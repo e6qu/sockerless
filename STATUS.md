@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-157-component-adaptor-docs` — starting fresh off `origin/main` 2026-05-13. |
-| In-flight | Phase 157 — component ⇄ reference-adaptor docs sweep. State save is the first commit; per-component docs land as subsequent commits. |
-| Last merged | PR #156 — Phase 156 project-wide docs refresh + bleephub `gh` CLI quick-start + GCP dep bump (2026-05-13). |
-| Standing merge auth | **Expired.** PRs #153/#154/#155/#156 were the one-time set; default "never auto-merge" rule is back. User merges every PR going forward. |
+| Active branch | `phase-158-bug991-vibecoding-skills` — off `origin/main` post-PR-#157 merge. |
+| In-flight | Phase 158 — BUG-991 fix + `docs/VIBE_CODING.md` sourced catalogue + 3 project-local Claude skills (`avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test`). |
+| Last merged | PR #157 — Phase 157 component ⇄ reference-adaptor docs sweep (2026-05-13). |
+| Standing merge auth | **Expired.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1 open · 990 fixed. BUG-991 (`docker run --rm` on `backends/docker` passthrough) staged as Phase 158 — surfaced during Phase 157 sample-capture. |
+| Bugs | 1 open (BUG-992 staged as Phase 159) · 991 fixed (BUG-991 closed this phase). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -42,26 +42,23 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 
-## Phase 157 — Component ⇄ reference-adaptor docs sweep (in flight)
+## Phase 158 — BUG-991 + VIBE_CODING.md + Claude skills (in flight)
 
-Frame: every component in this repo has an **external "adaptor"** (docker CLI / aws CLI / gcloud / az / Terraform providers / gh CLI / browser) that simultaneously **validates** the component (tests drive the real adaptor), is the **utility** users actually invoke, and is the **reference** for what "correct" means.
+Three pieces on one branch:
 
-Each component gets a doc section showing:
+1. **BUG-991 fix** ✅ — `handleContainerWait` non-CloudState branch + `BaseServer.ContainerWait` `condition=removed` fallback replaced with `s.self.ContainerInspect` + `s.self.ContainerWait` delegation. Verified: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker`. Closed the silent-success-on-missing-resource fallback per "no fallback-hiding-bugs."
+2. **`docs/VIBE_CODING.md`** ✅ — 23-pattern sourced catalogue with verbatim quotes + URLs (HN, Addy Osmani, Simon Willison, Augment, curl, Zig, TDS, Socket, CACM). Each pattern maps to a sockerless-specific failure mode + policy + bug-ID where applicable.
+3. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** ✅ — three project-local Claude skills operationalising the catalogue. Skeptical-of-imports: all three authored from scratch, no external skill imports (avoiding supply-chain / backdoor risk).
 
-1. **Reference adaptor + minimum version.**
-2. **Validation entry point** (test path that drives the real adaptor + last-green count).
-3. **Wiring** (env / endpoint / creds) in ≤5 lines.
-4. **Sample command + real captured output.**
-5. **What's out of scope** (what the adaptor exercises that we don't support).
+Sub-bug surfaced (BUG-992): `docker images` / `docker volume ls` / `docker network ls` return empty against passthrough backends because list handlers read `s.Store.X.List()` directly. Same shape as BUG-991. Staged as Phase 159 in [PLAN.md](PLAN.md).
 
-Headline deliverable: `simulators/README.md` end-to-end showcase — three loop variants (AWS sim ↔ ECS backend, GCP sim ↔ Cloud Run backend, Azure sim ↔ ACA backend) each terminating in `docker run alpine echo hi` round-tripping through a real simulator.
-
-Full plan in [PLAN.md § Phase 157](PLAN.md). Component matrix in [DO_NEXT.md](DO_NEXT.md).
+Full plan in [PLAN.md § Phase 158](PLAN.md). Component-adaptor matrix from Phase 157 in [DO_NEXT.md](DO_NEXT.md).
 
 ## Recently closed phases
 
 | PR | Phase | Headline |
 |---|---|---|
+| #157 | 157 | Component ⇄ reference-adaptor docs sweep + state save + experimental/security caveat on root README + `backends/docker/README.md` rewrite. BUG-991 surfaced. |
 | #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP dep bump. |
 | #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md`. |
 | #154 | 154 | Broad GitHub API sweep — reactions, releases, deployments + environments, PR review comments + threads, Checks, Actions OIDC + JWKS, Pages, branch protection. Real `gh` CLI Docker harness 50/50 PASS. |
