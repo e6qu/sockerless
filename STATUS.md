@@ -11,7 +11,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | Last merged | PR #156 — Phase 156 project-wide docs refresh + bleephub `gh` CLI quick-start + GCP dep bump (2026-05-13). |
 | Standing merge auth | **Expired.** PRs #153/#154/#155/#156 were the one-time set; default "never auto-merge" rule is back. User merges every PR going forward. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 990 fixed. |
+| Bugs | 1 open · 990 fixed. BUG-991 (`docker run --rm` on `backends/docker` passthrough) staged as Phase 158 — surfaced during Phase 157 sample-capture. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

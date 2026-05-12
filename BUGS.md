@@ -1,6 +1,6 @@
 # Known Bugs
 
-**990 filed · 990 fixed · 0 open · 1 false positive.**
+**991 filed · 990 fixed · 1 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,6 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| 991 | P1 | `backends/docker` + `backends/core/handle_containers.go` | `docker run --rm` fails: CLI's wait flow sends `POST /containers/{id}/wait?condition=removed` *before* `/start`; `handleContainerWait` non-CloudState path checks `s.Store.Containers.Get(id)` directly, sees the container isn't in the docker backend's local store (it lives in the real Docker daemon, not in sockerless's Store), and returns 200 with StatusCode=0 immediately. The CLI then treats wait-completed-before-start as a crash and aborts with `error waiting for container: ... No such container: <id>`. **Fix shape**: when the local Store has no record AND `s.self != nil` AND the backend is a passthrough (docker), delegate to `s.self.ContainerWait(id, condition)` so the wait flows through to the real daemon. Surfaced 2026-05-13 during Phase 157 docs sample-capture for `backends/docker`. Staged as Phase 158 in PLAN.md. |
 
 ## False positives
 
