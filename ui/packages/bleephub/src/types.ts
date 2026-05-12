@@ -122,6 +122,9 @@ export interface BleephubApp {
   description: string;
   ownerId: number;
   createdAt: string;
+  clientId?: string;
+  permissions?: Record<string, string>;
+  events?: string[];
 }
 
 /** Installation row from /internal/installations. */
@@ -132,6 +135,18 @@ export interface BleephubInstallation {
   targetType: string;
   targetLogin: string;
   repositorySelection: string;
+  createdAt: string;
+  suspendedAt?: string | null;
+}
+
+/** OAuth App row from /internal/oauth-apps (Phase 153 — distinct from GitHub App). */
+export interface BleephubOAuthApp {
+  clientId: string;
+  name: string;
+  description: string;
+  url: string;
+  callbackUrl: string;
+  ownerId: number;
   createdAt: string;
 }
 

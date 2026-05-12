@@ -124,6 +124,12 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				},
 			},
 			"authorAssociation": &graphql.Field{Type: graphql.String},
+			// Fields gh CLI's `gh issue view` queries on IssueComment — defaults
+			// fine for bleephub (we don't model edit history or moderation).
+			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"reactionGroups":      &graphql.Field{Type: graphql.NewList(reactionGroupType), Resolve: emptyList},
 		},
 	})
 
@@ -219,7 +225,34 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				Type: issueMilestoneType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
-					return i["milestone"], nil
+					m, ok := i["milestone"].(map[string]interface{})
+					if !ok || m == nil {
+						// graphql-go's NonNull checks fire even on a nil-valued
+						// map[string]interface{}; return untyped nil so the field
+						// resolves to null cleanly.
+						return nil, nil
+					}
+					return m, nil
+				},
+			},
+			// ProjectV2 items — gh CLI's `gh issue view` queries Issue.projectItems
+			// as a second round-trip. Bleephub doesn't model Projects v2; return
+			// an empty connection so the query type-checks + resolves cleanly.
+			"projectItems": &graphql.Field{
+				Type: projectV2ItemConnectionType(),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{
+						"totalCount": 0,
+						"nodes":      []interface{}{},
+						"pageInfo": map[string]interface{}{
+							"hasNextPage": false,
+							"endCursor":   nil,
+						},
+					}, nil
 				},
 			},
 			"comments": &graphql.Field{
@@ -346,6 +379,24 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
+	// IssueOrderField + OrderDirection enums — gh CLI sends enum names like
+	// CREATED_AT / DESC, not strings.
+	issueOrderFieldEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueOrderField",
+		Values: graphql.EnumValueConfigMap{
+			"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+			"UPDATED_AT": &graphql.EnumValueConfig{Value: "UPDATED_AT"},
+			"COMMENTS":   &graphql.EnumValueConfig{Value: "COMMENTS"},
+		},
+	})
+	issueOrderDirectionEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueOrderDirection",
+		Values: graphql.EnumValueConfigMap{
+			"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
+			"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+		},
+	})
+
 	repoType.AddFieldConfig("issues", &graphql.Field{
 		Type: issueConnectionType,
 		Args: graphql.FieldConfigArgument{
@@ -357,8 +408,8 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "IssueOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
-					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},
-					"direction": &graphql.InputObjectFieldConfig{Type: graphql.String},
+					"field":     &graphql.InputObjectFieldConfig{Type: issueOrderFieldEnum},
+					"direction": &graphql.InputObjectFieldConfig{Type: issueOrderDirectionEnum},
 				},
 			})},
 		},
@@ -450,26 +501,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
-	// issueOrPullRequest — gh issue view uses this
-	repoType.AddFieldConfig("issueOrPullRequest", &graphql.Field{
-		Type: issueType,
-		Args: graphql.FieldConfigArgument{
-			"number": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
-		},
-		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
-			repoID, _ := repo["databaseId"].(int)
-			number, _ := p.Args["number"].(int)
-
-			issue := s.store.GetIssueByNumber(repoID, number)
-			if issue == nil {
-				return nil, nil
-			}
-			result := issueToGQL(issue, s.store)
-			result["__typename"] = "Issue"
-			return result, nil
-		},
-	})
+	// issueOrPullRequest is defined in addPullRequestFieldsToSchema (after the
+	// PullRequest type exists), so it can return a union of Issue|PullRequest.
+	// gh CLI's `gh issue view <N>` uses `...on Issue` + `...on PullRequest`
+	// fragments which require a real union return type.
 
 	repoType.AddFieldConfig("labels", &graphql.Field{
 		Type: labelConnectionType,
@@ -1198,3 +1233,79 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 		},
 	}
 }
+
+// Schema-stub resolvers — return a default for fields that gh CLI queries
+// but bleephub doesn't model (edit history, moderation, reactions).
+// Errors-free responses unblock gh's queries; the contract returns defaults.
+// projectV2ItemConnectionType returns a singleton stub for GitHub Projects v2
+// queries gh CLI's `gh issue view` performs. bleephub doesn't model Projects
+// v2; this returns a queryable but always-empty connection.
+//
+// Defined as a function (not a top-level var) so it's lazily-constructed —
+// graphql-go panics if types are constructed before the parent type is built.
+var projectV2ItemConnectionTypeMemo *graphql.Object
+
+func projectV2ItemConnectionType() *graphql.Object {
+	if projectV2ItemConnectionTypeMemo != nil {
+		return projectV2ItemConnectionTypeMemo
+	}
+	projectV2Type := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2",
+		Fields: graphql.Fields{
+			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
+		},
+	})
+	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldSingleSelectValue",
+		Fields: graphql.Fields{
+			"optionId": &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"name":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+		},
+	})
+	itemFieldValueUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "ProjectV2ItemFieldValue",
+		Types: []*graphql.Object{singleSelectValueType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			return singleSelectValueType
+		},
+	})
+	projectV2ItemType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2Item",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"project": &graphql.Field{
+				Type:    projectV2Type,
+				Resolve: alwaysNil,
+			},
+			"fieldValueByName": &graphql.Field{
+				Type: itemFieldValueUnion,
+				Args: graphql.FieldConfigArgument{
+					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				},
+				Resolve: alwaysNil,
+			},
+		},
+	})
+	projectV2ItemPageInfoType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemPageInfo",
+		Fields: graphql.Fields{
+			"hasNextPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"endCursor":   &graphql.Field{Type: graphql.String},
+		},
+	})
+	projectV2ItemConnectionTypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemConnection",
+		Fields: graphql.Fields{
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemType)},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(projectV2ItemPageInfoType)},
+		},
+	})
+	return projectV2ItemConnectionTypeMemo
+}
+
+func alwaysFalse(graphql.ResolveParams) (interface{}, error)       { return false, nil }
+func alwaysNil(graphql.ResolveParams) (interface{}, error)         { return nil, nil }
+func emptyList(graphql.ResolveParams) (interface{}, error)         { return []interface{}{}, nil }
+func alwaysEmptyString(graphql.ResolveParams) (interface{}, error) { return "", nil }

@@ -6,48 +6,57 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-87d-92-observability-closeout-gcs-sync` — Phase 87d closeout + Phase 92 bundled, in flight. |
-| In-flight | Phase 87d — trace context propagation across admin + bleephub HTTP clients (otelhttp.NewTransport on every plain `&http.Client{}`); MeterProvider + runtime metrics across all 12 components (auto-emits HTTP request count/duration/size from the existing otelhttp.NewHandler + Go runtime metrics); `make stack-observability-validate` end-to-end harness. Phase 92 — gcs-fuse deregistered on cloudrun + gcf with translator reject pointing at gcs-sync (Cloud Run rejects cache-TTL flags so gcs-fuse is broken for cross-task workspaces — BUG-987 closes the original BUG-944 documentation). |
-| Last merged | PR #150 — Phase 87c full scope (2026-05-10). |
+| Active branch | `docs-cleanup-actionable` — Phase 153 (bleephub↔GitHub API parity + SQLite persistence + real `gh` CLI compatibility) **complete on PR #153, awaiting user merge**. |
+| In-flight | Phase 153 — all 13 sub-tasks shipped. Docker harness 50/50 PASS. PR #153 ready. **Do NOT auto-merge.** |
+| Last merged | PR #152 — `docs/POD_MATERIALIZATION.md` (2026-05-12). |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 987 fixed. |
+| Bugs | 0 open · 990 fixed. |
 | Live infra | None up. |
 
-**Invariant:** components stay decoupled from admin / UI. Sims, backends, bleephub run independently via env vars; admin only reads what they already expose (`/v1/health`, `/v1/info`). Phase 81 SSE tails admin's own `.stack-pids/<name>.log`; Phase 82 rollup queries existing `/internal/v1/resources` endpoints — no new component-side wiring.
+## Invariants
 
-## Phase 87d + 92 — in flight on `phase-87d-92-observability-closeout-gcs-sync`
+- **Components stay decoupled from admin / UI.** Sims, backends, bleephub run independently via env vars; admin reads only `/v1/health`, `/v1/info`, env. No admin-required env vars on components, no startup registration.
+- **Bleephub is maximally compatible with the GitHub REST/GraphQL API.** If GitHub accepts it, bleephub accepts it — including string-coerced booleans/integers in JSON bodies (what `gh api -f key=value` sends). This is the GitHub API spec; not a fallback.
+- **The `gh` CLI must work directly against bleephub.** Tests use real `gh repo create` / `gh issue create` / `gh pr create` against the running bleephub, not `gh api` URL hackery.
+- **GitHub Apps and OAuth Apps are separate concepts.** Distinct store entries, distinct token prefixes (`gho_` vs `ghu_` vs `ghs_` vs `ghr_` vs `ghp_`), parallel surfaces on `/applications/{client_id}/...`.
+- **Installation tokens are immutable snapshots.** Bumping installation perms post-mint does NOT auto-upgrade existing tokens (mirrors real GH).
+- **Persistence is opt-in + fail-loud.** `BLEEPHUB_PERSIST=true` enables SQLite. Open-failure `log.Fatalf`s (BUG-985/986 pattern); never silently falls back to in-memory.
+- **No fakes / no fallbacks.** Unknown values fail loud. Operator-requested persistence + auth never silently degrade.
+- **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud` — no implicit skip.
+- **Backend ↔ host primitive must match.** ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, GCF in CRF, ACA in ACA, AZF in AZF.
+- **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y".
 
-**Phase 87d closes Phase 87.** Three real gaps the audit surfaced after the bridge work merged:
+## Phase 153 progress (`docs-cleanup-actionable` branch / PR #153)
 
-1. **Trace context propagation** — admin's 7 plain `&http.Client{}` sites (proxyClient, rollupClient, health-poll, component proxy, project-manager health-wait, sim bootstrap, instance probe) and bleephub's 2 (GitHub Actions tarball fetch, webhook dispatch) now use `otelhttp.NewTransport(http.DefaultTransport)` so outgoing requests carry the `traceparent` header. `tracedHTTPClient(timeout)` helper added in admin's `otel.go` for clean reuse. Global propagator (`TraceContext + Baggage`) set inside each of the 5 `InitObservability` implementations — 12 components covered.
-2. **MeterProvider + runtime metrics** — `InitObservability` now also creates a MeterProvider with the OTLP HTTP metric exporter, so `otelhttp.NewHandler`'s built-in HTTP request count / duration / size flow (they were emitted into a no-op meter until now). `runtime.Start` from `go.opentelemetry.io/contrib/instrumentation/runtime` wires Go runtime metrics (goroutines, GC pauses, heap size). 2 new tests in `backends/core/otel_test.go`.
-3. **`make stack-observability-validate`** — manual operator-grade end-to-end check. Polls VictoriaLogs + Jaeger until ≥1 log line and ≥1 trace land for the requested service (default `sockerless-backend-docker`), with configurable timeout (`OBS_VALIDATE_TIMEOUT_S`, default 30s) and service override (`OBS_VALIDATE_SERVICE`). Documented in `docs/OBSERVABILITY.md` § Validation.
+12 commits shipped. Per-sub-task:
 
-**Phase 92 closes BUG-944 + ships BUG-987.** `Backing: gcs-fuse` on cloudrun + gcf produced silently broken cross-task workspaces because Cloud Run rejects the cache-TTL gcsfuse flags as unrecognized (`metadata-cache:ttl-secs`, `metadata-cache:negative-ttl-secs`). Without those flags the 5s negative-cache hides freshly-written files from sibling containers. Real fix: deregister `GCSFuseDriver` on cloudrun + gcf, translator rejects `BackingGCSFuse` with a concrete pointer at `gcs-sync` (per-exec tar/untar, no FUSE, strong consistency). Driver code stays in `backends/gcp-common/storage_gcsfuse.go` for hypothetical future backends without the flag-allowlist constraint.
+| Sub-task | Commit | What |
+|---|---|---|
+| P153.1 | `e87239e` | Store + types: Installation suspend/repo-selection, OAuth Apps, UserToServerToken (gho_/ghu_/ghr_), Checks API store |
+| P153.2 | `dc3ceb3` | Middleware recognises gho_/ghu_/ghr_; default mint switches bph_ → ghp_ |
+| P153.3 | `c019df9` | apps/{slug}, suspend/unsuspend, orgs/{org}/installation, users/{u}/installation, repo-selection mgmt, installation/repositories |
+| P153.4 | `bba640b` | App-level webhook config + deliveries (`/app/hook/config` + `/app/hook/deliveries`) |
+| P153.5 | `fab271b` | `/applications/{client_id}/token` family + OAuth App management endpoints |
+| P153.6 | `2fb5e06` | `requirePerm(scope, level)` decorator gates write-class endpoints; repo hook redelivery |
+| P153.7 | `d5cfb27` | `installation:{id}` payload field + X-GitHub-Hook-* headers + X-Hub-Signature SHA1 + installation/installation_repositories events |
+| P153.8 | `93d5295` | Checks API (check-runs + check-suites + annotations) |
+| P153.9 | `5f97511` | HATEOAS `*_url` fields on appToJSON + installationToJSON |
+| P153.10 | `297484f` | UI: permissions/events form, PEM + secrets viewer, OAuth Apps tab, suspend/delete |
+| P153.11 | `c586b18` | Phase 153 added to gh CLI test script + state save |
+| P153.12 | `192c627` | SQLite persistence — KV-style table, 9 buckets persisted, fail-loud on open |
+| P153.13 | `0fd5549` + `b3685ef` + `dfdf3db` + `b538d5c` | Real `gh` CLI Docker harness (`make bleephub-gh-docker-test`) — 50/50 PASS. GitHub-spec body tolerance (`flexBool`/`flexInt`/...); GraphQL parity (enums + `repositoryOwner` + Issue\|PullRequest union + `Issue.projectItems` stub + PR fields). Native `gh repo create`/view/list, `gh issue create`/view/list all pass; closed BUG-988/989/990. |
 
-## Phases after 87d / 92
+CI runs after each push on PR #153. Two consecutive green CI runs on `297484f` and `192c627`. Never auto-merge — user merges.
 
-- **Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. Bookmarked: Cloud Run lacks the primitive entirely (`runpb.Volume` has no PersistentDisk field). Implementation requires either a sockerless GCE-style backend or a future Cloud Run feature.
-- **Live-cloud validation track** — Lambda / Cloud Run Services / ACA Apps / AZF cloud-dns / Lambda service-mesh / ACA-AZF Azure AD.
-
-## Recently shipped
+## Recently shipped (older PRs in WHAT_WE_DID.md)
 
 | Date | PR | Headline |
 |---|---|---|
-| 2026-05-10 | #149 | Phase 91 (consolidated) — Lambda volume_translator scaffolding + framework migration; cloudrun + gcf reject `BackingPDEphemeral` with concrete pointers; integration TestMain switched to public.ecr.aws to dodge Docker Hub throttling. |
-| 2026-05-10 | #148 | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. ACA `StorageTypeEmptyDir`; ECS + AZF reject loudly with concrete pointers. |
-| 2026-05-10 | #147 | Phase 91 — `BackingMemory` translator on cloudrun + gcf (`EmptyDir{Memory}` + `SizeLimit` from `spec.Memory.SizeMB`). Closes the framework-vs-translator gap on the GCP backends. |
-| 2026-05-10 | #146 | Phase 87b — wire OTel SDK across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go + otelhttp.NewHandler on sim/admin muxes. Spans flow from every Go binary into Jaeger when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
-| 2026-05-10 | #145 | Phase 87 (Stack A first PR) — `make stack-observability-{up,down,status}` (otel-collector + VictoriaLogs + Jaeger), filelog receiver scraping `.stack-pids/*.log`, `GET /api/v1/observability` endpoint, VictoriaLogs/Jaeger deep-link chips on the diagnostic panel, `docs/OBSERVABILITY.md`. |
-| 2026-05-10 | #144 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
-| 2026-05-10 | #143 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload / Restart prompt. |
-| 2026-05-10 | #142 | Phase 84 + BUG-985 + BUG-986 — sim NewServer + MakeStore fail loud on persistence open; admin SIM_DATA_DIR injection per topology instance; cross-cloud isolation tests; make purge-state operator targets. |
-| 2026-05-10 | #141 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` retired. |
-| 2026-05-10 | #140 | Phase 81 + Phase 82 — SSE log endpoint + single-instance tail UI + instance proxy endpoint + combined timeline + API console UI; cloud-resources rollup endpoint + UI with instance/cloud/service/flat groupings + failed-sources banner. |
-| 2026-05-10 | #139 | Phase 80 — admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status, Start/Stop/Rebuild, port registry. |
-| 2026-05-10 | #138 | Phase 79 — `sockerless.yaml` topology store, `TopologyManager`, CRUD REST surface, `make/components.mk` lifecycle targets, port allocator. + Phase 87 plan + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation. |
-| 2026-05-10 | #137 | Phase 78 UI polish (dark mode, Toast/InlineError, Modal, a11y, perf, READMEs) + Phase 79 step 1 (`Instance` type). |
-| 2026-05-10 | #136 | Phase 121b finish — driver consolidation, host-aliases everywhere, AZF/Lambda DNS, Azure AD access. |
-| 2026-05-09 | #135 | Phase 121b initial — Azure sim hardening, all-6-backends harness restructure, driver consolidation, GCP sim Cloud Run routing, envelope parsing, label round-trip. |
-
-Older PRs in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+| 2026-05-12 | #152 | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
+| 2026-05-11 | #151 | Phase 87d closeout + Phase 92 — trace propagation + MeterProvider + runtime metrics; `Backing: gcs-fuse` deregistered. |
+| 2026-05-10 | #150 | Phase 87c — zerolog → OTel logs bridge across all 12 components. |
+| 2026-05-10 | #149 | Phase 91 (consolidated) — Lambda volume_translator framework migration; cloudrun + gcf reject `BackingPDEphemeral`. |
+| 2026-05-10 | #148 | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. |
+| 2026-05-10 | #147 | Phase 91 — `BackingMemory` translator on cloudrun + gcf. |
+| 2026-05-10 | #146 | Phase 87b — component-side OTel SDK wiring. |
+| 2026-05-10 | #145 | Phase 87 — observability stack. |

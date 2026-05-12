@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // X-Hub-Signature legacy SHA1 alongside SHA256 — required for parity with real GH
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,12 @@ func computeHMACSignature(secret string, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func computeHMACSignatureSHA1(secret string, payload []byte) string {
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write(payload)
+	return "sha1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // emitWebhookEvent dispatches an event to matching webhooks (non-blocking).
@@ -86,9 +94,18 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 		"User-Agent":        "GitHub-Hookshot/bleephub",
 		"X-GitHub-Event":    event,
 		"X-GitHub-Delivery": guid,
+		"X-GitHub-Hook-ID":  strconv.Itoa(hook.ID),
 	}
 	if hook.Secret != "" {
 		reqHeaders["X-Hub-Signature-256"] = computeHMACSignature(hook.Secret, payloadBytes)
+		reqHeaders["X-Hub-Signature"] = computeHMACSignatureSHA1(hook.Secret, payloadBytes)
+	}
+	// Installation-target headers when the hook is app-bound (HookID < 0 marks an app hook).
+	if hook.ID < 0 {
+		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "integration"
+		reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(-hook.ID)
+	} else {
+		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "repository"
 	}
 
 	httpReq, err := http.NewRequest("POST", hook.URL, bytes.NewReader(payloadBytes))

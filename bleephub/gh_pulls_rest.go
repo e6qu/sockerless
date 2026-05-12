@@ -11,14 +11,14 @@ import (
 )
 
 func (s *Server) registerGHPullRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls", s.handleCreatePullRequest)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls", s.requirePerm("pull_requests", permWrite, s.handleCreatePullRequest))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls", s.handleListPullRequests)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}", s.handleGetPullRequest)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{number}", s.handleUpdatePullRequest)
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/merge", s.handleMergePullRequest)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.handleCreatePRReview)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{number}", s.requirePerm("pull_requests", permWrite, s.handleUpdatePullRequest))
+	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/merge", s.requirePerm("contents", permWrite, s.handleMergePullRequest))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.requirePerm("pull_requests", permWrite, s.handleCreatePRReview))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.handleListPRReviews)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.handleRequestReviewers)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm("pull_requests", permWrite, s.handleRequestReviewers))
 }
 
 func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request) {
@@ -37,11 +37,11 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-		Head  string `json:"head"`
-		Base  string `json:"base"`
-		Draft bool   `json:"draft"`
+		Title string   `json:"title"`
+		Body  string   `json:"body"`
+		Head  string   `json:"head"`
+		Base  string   `json:"base"`
+		Draft flexBool `json:"draft"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
@@ -52,7 +52,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, req.Head, req.Base, req.Draft, nil, nil, 0)
+	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, req.Head, req.Base, bool(req.Draft), nil, nil, 0)
 	if pr == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Pull request creation failed")
 		return

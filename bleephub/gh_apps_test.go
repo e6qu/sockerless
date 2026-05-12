@@ -109,7 +109,7 @@ func TestInstallationTokenGeneration(t *testing.T) {
 	app := st.CreateApp(1, "Token App", "", nil, nil)
 	inst := st.CreateInstallation(app.ID, "User", 1, "admin", nil, nil)
 
-	token := st.CreateInstallationToken(inst.ID, app.ID, map[string]string{"contents": "read"})
+	token := st.CreateInstallationToken(inst.ID, app.ID, map[string]string{"contents": "read"}, nil)
 	if !strings.HasPrefix(token.Token, "ghs_") {
 		t.Fatalf("expected ghs_ prefix, got %s", token.Token)
 	}
@@ -135,7 +135,7 @@ func TestInstallationTokenExpiry(t *testing.T) {
 	app := st.CreateApp(1, "Expiry App", "", nil, nil)
 	inst := st.CreateInstallation(app.ID, "User", 1, "admin", nil, nil)
 
-	token := st.CreateInstallationToken(inst.ID, app.ID, nil)
+	token := st.CreateInstallationToken(inst.ID, app.ID, nil, nil)
 
 	// Force expire
 	st.mu.Lock()

@@ -203,9 +203,28 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
+	// PRComment type — must match IssueComment's nullability for shared fields
+	// (body, createdAt). gh CLI's `gh issue view` query unions Issue|PR with
+	// shared `comments.nodes` field selections; the field types must merge.
+	prCommentType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PRComment",
+		Fields: graphql.Fields{
+			"id":                  &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"body":                &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
+			"createdAt":           &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
+			"authorAssociation":   &graphql.Field{Type: graphql.String, Resolve: alwaysEmptyString},
+			"author":              &graphql.Field{Type: userType, Resolve: alwaysNil},
+			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"reactionGroups":      &graphql.Field{Type: graphql.NewList(prReactionGroupType), Resolve: emptyList},
+		},
+	})
+
 	prCommentConnectionType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRCommentConnection",
 		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(prCommentType), Resolve: emptyList},
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(prCommentPageInfoType)},
 		},
@@ -327,11 +346,27 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				Type: prCommentConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
 					return pr["comments"], nil
 				},
+			},
+			// `milestone` — gh CLI's issue view fragment queries it on PR too
+			// (real GH PRs have milestones). bleephub doesn't model PR milestones
+			// today; return nil so the field is queryable but always empty.
+			"milestone": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "PRMilestone",
+					Fields: graphql.Fields{
+						"number":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+						"title":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+						"description": &graphql.Field{Type: graphql.String},
+						"dueOn":       &graphql.Field{Type: graphql.String},
+					},
+				}),
+				Resolve: alwaysNil,
 			},
 			"commits": &graphql.Field{
 				Type: prCommitConnectionType,
@@ -494,6 +529,47 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				return nil, nil
 			}
 			return pullRequestToGQL(pr, s.store), nil
+		},
+	})
+
+	// BUG-989 fix — issueOrPullRequest as a real Issue|PullRequest union so
+	// gh CLI's `gh issue view <N>` `...on Issue` + `...on PullRequest`
+	// fragments type-check.
+	issueOrPRUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:        "IssueOrPullRequest",
+		Description: "Either an Issue or a PullRequest (matches GitHub's polymorphic lookup by number).",
+		Types:       []*graphql.Object{issueType, pullRequestType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			if m, ok := p.Value.(map[string]interface{}); ok {
+				if tn, _ := m["__typename"].(string); tn == "PullRequest" {
+					return pullRequestType
+				}
+			}
+			return issueType
+		},
+	})
+	repoType.AddFieldConfig("issueOrPullRequest", &graphql.Field{
+		Type: issueOrPRUnion,
+		Args: graphql.FieldConfigArgument{
+			"number": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			repo := p.Source.(map[string]interface{})
+			repoID, _ := repo["databaseId"].(int)
+			number, _ := p.Args["number"].(int)
+
+			// Issue first; if not found, fall through to PR.
+			if issue := s.store.GetIssueByNumber(repoID, number); issue != nil {
+				result := issueToGQL(issue, s.store)
+				result["__typename"] = "Issue"
+				return result, nil
+			}
+			if pr := s.store.GetPullRequestByNumber(repoID, number); pr != nil {
+				result := pullRequestToGQL(pr, s.store)
+				result["__typename"] = "PullRequest"
+				return result, nil
+			}
+			return nil, nil
 		},
 	})
 

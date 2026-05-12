@@ -29,17 +29,20 @@ type DeliveryResponse struct {
 
 // WebhookDelivery records a single delivery attempt for a webhook.
 type WebhookDelivery struct {
-	ID          int               `json:"id"`
-	HookID      int               `json:"hook_id"`
-	GUID        string            `json:"guid"`
-	Event       string            `json:"event"`
-	Action      string            `json:"action"`
-	StatusCode  int               `json:"status_code"`
-	Duration    float64           `json:"duration"`
-	Request     *DeliveryRequest  `json:"request"`
-	Response    *DeliveryResponse `json:"response"`
-	Redelivery  bool              `json:"redelivery"`
-	DeliveredAt time.Time         `json:"delivered_at"`
+	ID             int               `json:"id"`
+	HookID         int               `json:"hook_id"`
+	AppID          int               `json:"app_id,omitempty"`
+	InstallationID int               `json:"installation_id,omitempty"`
+	RepositoryID   int               `json:"repository_id,omitempty"`
+	GUID           string            `json:"guid"`
+	Event          string            `json:"event"`
+	Action         string            `json:"action"`
+	StatusCode     int               `json:"status_code"`
+	Duration       float64           `json:"duration"`
+	Request        *DeliveryRequest  `json:"request"`
+	Response       *DeliveryResponse `json:"response"`
+	Redelivery     bool              `json:"redelivery"`
+	DeliveredAt    time.Time         `json:"delivered_at"`
 }
 
 // CreateHook creates a new webhook for a repository.

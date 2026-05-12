@@ -8,33 +8,34 @@ import (
 )
 
 func (s *Server) registerGHIssueRoutes() {
-	// Labels
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/labels", s.handleCreateLabel)
+	// Labels — issues:write covers labels (real GH conflates the two; admin
+	// would be required for organization-level changes which bleephub doesn't model).
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/labels", s.requirePerm("issues", permWrite, s.handleCreateLabel))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/labels", s.handleListLabels)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/labels/{name}", s.handleGetLabel)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/labels/{name}", s.handleUpdateLabel)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/labels/{name}", s.handleDeleteLabel)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/labels/{name}", s.requirePerm("issues", permWrite, s.handleUpdateLabel))
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/labels/{name}", s.requirePerm("issues", permWrite, s.handleDeleteLabel))
 
 	// Milestones
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/milestones", s.handleCreateMilestone)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/milestones", s.requirePerm("issues", permWrite, s.handleCreateMilestone))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/milestones", s.handleListMilestones)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/milestones/{number}", s.handleGetMilestone)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/milestones/{number}", s.handleUpdateMilestone)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/milestones/{number}", s.handleDeleteMilestone)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/milestones/{number}", s.requirePerm("issues", permWrite, s.handleUpdateMilestone))
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/milestones/{number}", s.requirePerm("issues", permWrite, s.handleDeleteMilestone))
 
 	// Issues
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues", s.handleCreateIssue)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues", s.requirePerm("issues", permWrite, s.handleCreateIssue))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues", s.handleListIssues)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues/{number}", s.handleGetIssue)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/issues/{number}", s.handleUpdateIssue)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/issues/{number}", s.requirePerm("issues", permWrite, s.handleUpdateIssue))
 
 	// Issue comments
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.handleCreateIssueComment)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.requirePerm("issues", permWrite, s.handleCreateIssueComment))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.handleListIssueComments)
 
 	// Issue label management
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.handleAddIssueLabels)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/labels/{name}", s.handleRemoveIssueLabel)
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.requirePerm("issues", permWrite, s.handleAddIssueLabels))
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/labels/{name}", s.requirePerm("issues", permWrite, s.handleRemoveIssueLabel))
 }
 
 // --- Label handlers ---

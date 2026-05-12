@@ -30,17 +30,19 @@ See also: [ARCHITECTURE.md](../ARCHITECTURE.md), [docs/GITHUB_RUNNER.md](../docs
 - Output passing between steps and jobs via `$GITHUB_OUTPUT`
 - GitHub REST + GraphQL API (repos, orgs, teams, users, issues, PRs) for `gh` CLI
 - Git smart HTTP protocol (`go-git`) for `actions/checkout`
-- Webhooks (HMAC-SHA256, async delivery with 3 retries)
-- GitHub Apps (RS256 JWT, installation tokens, `ghs_`-prefixed)
-- OpenTelemetry tracing (optional, OTLP HTTP)
+- Webhooks (HMAC-SHA256, async delivery with 3 retries; `installation:{id}` field + app-targeted events come with Phase 153 — see below)
+- GitHub Apps — current surface: app create (manifest + management), `GET /app`, `GET|DELETE /app/installations`, installation token mint (`ghs_`), repo installation lookup, user installations + repos, OAuth web flow + device flow (one-time codes), RS256 JWT verify
+- OpenTelemetry tracing + logs + metrics (optional, OTLP HTTP)
 - Embedded React dashboard at `/ui/`
 
-## What it does not implement
+## What it does not implement (yet)
 
+- **GitHub API signature parity (Phase 153, planned)** — see [../specs/BLEEPHUB_GITHUB_API_PARITY.md](../specs/BLEEPHUB_GITHUB_API_PARITY.md). Missing today: `GET /apps/{slug}`, `/orgs/{org}/installation`, `/users/{username}/installation`, suspend/unsuspend, `GET /installation/repositories`, repo selection management, hook delivery redelivery, app-level webhook config, OAuth token-management family (`/applications/{client_id}/token`), Checks API. Installation tokens are not permission-gated at request handlers. Token prefixes don't disambiguate (`gho_` / `ghu_` / `ghr_` — bleephub uses `bph_` for non-installation tokens). Webhook payloads omit `installation:{id}` and several `X-GitHub-Hook-*` headers. `*_url` HATEOAS fields missing from many JSON responses.
 - Runner auto-update (`AgentRefreshMessage`)
 - V2 broker flow (uses legacy V1 pipelines paths)
 - Reusable workflows (`uses: ./.github/workflows/`)
 - Composite actions
+- Marketplace / billing
 
 ## How it works
 
@@ -123,7 +125,7 @@ This builds the Docker image (`bleephub/Dockerfile`), starts all services, confi
 | Core protocol | `server.go`, `auth.go`, `agents.go`, `broker.go`, `run_service.go`, `timeline.go` | Runner registration, job delivery, lifecycle |
 | Jobs & workflows | `jobs.go`, `workflow.go`, `workflows.go`, `workflows_msg.go`, `matrix.go`, `outputs.go`, `secrets.go`, `expressions.go`, `actions.go`, `artifacts.go` | Multi-job, matrix, secrets, expressions, artifacts |
 | GitHub API | `gh_rest.go`, `gh_graphql.go`, `gh_repos_*.go`, `gh_orgs_*.go`, `gh_issues_*.go`, `gh_pulls_*.go`, `gh_teams_rest.go`, `gh_labels_rest.go`, `gh_members_rest.go` | REST + GraphQL for `gh` CLI |
-| GitHub Apps | `gh_apps_jwt.go`, `gh_apps_rest.go`, `gh_apps_store.go`, `gh_oauth.go` | JWT auth, installation tokens, OAuth device flow |
+| GitHub Apps | `gh_apps_jwt.go`, `gh_apps_rest.go`, `gh_apps_store.go`, `gh_oauth.go` | RS256 JWT verify, installation tokens (`ghs_`), OAuth device + web flows |
 | Webhooks | `webhooks.go`, `webhooks_store.go`, `webhooks_payloads.go`, `gh_hooks_rest.go` | HMAC-SHA256 delivery with retry |
 | Git | `git_http.go` | Smart HTTP protocol (go-git) |
 | Infrastructure | `store.go`, `store_*.go`, `rbac.go`, `metrics.go`, `otel.go`, `handle_mgmt.go`, `ui_embed.go` | State, RBAC, metrics, OTel, dashboard |

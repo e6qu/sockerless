@@ -276,8 +276,8 @@ func TestGHDeviceFlow(t *testing.T) {
 	if accessToken == "" {
 		t.Fatal("missing access_token")
 	}
-	if !strings.HasPrefix(accessToken, "bph_") {
-		t.Fatalf("expected bph_ prefix, got %s", accessToken)
+	if !strings.HasPrefix(accessToken, "ghp_") && !strings.HasPrefix(accessToken, "gho_") {
+		t.Fatalf("expected ghp_ or gho_ prefix, got %s", accessToken)
 	}
 
 	// Step 3: Use the new token to hit /api/v3/

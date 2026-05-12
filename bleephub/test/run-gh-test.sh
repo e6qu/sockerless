@@ -67,7 +67,7 @@ export GIT_SSL_CAINFO=/tmp/tls/ca.crt
 log "Starting bleephub..."
 export BPH_TLS_CERT=/tmp/tls/server.crt
 export BPH_TLS_KEY=/tmp/tls/server.key
-bleephub -addr :443 &
+bleephub -addr :443 --log-level debug > /tmp/bleephub.log 2>&1 &
 BPH_PID=$!
 
 # Wait for server
@@ -93,11 +93,24 @@ git config --global init.defaultBranch main
 # Default token
 TOKEN="bph_0000000000000000000000000000000000000000"
 BASE="https://localhost"
+HOST="localhost"
 
-# We'll use gh api with full URLs + -H for auth, since gh auth login for
-# custom GHES hostnames can be tricky. This tests the exact same REST/GraphQL
-# endpoints that gh CLI uses.
+# --- Authenticate gh CLI against bleephub ---
+# gh CLI gates all calls on "you must be logged in to some host". Login it
+# against bleephub as a GHES host so high-level commands (gh repo create,
+# gh issue create, gh pr create, gh release create, ...) target bleephub.
+# We set GH_TOKEN to satisfy the default-host check AND `gh auth login`
+# the bleephub host explicitly with the same token.
+export GH_TOKEN="$TOKEN"
+export GH_HOST="$HOST"
+# Login the host so gh's host config has bleephub as a known GHES.
+echo "$TOKEN" | gh auth login --hostname "$HOST" --with-token >/dev/null 2>&1 || true
+gh config set -h "$HOST" git_protocol https >/dev/null 2>&1 || true
 
+# `api` for endpoints `gh` doesn't expose as a high-level command
+# (apps/{slug}, /applications/{cid}/token, suspend, etc.). For the
+# happy-path repo/issue/PR/release surface, use real `gh repo create`,
+# `gh issue create`, `gh pr create`, `gh release create` below.
 api() {
     gh api -H "Authorization: token $TOKEN" -H "Accept: application/vnd.github+json" "$@"
 }
@@ -126,10 +139,17 @@ GQL_LOGIN=$(echo "$GQL" | jq -r '.data.viewer.login')
 assert_eq "graphql viewer login" "admin" "$GQL_LOGIN"
 
 # ============================================================
-# Test: Create repo
+# Test: Create repo via real `gh repo create`
 # ============================================================
-log "Test: Create repo"
-REPO=$(api "$BASE/api/v3/user/repos" -f name=gh-test-repo -f description="GH CLI test" -f private=false)
+log "Test: gh repo create"
+# gh repo create posts to /user/repos with a JSON body matching real GitHub.
+# --public sends private=false; --description maps to description.
+if ! gh repo create gh-test-repo --public --description "GH CLI test" >/dev/null 2>&1; then
+    fail "gh repo create failed"
+else
+    pass "gh repo create"
+fi
+REPO=$(api "$BASE/api/v3/repos/admin/gh-test-repo")
 REPO_NAME=$(echo "$REPO" | jq -r '.name')
 assert_eq "repo name" "gh-test-repo" "$REPO_NAME"
 REPO_FULLNAME=$(echo "$REPO" | jq -r '.full_name')
@@ -140,15 +160,28 @@ PERMS_ADMIN=$(echo "$REPO" | jq -r '.permissions.admin')
 assert_eq "repo permissions.admin" "true" "$PERMS_ADMIN"
 
 # ============================================================
-# Test: List repos
+# Test: List repos via real `gh repo list`
 # ============================================================
-log "Test: List repos"
-REPOS=$(api "$BASE/api/v3/user/repos")
-REPO_COUNT=$(echo "$REPOS" | jq 'length')
-if [ "$REPO_COUNT" -ge 1 ]; then
-    pass "list repos returns >= 1"
+log "Test: gh repo list"
+# Without --json gh uses REST. With --json it uses GraphQL (separate
+# parity surface). REST path is the minimum that must work.
+if gh repo list admin >/dev/null 2>&1; then
+    pass "gh repo list"
 else
-    fail "list repos returned $REPO_COUNT"
+    fail "gh repo list returned non-zero"
+fi
+
+# ============================================================
+# Test: View repo via real `gh repo view` (REST path, no --json)
+# ============================================================
+log "Test: gh repo view"
+# Without --json gh uses REST. With --json it uses GraphQL — that's a
+# separate parity surface (gh's GraphQL field names map onto bleephub's
+# schema). REST path is the minimum that must work.
+if gh repo view admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh repo view"
+else
+    fail "gh repo view returned non-zero"
 fi
 
 # ============================================================
@@ -180,33 +213,47 @@ else
 fi
 
 # ============================================================
-# Test: Create issue
+# Test: Create issue via real `gh issue create`
 # ============================================================
-log "Test: Create issue"
-ISSUE=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues" -f title="GH CLI issue" -f body="Testing via gh api")
-ISSUE_NUM=$(echo "$ISSUE" | jq -r '.number')
-assert_eq "issue number" "1" "$ISSUE_NUM"
-ISSUE_STATE=$(echo "$ISSUE" | jq -r '.state')
-assert_eq "issue state" "open" "$ISSUE_STATE"
-
-# ============================================================
-# Test: Get issue
-# ============================================================
-log "Test: Get issue"
-ISSUE_GET=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues/1")
-ISSUE_TITLE=$(echo "$ISSUE_GET" | jq -r '.title')
-assert_eq "get issue title" "GH CLI issue" "$ISSUE_TITLE"
-
-# ============================================================
-# Test: List issues
-# ============================================================
-log "Test: List issues"
-ISSUES=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues")
-ISSUE_LIST_COUNT=$(echo "$ISSUES" | jq 'length')
-if [ "$ISSUE_LIST_COUNT" -ge 1 ]; then
-    pass "list issues returns >= 1"
+log "Test: gh issue create"
+# Real gh exits 0 when the issue is created. We verify by GETting the
+# issue via REST afterwards rather than parsing gh's URL output (which
+# varies across gh versions and Host configs).
+if ! gh issue create --repo admin/gh-test-repo --title "GH CLI issue" --body "Testing via real gh" >/dev/null 2>&1; then
+    fail "gh issue create returned non-zero"
 else
-    fail "list issues returned $ISSUE_LIST_COUNT"
+    pass "gh issue create exited 0"
+fi
+ISSUE_GET=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues/1")
+ISSUE_NUM=$(echo "$ISSUE_GET" | jq -r '.number')
+assert_eq "issue 1 exists after gh issue create" "1" "$ISSUE_NUM"
+ISSUE_TITLE=$(echo "$ISSUE_GET" | jq -r '.title')
+assert_eq "issue 1 title after gh issue create" "GH CLI issue" "$ISSUE_TITLE"
+ISSUE_STATE=$(echo "$ISSUE_GET" | jq -r '.state')
+assert_eq "issue 1 state after gh issue create" "open" "$ISSUE_STATE"
+
+# ============================================================
+# Test: View issue via real `gh issue view` (REST-backed, --json optional)
+# ============================================================
+log "Test: gh issue view"
+# `gh issue view N --repo …` uses the REST API directly; --json args go
+# through GraphQL on real GH. We test the REST-only path here by NOT
+# passing --json — gh prints a human-readable summary on success.
+if gh issue view 1 --repo admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh issue view"
+else
+    fail "gh issue view returned non-zero"
+fi
+
+# ============================================================
+# Test: List issues via real `gh issue list` (REST-backed)
+# ============================================================
+log "Test: gh issue list"
+# Same as above — without --json gh uses REST.
+if gh issue list --repo admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh issue list"
+else
+    fail "gh issue list returned non-zero"
 fi
 
 # ============================================================
@@ -366,6 +413,79 @@ else
 fi
 
 # ============================================================
+# Phase 153 — GitHub Apps + OAuth Apps parity tests
+# ============================================================
+log "Phase 153: GitHub Apps + OAuth Apps surface"
+
+# Create a GitHub App with explicit permissions + events
+APP=$(api "$BASE/api/v3/bleephub/apps" -f name="Parity App" -f description="Phase 153 test" \
+    -f 'permissions[issues]=write' -f 'permissions[checks]=write' \
+    -f 'events[]=push' -f 'events[]=installation')
+APP_ID=$(echo "$APP" | jq -r '.id')
+APP_SLUG=$(echo "$APP" | jq -r '.slug')
+assert_not_empty "Phase153 app id"   "$APP_ID"
+assert_not_empty "Phase153 app slug" "$APP_SLUG"
+
+# Public app lookup (anonymous)
+APP_BY_SLUG=$(curl -sSk "$BASE/api/v3/apps/$APP_SLUG")
+SLUG_FROM_PUBLIC=$(echo "$APP_BY_SLUG" | jq -r '.slug')
+assert_eq "Phase153 GET /apps/{slug} anon" "$APP_SLUG" "$SLUG_FROM_PUBLIC"
+PEM_LEAK=$(echo "$APP_BY_SLUG" | jq -r '.pem // ""')
+assert_eq "Phase153 public app no PEM leak" "" "$PEM_LEAK"
+
+# Create an installation
+INST=$(api "$BASE/api/v3/bleephub/apps/$APP_ID/installations" \
+    -f target_type=User -f target_id=1 -f target_login=admin \
+    -f 'permissions[issues]=write' -f 'permissions[checks]=write')
+INST_ID=$(echo "$INST" | jq -r '.id')
+assert_not_empty "Phase153 installation id" "$INST_ID"
+SELECTION=$(echo "$INST" | jq -r '.repository_selection')
+assert_eq "Phase153 installation default repository_selection" "all" "$SELECTION"
+# HATEOAS url fields
+ACCESS_URL=$(echo "$INST" | jq -r '.access_tokens_url')
+case "$ACCESS_URL" in
+    *"/api/v3/app/installations/$INST_ID/access_tokens"*) pass "Phase153 installation access_tokens_url" ;;
+    *) fail "Phase153 access_tokens_url shape: $ACCESS_URL" ;;
+esac
+
+# Suspend / unsuspend (sim mgmt path)
+SUSPEND_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
+    "$BASE/api/v3/bleephub/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase153 suspend installation 204" "204" "$SUSPEND_CODE"
+UNSUSP_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
+    "$BASE/api/v3/bleephub/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase153 unsuspend installation 204" "204" "$UNSUSP_CODE"
+
+# Installation lookup by user
+USR_INST=$(curl -sSk -H "Authorization: token $TOKEN" "$BASE/api/v3/users/admin/installation")
+USR_INST_ID=$(echo "$USR_INST" | jq -r '.id // 0')
+assert_eq "Phase153 GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
+
+# OAuth App create + Basic-auth on /applications/{client_id}/token
+OA=$(api "$BASE/api/v3/bleephub/oauth-apps" -f name="OA Parity" -f description="Phase 153" \
+    -f url="https://example.test" -f callback_url="https://example.test/cb")
+OA_CID=$(echo "$OA" | jq -r '.client_id')
+OA_CSEC=$(echo "$OA" | jq -r '.client_secret')
+assert_not_empty "Phase153 oauth app client_id"     "$OA_CID"
+assert_not_empty "Phase153 oauth app client_secret" "$OA_CSEC"
+
+# Unknown token → 404
+ACTOK_404=$(curl -sSk -X POST -u "$OA_CID:$OA_CSEC" \
+    -H "Content-Type: application/json" \
+    -d '{"access_token":"gho_does_not_exist"}' \
+    "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase153 /applications/{client_id}/token unknown → 404" "404" "$ACTOK_404"
+
+# Wrong client secret → 401
+ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
+    -H "Content-Type: application/json" \
+    -d '{"access_token":"gho_x"}' \
+    "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase153 /applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
+
+log "Phase 153 parity probes complete"
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
@@ -378,6 +498,9 @@ echo "=============================="
 
 if [ "$FAIL" -gt 0 ]; then
     echo -e "Failures:$ERRORS"
+    echo ""
+    echo "=== last 80 lines of bleephub log (debug-level) for the failures ==="
+    tail -80 /tmp/bleephub.log 2>/dev/null || true
     kill $BPH_PID 2>/dev/null || true
     exit 1
 fi

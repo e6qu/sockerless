@@ -15,6 +15,8 @@ type contextKey string
 const ctxUser contextKey = "gh-user"
 const ctxApp contextKey = "gh-app"
 const ctxInstallation contextKey = "gh-installation"
+const ctxInstallationToken contextKey = "gh-installation-token"
+const ctxUserToServerToken contextKey = "gh-uts-token"
 
 // ghUserFromContext extracts the authenticated user from the request context.
 func ghUserFromContext(ctx context.Context) *User {
@@ -26,6 +28,34 @@ func ghUserFromContext(ctx context.Context) *User {
 func ghAppFromContext(ctx context.Context) *App {
 	a, _ := ctx.Value(ctxApp).(*App)
 	return a
+}
+
+// ghInstallationFromContext extracts the installation associated with the request,
+// if authenticated by a ghs_ installation token. Returns nil for other auth shapes.
+// Consumed by the permission decorator + Checks handlers (P153.6 / P153.8).
+//
+//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+func ghInstallationFromContext(ctx context.Context) *Installation {
+	i, _ := ctx.Value(ctxInstallation).(*Installation)
+	return i
+}
+
+// ghInstallationTokenFromContext extracts the installation token used to authenticate
+// the request, if any.
+//
+//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+func ghInstallationTokenFromContext(ctx context.Context) *InstallationToken {
+	t, _ := ctx.Value(ctxInstallationToken).(*InstallationToken)
+	return t
+}
+
+// ghUserToServerTokenFromContext extracts the gho_/ghu_ token used to authenticate,
+// if any.
+//
+//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+func ghUserToServerTokenFromContext(ctx context.Context) *UserToServerToken {
+	t, _ := ctx.Value(ctxUserToServerToken).(*UserToServerToken)
+	return t
 }
 
 // ghHeadersMiddleware injects GitHub-compatible response headers on /api/ routes
@@ -52,20 +82,35 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 				tokenStr = strings.TrimPrefix(auth, "Bearer ")
 			}
 			if tokenStr != "" {
-				if looksLikeJWT(tokenStr) {
+				switch {
+				case looksLikeJWT(tokenStr):
 					if app, err := s.store.parseAndVerifyAppJWT(tokenStr); err == nil {
 						ctx = context.WithValue(ctx, ctxApp, app)
 					}
-				} else if strings.HasPrefix(tokenStr, "ghs_") {
+				case strings.HasPrefix(tokenStr, "ghs_"):
 					if instToken, inst := s.store.LookupInstallationToken(tokenStr); instToken != nil {
 						ctx = context.WithValue(ctx, ctxInstallation, inst)
+						ctx = context.WithValue(ctx, ctxInstallationToken, instToken)
 						app := s.store.GetApp(instToken.AppID)
 						if app != nil {
 							botUser := &User{Login: app.Slug + "[bot]", Type: "Bot", ID: -app.ID}
 							ctx = context.WithValue(ctx, ctxUser, botUser)
 						}
 					}
-				} else {
+				case strings.HasPrefix(tokenStr, "gho_"), strings.HasPrefix(tokenStr, "ghu_"):
+					if utsTok, u := s.store.LookupUserToServerToken(tokenStr); utsTok != nil {
+						ctx = context.WithValue(ctx, ctxUserToServerToken, utsTok)
+						if u != nil {
+							ctx = context.WithValue(ctx, ctxUser, u)
+							user = u
+						}
+					}
+				case strings.HasPrefix(tokenStr, "ghr_"):
+					// Refresh tokens are not bearer credentials; they only work
+					// through POST /login/oauth/access_token with grant_type=refresh_token
+					// or PATCH /applications/{client_id}/token. Reject as bad credentials
+					// on Authorization-header use.
+				default:
 					token, user = s.store.LookupToken(tokenStr)
 				}
 			}

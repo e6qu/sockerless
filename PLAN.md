@@ -7,16 +7,18 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 ## Guiding principles
 
 1. **Docker API fidelity** — match Docker's REST API exactly.
-2. **Real execution** — sims and backends actually run commands; no stubs, fakes, or mocks.
-3. **External validation** — proven by unmodified external test suites.
-4. **Driver-first handlers** — handler code routes through driver interfaces.
-5. **LLM-editable files** — source files under 400 lines.
-6. **State persistence** — every task ends with a state save.
-7. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
-8. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
-9. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
-10. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
-11. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+2. **GitHub API fidelity (bleephub)** — match GitHub's REST + GraphQL paths and shapes exactly, modulo base domain. Including request-body tolerances: if real GitHub accepts string-coerced booleans (what `gh api -f` sends), bleephub accepts them too. The `gh` CLI must work directly against bleephub — not via URL hackery.
+3. **Real execution** — sims and backends actually run commands; no stubs, fakes, or mocks.
+4. **External validation** — proven by unmodified external test suites (the `gh` binary, the official `actions/runner`, real Docker SDKs, Terraform providers).
+5. **Driver-first handlers** — handler code routes through driver interfaces.
+6. **LLM-editable files** — source files under 400 lines.
+7. **State persistence** — every task ends with a state save (STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md / `_tasks/done/`).
+8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find. **In particular: we are not in legacy maintenance — no shims for old bleephub behavior.** If real GitHub does X, bleephub does X.
+9. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
+10. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
+11. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
+12. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+13. **Persistence is opt-in + fail-loud.** Operator-requested persistence (`BLEEPHUB_PERSIST=true`, `SIM_PERSIST=true`) that fails to open must `log.Fatalf`. Never silently fall back to in-memory (BUG-985/986).
 
 ## Closed phases (PR index)
 
@@ -28,162 +30,118 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #125 | CI reorg | Workflows reorganized: zero auto-fire on main; live-tests-{cloud}. |
 | #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration. |
 | #129 | 135 | Sim host model + 3-tier coverage + native arm64 CI runners. |
-| #130 | 128 | Runner job timeout (bootstrap timer + cloud-native cap; SIGTERM → 30s → SIGKILL → exit 124). |
+| #130 | 128 | Runner job timeout (bootstrap timer + cloud-native cap). |
 | #131 | 124 | Network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only). |
 | #132 | 125 | DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none). |
 | #133 | 126 | Access driver (iam-role / id-token / mTLS / none-internal). |
 | #134 | 127 | Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
-| #135 | 121b (initial) | Azure sim hardening, all-6-backends test harness restructure, in-memory storage, driver consolidation pattern B, GCP sim Cloud Run invoke routing, GCF envelope decode + label round-trip, drop QEMU. |
-| #136 | 121b (finish) | Network-discovery adapter consolidation; host-aliases opt-in everywhere; AZF cloud-dns + Lambda service-mesh wiring; Azure AD access driver; pair DNS + cloud-side provisioning to NetworkDiscovery. |
-| #137 | 78 + 79 step 1 | UI polish (dark mode toggle, Toast / InlineError, Modal + ContainerDetail, a11y, perf, READMEs) + admin `Instance` type. |
-| #138 | 79 (full) + 87 plan | `sockerless.yaml` topology + `TopologyManager` + CRUD REST + lifecycle endpoints + `make/components.mk` granular targets + port allocator + Phase 87 observability plan (OTel+VictoriaLogs+Jaeger Stack A) + `specs/CLOUD_RESOURCE_MAPPING.md` consolidation (Docker/Podman→cloud quick reference, CI runner requirements, multi-system CI/CD comparison). |
-| #139 | 80 + state save | Admin UI Topology page (`/ui/topology`): project + instance tree, per-instance status polling, Start/Stop/Rebuild, per-kind add/edit instance modal, add/delete project modal, auto-allocate port, port registry. Replaces legacy ProjectsPage + ProjectCreatePage. + state save for #138. |
-| #140 | 81 + 82 + state save | Phase 81 — SSE log endpoint (`/api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N`), instance proxy endpoint (`/proxy`), single-instance log tail UI (`/ui/topology/:project/:instance/logs`), combined timeline + API console UI (`/ui/topology/:project/console`). Phase 82 — cloud-resources rollup endpoint (`/api/v1/topology/resources`) + UI (`/ui/topology/resources`) with by-instance / by-cloud / by-service / flat groupings + failed-sources banner. |
-| #141 | 83 | Phase 83 — shared `ResourceListPage` in `@sockerless/ui-core`; 13 sim pages refactored across simulator-aws / gcp / azure onto the shared component + design language; legacy `/ui/resources` + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired. |
-| #142 | 84 + BUG-985 + BUG-986 | Phase 84 — sim shared `NewServer` returns `(*Server, error)` + `MakeStore` log.Fatalf on per-table failure (no silent in-memory degradation when persistence requested). Admin `SIM_DATA_DIR` injection per topology instance. Cross-cloud isolation tests. `make purge-state` operator targets. |
-| #143 | 85 | Phase 85 — admin config edit + hot reload. Curated `ConfigKeyMeta` table, PUT /config endpoint with classification, POST /reload + `make reload-component` (SIGHUP via PID file), ConfigEditModal UI with hot/restart badges + post-save Reload/Restart prompt. |
-| #144 | 86 | Phase 86 — health + supervision surface. Exit-code capture via watcher subshell + `CrashedSinceStart` distinction; 5 s probe timeout; `/diagnostics` endpoint bundling status + last-N logs; `<UnhealthyDiagnosticPanel>` mounted only on broken rows. |
-| #145 | 87 | Phase 87 (Stack A first PR) — observability stack make targets, collector config with filelog receiver, /api/v1/observability endpoint, VictoriaLogs/Jaeger UI deep-link chips, docs/OBSERVABILITY.md. |
-| #146 | 87b | Phase 87b — wire OTel SDK + otelhttp.NewHandler across 6 backend main.go files + 3 sim shared/otel.go helpers + admin otel.go. Trace emission for every Go binary when OTEL_EXPORTER_OTLP_ENDPOINT is set. |
-| #147 | 91 | Phase 91 — `BackingMemory` translator on cloudrun + gcf. `EmptyDir{Medium: MEMORY}` + `SizeLimit` from `spec.Memory.SizeMB`. |
-| #148 | 91b | Phase 91b — `BackingMemory` translator on ECS / ACA / AZF. ACA `StorageTypeEmptyDir`; ECS + AZF reject loudly with concrete pointers. |
-| #149 | 91c | Phase 91 (consolidated) — Lambda volume_translator scaffolding + framework migration; cloudrun + gcf reject `BackingPDEphemeral` with concrete pointers; integration TestMain → ECR Public Gallery. |
-| #150 | 87c | Phase 87c — zerolog → OTel logs bridge across all 12 components (7 backends via core/otel.go; 3 sims + admin + bleephub via mirrored bridge code in their separate Go modules). 5 new core tests. |
+| #135–136 | 121b | Azure sim hardening, driver consolidation pattern B, network-discovery adapter consolidation, AZF/Lambda DNS, Azure AD access. |
+| #137–142 | 78–84 | UI polish + admin orchestration (`sockerless.yaml` topology, `TopologyManager`, lifecycle endpoints, UI Topology page, per-instance logs + console, cloud-resources rollup, sim UI parity, per-instance state isolation + BUG-985/986). |
+| #143–144 | 85–86 | Config edit + hot reload; health + supervision surface (exit-code capture, `/diagnostics`, `<UnhealthyDiagnosticPanel>`). |
+| #145–146 | 87 + 87b | Observability stack (otel-collector + VictoriaLogs + Jaeger) + component-side OTel SDK wiring. |
+| #147–149 | 91 + 91b + 91c | `BackingMemory` translator across 5 backends; Lambda volume_translator framework migration; cloudrun + gcf `BackingPDEphemeral` rejection. |
+| #150 | 87c | zerolog → OTel logs bridge across all 12 components. |
+| #151 | 87d + 92 | Trace propagation + MeterProvider + runtime metrics + `make stack-observability-validate`; `Backing: gcs-fuse` deregistered on cloudrun + gcf (closes BUG-944, ships BUG-987). |
+| #152 | docs | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
 
-## Roadmap (ordered)
+## Active + planned phases
 
-### Phase 78 — UI polish ✓ complete (#137)
+Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
 
-Dark mode, error UX, Container detail modal, accessibility, perf, documentation. See `WHAT_WE_DID.md` for details.
+### Phase 153 — bleephub ↔ GitHub API signature parity (in flight on PR #153)
 
-### Phase 79 — Topology + admin config service ✓ complete (PR #138)
+Every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. **And** every request body that `gh` CLI sends — including the string-coerced bool/int variants `gh api -f` emits — is accepted exactly as real GitHub accepts it. Bleephub is "maximally compatible": if `gh` works against `api.github.com`, it works against bleephub. Spec: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-Admin owns the source of truth for "what instances exist". `sockerless.yaml` at repo root carries `projects[]`, each with `instances[]` (sim / backend / bleephub, 0..N of each). Project model preserved. Existing per-project JSONs auto-migrate.
+**Status**: 12/13 sub-tasks shipped on `docs-cleanup-actionable` branch. P153.13 (real `gh` CLI Docker harness + GitHub-spec body tolerance) is the final piece.
 
-- ✓ Step 1: `Instance` type + per-kind validate + legacy derivation (#137).
-- ✓ Step 2: `sockerless.yaml` topology store + `MigrateLegacyProjects` (#138).
-- ✓ Step 3: `TopologyManager` singleton + read/write REST surface (#138).
-- ✓ Step 4: `make/components.mk` granular targets; `stack-X-Y` rewritten as composition (#138).
-- ✓ Step 5: `TopologyManager.AllocatePort` from `ports.ranges` (#138).
-- ✓ Step 6: lifecycle REST endpoints shell `make {start,stop,rebuild}-component` (#138).
-- ✓ Step 7: surgical CRUD endpoints (project + instance add/remove/edit) + per-instance status endpoint + `docs/ADMIN_ORCHESTRATION.md` (#138).
+Eight gap buckets covered:
 
-### Phase 80 — Admin UI: topology page + per-instance lifecycle ✓ complete (PR #139)
+1. **Missing endpoints** ✓ shipped (P153.3, P153.4, P153.5, P153.8) — `GET /apps/{slug}`, `/orgs/{org}/installation`, `/users/{username}/installation`, `PUT|DELETE /app/installations/{id}/suspended`, `GET /installation/repositories`, `PUT|DELETE /user/installations/{id}/repositories/{repo_id}`, hook delivery redelivery, app-level webhook config + deliveries, OAuth `applications/{client_id}/token` family, Checks API.
+2. **Permission enforcement** ✓ shipped (P153.6) — `requirePerm(scope, level)` decorator gates write-class endpoints. PAT bypasses (real GH behavior); ghs_/ghu_ check installation perms; gho_ maps classic OAuth scopes.
+3. **Repository selection** ✓ shipped (P153.1 + P153.3) — `repository_selection: "selected"` with per-installation `SelectedRepoIDs` allow-list.
+4. **Webhook payload + headers** ✓ shipped (P153.7) — `installation:{id}` on every event; all four X-GitHub-Hook-* headers; X-Hub-Signature (SHA1) alongside SHA256.
+5. **App-targeted webhook events** ✓ shipped (P153.7) — `installation`, `installation_repositories` fired on store transitions; `installation_target` and `github_app_authorization` reserved for future events.
+6. **OAuth token prefixes + refresh tokens** ✓ shipped (P153.1 + P153.2) — `gho_`, `ghu_`, `ghr_`, `ghs_`, `ghp_` recognized.
+7. **JSON shape** ✓ shipped (P153.9) — `*_url` HATEOAS fields, `installations_count`, `suspended_at`, `suspended_by`, `single_file_name`.
+8. **`gh` CLI compatibility** in flight (P153.13) — bleephub accepts what real GitHub accepts (string-coerced booleans/integers from `gh api -f` calls). Test harness uses real `gh repo create` / `gh issue create` / `gh pr create` end-to-end.
 
-Topology page at `/ui/topology`: project + instance tree, per-instance status badge polled every 2s, per-instance Start/Stop/Rebuild buttons, per-kind add/edit instance modal (sim/backend/bleephub), add/delete project modal, auto-allocate port from configured pool, port registry view (configured ranges + claimed ports). Replaced legacy ProjectsPage + ProjectCreatePage. See `docs/ADMIN_ORCHESTRATION.md` § Admin UI — Topology page.
+**Bundled: SQLite persistence (P153.12)** — `BLEEPHUB_PERSIST=true` + `BLEEPHUB_DATA_DIR=…` enables write-through SQLite for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. Fail-loud on open failure (BUG-985/986 pattern). Git storage stays in-memory.
 
-### Phase 81 — Per-instance logs + live troubleshooting console ✓ complete (PR #140 open)
+Acceptance: `make bleephub-gh-docker-test` exercises Phase 153 surface end-to-end through the real `gh` binary in Docker, including `gh repo create`, `gh issue create`, `gh pr create`. `go test ./...` green in `bleephub/`. UI surfaces installation CRUD + suspend + repo selection + PEM viewer + OAuth Apps + suspend/delete.
 
-`GET /api/v1/topology/projects/{p}/instances/{i}/logs?follow=1&lines=N` reads `.stack-pids/<name>.log`. Without `follow`: last N lines as JSON. With `follow=1`: SSE stream (seeded with last N, then one event per new line; keep-alive comments, truncation re-opens).
+### Phase 154 — Broad GitHub API sweep (planned, post-153)
 
-`POST /api/v1/topology/projects/{p}/instances/{i}/proxy` server-side dial to `http://localhost:<inst.Port>` so the API console panel avoids browser CORS.
+After Phase 153 ships, sweep the rest of the GitHub API surface so the typical `gh` / `octokit` / `probot` workflow runs end-to-end against bleephub without surprise rejections. Audit-first: cross-reference real GitHub's OpenAPI spec against the current `gh_*.go` handlers + GraphQL schema, file per-surface gap tickets, prioritize by gh-CLI hit-rate (commands operators actually run).
 
-UI: `/ui/topology/:project/:instance/logs` (live SSE tail with pause/resume/clear/seed-size). `/ui/topology/:project/console` (combined timeline subscribing to all per-instance streams, tagged + sorted by parsed timestamp or arrival; API console with method/path/headers/body fired through the proxy).
+Surfaces in scope:
 
-### Phase 82 — Cloud-resources rollup in admin ✓ complete (PR #140 open)
+1. **GitHub Apps (deeper)** — `installation_target` + `github_app_authorization` events; new_permissions_accepted flow; per-installation per-permission grant matrix; webhook redelivery with attempt tracking; manifest creation preflight redirect; marketplace stub.
+2. **Orgs** — members API (list, add, remove, role change), teams API depth (parent teams, sync to IdP groups), audit log, security manager role, org-level secrets + variables, dependency-graph.
+3. **Installing apps in orgs** — `POST /orgs/{org}/installations` if exposed, install URL flow, org-admin approval, repository_selection at org install time.
+4. **OIDC** — Actions OIDC token issuance (`ACTIONS_ID_TOKEN_REQUEST_URL` / `_TOKEN`), JWKS endpoint, claims (sub: `repo:owner/name:ref:refs/heads/main`, audience, environment claim), cloud IdP trust contracts.
+5. **Webhooks (extras)** — org-level webhooks, enterprise-level, `meta`/`security_advisory`/`secret_scanning_alert` events.
+6. **Pipelines + jobs API** — full Actions REST: workflow runs / jobs / steps shape parity, logs download endpoints, artifacts download with redirect, rerun + cancel endpoints, attempt tracking.
+7. **Triggering pipelines** — `workflow_dispatch` with inputs validation against `on.workflow_dispatch.inputs`, `repository_dispatch` with client_payload, event-from-API parity.
+8. **Users API** — followers/following/blocked, user emails, gpg/ssh keys, status, sponsorship listing.
+9. **Groups (teams + IdP)** — team membership, IdP group sync surface (`PATCH /orgs/{org}/teams/{slug}/team-sync/group-mappings`).
+10. **SSO integration** — SAML SSO header on PATs, SCIM 2.0 provisioning endpoints (`/scim/v2/...`), enforced-SSO redirects.
+11. **GitHub Pages** — `/repos/{o}/{r}/pages` GET/POST/PUT/DELETE + builds endpoint + deployments.
+12. **Deployments + Environments** — full deployments API (statuses, deployment_status events), Environments (protection rules, reviewers, secrets, deployment branch policies), branch protection rules.
+13. **Issue + PR comments depth** — issue comments full CRUD + reactions; PR review comments (inline / file-line / range), review threads, resolving + reopening threads (`POST /repos/{o}/{r}/pulls/{n}/comments/{id}/replies`, `gh pr review --thread`, `resolveReviewThread` / `unresolveReviewThread` GraphQL mutations), suggested-changes (`suggestion` syntax), comment edit history, multi-line code suggestions, threading mutations from gh CLI's PR view.
+14. **Reactions API** — `/repos/{o}/{r}/issues/{n}/reactions` + `/comments/{id}/reactions` + `/pulls/{n}/comments/{id}/reactions` POST/DELETE/GET; full eight reaction types (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`); reaction groups on Issue/PR/IssueComment/PRComment GraphQL types with real counts (today returns empty `[]`); reactions on releases + commits + discussions.
+15. **Webhook events parity** — full event coverage matching real GH's webhook event index: `branch_protection_rule`, `check_run`/`check_suite` (Apps wire it; need the event delivery), `code_scanning_alert`, `commit_comment`, `create`/`delete` (branch/tag), `dependabot_alert`, `deploy_key`, `deployment`/`deployment_status`, `discussion`/`discussion_comment`, `fork`, `gollum` (wiki), `label`, `member`/`membership`, `meta`, `milestone`, `package`, `page_build`, `project`/`projects_v2*`, `public`, `pull_request_review`/`pull_request_review_comment`/`pull_request_review_thread`, `push` (already), `release`, `repository`/`repository_dispatch`/`repository_import`/`repository_ruleset`, `secret_scanning_alert`, `security_advisory`, `sponsorship`, `star`, `status`, `team`/`team_add`, `watch`, `workflow_dispatch`/`workflow_job`/`workflow_run`. Per-event payload shape verified against real GH samples. Delivery filtering honors `events` field on hook config including wildcard (`*`).
 
-`GET /api/v1/topology/resources` aggregates `/internal/v1/resources` across every running backend instance in the topology, attributing each row with project + instance + cloud + backend. Sims excluded by design (they expose cloud APIs directly, not a uniform resource list). Per-source status surfaced so "0 resources" stays distinct from "couldn't query".
+Acceptance per surface: `gh <verb>` (or octokit equivalent) round-trips against bleephub. The Phase 153 Docker harness gets new sub-blocks per surface. Each surface ships as a P154.X sub-commit on a single branch / PR.
 
-UI: `/ui/topology/resources` with grouping toggle (instance / cloud / service product / flat), active-only toggle, failed-sources banner, per-row status badge + cleaned-up tag.
+### Phase 155 — Documentation refresh: bleephub-specific docs
 
-### Phase 83 — Sim UI parity ✓ in flight (`phase-83-sim-ui-parity` branch)
+After Phase 154 ships, sweep every doc that references bleephub and re-align:
 
-`@sockerless/ui-core` gains a shared `ResourceListPage<T>` component owning the useQuery + heading + Spinner/InlineError-with-Retry/DataTable wiring. Each per-service sim page (ECS tasks, Lambda functions, Cloud Run jobs, ACR registries, …) collapses to a columns config + queryFn — automatic filter input, count meta, error retry, kicker styling, empty-state message all included.
+- `bleephub/README.md` — fully reflect the Apps + OAuth Apps surface, persistence flag, gh CLI compatibility, and the supported subset of the GitHub webhook event index.
+- `specs/BLEEPHUB_GITHUB_API_PARITY.md` — collapse "✓ shipped" rows into a closing changelog; raise the bar for what "parity" means after Phase 154.
+- `docs/RUNNERS.md` § GitHub runner contract — point at bleephub for local mode; confirm runner-protocol surface still matches the official `actions/runner` v2.32x.
+- `docs/runner-capability-matrix.md` — row for every Phase 153/154 capability (Apps, OAuth, Checks, Pages, Deployments, Environments, SSO).
+- `ARCHITECTURE.md` — bleephub block reflects persistence + Apps subsystem.
+- `ui/packages/bleephub/README.md` (if missing, create) — what each tab does, what each new dialog covers, how to seed test data.
+- Add `docs/BLEEPHUB_GH_CLI.md` walking operators through `gh auth login` against a local bleephub + the supported subset of `gh` commands.
 
-Sweep: 13 sim pages refactored across simulator-aws / simulator-gcp / simulator-azure. OverviewPage gets `PageHeading` with kicker / meta / status badge in actions slot. Drive-by fix: `MetricsCard` was renamed `label`→`title` at some point but the OverviewPages still passed `label` (broken since the rename — TypeScript caught it).
+Acceptance: every claim in those docs round-trips through the Docker harness; no doc references missing endpoints or vanished UI elements.
 
-Legacy `/ui/resources` (registry-backed) + `/ui/projects/:name` + `/ui/projects/:name/logs` admin pages retired — orphaned by the Phase 79/80 sweep, replacements landed in Phase 81/82. Companion `AdminApiClient.project*` + `resources()` methods and 4 type aliases removed. Backing Go endpoints stay for `--backend name=addr` CLI users.
+### Phase 156 — Documentation refresh: project-wide
 
-Out of scope (deliberate): no Containers / Resources / Metrics pages on sims — those are backend concepts (Docker lifecycle, sockerless-tracked resources, backend metrics). Sims model cloud APIs directly.
+Sweep every other top-level doc and confirm it's still accurate after Phases 153–155:
 
-### Phase 84 — Per-instance state isolation + persistence ✓ in flight (`phase-84-instance-state-isolation`)
+- `README.md` (root) — module sizes, badges, quick-start, supported-clouds table, contributor section.
+- `ARCHITECTURE.md` — backends inventory, driver framework (storage / network / DNS / access), sim host model, observability stack.
+- `specs/CLOUD_RESOURCE_MAPPING.md` — re-verify Docker→cloud mapping per backend.
+- `docs/OBSERVABILITY.md` — Stack A description, validation harness, metric / trace / log channels.
+- `docs/ADMIN_ORCHESTRATION.md` — `sockerless.yaml` schema, REST surface, lifecycle endpoints, config edit + hot reload.
+- `docs/MAKEFILE_STANDARD.md` — per-app Makefile contract.
+- `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walkthrough.
+- `docs/RUNNERS.md` + `docs/GITLAB_RUNNER_DOCKER.md` + `docs/GITLAB_RUNNER_SAAS.md` + `docs/GITHUB_RUNNER.md` + `docs/GITHUB_RUNNER_SAAS.md` — runner setup paths.
+- `docs/ECS_LIVE_SETUP.md` / `docs/ECS_SERVICES_DESIGN.md` / `docs/LAMBDA_EXEC_DESIGN.md` — live-cloud setup + design notes.
 
-Admin's `InstanceLifecycle.Start` writes `SIM_DATA_DIR=<repo>/.sockerless-state/<project>/<instance>/` into `.stack-pids/<n>.env` for sim instances. Multiple sim instances of the same cloud coexist with isolated state across restarts. Operator opts into persistence by adding `SIM_PERSIST=true` to the instance Config — admin doesn't force it.
-
-BUG-985 + BUG-986 fixed in the same patch: both silent in-memory fallbacks in the sim shared layer (`NewServer` on `OpenDB` failure, `MakeStore` on `NewSQLiteStore` per-table failure). `NewServer` now returns `(*Server, error)`; `MakeStore` calls `log.Fatalf`. Sim main.go on the OpenDB path calls `log.Fatalf`. Operator-requested persistence fails loud at the start instead of silently degrading.
-
-Operator workflow: `make purge-state PROJECT=<p> NAME=<i>` (single-instance) and `make purge-state-all` for clean-slate sweeps. `stop-component` deliberately preserves state.
-
-Cross-cloud sweep: 5 test cases mirrored across simulators/{aws,gcp,azure}/shared/ — cross-DataDir isolation, persist-survives-reopen, BUG-985 regression guard, persist happy path, no-persist path.
-
-### Phase 85 — Config edit + hot reload ✓ in flight (`phase-85-config-edit-hot-reload`)
-
-Admin curates a `ConfigKeyMeta` table — 3 hot-reloadable keys (SIM_LOG_LEVEL, SOCKERLESS_LOG_LEVEL, SIM_PULL_POLICY) + 14 annotated restart-required keys + safe default (restart-required) for unknown keys. Metadata lives admin-side, NOT on the component.
-
-`PUT /api/v1/topology/projects/{p}/instances/{i}/config` writes Instance.Config and returns the change classification so the UI prompts in one round trip.
-
-`POST /api/v1/topology/projects/{p}/instances/{i}/reload` shells `make reload-component` (kill -HUP via PID file). Component-side handling of SIGHUP is the component's concern — Phase 85 ships the signal path; component absorption is per-binary.
-
-UI: `<ConfigEditModal>` opens from a "config" button on every InstanceRow. Per-row hot/restart badges. Save → footer offers Reload / Reload (partial) + Restart / Close based on what classified server-side.
-
-### Phase 86 — Health + supervision surface ✓ in flight (`phase-86-health-supervision`)
-
-`start-component` wraps the binary in a watcher subshell that records exit code + RFC-3339-utc timestamp to `.stack-pids/<n>.exit` when the binary terminates. `InstanceStatus` gains `Exit` + `CrashedSinceStart` fields. `probeHealth` timeout bumped 1 s → 5 s.
-
-`GET /api/v1/topology/projects/{p}/instances/{i}/diagnostics?lines=N` returns status + last N log lines in one shot (default 50, cap 1000). UI: `<UnhealthyDiagnosticPanel>` collapsible panel under InstanceRow rendered only when `shouldRender(status)` is true (unhealthy / crashed_since_start / process gone with pidfile). Polls /diagnostics every 10 s only on broken rows; cost is bounded.
-
-No auto-restart — operator-driven recovery via the existing Restart / Reload / Stop buttons. Component-side handling is unchanged.
-
-### Phase 87 — Centralized observability (logs + traces) — Stack A ✓ shipped (PR #145)
-
-`make stack-observability-{up,down,status}` brings up otel-collector-contrib + VictoriaLogs + Jaeger. Default collector config scrapes `.stack-pids/*.log` so logs flow without binary changes. `GET /api/v1/observability` + UI deep-link chips on the diagnostic panel. `docs/OBSERVABILITY.md`.
-
-### Phase 87b — Component-side OTel SDK wiring ✓ in flight (`phase-87b-component-otel-wiring`)
-
-Trace emission for every Go binary. `core.InitTracer` wired into 6 backend main.go files (ecs / lambda / cloudrun / gcf / aca / azf — docker already had it from Phase 86). New `simulator.InitTracer` in each per-cloud sim shared package + `otelhttp.NewHandler` at the outermost middleware layer + 4-line init in each sim main.go. Admin gains its own duplicated `InitTracer` helper (separate Go module without backend-core dep) + otelhttp wrap on the mux. bleephub already wired since Phase 86. 11 new tracer tests.
-
-**Phase 87c** ✓ shipped (PR #150) — zerolog → OTel logs bridge across all 12 components. `backends/core/otel.go` adds `InitObservability` + `OTelLogWriter`; 7 backends use it. Mirrored bridge in each `simulators/{aws,gcp,azure}/shared/otel.go` (separate Go module — `Config.LogWriter` threaded through `NewServer`), `bleephub/otel.go`, and `cmd/sockerless-admin/otel.go` (adds `TextLogWriter` for stdlib `log`). Components-decoupled invariant intact: emission gated on `OTEL_EXPORTER_OTLP_ENDPOINT`; no admin/UI dep injected. 5 new core tests.
-
-**Phase 87d** ✓ in flight on `phase-87d-92-observability-closeout-gcs-sync` (bundled with Phase 92) — Phase 87 closeout. (1) Trace context propagation: every admin + bleephub `&http.Client{}` wrapped with `otelhttp.NewTransport`; global `TraceContext + Baggage` propagator set inside `InitObservability` so wrapped clients carry `traceparent`. (2) MeterProvider + runtime metrics: `InitObservability` adds an OTLP HTTP metric exporter + `runtime.Start` so HTTP request count/duration/size and Go runtime metrics flow when OTLP is enabled. (3) `make stack-observability-validate` end-to-end harness polling VictoriaLogs + Jaeger until telemetry lands. 2 new core tests.
-
-**Stack A — Apache 2.0 throughout, three binaries:**
-- **OpenTelemetry Collector** (Apache 2.0) receives OTLP at `localhost:4317`, fans out: logs → VictoriaLogs OTLP HTTP, traces → Jaeger OTLP, optional metrics → VictoriaMetrics.
-- **VictoriaLogs** (Apache 2.0) for logs. Built-in UI on `:9428`. `--retentionPeriod=7d` cap.
-- **Jaeger** all-in-one (Apache 2.0) for traces. Built-in UI on `:16686`. `--badger.span-store-ttl=72h` cap.
-
-**Invariant preserved:** components emit OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set in their env. Unset = today's behaviour (zerolog → stdout). No admin coupling, no required env var, no startup registration.
-
-Sub-steps:
-
-1. **`backends/core/otel/`** — wraps go.opentelemetry.io/otel SDK setup (logs + traces + resource attrs). Reads `OTEL_EXPORTER_OTLP_ENDPOINT` + service name. Used by every component's `main.go` in 3 lines.
-2. **HTTP middleware** — wrap each backend / sim mux with `otelhttp.NewHandler` so spans land per request automatically.
-3. **zerolog → OTel logs bridge** — existing `zerolog.Logger` calls also export to the OTel logs SDK. No log-line API changes.
-4. **`make stack-observability-{up,down,status}`** in `make/stack.mk`. Runs collector + VictoriaLogs + Jaeger as background processes; PIDs in `.stack-pids/observability/`. Default config emits to `./.sockerless-state/observability/{logs,traces}/` with rotation + 5 GB total cap.
-5. **Admin UI integration** — per-instance "View logs" + "View traces" deep links (filter by `service.name = <instance-name>`). Inline log tail (Phase 81) still works for the no-OTel path.
-6. **Documentation** — `ui/README.md` + new `docs/OBSERVABILITY.md` cover both modes.
-
-**Order vs other phases:** lands after Phase 86. Phase 86 ships with file-tail source for "show last-N log lines on unhealthy"; Phase 87 promotes to OTel-source when the collector is up.
-
-If Stack A turns out unsuitable: same component code (OTLP) works against OpenObserve (AGPL) or SigNoz (MIT) — only `make/stack.mk` changes.
-
-## Future phases
-
-### Phases 91–94 — Real per-cloud volume provisioning
-
-Lift the runner-task `emptyDir` fallback to real-workload provisioning of `pd-ephemeral` / `efs-ephemeral` / `azure-files-ephemeral`. Designs in `specs/CLOUD_RESOURCE_MAPPING.md` § Volume provisioning per backend.
-
-**Phase 91 ✓ shipped (PR #147)** — `BackingMemory` translator on cloudrun + gcf. Audit found the actual gap: Phase 127's MemoryDriver was registered in every backend's storageBackings registry, but no translator handled the `case core.BackingMemory` arm.
-
-**Phase 91b ✓ shipped (PR #148)** — `BackingMemory` translator on ECS / ACA / AZF. ACA gets clean `StorageTypeEmptyDir`; ECS + AZF reject loudly.
-
-**Phase 91c (consolidated) ✓ shipped (PR #149)** — Lambda `volume_translator.go` scaffolding + `fileSystemConfigsForBinds` migration to framework dispatch + cloudrun/gcf `BackingPDEphemeral` rejection arms with concrete pointers (`gcs-fuse` + `gcs-sync` alternatives, GCE-backend bookmark) + integration TestMain switched to ECR Public Gallery (Docker Hub throttling fix).
-
-**Phase 91d** — Real `pd-ephemeral` lifecycle on cloudrun + gcf. **Bookmarked indefinitely.** `runpb.Volume` protobuf has no PersistentDisk field; Cloud Run Admin API doesn't expose PD attach as a first-class primitive. Implementation would require either a sockerless GCE-style backend (separate phase) or a future Cloud Run feature. Reject-with-pointers shape (Phase 91c) stays in place until then.
-
-**Phase 92** ✓ in flight on `phase-87d-92-observability-closeout-gcs-sync` (bundled with Phase 87d) — `gcs-fuse` deregistered on cloudrun + gcf. Cloud Run rejects the cache-TTL gcsfuse mount flags (`metadata-cache:ttl-secs`, `metadata-cache:negative-ttl-secs`) needed for safe cross-task workspaces, so `Backing: gcs-fuse` produced silently broken deploys. `GCSFuseDriver` no longer registered on either backend; `BackingGCSFuse` rejects in the volume translator with a concrete pointer at `gcs-sync` (per-exec tar/untar — strong consistency, no FUSE). Closes BUG-944 + ships BUG-987. Driver code retained in `backends/gcp-common/storage_gcsfuse.go` for hypothetical future backends without the flag-allowlist constraint.
+Acceptance: every doc page links to existing files; CLI examples copy-paste run against current `main`; no "Phase 8X TODO" placeholders remain unaddressed.
 
 ### Live-cloud validation track
 
 Per-backend live-cloud sweeps separate from unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
+
 - Lambda live (deferred from Phase 86).
-- Cloud Run Services / ACA Apps live (closed in code 2026-04-21 behind UseService/UseApp).
+- Cloud Run Services / ACA Apps live (closed in code 2026-04-21 behind `UseService` / `UseApp`).
 - AZF + cloud-dns on Azure live (new in #136).
 - Lambda + service-mesh on AWS live (new in #136).
 - ACA / AZF + Azure AD access on Azure live (new in #136).
 
+One branch per cell; teardown self-sufficient per `feedback_teardown_aggressive.md`.
+
+### Phase 91d — Real pd-ephemeral on cloudrun + gcf
+
+**Bookmarked indefinitely.** Cloud Run's `runpb.Volume` lacks a PD field; Admin API doesn't expose PD attach as a first-class primitive. Real implementation requires either a sockerless GCE-style backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c, PR #149) stays in place.
+
 ## Driver phase template
 
-Storage backing (Phase 123) is the pilot. Each driver phase follows:
+Storage backing (Phase 127) is the pilot. Each driver phase follows:
 
 1. `api/<dim>_driver.go` — enum + struct fields on the relevant config.
 2. `backends/core/<dim>_driver.go` — driver interface + registry + no-op default.
@@ -198,5 +156,5 @@ Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass.
 ## Future ideas
 
 - GraphQL subscriptions for real-time event streaming.
-- Full GitHub App permission scoping.
-- Sockerless GCE-style backend (would unlock Phase 127 GCP `pd-ephemeral` for real workloads).
+- Sockerless GCE-style backend (would unlock Phase 91d real `pd-ephemeral` for real workloads).
+- Marketplace / billing on bleephub (currently out of scope — most apps don't use them; revisit if a real consumer asks).
