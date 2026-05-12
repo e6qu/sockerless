@@ -37,6 +37,86 @@ func (s *Server) registerGHAppsRoutes() {
 	// Management endpoints for testing
 	s.mux.HandleFunc("POST /api/v3/bleephub/apps", s.handleCreateApp)
 	s.mux.HandleFunc("POST /api/v3/bleephub/apps/{app_id}/installations", s.handleCreateInstallationMgmt)
+	s.mux.HandleFunc("POST /api/v3/bleephub/installations/{id}/suspend", s.handleSuspendInstallationMgmt)
+	s.mux.HandleFunc("POST /api/v3/bleephub/installations/{id}/unsuspend", s.handleUnsuspendInstallationMgmt)
+	s.mux.HandleFunc("DELETE /api/v3/bleephub/installations/{id}", s.handleDeleteInstallationMgmt)
+}
+
+// handleSuspendInstallationMgmt — sim-only convenience that lets the UI suspend
+// an installation without holding the app's JWT (web UI doesn't sign one).
+func (s *Server) handleSuspendInstallationMgmt(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !s.store.SuspendInstallation(id, user) {
+		writeGHError(w, http.StatusConflict, "Installation already suspended")
+		return
+	}
+	if app := s.store.GetApp(inst.AppID); app != nil {
+		s.emitInstallationEvent(app, "suspend", inst)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleUnsuspendInstallationMgmt(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !s.store.UnsuspendInstallation(id) {
+		writeGHError(w, http.StatusConflict, "Installation not suspended")
+		return
+	}
+	if app := s.store.GetApp(inst.AppID); app != nil {
+		s.emitInstallationEvent(app, "unsuspend", inst)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleDeleteInstallationMgmt(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.DeleteInstallation(id)
+	if app := s.store.GetApp(inst.AppID); app != nil {
+		s.emitInstallationEvent(app, "deleted", inst)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleManifestConversion(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,7 @@ import type {
   BleephubHealth,
   BleephubApp,
   BleephubInstallation,
+  BleephubOAuthApp,
   BleephubOAuthState,
 } from "./types.js";
 
@@ -53,15 +54,20 @@ export const fetchOAuthState = () =>
 
 /**
  * Create a new GitHub App via bleephub's management endpoint.
- * Returns the created App entity (with PEM private key).
+ * Returns the created App entity (with PEM private key + client_secret).
  */
 export async function createApp(payload: {
   name: string;
   description?: string;
-}): Promise<BleephubApp & { pem: string }> {
+  permissions?: Record<string, string>;
+  events?: string[];
+}): Promise<BleephubApp & { pem: string; client_secret: string; webhook_secret: string }> {
   const res = await fetch("/api/v3/bleephub/apps", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+    },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -71,13 +77,45 @@ export async function createApp(payload: {
   return res.json();
 }
 
+export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
+  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function createOAuthApp(payload: {
+  name: string;
+  description?: string;
+  url?: string;
+  callback_url?: string;
+}): Promise<BleephubOAuthApp & { client_secret: string }> {
+  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`createOAuthApp ${res.status}: ${text || res.statusText}`);
+  }
+  return res.json();
+}
+
 export async function createInstallation(
   appId: number,
-  payload: { targetType: string; targetId: number; targetLogin: string },
+  payload: { target_type: string; target_id: number; target_login: string; permissions?: Record<string, string>; events?: string[] },
 ): Promise<BleephubInstallation> {
   const res = await fetch(`/api/v3/bleephub/apps/${appId}/installations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+    },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -85,6 +123,29 @@ export async function createInstallation(
     throw new Error(`createInstallation ${res.status}: ${text || res.statusText}`);
   }
   return res.json();
+}
+
+export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
+  const verb = suspend ? "suspend" : "unsuspend";
+  const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {
+    method: "POST",
+    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+  });
+  if (!res.ok && res.status !== 409) {
+    const text = await res.text();
+    throw new Error(`${verb} ${res.status}: ${text || res.statusText}`);
+  }
+}
+
+export async function deleteInstallation(installationID: number): Promise<void> {
+  const res = await fetch(`/api/v3/bleephub/installations/${installationID}`, {
+    method: "DELETE",
+    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+  });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text();
+    throw new Error(`delete ${res.status}: ${text || res.statusText}`);
+  }
 }
 
 /**

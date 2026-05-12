@@ -60,12 +60,13 @@ function routedFetch(url: RequestInfo | URL): Promise<Response> {
 }
 
 describe("AppsPage", () => {
-  it("renders Apps and Installations tabs", async () => {
+  it("renders GitHub Apps, Installations, and OAuth Apps tabs", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Apps" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "GitHub Apps" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Installations" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "OAuth Apps" })).toBeInTheDocument();
     });
   });
 
@@ -93,12 +94,12 @@ describe("AppsPage", () => {
   it("opens the Create App dialog", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
-    // The header CTA is "+ new app" in the new editorial design.
-    const cta = await screen.findByRole("button", { name: /new app/i });
+    // Header CTA on the default GitHub Apps tab is "+ new github app".
+    const cta = await screen.findByRole("button", { name: /new github app/i });
     fireEvent.click(cta);
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /create app/i })).toBeInTheDocument();
-      expect(screen.getByLabelText(/name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^name$/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
     });
   });
