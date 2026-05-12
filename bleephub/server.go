@@ -143,6 +143,9 @@ func (s *Server) registerRoutes() {
 	// Deployments + Environments (gh_deployments.go)
 	s.registerGHDeploymentsRoutes()
 
+	// PR review comments (gh_pr_comments.go) — inline / file-line / threads
+	s.registerGHPRCommentsRoutes()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()

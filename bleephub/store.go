@@ -93,6 +93,7 @@ type Store struct {
 	Reactions          *ReactionStore                // P154.1 — reactions across all parent types
 	Releases           *ReleaseStore                 // P154.2 — release CRUD
 	Deployments        *DeploymentStore              // P154.4 — deployments + statuses + environments
+	PRReviewComments   *PRReviewCommentStore         // P154.5 — PR review comments (inline / threads)
 	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
@@ -230,6 +231,7 @@ func NewStore() *Store {
 		Reactions:          newReactionStore(),
 		Releases:           newReleaseStore(),
 		Deployments:        newDeploymentStore(),
+		PRReviewComments:   newPRReviewCommentStore(),
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
