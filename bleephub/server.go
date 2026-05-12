@@ -146,6 +146,13 @@ func (s *Server) registerRoutes() {
 	// PR review comments (gh_pr_comments.go) — inline / file-line / threads
 	s.registerGHPRCommentsRoutes()
 
+	// PR thread resolve/unresolve (gh_pr_threads.go)
+	s.registerGHPRThreadsRoutes()
+
+	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
+	// Pages, branch protection, org members, marketplace.
+	s.registerGHMiscEndpoints()
+
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
