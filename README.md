@@ -14,6 +14,16 @@
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
+> ## ⚠ Caveat emptor — read before you run this
+>
+> Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (130 k+ lines of Go, 64 k lines of tests, three cloud simulators, eight runner-integration cells green) — and yet:
+>
+> - **Security is unaudited and questionable.** Tokens, auth flows, cert handling, and credential plumbing have not been reviewed by anyone qualified to sign off. Assume any production-style use is unsafe until proven otherwise.
+> - **The implementation is immature.** Edge cases routinely surface; "no-fakes, no-fallbacks" is an aspiration, not a guarantee. The cloud-API surface area is large enough that pockets of half-built behaviour exist.
+> - **This is not prod-safe.** Do not place this in front of real workloads, real users, real customer data, or real money. If you need a hardened Docker-API → cloud bridge, this isn't it yet.
+>
+> **However** — opening issues, contributing fixes, or running it for your own testing/learning is all welcome. The repo is built in the open and reviews / pull requests / bug reports help it mature.
+
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
 > **2026-05-07 — 8/8 runner-integration cells GREEN.** GitHub × {ECS, Lambda, Cloud Run, GCF} and GitLab × the same four are all running the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. See [STATUS.md](STATUS.md) for live URLs. The closing milestone shipped Phase 123, the **storage backing driver abstraction** — `gcs-sync` replaces FUSE-on-object-store for shared workspaces. That driver pattern (cloud-agnostic core interface + per-cloud impls + operator-pluggable selection at config time + no-fallbacks discipline) is the proven precedent for a wider driver-generalization plan covering networking, DNS, and access — see [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [PLAN.md](PLAN.md) Phases 124-127.
