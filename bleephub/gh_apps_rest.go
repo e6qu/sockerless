@@ -265,47 +265,81 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 
 func appToJSON(app *App, includePEM bool) map[string]interface{} {
 	result := map[string]interface{}{
-		"id":           app.ID,
-		"node_id":      app.NodeID,
-		"slug":         app.Slug,
-		"name":         app.Name,
-		"client_id":    app.ClientID,
-		"description":  app.Description,
-		"external_url": app.ExternalURL,
-		"permissions":  app.Permissions,
-		"events":       app.Events,
-		"created_at":   app.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":   app.UpdatedAt.UTC().Format(time.RFC3339),
+		"id":                  app.ID,
+		"node_id":             app.NodeID,
+		"slug":                app.Slug,
+		"name":                app.Name,
+		"client_id":           app.ClientID,
+		"description":         app.Description,
+		"external_url":        app.ExternalURL,
+		"html_url":            "https://github.com/apps/" + app.Slug,
+		"events_url":          "/api/v3/apps/" + app.Slug + "/events",
+		"hooks_url":           "/api/v3/app/hook/deliveries",
+		"installations_url":   "/api/v3/app/installations",
+		"permissions":         app.Permissions,
+		"events":              app.Events,
+		"installations_count": 0,
+		"created_at":          app.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":          app.UpdatedAt.UTC().Format(time.RFC3339),
 		"owner": map[string]interface{}{
-			"login": "admin",
-			"id":    app.OwnerID,
-			"type":  "User",
+			"login":      "admin",
+			"id":         app.OwnerID,
+			"type":       "User",
+			"html_url":   "/admin",
+			"avatar_url": "",
 		},
 	}
 	if includePEM {
 		result["pem"] = app.PEMPrivateKey
+		result["client_secret"] = app.ClientSecret
+		result["webhook_secret"] = app.WebhookSecret
 	}
 	return result
 }
 
 func installationToJSON(inst *Installation) map[string]interface{} {
-	return map[string]interface{}{
-		"id":                   inst.ID,
-		"app_id":               inst.AppID,
-		"app_slug":             inst.AppSlug,
-		"target_type":          inst.TargetType,
-		"target_id":            inst.TargetID,
-		"permissions":          inst.Permissions,
-		"events":               inst.Events,
-		"repository_selection": inst.RepositorySelection,
-		"created_at":           inst.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":           inst.UpdatedAt.UTC().Format(time.RFC3339),
-		"account": map[string]interface{}{
-			"login": inst.TargetLogin,
-			"id":    inst.TargetID,
-			"type":  inst.TargetType,
-		},
+	if inst == nil {
+		return nil
 	}
+	out := map[string]interface{}{
+		"id":                        inst.ID,
+		"app_id":                    inst.AppID,
+		"app_slug":                  inst.AppSlug,
+		"target_type":               inst.TargetType,
+		"target_id":                 inst.TargetID,
+		"permissions":               inst.Permissions,
+		"events":                    inst.Events,
+		"repository_selection":      inst.RepositorySelection,
+		"single_file_name":          inst.SingleFileName,
+		"has_multiple_single_files": false,
+		"single_file_paths":         []string{},
+		"created_at":                inst.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":                inst.UpdatedAt.UTC().Format(time.RFC3339),
+		"account": map[string]interface{}{
+			"login":      inst.TargetLogin,
+			"id":         inst.TargetID,
+			"type":       inst.TargetType,
+			"html_url":   "/" + inst.TargetLogin,
+			"avatar_url": "",
+		},
+		"html_url":          "/apps/" + inst.AppSlug + "/installations/" + strconv.Itoa(inst.ID),
+		"access_tokens_url": "/api/v3/app/installations/" + strconv.Itoa(inst.ID) + "/access_tokens",
+		"repositories_url":  "/api/v3/installation/repositories",
+		"events_url":        "/api/v3/apps/" + inst.AppSlug + "/installations/" + strconv.Itoa(inst.ID) + "/events",
+		"suspended_at":      nil,
+		"suspended_by":      nil,
+	}
+	if inst.SuspendedAt != nil {
+		out["suspended_at"] = inst.SuspendedAt.UTC().Format(time.RFC3339)
+		if inst.SuspendedBy != nil {
+			out["suspended_by"] = map[string]interface{}{
+				"login": inst.SuspendedBy.Login,
+				"id":    inst.SuspendedBy.ID,
+				"type":  inst.SuspendedBy.Type,
+			}
+		}
+	}
+	return out
 }
 
 func installationTokenToJSON(token *InstallationToken) map[string]interface{} {
