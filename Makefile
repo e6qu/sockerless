@@ -318,6 +318,16 @@ upstream-test-gcl-all:
 	done
 
 # Bleephub-specific tests (preserved aliases).
-.PHONY: bleephub-test bleephub-gh-test
+.PHONY: bleephub-test bleephub-gh-test bleephub-gh-docker-test
 bleephub-test:    ; @$(MAKE) -s -C bleephub test
 bleephub-gh-test: ; @$(MAKE) -s -C bleephub test-integration
+
+# Docker-based gh CLI parity harness (Phase 153 P153.13). Builds a Docker
+# image that bundles bleephub + the official `gh` binary, then runs
+# bleephub/test/run-gh-test.sh against it. Real gh, real TLS, real HTTP.
+# Image build is roughly 60s on a cold cache; subsequent runs take ~10s.
+bleephub-gh-docker-test:
+	@printf "$(COLOR_CYAN)▸ Building bleephub gh-test image…$(COLOR_RESET)\n"
+	@docker build -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .
+	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
+	@docker run --rm bleephub-gh-test:local

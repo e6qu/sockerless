@@ -206,7 +206,7 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 	var repoIDs []int
 	var body struct {
 		Permissions   map[string]string `json:"permissions"`
-		RepositoryIDs []int             `json:"repository_ids"`
+		RepositoryIDs flexIntSlice      `json:"repository_ids"`
 		Repositories  []string          `json:"repositories"`
 	}
 	if r.Body != nil {
@@ -214,7 +214,7 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 			if body.Permissions != nil {
 				perms = body.Permissions
 			}
-			repoIDs = body.RepositoryIDs
+			repoIDs = []int(body.RepositoryIDs)
 			if len(repoIDs) == 0 && len(body.Repositories) > 0 {
 				for _, name := range body.Repositories {
 					if repo := s.store.GetRepo(inst.TargetLogin, name); repo != nil {
@@ -321,7 +321,7 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 
 	var req struct {
 		TargetType  string            `json:"target_type"`
-		TargetID    int               `json:"target_id"`
+		TargetID    flexInt           `json:"target_id"`
 		TargetLogin string            `json:"target_login"`
 		Permissions map[string]string `json:"permissions"`
 		Events      []string          `json:"events"`
@@ -334,7 +334,7 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 		req.TargetType = "User"
 	}
 
-	inst := s.store.CreateInstallation(appID, req.TargetType, req.TargetID, req.TargetLogin, req.Permissions, req.Events)
+	inst := s.store.CreateInstallation(appID, req.TargetType, int(req.TargetID), req.TargetLogin, req.Permissions, req.Events)
 	if inst != nil {
 		s.emitInstallationEvent(app, "created", inst)
 	}

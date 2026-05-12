@@ -37,11 +37,11 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-		Head  string `json:"head"`
-		Base  string `json:"base"`
-		Draft bool   `json:"draft"`
+		Title string   `json:"title"`
+		Body  string   `json:"body"`
+		Head  string   `json:"head"`
+		Base  string   `json:"base"`
+		Draft flexBool `json:"draft"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
@@ -52,7 +52,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, req.Head, req.Base, req.Draft, nil, nil, 0)
+	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, req.Head, req.Base, bool(req.Draft), nil, nil, 0)
 	if pr == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Pull request creation failed")
 		return

@@ -7,17 +7,18 @@ State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md
 ## Guiding principles
 
 1. **Docker API fidelity** — match Docker's REST API exactly.
-2. **GitHub API fidelity (bleephub)** — match GitHub's REST + GraphQL paths and shapes exactly, modulo base domain.
+2. **GitHub API fidelity (bleephub)** — match GitHub's REST + GraphQL paths and shapes exactly, modulo base domain. Including request-body tolerances: if real GitHub accepts string-coerced booleans (what `gh api -f` sends), bleephub accepts them too. The `gh` CLI must work directly against bleephub — not via URL hackery.
 3. **Real execution** — sims and backends actually run commands; no stubs, fakes, or mocks.
-4. **External validation** — proven by unmodified external test suites.
+4. **External validation** — proven by unmodified external test suites (the `gh` binary, the official `actions/runner`, real Docker SDKs, Terraform providers).
 5. **Driver-first handlers** — handler code routes through driver interfaces.
 6. **LLM-editable files** — source files under 400 lines.
 7. **State persistence** — every task ends with a state save (STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md / `_tasks/done/`).
-8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find.
+8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find. **In particular: we are not in legacy maintenance — no shims for old bleephub behavior.** If real GitHub does X, bleephub does X.
 9. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
 10. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
 11. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
 12. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
+13. **Persistence is opt-in + fail-loud.** Operator-requested persistence (`BLEEPHUB_PERSIST=true`, `SIM_PERSIST=true`) that fails to open must `log.Fatalf`. Never silently fall back to in-memory (BUG-985/986).
 
 ## Closed phases (PR index)
 
@@ -47,21 +48,26 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
 
-### Phase 153 — bleephub ↔ GitHub API signature parity (planned)
+### Phase 153 — bleephub ↔ GitHub API signature parity (in flight on PR #153)
 
-Every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. Spec: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
+Every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. **And** every request body that `gh` CLI sends — including the string-coerced bool/int variants `gh api -f` emits — is accepted exactly as real GitHub accepts it. Bleephub is "maximally compatible": if `gh` works against `api.github.com`, it works against bleephub. Spec: [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-Seven gap buckets surfaced by the 2026-05-12 audit:
+**Status**: 12/13 sub-tasks shipped on `docs-cleanup-actionable` branch. P153.13 (real `gh` CLI Docker harness + GitHub-spec body tolerance) is the final piece.
 
-1. **Missing endpoints** — `GET /apps/{slug}`, `/orgs/{org}/installation`, `/users/{username}/installation`, `PUT|DELETE /app/installations/{id}/suspended`, `GET /installation/repositories`, `PUT|DELETE /user/installations/{id}/repositories/{repo_id}`, hook delivery redelivery, app-level webhook config, OAuth `applications/{client_id}/token` family, Checks API.
-2. **Permission enforcement** — `ghs_` / `ghu_` tokens are currently rubber-stamped; gate write endpoints on installation permissions.
-3. **Repository selection** — `repository_selection: "selected"` with an allow-list (today: hard-coded `"all"`).
-4. **Webhook payload + headers** — `installation: {id}` on every event; `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-Type`, `X-GitHub-Hook-Installation-Target-ID`, `X-Hub-Signature` (SHA1).
-5. **App-targeted webhook events** — `installation`, `installation_repositories`, `installation_target`, `github_app_authorization`.
-6. **OAuth token prefixes + refresh tokens** — `gho_` (OAuth user-to-server), `ghu_` (App user-to-server), `ghr_` (refresh), `ghs_` (server-to-server, existing).
-7. **JSON shape** — `*_url` HATEOAS fields, `installations_count`, `suspended_at`, `single_file_name`, etc.
+Eight gap buckets covered:
 
-Acceptance: probot reference test suite (or octokit-app) round-trips against `http://localhost:5555` modulo base URL. `go test ./...` green in `bleephub/`. UI surfaces installation CRUD + suspend + repo selection + PEM viewer + token mgmt.
+1. **Missing endpoints** ✓ shipped (P153.3, P153.4, P153.5, P153.8) — `GET /apps/{slug}`, `/orgs/{org}/installation`, `/users/{username}/installation`, `PUT|DELETE /app/installations/{id}/suspended`, `GET /installation/repositories`, `PUT|DELETE /user/installations/{id}/repositories/{repo_id}`, hook delivery redelivery, app-level webhook config + deliveries, OAuth `applications/{client_id}/token` family, Checks API.
+2. **Permission enforcement** ✓ shipped (P153.6) — `requirePerm(scope, level)` decorator gates write-class endpoints. PAT bypasses (real GH behavior); ghs_/ghu_ check installation perms; gho_ maps classic OAuth scopes.
+3. **Repository selection** ✓ shipped (P153.1 + P153.3) — `repository_selection: "selected"` with per-installation `SelectedRepoIDs` allow-list.
+4. **Webhook payload + headers** ✓ shipped (P153.7) — `installation:{id}` on every event; all four X-GitHub-Hook-* headers; X-Hub-Signature (SHA1) alongside SHA256.
+5. **App-targeted webhook events** ✓ shipped (P153.7) — `installation`, `installation_repositories` fired on store transitions; `installation_target` and `github_app_authorization` reserved for future events.
+6. **OAuth token prefixes + refresh tokens** ✓ shipped (P153.1 + P153.2) — `gho_`, `ghu_`, `ghr_`, `ghs_`, `ghp_` recognized.
+7. **JSON shape** ✓ shipped (P153.9) — `*_url` HATEOAS fields, `installations_count`, `suspended_at`, `suspended_by`, `single_file_name`.
+8. **`gh` CLI compatibility** in flight (P153.13) — bleephub accepts what real GitHub accepts (string-coerced booleans/integers from `gh api -f` calls). Test harness uses real `gh repo create` / `gh issue create` / `gh pr create` end-to-end.
+
+**Bundled: SQLite persistence (P153.12)** — `BLEEPHUB_PERSIST=true` + `BLEEPHUB_DATA_DIR=…` enables write-through SQLite for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. Fail-loud on open failure (BUG-985/986 pattern). Git storage stays in-memory.
+
+Acceptance: `make bleephub-gh-docker-test` exercises Phase 153 surface end-to-end through the real `gh` binary in Docker, including `gh repo create`, `gh issue create`, `gh pr create`. `go test ./...` green in `bleephub/`. UI surfaces installation CRUD + suspend + repo selection + PEM viewer + OAuth Apps + suspend/delete.
 
 ### Live-cloud validation track
 

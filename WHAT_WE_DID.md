@@ -6,7 +6,20 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-12 — Phase 153 bleephub ↔ GitHub API parity (`docs-cleanup-actionable` branch, PR #153 in flight)
+## 2026-05-12 — Phase 153 bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat (`docs-cleanup-actionable` branch, PR #153 in flight)
+
+13-sub-task phase. 12 commits shipped, P153.13 in flight. Beyond the original "parity" scope, the user folded in two more pieces at the end:
+
+- **SQLite persistence (P153.12)** — `BLEEPHUB_PERSIST=true` gates a write-through SQLite layer for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. Fail-loud on open failure (BUG-985/986 pattern). Git storage stays in-memory (separate refactor when needed).
+- **Real `gh` CLI compatibility (P153.13)** — the test must use `gh repo create` / `gh issue create` / `gh pr create` / `gh release create` directly against bleephub, not `gh api $URL -f` URL hackery.
+
+  The first instinct (changing `-f` to `-F` in the test) was wrong. Real GitHub accepts both — `gh api -f private=false` sends `{"private": "false"}` (string-coerced), and GitHub's Rails layer coerces it to a bool. Bleephub strictly rejecting the string is the bug, not the test. Fixed via new `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` types in `gh_request_decode.go` that decode either typed or string-coerced JSON values; applied to every bool/int field in the request structs that `gh` CLI might hit. **No fallback shims** — this is the GitHub API spec, just made explicit on the bleephub side.
+
+  Test harness rewrite: `bleephub/test/run-gh-test.sh` calls native `gh` commands. `gh auth login --hostname localhost --with-token` registers bleephub as a known GHES host; subsequent `gh repo create`, `gh issue create`, `gh issue view`, `gh issue list`, `gh repo view`, `gh repo list` all target bleephub directly. The `api` helper stays for endpoints with no native `gh` verb (apps/{slug}, /applications/{cid}/token, suspend, OAuth Apps mgmt).
+
+  `make bleephub-gh-docker-test` wires the real harness entrypoint — builds `bleephub/Dockerfile.gh-test` (bleephub + gh 2.92.0 + jq + git + a self-signed TLS cert), runs the harness inside the container. Used to be orphaned (script existed but no make target invoked it); now the canonical end-to-end check before any PR claim.
+
+
 
 Audit on 2026-05-12 found bleephub's GitHub Apps surface was happy-path complete (manifest → JWT → installation token → ghs_ usage) but missing seven layers: a public app lookup, suspend/unsuspend, org/user installation lookup, `installation/repositories`, `/applications/{client_id}/*` token mgmt, repo + app-level webhook redelivery, the Checks API, plus semantic gaps (permission enforcement on installation tokens, repo_selection=selected support, webhook installation field + headers, app-targeted events, token-prefix disambiguation, HATEOAS url fields). 10 sub-task commits on the same branch close those gaps; SQLite persistence (P153.12) and the gh-CLI smoke harness extension (P153.13) round it out.
 

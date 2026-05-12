@@ -95,6 +95,16 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		Context:        r.Context(),
 	})
 
+	// Debug: log the query + any errors so the harness can diagnose which
+	// gh CLI queries hit unimplemented fields.
+	if len(result.Errors) > 0 {
+		s.logger.Debug().
+			Str("operation", req.OperationName).
+			Str("query", req.Query).
+			Interface("errors", result.Errors).
+			Msg("graphql errors")
+	}
+
 	writeJSON(w, http.StatusOK, result)
 }
 

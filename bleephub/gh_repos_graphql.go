@@ -98,20 +98,57 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 
+	// Enums that real GitHub exposes — gh CLI sends these by name (CREATED_AT, DESC,
+	// PUBLIC, OWNER, ...) not as strings. The schema must declare them so gh's
+	// `gh repo list`, `gh issue list`, etc. type-check.
+	repositoryPrivacyEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "RepositoryPrivacy",
+		Values: graphql.EnumValueConfigMap{
+			"PUBLIC":   &graphql.EnumValueConfig{Value: "PUBLIC"},
+			"PRIVATE":  &graphql.EnumValueConfig{Value: "PRIVATE"},
+			"INTERNAL": &graphql.EnumValueConfig{Value: "INTERNAL"},
+		},
+	})
+	repositoryAffiliationEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "RepositoryAffiliation",
+		Values: graphql.EnumValueConfigMap{
+			"OWNER":               &graphql.EnumValueConfig{Value: "OWNER"},
+			"COLLABORATOR":        &graphql.EnumValueConfig{Value: "COLLABORATOR"},
+			"ORGANIZATION_MEMBER": &graphql.EnumValueConfig{Value: "ORGANIZATION_MEMBER"},
+		},
+	})
+	repositoryOrderFieldEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "RepositoryOrderField",
+		Values: graphql.EnumValueConfigMap{
+			"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+			"UPDATED_AT": &graphql.EnumValueConfig{Value: "UPDATED_AT"},
+			"PUSHED_AT":  &graphql.EnumValueConfig{Value: "PUSHED_AT"},
+			"STARGAZERS": &graphql.EnumValueConfig{Value: "STARGAZERS"},
+			"NAME":       &graphql.EnumValueConfig{Value: "NAME"},
+		},
+	})
+	orderDirectionEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "OrderDirection",
+		Values: graphql.EnumValueConfigMap{
+			"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
+			"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+		},
+	})
+
 	// Add repositories field to User type
 	userType.AddFieldConfig("repositories", &graphql.Field{
 		Type: repoConnectionType,
 		Args: graphql.FieldConfigArgument{
 			"first":             &graphql.ArgumentConfig{Type: graphql.Int},
 			"after":             &graphql.ArgumentConfig{Type: graphql.String},
-			"privacy":           &graphql.ArgumentConfig{Type: graphql.String},
+			"privacy":           &graphql.ArgumentConfig{Type: repositoryPrivacyEnum},
 			"isFork":            &graphql.ArgumentConfig{Type: graphql.Boolean},
-			"ownerAffiliations": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
+			"ownerAffiliations": &graphql.ArgumentConfig{Type: graphql.NewList(repositoryAffiliationEnum)},
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "RepositoryOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
-					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},
-					"direction": &graphql.InputObjectFieldConfig{Type: graphql.String},
+					"field":     &graphql.InputObjectFieldConfig{Type: repositoryOrderFieldEnum},
+					"direction": &graphql.InputObjectFieldConfig{Type: orderDirectionEnum},
 				},
 			})},
 		},
@@ -179,6 +216,38 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 				return nil, nil
 			}
 			return repoToGraphQL(repo), nil
+		},
+	})
+
+	// `repositoryOwner(login)` is the interface real GitHub exposes for "user or
+	// organization that owns repos". gh CLI's `gh repo list <login>` queries it.
+	// Bleephub treats user and org the same — both have a .repositories field on
+	// userType already — so we return the User shape regardless of whether the
+	// login resolves to a User or an Org (orgs.login is also indexed in
+	// OrgsByLogin; treat their JSON shape as the same as a User for this purpose).
+	queryType.AddFieldConfig("repositoryOwner", &graphql.Field{
+		Type: userType,
+		Args: graphql.FieldConfigArgument{
+			"login": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			login, _ := p.Args["login"].(string)
+			if u := s.store.LookupUserByLogin(login); u != nil {
+				return userToGraphQL(u), nil
+			}
+			// Org → fake a User-shaped payload so userType.repositories resolves.
+			s.store.mu.RLock()
+			org := s.store.OrgsByLogin[login]
+			s.store.mu.RUnlock()
+			if org != nil {
+				return map[string]interface{}{
+					"login":      org.Login,
+					"databaseId": org.ID,
+					"name":       org.Name,
+					"url":        "/" + org.Login,
+				}, nil
+			}
+			return nil, nil
 		},
 	})
 

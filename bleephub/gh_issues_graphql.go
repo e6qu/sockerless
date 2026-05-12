@@ -124,6 +124,12 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				},
 			},
 			"authorAssociation": &graphql.Field{Type: graphql.String},
+			// Fields gh CLI's `gh issue view` queries on IssueComment — defaults
+			// fine for bleephub (we don't model edit history or moderation).
+			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"reactionGroups":      &graphql.Field{Type: graphql.NewList(reactionGroupType), Resolve: emptyList},
 		},
 	})
 
@@ -1198,3 +1204,10 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 		},
 	}
 }
+
+// Schema-stub resolvers — return a default for fields that gh CLI queries
+// but bleephub doesn't model (edit history, moderation, reactions).
+// Errors-free responses unblock gh's queries; the contract returns defaults.
+func alwaysFalse(graphql.ResolveParams) (interface{}, error) { return false, nil }
+func alwaysNil(graphql.ResolveParams) (interface{}, error)   { return nil, nil }
+func emptyList(graphql.ResolveParams) (interface{}, error)   { return []interface{}{}, nil }

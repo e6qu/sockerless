@@ -1,6 +1,6 @@
 # Known Bugs
 
-**987 filed · 987 fixed · 0 open · 1 false positive.**
+**990 filed · 987 fixed · 3 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,6 +10,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
+| BUG-988 | P2 | bleephub GraphQL | `gh repo list <user>` exits non-zero. Root causes: (a) `RepositoryPrivacy` / `RepositoryAffiliation` / `RepositoryOrderField` / `OrderDirection` enums missing — bleephub declared the equivalent args as `String`. (b) `repositoryOwner(login)` query missing — gh uses it as the polymorphic "user or org owner" interface. **Partial fix in flight**: enums added + `repositoryOwner` query proxies to user/org lookup. |
+| BUG-989 | P2 | bleephub GraphQL | `gh issue view <N> --repo o/r` exits non-zero. Root causes: (a) IssueComment missing fields gh queries (`includesCreatedEdit`, `isMinimized`, `minimizedReason`, `reactionGroups`). (b) `issueOrPullRequest` returns just `Issue`, not a union of `Issue \| PullRequest` — gh's `...on PullRequest` fragment fails to type-check. (c) `PullRequest.milestone` missing. (d) `PullRequest.comments` missing `last` arg. (e) `PRCommentConnection.nodes` missing. **Partial fix in flight**: IssueComment fields added (return defaults). Union + PR.milestone + comments(last:) + PRCommentConnection.nodes still TODO. |
+| BUG-990 | P2 | bleephub GraphQL | `gh issue list --repo o/r` exits non-zero. Root cause: `orderBy.field` / `.direction` declared as `String` but gh sends enum names (`CREATED_AT`, `DESC`). **Fixed**: enums added in BUG-988 patch (same input-object refactor). Validate after Docker harness re-run. |
 
 ## False positives
 
@@ -21,10 +24,12 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 - **Backend ↔ host primitive must match (P0).** ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, GCF in CRF, ACA in ACA, AZF in AZF. Cross-pollution is a critical architectural error.
 - **No fakes / no fallbacks / no skips.** Synthetic exit codes, silent shims, fake-data fallbacks, conditional `t.Skip` for missing config — all file as bugs and get real fixes. Tests run or fail loud; never skip silently.
+- **No legacy-shim fallbacks during development.** Bleephub isn't carrying old behavior — if real GitHub does X, bleephub does X. Don't add a "legacy bph_ token shape" path when the right answer is "match GitHub's `ghp_`".
 - **Cross-cloud sweep on every find.** When a pattern is found in one backend, the same code paths in the other 5 backends / 3 sims get checked in the same commit.
 - **Pattern B for cloud-specific drivers.** Within a cloud, drivers consolidate into `*-common`; cross-cloud duplication is fine and expected.
 - **Doc-only fixes are unsafe when the cloud rejects the config.** BUG-944/987: a documented MountOptions requirement that Cloud Run rejects is no fix. Verify cloud-acceptable, not just sockerless-controllable.
 - **HTTP 500 reserved for unexpected panics.** Never return 5xx as a designed failure path; use exit-code header / envelope.
+- **External test fixtures must use the real client.** The `gh` CLI test harness uses real `gh repo create` / `gh issue create` against bleephub, not `gh api $URL -f key=val` URL hackery. If bleephub rejects what real GitHub accepts, fix bleephub — don't bend the test.
 
 ## Resolved history (compressed)
 

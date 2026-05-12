@@ -33,8 +33,8 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 			URL    string `json:"url"`
 			Secret string `json:"secret"`
 		} `json:"config"`
-		Events []string `json:"events"`
-		Active *bool    `json:"active"`
+		Events []string  `json:"events"`
+		Active *flexBool `json:"active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
@@ -52,7 +52,7 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 	}
 	active := true
 	if req.Active != nil {
-		active = *req.Active
+		active = bool(*req.Active)
 	}
 
 	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret, events, active)
@@ -118,8 +118,8 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 			URL    string `json:"url"`
 			Secret string `json:"secret"`
 		} `json:"config"`
-		Events []string `json:"events"`
-		Active *bool    `json:"active"`
+		Events []string  `json:"events"`
+		Active *flexBool `json:"active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
@@ -139,7 +139,7 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 			h.Events = req.Events
 		}
 		if req.Active != nil {
-			h.Active = *req.Active
+			h.Active = bool(*req.Active)
 		}
 	})
 

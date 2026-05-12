@@ -25,10 +25,10 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Private     bool   `json:"private"`
-		AutoInit    bool   `json:"auto_init"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Private     flexBool `json:"private"`
+		AutoInit    flexBool `json:"auto_init"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
@@ -39,7 +39,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := s.store.CreateRepo(user, req.Name, req.Description, req.Private)
+	repo := s.store.CreateRepo(user, req.Name, req.Description, bool(req.Private))
 	if repo == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
 		return
@@ -96,7 +96,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		if v, ok := req["default_branch"].(string); ok {
 			r.DefaultBranch = v
 		}
-		if v, ok := req["private"].(bool); ok {
+		if v, ok := coerceBool(req["private"]); ok {
 			r.Private = v
 			if v {
 				r.Visibility = "private"
@@ -104,7 +104,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 				r.Visibility = "public"
 			}
 		}
-		if v, ok := req["archived"].(bool); ok {
+		if v, ok := coerceBool(req["archived"]); ok {
 			r.Archived = v
 		}
 	})

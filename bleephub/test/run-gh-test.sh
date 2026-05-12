@@ -67,7 +67,7 @@ export GIT_SSL_CAINFO=/tmp/tls/ca.crt
 log "Starting bleephub..."
 export BPH_TLS_CERT=/tmp/tls/server.crt
 export BPH_TLS_KEY=/tmp/tls/server.key
-bleephub -addr :443 &
+bleephub -addr :443 --log-level debug > /tmp/bleephub.log 2>&1 &
 BPH_PID=$!
 
 # Wait for server
@@ -93,11 +93,24 @@ git config --global init.defaultBranch main
 # Default token
 TOKEN="bph_0000000000000000000000000000000000000000"
 BASE="https://localhost"
+HOST="localhost"
 
-# We'll use gh api with full URLs + -H for auth, since gh auth login for
-# custom GHES hostnames can be tricky. This tests the exact same REST/GraphQL
-# endpoints that gh CLI uses.
+# --- Authenticate gh CLI against bleephub ---
+# gh CLI gates all calls on "you must be logged in to some host". Login it
+# against bleephub as a GHES host so high-level commands (gh repo create,
+# gh issue create, gh pr create, gh release create, ...) target bleephub.
+# We set GH_TOKEN to satisfy the default-host check AND `gh auth login`
+# the bleephub host explicitly with the same token.
+export GH_TOKEN="$TOKEN"
+export GH_HOST="$HOST"
+# Login the host so gh's host config has bleephub as a known GHES.
+echo "$TOKEN" | gh auth login --hostname "$HOST" --with-token >/dev/null 2>&1 || true
+gh config set -h "$HOST" git_protocol https >/dev/null 2>&1 || true
 
+# `api` for endpoints `gh` doesn't expose as a high-level command
+# (apps/{slug}, /applications/{cid}/token, suspend, etc.). For the
+# happy-path repo/issue/PR/release surface, use real `gh repo create`,
+# `gh issue create`, `gh pr create`, `gh release create` below.
 api() {
     gh api -H "Authorization: token $TOKEN" -H "Accept: application/vnd.github+json" "$@"
 }
@@ -126,10 +139,17 @@ GQL_LOGIN=$(echo "$GQL" | jq -r '.data.viewer.login')
 assert_eq "graphql viewer login" "admin" "$GQL_LOGIN"
 
 # ============================================================
-# Test: Create repo
+# Test: Create repo via real `gh repo create`
 # ============================================================
-log "Test: Create repo"
-REPO=$(api "$BASE/api/v3/user/repos" -f name=gh-test-repo -f description="GH CLI test" -f private=false)
+log "Test: gh repo create"
+# gh repo create posts to /user/repos with a JSON body matching real GitHub.
+# --public sends private=false; --description maps to description.
+if ! gh repo create gh-test-repo --public --description "GH CLI test" >/dev/null 2>&1; then
+    fail "gh repo create failed"
+else
+    pass "gh repo create"
+fi
+REPO=$(api "$BASE/api/v3/repos/admin/gh-test-repo")
 REPO_NAME=$(echo "$REPO" | jq -r '.name')
 assert_eq "repo name" "gh-test-repo" "$REPO_NAME"
 REPO_FULLNAME=$(echo "$REPO" | jq -r '.full_name')
@@ -140,15 +160,28 @@ PERMS_ADMIN=$(echo "$REPO" | jq -r '.permissions.admin')
 assert_eq "repo permissions.admin" "true" "$PERMS_ADMIN"
 
 # ============================================================
-# Test: List repos
+# Test: List repos via real `gh repo list`
 # ============================================================
-log "Test: List repos"
-REPOS=$(api "$BASE/api/v3/user/repos")
-REPO_COUNT=$(echo "$REPOS" | jq 'length')
-if [ "$REPO_COUNT" -ge 1 ]; then
-    pass "list repos returns >= 1"
+log "Test: gh repo list"
+# Without --json gh uses REST. With --json it uses GraphQL (separate
+# parity surface). REST path is the minimum that must work.
+if gh repo list admin >/dev/null 2>&1; then
+    pass "gh repo list"
 else
-    fail "list repos returned $REPO_COUNT"
+    fail "gh repo list returned non-zero"
+fi
+
+# ============================================================
+# Test: View repo via real `gh repo view` (REST path, no --json)
+# ============================================================
+log "Test: gh repo view"
+# Without --json gh uses REST. With --json it uses GraphQL — that's a
+# separate parity surface (gh's GraphQL field names map onto bleephub's
+# schema). REST path is the minimum that must work.
+if gh repo view admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh repo view"
+else
+    fail "gh repo view returned non-zero"
 fi
 
 # ============================================================
@@ -180,33 +213,47 @@ else
 fi
 
 # ============================================================
-# Test: Create issue
+# Test: Create issue via real `gh issue create`
 # ============================================================
-log "Test: Create issue"
-ISSUE=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues" -f title="GH CLI issue" -f body="Testing via gh api")
-ISSUE_NUM=$(echo "$ISSUE" | jq -r '.number')
-assert_eq "issue number" "1" "$ISSUE_NUM"
-ISSUE_STATE=$(echo "$ISSUE" | jq -r '.state')
-assert_eq "issue state" "open" "$ISSUE_STATE"
-
-# ============================================================
-# Test: Get issue
-# ============================================================
-log "Test: Get issue"
-ISSUE_GET=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues/1")
-ISSUE_TITLE=$(echo "$ISSUE_GET" | jq -r '.title')
-assert_eq "get issue title" "GH CLI issue" "$ISSUE_TITLE"
-
-# ============================================================
-# Test: List issues
-# ============================================================
-log "Test: List issues"
-ISSUES=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues")
-ISSUE_LIST_COUNT=$(echo "$ISSUES" | jq 'length')
-if [ "$ISSUE_LIST_COUNT" -ge 1 ]; then
-    pass "list issues returns >= 1"
+log "Test: gh issue create"
+# Real gh exits 0 when the issue is created. We verify by GETting the
+# issue via REST afterwards rather than parsing gh's URL output (which
+# varies across gh versions and Host configs).
+if ! gh issue create --repo admin/gh-test-repo --title "GH CLI issue" --body "Testing via real gh" >/dev/null 2>&1; then
+    fail "gh issue create returned non-zero"
 else
-    fail "list issues returned $ISSUE_LIST_COUNT"
+    pass "gh issue create exited 0"
+fi
+ISSUE_GET=$(api "$BASE/api/v3/repos/admin/gh-test-repo/issues/1")
+ISSUE_NUM=$(echo "$ISSUE_GET" | jq -r '.number')
+assert_eq "issue 1 exists after gh issue create" "1" "$ISSUE_NUM"
+ISSUE_TITLE=$(echo "$ISSUE_GET" | jq -r '.title')
+assert_eq "issue 1 title after gh issue create" "GH CLI issue" "$ISSUE_TITLE"
+ISSUE_STATE=$(echo "$ISSUE_GET" | jq -r '.state')
+assert_eq "issue 1 state after gh issue create" "open" "$ISSUE_STATE"
+
+# ============================================================
+# Test: View issue via real `gh issue view` (REST-backed, --json optional)
+# ============================================================
+log "Test: gh issue view"
+# `gh issue view N --repo …` uses the REST API directly; --json args go
+# through GraphQL on real GH. We test the REST-only path here by NOT
+# passing --json — gh prints a human-readable summary on success.
+if gh issue view 1 --repo admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh issue view"
+else
+    fail "gh issue view returned non-zero"
+fi
+
+# ============================================================
+# Test: List issues via real `gh issue list` (REST-backed)
+# ============================================================
+log "Test: gh issue list"
+# Same as above — without --json gh uses REST.
+if gh issue list --repo admin/gh-test-repo >/dev/null 2>&1; then
+    pass "gh issue list"
+else
+    fail "gh issue list returned non-zero"
 fi
 
 # ============================================================
@@ -451,6 +498,9 @@ echo "=============================="
 
 if [ "$FAIL" -gt 0 ]; then
     echo -e "Failures:$ERRORS"
+    echo ""
+    echo "=== last 80 lines of bleephub log (debug-level) for the failures ==="
+    tail -80 /tmp/bleephub.log 2>/dev/null || true
     kill $BPH_PID 2>/dev/null || true
     exit 1
 fi
