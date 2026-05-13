@@ -9,8 +9,8 @@ The Docker REST API on its `:3375` port is exercised by three external tools:
 | Adaptor | Min version | What it proves |
 |---|---|---|
 | **Docker Go SDK** (`github.com/docker/docker/client`) | v25+ | Full SDK compatibility — used by `tests/` and `actions/runner`. |
-| **`docker` CLI** | 29.x | Wire-level Docker REST v1.44. **Partially blocked by [BUG-991](#known-issues)** for the foreground `docker run` flow. |
-| **`podman` CLI** | 5.x | Docker-compat shim (`podman --url tcp://…`). Same wire as `docker`; same BUG-991 surface. |
+| **`docker` CLI** | 29.x | Wire-level Docker REST v1.44. `docker run` round-trips end-to-end since BUG-991 (Phase 158). |
+| **`podman` CLI** | 5.x | Docker-compat shim (`podman --url tcp://…`). Same wire as `docker`. |
 
 The contract: anything the Docker SDK / CLI does against `unix:///var/run/docker.sock`, it must do against this backend. Gaps from that contract are real bugs and filed in [BUGS.md](../../BUGS.md).
 
@@ -48,17 +48,26 @@ The backend has zero local container state: every `GET /containers/{id}` reaches
 
 ## Sample
 
-Working `docker` CLI calls against the backend (captured 2026-05-13, real output):
+End-to-end via real `docker` CLI (captured 2026-05-13 post BUG-991 + BUG-992 fixes, real output):
 
 ```bash
 $ DOCKER_HOST=tcp://localhost:3375 docker version --format '{{.Client.Version}} client / {{.Server.Version}} server'
 29.4.2 client / 5.4.2 server
 
+$ DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:3.20 echo "hello from sockerless backend-docker"
+hello from sockerless backend-docker
+
+$ DOCKER_HOST=tcp://localhost:3375 docker images --format '{{.Repository}}:{{.Tag}}' | head -3
+gcr.io/distroless/static-debian12:nonroot
+ubuntu:22.04
+alpine:3.20
+
+$ DOCKER_HOST=tcp://localhost:3375 docker volume ls --format '{{.Name}}' | head -2
+sclaude-config
+sclaude-npm
+
 $ curl -sS http://localhost:3375/_ping
 OK
-
-$ curl -sS http://localhost:3375/v1.44/version | jq -r '"ApiVersion=\(.ApiVersion) Version=\(.Version) Os=\(.Os)"'
-ApiVersion=1.44 Version=5.4.2 Os=darwin
 ```
 
 Full lifecycle via the **Docker Go SDK** (excerpt from the pattern used by `tests/containers_test.go`):
@@ -88,8 +97,12 @@ The SDK lets the caller order `create → start → wait` deterministically. Thi
 
 ## Known issues
 
-- **BUG-991** — `docker run` (CLI) returns `error waiting for container: No such container: <id>`. The CLI's foreground flow sends `POST /containers/{id}/wait?condition=next-exit` *before* `POST /containers/{id}/start`; this backend's wait handler (in `backends/core/handle_containers.go`) checks the local Store directly, finds nothing (containers live in the upstream daemon, not in the Store), and returns 200/StatusCode=0 immediately. The CLI then treats wait-completed-before-start as a crash. Fix shape: delegate to `s.self.ContainerWait` when the local Store has no record and `s.self != nil`. Staged as Phase 158 in [PLAN.md](../../PLAN.md). Until then, drive this backend via the **Docker Go SDK** (which orders the calls deterministically) or via raw `curl`.
-- **Image / volume / network list under-fills** when the local Store is empty. `GET /images/json` returns `[]` even when the upstream daemon has images; same handler-shape issue as BUG-991. Will likely fold into Phase 158.
+None open. Two recent fixes (both Phase 158):
+
+- **BUG-991** (closed 2026-05-13) — `docker run` (CLI) used to return `error waiting for container: No such container: <id>` because the wait handler checked the local Store directly. Fixed by delegating to `s.self.ContainerInspect` + `s.self.ContainerWait`.
+- **BUG-992** (closed 2026-05-13) — `docker images` used to return `[]` against this backend even when the upstream daemon had images. `handleImageList` re-implemented filter logic over `s.Store.Images.List()` instead of delegating to `s.self.ImageList(opts)`. Fixed by replacing the 100-line in-handler logic with a thin delegate. Volume + network list handlers were already correct.
+
+See `backends/core/handle_containers.go`, `handle_images.go`, and the Phase 158 commit history.
 
 ## What's out of scope
 

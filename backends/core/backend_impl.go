@@ -570,12 +570,15 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 }
 
 // ContainerWait blocks until a container stops and returns its exit code.
+//
+// Returns NotFoundError consistently when the container doesn't exist
+// in any of {PendingCreates, CloudState, Store}. Callers that want
+// "already removed = success" semantics (Docker's condition=removed
+// shortcut) must Inspect first themselves — silent success on a
+// missing container is a fallback-hiding-bug (BUG-991 lineage).
 func (s *BaseServer) ContainerWait(ref string, condition string) (*api.ContainerWaitResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {
-		if condition == "removed" {
-			return &api.ContainerWaitResponse{StatusCode: 0}, nil
-		}
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID

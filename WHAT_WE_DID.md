@@ -6,6 +6,66 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + Claude skills (in flight on `phase-158-bug991-vibecoding-skills`)
+
+Four pieces on one branch, driven by the user reading BUG-991 as "a fallback hiding a bug" and asking for both the fix and a project-wide hardening response. The user then folded BUG-992 into the same PR rather than deferring to Phase 159.
+
+**1. BUG-991 fix** — `handleContainerWait`'s non-CloudState branch and `BaseServer.ContainerWait`'s `condition=removed` short-circuit were both flat-out lies on missing data: "container not in Store → return 200/StatusCode=0." Replaced with `s.self.ContainerInspect` (which delegates to upstream on passthrough backends) + `s.self.ContainerWait` for the actual block. The Inspect check is the *truth* check; the wait then delegates to whichever backend's override knows how to actually wait (docker → upstream daemon; cloud backends → CloudState). `condition=removed` "already removed = success" semantic preserved, but only after upstream confirms the container genuinely doesn't exist anywhere.
+
+Surfaced during Phase 157 docs sample-capture. The fix is small (~30 lines), but the *pattern* it represents — "handler shortcuts a Store-empty case to success" — is the single biggest source of vibe-coded silent failures.
+
+Cross-cloud sweep on the wait pattern: only docker backend overrides `ContainerWait`. All cloud backends route through `BaseServer.ContainerWait` which uses CloudState. The fix is the right shape — no per-cloud patches needed.
+
+**BUG-992 fix** — Audit during BUG-991 work found `handleImageList` re-implementing 100 lines of filter logic over `s.Store.Images.List()` while `BaseServer.ImageList` already did the same work, and the docker / cloud backend overrides of `ImageList` were never reached from the HTTP path. Two parallel implementations diverging (pattern 11 of VIBE_CODING.md). Fixed by reducing `handleImageList` to a 13-line delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` now returns the upstream daemon's images (gcr.io/distroless, ubuntu:22.04, alpine:3.20, …) where it previously returned `[]`.
+
+Cross-cloud sweep on the list pattern: `handleVolumeList` and `handleNetworkList` already delegated correctly. No other list handler affected. The sweep finds the *real* extent of the pattern, not a guess — a strict application of the rule pays off here.
+
+User folded BUG-992 into the same PR rather than deferring to Phase 159. Phase 159 entry removed from PLAN.md; this PR closes both bugs.
+
+**`docs/GOLANG_STRONG_TYPING.md`** — second research agent, similar discipline as the vibe-coding one (real sources, real quotes, no padding). Returned 15 approaches across all 12 required categories (typed IDs, exhaustive enums, generics constraints, nil-safety, codegen, static analysis, property-based testing, spec-driven typing, interface satisfaction proofs, phantom types, sealed sum-types, banning untyped containers + parse-don't-validate, required-field builders, struct-tag validation).
+
+Critical finding from the doc's "What probably WON'T work for sockerless" section: trying to *compile-time-enforce* the "handler must call s.self.X()" rule directly is fighting the language. `BaseServer.self api.Backend` is already the contract — what failed was discipline, not types. The right shape is a custom `revive` rule or `analysis.Analyzer` that bans `s.Store.<X>.<Read>` outside specifically-tagged getter functions. Type-level guards work for sum types and IDs; lint-level guards work for "where allowed to call what."
+
+Suggested adoption order ranked by cost vs. leverage: (1) `var _ Interface = (*Impl)(nil)` policy + linter, (2) `golangci-lint` baseline with curated linters, (3) typed IDs for cloud-state layer only, (4) sealed sum types for `core.PodSpec` and runner spec, (5) NilAway scope-limited, (6) property tests on filter logic (direct BUG-992 follow-up), (7) oapi-codegen for bleephub greenfield, (8) parse-don't-validate constructors retrofit. Each step has a clear "earn its way in" gate before the next.
+
+**Skill refinement (P158.7)** — `avoid-vibe-slop` gained a "Make the type system catch what discipline misses" section pointing at three concrete patterns from the typing doc. `adaptor-fidelity-check` gained a "Compile-time guardrails for adaptor contracts" section linking `var _ Interface = (*Impl)(nil)` to its in-repo usage. Both skills now cross-reference `docs/GOLANG_STRONG_TYPING.md` in the Quick references section.
+
+**2. `docs/VIBE_CODING.md`** — sourced anti-pattern catalogue. Spawned a research agent with explicit instructions to surface real quotes from real URLs (no padding, no invented patterns). Returned 23 distinct patterns with verbatim quotes from HN, Addy Osmani, Simon Willison, curl/Stenberg, Zig's ban policy, Augment's 8-pattern catalogue, TDS security-debt analysis, Socket on slopsquatting, CACM on hallucinated packages, Tobias Brunner's vibe-coding horror story, Claude Code GitHub issues, Karpathy's original tweet. Mapped each pattern to a sockerless failure mode + the policy/tooling in place. The "Sockerless instance" line is the load-bearing bit — patterns 1, 9, and 11 each show up in this repo by name (BUG-991, BUG-992, the cross-cloud sweep rule).
+
+Surprise during agent work: the research agent initially returned the catalogue with one section labeled "I have enough material to assemble..." — basically a planning preamble. Pattern 17 (context amnesia) almost in real-time. Re-read the agent's output carefully, kept only the structured content.
+
+**3. Three project-local Claude skills under `.claude/skills/`**:
+
+- `avoid-vibe-slop/SKILL.md` — pre-edit checklist (17 questions across truth/adaptor-fidelity, plan-and-root-cause, tests, comments/abstraction, dependencies, destructive actions, context discipline). Skill fires before any non-trivial Go/TS edit; references VIBE_CODING.md patterns by number.
+- `adaptor-fidelity-check/SKILL.md` — six-step verification when editing wire-facing handlers. Step 1: capture the real adaptor's wire shape (`docker --debug`, `aws --debug`, `gcloud --log-http`, `gh api --include`, `terraform plan`). Step 2: diff against our handler. Step 6: update component README with real captured output.
+- `manual-test/SKILL.md` — per-component recipe for driving the real adaptor against a running binary. Discipline: no mocks, real captured output, cleanup at end.
+
+Skeptical-of-imports approach per user direction: all three skills written from scratch. No third-party skill imports (potential supply-chain / backdoor / license issues). Each skill's `description` frontmatter explains when to auto-fire.
+
+**Did not work as expected**: the initial fix attempt for BUG-991 left the `BaseServer.ContainerWait`'s same `condition=removed → StatusCode: 0` fallback in place at line 576-578, defending it as "internal API contract." The user's framing — "is it the case of a fallback hiding bug?" — pushed back on that. Removed the parallel fallback too: internal callers wanting "already removed = success" must now `Inspect` first themselves. No silent success on a missing resource, anywhere.
+
+The `time` import in `handle_containers.go` became unused after the polling-for-removal loop in the original handler was deleted; pre-commit `go build` caught the compile error in <1 cycle. Good fast feedback.
+
+Took the opportunity to delete the polling loop entirely (`for i := 0; i < 50; i++ { time.Sleep(100ms) }`). That whole construct was waiting for the local Store to delete a container that the local Store never had — pure waste. Delegating to `s.self.ContainerWait` makes it unnecessary.
+
+User pattern this phase: the BUG-991 fix and the vibe-coding catalogue are mutually reinforcing — the bug demonstrated exactly the failure class the catalogue codifies. Next time a Store-direct check appears in a handler, the skill checklist (specifically `avoid-vibe-slop` question #4) fires before the code lands.
+
+## 2026-05-13 — Phase 157 component ⇄ reference-adaptor docs sweep (PR #157, merged at `aa54174f`)
+
+Reframed all component docs around their **external reference adaptor** — the tool that simultaneously validates the component (tests drive the real adaptor), is the utility users invoke, and defines what "correct" means.
+
+Three commits:
+
+1. `phase 157.0` — State save refocused on Phase 157.
+2. `docs(README)` — Experimental + security caveat block at top of root README. User-requested after recognising the project's actual maturity level: "highly experimental, fully vibe-coded, questionable security, not prod-safe. Caveat Emptor."
+3. `phase 157.1` — `backends/docker/README.md` rewritten in the adaptor-led shape: reference adaptor (Docker SDK / docker CLI / podman CLI) + validation (tests/ 59 SDK functions) + wiring (DOCKER_HOST=tcp://localhost:3375) + sample (real captured output) + out-of-scope.
+
+While sample-capturing, hit **BUG-991** — `docker run --rm` against `backends/docker` failed because the wait handler short-circuited on missing local Store record. Filed inline; staged as Phase 158. Fix actually shipped on the Phase 158 branch (above).
+
+Surprise: the Explore-agent survey of all P157 target docs reported "everything CURRENT" too quickly. Spot-checked anyway, found two concrete fixes (README's bleephub one-liner was pre-Phase-153 narrow; OBSERVABILITY.md's docker backend binary path was wrong). Lesson: when an agent's survey looks too clean, sample-verify against the latest commits, not just internal consistency.
+
+Phase 157 was supposed to cover all components. Shipped only `backends/docker` + state save + caveat + BUG-991 file. The remaining components are queued in DO_NEXT.md Track B for a future phase.
+
 ## 2026-05-13 — Phase 156 project-wide docs refresh + bleephub `gh` CLI clarity pass (PR #156, merged)
 
 Companion to #155. Survey of every top-level doc found the project-wide surface substantially current — bleephub-specific text was already aligned by #155 + the ARCHITECTURE.md service-group table edit. Two concrete fixes landed:

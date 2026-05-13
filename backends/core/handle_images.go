@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -262,115 +261,20 @@ func (s *BaseServer) handleImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
-	filters := ParseFilters(r.URL.Query().Get("filters"))
-	referenceFilters := filters["reference"]
-	danglingFilters := filters["dangling"]
-	labelFilters := filters["label"]
-	beforeFilters := filters["before"]
-	sinceFilters := filters["since"]
-
-	// Build image→container count map
-	imgContainerCount := make(map[string]int64)
-	for _, c := range s.Store.Containers.List() {
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			imgContainerCount[img.ID]++
-		}
+	// Delegate to s.self so passthrough backends (docker) reach the
+	// upstream daemon and cloud backends reach their ImageManager
+	// (which merges Store + cloud registry). The old in-handler logic
+	// read s.Store.Images.List() directly, which returned [] for any
+	// backend that doesn't track images in its local Store — exactly
+	// the BUG-991 fallback-hiding-bug shape, just for list endpoints.
+	opts := api.ImageListOptions{
+		All:     r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true",
+		Filters: ParseFilters(r.URL.Query().Get("filters")),
 	}
-
-	seen := make(map[string]bool)
-	var result []*api.ImageSummary
-	for _, img := range s.Store.Images.List() {
-		if seen[img.ID] {
-			continue
-		}
-		seen[img.ID] = true
-
-		// Apply reference filter
-		if len(referenceFilters) > 0 {
-			matched := false
-			for _, ref := range referenceFilters {
-				for _, tag := range img.RepoTags {
-					if m, _ := path.Match(ref, tag); m {
-						matched = true
-						break
-					}
-				}
-				if matched {
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-		}
-
-		// Apply dangling filter
-		if len(danglingFilters) > 0 {
-			isDangling := true
-			for _, tag := range img.RepoTags {
-				if !strings.Contains(tag, "<none>") {
-					isDangling = false
-					break
-				}
-			}
-			wantDangling := danglingFilters[0] == "true" || danglingFilters[0] == "1"
-			if wantDangling != isDangling {
-				continue
-			}
-		}
-
-		// Apply label filter
-		if len(labelFilters) > 0 && !MatchLabels(img.Config.Labels, labelFilters) {
-			continue
-		}
-
-		// Apply before filter
-		if len(beforeFilters) > 0 {
-			skip := false
-			for _, val := range beforeFilters {
-				if refImg, ok := s.Store.ResolveImage(val); ok {
-					refTime, _ := time.Parse(time.RFC3339Nano, refImg.Created)
-					imgTime, _ := time.Parse(time.RFC3339Nano, img.Created)
-					if !imgTime.Before(refTime) {
-						skip = true
-						break
-					}
-				}
-			}
-			if skip {
-				continue
-			}
-		}
-
-		// Apply since filter
-		if len(sinceFilters) > 0 {
-			skip := false
-			for _, val := range sinceFilters {
-				if refImg, ok := s.Store.ResolveImage(val); ok {
-					refTime, _ := time.Parse(time.RFC3339Nano, refImg.Created)
-					imgTime, _ := time.Parse(time.RFC3339Nano, img.Created)
-					if !imgTime.After(refTime) {
-						skip = true
-						break
-					}
-				}
-			}
-			if skip {
-				continue
-			}
-		}
-
-		created, _ := time.Parse(time.RFC3339Nano, img.Created)
-		result = append(result, &api.ImageSummary{
-			ID:          img.ID,
-			RepoTags:    img.RepoTags,
-			RepoDigests: img.RepoDigests,
-			Created:     created.Unix(),
-			Size:        img.Size,
-			VirtualSize: img.VirtualSize,
-			Labels:      img.Config.Labels,
-			Containers:  imgContainerCount[img.ID],
-		})
+	result, err := s.self.ImageList(opts)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
 	if result == nil {
 		result = []*api.ImageSummary{}

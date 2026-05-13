@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sockerless/api"
 )
@@ -263,60 +262,45 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	id, ok := s.ResolveContainerIDAuto(r.Context(), ref)
-	if !ok {
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
-		return
-	}
-
 	condition := r.URL.Query().Get("condition")
 	if condition == "" {
 		condition = "not-running"
 	}
 
-	c, exists := s.Store.Containers.Get(id)
-	if !exists {
-		if condition == "removed" {
-			WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+	// Verify the container exists where the truth lives — via s.self,
+	// not just the local Store. Passthrough backends (docker) keep
+	// containers in the upstream daemon; checking only s.Store would
+	// 404 (or worse, silently succeed on condition=removed) for
+	// containers the caller just created via the same backend. BUG-991.
+	if _, err := s.self.ContainerInspect(ref); err != nil {
+		if _, isNotFound := err.(*api.NotFoundError); isNotFound {
+			if condition == "removed" {
+				// Truly gone everywhere → "already removed" success
+				// per Docker API semantics.
+				WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{StatusCode: 0})
+				return
+			}
+			WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
 			return
 		}
-		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		WriteError(w, err)
 		return
 	}
 
-	if condition != "next-exit" && (c.State.Status == "exited" || c.State.Status == "dead") {
-		WriteJSON(w, http.StatusOK, api.ContainerWaitResponse{
-			StatusCode: c.State.ExitCode,
-		})
-		return
-	}
-
-	// Flush headers before blocking — see note above.
+	// Container exists in s.self. Flush headers (docker CLI's run-d
+	// flow sends /wait before /start and blocks on reading the status
+	// line; without this flush /start never gets sent), then delegate
+	// the actual blocking wait to s.self.ContainerWait. Each backend's
+	// override does the right thing: docker forwards to the upstream
+	// daemon; BaseServer's default reads s.Store + WaitChs.
 	flushWaitHeaders(w)
-
-	ch, ok := s.Store.WaitChs.Load(id)
-	if !ok {
-		c, _ = s.Store.Containers.Get(id)
-		writeWaitBody(w, c.State.ExitCode)
+	resp, err := s.self.ContainerWait(ref, condition)
+	if err != nil {
+		// Headers already sent; signal failure via -1 exit code.
+		writeWaitBody(w, -1)
 		return
 	}
-
-	select {
-	case <-ch.(chan struct{}):
-		c, _ = s.Store.Containers.Get(id)
-		// For "removed" condition, poll briefly for actual container deletion
-		if condition == "removed" {
-			for i := 0; i < 50; i++ {
-				if _, exists := s.Store.Containers.Get(id); !exists {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-		writeWaitBody(w, c.State.ExitCode)
-	case <-r.Context().Done():
-		writeWaitBody(w, -1)
-	}
+	writeWaitBody(w, int(resp.StatusCode))
 }
 
 // flushWaitHeaders sends 200 OK + JSON content-type headers to the
