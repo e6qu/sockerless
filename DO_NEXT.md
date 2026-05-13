@@ -16,8 +16,9 @@ Phase 158 (BUG-991 fix + VIBE_CODING.md sourced catalogue + 3 project-local Clau
 | P158.4 — Claude skills | ✅ | `avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test` under `.claude/skills/`. |
 | P158.5 — State save | ✅ | This commit set. |
 | P158.6 — BUG-992 fix (added by user; same PR) | ✅ | `handleImageList` reduced from ~115 lines to 13-line delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` returns the upstream daemon's images. |
+| P158.7 — `docs/GOLANG_STRONG_TYPING.md` + skill refinement | ✅ | 15-approach research-only catalogue. Skills refined to surface type-system guardrails (interface satisfaction proofs, typed IDs, sealed sum types, forbidigo against `any`). |
 
-Remaining: push final commit + wait for user merge.
+Remaining: push final commit + monitor CI + **user-authorized merge** (one-time for PR #158 only — default no-auto-merge resumes after).
 
 ## Resumable tracks after Phase 158 merges
 

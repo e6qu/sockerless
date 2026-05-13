@@ -79,6 +79,16 @@ Stop and rewrite if you catch yourself producing any of these:
 - `gh` CLI is the reference adaptor for bleephub; HTTPS-only; `--hostname` is the wiring flag.
 - Never auto-merge PRs; user merges every one.
 
+## Make the type system catch what discipline misses
+
+When a bug class (like BUG-991/BUG-992 — "handler read Store directly instead of `s.self.X`") could be enforced at compile time, prefer the type-system fix over a comment / lint rule. The doc `docs/GOLANG_STRONG_TYPING.md` catalogues 15 approaches with cost/risk per option. Three patterns specifically protect against vibe-coding regressions:
+
+- **`var _ Interface = (*Impl)(nil)`** — every implementor of an interface in `backends/core/` has this satisfaction proof. If the agent drops a method, build fails. (Approach 8.)
+- **Sealed interfaces + `gochecksumtype`** — for sum types like `core.PodSpec` variants; missing a case in a switch is a build failure. (Approach 10.)
+- **Typed IDs** — `ContainerARN`, `TaskID`, `LambdaFunctionName` as distinct Go types so the compiler rejects ARN-where-task-name-was-expected at call-sites. (Approach 1.)
+
+When you add a new sum-type-shaped enum or interface to this repo, reach for these first. When you're tempted to use `any` / `interface{}` / `map[string]any` outside `api/types_gen.go`, that's a flag — see `forbidigo` rule candidates in the same doc.
+
 ## Output
 
 When this skill fires, restate the 1–2 checklist items most relevant to the current change. Don't dump the whole list. Then proceed with the work — or stop and ask if a "no" surfaced.

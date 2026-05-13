@@ -42,14 +42,15 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 
-## Phase 158 — BUG-991 + BUG-992 + VIBE_CODING.md + Claude skills (in flight)
+## Phase 158 — BUG-991 + BUG-992 + VIBE_CODING.md + GOLANG_STRONG_TYPING.md + Claude skills (in flight)
 
-Four pieces on one branch:
+Five pieces on one branch:
 
 1. **BUG-991 fix** ✅ — `handleContainerWait` non-CloudState branch + `BaseServer.ContainerWait` `condition=removed` fallback replaced with `s.self.ContainerInspect` + `s.self.ContainerWait` delegation. Verified: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker`. Closed the silent-success-on-missing-resource fallback per "no fallback-hiding-bugs."
 2. **BUG-992 fix** ✅ — `handleImageList`'s 100-line in-handler filter logic against `s.Store.Images.List()` replaced with a thin delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` returns the upstream daemon's real images. Cross-cloud sweep: volume + network list handlers already delegated correctly.
-3. **`docs/VIBE_CODING.md`** ✅ — 23-pattern sourced catalogue with verbatim quotes + URLs (HN, Addy Osmani, Simon Willison, Augment, curl, Zig, TDS, Socket, CACM). Each pattern maps to a sockerless-specific failure mode + policy + bug-ID where applicable.
-4. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** ✅ — three project-local Claude skills operationalising the catalogue. Skeptical-of-imports: all three authored from scratch, no external skill imports.
+3. **`docs/VIBE_CODING.md`** ✅ — 23-pattern sourced catalogue with verbatim quotes + URLs.
+4. **`docs/GOLANG_STRONG_TYPING.md`** ✅ — 15-approach research-only catalogue for stronger Go typing (typed IDs, exhaustive enums, generics constraints, NilAway, codegen, golangci-lint composition, property-based testing, interface satisfaction proofs, phantom types, sealed sum-types, parse-don't-validate, builder pattern, struct-tag validation). Adoption deferred; suggested order included. Each approach has a sourced quote and a "Verdict for sockerless" (adopt / try / skip / unsure).
+5. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** ✅ — three project-local Claude skills. Updated with type-system-as-guardrail guidance from the typing doc (var-blank-equals satisfaction proofs, typed IDs, sealed sum types, forbidigo against `any`).
 
 Full plan in [PLAN.md § Phase 158](PLAN.md). Component-adaptor matrix from Phase 157 in [DO_NEXT.md](DO_NEXT.md).
 

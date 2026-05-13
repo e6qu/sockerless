@@ -100,9 +100,21 @@ Update the component's README (per Phase 157 doc shape):
 - "I only changed the response shape for ECS; should be fine" — but `lambda` and `aca` share the same handler (pattern 12).
 - "I'll add a `null` check in the parser" — when the real adaptor never sends null in that field (pattern 22).
 
+## Compile-time guardrails for adaptor contracts
+
+When the contract you're enforcing fits in the type system, prefer that to a manual review. Patterns that work in this repo (see `docs/GOLANG_STRONG_TYPING.md` for the full set):
+
+- **Interface satisfaction proofs.** Every backend's `*Server` type declares `var _ api.Backend = (*Server)(nil)` at package scope. Adding a method to `api.Backend` then forces a build error in every backend until they all implement it. New cloud backends: copy this line. (Approach 8 in the typing doc.)
+- **Typed IDs for cloud-state layers.** When you introduce a new identifier kind (ARN, task ID, function name, hostname), don't use `string`. Define `type ContainerARN string` (or similar) at the cloud-common layer. The compiler catches "passed the ECS task ARN to a Lambda function-name parameter" mismatches that the agent's "this string is opaque, who cares" instinct would miss. (Approach 1.)
+- **Sealed sum types + `gochecksumtype`.** Used in `core.PodSpec`-style variants. When a new variant lands, every switch missing the case is a build error. Match cloud lifecycles, dispatch shapes, etc. (Approach 10.)
+- **`forbidigo` against raw `any` outside `api/types_gen.go`.** Keep heterogeneous JSON quarantined to the generated Docker-API types; insist on typed shapes everywhere else. (Approach 12.)
+
+For spec-driven domains (the OpenAPI Docker surface, the bleephub GitHub surface), code-generation from spec (`oapi-codegen`, `gqlgen`) is the long-game upgrade. Adoption decisions stay deferred per the typing doc's status banner.
+
 ## Quick references
 
 - `docs/VIBE_CODING.md` — full anti-pattern catalogue.
+- `docs/GOLANG_STRONG_TYPING.md` — type-strengthening approaches (research only; adoption deferred).
 - `docs/RUNNERS.md` — runner ↔ sockerless wiring guide.
 - `specs/BLEEPHUB_GITHUB_API_PARITY.md` — GitHub API contract for bleephub.
 - `specs/CLOUD_RESOURCE_MAPPING.md` — Docker→cloud mapping per backend.
