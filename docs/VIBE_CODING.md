@@ -126,7 +126,7 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 **Description**: Agent re-implements something that already exists because it didn't search for it. Multiple competing implementations diverge.
 **Example**: "Duplicate authentication logic implemented differently in 7 locations."
 **Why it's bad**: Bug fixes only land in one copy. Behaviour drifts between call-sites and security boundaries.
-**Sockerless instance**: BUG-992 (passthrough list endpoints) is partially this — `handle_images.go` re-implements list logic against `s.Store` instead of calling `s.self.ImageList()`. Same pattern appears in volume + network list paths. Staged as Phase 159.
+**Sockerless instance**: BUG-992 — `handleImageList` re-implemented 100 lines of filter logic over `s.Store.Images.List()` while `BaseServer.ImageList` already did the same work, and the docker / cloud backend overrides of `ImageList` were never reached from the HTTP path. Fixed in Phase 158 by reducing `handleImageList` to a thin delegate to `s.self.ImageList(opts)`. Volume + network list handlers were already correct (already delegated), proving the cross-cloud sweep finds the *real* extent of the pattern, not a guess.
 **Source**: [HN id=43519938](https://news.ycombinator.com/item?id=43519938) — cadamsdotcom: *"It'll make duplicates of stuff you didn't know you already had because you're not fully across your own codebase and neither is the model."*
 
 ### 12. Concurrency / correctness bugs replicated across the codebase

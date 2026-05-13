@@ -10,23 +10,18 @@ Phase 158 (BUG-991 fix + VIBE_CODING.md sourced catalogue + 3 project-local Clau
 
 | Sub-task | Status | Notes |
 |---|---|---|
-| P158.1 — BUG-991 fix (delegate ContainerWait to s.self) | ✅ | `handle_containers.go` + `BaseServer.ContainerWait`; verified manually; `go test ./...` green in `backends/core/`. |
-| P158.2 — Audit other fallback-hiding-bugs | ✅ | BUG-992 (list endpoints) filed and staged as Phase 159. |
+| P158.1 — BUG-991 fix (delegate ContainerWait to s.self) | ✅ | `handle_containers.go` + `BaseServer.ContainerWait`; verified manually; `go test ./...` green. |
+| P158.2 — Audit fallback-hiding-bugs across list handlers | ✅ | BUG-992 found in `handleImageList`. Volume/network handlers already delegated correctly. |
 | P158.3 — `docs/VIBE_CODING.md` | ✅ | 23-pattern sourced catalogue. |
 | P158.4 — Claude skills | ✅ | `avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test` under `.claude/skills/`. |
-| P158.5 — State save | in-progress | This commit. |
+| P158.5 — State save | ✅ | This commit set. |
+| P158.6 — BUG-992 fix (added by user; same PR) | ✅ | `handleImageList` reduced from ~115 lines to 13-line delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` returns the upstream daemon's images. |
 
-Remaining: commit + push + open PR + wait for user merge.
+Remaining: push final commit + wait for user merge.
 
 ## Resumable tracks after Phase 158 merges
 
-### Track A — Phase 159 — Passthrough-list-endpoints sweep
-
-BUG-992 fix. Audit + fix every list endpoint that reads `s.Store.X.List()` directly without consulting `s.self.X`. Known affected: `handle_images.go handleImageList`, `handle_volumes.go` list, `handle_networks.go` list. Likely more. Cross-cloud sweep on every find.
-
-Acceptance: `DOCKER_HOST=tcp://localhost:3375 docker {images,volume ls,network ls}` returns the upstream daemon's actual resources against `backends/docker`.
-
-### Track B — Resume Phase 157 component-adaptor sweep (deferred during 158)
+### Track A — Resume Phase 157 component-adaptor sweep (deferred during 158)
 
 Phase 157 PR #157 only covered `backends/docker`. The other components (backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, simulators/README.md end-to-end showcase, cmd/sockerless, cmd/sockerless-admin) need the same adaptor-led rewrite. Component matrix below.
 
@@ -50,7 +45,7 @@ Doc shape (locked-in from #157): lead with adaptor, then validation, wiring, sam
 
 Headline pending: `simulators/README.md` end-to-end showcase — 3 loop variants (AWS sim ↔ ECS backend, GCP sim ↔ Cloud Run backend, Azure sim ↔ ACA backend), each ≤15 lines of bash to `docker run alpine echo hi` round-tripping through a real simulator.
 
-### Track C — Skill maturation (post-Phase 158)
+### Track B — Skill maturation (post-Phase 158)
 
 The three skills (`avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test`) are v1. As we surface more patterns, append to `docs/VIBE_CODING.md` and reference them from the skill checklists. Candidate additional skills (future phases):
 
@@ -58,11 +53,11 @@ The three skills (`avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test`) ar
 - `spec-first-implementation` — verify spec exists in `specs/` before coding.
 - `cross-cloud-sweep` — formal procedure for the "if found in one backend, check the other 5" rule.
 
-### Track D — Live-cloud validation
+### Track C — Live-cloud validation
 
 Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell.
 
-### Track E — Phase 91d (bookmarked indefinitely)
+### Track D — Phase 91d (bookmarked indefinitely)
 
 Real `pd-ephemeral` on cloudrun + gcf. Don't reopen until cloud capability changes.
 

@@ -48,7 +48,7 @@ The backend has zero local container state: every `GET /containers/{id}` reaches
 
 ## Sample
 
-End-to-end via real `docker` CLI (captured 2026-05-13 post BUG-991 fix, real output):
+End-to-end via real `docker` CLI (captured 2026-05-13 post BUG-991 + BUG-992 fixes, real output):
 
 ```bash
 $ DOCKER_HOST=tcp://localhost:3375 docker version --format '{{.Client.Version}} client / {{.Server.Version}} server'
@@ -57,11 +57,17 @@ $ DOCKER_HOST=tcp://localhost:3375 docker version --format '{{.Client.Version}} 
 $ DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine:3.20 echo "hello from sockerless backend-docker"
 hello from sockerless backend-docker
 
+$ DOCKER_HOST=tcp://localhost:3375 docker images --format '{{.Repository}}:{{.Tag}}' | head -3
+gcr.io/distroless/static-debian12:nonroot
+ubuntu:22.04
+alpine:3.20
+
+$ DOCKER_HOST=tcp://localhost:3375 docker volume ls --format '{{.Name}}' | head -2
+sclaude-config
+sclaude-npm
+
 $ curl -sS http://localhost:3375/_ping
 OK
-
-$ curl -sS http://localhost:3375/v1.44/version | jq -r '"ApiVersion=\(.ApiVersion) Version=\(.Version) Os=\(.Os)"'
-ApiVersion=1.44 Version=5.4.2 Os=darwin
 ```
 
 Full lifecycle via the **Docker Go SDK** (excerpt from the pattern used by `tests/containers_test.go`):
@@ -91,8 +97,12 @@ The SDK lets the caller order `create → start → wait` deterministically. Thi
 
 ## Known issues
 
-- **BUG-992** — `docker images` / `docker volume ls` / `docker network ls` return empty against this backend even when the upstream daemon has resources. Same handler-shape as the now-closed BUG-991: `backends/core/handle_*.go` reads from `s.Store.X.List()` directly instead of delegating to `s.self.XList()`. Staged as Phase 159 in [PLAN.md](../../PLAN.md). Affects passthrough backends only (cloud backends populate Store via `CloudState`).
-- **BUG-991** (closed 2026-05-13) — `docker run` (CLI) used to return `error waiting for container: No such container: <id>` because the wait handler checked the local Store directly. Fixed by delegating to `s.self.ContainerInspect` + `s.self.ContainerWait`. See `backends/core/handle_containers.go` + commit history on Phase 158.
+None open. Two recent fixes (both Phase 158):
+
+- **BUG-991** (closed 2026-05-13) — `docker run` (CLI) used to return `error waiting for container: No such container: <id>` because the wait handler checked the local Store directly. Fixed by delegating to `s.self.ContainerInspect` + `s.self.ContainerWait`.
+- **BUG-992** (closed 2026-05-13) — `docker images` used to return `[]` against this backend even when the upstream daemon had images. `handleImageList` re-implemented filter logic over `s.Store.Images.List()` instead of delegating to `s.self.ImageList(opts)`. Fixed by replacing the 100-line in-handler logic with a thin delegate. Volume + network list handlers were already correct.
+
+See `backends/core/handle_containers.go`, `handle_images.go`, and the Phase 158 commit history.
 
 ## What's out of scope
 

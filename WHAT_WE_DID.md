@@ -6,15 +6,21 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-13 — Phase 158 BUG-991 fix + VIBE_CODING.md sourced catalogue + Claude skills (in flight on `phase-158-bug991-vibecoding-skills`)
+## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + Claude skills (in flight on `phase-158-bug991-vibecoding-skills`)
 
-Three pieces on one branch, driven by the user reading BUG-991 as "a fallback hiding a bug" and asking for both the fix and a project-wide hardening response.
+Four pieces on one branch, driven by the user reading BUG-991 as "a fallback hiding a bug" and asking for both the fix and a project-wide hardening response. The user then folded BUG-992 into the same PR rather than deferring to Phase 159.
 
 **1. BUG-991 fix** — `handleContainerWait`'s non-CloudState branch and `BaseServer.ContainerWait`'s `condition=removed` short-circuit were both flat-out lies on missing data: "container not in Store → return 200/StatusCode=0." Replaced with `s.self.ContainerInspect` (which delegates to upstream on passthrough backends) + `s.self.ContainerWait` for the actual block. The Inspect check is the *truth* check; the wait then delegates to whichever backend's override knows how to actually wait (docker → upstream daemon; cloud backends → CloudState). `condition=removed` "already removed = success" semantic preserved, but only after upstream confirms the container genuinely doesn't exist anywhere.
 
-Surfaced during Phase 157 docs sample-capture. The fix is small (~30 lines), but the *pattern* it represents — "handler shortcuts a Store-empty case to success" — is the single biggest source of vibe-coded silent failures. Caught a sibling: `handleImageList` reads `s.Store.Images.List()` directly without consulting `s.self.ImageList()`, so docker backend returns `[]` even when upstream has images. Filed as BUG-992; staged as Phase 159 (passthrough-list-endpoints sweep).
+Surfaced during Phase 157 docs sample-capture. The fix is small (~30 lines), but the *pattern* it represents — "handler shortcuts a Store-empty case to success" — is the single biggest source of vibe-coded silent failures.
 
 Cross-cloud sweep on the wait pattern: only docker backend overrides `ContainerWait`. All cloud backends route through `BaseServer.ContainerWait` which uses CloudState. The fix is the right shape — no per-cloud patches needed.
+
+**BUG-992 fix** — Audit during BUG-991 work found `handleImageList` re-implementing 100 lines of filter logic over `s.Store.Images.List()` while `BaseServer.ImageList` already did the same work, and the docker / cloud backend overrides of `ImageList` were never reached from the HTTP path. Two parallel implementations diverging (pattern 11 of VIBE_CODING.md). Fixed by reducing `handleImageList` to a 13-line delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` now returns the upstream daemon's images (gcr.io/distroless, ubuntu:22.04, alpine:3.20, …) where it previously returned `[]`.
+
+Cross-cloud sweep on the list pattern: `handleVolumeList` and `handleNetworkList` already delegated correctly. No other list handler affected. The sweep finds the *real* extent of the pattern, not a guess — a strict application of the rule pays off here.
+
+User folded BUG-992 into the same PR rather than deferring to Phase 159. Phase 159 entry removed from PLAN.md; this PR closes both bugs.
 
 **2. `docs/VIBE_CODING.md`** — sourced anti-pattern catalogue. Spawned a research agent with explicit instructions to surface real quotes from real URLs (no padding, no invented patterns). Returned 23 distinct patterns with verbatim quotes from HN, Addy Osmani, Simon Willison, curl/Stenberg, Zig's ban policy, Augment's 8-pattern catalogue, TDS security-debt analysis, Socket on slopsquatting, CACM on hallucinated packages, Tobias Brunner's vibe-coding horror story, Claude Code GitHub issues, Karpathy's original tweet. Mapped each pattern to a sockerless failure mode + the policy/tooling in place. The "Sockerless instance" line is the load-bearing bit — patterns 1, 9, and 11 each show up in this repo by name (BUG-991, BUG-992, the cross-cloud sweep rule).
 

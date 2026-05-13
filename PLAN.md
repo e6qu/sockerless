@@ -72,30 +72,16 @@ Component matrix + commit layout in [DO_NEXT.md § Phase 157](DO_NEXT.md). Out o
 
 bleephub ↔ GitHub API parity (153) + broad GitHub API sweep (154) + bleephub docs (155) + project-wide docs (156). Headlines in the PR index above; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Spec at [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-### Phase 158 — BUG-991 fix + vibe-coding catalogue + Claude skills (in flight)
+### Phase 158 — BUG-991 + BUG-992 fixes + vibe-coding catalogue + Claude skills (in flight)
 
-Three pieces on one branch:
+Four pieces on one branch:
 
 1. **BUG-991 fix** — `handleContainerWait`'s non-CloudState branch + `BaseServer.ContainerWait`'s `condition=removed` fallback both replaced. Handler now calls `s.self.ContainerInspect` to verify existence (delegates to upstream on passthrough backends), then `s.self.ContainerWait` for the actual block. Removed silent-success on missing-resource per "no fallback-hiding-bugs."
-2. **`docs/VIBE_CODING.md`** — sourced anti-pattern catalogue (23 patterns, ~20 primary sources), each pattern mapped to a sockerless-specific failure mode + policy + bug-ID where applicable. Lives as the project's contract on what "vibe-coding done responsibly" means here.
-3. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** — three project-local Claude skills that operationalise the catalogue. Skeptical-of-imports approach: all three written from scratch against this repo, no external skill imports.
+2. **BUG-992 fix** — `handleImageList`'s 100-line in-handler filter logic against `s.Store.Images.List()` replaced with a thin delegate to `s.self.ImageList(opts)`. Each backend's override knows where the truth lives (docker → upstream daemon; cloud backends → `ImageManager`). Cross-cloud sweep: `handleVolumeList` and `handleNetworkList` already delegated correctly, no other list handler affected.
+3. **`docs/VIBE_CODING.md`** — sourced anti-pattern catalogue (23 patterns, ~20 primary sources), each pattern mapped to a sockerless-specific failure mode + policy + bug-ID where applicable.
+4. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** — three project-local Claude skills that operationalise the catalogue. Skeptical-of-imports approach: all three written from scratch.
 
-Acceptance: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker` (verified manually 2026-05-13). `go test ./...` green. New files validated by pre-commit hooks.
-
-### Phase 159 — Passthrough-list-endpoints sweep (planned, post-158)
-
-BUG-992 surfaced during the BUG-991 investigation. The same handler shape as BUG-991 affects every list endpoint that reads `s.Store.X.List()` directly without delegating to `s.self.XList()`:
-
-- `GET /images/json` — `handle_images.go:264 handleImageList`
-- `GET /volumes` — same pattern
-- `GET /networks` — same pattern
-- Possibly more (audit per `MEMORY.md` § cross-cloud sweep)
-
-For passthrough backends (docker) these return `[]` even when the upstream daemon has resources, because the local Store is empty.
-
-Fix shape: handlers enumerate resources via `s.self.X` first (which on passthrough delegates upstream, on cloud reads CloudState), then merge with Store entries if both have content. Cross-cloud sweep on every find.
-
-Acceptance: `docker images`, `docker volume ls`, `docker network ls` return the upstream daemon's actual resources against `backends/docker`. Existing tests green. Cloud backends unaffected (they populate Store via CloudState).
+Acceptance: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker`; `docker images` returns the upstream daemon's images. `go test ./...` green. New files validated by pre-commit hooks.
 
 ### Live-cloud validation track
 
