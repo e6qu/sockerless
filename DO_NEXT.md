@@ -36,11 +36,11 @@ This satisfies the existing pre-commit hook "Simulator testing contract (SDK + C
 
 | Sub | Status | What (includes handler + SDK + Terraform + CLI tests) |
 |---|---|---|
-| **P159.0** | ✅ | State save — STATUS / PLAN / DO_NEXT / BUGS / WHAT_WE_DID locking in Phase 159 scope. |
-| **P159.1** | pending | CloudFront skeleton — main.go route registration + XML codec shape + `Distribution`, `OriginAccessControl` CRUD + `aws_cloudfront_distribution` + `aws_cloudfront_origin_access_control` terraform tests + sdk + cli tests. |
-| **P159.2** | pending | CloudFront `CachePolicy`, `OriginRequestPolicy`, `ResponseHeadersPolicy` + matching terraform (`aws_cloudfront_cache_policy`, etc.) / sdk / cli tests. |
-| **P159.3** | pending | CloudFront Functions + invalidations + key groups + aliases + monitoring + tag CRUD + matching tests. |
-| **P159.4** | pending | ACM — us-east-1 pin + full CRUD + `DescribeCertificate` shape + `aws_acm_certificate` terraform test (validation_method=DNS path) + sdk + cli tests. |
+| **P159.0** | ✅ | State save + dep tidy (aca/azf go.sum after azure-common bump). |
+| **P159.1** | ✅ | CloudFront `Distribution` + `OriginAccessControl` + Tagging — first XML-bodied service. Wire pattern + cfNormalizeConfig + ETag/If-Match all locked in. PR commit `bf85f382`. |
+| **P159.2** | ✅ | CloudFront `CachePolicy` + `OriginRequestPolicy` + `ResponseHeadersPolicy` — independent CRUDs, no inter-resource dependencies. PR commit `94331059`. |
+| **P159.3** | ✅ | CloudFront `Function` (DEVELOPMENT→LIVE) + `Invalidation` (per-distribution) + `PublicKey` + `KeyGroup` (with PublicKey reference dependency). PR commit `fe2c6e81`. |
+| **P159.4** | in-progress | ACM — us-east-1 pin enforcement + full CRUD + `DescribeCertificate` shape + `aws_acm_certificate` terraform test (validation_method=DNS path) + sdk + cli tests. |
 | **P159.5** | pending | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution domain names + `aws_route53_record` (with `alias{…}`) terraform test + sdk + cli tests. |
 | **P159.6** | pending | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + AssociateWebACL with CloudFront ARN target + `aws_wafv2_web_acl` + `aws_wafv2_web_acl_association` terraform tests + sdk + cli tests. |
 | **P159.7** | pending | Amplify apps + branches + webhooks + jobs (synthesised; no real build) + `aws_amplify_app` + `aws_amplify_branch` + `aws_amplify_webhook` terraform tests + sdk + cli tests. |

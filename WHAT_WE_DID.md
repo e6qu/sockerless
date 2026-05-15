@@ -6,20 +6,34 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-15 — Phase 159 starting: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on `phase-159-aws-sim-cloudfront-amplify`)
+## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
 
-Continuity-only commit — no implementation yet. The user picked the next phase deliberately while the project's adaptor framing is fresh: expand `simulators/aws/` to cover the CloudFront + Amplify front-of-house surface most production Terraform stacks reach into, plus the four services those two pull in (WAFv2 attached to the distribution, ACM for the cert in us-east-1, Route 53 ALIAS records for the custom domain, IAM service-linked roles + OIDC providers for SSR identity).
+Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).
 
-Scope locked in PLAN.md § Phase 159 and broken into 13 sub-tasks (P159.0 through P159.12) in DO_NEXT.md. Each sub-task = one commit. The phase will likely span sessions; the state-save discipline + the new `.claude/skills/` checklists are designed exactly for this — a fresh session should be able to resume from `git log --oneline -15 + STATUS.md + DO_NEXT.md` with no other context.
+User direction at phase open: granular commits with CI green per commit. Each sub-task ships handler + SDK test + CLI test + Terraform test together, satisfying the existing "Simulator testing contract (SDK + CLI + terraform per change)" pre-commit hook.
 
-Two wire-protocol notes are load-bearing enough to call out:
+### Progress
 
-- **CloudFront speaks XML, not JSON.** Sim's existing handlers are JSON-only. Need an XML codec next to the JSON one; element order matters (the AWS Go SDK rejects out-of-order XML on some types). Same applies to Route 53.
-- **ACM is us-east-1-pinned for CloudFront.** Sim must enforce this on `ViewerCertificate.ACMCertificateArn` references, returning the real AWS error shape (`InvalidViewerCertificate`) when the cert region doesn't match. This is exactly the kind of constraint where "synthesise a 200 because the model can't tell what AWS does" would be a vibe-coding-slop regression — call it out in the sub-task brief.
+**P159.0** ✅ — State save + 8-module dep tidy after `azure-common`'s `azblob v1.6.4 → v1.7.0` bump pulled a transitive `MSAL Go v1.7.1 → v1.7.2`. Initial CI run failed `build-check` + `smoke` with `missing go.sum entry`; tidy in `backends/aca` + `backends/azure-functions` cleared both.
 
-The Phase 158 framing pays off here: every new sim handler has a clear reference adaptor (the aws CLI verb, the Go SDK method, the Terraform `aws_*` resource), and the validation entry points (`simulators/aws/{sdk-tests,terraform-tests,cli-tests}/`) are already established. Discipline: capture the real wire shape via `aws --debug` against real AWS before writing the handler, not after.
+**P159.1** ✅ — CloudFront `Distribution` + `OriginAccessControl` + Tagging (commit `bf85f382`). First XML-bodied service on the sim; same `encoding/xml` pattern as `s3.go`. Two notable corrections during development:
 
-Phase 157's Track A (remaining component-adaptor docs) carries forward — the `simulators/aws/README.md` portion of it folds into P159.12 since the new services land in the same simulator.
+- The AWS Go SDK dispatches Terraform's `aws_cloudfront_distribution` through `CreateDistributionWithTags` (different XML wrapper, same path with `?WithTags` query) — handler now sniffs the query param and routes to either body shape.
+- The Terraform provider crashed twice during initial development. First on `ListTagsForResource` (404 wasn't enough — needed the endpoint). Second on `resourceDistributionRead` dereferencing ~20 nested DistributionConfig fields without nil-checks. Fix: `cfNormalizeConfig` fills empty containers for every optional nested element on response. Source verified at `hashicorp/terraform-provider-aws@v6.32.1` `distribution.go:1098`. Pure BUG-991/992 lineage applied — encode the contract explicitly rather than papering over with a synthesised 200.
+
+**P159.2** ✅ — CloudFront `CachePolicy` + `OriginRequestPolicy` + `ResponseHeadersPolicy` (commit `94331059`). Independent CRUDs in `cloudfront_policies.go`. Shape was uneventful — wire pattern from P159.1 transferred cleanly. Security headers config supports XSSProtection / FrameOptions / ReferrerPolicy / ContentSecurityPolicy / ContentTypeOptions / StrictTransportSecurity (subset matching `aws_cloudfront_response_headers_policy` Terraform resource fields).
+
+**P159.3** ✅ — CloudFront `Function` (DEVELOPMENT→LIVE stage) + `Invalidation` + `PublicKey` + `KeyGroup` (commit `fe2c6e81`). Split into `cloudfront_functions.go` + `cloudfront_keys.go` to keep files reasonable. `CreateFunctionRequest` body decode tested against the SDK's `Base64EncodeBytes`-encoded `FunctionCode`. `GetFunction` returns raw bytes with `Content-Type: application/octet-stream` (not XML — diverges from every other CloudFront endpoint). `KeyGroupConfig.Items` references PublicKey IDs by string; sim rejects empty Items with InvalidArgument(400) per the real-API constraint.
+
+**P159.4** in flight — ACM with us-east-1 pin.
+
+### Discipline lessons reinforced
+
+- **Verify SDK wire shape from the serializer source, not by guess.** `aws-sdk-go-v2/service/cloudfront@v1.64.0/serializers.go` defines exact paths, body wrappers, and namespace strings. Every P159.x handler started by reading the corresponding `awsRestxml_serializeOp*` function before writing Go.
+- **Cross-cloud sweep on every find** (P159.1 Terraform crash analysis used the SDK Go type definitions to enumerate fields-the-provider-dereferences-without-nil-check rather than fixing one at a time). Cheaper to fix all in one normalisation pass.
+- **Pre-commit hook is the friend, not the enemy.** `gofmt` re-formatted policies.go and functions.go on first commit attempts; each time the recovery is `git add` the formatted version and re-run `git commit`. The hook also caught the dep-drift in P159.0 before push, saving a CI cycle.
+
+Phase 157's Track A (remaining component-adaptor docs) carries forward — the `simulators/aws/README.md` portion folds into P159.10 since the new services land in the same simulator.
 
 ## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + GOLANG_STRONG_TYPING.md + Claude skills (PR #158, merged at `89ff7df4`)
 

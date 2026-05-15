@@ -486,6 +486,26 @@ func cfDomainName(id string) string {
 	return strings.ToLower(id) + ".cloudfront.net"
 }
 
+// cfValidateViewerCertificate enforces real-AWS constraints on the
+// distribution's ViewerCertificate block. Specifically: ACM
+// certificates referenced via ACMCertificateArn must be issued in
+// us-east-1 (real AWS rejects any other region with
+// InvalidViewerCertificate). Returns empty string on success, error
+// message on failure.
+func cfValidateViewerCertificate(vc *CFViewerCertificate) string {
+	if vc == nil || vc.ACMCertificateArn == "" {
+		return ""
+	}
+	exists, regionMatch := acmCertExistsInRegion(vc.ACMCertificateArn, "us-east-1")
+	if !exists {
+		return "The specified ACM certificate does not exist: " + vc.ACMCertificateArn
+	}
+	if !regionMatch {
+		return "The specified ACM certificate must be in the us-east-1 region for use with CloudFront: " + vc.ACMCertificateArn
+	}
+	return ""
+}
+
 // cfNormalizeConfig fills in empty values for every optional nested element
 // in DistributionConfig so the GetDistribution response always carries the
 // full XML shape the Terraform aws provider expects. The provider reads
@@ -615,6 +635,10 @@ func handleCFCreateDistribution(w http.ResponseWriter, r *http.Request) {
 		cfWriteError(w, http.StatusBadRequest, "InvalidArgument", "At least one origin is required")
 		return
 	}
+	if err := cfValidateViewerCertificate(cfg.ViewerCertificate); err != "" {
+		cfWriteError(w, http.StatusBadRequest, "InvalidViewerCertificate", err)
+		return
+	}
 	cfg.Xmlns = "" // we set namespace on the outer Distribution element
 	cfNormalizeConfig(&cfg)
 	id := cfRandomID("E")
@@ -680,6 +704,10 @@ func handleCFUpdateDistribution(w http.ResponseWriter, r *http.Request) {
 	var cfg CFDistributionConfig
 	if err := xml.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		cfWriteError(w, http.StatusBadRequest, "MalformedXML", "Could not decode DistributionConfig: "+err.Error())
+		return
+	}
+	if msg := cfValidateViewerCertificate(cfg.ViewerCertificate); msg != "" {
+		cfWriteError(w, http.StatusBadRequest, "InvalidViewerCertificate", msg)
 		return
 	}
 	cfg.Xmlns = ""

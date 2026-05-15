@@ -20,6 +20,7 @@ provider "aws" {
     ecr              = var.endpoint
     servicediscovery = var.endpoint
     cloudfront       = var.endpoint
+    acm              = var.endpoint
   }
 }
 
@@ -110,6 +111,16 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   }
   query_strings_config {
     query_string_behavior = "none"
+  }
+}
+
+resource "aws_acm_certificate" "tf_cert" {
+  domain_name               = "tf-cert.example.com"
+  subject_alternative_names = ["www.tf-cert.example.com"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

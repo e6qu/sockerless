@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-159-aws-sim-cloudfront-amplify` — off `origin/main` post-PR-#158 merge. |
-| In-flight | Phase 159 — expand AWS simulator to cover CloudFront + AWS Amplify + the supporting IAM / Route 53 / WAFv2 / ACM surfaces those two services depend on. Continuity docs landing first; implementation across sub-task commits. |
+| Active branch | `phase-159-aws-sim-cloudfront-amplify` — open as PR #159. |
+| In-flight | Phase 159 — expand AWS simulator to CloudFront / Amplify / WAFv2 / ACM / Route 53 / IAM extensions. P159.0–3 shipped (CloudFront Distribution + OAC + Cache/OriginRequest/ResponseHeaders policies + Functions + Invalidations + KeyGroups + PublicKeys + Tagging — all with SDK + CLI + Terraform tests green). P159.4 (ACM) starting. |
 | Last merged | PR #158 — Phase 158 BUG-991 + BUG-992 + `docs/VIBE_CODING.md` + `docs/GOLANG_STRONG_TYPING.md` + 3 Claude skills (2026-05-13). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
