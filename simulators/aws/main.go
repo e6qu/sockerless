@@ -66,6 +66,7 @@ func main() {
 	registerKMS(awsRouter, srv)
 	registerDynamoDB(awsRouter, srv)
 	registerACM(awsRouter, srv)
+	registerWAFv2(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()

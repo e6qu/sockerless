@@ -22,6 +22,7 @@ provider "aws" {
     cloudfront       = var.endpoint
     acm              = var.endpoint
     route53          = var.endpoint
+    wafv2            = var.endpoint
   }
 }
 
@@ -113,6 +114,56 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   query_strings_config {
     query_string_behavior = "none"
   }
+}
+
+resource "aws_wafv2_ip_set" "tf_ipset" {
+  name               = "tf-ipset"
+  description        = "tf-test IP allowlist"
+  scope              = "CLOUDFRONT"
+  ip_address_version = "IPV4"
+  addresses          = ["203.0.113.0/24", "198.51.100.10/32"]
+}
+
+resource "aws_wafv2_web_acl" "tf_acl" {
+  name        = "tf-acl"
+  description = "tf-test WebACL"
+  scope       = "CLOUDFRONT"
+
+  default_action {
+    allow {}
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "tf-acl-metric"
+    sampled_requests_enabled   = true
+  }
+
+  rule {
+    name     = "block-ipset"
+    priority = 1
+
+    action {
+      block {}
+    }
+
+    statement {
+      ip_set_reference_statement {
+        arn = aws_wafv2_ip_set.tf_ipset.arn
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "tf-acl-block"
+      sampled_requests_enabled   = true
+    }
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "tf_assoc" {
+  resource_arn = aws_cloudfront_distribution.tf_dist.arn
+  web_acl_arn  = aws_wafv2_web_acl.tf_acl.arn
 }
 
 resource "aws_route53_zone" "tf_zone" {
