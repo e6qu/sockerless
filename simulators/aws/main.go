@@ -93,6 +93,7 @@ func main() {
 	registerS3(srv)
 	registerCloudFront(srv)
 	registerRoute53(srv)
+	registerAmplify(srv)
 	registerHostMetadata(srv)
 
 	// Dashboard summary endpoints for UI

@@ -23,6 +23,7 @@ provider "aws" {
     acm              = var.endpoint
     route53          = var.endpoint
     wafv2            = var.endpoint
+    amplify          = var.endpoint
   }
 }
 
@@ -114,6 +115,32 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   query_strings_config {
     query_string_behavior = "none"
   }
+}
+
+resource "aws_amplify_app" "tf_amplify" {
+  name        = "tf-amplify"
+  description = "tf-test Amplify app"
+  platform    = "WEB"
+
+  environment_variables = {
+    ENV = "test"
+  }
+
+  enable_branch_auto_build = true
+  enable_basic_auth        = false
+}
+
+resource "aws_amplify_branch" "tf_amplify_main" {
+  app_id      = aws_amplify_app.tf_amplify.id
+  branch_name = "main"
+  framework   = "Next.js - SSR"
+  stage       = "PRODUCTION"
+}
+
+resource "aws_amplify_webhook" "tf_amplify_hook" {
+  app_id      = aws_amplify_app.tf_amplify.id
+  branch_name = aws_amplify_branch.tf_amplify_main.branch_name
+  description = "tf-test webhook"
 }
 
 resource "aws_wafv2_ip_set" "tf_ipset" {
