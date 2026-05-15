@@ -1,32 +1,94 @@
 # Do Next
 
-Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) · vibe-coding catalogue [docs/VIBE_CODING.md](docs/VIBE_CODING.md).
+Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) · vibe-coding catalogue [docs/VIBE_CODING.md](docs/VIBE_CODING.md) · typing research [docs/GOLANG_STRONG_TYPING.md](docs/GOLANG_STRONG_TYPING.md).
 
 ## Where we are
 
-Phase 158 (BUG-991 fix + VIBE_CODING.md sourced catalogue + 3 project-local Claude skills) shipping on `phase-158-bug991-vibecoding-skills`. PR #157 merged 2026-05-13.
+Phase 159 (AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM) starting on `phase-159-aws-sim-cloudfront-amplify`, off `origin/main` post-PR-#158 merge.
 
-## Phase 158 status
+PR #158 merged 2026-05-13 with user-authorized one-time merge. Default "user merges every PR" is back.
 
-| Sub-task | Status | Notes |
+## Phase 159 scope (locked-in)
+
+Expand `simulators/aws/` to cover six service families currently absent from the simulator. **Reference adaptors** drive validation per Phase 157 frame: `aws` CLI verbs + AWS Go SDK + Terraform `aws` provider resources. See [PLAN.md § Phase 159](PLAN.md) for the protocol notes and out-of-scope.
+
+### Service-by-service surface area
+
+| File (new) | Service | Wire | Core verbs |
+|---|---|---|---|
+| `simulators/aws/cloudfront.go` | CloudFront | REST + XML | `CreateDistribution`, `GetDistribution`, `UpdateDistribution`, `DeleteDistribution`, `ListDistributions`, `CreateInvalidation`, `ListInvalidations`, `GetInvalidation`, `CreateOriginAccessControl`, `GetOriginAccessControl`, `ListOriginAccessControls`, `DeleteOriginAccessControl`, `CreateCachePolicy`, `GetCachePolicy`, `DeleteCachePolicy`, `ListCachePolicies`, `CreateOriginRequestPolicy`, `CreateResponseHeadersPolicy`, `CreateFunction`, `PublishFunction`, `DescribeFunction`, `ListFunctions`, `DeleteFunction`, `UpdateFunction`, `CreateKeyGroup`, `CreatePublicKey`, `AssociateAlias`, `ListConflictingAliases`, `CreateMonitoringSubscription`, tag CRUD. |
+| `simulators/aws/amplify.go` | Amplify | JSON | `CreateApp`, `UpdateApp`, `DeleteApp`, `GetApp`, `ListApps`, `CreateBranch`, `GetBranch`, `ListBranches`, `UpdateBranch`, `DeleteBranch`, `CreateDomainAssociation`, `GetDomainAssociation`, `ListDomainAssociations`, `UpdateDomainAssociation`, `DeleteDomainAssociation`, `CreateWebhook`, `GetWebhook`, `ListWebhooks`, `UpdateWebhook`, `DeleteWebhook`, `CreateDeployment`, `StartDeployment`, `StartJob`, `GetJob`, `ListJobs`, `StopJob`, `CreateBackendEnvironment`, `GetBackendEnvironment`, `ListBackendEnvironments`, `DeleteBackendEnvironment`, tag CRUD, `GenerateAccessLogs`, `GetArtifactUrl`. |
+| `simulators/aws/wafv2.go` | WAFv2 (CLOUDFRONT scope) | JSON | `CreateWebACL`, `GetWebACL`, `UpdateWebACL`, `DeleteWebACL`, `ListWebACLs`, `AssociateWebACL`, `DisassociateWebACL`, `GetWebACLForResource`, `ListResourcesForWebACL`, `CreateRuleGroup`, `GetRuleGroup`, `UpdateRuleGroup`, `DeleteRuleGroup`, `ListRuleGroups`, `CreateIPSet`, `GetIPSet`, `UpdateIPSet`, `DeleteIPSet`, `ListIPSets`, `CreateRegexPatternSet`, tag CRUD, `GetSampledRequests` (stub). |
+| `simulators/aws/acm.go` | ACM (us-east-1 pin) | JSON | `RequestCertificate`, `DescribeCertificate`, `DeleteCertificate`, `ListCertificates`, `AddTagsToCertificate`, `RemoveTagsFromCertificate`, `ListTagsForCertificate`, `ImportCertificate`, `ResendValidationEmail`, `UpdateCertificateOptions`. |
+| `simulators/aws/route53.go` | Route 53 | REST + XML | `ListHostedZones`, `CreateHostedZone`, `GetHostedZone`, `DeleteHostedZone`, `ChangeResourceRecordSets` (incl. `AliasTarget` block), `ListResourceRecordSets`, `GetChange`, `CreateHealthCheck`, `GetHealthCheck`, `DeleteHealthCheck`, tag CRUD. |
+| `simulators/aws/iam.go` (extend) | IAM service-linked roles + OIDC | JSON | Add `CreateServiceLinkedRole` for `AWSServiceRoleForCloudFrontLogger` + `AWSServiceRoleForAmplify`; `CreateOpenIDConnectProvider`, `GetOpenIDConnectProvider`, `DeleteOpenIDConnectProvider`, `ListOpenIDConnectProviders`. |
+
+### Sub-task / commit layout
+
+Each sub-task = one commit; CI runs per push. Phase may span sessions — state save preserves continuity.
+
+| Sub | Status | What |
 |---|---|---|
-| P158.1 — BUG-991 fix (delegate ContainerWait to s.self) | ✅ | `handle_containers.go` + `BaseServer.ContainerWait`; verified manually; `go test ./...` green. |
-| P158.2 — Audit fallback-hiding-bugs across list handlers | ✅ | BUG-992 found in `handleImageList`. Volume/network handlers already delegated correctly. |
-| P158.3 — `docs/VIBE_CODING.md` | ✅ | 23-pattern sourced catalogue. |
-| P158.4 — Claude skills | ✅ | `avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test` under `.claude/skills/`. |
-| P158.5 — State save | ✅ | This commit set. |
-| P158.6 — BUG-992 fix (added by user; same PR) | ✅ | `handleImageList` reduced from ~115 lines to 13-line delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` returns the upstream daemon's images. |
-| P158.7 — `docs/GOLANG_STRONG_TYPING.md` + skill refinement | ✅ | 15-approach research-only catalogue. Skills refined to surface type-system guardrails (interface satisfaction proofs, typed IDs, sealed sum types, forbidigo against `any`). |
+| **P159.0** | ✅ | State save — STATUS / PLAN / DO_NEXT / BUGS / WHAT_WE_DID locking in Phase 159 scope. (This commit.) |
+| **P159.1** | pending | CloudFront skeleton — main.go route registration + XML codec shape + `Distribution`, `OriginAccessControl`, `CachePolicy`, `Function` store types + happy-path Create/Get/Delete/List for each. |
+| **P159.2** | pending | CloudFront invalidations + key groups + aliases + monitoring subscription + tag CRUD. |
+| **P159.3** | pending | ACM — us-east-1 pin + full CRUD + `DescribeCertificate` shape matching SDK expectations. |
+| **P159.4** | pending | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution domain names. |
+| **P159.5** | pending | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + AssociateWebACL with CloudFront ARN target. |
+| **P159.6** | pending | Amplify apps + branches + webhooks + jobs (synthesised; no real build). |
+| **P159.7** | pending | Amplify domains + custom rules + backend environments. |
+| **P159.8** | pending | IAM extension — service-linked roles (`AWSServiceRoleForCloudFrontLogger`, `AWSServiceRoleForAmplify`) + OIDC providers. |
+| **P159.9** | pending | `simulators/aws/sdk-tests/` — test functions per service driving real AWS Go SDK against running sim. |
+| **P159.10** | pending | `simulators/aws/terraform-tests/` — Terraform plans per service via real `aws` provider with `endpoints {}` overriding to sim. |
+| **P159.11** | pending | `simulators/aws/cli-tests/` — `aws` CLI smoke per service. |
+| **P159.12** | pending | `simulators/aws/API_SPEC.md` + `simulators/aws/README.md` (adaptor-led shape from Phase 157) updated. State save before PR. |
 
-Remaining: push final commit + monitor CI + **user-authorized merge** (one-time for PR #158 only — default no-auto-merge resumes after).
+### Discipline reminders
 
-## Resumable tracks after Phase 158 merges
+Before each sub-task commit, read `.claude/skills/avoid-vibe-slop/SKILL.md` checklist. Specifically:
 
-### Track A — Resume Phase 157 component-adaptor sweep (deferred during 158)
+- Q2 "What is the reference adaptor?" — `aws <service>` CLI + AWS Go SDK + Terraform `aws_*` resource. If you can't name it for this verb, you don't know if the change is right.
+- Q3 "Does the adaptor's real behaviour confirm what I'm about to write?" — capture wire shape with `aws --debug <service> <verb>` against real AWS before guessing.
+- Q4 "Is it a fallback or lying about success?" — sim must return real AWS error shapes (e.g., `NoSuchDistribution`, `InvalidParameterValue`) when state is wrong, not a synthesised 200.
+- BUG-991/992 lineage especially relevant: **simulator handlers must consult their own store and return real errors for missing resources, not silent success.**
 
-Phase 157 PR #157 only covered `backends/docker`. The other components (backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, simulators/README.md end-to-end showcase, cmd/sockerless, cmd/sockerless-admin) need the same adaptor-led rewrite. Component matrix below.
+For wire-shape capture:
 
-Per-component plan from PR #157:
+```bash
+aws --debug --endpoint-url https://cloudfront.amazonaws.com cloudfront create-distribution --distribution-config file://config.json 2>&1 | grep -E "Body|URL|Method" | head -30
+```
+
+For Terraform-driven validation:
+
+```bash
+cd simulators/aws/terraform-tests/cloudfront
+terraform plan -refresh=true  # endpoints { cloudfront = "http://localhost:5566/" }
+```
+
+### Acceptance bar
+
+- Each new sim handler returns the real AWS wire shape (XML for CloudFront/Route 53; JSON for the others). Verified by running `aws <verb>` against the sim and getting parse-success on the SDK side.
+- For each service, at least one `sdk-test` + one `terraform-test` + one `cli-test` lands green.
+- `simulators/aws/API_SPEC.md` enumerates every new verb covered with last-green dates.
+- `simulators/aws/README.md` (when written, P159.12) follows Phase 157 adaptor-led shape.
+- No "synthesised success" patterns — missing resources return real error codes.
+
+### Out of scope
+
+- WAFv2 REGIONAL scope (ALB/API Gateway path) — deferred until a backend needs it.
+- CloudFront Functions actually executing JavaScript — handlers store + return the code; do not interpret.
+- Lambda@Edge runtime — association metadata only, no execution.
+- Amplify real build pipeline — jobs return synthesised `SUCCEEDED` after a short pause; no npm/yarn.
+- ACM DNS-validation polling realism — eager `ISSUED` transition (real AWS takes hours).
+- Service-linked role enforcement — create on demand; do not gate operations on SLR existence.
+
+## Resumable tracks after Phase 159 merges
+
+### Track A — Resume Phase 157 component-adaptor sweep (deferred during 158 + 159)
+
+Phase 157 PR #157 only covered `backends/docker`. Remaining: backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, `simulators/README.md` end-to-end showcase, cmd/sockerless, cmd/sockerless-admin. The `simulators/aws/README.md` portion likely folds into P159.12.
+
+Component matrix:
 
 | Component | Reference adaptor | Validation entry point |
 |---|---|---|
@@ -36,23 +98,19 @@ Per-component plan from PR #157:
 | `backends/cloudrun-functions` | gcloud + Go SDK + Terraform google; docker CLI | same |
 | `backends/aca` | az + Go SDK + Terraform azurerm; docker CLI | `simulators/azure/sdk-tests` |
 | `backends/azure-functions` | az + Go SDK + Terraform azurerm; docker CLI | same |
-| `simulators/aws` | aws CLI + AWS Go SDK + Terraform aws | `simulators/aws/{sdk-tests,terraform-tests}` |
 | `simulators/gcp` | gcloud + Go SDK + Terraform google | `simulators/gcp/{sdk-tests,terraform-tests}` |
 | `simulators/azure` | az + Go SDK + Terraform azurerm | `simulators/azure/{sdk-tests,terraform-tests}` |
-| `cmd/sockerless` (CLI) | itself — CLI is the adaptor for backends | `cmd/sockerless/*_test.go` |
+| `cmd/sockerless` (CLI) | itself — CLI is adaptor for backends | `cmd/sockerless/*_test.go` |
 | `cmd/sockerless-admin` | browser / REST clients against `/v1/*` | `cmd/sockerless-admin/*_test.go` |
-
-Doc shape (locked-in from #157): lead with adaptor, then validation, wiring, sample (real captured output), out-of-scope.
-
-Headline pending: `simulators/README.md` end-to-end showcase — 3 loop variants (AWS sim ↔ ECS backend, GCP sim ↔ Cloud Run backend, Azure sim ↔ ACA backend), each ≤15 lines of bash to `docker run alpine echo hi` round-tripping through a real simulator.
 
 ### Track B — Skill maturation (post-Phase 158)
 
-The three skills (`avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test`) are v1. As we surface more patterns, append to `docs/VIBE_CODING.md` and reference them from the skill checklists. Candidate additional skills (future phases):
+Candidate additional skills as new patterns surface:
 
 - `state-save` — codify the STATUS/PLAN/DO_NEXT/BUGS/WHAT_WE_DID refresh rhythm.
 - `spec-first-implementation` — verify spec exists in `specs/` before coding.
 - `cross-cloud-sweep` — formal procedure for the "if found in one backend, check the other 5" rule.
+- `simulator-handler` — repeatable pattern for a new sim service file (XML codec, JSON codec, store type, error shapes).
 
 ### Track C — Live-cloud validation
 
@@ -68,18 +126,19 @@ Real `pd-ephemeral` on cloudrun + gcf. Don't reopen until cloud capability chang
 - Components decoupled from admin / UI.
 - No fakes / no fallbacks / no silent shims.
 - Backend ↔ host primitive must match.
+- Simulator returns real AWS error shapes on missing/invalid state — never synthesised 200.
 - `gh` CLI is the reference adaptor for bleephub; HTTPS-only, `--hostname` is the wiring flag.
+- `aws --debug` is the reference for sim handler wire shapes — capture before writing.
 - `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for cloud-mapping.
-- Read `docs/VIBE_CODING.md` before any non-trivial code change.
-- Read `.claude/skills/avoid-vibe-slop/SKILL.md` checklist before writing handlers / tests / "fixes".
+- Read `docs/VIBE_CODING.md` + `.claude/skills/avoid-vibe-slop/SKILL.md` checklist before any non-trivial code change.
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout phase-158-bug991-vibecoding-skills && git pull` (or `git checkout main && git pull --ff-only` if 158 merged).
-2. `git log --oneline -10` to see what's on the branch.
+1. `git fetch origin && git checkout phase-159-aws-sim-cloudfront-amplify && git pull` (or `git checkout main && git pull --ff-only` if 159 merged).
+2. `git log --oneline -15` to see what's already on the branch.
 3. Read STATUS.md + this file + the recent commits.
-4. If editing code: read `.claude/skills/avoid-vibe-slop/SKILL.md` and run its checklist.
-5. If editing a wire-facing handler: also read `.claude/skills/adaptor-fidelity-check/SKILL.md`.
-6. Manual test before claiming done (per `.claude/skills/manual-test/SKILL.md`).
+4. Read `.claude/skills/avoid-vibe-slop/SKILL.md` checklist before writing handler code.
+5. Read `.claude/skills/adaptor-fidelity-check/SKILL.md` before writing wire-shape code; capture real AWS wire via `aws --debug` first.
+6. Manual test before claiming a sub-task done (per `.claude/skills/manual-test/SKILL.md`); for sim sub-tasks, the recipe is "start sim, run real `aws` CLI / SDK / Terraform against it, paste real captured output."
 7. File BUGS.md entries for anything that surfaces; fix in the same session.
-8. State-save before pushing.
+8. State-save before pushing each sub-task commit; update the P159.X status row in this file.

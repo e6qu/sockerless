@@ -47,41 +47,76 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #154 | 154 | Broad GitHub API sweep — reactions, releases, deployments + environments, PR review comments + threads, Checks, Actions OIDC + JWKS, Pages, branch protection. |
 | #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md` block. |
 | #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP `google.golang.org/api` v0.278.0 → v0.279.0. |
+| #157 | 157 | Component ⇄ reference-adaptor docs sweep (only `backends/docker` covered; remaining components queued as Track A in DO_NEXT.md). Experimental/security caveat on root README. BUG-991 surfaced + staged. |
+| #158 | 158 | BUG-991 + BUG-992 fixes; `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue; 3 project-local Claude skills under `.claude/skills/`. |
 
 ## Active + planned phases
 
 Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
 
-### Phase 157 — Component ⇄ reference-adaptor docs sweep (in flight)
+### Phase 159 — AWS simulator: CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight)
 
-Every component in the repo is paired with an external **reference adaptor** (docker CLI / aws CLI / gcloud / az / Terraform providers / gh CLI / browser). The adaptor is simultaneously the component's validation harness (tests drive the real adaptor), utility (how users actually invoke the component), and reference (defines "correct" behaviour).
+Expand `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most AWS Terraform stacks reach into. Today's sim handles ECS / ECR / IAM / EC2 / EFS / Lambda / KMS / SSM / S3 / STS / SecretsManager / DynamoDB / CloudWatch / CloudMap / Lambda Runtime / metadata. Phase 159 adds:
 
-Acceptance per component:
+| Service | Wire | Why now |
+|---|---|---|
+| CloudFront | REST + XML | The CDN front-end for Amplify, S3 static sites, and most Terraform-stamped production stacks. |
+| AWS Amplify | JSON | Website hosting + branch-per-env deployments; depends on CloudFront under the hood. |
+| WAFv2 | JSON (scope-aware) | Web ACL associations on CloudFront distributions are the standard prod-shape. |
+| ACM | JSON (us-east-1 pin) | Cert issuance + DescribeCertificate for CloudFront distribution aliases. |
+| Route 53 (ALIAS records) | REST + XML | ALIAS A/AAAA records targeting CloudFront distribution DNS names; the production way to wire a custom domain. |
+| IAM additions | JSON (existing handler extended) | Service-linked roles `AWSServiceRoleForCloudFrontLogger` + `AWSServiceRoleForAmplify`; OIDC providers for Amplify SSR. |
 
-- One README section per component, leading with the adaptor + minimum version.
-- "Validation" line points at the test path that drives the real adaptor + last-green count.
-- "Wiring" section is ≤5 lines (env / endpoint / creds).
-- "Sample" block contains a real captured output from running the command.
-- "Out of scope" subsection enumerates deferred adaptor capabilities.
+Reference adaptors per Phase 157 frame:
 
-Headline deliverable: `simulators/README.md` end-to-end showcase — three loop variants (AWS sim ↔ ECS backend, GCP sim ↔ Cloud Run backend, Azure sim ↔ ACA backend) each terminating in `docker run alpine echo hi` round-tripping through a real simulator. ≤15 lines of bash from zero to round-trip per variant.
+- **`aws cloudfront` CLI** — `create-distribution`, `get-distribution`, `update-distribution`, `delete-distribution`, `list-distributions`, `create-invalidation`, `create-function`, `publish-function`, `create-origin-access-control`, `associate-alias`, tag CRUD.
+- **`aws amplify` CLI** — `create-app`, `update-app`, `delete-app`, `list-apps`, `create-branch`, `start-deployment`, `start-job`, `create-domain-association`, `create-webhook`.
+- **`aws wafv2` CLI** — `create-web-acl --scope CLOUDFRONT`, `associate-web-acl`, `list-web-acls`, `update-web-acl`, `delete-web-acl`.
+- **`aws acm` CLI** — `request-certificate`, `describe-certificate`, `delete-certificate`, `list-certificates`, `add-tags-to-certificate`.
+- **`aws route53` CLI** — `change-resource-record-sets` with `AliasTarget`, `list-resource-record-sets`.
+- **AWS Go SDK** — `aws-sdk-go-v2/service/{cloudfront,amplify,wafv2,acm,route53}`.
+- **Terraform `aws` provider resources** — `aws_cloudfront_distribution`, `aws_cloudfront_function`, `aws_cloudfront_origin_access_control`, `aws_amplify_app`, `aws_amplify_branch`, `aws_amplify_domain_association`, `aws_amplify_webhook`, `aws_wafv2_web_acl`, `aws_wafv2_web_acl_association`, `aws_acm_certificate`, `aws_route53_record` (with `alias{…}`).
 
-Component matrix + commit layout in [DO_NEXT.md § Phase 157](DO_NEXT.md). Out of scope: live-cloud cells (separate tracks), code changes (docs only), bleephub (covered by #155 + #156).
+Wire-protocol notes (load-bearing):
+
+- **CloudFront speaks XML.** Path style is `/2020-05-31/distribution/{id}`; bodies are `<Distribution>…</Distribution>`. Existing sim handlers are JSON-only; need an XML encoder/decoder shape next to the JSON one. Match `aws-sdk-go-v2/service/cloudfront`'s exact element order — the SDK rejects out-of-order XML on some types.
+- **Route 53 speaks XML.** Same family.
+- **WAFv2 scope dimension** — `CLOUDFRONT` scope is global (us-east-1); `REGIONAL` is per-region (ALB/API Gateway). Phase 159 covers CLOUDFRONT scope; REGIONAL can come later if a backend needs it.
+- **ACM us-east-1 pin** — CloudFront only accepts certs from `us-east-1`. Sim must enforce this on `ViewerCertificate.ACMCertificateArn` references and reject mismatches with the same error shape the real AWS API uses.
+
+Acceptance:
+
+- Per-service `simulators/aws/{cloudfront,amplify,wafv2,acm,route53}.go` handler files matching the existing per-service file pattern.
+- `simulators/aws/sdk-tests/` adds test functions per service driving the real AWS Go SDK against the running simulator.
+- `simulators/aws/terraform-tests/` adds Terraform plans per service using the real Terraform `aws` provider with `endpoints {}` block overriding to the sim.
+- `simulators/aws/cli-tests/` adds `aws` CLI smoke per service.
+- `simulators/aws/API_SPEC.md` updated to enumerate the new verbs covered + last-green count.
+- `simulators/aws/README.md` updated in Phase 157 adaptor-led shape (currently part of Track A; can be folded in here).
+
+Sub-task breakdown + commit layout in [DO_NEXT.md § Phase 159](DO_NEXT.md). Each sub-task = one commit; CI runs per commit. Phase may span multiple sessions; state save discipline (per `.claude/skills/avoid-vibe-slop`) preserves continuity.
+
+Out of scope:
+
+- WAFv2 REGIONAL scope (deferred until an ALB/API Gateway need surfaces).
+- CloudFront edge functions actually executing JavaScript (return success; do not interpret the code).
+- Lambda@Edge association beyond the metadata layer.
+- Amplify build orchestration actually running the build (`StartJob` returns success + a synthesised job ID; no real npm install).
+- ACM certificate DNS-validation polling loops (`pendingValidation` → `issued` transition can be eager).
+- Service-linked role *enforcement* (sim accepts requests without verifying the SLR exists; create the records on demand).
+
+### Phase 157 — Component ⇄ reference-adaptor docs sweep (partial; Track A in DO_NEXT.md)
+
+PR #157 covered `backends/docker` only. The remaining components (backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, simulators/README.md showcase, cmd/sockerless, cmd/sockerless-admin) carry forward as Track A. Note: the `simulators/aws/README.md` portion likely lands inside Phase 159 since the new services are being added there.
+
+Doc shape (locked-in from #157): lead with adaptor, then validation, wiring, sample (real captured output), out-of-scope.
 
 ### Phase 153–156 — Closed
 
 bleephub ↔ GitHub API parity (153) + broad GitHub API sweep (154) + bleephub docs (155) + project-wide docs (156). Headlines in the PR index above; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Spec at [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
 
-### Phase 158 — BUG-991 + BUG-992 fixes + vibe-coding catalogue + Claude skills (in flight)
+### Phase 158 — Closed (PR #158)
 
-Four pieces on one branch:
-
-1. **BUG-991 fix** — `handleContainerWait`'s non-CloudState branch + `BaseServer.ContainerWait`'s `condition=removed` fallback both replaced. Handler now calls `s.self.ContainerInspect` to verify existence (delegates to upstream on passthrough backends), then `s.self.ContainerWait` for the actual block. Removed silent-success on missing-resource per "no fallback-hiding-bugs."
-2. **BUG-992 fix** — `handleImageList`'s 100-line in-handler filter logic against `s.Store.Images.List()` replaced with a thin delegate to `s.self.ImageList(opts)`. Each backend's override knows where the truth lives (docker → upstream daemon; cloud backends → `ImageManager`). Cross-cloud sweep: `handleVolumeList` and `handleNetworkList` already delegated correctly, no other list handler affected.
-3. **`docs/VIBE_CODING.md`** — sourced anti-pattern catalogue (23 patterns, ~20 primary sources), each pattern mapped to a sockerless-specific failure mode + policy + bug-ID where applicable.
-4. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** — three project-local Claude skills that operationalise the catalogue. Skeptical-of-imports approach: all three written from scratch.
-
-Acceptance: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker`; `docker images` returns the upstream daemon's images. `go test ./...` green. New files validated by pre-commit hooks.
+BUG-991 + BUG-992 fixes (handler→`s.self` delegation closed two fallback-hiding-bugs); `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue; 3 project-local Claude skills under `.claude/skills/`. Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
 ### Live-cloud validation track
 

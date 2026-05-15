@@ -6,7 +6,22 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + Claude skills (in flight on `phase-158-bug991-vibecoding-skills`)
+## 2026-05-15 — Phase 159 starting: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on `phase-159-aws-sim-cloudfront-amplify`)
+
+Continuity-only commit — no implementation yet. The user picked the next phase deliberately while the project's adaptor framing is fresh: expand `simulators/aws/` to cover the CloudFront + Amplify front-of-house surface most production Terraform stacks reach into, plus the four services those two pull in (WAFv2 attached to the distribution, ACM for the cert in us-east-1, Route 53 ALIAS records for the custom domain, IAM service-linked roles + OIDC providers for SSR identity).
+
+Scope locked in PLAN.md § Phase 159 and broken into 13 sub-tasks (P159.0 through P159.12) in DO_NEXT.md. Each sub-task = one commit. The phase will likely span sessions; the state-save discipline + the new `.claude/skills/` checklists are designed exactly for this — a fresh session should be able to resume from `git log --oneline -15 + STATUS.md + DO_NEXT.md` with no other context.
+
+Two wire-protocol notes are load-bearing enough to call out:
+
+- **CloudFront speaks XML, not JSON.** Sim's existing handlers are JSON-only. Need an XML codec next to the JSON one; element order matters (the AWS Go SDK rejects out-of-order XML on some types). Same applies to Route 53.
+- **ACM is us-east-1-pinned for CloudFront.** Sim must enforce this on `ViewerCertificate.ACMCertificateArn` references, returning the real AWS error shape (`InvalidViewerCertificate`) when the cert region doesn't match. This is exactly the kind of constraint where "synthesise a 200 because the model can't tell what AWS does" would be a vibe-coding-slop regression — call it out in the sub-task brief.
+
+The Phase 158 framing pays off here: every new sim handler has a clear reference adaptor (the aws CLI verb, the Go SDK method, the Terraform `aws_*` resource), and the validation entry points (`simulators/aws/{sdk-tests,terraform-tests,cli-tests}/`) are already established. Discipline: capture the real wire shape via `aws --debug` against real AWS before writing the handler, not after.
+
+Phase 157's Track A (remaining component-adaptor docs) carries forward — the `simulators/aws/README.md` portion of it folds into P159.12 since the new services land in the same simulator.
+
+## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + GOLANG_STRONG_TYPING.md + Claude skills (PR #158, merged at `89ff7df4`)
 
 Four pieces on one branch, driven by the user reading BUG-991 as "a fallback hiding a bug" and asking for both the fix and a project-wide hardening response. The user then folded BUG-992 into the same PR rather than deferring to Phase 159.
 

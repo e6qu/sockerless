@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-158-bug991-vibecoding-skills` — off `origin/main` post-PR-#157 merge. |
-| In-flight | Phase 158 — BUG-991 fix + `docs/VIBE_CODING.md` sourced catalogue + 3 project-local Claude skills (`avoid-vibe-slop`, `adaptor-fidelity-check`, `manual-test`). |
-| Last merged | PR #157 — Phase 157 component ⇄ reference-adaptor docs sweep (2026-05-13). |
-| Standing merge auth | **Expired.** Default "never auto-merge" rule active. User merges every PR. |
+| Active branch | `phase-159-aws-sim-cloudfront-amplify` — off `origin/main` post-PR-#158 merge. |
+| In-flight | Phase 159 — expand AWS simulator to cover CloudFront + AWS Amplify + the supporting IAM / Route 53 / WAFv2 / ACM surfaces those two services depend on. Continuity docs landing first; implementation across sub-task commits. |
+| Last merged | PR #158 — Phase 158 BUG-991 + BUG-992 + `docs/VIBE_CODING.md` + `docs/GOLANG_STRONG_TYPING.md` + 3 Claude skills (2026-05-13). |
+| Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 992 fixed (BUG-991 + BUG-992 both closed this phase). |
+| Bugs | 0 open · 992 fixed. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -42,22 +42,26 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 
-## Phase 158 — BUG-991 + BUG-992 + VIBE_CODING.md + GOLANG_STRONG_TYPING.md + Claude skills (in flight)
+## Phase 159 — AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM (in flight)
 
-Five pieces on one branch:
+Sockerless's `simulators/aws/` today implements ECS, ECR, IAM, EC2, EFS, Lambda, KMS, SSM, S3, STS, SecretsManager, DynamoDB, CloudWatch, CloudMap, Lambda Runtime API, metadata services. Phase 159 adds the front-of-house CDN/website-hosting surface: **CloudFront** and **AWS Amplify** plus the four supporting services those two consume:
 
-1. **BUG-991 fix** ✅ — `handleContainerWait` non-CloudState branch + `BaseServer.ContainerWait` `condition=removed` fallback replaced with `s.self.ContainerInspect` + `s.self.ContainerWait` delegation. Verified: `docker run --rm alpine:3.20 echo hi` succeeds against `backends/docker`. Closed the silent-success-on-missing-resource fallback per "no fallback-hiding-bugs."
-2. **BUG-992 fix** ✅ — `handleImageList`'s 100-line in-handler filter logic against `s.Store.Images.List()` replaced with a thin delegate to `s.self.ImageList(opts)`. Verified: `docker images` against `backends/docker` returns the upstream daemon's real images. Cross-cloud sweep: volume + network list handlers already delegated correctly.
-3. **`docs/VIBE_CODING.md`** ✅ — 23-pattern sourced catalogue with verbatim quotes + URLs.
-4. **`docs/GOLANG_STRONG_TYPING.md`** ✅ — 15-approach research-only catalogue for stronger Go typing (typed IDs, exhaustive enums, generics constraints, NilAway, codegen, golangci-lint composition, property-based testing, interface satisfaction proofs, phantom types, sealed sum-types, parse-don't-validate, builder pattern, struct-tag validation). Adoption deferred; suggested order included. Each approach has a sourced quote and a "Verdict for sockerless" (adopt / try / skip / unsure).
-5. **`.claude/skills/{avoid-vibe-slop,adaptor-fidelity-check,manual-test}/SKILL.md`** ✅ — three project-local Claude skills. Updated with type-system-as-guardrail guidance from the typing doc (var-blank-equals satisfaction proofs, typed IDs, sealed sum types, forbidigo against `any`).
+- **CloudFront** — REST + XML wire (not JSON). Distributions, origin access controls (OAC) + legacy origin access identities (OAI), cache policies, origin request policies, response headers policies, behaviors, invalidations, CloudFront Functions, key groups + public keys, real-time log configs, monitoring subscriptions, tag CRUD, `AssociateAlias` / `ListConflictingAliases`.
+- **AWS Amplify** — JSON wire. Apps, branches, domain associations, webhooks, deployments, jobs, backend environments, build artifacts, custom rules (redirects/rewrites), tag CRUD.
+- **WAFv2** — JSON wire, scope-aware (`CLOUDFRONT` vs `REGIONAL`). WebACLs, rule groups, IP sets, regex pattern sets, association with CloudFront distributions, sampled-requests stub.
+- **ACM** — JSON wire. `RequestCertificate` / `DescribeCertificate` / `DeleteCertificate` / `ListCertificates` / tag CRUD / `ImportCertificate`. us-east-1 region pinning enforced for CloudFront-associated certs.
+- **Route 53 ALIAS** — extend the existing DNS handling (if any) or add it: hosted zones + record sets including `AliasTarget` records pointing at CloudFront distribution domain names + Amplify default domains.
+- **IAM additions** — service-linked roles (`AWSServiceRoleForCloudFrontLogger`, `AWSServiceRoleForAmplify`), OIDC providers (for Amplify SSR identity), policies that already-existing IAM handlers may not synthesise yet.
 
-Full plan in [PLAN.md § Phase 158](PLAN.md). Component-adaptor matrix from Phase 157 in [DO_NEXT.md](DO_NEXT.md).
+Reference adaptors (per Phase 157 frame): `aws cloudfront`, `aws amplify`, `aws wafv2`, `aws acm`, `aws route53` CLI verbs + AWS Go SDK + Terraform `aws` provider resources (`aws_cloudfront_distribution`, `aws_cloudfront_function`, `aws_cloudfront_origin_access_control`, `aws_amplify_app`, `aws_amplify_branch`, `aws_amplify_domain_association`, `aws_wafv2_web_acl`, `aws_wafv2_web_acl_association`, `aws_acm_certificate`, `aws_route53_record` with `alias{…}`).
+
+Sub-task breakdown lives in [DO_NEXT.md § Phase 159](DO_NEXT.md). State save + phase scoping is sub-task 0; implementation sub-tasks land as separate commits on this branch.
 
 ## Recently closed phases
 
 | PR | Phase | Headline |
 |---|---|---|
+| #158 | 158 | BUG-991 + BUG-992 fixes (handler→`s.self` delegation closed two fallback-hiding-bugs in `handleContainerWait` + `handleImageList`). `docs/VIBE_CODING.md` 23-pattern catalogue. `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue. Three project-local Claude skills under `.claude/skills/`. |
 | #157 | 157 | Component ⇄ reference-adaptor docs sweep + state save + experimental/security caveat on root README + `backends/docker/README.md` rewrite. BUG-991 surfaced. |
 | #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP dep bump. |
 | #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md`. |
