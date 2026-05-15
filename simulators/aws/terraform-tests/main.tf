@@ -24,6 +24,7 @@ provider "aws" {
     route53          = var.endpoint
     wafv2            = var.endpoint
     amplify          = var.endpoint
+    iam              = var.endpoint
   }
 }
 
@@ -115,6 +116,18 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   query_strings_config {
     query_string_behavior = "none"
   }
+}
+
+resource "aws_iam_service_linked_role" "tf_slr_cloudfront" {
+  aws_service_name = "cloudfront.amazonaws.com"
+  custom_suffix    = "tftest"
+  description      = "tf-test CloudFront SLR"
+}
+
+resource "aws_iam_openid_connect_provider" "tf_oidc" {
+  url             = "https://oidc.eks.us-east-1.amazonaws.com/id/TFTESTOIDC"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
 }
 
 resource "aws_amplify_app" "tf_amplify" {
