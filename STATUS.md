@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-159-aws-sim-cloudfront-amplify` — open as PR #159. |
-| In-flight | Phase 159 — expand AWS simulator to CloudFront / Amplify / WAFv2 / ACM / Route 53 / IAM extensions. P159.0–3 shipped (CloudFront Distribution + OAC + Cache/OriginRequest/ResponseHeaders policies + Functions + Invalidations + KeyGroups + PublicKeys + Tagging — all with SDK + CLI + Terraform tests green). P159.4 (ACM) starting. |
+| Active branch | `phase-159-aws-sim-cloudfront-amplify` — open as PR #159. P159.0 through P159.10 all complete. Awaiting user merge. |
+| In-flight | **Phase 159 complete** — AWS simulator expanded to CloudFront / ACM / Route 53 / WAFv2 / Amplify / IAM SLR + OIDC. All 11 sub-tasks shipped with handler + SDK + CLI + Terraform tests. End-to-end `TestStackProductionShape` asserts CloudFront ↔ ACM ↔ WAF ↔ Route 53 cross-resource links converge after one `terraform apply`. CI green on every push. |
 | Last merged | PR #158 — Phase 158 BUG-991 + BUG-992 + `docs/VIBE_CODING.md` + `docs/GOLANG_STRONG_TYPING.md` + 3 Claude skills (2026-05-13). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |

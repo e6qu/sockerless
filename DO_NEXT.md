@@ -4,9 +4,11 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 159 (AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM) starting on `phase-159-aws-sim-cloudfront-amplify`, off `origin/main` post-PR-#158 merge.
+Phase 159 (AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM) **complete** on `phase-159-aws-sim-cloudfront-amplify` — PR #159 open, all sub-tasks P159.0 … P159.10 committed + pushed. CI green on every push (last green: P159.9 = 11/11 checks 2026-05-15).
 
-PR #158 merged 2026-05-13 with user-authorized one-time merge. Default "user merges every PR" is back.
+P159.10 (final sub-task) closed 2026-05-15: `API_SPEC.md` extended with §8–13 (CloudFront, ACM, Route 53, WAFv2, Amplify, IAM SLR/OIDC), `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape, end-to-end `TestStackProductionShape` added (asserts WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront domain_name, ACM ARN region == us-east-1).
+
+Awaiting user merge of PR #159. Default "user merges every PR" remains in force.
 
 ## Phase 159 scope (locked-in)
 
@@ -40,13 +42,13 @@ This satisfies the existing pre-commit hook "Simulator testing contract (SDK + C
 | **P159.1** | ✅ | CloudFront `Distribution` + `OriginAccessControl` + Tagging — first XML-bodied service. Wire pattern + cfNormalizeConfig + ETag/If-Match all locked in. PR commit `bf85f382`. |
 | **P159.2** | ✅ | CloudFront `CachePolicy` + `OriginRequestPolicy` + `ResponseHeadersPolicy` — independent CRUDs, no inter-resource dependencies. PR commit `94331059`. |
 | **P159.3** | ✅ | CloudFront `Function` (DEVELOPMENT→LIVE) + `Invalidation` (per-distribution) + `PublicKey` + `KeyGroup` (with PublicKey reference dependency). PR commit `fe2c6e81`. |
-| **P159.4** | in-progress | ACM — us-east-1 pin enforcement + full CRUD + `DescribeCertificate` shape + `aws_acm_certificate` terraform test (validation_method=DNS path) + sdk + cli tests. |
-| **P159.5** | pending | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution domain names + `aws_route53_record` (with `alias{…}`) terraform test + sdk + cli tests. |
-| **P159.6** | pending | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + AssociateWebACL with CloudFront ARN target + `aws_wafv2_web_acl` + `aws_wafv2_web_acl_association` terraform tests + sdk + cli tests. |
-| **P159.7** | pending | Amplify apps + branches + webhooks + jobs (synthesised; no real build) + `aws_amplify_app` + `aws_amplify_branch` + `aws_amplify_webhook` terraform tests + sdk + cli tests. |
-| **P159.8** | pending | Amplify domains + custom rules + backend environments + `aws_amplify_domain_association` terraform test + sdk + cli tests. |
-| **P159.9** | pending | IAM extension — service-linked roles (`AWSServiceRoleForCloudFrontLogger`, `AWSServiceRoleForAmplify`) + OIDC providers + `aws_iam_service_linked_role` + `aws_iam_openid_connect_provider` terraform tests + sdk + cli tests. |
-| **P159.10** | pending | `simulators/aws/API_SPEC.md` updated with every new verb covered. `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape. End-to-end terraform test plan that provisions CloudFront + ACM cert + WAF + Route 53 ALIAS together (the production "shape"). State save + close. |
+| **P159.4** | ✅ | ACM — us-east-1 pin enforcement + full CRUD + `DescribeCertificate` shape + `aws_acm_certificate` terraform test + sdk + cli tests. PR commit. |
+| **P159.5** | ✅ | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution + `aws_route53_record` (with `alias{…}`) terraform test + sdk + cli tests. PR commit. |
+| **P159.6** | ✅ | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + RegexPatternSets + Association + sdk + cli + terraform tests. ARN region is literally `us-east-1`, path includes `global/`. PR commit. |
+| **P159.7** | ✅ | Amplify apps + branches + webhooks + jobs (synthesised SUCCEEDED) + sdk + cli + terraform tests. PR commit. |
+| **P159.8** | ✅ | Amplify domains + custom rules + backend environments + sdk + cli + terraform tests. PR commit. |
+| **P159.9** | ✅ | IAM extension — service-linked roles + OIDC providers + sdk + cli + terraform tests. Shadow `IAMRole` write so `aws_iam_service_linked_role` Read (which calls `GetRole`) converges. PR commit `3c95acf4`. |
+| **P159.10** | ✅ | `simulators/aws/API_SPEC.md` §8–13 added covering every new verb (CloudFront, ACM, Route 53, WAFv2, Amplify, IAM extensions) + REST path reference appendix. `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape (reference adaptor / validation / wiring / sample / known issues / out-of-scope). End-to-end `TestStackProductionShape` provisions CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + Cloud Map in one apply, asserts WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront domain_name, ACM ARN region == us-east-1. PR commit 2026-05-15. |
 
 The Terraform-test stance carries the same expectation as the user's direction: **expand terraform provider tests against the newly added functionality** — not a smoke per resource, but real `terraform apply` + plan-no-drift + destroy for each. Use the existing `simulators/aws/terraform-tests/` runner pattern (real Terraform binary, `endpoints {}` block overriding to the sim, `make terraform-tests` driving go-test wrappers).
 

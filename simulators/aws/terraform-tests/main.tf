@@ -357,3 +357,38 @@ resource "aws_cloudfront_distribution" "tf_dist" {
     cloudfront_default_certificate = true
   }
 }
+
+# Phase 159.10 end-to-end stack outputs — verify the production-shape
+# cross-resource links converge after apply. apply_test.go asserts that
+# WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront
+# domain_name, and the ACM cert ARN region is us-east-1 (CloudFront pin).
+output "cloudfront_arn" {
+  value = aws_cloudfront_distribution.tf_dist.arn
+}
+output "cloudfront_domain_name" {
+  value = aws_cloudfront_distribution.tf_dist.domain_name
+}
+output "cloudfront_hosted_zone_id" {
+  value = aws_cloudfront_distribution.tf_dist.hosted_zone_id
+}
+output "acm_certificate_arn" {
+  value = aws_acm_certificate.tf_cert.arn
+}
+output "wafv2_assoc_resource_arn" {
+  value = aws_wafv2_web_acl_association.tf_assoc.resource_arn
+}
+output "wafv2_assoc_webacl_arn" {
+  value = aws_wafv2_web_acl_association.tf_assoc.web_acl_arn
+}
+output "route53_alias_target_name" {
+  value = aws_route53_record.tf_alias.alias[0].name
+}
+output "route53_alias_target_zone_id" {
+  value = aws_route53_record.tf_alias.alias[0].zone_id
+}
+output "amplify_app_arn" {
+  value = aws_amplify_app.tf_amplify.arn
+}
+output "iam_slr_arn" {
+  value = aws_iam_service_linked_role.tf_slr_cloudfront.arn
+}

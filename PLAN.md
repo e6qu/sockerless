@@ -54,11 +54,11 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
 
-### Phase 159 — AWS simulator: CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
+### Phase 159 — AWS simulator: CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (complete on PR #159, awaiting merge)
 
-Expand `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most AWS Terraform stacks reach into. P159.0–3 shipped on `phase-159-aws-sim-cloudfront-amplify`: CloudFront `Distribution`, `OriginAccessControl`, `CachePolicy`, `OriginRequestPolicy`, `ResponseHeadersPolicy`, `Function` (DEVELOPMENT→LIVE), `Invalidation`, `PublicKey`, `KeyGroup`, plus tagging — all with SDK + CLI + Terraform tests. CI green per commit.
+Expand `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most AWS Terraform stacks reach into. **All 11 sub-tasks shipped on `phase-159-aws-sim-cloudfront-amplify`** (P159.0 dep tidy → P159.10 docs + end-to-end stack test). CI green on every push; awaiting user merge.
 
-P159.4 (ACM with us-east-1 pin) in flight. Today's sim handles ECS / ECR / IAM / EC2 / EFS / Lambda / KMS / SSM / S3 / STS / SecretsManager / DynamoDB / CloudWatch / CloudMap / Lambda Runtime / metadata. Phase 159 adds:
+Today's sim handles ECS / ECR / IAM / EC2 / EFS / Lambda / KMS / SSM / S3 / STS / SecretsManager / DynamoDB / CloudWatch / CloudMap / Lambda Runtime / metadata. Phase 159 adds:
 
 | Service | Wire | Why now |
 |---|---|---|
