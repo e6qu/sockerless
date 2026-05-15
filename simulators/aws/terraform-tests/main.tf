@@ -21,6 +21,7 @@ provider "aws" {
     servicediscovery = var.endpoint
     cloudfront       = var.endpoint
     acm              = var.endpoint
+    route53          = var.endpoint
   }
 }
 
@@ -111,6 +112,34 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   }
   query_strings_config {
     query_string_behavior = "none"
+  }
+}
+
+resource "aws_route53_zone" "tf_zone" {
+  name    = "tf-route53.local"
+  comment = "tf-test zone"
+}
+
+# A-record + ALIAS record. ALIAS targets the CloudFront distribution
+# created below by reference; this exercises the cross-resource flow
+# that real production stacks use (Route 53 ALIAS → CloudFront).
+resource "aws_route53_record" "tf_a" {
+  zone_id = aws_route53_zone.tf_zone.zone_id
+  name    = "api.tf-route53.local"
+  type    = "A"
+  ttl     = 300
+  records = ["203.0.113.42"]
+}
+
+resource "aws_route53_record" "tf_alias" {
+  zone_id = aws_route53_zone.tf_zone.zone_id
+  name    = "cdn.tf-route53.local"
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.tf_dist.domain_name
+    zone_id                = aws_cloudfront_distribution.tf_dist.hosted_zone_id
+    evaluate_target_health = false
   }
 }
 
