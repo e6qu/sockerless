@@ -222,6 +222,9 @@ func registerAmplify(srv *sim.Server) {
 	mux.HandleFunc("GET /tags/{arn...}", handleAmplifyListTags)
 	mux.HandleFunc("POST /tags/{arn...}", handleAmplifyTagResource)
 	mux.HandleFunc("DELETE /tags/{arn...}", handleAmplifyUntagResource)
+
+	// Domains + BackendEnvironments (amplify_domains.go)
+	registerAmplifyDomains(srv)
 }
 
 // ---------- Apps ----------

@@ -143,6 +143,27 @@ resource "aws_amplify_webhook" "tf_amplify_hook" {
   description = "tf-test webhook"
 }
 
+resource "aws_amplify_backend_environment" "tf_amplify_be" {
+  app_id           = aws_amplify_app.tf_amplify.id
+  environment_name = "staging"
+  stack_name       = "amplify-staging-stack"
+}
+
+resource "aws_amplify_domain_association" "tf_amplify_domain" {
+  app_id      = aws_amplify_app.tf_amplify.id
+  domain_name = "tf-amplify.example.com"
+
+  sub_domain {
+    branch_name = aws_amplify_branch.tf_amplify_main.branch_name
+    prefix      = "www"
+  }
+
+  sub_domain {
+    branch_name = aws_amplify_branch.tf_amplify_main.branch_name
+    prefix      = ""
+  }
+}
+
 resource "aws_wafv2_ip_set" "tf_ipset" {
   name               = "tf-ipset"
   description        = "tf-test IP allowlist"
