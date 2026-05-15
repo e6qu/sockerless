@@ -113,6 +113,34 @@ resource "aws_cloudfront_origin_request_policy" "tf_orp" {
   }
 }
 
+resource "aws_cloudfront_function" "tf_fn" {
+  name    = "tf-fn"
+  runtime = "cloudfront-js-2.0"
+  comment = "tf-test function"
+  publish = true
+  code    = <<-EOF
+    function handler(event) {
+      return event.request;
+    }
+  EOF
+}
+
+resource "aws_cloudfront_public_key" "tf_pk" {
+  name        = "tf-pk"
+  comment     = "tf-test public key"
+  encoded_key = <<-EOF
+    -----BEGIN PUBLIC KEY-----
+    dGVzdC1rZXktYnl0ZXMtZm9yLXNpbXVsYXRvcg==
+    -----END PUBLIC KEY-----
+  EOF
+}
+
+resource "aws_cloudfront_key_group" "tf_kg" {
+  name    = "tf-kg"
+  comment = "tf-test key group"
+  items   = [aws_cloudfront_public_key.tf_pk.id]
+}
+
 resource "aws_cloudfront_response_headers_policy" "tf_rhp" {
   name    = "tf-response-headers-policy"
   comment = "tf-test response headers policy"
