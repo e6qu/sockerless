@@ -19,6 +19,7 @@ provider "aws" {
     sts              = var.endpoint
     ecr              = var.endpoint
     servicediscovery = var.endpoint
+    cloudfront       = var.endpoint
   }
 }
 
@@ -58,5 +59,68 @@ resource "aws_service_discovery_service" "tf_svc" {
       ttl  = 10
       type = "A"
     }
+  }
+}
+
+# Phase 159 — Exercise the CloudFront REST + XML wire on the simulator.
+# Hits POST /2020-05-31/distribution + GET /2020-05-31/distribution/{id} +
+# PUT /2020-05-31/distribution/{id}/config (Terraform sets Enabled=false
+# automatically before destroy because the simulator enforces the real
+# AWS "DistributionNotDisabled" precondition).
+resource "aws_cloudfront_origin_access_control" "tf_oac" {
+  name                              = "tf-oac"
+  description                       = "tf-test"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "tf_dist" {
+  enabled         = false # let terraform destroy without an explicit disable step
+  is_ipv6_enabled = true
+  comment         = "tf-test cloudfront"
+  price_class     = "PriceClass_100"
+
+  origin {
+    domain_name              = "tf-origin.example.com"
+    origin_id                = "tf-origin"
+    origin_access_control_id = aws_cloudfront_origin_access_control.tf_oac.id
+
+    custom_origin_config {
+      http_port                = 80
+      https_port               = 443
+      origin_protocol_policy   = "https-only"
+      origin_ssl_protocols     = ["TLSv1.2"]
+      origin_read_timeout      = 30
+      origin_keepalive_timeout = 5
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "tf-origin"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
   }
 }

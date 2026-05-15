@@ -25,23 +25,30 @@ Expand `simulators/aws/` to cover six service families currently absent from the
 
 ### Sub-task / commit layout
 
-Each sub-task = one commit; CI runs per push. Phase may span sessions — state save preserves continuity.
+**Per-service-bundled tests**, not batched at the end. Each service sub-task lands with:
 
-| Sub | Status | What |
+1. The handler file (`simulators/aws/<service>.go`)
+2. SDK test (`simulators/aws/sdk-tests/<service>_test.go`) driving real AWS Go SDK
+3. **Terraform test** (`simulators/aws/terraform-tests/<service>/`) driving the real Terraform `aws` provider with `endpoints {}` override — must apply, plan-no-drift, and destroy clean
+4. CLI test (`simulators/aws/cli-tests/<service>_test.go`) driving real `aws` CLI
+
+This satisfies the existing pre-commit hook "Simulator testing contract (SDK + CLI + terraform per change)" and gives every new sim handler three independent validations. Each sub-task = one commit; CI runs per push. Phase may span sessions — state save preserves continuity.
+
+| Sub | Status | What (includes handler + SDK + Terraform + CLI tests) |
 |---|---|---|
-| **P159.0** | ✅ | State save — STATUS / PLAN / DO_NEXT / BUGS / WHAT_WE_DID locking in Phase 159 scope. (This commit.) |
-| **P159.1** | pending | CloudFront skeleton — main.go route registration + XML codec shape + `Distribution`, `OriginAccessControl`, `CachePolicy`, `Function` store types + happy-path Create/Get/Delete/List for each. |
-| **P159.2** | pending | CloudFront invalidations + key groups + aliases + monitoring subscription + tag CRUD. |
-| **P159.3** | pending | ACM — us-east-1 pin + full CRUD + `DescribeCertificate` shape matching SDK expectations. |
-| **P159.4** | pending | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution domain names. |
-| **P159.5** | pending | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + AssociateWebACL with CloudFront ARN target. |
-| **P159.6** | pending | Amplify apps + branches + webhooks + jobs (synthesised; no real build). |
-| **P159.7** | pending | Amplify domains + custom rules + backend environments. |
-| **P159.8** | pending | IAM extension — service-linked roles (`AWSServiceRoleForCloudFrontLogger`, `AWSServiceRoleForAmplify`) + OIDC providers. |
-| **P159.9** | pending | `simulators/aws/sdk-tests/` — test functions per service driving real AWS Go SDK against running sim. |
-| **P159.10** | pending | `simulators/aws/terraform-tests/` — Terraform plans per service via real `aws` provider with `endpoints {}` overriding to sim. |
-| **P159.11** | pending | `simulators/aws/cli-tests/` — `aws` CLI smoke per service. |
-| **P159.12** | pending | `simulators/aws/API_SPEC.md` + `simulators/aws/README.md` (adaptor-led shape from Phase 157) updated. State save before PR. |
+| **P159.0** | ✅ | State save — STATUS / PLAN / DO_NEXT / BUGS / WHAT_WE_DID locking in Phase 159 scope. |
+| **P159.1** | pending | CloudFront skeleton — main.go route registration + XML codec shape + `Distribution`, `OriginAccessControl` CRUD + `aws_cloudfront_distribution` + `aws_cloudfront_origin_access_control` terraform tests + sdk + cli tests. |
+| **P159.2** | pending | CloudFront `CachePolicy`, `OriginRequestPolicy`, `ResponseHeadersPolicy` + matching terraform (`aws_cloudfront_cache_policy`, etc.) / sdk / cli tests. |
+| **P159.3** | pending | CloudFront Functions + invalidations + key groups + aliases + monitoring + tag CRUD + matching tests. |
+| **P159.4** | pending | ACM — us-east-1 pin + full CRUD + `DescribeCertificate` shape + `aws_acm_certificate` terraform test (validation_method=DNS path) + sdk + cli tests. |
+| **P159.5** | pending | Route 53 — XML codec extension + zones + record sets + `AliasTarget` referencing CloudFront distribution domain names + `aws_route53_record` (with `alias{…}`) terraform test + sdk + cli tests. |
+| **P159.6** | pending | WAFv2 — JSON, CLOUDFRONT scope; WebACLs + IPSets + RuleGroups + AssociateWebACL with CloudFront ARN target + `aws_wafv2_web_acl` + `aws_wafv2_web_acl_association` terraform tests + sdk + cli tests. |
+| **P159.7** | pending | Amplify apps + branches + webhooks + jobs (synthesised; no real build) + `aws_amplify_app` + `aws_amplify_branch` + `aws_amplify_webhook` terraform tests + sdk + cli tests. |
+| **P159.8** | pending | Amplify domains + custom rules + backend environments + `aws_amplify_domain_association` terraform test + sdk + cli tests. |
+| **P159.9** | pending | IAM extension — service-linked roles (`AWSServiceRoleForCloudFrontLogger`, `AWSServiceRoleForAmplify`) + OIDC providers + `aws_iam_service_linked_role` + `aws_iam_openid_connect_provider` terraform tests + sdk + cli tests. |
+| **P159.10** | pending | `simulators/aws/API_SPEC.md` updated with every new verb covered. `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape. End-to-end terraform test plan that provisions CloudFront + ACM cert + WAF + Route 53 ALIAS together (the production "shape"). State save + close. |
+
+The Terraform-test stance carries the same expectation as the user's direction: **expand terraform provider tests against the newly added functionality** — not a smoke per resource, but real `terraform apply` + plan-no-drift + destroy for each. Use the existing `simulators/aws/terraform-tests/` runner pattern (real Terraform binary, `endpoints {}` block overriding to the sim, `make terraform-tests` driving go-test wrappers).
 
 ### Discipline reminders
 

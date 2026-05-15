@@ -89,6 +89,7 @@ func main() {
 	registerEFS(srv)
 	registerLambda(srv)
 	registerS3(srv)
+	registerCloudFront(srv)
 	registerHostMetadata(srv)
 
 	// Dashboard summary endpoints for UI
