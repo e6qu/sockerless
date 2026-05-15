@@ -15,6 +15,12 @@ schemas, and error codes for all required API actions.
 5. [Cloud Map (Service Discovery)](#5-cloud-map-service-discovery)
 6. [Lambda](#6-lambda)
 7. [S3 (Simple Storage Service)](#7-s3-simple-storage-service)
+8. [CloudFront](#8-cloudfront) (Phase 159)
+9. [ACM (Certificate Manager)](#9-acm-certificate-manager) (Phase 159)
+10. [Route 53](#10-route-53) (Phase 159)
+11. [WAFv2](#11-wafv2) (Phase 159)
+12. [Amplify](#12-amplify) (Phase 159)
+13. [IAM extensions — Service-Linked Roles + OIDC](#13-iam-extensions--service-linked-roles--oidc) (Phase 159)
 
 ---
 
@@ -3535,3 +3541,342 @@ GET    /{Key}                                             GetObject
 DELETE /{Key}                                             DeleteObject
 GET    /?list-type=2                                      ListObjectsV2
 ```
+
+### CloudFront (cloudfront.amazonaws.com)
+```
+POST   /2020-05-31/distribution                                  CreateDistribution
+POST   /2020-05-31/distribution?WithTags                         CreateDistributionWithTags
+GET    /2020-05-31/distribution                                  ListDistributions
+GET    /2020-05-31/distribution/{Id}                             GetDistribution
+GET    /2020-05-31/distribution/{Id}/config                      GetDistributionConfig
+PUT    /2020-05-31/distribution/{Id}/config                      UpdateDistribution
+DELETE /2020-05-31/distribution/{Id}                             DeleteDistribution
+POST   /2020-05-31/origin-access-control                         CreateOriginAccessControl
+GET    /2020-05-31/origin-access-control                         ListOriginAccessControls
+GET    /2020-05-31/origin-access-control/{Id}                    GetOriginAccessControl
+GET    /2020-05-31/origin-access-control/{Id}/config             GetOriginAccessControlConfig
+PUT    /2020-05-31/origin-access-control/{Id}/config             UpdateOriginAccessControl
+DELETE /2020-05-31/origin-access-control/{Id}                    DeleteOriginAccessControl
+POST   /2020-05-31/cache-policy                                  CreateCachePolicy
+GET    /2020-05-31/cache-policy                                  ListCachePolicies
+GET    /2020-05-31/cache-policy/{Id}                             GetCachePolicy
+PUT    /2020-05-31/cache-policy/{Id}                             UpdateCachePolicy
+DELETE /2020-05-31/cache-policy/{Id}                             DeleteCachePolicy
+POST   /2020-05-31/origin-request-policy                         CreateOriginRequestPolicy
+POST   /2020-05-31/response-headers-policy                       CreateResponseHeadersPolicy
+POST   /2020-05-31/function                                      CreateFunction
+GET    /2020-05-31/function/{Name}/describe                      DescribeFunction
+GET    /2020-05-31/function/{Name}                               GetFunction
+PUT    /2020-05-31/function/{Name}                               UpdateFunction
+POST   /2020-05-31/function/{Name}/publish                       PublishFunction
+DELETE /2020-05-31/function/{Name}                               DeleteFunction
+POST   /2020-05-31/distribution/{DistId}/invalidation            CreateInvalidation
+GET    /2020-05-31/distribution/{DistId}/invalidation            ListInvalidations
+GET    /2020-05-31/distribution/{DistId}/invalidation/{Id}       GetInvalidation
+POST   /2020-05-31/public-key                                    CreatePublicKey
+POST   /2020-05-31/key-group                                     CreateKeyGroup
+GET    /2020-05-31/tagging                                       ListTagsForResource
+POST   /2020-05-31/tagging?Operation=Tag&Resource={ARN}          TagResource
+POST   /2020-05-31/tagging?Operation=Untag&Resource={ARN}        UntagResource
+```
+
+### Route 53 (route53.amazonaws.com)
+```
+POST   /2013-04-01/hostedzone                                    CreateHostedZone
+GET    /2013-04-01/hostedzone                                    ListHostedZones
+GET    /2013-04-01/hostedzone/{Id}                               GetHostedZone
+DELETE /2013-04-01/hostedzone/{Id}                               DeleteHostedZone
+POST   /2013-04-01/hostedzone/{Id}/rrset                         ChangeResourceRecordSets
+POST   /2013-04-01/hostedzone/{Id}/rrset/                        ChangeResourceRecordSets (CLI form)
+GET    /2013-04-01/hostedzone/{Id}/rrset                         ListResourceRecordSets
+GET    /2013-04-01/change/{Id}                                   GetChange
+GET    /2013-04-01/tags/hostedzone/{Id}                          ListTagsForResource
+POST   /2013-04-01/tags/hostedzone/{Id}                          ChangeTagsForResource
+```
+
+### Amplify (amplify.{region}.amazonaws.com)
+```
+POST   /apps                                                     CreateApp
+GET    /apps                                                     ListApps
+GET    /apps/{AppId}                                             GetApp
+POST   /apps/{AppId}                                             UpdateApp
+DELETE /apps/{AppId}                                             DeleteApp
+POST   /apps/{AppId}/branches                                    CreateBranch
+GET    /apps/{AppId}/branches                                    ListBranches
+GET    /apps/{AppId}/branches/{BranchName}                       GetBranch
+POST   /apps/{AppId}/branches/{BranchName}                       UpdateBranch
+DELETE /apps/{AppId}/branches/{BranchName}                       DeleteBranch
+POST   /apps/{AppId}/webhooks                                    CreateWebhook
+GET    /apps/{AppId}/webhooks                                    ListWebhooks
+GET    /webhooks/{WebhookId}                                     GetWebhook
+POST   /webhooks/{WebhookId}                                     UpdateWebhook
+DELETE /webhooks/{WebhookId}                                     DeleteWebhook
+POST   /apps/{AppId}/branches/{BranchName}/jobs                  StartJob
+GET    /apps/{AppId}/branches/{BranchName}/jobs                  ListJobs
+GET    /apps/{AppId}/branches/{BranchName}/jobs/{JobId}          GetJob
+DELETE /apps/{AppId}/branches/{BranchName}/jobs/{JobId}          StopJob
+POST   /apps/{AppId}/branches/{BranchName}/deployments           CreateDeployment
+POST   /apps/{AppId}/branches/{BranchName}/deployments/start     StartDeployment
+POST   /apps/{AppId}/domains                                     CreateDomainAssociation
+GET    /apps/{AppId}/domains/{DomainName}                        GetDomainAssociation
+DELETE /apps/{AppId}/domains/{DomainName}                        DeleteDomainAssociation
+POST   /apps/{AppId}/backendenvironments                         CreateBackendEnvironment
+GET    /apps/{AppId}/backendenvironments/{Name}                  GetBackendEnvironment
+DELETE /apps/{AppId}/backendenvironments/{Name}                  DeleteBackendEnvironment
+POST   /tags/{ARN...}                                            TagResource
+GET    /tags/{ARN...}                                            ListTagsForResource
+DELETE /tags/{ARN...}                                            UntagResource
+```
+
+---
+
+## 8. CloudFront
+
+### Service Configuration
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `cloudfront.amazonaws.com` (global service, no region segment) |
+| **Protocol** | REST + XML |
+| **Content-Type** | `application/xml` (request body), `text/xml` (response body) |
+| **API Version** | `2020-05-31` |
+| **XML Namespace** | `http://cloudfront.amazonaws.com/doc/2020-05-31/` |
+| **Concurrency** | Strong ETag + `If-Match` precondition on `PUT /distribution/{Id}/config`, `PUT /origin-access-control/{Id}/config`, and `DELETE` of distributions/OACs/policies/functions/keys/key-groups. |
+
+CloudFront speaks REST + XML, not AWS-JSON. Every body is namespaced XML; every mutation returns an `ETag` header that the next mutator must echo via `If-Match`. The simulator implements this end-to-end.
+
+### Verbs covered
+
+| Subsystem | Verbs |
+|---|---|
+| **Distribution** | `CreateDistribution`, `CreateDistributionWithTags` (POST `?WithTags`), `ListDistributions`, `GetDistribution`, `GetDistributionConfig`, `UpdateDistribution`, `DeleteDistribution` |
+| **OriginAccessControl** | `CreateOriginAccessControl`, `ListOriginAccessControls`, `GetOriginAccessControl`, `GetOriginAccessControlConfig`, `UpdateOriginAccessControl`, `DeleteOriginAccessControl` |
+| **CachePolicy / OriginRequestPolicy / ResponseHeadersPolicy** | Full CRUD per type (Create/List/Get/GetConfig/Update/Delete). |
+| **CloudFront Functions** | `CreateFunction`, `DescribeFunction`, `GetFunction` (returns raw function bytes, `Content-Type: application/octet-stream`), `UpdateFunction`, `PublishFunction` (DEVELOPMENT → LIVE), `DeleteFunction`. |
+| **Invalidations** | `CreateInvalidation`, `ListInvalidations`, `GetInvalidation`. Eager: status is `Completed` immediately. |
+| **PublicKey / KeyGroup** | Full CRUD for signed-URL trust. |
+| **Tagging** | `ListTagsForResource` (`GET /tagging?Resource=…`), `TagResource` (`POST /tagging?Operation=Tag&Resource=…`), `UntagResource` (`POST /tagging?Operation=Untag&Resource=…`). |
+
+### Validation enforced
+
+- **ACM us-east-1 pin** (`cfValidateViewerCertificate` in `cloudfront.go`): when `DistributionConfig.ViewerCertificate.ACMCertificateArn` is set, the sim looks up the cert in the ACM store and returns `InvalidViewerCertificate` (HTTP 400) if the cert is missing or its ARN region is not `us-east-1`. Real CloudFront rejects with the same error code.
+- **DistributionNotDisabled** on delete when `Enabled=true`.
+- **PreconditionFailed** (HTTP 412) when `If-Match` is absent or doesn't match the stored ETag.
+- **NoSuchDistribution / NoSuchOriginAccessControl / NoSuchCachePolicy / …** (HTTP 404) on unknown ID.
+
+### Error envelope
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ErrorResponse xmlns="http://cloudfront.amazonaws.com/doc/2020-05-31/">
+  <Error>
+    <Type>Sender</Type>
+    <Code>InvalidViewerCertificate</Code>
+    <Message>The specified ACM certificate must be in the us-east-1 region for use with CloudFront: arn:aws:acm:us-west-2:...</Message>
+  </Error>
+  <RequestId>...</RequestId>
+</ErrorResponse>
+```
+
+### Sim deviations from real AWS
+
+- All distributions are reported `Status: Deployed` immediately. Real CloudFront takes 5–15 minutes to deploy edge configs.
+- All invalidations report `Status: Completed` immediately.
+- Function `PublishFunction` is synchronous (stage `DEVELOPMENT → LIVE` in one request).
+
+---
+
+## 9. ACM (Certificate Manager)
+
+### Service Configuration
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `acm.{region}.amazonaws.com` |
+| **Protocol** | AWS-JSON 1.1 |
+| **Target Prefix** | `CertificateManager` |
+| **API Version** | `2015-12-08` |
+| **Time format** | Unix epoch as JSON number (`*float64`), not RFC3339. |
+
+### Verbs covered
+
+`RequestCertificate`, `DescribeCertificate`, `DeleteCertificate`, `ListCertificates`, `AddTagsToCertificate`, `RemoveTagsFromCertificate`, `ListTagsForCertificate`, `ImportCertificate`, `UpdateCertificateOptions`, `ResendValidationEmail`, `RenewCertificate`.
+
+### Behaviour
+
+- `RequestCertificate` returns `CertificateArn`; status starts at `PENDING_VALIDATION`. When `ValidationMethod=DNS`, the response includes a synthesised `ResourceRecord` per domain (CNAME `_acm-challenge.{domain}` → `_acm-challenge-{rand}.acm-validations.aws.`).
+- `ImportCertificate` returns a cert with `Status=ISSUED` and `Type=IMPORTED` immediately.
+- Region pinning enforced cross-resource: CloudFront `ViewerCertificate.ACMCertificateArn` references must resolve to a cert whose ARN region is `us-east-1` (see [§8](#8-cloudfront)).
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `ResourceNotFoundException` (HTTP 400) | Unknown `CertificateArn`. |
+| `InvalidParameterValueException` (HTTP 400) | Missing required fields. |
+| `ValidationException` (HTTP 400) | Malformed input. |
+
+---
+
+## 10. Route 53
+
+### Service Configuration
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `route53.amazonaws.com` (global service, no region segment) |
+| **Protocol** | REST + XML |
+| **Content-Type** | `application/xml` |
+| **API Version** | `2013-04-01` |
+| **XML Namespace** | `https://route53.amazonaws.com/doc/2013-04-01/` |
+
+### Verbs covered
+
+`CreateHostedZone`, `ListHostedZones`, `GetHostedZone`, `DeleteHostedZone`, `ChangeResourceRecordSets` (CREATE / UPSERT / DELETE), `ListResourceRecordSets`, `GetChange`, `ListTagsForResource`, `ChangeTagsForResource`.
+
+### Behaviour
+
+- `CreateHostedZone` seeds default `NS` + `SOA` records. Cannot delete a zone with non-seed records (returns `HostedZoneNotEmpty`).
+- Names are normalised to trailing dot (`api.tf-route53.local.`) before storage; comparisons honour the dot.
+- `ListResourceRecordSets` honours `name` + `type` query params as cursor (required for Terraform's per-record reads to converge).
+- `ChangeResourceRecordSets` supports the `AliasTarget { DNSName, HostedZoneId, EvaluateTargetHealth }` block — Route 53 → CloudFront ALIAS is the production-shape integration.
+- Both `/rrset` and `/rrset/` are registered (`aws` CLI uses the trailing slash).
+- `GetChange` returns `Status=INSYNC` immediately; real Route 53 cycles `PENDING → INSYNC` over ~60s.
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `NoSuchHostedZone` (HTTP 404) | Unknown zone ID. |
+| `InvalidInput` (HTTP 400) | Malformed `ChangeBatch`. |
+| `HostedZoneNotEmpty` (HTTP 400) | Delete with non-seed records remaining. |
+
+---
+
+## 11. WAFv2
+
+### Service Configuration
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `wafv2.us-east-1.amazonaws.com` (real region for CLOUDFRONT scope; scoped resources live at `arn:aws:wafv2:us-east-1:<acct>:global/...`) |
+| **Protocol** | AWS-JSON 1.1 |
+| **Target Prefix** | `AWSWAF_20190729` |
+| **API Version** | `2019-07-29` |
+| **Concurrency** | `LockToken` returned on Get/List; required on Update/Delete. |
+
+### Verbs covered (24)
+
+| Subsystem | Verbs |
+|---|---|
+| **WebACL** | `CreateWebACL`, `GetWebACL`, `UpdateWebACL`, `DeleteWebACL`, `ListWebACLs` |
+| **Association** | `AssociateWebACL`, `DisassociateWebACL`, `GetWebACLForResource`, `ListResourcesForWebACL` |
+| **IPSet** | `CreateIPSet`, `GetIPSet`, `UpdateIPSet`, `DeleteIPSet`, `ListIPSets` |
+| **RuleGroup** | `CreateRuleGroup`, `GetRuleGroup`, `UpdateRuleGroup`, `DeleteRuleGroup`, `ListRuleGroups` |
+| **RegexPatternSet** | `CreateRegexPatternSet`, `GetRegexPatternSet`, `UpdateRegexPatternSet`, `DeleteRegexPatternSet`, `ListRegexPatternSets` |
+| **Tagging** | `TagResource`, `UntagResource`, `ListTagsForResource` |
+| **Inspection** | `GetSampledRequests` (returns empty sample list — sim doesn't actually inspect traffic) |
+
+### ARN shape
+
+```
+arn:aws:wafv2:us-east-1:<acct>:global/<resourceType>/<name>/<id>
+```
+
+`<resourceType>` is `webacl` / `ipset` / `rulegroup` / `regexpatternset`. The region segment IS literally `us-east-1` and the path includes `global/`; this is real AWS's convention for CLOUDFRONT-scoped resources. The simulator keys its store on `<scope>/<type>/<id>` and resolves ARNs back to this shape.
+
+### Behaviour
+
+- `Rules` and `VisibilityConfig` pass through as `json.RawMessage` (opaque) — the sim doesn't interpret rule statements, but round-trips them byte-for-byte.
+- `AssociateWebACL` stores a `resource_arn → web_acl_arn` map (`sync.Map`). `GetWebACLForResource` reads it; `DisassociateWebACL` deletes the entry.
+- `LockToken` is regenerated on every mutation; mismatched tokens return `WAFOptimisticLockException`.
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `WAFNonexistentItemException` (HTTP 400) | Unknown WebACL/IPSet/RuleGroup/RegexPatternSet ID. |
+| `WAFOptimisticLockException` (HTTP 400) | LockToken mismatch on Update/Delete. |
+| `WAFInvalidParameterException` (HTTP 400) | Missing or malformed required fields. |
+| `WAFAssociatedItemException` (HTTP 400) | Delete WebACL while still associated to a resource. |
+
+---
+
+## 12. Amplify
+
+### Service Configuration
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `amplify.{region}.amazonaws.com` |
+| **Protocol** | REST + JSON (versionless paths — `/apps`, `/apps/{appId}/branches`, etc.) |
+| **Content-Type** | `application/json` |
+| **API Version** | `2017-07-25` |
+
+### Verbs covered
+
+| Subsystem | Verbs |
+|---|---|
+| **App** | `CreateApp`, `ListApps`, `GetApp`, `UpdateApp`, `DeleteApp` |
+| **Branch** | `CreateBranch`, `ListBranches`, `GetBranch`, `UpdateBranch`, `DeleteBranch` |
+| **Webhook** | `CreateWebhook`, `ListWebhooks`, `GetWebhook`, `UpdateWebhook`, `DeleteWebhook` |
+| **Job** | `StartJob`, `ListJobs`, `GetJob`, `StopJob` |
+| **Deployment** | `CreateDeployment` (POST `/apps/{appId}/branches/{name}/deployments`), `StartDeployment` (POST `/apps/{appId}/branches/{name}/deployments/start`) |
+| **Domain** | `CreateDomainAssociation`, `GetDomainAssociation`, `UpdateDomainAssociation`, `DeleteDomainAssociation`, `ListDomainAssociations` |
+| **BackendEnvironment** | `CreateBackendEnvironment`, `ListBackendEnvironments`, `GetBackendEnvironment`, `DeleteBackendEnvironment` |
+| **Tagging** | `TagResource`, `ListTagsForResource`, `UntagResource` (all keyed off `/tags/{arn...}`) |
+
+### Behaviour
+
+- `StartJob` synthesises a `SUCCEEDED` job with 3 canonical steps (`PROVISION`, `BUILD`, `DEPLOY`).
+- `DeleteApp` cascades to associated branches + webhooks + jobs.
+- `CreateDomainAssociation` eagerly sets `DomainStatus=AVAILABLE` and `UpdateStatus=UPDATE_COMPLETE` and synthesises CNAME DNS records for each sub-domain. Real Amplify cycles through `PENDING_DEPLOYMENT → AVAILABLE` over minutes.
+- Custom rules pass through as `json.RawMessage`.
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `NotFoundException` (HTTP 404) | Unknown app / branch / webhook / domain. |
+| `BadRequestException` (HTTP 400) | Missing required fields. |
+| `LimitExceededException` (HTTP 400) | Reserved; not currently emitted by sim. |
+
+---
+
+## 13. IAM extensions — Service-Linked Roles + OIDC
+
+These are layered on top of the existing IAM (AWS Query Protocol) surface. See [§Appendix A](#appendix-a-error-code-tables) for the shared IAM Query envelope.
+
+### Verbs covered
+
+**Service-Linked Roles:**
+- `CreateServiceLinkedRole`
+- `DeleteServiceLinkedRole`
+- `GetServiceLinkedRoleDeletionStatus`
+
+**OIDC providers:**
+- `CreateOpenIDConnectProvider`
+- `GetOpenIDConnectProvider`
+- `UpdateOpenIDConnectProviderThumbprint`
+- `AddClientIDToOpenIDConnectProvider`
+- `RemoveClientIDFromOpenIDConnectProvider`
+- `DeleteOpenIDConnectProvider`
+- `ListOpenIDConnectProviders`
+
+### Behaviour
+
+- `CreateServiceLinkedRole` maps `AWSServiceName` to a canonical name: `cloudfront.amazonaws.com → AWSServiceRoleForCloudFrontLogger`, `amplify.amazonaws.com → AWSServiceRoleForAmplify`, `ecs.amazonaws.com → AWSServiceRoleForECS`, etc. Unknown principals fall back to a PascalCase derivation.
+- SLR ARN: `arn:aws:iam::<acct>:role/aws-service-role/<service-principal>/<name>`.
+- A shadow `IAMRole` record is also written into the standard `iamRoles` store so the Terraform aws_iam_service_linked_role.Read path (which calls `GetRole`, not `GetServiceLinkedRole`) finds the role.
+- `DeleteServiceLinkedRole` returns a `DeletionTaskId`; `GetServiceLinkedRoleDeletionStatus` returns `SUCCEEDED` immediately. Real AWS cycles `IN_PROGRESS → SUCCEEDED` over seconds.
+- OIDC ARN: `arn:aws:iam::<acct>:oidc-provider/<url-without-scheme>`.
+- `AddClientIDToOpenIDConnectProvider` is idempotent (dedupes existing client IDs).
+- AWS Query Protocol encodes lists as `ClientIDList.member.1=...&ClientIDList.member.2=...`; the sim parses both forms.
+
+### Error codes
+
+| Code | When |
+|---|---|
+| `NoSuchEntity` (HTTP 404) | Unknown role / OIDC provider. |
+| `EntityAlreadyExists` (HTTP 409) | OIDC provider with the same URL already exists. |
+| `InvalidInput` (HTTP 400) | Malformed input (missing URL/Thumbprint, etc.). |

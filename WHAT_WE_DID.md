@@ -6,7 +6,50 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + Claude skills (in flight on `phase-158-bug991-vibecoding-skills`)
+## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
+
+Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).
+
+User direction at phase open: granular commits with CI green per commit. Each sub-task ships handler + SDK test + CLI test + Terraform test together, satisfying the existing "Simulator testing contract (SDK + CLI + terraform per change)" pre-commit hook.
+
+### Progress
+
+**P159.0** ✅ — State save + 8-module dep tidy after `azure-common`'s `azblob v1.6.4 → v1.7.0` bump pulled a transitive `MSAL Go v1.7.1 → v1.7.2`. Initial CI run failed `build-check` + `smoke` with `missing go.sum entry`; tidy in `backends/aca` + `backends/azure-functions` cleared both.
+
+**P159.1** ✅ — CloudFront `Distribution` + `OriginAccessControl` + Tagging (commit `bf85f382`). First XML-bodied service on the sim; same `encoding/xml` pattern as `s3.go`. Two notable corrections during development:
+
+- The AWS Go SDK dispatches Terraform's `aws_cloudfront_distribution` through `CreateDistributionWithTags` (different XML wrapper, same path with `?WithTags` query) — handler now sniffs the query param and routes to either body shape.
+- The Terraform provider crashed twice during initial development. First on `ListTagsForResource` (404 wasn't enough — needed the endpoint). Second on `resourceDistributionRead` dereferencing ~20 nested DistributionConfig fields without nil-checks. Fix: `cfNormalizeConfig` fills empty containers for every optional nested element on response. Source verified at `hashicorp/terraform-provider-aws@v6.32.1` `distribution.go:1098`. Pure BUG-991/992 lineage applied — encode the contract explicitly rather than papering over with a synthesised 200.
+
+**P159.2** ✅ — CloudFront `CachePolicy` + `OriginRequestPolicy` + `ResponseHeadersPolicy` (commit `94331059`). Independent CRUDs in `cloudfront_policies.go`. Shape was uneventful — wire pattern from P159.1 transferred cleanly. Security headers config supports XSSProtection / FrameOptions / ReferrerPolicy / ContentSecurityPolicy / ContentTypeOptions / StrictTransportSecurity (subset matching `aws_cloudfront_response_headers_policy` Terraform resource fields).
+
+**P159.3** ✅ — CloudFront `Function` (DEVELOPMENT→LIVE stage) + `Invalidation` + `PublicKey` + `KeyGroup` (commit `fe2c6e81`). Split into `cloudfront_functions.go` + `cloudfront_keys.go` to keep files reasonable. `CreateFunctionRequest` body decode tested against the SDK's `Base64EncodeBytes`-encoded `FunctionCode`. `GetFunction` returns raw bytes with `Content-Type: application/octet-stream` (not XML — diverges from every other CloudFront endpoint). `KeyGroupConfig.Items` references PublicKey IDs by string; sim rejects empty Items with InvalidArgument(400) per the real-API constraint.
+
+**P159.4** ✅ — ACM with us-east-1 pin. AWS-JSON 1.1 on `awsRouter`. 11 ops including `RequestCertificate` / `DescribeCertificate` / `ImportCertificate` / `AddTagsToCertificate` / tag CRUD. Wire surprise: ACM encodes timestamps as Unix-epoch JSON *numbers* (`*float64`), not RFC3339 strings — discovered when SDK threw "expected TStamp to be a JSON Number, got string instead". Exposed `acmCertExistsInRegion(arn, region)` for CloudFront's us-east-1 pin enforcement in `cfValidateViewerCertificate`. `RequestCertificate` synthesises DNS-validation `ResourceRecord` per SAN; `ImportCertificate` returns `Status=ISSUED` immediately.
+
+**P159.5** ✅ — Route 53 (XML, zones + records + AliasTarget). Two-go-round before TF green:
+- AWS CLI sends `POST /rrset/` with trailing slash; Go 1.22 mux treats `/rrset` and `/rrset/` as distinct patterns. Fix: register both.
+- The TF provider's `aws_route53_record.Read` uses `StartRecordName/StartRecordType` as a cursor; without a real filter implementation, the seeded NS/SOA records appeared first and TF concluded "record not found". Fix: implement the cursor filter + normalise stored names to trailing-dot. `AliasTarget` block round-trips, allowing `aws_route53_record` → CloudFront integration to converge in TF.
+
+**P159.6** ✅ — WAFv2 (CLOUDFRONT scope). 24 ops across WebACL/Association/IPSet/RuleGroup/RegexPatternSet/Tagging/GetSampledRequests. `LockToken` optimistic-concurrency tokens. ARN gotcha resolved by reading real AWS: the region segment IS literally `us-east-1` (not `global`) with `global/` in the path — TF rejected `region=global` as "invalid region value". `AssociateWebACL`/`DisassociateWebACL` keyed on a `sync.Map` of `resource_arn → web_acl_arn`. Rules + VisibilityConfig pass through as `json.RawMessage` (opaque) to avoid serialising dense nested rule statements.
+
+**P159.7** ✅ — Amplify apps + branches + webhooks + jobs. REST + JSON, versionless paths. `StartJob` synthesises a `SUCCEEDED` job with 3 canonical steps (`PROVISION` / `BUILD` / `DEPLOY`). `CreateDeployment` correction during dev: the SDK route is `/apps/{appId}/branches/{name}/deployments` (NOT app-level) and `StartDeployment` ends in `/deployments/start`. Verified against `aws-sdk-go-v2/service/amplify/serializers.go` route definitions.
+
+**P159.8** ✅ — Amplify domains + custom rules + backend environments. Eager `DomainStatus=AVAILABLE` and `UpdateStatus=UPDATE_COMPLETE`. Sub-domains synthesise CNAME DNS records pointing at the Amplify default domain. Custom rules pass through as `json.RawMessage`. CI had one transient Docker Hub `toomanyrequests` flake on `TestLambdaContainerLogs` (unrelated to P159.8) — re-run passed.
+
+**P159.9** ✅ — IAM extension: service-linked roles + OIDC providers (commit `3c95acf4`). SLR principal map: `cloudfront.amazonaws.com → AWSServiceRoleForCloudFrontLogger`, `amplify.amazonaws.com → AWSServiceRoleForAmplify`, etc. ARN: `arn:aws:iam::<acct>:role/aws-service-role/<service-principal>/<name>`. **Cross-resource fix during dev**: TF's `aws_iam_service_linked_role.Read` calls `GetRole` (not `GetServiceLinkedRole` — no such API exists). First TF run failed with "couldn't find resource" because my SLR store was `iamSLRs`, but `GetRole` looks in `iamRoles`. Fix: write a shadow `IAMRole` to `iamRoles` on Create + remove on Delete. OIDC providers fully covered: Create/Get/Update/Add/Remove/Delete/List; AWS Query Protocol list parsing for `ClientIDList.member.N=...`; `AddClientIDToOpenIDConnectProvider` is idempotent.
+
+**P159.10** ✅ — Closeout. `simulators/aws/API_SPEC.md` §8–13 added covering every new verb (CloudFront, ACM, Route 53, WAFv2, Amplify, IAM extensions) with REST path reference appendix entries. `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape: reference adaptor (SDK / CLI / Terraform) → validation (per-test-suite last-green dates) → wiring → sample → known issues → out-of-scope. End-to-end `TestStackProductionShape` in `terraform-tests/apply_test.go` provisions the full CloudFront-fronted stack (CF + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + Cloud Map) in one apply, then asserts via `terraform output -json` that the three load-bearing cross-resource invariants converge: WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront.domain_name, ACM ARN region == us-east-1. Test green locally in 86s; CI rerun under way.
+
+### Discipline lessons reinforced
+
+- **Verify SDK wire shape from the serializer source, not by guess.** `aws-sdk-go-v2/service/cloudfront@v1.64.0/serializers.go` defines exact paths, body wrappers, and namespace strings. Every P159.x handler started by reading the corresponding `awsRestxml_serializeOp*` function before writing Go.
+- **Cross-cloud sweep on every find** (P159.1 Terraform crash analysis used the SDK Go type definitions to enumerate fields-the-provider-dereferences-without-nil-check rather than fixing one at a time). Cheaper to fix all in one normalisation pass.
+- **Pre-commit hook is the friend, not the enemy.** `gofmt` re-formatted policies.go and functions.go on first commit attempts; each time the recovery is `git add` the formatted version and re-run `git commit`. The hook also caught the dep-drift in P159.0 before push, saving a CI cycle.
+
+Phase 157's Track A (remaining component-adaptor docs) carries forward — the `simulators/aws/README.md` portion folds into P159.10 since the new services land in the same simulator.
+
+## 2026-05-13 — Phase 158 BUG-991 + BUG-992 + VIBE_CODING.md + GOLANG_STRONG_TYPING.md + Claude skills (PR #158, merged at `89ff7df4`)
 
 Four pieces on one branch, driven by the user reading BUG-991 as "a fallback hiding a bug" and asking for both the fix and a project-wide hardening response. The user then folded BUG-992 into the same PR rather than deferring to Phase 159.
 

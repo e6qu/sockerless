@@ -55,6 +55,9 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("ListAttachedRolePolicies", handleIAMListAttachedRolePolicies)
 	r.Register("ListRolePolicies", handleIAMListRolePolicies)
 	r.Register("ListInstanceProfilesForRole", handleIAMListInstanceProfilesForRole)
+
+	// Service-linked roles + OIDC providers (iam_slr_oidc.go)
+	registerIAMSLRandOIDC(r, srv)
 }
 
 func iamRoleXML(role IAMRole) string {
