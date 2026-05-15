@@ -75,6 +75,59 @@ resource "aws_cloudfront_origin_access_control" "tf_oac" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_cache_policy" "tf_cp" {
+  name        = "tf-cache-policy"
+  comment     = "tf-test cache policy"
+  default_ttl = 86400
+  max_ttl     = 31536000
+  min_ttl     = 1
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+
+    headers_config {
+      header_behavior = "none"
+    }
+    cookies_config {
+      cookie_behavior = "none"
+    }
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+  }
+}
+
+resource "aws_cloudfront_origin_request_policy" "tf_orp" {
+  name    = "tf-origin-request-policy"
+  comment = "tf-test origin request policy"
+
+  headers_config {
+    header_behavior = "none"
+  }
+  cookies_config {
+    cookie_behavior = "none"
+  }
+  query_strings_config {
+    query_string_behavior = "none"
+  }
+}
+
+resource "aws_cloudfront_response_headers_policy" "tf_rhp" {
+  name    = "tf-response-headers-policy"
+  comment = "tf-test response headers policy"
+
+  security_headers_config {
+    content_type_options {
+      override = true
+    }
+    frame_options {
+      override     = true
+      frame_option = "DENY"
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "tf_dist" {
   enabled         = false # let terraform destroy without an explicit disable step
   is_ipv6_enabled = true

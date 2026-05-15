@@ -565,6 +565,9 @@ func registerCloudFront(srv *sim.Server) {
 	mux.HandleFunc("GET /"+cfAPIVersion+"/tagging", handleCFListTags)
 	mux.HandleFunc("POST /"+cfAPIVersion+"/tagging", handleCFTagDispatch)
 
+	// Policies (cache / origin-request / response-headers) — same wire shape
+	registerCloudFrontPolicies(srv)
+
 	// OriginAccessControl
 	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", handleCFCreateOAC)
 	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", handleCFListOACs)
