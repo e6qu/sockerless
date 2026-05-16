@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-159-aws-sim-cloudfront-amplify` — open as PR #159. P159.0 through P159.10 all complete. Awaiting user merge. |
-| In-flight | **Phase 159 complete** — AWS simulator expanded to CloudFront / ACM / Route 53 / WAFv2 / Amplify / IAM SLR + OIDC. All 11 sub-tasks shipped with handler + SDK + CLI + Terraform tests. End-to-end `TestStackProductionShape` asserts CloudFront ↔ ACM ↔ WAF ↔ Route 53 cross-resource links converge after one `terraform apply`. CI green on every push. |
-| Last merged | PR #158 — Phase 158 BUG-991 + BUG-992 + `docs/VIBE_CODING.md` + `docs/GOLANG_STRONG_TYPING.md` + 3 Claude skills (2026-05-13). |
+| Active branch | `phase-160-skills-from-159-lessons` — open as PR #160. |
+| In-flight | **Phase 160 — Skills + complete docs sweep.** Two new project-local skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement (steps 1a + 1b) capturing the four recurring Phase 159 lessons. **PLUS** every component README now follows the Phase 157 adaptor-led shape: 6 cloud-backend READMEs + 2 simulator READMEs rewritten + bleephub Reference-adaptor section + `cmd/sockerless` rewrite + `cmd/sockerless-admin/README.md` (new) + `simulators/README.md` (rewritten as end-to-end showcase + navigation hub). External spec hyperlinks (Docker REST API, AWS/GCP/Azure SDK + CLI, Terraform provider registry, GitHub REST/GraphQL) throughout. Phase 157 Track A officially closed. |
+| Last merged | PR #159 — Phase 159 AWS sim CloudFront/ACM/Route 53/WAFv2/Amplify/IAM SLR+OIDC (2026-05-15, merged at `236a387f`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 992 fixed. |

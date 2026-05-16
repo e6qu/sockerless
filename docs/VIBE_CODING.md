@@ -248,11 +248,13 @@ These are the public stances from established projects on accepting AI-generated
 
 ## Project-local skills
 
-Three Claude skills under `.claude/skills/` operationalise the catalogue:
+Five Claude skills under `.claude/skills/` operationalise the catalogue:
 
 - [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) — read before every non-trivial change. Checklist references patterns by number.
-- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/simulators/bleephub; verifies the change preserves the reference-adaptor contract.
+- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/simulators/bleephub; verifies the change preserves the reference-adaptor contract. Phase 160 extended it with SDK-serializer-source verification (step 1a) and TF-provider `resourceXxxRead` inspection (step 1b).
 - [`manual-test`](../.claude/skills/manual-test/SKILL.md) — runs the canonical manual smoke per component (no mocks, real adaptor).
+- [`sim-handler-checklist`](../.claude/skills/sim-handler-checklist/SKILL.md) — pre-write checklist for new `simulators/<cloud>/<service>.go` files. Distilled from Phase 159 (CloudFront / ACM / Route 53 / WAFv2 / Amplify / IAM SLR/OIDC); every load-bearing fix came from one of four checks the skill enumerates.
+- [`cross-resource-stack-test`](../.claude/skills/cross-resource-stack-test/SKILL.md) — codifies the `TestStackProductionShape` pattern: declare `output` blocks for every cross-resource attribute, read `terraform output -json` in Go, assert what references resolve to (not just that apply doesn't crash).
 
 ## How to extend this doc
 
@@ -262,4 +264,4 @@ Three Claude skills under `.claude/skills/` operationalise the catalogue:
 4. **Append, don't renumber.** Pattern numbers are stable references; skills cite them.
 5. **Update the category table** if the pattern needs a new category.
 
-Last updated: 2026-05-13 (Phase 158 — initial catalogue).
+Last updated: 2026-05-16 (Phase 160 — two new project-local skills + adaptor-fidelity-check refinement, both derived from Phase 159 closeout lessons).

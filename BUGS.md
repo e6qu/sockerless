@@ -1,6 +1,6 @@
 # Known Bugs
 
-**992 filed · 992 fixed · 0 open · 1 false positive.**
+**993 filed · 993 fixed · 0 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -30,8 +30,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
 
 ## Resolved history (compressed)
 
-992 bugs filed and fixed across phases 86–158.
+993 bugs filed and fixed across phases 86–160.
 
+- **993** (Phase 160) — Close-then-bind port-allocator race in `simulators/gcp/sdk-tests/{helpers_test.go,quota_test.go}`. Pattern was `ln := Listen(:0); port = ln.Addr().Port; ln.Close(); ln2 := Listen(:0); grpcPort = ln2.Addr().Port; ln2.Close()` — between `ln.Close()` and `ln2 := Listen()` the OS could re-assign the just-freed port to `ln2`, so the sim's HTTP and gRPC servers both wanted the same port and the second `bind()` failed with "address already in use". Surfaced on PR #160 CI 2026-05-16 (`TestSDK_RegionalCPUQuota_RejectsCloudFunctionsDeploy`). Fix: allocate both listeners while both are open, then close both — simultaneous-open listeners cannot collide by construction. Verified locally with `count=3` reruns; ports are now guaranteed sequential.
 - **992** (Phase 158) — Sibling of BUG-991. `handleImageList` in `backends/core/handle_images.go` read `s.Store.Images.List()` directly with extensive filter logic, never calling `s.self.ImageList()`. For passthrough backends (docker) this returned `[]` even when the upstream daemon had images. Fixed by replacing the 100-line in-handler filtering with a thin delegate to `s.self.ImageList(opts)` — each backend's override knows where the truth lives (docker → upstream daemon; cloud backends → `ImageManager` which merges Store + cloud registry). Verified: `docker images` against `backends/docker` now returns the upstream daemon's images. Volumes + networks already delegated correctly; no other list handler affected. Surfaced during BUG-991 investigation on 2026-05-13.
 - **991** (Phase 158) — Classic fallback-hiding-bug. `docker run --rm` against `backends/docker` returned `error waiting for container: No such container` because `handleContainerWait`'s non-CloudState branch checked `s.Store.Containers.Get(id)` directly and short-circuited to 200/StatusCode=0 on `condition=removed`. The wait fires *before* start in the docker CLI's foreground flow, so the local Store lookup races and lies. Fixed by replacing the Store-direct branch with `s.self.ContainerInspect(ref)` (which delegates to upstream on passthrough backends) + `s.self.ContainerWait` for the actual block. Also removed the parallel `condition=removed → StatusCode: 0` fallback in `BaseServer.ContainerWait` itself — callers wanting "already removed = success" semantics must `Inspect` first themselves, never return success on a missing resource. Surfaced 2026-05-13 during Phase 157 docs sample-capture; the symptom directly motivated Phase 158's vibe-coding-anti-pattern doc + skill work.
 

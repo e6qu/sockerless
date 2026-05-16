@@ -30,12 +30,11 @@ func startQuotaIsolatedSim(t *testing.T, budget float64) string {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-
 	ln2, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
 	grpcPort := ln2.Addr().(*net.TCPAddr).Port
+	ln.Close()
 	ln2.Close()
 
 	cmd := exec.Command(binaryPath)

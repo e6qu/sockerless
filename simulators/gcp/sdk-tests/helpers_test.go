@@ -57,19 +57,21 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 	}
 
+	// Allocate both ports while both listeners are open. Closing the first
+	// before allocating the second lets the OS re-assign the just-freed
+	// port to the second listener, causing the sim's HTTP and gRPC servers
+	// to collide on the same port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatalf("Failed to find free port: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-
-	// Allocate a second port for gRPC
 	ln2, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatalf("Failed to find free gRPC port: %v", err)
 	}
+	port := ln.Addr().(*net.TCPAddr).Port
 	grpcPort := ln2.Addr().(*net.TCPAddr).Port
+	ln.Close()
 	ln2.Close()
 
 	simCmd = exec.Command(binaryPath)

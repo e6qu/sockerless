@@ -4,11 +4,17 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 159 (AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM) **complete** on `phase-159-aws-sim-cloudfront-amplify` — PR #159 open, all sub-tasks P159.0 … P159.10 committed + pushed. CI green on every push (last green: P159.9 = 11/11 checks 2026-05-15).
+Phase 159 merged 2026-05-15 (PR #159, commit `236a387f` on origin/main).
 
-P159.10 (final sub-task) closed 2026-05-15: `API_SPEC.md` extended with §8–13 (CloudFront, ACM, Route 53, WAFv2, Amplify, IAM SLR/OIDC), `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape, end-to-end `TestStackProductionShape` added (asserts WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront domain_name, ACM ARN region == us-east-1).
+Phase 160 in flight on `phase-160-skills-from-159-lessons`: codify the four load-bearing Phase 159 lessons into new project-local Claude skills and refine `adaptor-fidelity-check`. No code-surface changes — `.claude/skills/`, `docs/VIBE_CODING.md`, and continuity docs only.
 
-Awaiting user merge of PR #159. Default "user merges every PR" remains in force.
+P160 acceptance:
+- New skill `sim-handler-checklist` covers SDK serializer source, TF provider `resourceXxxRead` inspection, asymmetric Create/Read APIs, trailing-slash routing.
+- New skill `cross-resource-stack-test` codifies the `TestStackProductionShape` pattern.
+- `adaptor-fidelity-check` gains steps 1a (SDK serializer) and 1b (TF provider Read inspection).
+- `docs/VIBE_CODING.md` project-local-skills section reflects all five skills.
+
+Default "user merges every PR" remains in force.
 
 ## Phase 159 scope (locked-in)
 
@@ -93,24 +99,26 @@ terraform plan -refresh=true  # endpoints { cloudfront = "http://localhost:5566/
 
 ## Resumable tracks after Phase 159 merges
 
-### Track A — Resume Phase 157 component-adaptor sweep (deferred during 158 + 159)
+### Track A — Phase 157 component-adaptor sweep (CLOSED in Phase 160)
 
-Phase 157 PR #157 only covered `backends/docker`. Remaining: backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, `simulators/README.md` end-to-end showcase, cmd/sockerless, cmd/sockerless-admin. The `simulators/aws/README.md` portion likely folds into P159.12.
+Every component README now follows the canonical Phase 157 adaptor-led shape:
 
-Component matrix:
-
-| Component | Reference adaptor | Validation entry point |
+| Component | Reference adaptor | Status |
 |---|---|---|
-| `backends/ecs` | aws CLI/SDK + Terraform aws; docker CLI | `simulators/aws/sdk-tests` + Docker SDK e2e |
-| `backends/lambda` | aws CLI/SDK + Terraform aws; docker CLI | same |
-| `backends/cloudrun` | gcloud + Go SDK + Terraform google; docker CLI | `simulators/gcp/sdk-tests` |
-| `backends/cloudrun-functions` | gcloud + Go SDK + Terraform google; docker CLI | same |
-| `backends/aca` | az + Go SDK + Terraform azurerm; docker CLI | `simulators/azure/sdk-tests` |
-| `backends/azure-functions` | az + Go SDK + Terraform azurerm; docker CLI | same |
-| `simulators/gcp` | gcloud + Go SDK + Terraform google | `simulators/gcp/{sdk-tests,terraform-tests}` |
-| `simulators/azure` | az + Go SDK + Terraform azurerm | `simulators/azure/{sdk-tests,terraform-tests}` |
-| `cmd/sockerless` (CLI) | itself — CLI is adaptor for backends | `cmd/sockerless/*_test.go` |
-| `cmd/sockerless-admin` | browser / REST clients against `/v1/*` | `cmd/sockerless-admin/*_test.go` |
+| `backends/docker` | docker CLI/SDK + podman CLI | ✅ #157 |
+| `backends/ecs` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
+| `backends/lambda` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
+| `backends/cloudrun` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `backends/cloudrun-functions` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `backends/aca` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `backends/azure-functions` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `simulators/aws` | aws CLI + AWS SDK + Terraform aws | ✅ P159.10 |
+| `simulators/gcp` | gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `simulators/azure` | az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `simulators/` (top-level) | end-to-end showcase + navigation hub | ✅ Phase 160 |
+| `bleephub` | gh CLI + actions/runner + smart-HTTP git + GitHub REST/GraphQL specs | ✅ Phase 160 |
+| `cmd/sockerless` (CLI) | user terminal + backend management API + Docker REST | ✅ Phase 160 |
+| `cmd/sockerless-admin` | browser/UI + REST clients + per-component `/v1/health` polling | ✅ Phase 160 (new file) |
 
 ### Track B — Skill maturation (post-Phase 158)
 

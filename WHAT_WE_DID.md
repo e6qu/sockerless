@@ -6,6 +6,52 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-16 — Phase 160: codify Phase 159 lessons as project-local skills (in flight on PR #160)
+
+Phase 159 closed with 11 sub-tasks across six AWS service families. Reviewing the commit history surfaced four recurring kinds of CI-red iteration — each one a wire-shape detail that the model "knew" from API-name patterns but didn't actually know:
+
+1. **SDK serializer source is authoritative when `--debug` isn't enough.** ACM timestamps as Unix-epoch numbers, CloudFront `?WithTags` query dispatch, WAFv2 `us-east-1`+`global/` ARN region, Amplify branch-level deployments — all four facts only visible in `aws-sdk-go-v2/service/<svc>/serializers.go`, none of them obvious from API names.
+2. **Terraform-provider Read crashes from nil-deref on omitted optional fields.** The cfNormalizeConfig pattern. Reproducible across services; the fix is always a single normalisation pass before responding.
+3. **Cross-resource Read API asymmetry.** `aws_iam_service_linked_role.Read` calls `GetRole`, not `GetServiceLinkedRole`. The sim must implement *both* sides or shadow-write between them.
+4. **Trailing-slash routing trap.** `aws` CLI uses `POST /rrset/`, the SDK uses `POST /rrset`; Go 1.22 mux treats them as distinct patterns. Both must be registered.
+
+Plus one positive lesson from `TestStackProductionShape` itself: asserting cross-resource invariants from `terraform output -json` catches a whole class of "apply passes but references don't actually resolve to each other" bugs that per-verb SDK tests never see.
+
+Phase 160 codifies all five into project-local Claude skills:
+
+- **New `sim-handler-checklist`** — pre-write checklist for any new `simulators/<cloud>/<service>.go` file, with the four checks above as explicit steps and worked examples from Phase 159 (`cfNormalizeConfig`, the SLR shadow-write, the `/rrset` + `/rrset/` registration).
+- **New `cross-resource-stack-test`** — codifies the `TestStackProductionShape` pattern: declare `output` blocks per cross-resource attribute, read `terraform output -json` in Go, assert what references resolve to, not just that apply doesn't crash.
+- **Refined `adaptor-fidelity-check`** — step 1a (read SDK serializer source when `--debug` can't surface client-side encoding choices) and step 1b (read TF provider `resourceXxxRead` for nil-deref patterns + verify which API Read calls). New failure modes added.
+- **`docs/VIBE_CODING.md`** — project-local-skills section updated to five skills with one-line descriptions of what each one covers; "Last updated" date refreshed.
+
+No code-surface changes; doc + skill changes only. The point is that the *next* sim service should ship without rediscovering these four traps.
+
+User direction at phase open: one PR for all of these. Single branch off `origin/main`.
+
+### Mid-phase scope expansion: docs sweep
+
+Once the skills landed, the user requested *"review and tighten all docs… every component has an external component / api / sdk / CLI surface — fix wrong info, make info easier to navigate, cross-link where possible, remove unneeded redundancy while keeping some redundancy for follow-ability."* The docs inventory surfaced an obvious gap: 6 backend READMEs + 2 simulator READMEs still hadn't adopted the Phase 157 adaptor-led shape (PR #157 only covered `backends/docker`; PR #159's P159.10 brought `simulators/aws`).
+
+Folded into Phase 160 same PR:
+
+- **6 backend READMEs rewritten** (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`). Each now leads with a two-direction reference-adaptor table (frontend Docker API + backend cloud API), followed by a validation table with test paths + last-green dates, wiring (CLI flags + env vars + config example — env tables kept per the user's "keep some redundancy" direction), captured-output sample showing `docker run` driving the Docker frontend with a verifiable cloud-side observation via the cloud CLI, known issues, out-of-scope. Every reference-adaptor row links to the official upstream spec (Docker REST API at docs.docker.com, AWS / GCP / Azure SDK godoc, CLI docs, Terraform provider registry).
+- **2 simulator READMEs rewritten** (`simulators/{gcp,azure}/README.md`). Each follows the `simulators/aws` template (canonical from P159.10). Existing rich Quick-start content preserved as "Extended examples" at the bottom; new reference-adaptor + validation + wiring + sample + known-issues + out-of-scope sections added at the top.
+- **bleephub README** gained an explicit "Reference adaptors" section with `gh` CLI / `actions/runner` / smart-HTTP git / GitHub REST / GitHub GraphQL all linked to their authoritative specs, plus a pointer to `specs/BLEEPHUB_GITHUB_API_PARITY.md` for the per-route audit artifact.
+- **Cross-links** added bidirectionally: every cloud backend README points at its simulator counterpart for local-dev / CI; every simulator README points back at the backends that consume it.
+- **Phase 157 Track A officially closed** in PLAN.md + DO_NEXT.md (the dangling cross-refs to "Track A" in three places now point at the resolved state).
+
+The "keep some redundancy" call paid off: env var tables stay in each backend README (single-glance quickstarts) rather than getting consolidated to `specs/CONFIG.md`, which is still the canonical full schema and cross-linked from every backend.
+
+### Second mid-phase expansion: pull the deferred items in
+
+User then asked to fold the three remaining deferred items into the same PR. Done same session:
+
+- **`cmd/sockerless/README.md`** rewritten in adaptor-led shape. The CLI's "reference adaptors" are the user's terminal + the backend management API + the [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/) (since `sockerless ps`, `metrics`, `check` go through it) + the per-package `*_test.go` files. Crucially, the README states what the CLI explicitly *does not* do: speak any cloud API directly.
+- **`cmd/sockerless-admin/README.md`** newly written (file did not exist before). The admin's reference adaptors are the embedded React UI + REST clients hitting `/api/*` + the admin's own outbound polling of each registered component's `/v1/health` + `/v1/info`. Documents the load-bearing `--backend name=addr` / `--simulator name=addr` / `--bleephub addr` flags and the priority order for component discovery. Reaffirms the components-decoupled invariant.
+- **`simulators/README.md`** rewritten as a true end-to-end showcase + navigation hub. The "Three governing principles" stay; the reference-adaptor table now appears upfront cross-cloud (SDK / CLI / Terraform-provider per cloud, with spec hyperlinks); the end-to-end showcase combines all three sims under one workflow including a pointer to `TestStackProductionShape`. Updated to reflect Phase 159's expansion of `simulators/aws` to include CloudFront / ACM / Route 53 / WAFv2 / Amplify.
+
+`PLAN.md` and `DO_NEXT.md` Track A tables updated to show all 14 component READMEs ticked. No "still un-rewritten" carryover.
+
 ## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
 
 Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).

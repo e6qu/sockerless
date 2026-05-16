@@ -1,19 +1,59 @@
-# sockerless
+# sockerless (CLI)
 
-CLI tool for managing Sockerless contexts and server lifecycle. Zero external dependencies.
+Zero-dependency CLI for managing Sockerless contexts and backend server lifecycle. Stores configuration in `~/.sockerless/` (override with `SOCKERLESS_HOME`). Talks to backends over their Docker REST API + management endpoints.
 
-## Overview
+## Reference adaptors
 
-The CLI manages named contexts (backend configurations), starts and stops backend servers, and provides commands for inspecting running services. Configuration is stored in `~/.sockerless/` (override with `SOCKERLESS_HOME`).
+The CLI is itself an adaptor against running Sockerless backends and against the user's shell. Its surface is small and validated by:
 
-## Building
+| Adaptor | What it proves |
+|---|---|
+| The user's terminal | `sockerless context`, `sockerless server`, `sockerless ps`, `sockerless status` — typed commands round-trip without surprises. |
+| The backend management HTTP API | `/v1/health`, `/v1/info`, `/v1/containers`, `/v1/metrics` on each [backend](../../backends/) at the configured `addr`. The CLI is a thin HTTP client; backends are the truth. |
+| The [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/) | `sockerless ps` parses `/containers/json`; `sockerless metrics` reads Prometheus over HTTP. |
+| `*_test.go` files in this package | Behaviour-level unit tests for context CRUD, config-migrate, simulator add/remove, status formatting. |
+
+This means `sockerless` does **not** speak any cloud API directly. Configuration *describes* cloud backends; the cloud calls happen inside the backend processes.
+
+## Validation
+
+| Test path | What runs | Last green |
+|---|---|---|
+| `cmd/sockerless/*_test.go` | Go unit tests for context store, config migrate, simulator manager, paths. | 2026-05-16 |
+| `make cmd/sockerless/test` | Leaf-Makefile suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-16 |
+| Manual round-trip | `sockerless context create … && sockerless server start && sockerless status` against a built backend binary. Discipline: real binary, real terminal output — see [`manual-test`](../../.claude/skills/manual-test/SKILL.md). | continuous |
+
+## Wiring
 
 ```sh
-make cmd/sockerless/build```
+# Build
+make cmd/sockerless/build
+
+# Initialise a context backed by ECS + the AWS sim
+sockerless context create ecs-dev --backend ecs --simulator sim-aws \
+  --set SOCKERLESS_ECS_CLUSTER=sockerless \
+  --set SOCKERLESS_ECS_SUBNETS=subnet-abc123 \
+  --set SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/exec
+
+# Start the backend
+sockerless server start
+
+# Drive workloads via the Docker frontend
+export DOCKER_HOST=tcp://localhost:3375
+docker run --rm alpine echo hello
+```
+
+### Environment variables
+
+| Variable | Description |
+|---|---|
+| `SOCKERLESS_HOME` | Override config directory (default `~/.sockerless`). |
+| `SOCKERLESS_CONTEXT` | Override active context name. |
+| `SOCKERLESS_CONFIG` | Override config file path (default `~/.sockerless/config.yaml`). |
 
 ## Commands
 
-### context — manage backend contexts
+### `context` — manage backend contexts
 
 ```sh
 sockerless context create myctx --backend ecs
@@ -30,13 +70,13 @@ sockerless context reload
 Flags for `context create`:
 
 | Flag | Description |
-|------|-------------|
-| `--backend` | Backend type (required): ecs, lambda, cloudrun, gcf, aca, azf, docker |
-| `--addr` | Server address (e.g. http://localhost:3375) |
+|---|---|
+| `--backend` | Backend type (required): `ecs`, `lambda`, `cloudrun`, `gcf`, `aca`, `azf`, `docker` |
+| `--addr` | Server address (e.g. `http://localhost:3375`) |
 | `--simulator` | Simulator name (from `config.yaml` simulators section) |
 | `--set KEY=VALUE` | Set environment variable (repeatable) |
 
-### server — start/stop/restart
+### `server` — lifecycle
 
 ```sh
 sockerless server start
@@ -47,51 +87,23 @@ sockerless server restart
 Flags for `server start`:
 
 | Flag | Default | Description |
-|------|---------|-------------|
+|---|---|---|
 | `--backend-bin` | `sockerless-backend-{type}` | Path to backend binary |
 | `--addr` | `:3375` | Listen address (Docker API + management) |
 
-### status — show server health
+### Inspection
 
 ```sh
-sockerless status
+sockerless status      # Backend health + uptime + container count
+sockerless ps          # Table: ID, NAME, IMAGE, STATE, POD
+sockerless metrics     # Prometheus metrics from the backend
+sockerless check       # Backend self-checks with per-check pass/fail
+sockerless resources list      # Cloud resources owned by this backend
+sockerless resources orphaned  # Resources without a matching sockerless owner-link
+sockerless resources cleanup   # Reap orphans
 ```
 
-Checks the backend health endpoint, reports uptime, backend type, and container count.
-
-### ps — list containers
-
-```sh
-sockerless ps
-```
-
-Displays a table with ID, NAME, IMAGE, STATE, and POD columns.
-
-### metrics — show server metrics
-
-```sh
-sockerless metrics
-```
-
-Fetches and pretty-prints metrics from the backend.
-
-### resources — manage cloud resources
-
-```sh
-sockerless resources list
-sockerless resources orphaned
-sockerless resources cleanup
-```
-
-### check — run health checks
-
-```sh
-sockerless check
-```
-
-Runs backend health checks, shows per-check pass/fail status.
-
-### simulator — manage cloud simulators
+### `simulator` — manage local cloud simulators
 
 ```sh
 sockerless simulator list
@@ -103,13 +115,13 @@ sockerless simulator remove sim-aws
 Flags for `simulator add`:
 
 | Flag | Description |
-|------|-------------|
-| `--cloud` | Cloud type (required): aws, gcp, azure |
+|---|---|
+| `--cloud` | Cloud type (required): `aws`, `gcp`, `azure` |
 | `--port` | Listen port (0 = auto) |
 | `--grpc-port` | gRPC port (GCP only) |
 | `--log-level` | Log level |
 
-### config migrate — convert JSON contexts to config.yaml
+### `config migrate` — convert JSON contexts to `config.yaml`
 
 ```sh
 sockerless config migrate          # preview to stdout
@@ -118,32 +130,24 @@ sockerless config migrate --write  # write to config.yaml
 
 Reads existing `contexts/*/config.json` files and converts them to the unified `config.yaml` format. Detects simulator usage from `SOCKERLESS_ENDPOINT_URL` and creates simulator entries automatically.
 
-### version
+### `version`
 
 ```sh
 sockerless version
 ```
 
-## Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `SOCKERLESS_HOME` | Override config directory (default `~/.sockerless`) |
-| `SOCKERLESS_CONTEXT` | Override active context name |
-| `SOCKERLESS_CONFIG` | Override config file path (default `~/.sockerless/config.yaml`) |
-
 ## Configuration layout
 
 ```
 ~/.sockerless/
-├── config.yaml                    Unified configuration (environments + simulators)
-├── active                         Active context/environment name
-├── contexts/                      Legacy JSON contexts (still supported)
+├── config.yaml          Unified configuration (environments + simulators)
+├── active               Active context/environment name
+├── contexts/            Legacy JSON contexts (still supported)
 │   └── {name}/
-│       └── config.json            Backend type, address, env vars
+│       └── config.json  Backend type, address, env vars
 └── run/
     └── {name}/
-        └── backend.pid            Server process ID
+        └── backend.pid  Server process ID
 ```
 
 ## Unified configuration
@@ -189,9 +193,21 @@ environments:
       agent_image: myregistry.azurecr.io/sockerless-agent:latest
 ```
 
-**Priority order:** config.yaml environment values → context env vars (legacy) → process environment variables → defaults.
+Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 
-Use `sockerless config migrate` to convert existing JSON contexts to config.yaml format. Legacy `contexts/*/config.json` files continue to work — the CLI checks config.yaml first, then falls back to JSON contexts.
+**Priority order:** `config.yaml` environment values → context env vars (legacy) → process environment variables → defaults.
+
+Use `sockerless config migrate` to convert existing JSON contexts to `config.yaml` format. Legacy `contexts/*/config.json` files continue to work — the CLI checks `config.yaml` first, then falls back to JSON contexts.
+
+## Known issues
+
+None open. CLI evolution tracked alongside backend evolution in [`PLAN.md`](../../PLAN.md).
+
+## What's out of scope
+
+- Cloud-API operations. The CLI configures backends; it doesn't itself call AWS / GCP / Azure. Use `aws` / `gcloud` / `az` for cloud-side observation.
+- Container exec / attach UX. Use the Docker frontend (`docker exec`, `docker attach`) — the backend serves the Docker REST API.
+- Multi-machine orchestration. Use `cmd/sockerless-admin` instead — that surface is dedicated to topology.
 
 ## Project structure
 
@@ -211,3 +227,5 @@ cmd/sockerless/
 ├── client.go          HTTP management client helpers
 └── paths.go           Config directory and path resolution
 ```
+
+See also: [`backends/*/README.md`](../../backends/) for what each backend type configures, [`cmd/sockerless-admin/README.md`](../sockerless-admin/README.md) for the topology / multi-backend orchestration surface, [`specs/CONFIG.md`](../../specs/CONFIG.md) for the full configuration schema.
