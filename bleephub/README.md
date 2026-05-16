@@ -221,7 +221,10 @@ Env vars:
 
 ```bash
 # Go unit tests
-make bleephub-test                  # go test ./bleephub/...
+make bleephub/test                  # go test ./bleephub/...
+
+# Official actions/runner harness (Docker)
+make bleephub/test-integration
 
 # Real gh CLI inside Docker (real bleephub + real gh binary + self-signed TLS)
 make bleephub-gh-docker-test

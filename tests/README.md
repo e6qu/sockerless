@@ -16,7 +16,7 @@ go test -v ./...
 # See STATUS.md and FEATURE_MATRIX.md for project-wide test results
 
 # From the repository root
-make test-e2e
+make tests/test
 
 # Against an external Docker-compatible endpoint
 SOCKERLESS_SOCKET=/var/run/docker.sock go test -v ./...

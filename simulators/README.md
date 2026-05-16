@@ -119,7 +119,7 @@ Top-level Makefile entry points:
 
 ```sh
 make docker-test          # Docker-based tests for all clouds
-make sim-test-all         # Simulator-backend integration tests
+make test-integration     # Simulator-backend integration tests (every Go app + test category)
 ```
 
 CI runs all four on every PR — see `.github/workflows/ci.yml` `sim (aws)`, `sim (gcp)`, `sim (azure)` jobs.

@@ -361,13 +361,14 @@ make docker-run         # docker run with port + env wired
 make docker-test        # run all tests inside docker
 ```
 
-### Legacy aliases (preserved at top level)
+### Cross-cutting test suites + coverage gates
 
-For backward-compat with existing CI workflows and developer muscle memory:
+Per-app tests run through the standard path-delegation surface
+(`make <dir>/test`, `make <dir>/test-integration`). The targets below
+are top-level Docker-driven suites that don't belong to any single
+app, plus the api.Backend coverage gate:
 
 ```bash
-make sim-test-{ecs,lambda,cloudrun,gcf,aca,azf}      # per-backend integration tests
-make sim-test-{aws,gcp,azure,all}                    # per-cloud aggregates
 make smoke-test-{act,act-ecs,act-cloudrun,act-aca,act-all}
 make smoke-test-{gitlab,gitlab-ecs,gitlab-cloudrun,gitlab-aca,gitlab-all}
 make tf-int-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
@@ -375,12 +376,22 @@ make e2e-github-{ecs,lambda,cloudrun,gcf,aca,azf,all}
 make e2e-gitlab-{ecs,lambda,cloudrun,gcf,aca,azf,all}
 make upstream-test-{act,act-individual,act-{ecs,lambda,cloudrun,gcf,aca,azf,all}}
 make upstream-test-gcl-{ecs,lambda,cloudrun,gcf,aca,azf,all}
-make bleephub-test bleephub-gh-test
-make test-{unit,e2e,agent,core,bleephub}
+make bleephub-gh-docker-test
 make check-backend-coverage{,-enforce}
 ```
 
-These delegate to the appropriate per-app or test-category Makefile, or keep their inline Docker-build form for the smoke / e2e / upstream families.
+For per-app integration tests, use the path-delegation form:
+
+```bash
+make backends/ecs/test-integration       # sim-backed ECS integration
+make backends/lambda/test-integration    # sim-backed Lambda integration
+make backends/cloudrun/test-integration  # …and so on for cloudrun-functions, aca, azure-functions
+make bleephub/test                       # bleephub unit tests
+make bleephub/test-integration           # bleephub official-runner harness
+make tests/test                          # cross-backend e2e suite
+make agent/test                          # agent unit tests
+make backends/core/test                  # shared core unit tests
+```
 
 ## Development
 

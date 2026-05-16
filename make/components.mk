@@ -1,8 +1,8 @@
 # components.mk — per-component lifecycle targets used by admin
-# orchestration (Phase 79). Each target operates on ONE component
-# instance keyed by NAME; the existing stack-X-Y macros in stack.mk
-# compose multiple of these to produce the legacy 1-sim + 1-backend
-# tuple.
+# orchestration. Each target operates on ONE component instance
+# keyed by NAME; the stack-X-Y macros in stack.mk compose multiple
+# of these into the pre-canned 1-sim + 1-backend + admin topology
+# used for single-cell operator workflows.
 #
 # Conventions:
 #   - PID files at .stack-pids/<NAME>.pid

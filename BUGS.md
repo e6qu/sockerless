@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1012 filed · 1012 fixed · 0 open · 2 false positives.**
+**1013 filed · 1013 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -33,7 +33,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1011 bugs filed and fixed across phases 86–161.
+1013 bugs filed and fixed across phases 86–163.
+
+- **1013** (Phase 163) — Top-level `Makefile` carried a `# ── Legacy aliases ──` section preserving pre-Phase-79 pure-alias targets (`sim-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`) — every one of them just `$(MAKE) -s -C <dir> <target>`, redundant with the `%/<target>` path-delegation rule. User directive: "sockerless has no legacy, it's under active development." Deleted the section; reframed the surviving Docker-driven cross-cutting suites (`smoke-test-*`, `tf-int-test-*`, `e2e-{github,gitlab}-*`, `upstream-test-*`, `bleephub-gh-docker-test`, `check-backend-coverage{,-enforce}`) under canonical section headers. Surfaced + fixed a latent defect in the `%/<target>` pattern rule: `make bleephub/test` short-circuited with "up to date" because `bleephub/test/` exists as a real directory and GNU make treated the target as a present file; added `.PHONY: FORCE` + `FORCE:` and depended the pattern rule on `FORCE` so the recipe always delegates. Docs swept across `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale invented targets (`stack-aws-ecs-up`/`-down`, `e2e-github-aws-ecs`, `docker-tf-int-test-azure`) replaced with real names. Stripped "legacy 1-sim + 1-backend tuple" comments from `make/stack.mk` + `make/components.mk` — the pre-canned topology is canonical, not legacy.
 
 - **1001** (Phase 161, third pass + bleephub GraphQL completion sub-phase) — Following the placeholder-resolver work (1st pass) and the real `ReactionStore` wiring (2nd pass), the user requested completing the underlying bleephub GraphQL surfaces. Folded into PR #161 as an in-PR sub-phase:
   - **P161.16 PullRequest.comments** — `Comment.ParentType` added (`"issue"` / `"pull_request"`) so PR + Issue conversation comments share the bleephub `Comments` store like real GitHub. REST `/issues/{n}/comments` resolves to either an Issue or a PR. GraphQL `PullRequest.comments` returns real comments via `prCommentToGQLLocked`; PRComment field resolvers flipped from `unreachableFieldErr` to real data.

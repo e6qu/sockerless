@@ -319,7 +319,7 @@ Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
 
 1. Land `make/` directory with `colors.mk`, `go-app.mk`, `go-lib.mk`, `ui-app.mk`, `stack.mk` first.
 2. Add the 19 leaf Makefiles in one commit (each is 5–10 lines).
-3. Rewrite top-level `Makefile` to delegate. Keep the existing `sim-test-*`, `e2e-*`, `tf-int-*`, `smoke-*`, `upstream-test-*` targets (they're orthogonal cross-cutting concerns) but rename them to fit the dotted-prefix convention if the user wants — or leave them as-is for now.
+3. Rewrite top-level `Makefile` to delegate. Cross-cutting Docker-driven suites (`e2e-*`, `tf-int-test-*`, `smoke-test-*`, `upstream-test-*`, `bleephub-gh-docker-test`) stay as top-level targets. Per-app aliases (`sim-test-*`, `bleephub-test`, `test-{unit,e2e,agent,core,bleephub}`) were removed once the path-delegation rule covered the same surface — sockerless has no legacy compatibility surface; use the `<dir>/<target>` path-delegation form.
 4. Add CI smoke-test that runs `make help` (validates that every leaf Makefile is wired correctly) + `make build` (validates the whole rebuild path).
 
 ## Discussion points before I start
@@ -330,7 +330,7 @@ Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
 
 3. **Stack target naming**. `stack-aws-ecs` vs `stack-up CLOUD=aws BE=ecs` vs `aws-ecs.up`. Pick one.
 
-4. **Orthogonal test categories**. The existing `sim-test-*` (sim-vs-backend integration), `tf-int-test-*` (terraform), `smoke-test-*` (Docker-in-Docker smoke), `upstream-test-*` (act + gitlab-ci-local), `e2e-*` (real-runner) — these are cross-cutting. Keep them as top-level targets, OR move each to live next to the test code (`tests/upstream/Makefile`, `tests/runners/Makefile`)?
+4. **Orthogonal test categories**. The Docker-driven cross-cutting suites — `tf-int-test-*` (terraform), `smoke-test-*` (Docker-in-Docker smoke), `upstream-test-*` (act + gitlab-ci-local), `e2e-*` (real-runner), `bleephub-gh-docker-test` — kept as top-level Makefile recipes. Per-app sim-vs-backend integration is reached through `make backends/<x>/test-integration` and the top-level `make test-integration` fan-out (the pure-alias `sim-test-*` shim has been removed — every callsite now uses path delegation).
 
 5. **Auto-discovery vs explicit listing for `GO_APPS`**. Globbing (`backends/*/`, `simulators/*/`) is more robust as new apps land but obscures what's wired up. Explicit listing in `Makefile` is verbose but greppable. Currently I'm proposing explicit. Override?
 

@@ -4,13 +4,43 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 160 merged 2026-05-16 (PR #160, `aeb0ac6e` on `origin/main`).
+Phase 162 merged 2026-05-16 (PR #162, `4f602988` on `origin/main`) — vibe-coding catalogue refresh, doc-only.
 
-**Phase 161 in flight on `phase-161-vibe-slop-sweep`**: comprehensive vibe-slop sweep + fixes. 13 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1008). 3 deeper legacy-rip-out BUGs (1006 CLI+admin JSON-context fallback, 1007 admin legacy migration scaffolding, 1009 gh-runner-dispatcher legacy services) surfaced during the sweep and staged for **Phase 162** so #161 stays reviewable. BUG-1001 (real ProjectV2 / PR-review-thread implementation) also Open at lower priority — the `unreachableFieldErr` placeholder makes the current contract honest.
+**Phase 163 in flight on `phase-163-legacy-make-rip-out`**: user directive — "remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either; sweep docs for old `make` calls and replace them with new ones." No code-surface changes; Makefile + docs only.
 
 Default "user merges every PR" remains in force.
 
-## Phase 161 scope
+## Phase 163 scope
+
+Rip the "Legacy aliases" section out of the top-level Makefile + the make/*.mk legacy framing. Sweep all docs to replace removed `make X` invocations with their canonical path-delegation form. Keep every recipe that does real work (Docker harnesses for smoke / tf-int / e2e / upstream / bleephub-gh-docker-test, plus `check-backend-coverage{,-enforce}`); only drop pure aliases.
+
+### Changes
+
+| Layer | Removed | Replaced with |
+|---|---|---|
+| Top-level Makefile | `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf}` | `make backends/<name>/test-integration` |
+| Top-level Makefile | `sim-test-{aws,gcp,azure,all}` (composites) | `make test-integration` fan-out, or chain per-backend targets |
+| Top-level Makefile | `test-{unit,e2e,agent,core,bleephub}` | `make agent/test`, `make backends/core/test`, `make bleephub/test`, `make tests/test` |
+| Top-level Makefile | `bleephub-test`, `bleephub-gh-test` | `make bleephub/test`, `make bleephub/test-integration` |
+| Makefile header | `# Legacy aliases preserved at the bottom (…)` comment | Section-header explanation of the surviving cross-cutting Docker suites |
+| Makefile pattern rule | `%/<target>: ...` short-circuited when target name collides with real dir (e.g. `bleephub/test/`) | Added `FORCE` phony dep so recipe always delegates into the per-app Makefile |
+| make/stack.mk | "legacy 1-sim + 1-backend tuple" comment | "pre-canned 1-sim + 1-backend + admin topology" |
+| make/components.mk | same | same |
+
+Docs updated: `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale invented targets fixed: `stack-aws-ecs-up`/`-down` → `stack-aws-ecs`/`stack-down`; `e2e-github-aws-ecs` → `e2e-github-ecs`; `docker-tf-int-test-azure` → `tf-int-test-azure`.
+
+### Acceptance bar (Phase 163)
+
+- `make help` parses cleanly.
+- `make backends/ecs/test-integration` (and equivalents for the other 5 backends) resolves and delegates.
+- `make bleephub/test`, `make bleephub/test-integration`, `make tests/test`, `make agent/test`, `make backends/core/test` all resolve through the pattern rule despite the `bleephub/test/` directory collision.
+- `go test ./...` green in `api`, `agent`, `bleephub`, `backends/core`, `cmd/sockerless-admin` (touched zero Go files, but sanity smoke confirms nothing regressed).
+- No `make sim-test-*`, `make bleephub-test`, `make bleephub-gh-test`, `make test-{unit,e2e,agent,core,bleephub}` refs remain in docs / scripts / CI.
+- CI workflows (`ci.yml`, `e2e-vs-simulators.yml`, `.gitlab-ci.yml`) untouched in the Makefile-target columns they relied on (`make lint`, `make e2e-github-*`, `make e2e-gitlab-*`, `simulators/<cloud> && make sdk-test`).
+
+## Earlier phases (closed)
+
+### Phase 161 — Vibe-slop sweep (merged PR #161)
 
 Run the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api). File every concrete violation. Fix every BUG in this PR.
 
