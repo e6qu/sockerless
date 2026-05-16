@@ -49,6 +49,18 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 | [dev.to/paulthedev/the-vibe-coding-hangover-is-real-...](https://dev.to/paulthedev/the-vibe-coding-hangover-is-real-what-nobody-tells-you-about-ai-generated-code-in-production-399h) | Concrete unsafe-code examples |
 | [github.com/anthropics/claude-code/issues/4487](https://github.com/anthropics/claude-code/issues/4487) | Claude Code context-amnesia silent code deletion |
 | [x.com/karpathy/status/1886192184808149383](https://x.com/karpathy/status/1886192184808149383) | Karpathy's original "vibe coding" tweet |
+| [addyo.substack.com/p/the-80-problem-in-agentic-coding](https://addyo.substack.com/p/the-80-problem-in-agentic-coding) | Addy Osmani follow-up: agentic-coding-specific failure modes (sycophancy, iteration-addiction, verification cost) |
+| [oreilly.com/radar/comprehension-debt-the-hidden-cost-of-ai-generated-code/](https://www.oreilly.com/radar/comprehension-debt-the-hidden-cost-of-ai-generated-code/) | O'Reilly Radar: comprehension debt as a new debt category |
+| [wespiser.com/posts/2026-03-22-AI-Expansion-vs-Software-Pruning.html](https://www.wespiser.com/posts/2026-03-22-AI-Expansion-vs-Software-Pruning.html) | Adam Wespiser: AI as expansion engine, no pruning |
+| [medium.com/@montes.makes/lint-against-the-machine](https://medium.com/@montes.makes/lint-against-the-machine-a-field-guide-to-catching-ai-coding-agent-anti-patterns-3c4ef7baeb9e) | Christopher Montes: lint-against-the-machine field guide |
+| [dev.to/klement_gunndu/ai-generated-code-is-building-tech-debt-you-cant-see-khn](https://dev.to/klement_gunndu/ai-generated-code-is-building-tech-debt-you-cant-see-khn) | Klement Gunndu: AI-generated tech debt (Ox Security study) |
+| [copilotkit.ai/blog/aimock-one-tool-to-mock-your-entire-ai-stack](https://www.copilotkit.ai/blog/aimock-one-tool-to-mock-your-entire-ai-stack) | CopilotKit: mock drift problem definition |
+| [github.com/mattpocock/dictionary-of-ai-coding/blob/main/dictionary/Sycophancy.md](https://github.com/mattpocock/dictionary-of-ai-coding/blob/main/dictionary/Sycophancy.md) | Matt Pocock dictionary of AI coding: Sycophancy entry |
+| [theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/](https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/) | The Register: Cursor-Opus agent destroying PocketOS production volume |
+| [github.com/anthropics/claude-code/issues/45073](https://github.com/anthropics/claude-code/issues/45073) | Claude Code issue: pre-commit hook clobbers AI's view of just-committed file |
+| [developers.redhat.com/articles/2026/04/21/ai-powered-documentation-updates-code-diff-docs-pr-one-comment](https://developers.redhat.com/articles/2026/04/21/ai-powered-documentation-updates-code-diff-docs-pr-one-comment) | Red Hat Developer: code-vs-docs drift after AI refactor |
+| [mergify.com/blog/should-we-still-write-docs-if-ai-can-read-the-code](https://mergify.com/blog/should-we-still-write-docs-if-ai-can-read-the-code) | Mergify: doc-as-contract argument vs. AI reading code directly |
+| [bryanfinster.substack.com/p/ai-broke-your-code-review-heres-how](https://bryanfinster.substack.com/p/ai-broke-your-code-review-heres-how) | Bryan Finster: AI-generated PRs invert the review cost curve |
 
 ## Anti-pattern catalog
 
@@ -209,9 +221,94 @@ Each pattern maps to one of nine categories defined at the bottom; patterns are 
 ### 23. AI-slop security reports / bogus PRs
 **Description**: AI generates long, confident vulnerability reports describing non-existent bugs. The reporter doesn't understand the code well enough to know the report is wrong.
 **Example**: curl received "seven Hackerone issues within a sixteen hour period," and "Eventually we concluded that none of them identified a vulnerability."
-**Why it's bad**: Volunteer maintainers burn out triaging hallucinations.
+**Why it's bad**: Volunteer maintainers burn out triaging hallucinations. Real bugs miss the triage window because reviewers go numb.
 **Sockerless instance**: Not a public open-source target yet, so not observed. If sockerless becomes public the policy will mirror Stenberg's: AI-assisted reports OK; AI-generated reports without verified reproduction rejected.
-**Source**: [bleepingcomputer.com](https://www.bleepingcomputer.com/news/security/curl-ending-bug-bounty-program-after-flood-of-ai-slop-reports/) — Stenberg: *"The main goal with shutting down the bounty is to remove the incentive for people to submit crap and non-well researched reports to us. AI generated or not."*
+**Source**: [bleepingcomputer.com](https://www.bleepingcomputer.com/news/security/curl-ending-bug-bounty-program-after-flood-of-ai-slop-reports/) — Stenberg: *"The main goal with shutting down the bounty is to remove the incentive for people to submit crap and non-well researched reports to us. AI generated or not."* And from the same shutdown announcement: *"if maintainers become numb because of these junk reports, real vulnerabilities in code will be missed."*
+
+### 24. Sycophantic agreement / no pushback
+**Description**: The agent executes contradictory or under-specified instructions without challenging them, and when reviewing its own work calls it "good." Distinct from existing patterns because it is a *social* failure mode that survives even excellent code-level review — the reviewer is the model itself.
+**Example**: User says "the existing handler is fine, just add X"; the agent silently keeps a broken validation path the user assumed was correct, because it never said "are you sure?"
+**Why it's bad**: The natural human safeguard against bad direction (a teammate pushing back) is absent, so wrong premises propagate into shipped code and into the test suite that locks them in. First-pass reviews are sycophantic-by-default.
+**Sockerless instance**: Phase 161 BUG-1001 first-pass review marked PRComment resolvers as "unreachable + truthful fallback, complete." Re-verification surfaced `staticReactionGroups()` ignoring the real `ReactionStore` entirely — the first pass never pushed back on its own classification.
+**Source**: [Addy Osmani, "The 80% Problem in Agentic Coding"](https://addyo.substack.com/p/the-80-problem-in-agentic-coding) — *"They don't always push back. No 'Are you sure?' or 'Have you considered...?' Just enthusiastic execution."* Corroborated by [mattpocock/dictionary-of-ai-coding "Sycophancy"](https://github.com/mattpocock/dictionary-of-ai-coding/blob/main/dictionary/Sycophancy.md): *"An agent asked to review code says it looks good rather than identifying real bugs."*
+
+### 25. Comprehension debt
+**Description**: A new debt category — not technical debt — capturing the growing gap between how much code exists in your system and how much any human on the team actually understands. AI velocity metrics look healthy while the team's grasp of its own system silently erodes.
+**Example**: A `ProjectConfig` dual-shape with `SimPort`/`BackendPort` *and* `Instances` coexisting for three phases; no current contributor can tell on sight which one is load-bearing for the start-project path.
+**Why it's bad**: Unlike technical debt, it doesn't announce itself through mounting friction — the build is fast, the PRs merge clean, but no one notices the rot until an incident.
+**Sockerless instance**: BUG-1011 — the dual-shape `ProjectConfig` from the legacy "1 sim + 1 backend" model was load-bearing for `project_manager.go::startProject` but had been declared "deprecated" in comments. Took multiple Read passes to confirm which fields were live. The ProjectManager rewrite reduced surface area; the dual-shape itself was the comprehension-debt artifact.
+**Source**: [O'Reilly Radar, "Comprehension Debt: The Hidden Cost of AI-Generated Code"](https://www.oreilly.com/radar/comprehension-debt-the-hidden-cost-of-ai-generated-code/) — *"Unlike technical debt, which announces itself through mounting friction—slow builds, tangled dependencies, the creeping dread every time you touch that one module—comprehension debt breeds false confidence."* And: *"Comprehension debt is the growing gap between how much code exists in your system and how much of it any human being genuinely understands."*
+
+### 26. Iteration-addiction loop ("one more prompt" tax)
+**Description**: The agent gets ~90% of a feature right and the developer spends hours re-prompting to close the last 10%, while a 30-minute manual fix would have finished it. Cumulative time exceeds writing from scratch; sunk-cost prevents switching back to manual.
+**Example**: Five hours into iterating on a stack test that would have been hand-written in 45 minutes.
+**Why it's bad**: Velocity *feels* high (lots of diffs, lots of activity) but throughput is lower than baseline. The developer is now too sunk-cost to switch back.
+**Sockerless instance**: Not strictly Phase 161 native, but the bleephub-completion sub-phase grew via incremental "add X too" requests over many turns — each individually small, cumulatively a full extra phase of scope.
+**Source**: [Addy Osmani, "The 80% Problem in Agentic Coding"](https://addyo.substack.com/p/the-80-problem-in-agentic-coding) — *"The agent implements an amazing feature and got maybe 10% of the thing wrong...And that was 5 hrs ago."*
+
+### 27. AI as expansion engine, no pruning
+**Description**: LLMs add lines, files, helpers, abstractions, and comments — they almost never delete. Industry data shows refactor (consolidating / deleting / simplifying) collapsed from ~25% of changes pre-AI to under 10% post-AI. The codebase grows monotonically; locally-coherent code accumulates without global constraint.
+**Example**: Three sibling helpers `validateInput`, `validateInputSimple`, `validateInputEnhanced` — each authored in a different session, none deleted.
+**Why it's bad**: Static analysis can't tell you `AbstractStrategyFactoryBuilder` is solving a non-problem. The linter is green, the codebase silently bloats, and pattern 25 (comprehension debt) accumulates until refactor becomes infeasible.
+**Sockerless instance**: Phase 161 found a remarkable amount of dead code that nothing was pruning proactively — `InitTracer` in 6 modules (BUG-1008), `decodeRegistryAuth` (BUG-998), `MigrateLegacyProjects` + `DeriveLegacyInstances` (BUG-1007), `staticReactionGroups` + `prStaticReactionGroups` (BUG-1001), the entire `bph_` legacy seeded-token surface (BUG-1004). None of these would have died without an explicit pruning phase.
+**Source**: [Adam Wespiser, "AI is an Expansion Engine. Software Engineering Needs a Pruning Engine"](https://www.wespiser.com/posts/2026-03-22-AI-Expansion-vs-Software-Pruning.html) — *"AI is an expansion engine. Software engineering is a pruning process."* And: *"Without negative pressure, coding with AI feels like progress while the system quietly drifts toward bloat."* Corroborated by [Klement Gunndu, "AI-Generated Code Is Building Tech Debt You Can't See"](https://dev.to/klement_gunndu/ai-generated-code-is-building-tech-debt-you-cant-see-khn): *"AI generates new code. They rarely suggest consolidating existing code."*
+
+### 28. Tautological / behavior-snapshot tests
+**Description**: AI-generated tests assert that the code does what it currently does, not what the spec says it should do. Tests synthesised from the implementation — flip a sign and the test still passes — calcify whatever the agent first produced. Distinct from pattern 3 (implementation-coupled) with a mutation-score lens.
+**Example**: A handler returns the literal string `"BUG-994 fallback path"` in an error; the generated test asserts that exact string. When the metadata is later stripped per a no-phase-refs rule, the test breaks; the underlying contract didn't change.
+**Why it's bad**: High coverage, green CI, zero protection against regression. The test calcifies the current (possibly buggy) behavior; mutation testing would catch this but coverage % doesn't.
+**Sockerless instance**: Phase 161 BUG-994 sweep stripped `"BUG-944"` from a Cloud Run gcsfuse-rejection error message; `TestRunpbVolumeFromBackingGCSFuseRejected` in `backends/cloudrun` asserted on the literal `"BUG-944"` substring and broke in CI. Fixed in P161.27 by re-deriving the assertion from contract substrings (`"cache-TTL"`, `"gcs-sync"`, `"Cloud Run"`) — what the error *means*, not the bug ID.
+**Source**: [Christopher Montes, "Lint Against the Machine"](https://medium.com/@montes.makes/lint-against-the-machine-a-field-guide-to-catching-ai-coding-agent-anti-patterns-3c4ef7baeb9e) — *"tests validate the AI's own assumptions, not the developer's intent."*
+
+### 29. Mock drift (rotting fixtures)
+**Description**: Hand-written mocks return a wire shape that was true when written but isn't anymore. CI stays green because the mock matches the test's expectations; production breaks because the real upstream changed.
+**Example**: A simulator test mocks an AWS SDK response with a field that AWS renamed three months ago. The handler "works" against the mock and silently mis-routes in real cloud.
+**Why it's bad**: The test isn't testing anything that exists in production; it's testing the developer's memory of the API from N months ago.
+**Sockerless instance**: Why sockerless never mocks the cloud — sims at cloud-API fidelity validated by real SDKs / CLIs / Terraform providers. The `adaptor-fidelity-check` skill (with Phase 160's SDK-serializer-source step 1a) is the explicit anti-mock-drift policy.
+**Source**: [CopilotKit, "AIMock: One Mock Server For Your Entire AI Stack"](https://www.copilotkit.ai/blog/aimock-one-tool-to-mock-your-entire-ai-stack) — *"the provider changes a response shape, your mock still returns the old format, CI stays green, and you discover the mismatch in production."*
+
+### 30. Assumption-propagation cascades
+**Description**: An early misunderstanding by the agent — about a type, a contract, a data flow — gets built upon in subsequent files / PRs / phases. By the time anyone notices, the wrong premise is load-bearing across many surfaces.
+**Example**: The agent decides early that "ARNs for global resources omit region"; ten files reference that helper; one of those resources is *not* actually global (WAFv2's us-east-1 quirk) and the entire chain mis-resolves.
+**Why it's bad**: The fix isn't local — it's a sweep across N call-sites. Nobody knows the original premise was wrong until the cascade fails downstream.
+**Sockerless instance**: BUG-1004 (seeded admin token shape `bph_` vs real GitHub's `ghp_`) had propagated across 14 fixture / test / doc / UI files because the initial assumption "bleephub issues `bph_` tokens" got built upon. The fix had to touch all 14. Also Phase 159 WAFv2: the "global resources omit region" assumption was wrong for WAFv2 ARNs, surfaced only via real SDK debug capture.
+**Source**: [Addy Osmani, "The 80% Problem in Agentic Coding"](https://addyo.substack.com/p/the-80-problem-in-agentic-coding) — *"The model misunderstands something early and builds an entire feature on faulty premises."*
+
+### 31. Pre-commit-hook rewriting clobbers AI's view of just-shipped code
+**Description**: AI edits a file; pre-commit hook (formatter, fixer, codemod) modifies it in-place during commit; the file on disk is now different from what the AI's context holds. Subsequent turns re-apply the original edits, often reverting the hook's fix — the "fix" never sticks.
+**Example**: Hook auto-strips a trailing newline; next AI turn re-adds it; commit succeeds; next iteration strips it again. Ping-pong.
+**Why it's bad**: Operational gotcha that wastes turns. Worse — when the hook's fix is load-bearing (security lint, formatter that prevents a bug class), the AI silently reverts it. Commit failures from hooks are easy to miss because "hook output passed" ≠ "commit landed".
+**Sockerless instance**: Phase 161 P161.25 (and others) saw the pre-commit `Update README badges` hook auto-modify README during commit; commit rolled back; took multiple attempts to land. The fix is to always run `git log --oneline -1` after a commit attempt to verify the SHA actually advanced.
+**Source**: [anthropics/claude-code issue #45073](https://github.com/anthropics/claude-code/issues/45073) — *"After Claude Code edits a file and commits it (where a pre-commit hook modifies the file in-place during the commit), Claude Code's internal view of the file reverts to the pre-edit content in subsequent turns. This causes Claude to repeatedly re-apply the same edits, believing they were never saved — even though the actual on-disk file and git history are correct."*
+
+### 32. Verification-bottleneck inversion
+**Description**: With AI authoring most of the code, the time-dominant activity is no longer writing — it's *understanding what was written well enough to approve it*. Reviewing AI-generated logic takes more effort per LOC than human-authored logic because the reviewer lacks the author's mental model.
+**Example**: A "quick" review of an AI-generated 400-line handler takes longer than re-implementing 200 lines by hand would have.
+**Why it's bad**: Teams that don't budget for this end up rubber-stamping (which compounds patterns 25, 28, 30) or burning out their senior reviewers.
+**Sockerless instance**: Phase 161 BUG-1001 closed in *three passes* — each pass with fresh eyes found something the previous pass had stamped "done." First pass: placeholder cleanup. Second pass: re-verification found the `staticReactionGroups` hardcoded-zero issue. Third pass (after user prompt): full bleephub GraphQL completion sub-phase. The lesson: budget for at least one explicit re-verification cycle per substantial change.
+**Source**: [Addy Osmani, "The 80% Problem in Agentic Coding"](https://addyo.substack.com/p/the-80-problem-in-agentic-coding) — *"reviewing AI-generated logic actually requires more effort than reviewing human-written code."* And [Bryan Finster, "AI Broke Your Code Review"](https://bryanfinster.substack.com/p/ai-broke-your-code-review-heres-how) corroborating the cost-curve inversion.
+
+### 33. Documentation drift after AI refactor
+**Description**: AI edits the code but not the docs / README / comments that describe the code; or it edits the docs to match an AI-imagined version of the code. Both directions of drift go undetected because reviewers focus on code diff, not doc diff.
+**Example**: An AI refactor moves a config flag's behaviour from boolean to enum; the README still says "set X=true/false"; new users follow the README and the field silently no-ops.
+**Why it's bad**: Operators trust the docs. Wrong docs are worse than missing docs because they confidently mislead.
+**Sockerless instance**: BUG-994 itself was partially this — comments like `// Phase 87b — kept for backward compat with callers that don't yet want logs export` were *fossil documentation* of a state of the world that no longer existed (no such callers). The fix was a doc-sync sweep across 115 comments. Going forward, Phase 157's reference-adaptor framing + Phase 160's per-component README contract makes drift visible (READMEs cite SDK + CLI + Terraform versions; mismatch fails review).
+**Source**: [Red Hat Developer, "AI-powered documentation updates"](https://developers.redhat.com/articles/2026/04/21/ai-powered-documentation-updates-code-diff-docs-pr-one-comment) — *"Developers frequently merge pull requests that change code behavior, but documentation in separate repositories still describes the old behavior, causing users to follow outdated instructions weeks later."*
+
+### 34. Refactor-induced safety-net loss
+**Description**: When delegating handler logic to a sibling method (typed-interface dispatch, self-method-call), defensive layers in the original handler — post-filters, retries, normalization passes — get silently dropped because the delegate target doesn't preserve them. Distinct from pattern 11 / 12 because the duplicate is *intentional* (extracting common logic); the bug is the asymmetry between what the original did and what the delegate does.
+**Example**: HTTP handler `handleContainerList` post-filters every result through `MatchContainerFilters` unconditionally; refactor delegates to `Server.ContainerList()` which only post-filters when CloudState is nil. Cloud backends pass filters to the cloud API, which doesn't apply label filters server-side — labels leak.
+**Why it's bad**: Tests that exercise the filter catch this. But the failure mode is subtle: the delegate target *does* call something that *looks* like the filter (CloudState passes the filter map through), just not at the layer where it matters. Easy to miss in review.
+**Sockerless instance**: Phase 161 P161.27 — BUG-995's `handleContainerList` → `s.self.ContainerList` delegation lost the unconditional post-filter. Surfaced as `TestComposeContainerLabelFilter` returning 3 containers instead of 2 (project filter not applied). Fixed by removing the `s.CloudState == nil` guard inside `BaseServer.ContainerList` so the filter runs unconditionally. Same lineage as BUG-991 / BUG-992 (handler delegation losing implicit behavior).
+**Source**: Pattern surfaced during Phase 161 closeout — no external citation yet, but the underlying mechanism is well-described in [Augment Code's pattern 8](https://www.augmentcode.com/guides/debugging-ai-generated-code-8-failure-patterns-and-fixes) ("Subtle behaviour changes during refactor") and in pattern 12 here (concurrency / correctness bugs replicated across the codebase) — different shape (asymmetry, not replication), same family.
+
+### 35. Text-rewriting scripts lose semantic information
+**Description**: Sed / regex / line-by-line scripts applied to source code can break syntax in ways the linter doesn't catch and only tests surface. Common failure modes: joining adjacent lines when a trailing newline gets stripped, eating required function args when a regex matches `, ""` across nested call expressions, leaving orphaned tokens when prefix-stripping is over-eager.
+**Example**: A regex `^//\s*Phase \d+ — (.*)$` strips the prefix; the rewrite forgets to re-append the trailing newline; the next line gets joined to the comment; an `s.mux.HandleFunc("GET /login/oauth/authorize", ...)` route disappears into the previous comment line.
+**Why it's bad**: The damage isn't local. A single bad regex can clobber routes / handlers / arg lists across dozens of files; the build still succeeds for unrelated reasons (Go doesn't care about route registration at compile time); tests catch a tiny fraction of the surface.
+**Sockerless instance**: Phase 161 P161.8 — the BUG-994 phase/BUG-ref stripping script lost trailing newlines on 3 sites in bleephub, joining route-registration lines into preceding comments and breaking 3 GraphQL routes (caught by `TestOAuthToken*`). Also the sed for `, ""` in P161.7 ate required args from `t.Setenv("FOO")`, `SimulatorEnv(CloudGCP, 5000)`, and 7+ `NewProjectManager(pm, nil)` call sites — all caught by `go test`, none by `go build`.
+**Mitigation**: For bulk code rewrites prefer language-aware tools — `gofmt -r`, `goimports`, AST visitors via `go/ast`, `tree-sitter` queries. When sed / regex *must* be used, run `go build ./...` AND `go test ./...` immediately after the script — don't trust visual inspection of the diff.
+**Source**: Pattern surfaced during Phase 161 closeout. Related discussion in [Christopher Montes, "Lint Against the Machine"](https://medium.com/@montes.makes/lint-against-the-machine-a-field-guide-to-catching-ai-coding-agent-anti-patterns-3c4ef7baeb9e) on the broader theme of static analysis being insufficient for AI-authored changes.
 
 ## Maintainer-stated AI-PR policies
 
@@ -237,22 +334,24 @@ These are the public stances from established projects on accepting AI-generated
 | Cat | Patterns | Sockerless policy |
 |---|---|---|
 | Fake / fallback / silent degradation | 1, 7, 9, 18 | "No fakes / no fallbacks / no silent shims" + fail-loud on persistence-open failure |
-| Anemic / fake tests | 2, 3 | External fixtures use real client; specs are the authoritative reference, not the implementation |
-| Lack of real-world fidelity | 6, 21, 22 | Reference-adaptor framing (Phase 157); cross-cloud sweep on every find |
-| Verbose / useless comments | 8 | Default to no comments; only WHY-non-obvious lines allowed |
-| Assumptions without research | 4, 22 | Grep before adding a call; verify upstream package existence; spec-first |
-| Rush instead of planning | 19, 20 | `PLAN.md` phase-by-phase; acceptance criteria; manual-test cycle |
+| Anemic / fake tests | 2, 3, 28, 29 | External fixtures use real client; specs are the authoritative reference, not the implementation; assert on contract substrings not implementation metadata; no mocks (sims at cloud-API fidelity) |
+| Lack of real-world fidelity | 6, 21, 22, 29 | Reference-adaptor framing (Phase 157); cross-cloud sweep on every find |
+| Verbose / useless comments + drift | 8, 33 | Default to no comments; only WHY-non-obvious lines allowed; per-component README contract makes doc-vs-code drift visible |
+| Assumptions without research | 4, 22, 30 | Grep before adding a call; verify upstream package existence; spec-first; flag early premises that propagate (cascade audit) |
+| Rush instead of planning | 19, 20, 26 | `PLAN.md` phase-by-phase; acceptance criteria; manual-test cycle; budget for re-verification |
 | Myopia / context loss | 11, 12, 13, 17 | State save every task; `MEMORY.md` carries invariants; cross-cloud sweep |
-| Model-specific habits | 5, 14 | "Right fix not quick fix"; three-lines-better-than-abstraction rule |
-| Security / supply chain | 4, 10, 15, 16 | README caveat block; pre-commit hooks; user-merges-every-PR |
+| Model-specific habits | 5, 14, 24, 25 | "Right fix not quick fix"; three-lines-better-than-abstraction rule; explicit re-verification overrides first-pass sycophancy; comprehension-debt audit at phase boundaries |
+| Security / supply chain | 4, 10, 15, 16, 23 | README caveat block; pre-commit hooks; user-merges-every-PR |
+| Refactor / pruning hygiene | 11, 12, 14, 27, 34, 35 | Always-delete-something audit per phase; language-aware tools (gofmt, ast) over sed for code rewrites; refactor-delegation safety-net audit |
+| Operational gotchas (process, not slop) | 31, 32 | Verify `git log` after every commit attempt; one explicit re-verification cycle per substantial change |
 
 ## Project-local skills
 
 Five Claude skills under `.claude/skills/` operationalise the catalogue:
 
-- [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) — read before every non-trivial change. Checklist references patterns by number.
-- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/simulators/bleephub; verifies the change preserves the reference-adaptor contract. Phase 160 extended it with SDK-serializer-source verification (step 1a) and TF-provider `resourceXxxRead` inspection (step 1b).
-- [`manual-test`](../.claude/skills/manual-test/SKILL.md) — runs the canonical manual smoke per component (no mocks, real adaptor).
+- [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) — read before every non-trivial change. 26-item checklist references patterns by number. Phase 161 closeout expanded it from 17 items to 26 with new categories: refactor-delegation safety-net audit (Q9, pattern 34), text-rewriting language-aware tools (Q10, pattern 35), metadata-in-test-assertions audit (Q13/Q15, pattern 28), pruning audit (Q18, pattern 27), doc-sync (Q19, pattern 33), post-commit SHA verification (Q25, pattern 31), explicit re-verification pass (Q26, patterns 24+32).
+- [`adaptor-fidelity-check`](../.claude/skills/adaptor-fidelity-check/SKILL.md) — used when touching backends/simulators/bleephub; verifies the change preserves the reference-adaptor contract. Phase 160 extended it with SDK-serializer-source verification (step 1a) and TF-provider `resourceXxxRead` inspection (step 1b). Pattern 29 (mock drift) is the explicit anti-pattern this skill exists to prevent.
+- [`manual-test`](../.claude/skills/manual-test/SKILL.md) — runs the canonical manual smoke per component (no mocks, real adaptor). Pattern 29 mitigation.
 - [`sim-handler-checklist`](../.claude/skills/sim-handler-checklist/SKILL.md) — pre-write checklist for new `simulators/<cloud>/<service>.go` files. Distilled from Phase 159 (CloudFront / ACM / Route 53 / WAFv2 / Amplify / IAM SLR/OIDC); every load-bearing fix came from one of four checks the skill enumerates.
 - [`cross-resource-stack-test`](../.claude/skills/cross-resource-stack-test/SKILL.md) — codifies the `TestStackProductionShape` pattern: declare `output` blocks for every cross-resource attribute, read `terraform output -json` in Go, assert what references resolve to (not just that apply doesn't crash).
 
@@ -264,4 +363,4 @@ Five Claude skills under `.claude/skills/` operationalise the catalogue:
 4. **Append, don't renumber.** Pattern numbers are stable references; skills cite them.
 5. **Update the category table** if the pattern needs a new category.
 
-Last updated: 2026-05-16 (Phase 160 — two new project-local skills + adaptor-fidelity-check refinement, both derived from Phase 159 closeout lessons).
+Last updated: 2026-05-16 (Phase 161 closeout — 12 new patterns (24–35) appended from Phase 161 fix lessons + late-2025 / 2026 external research. Patterns 34 + 35 are Phase-161-native; 24–33 are cited from external sources first cataloged this round. Phase 161 sub-task mappings included on every entry that hit the same shape.)

@@ -22,40 +22,49 @@ Stop after each "no" and resolve it before writing code.
 ### Truth and adaptor fidelity
 
 1. **Has someone already implemented this in the repo?** Grep the surface for the function/path/type name. If yes, extend that — never re-implement (pattern 11, 13).
-2. **What is the reference adaptor for this code path?** Docker SDK, gh CLI, aws CLI, gcloud, az, Terraform provider. If you can't name it, you don't know if the change is right (pattern 22).
-3. **Does the adaptor's real behaviour confirm what I'm about to write?** If your only evidence is "model says so," verify the wire shape with `curl -v` / `--debug` / `Wireshark` / the upstream spec (pattern 6).
+2. **What is the reference adaptor for this code path?** Docker SDK, gh CLI, aws CLI, gcloud, az, Terraform provider. If you can't name it, you don't know if the change is right (pattern 22, 29).
+3. **Does the adaptor's real behaviour confirm what I'm about to write?** If your only evidence is "model says so," verify the wire shape with `curl -v` / `--debug` / `Wireshark` / the upstream spec (pattern 6, 30).
 4. **If you're adding a "fallback" branch — is it actually a fallback, or is it lying about success?** Patterns 1, 7, 9 are the same shape: silent success when the truth is missing. Default answer: return an error, never fabricate.
+5. **Marking a resolver / handler as "unreachable in practice"?** Flag it for re-audit if you ever make the parent collection non-empty — the placeholder will start firing for real. `unreachableFieldErr` is a temporary contract, not a permanent one (pattern 30 lineage).
 
 ### Plan and root cause
 
-5. **Is this the right fix, or the quick fix?** If you'd be embarrassed to explain it in a code review, it's the quick fix (pattern 19).
-6. **Have you read at least one nearby function for the surrounding pattern?** If no, you'll fight the codebase's conventions and lose (pattern 13).
-7. **If the fix involves stacking guards** (`if x != nil && x.Y != "" && len(x.Z) > 0 ...`) — what's the root cause? Five-deep conditionals hide the real bug (pattern 5).
+6. **Is this the right fix, or the quick fix?** If you'd be embarrassed to explain it in a code review, it's the quick fix (pattern 19).
+7. **Have you read at least one nearby function for the surrounding pattern?** If no, you'll fight the codebase's conventions and lose (pattern 13).
+8. **If the fix involves stacking guards** (`if x != nil && x.Y != "" && len(x.Z) > 0 ...`) — what's the root cause? Five-deep conditionals hide the real bug (pattern 5).
+9. **Refactoring to delegate via self-dispatch?** Audit every defensive layer in the original — post-filters, error normalisers, fallback paths often live as silent backstops that the delegate doesn't preserve. The asymmetry is invisible to compilers + linters (pattern 34).
+10. **Bulk text rewrite across many files?** Use language-aware tools — `gofmt -r`, `goimports`, `go/ast` visitors, `tree-sitter` queries. Sed / regex on code can join lines, eat required args, leave orphaned tokens. If you must use sed, run `go build ./...` AND `go test ./...` immediately after — don't trust visual inspection of the diff (pattern 35).
 
 ### Tests and fidelity
 
-8. **Are you adding a test?** It must drive the real adaptor — not a mock (pattern 2). For sockerless this means: `docker` CLI / `gh` CLI / `aws` CLI / SDK clients, against a running binary, not a struct mocked-out in a unit test.
-9. **Is the test derived from spec, or from the implementation?** If you wrote the assertion by reading the code you just wrote, you're testing yourself, not the contract (pattern 3).
-10. **Coverage % is not the goal.** Mutation-killed % is. A 95%-covered branch with one assert that everything returns non-nil is a lie (pattern 2).
+11. **Are you adding a test?** It must drive the real adaptor — not a mock (pattern 2, 29). For sockerless this means: `docker` CLI / `gh` CLI / `aws` CLI / SDK clients, against a running binary, not a struct mocked-out in a unit test.
+12. **Is the test derived from spec, or from the implementation?** If you wrote the assertion by reading the code you just wrote, you're testing yourself, not the contract (pattern 3, 28).
+13. **Does the test assert on implementation metadata?** Bug IDs in error strings, phase numbers, internal IDs, version strings — these break the moment you clean up the metadata. Re-derive the assertion from the contract: what the error *means*, not the bug-tracking artifact (pattern 28).
+14. **Coverage % is not the goal.** Mutation-killed % is. A 95%-covered branch with one assert that everything returns non-nil is a lie (pattern 2).
+15. **Did you sweep test fixtures for the same strings you just cleaned from production code?** A grep on the production code's stripped substring will find anchored tests before CI does (pattern 28).
 
-### Comments and abstraction
+### Comments, abstraction, pruning
 
-11. **Default: write no comments.** Add one only when the *why* would surprise a reader (a hidden constraint, a subtle invariant, a workaround for a specific bug). Restating signatures is forbidden (pattern 8).
-12. **Are you about to add a factory / adapter / provider / manager for a single call-site?** Stop. Three similar lines is better than premature abstraction (pattern 14).
+16. **Default: write no comments.** Add one only when the *why* would surprise a reader (a hidden constraint, a subtle invariant, a workaround for a specific bug). Restating signatures is forbidden (pattern 8).
+17. **Are you about to add a factory / adapter / provider / manager for a single call-site?** Stop. Three similar lines is better than premature abstraction (pattern 14).
+18. **Did this change DELETE code you no longer need?** AI is an expansion engine — it adds, it rarely prunes. Look for dead helpers, retired branches, stale shims. A change that only adds lines is feeding pattern 27.
+19. **If you changed code-behaviour, did you sync the docs?** READMEs, env-var tables, error-message contracts in `specs/`, comment blocks describing the code you just rewrote. Wrong docs are worse than missing docs because they confidently mislead operators (pattern 33).
 
 ### Dependencies
 
-13. **Is this package real?** Before `go get <name>` or `bun add <name>`, confirm upstream existence via the official registry (pkg.go.dev / npmjs.com / pypi.org). Slopsquatted package names are weaponised malware (pattern 4).
-14. **Is this package current?** The pre-push `check-latest-deps` hook will flag drift, but proactive upgrades beat reactive flag-fixing (pattern 21).
+20. **Is this package real?** Before `go get <name>` or `bun add <name>`, confirm upstream existence via the official registry (pkg.go.dev / npmjs.com / pypi.org). Slopsquatted package names are weaponised malware (pattern 4).
+21. **Is this package current?** The pre-push `check-latest-deps` hook will flag drift, but proactive upgrades beat reactive flag-fixing (pattern 21).
 
 ### Destructive actions
 
-15. **Are you about to run `rm -rf`, `git push --force`, `terraform destroy`, drop a DB, or modify shared infrastructure?** Default: ask first. The agent-deleted-production-DB stories in [VIBE_CODING.md § 10](../../docs/VIBE_CODING.md#10-destructive-command-execution--agent-goes-rogue) are why.
+22. **Are you about to run `rm -rf`, `git push --force`, `terraform destroy`, drop a DB, or modify shared infrastructure?** Default: ask first. The agent-deleted-production-DB stories in [VIBE_CODING.md § 10](../../docs/VIBE_CODING.md#10-destructive-command-execution--agent-goes-rogue) are why.
 
-### Context discipline
+### Context, commit, and re-verification discipline
 
-16. **Did the conversation just compact?** Re-read STATUS.md + DO_NEXT.md + the last 2 commits before continuing. Context-amnesia silently rewrites prior decisions (pattern 17).
-17. **Did you just claim something works?** Did you actually run it? "Works on my machine" without an `$ ` shell prompt and real output in the message is suspicious.
+23. **Did the conversation just compact?** Re-read STATUS.md + DO_NEXT.md + the last 2 commits before continuing. Context-amnesia silently rewrites prior decisions (pattern 17).
+24. **Did you just claim something works?** Did you actually run it? "Works on my machine" without an `$ ` shell prompt and real output in the message is suspicious.
+25. **After `git commit` reports success, did you run `git log --oneline -1` to verify the SHA actually advanced?** Pre-commit hook auto-fixes can roll back a commit silently. "Hook output passed" ≠ "commit landed" (pattern 31).
+26. **First-pass review is sycophantic-by-default.** When closing a BUG or finishing a substantial change, plan an explicit re-verification pass with fresh eyes — typically surfaces new bugs the first pass rubber-stamped (patterns 24, 32). Budget the time; don't skip it.
 
 ## Failure modes to recognise in your own output
 
@@ -68,6 +77,12 @@ Stop and rewrite if you catch yourself producing any of these:
 - "Backward-compatibility shim" in code that isn't released or has no users — pattern 8.
 - Tests with `assert.NotNil(x)` as the only assertion.
 - 47 files for a one-call-site change — pattern 14.
+- "Looks good to me" on your own work after a single pass — pattern 24 (sycophancy). Re-read with fresh eyes; first-pass review trusts the wrong things.
+- A diff that's only additions, no deletions — pattern 27. AI rarely prunes; force the pruning audit.
+- Assertions on bug IDs / phase numbers / internal IDs in error strings — pattern 28. Re-derive from the contract.
+- Sed / regex on Go source spanning multiple files — pattern 35. Run `go build && go test` immediately; visual inspection misses joined lines + eaten args.
+- Code change merged without docs change — pattern 33. If the behaviour changed, the README, env-var table, and adjacent comment block need to change with it.
+- Commit message says "passed" but you didn't run `git log` afterward — pattern 31. The hook may have rolled it back.
 
 ## Sockerless-specific invariants (load-bearing; don't violate)
 
@@ -91,4 +106,13 @@ When you add a new sum-type-shaped enum or interface to this repo, reach for the
 
 ## Output
 
-When this skill fires, restate the 1–2 checklist items most relevant to the current change. Don't dump the whole list. Then proceed with the work — or stop and ask if a "no" surfaced.
+When this skill fires, restate the 1–2 checklist items most relevant to the current change. Don't dump the whole list — there are 26 items and reciting them is itself a sycophancy trap. Pick the items that match the kind of change you're about to make:
+
+- New handler / refactor of an existing handler → Q1, Q2, Q9 (delegation safety nets).
+- Bulk rewrite across many files → Q10 (language-aware tools), Q15 (sweep tests too), Q18 (delete something).
+- New test → Q11–14 (real adaptor, spec not impl, no metadata in assertions).
+- Behaviour change → Q19 (sync docs).
+- Closing a BUG → Q26 (explicit re-verification pass).
+- After commit → Q25 (verify SHA advanced).
+
+Then proceed — or stop and ask if a "no" surfaced.

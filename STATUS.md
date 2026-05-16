@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-161-vibe-slop-sweep` — to open as PR #161. |
-| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes + bleephub GraphQL completion + ProjectManager instance rewrite.** 18 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008/1009/1011). Plus an in-PR bleephub-completion sub-phase covering PR.comments, PR.reviewThreads, ProjectV2 (incl. fields + field-value writes), comment edit history + minimization, issue/PR locking, PR.milestone, all with real `gh` CLI smoke tests in `bleephub/test/run-gh-test.sh`. |
+| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes + bleephub GraphQL completion + ProjectManager instance rewrite + catalogue refresh.** 18 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008/1009/1011). bleephub-completion sub-phase covers PR.comments, PR.reviewThreads, ProjectV2 (incl. fields + field-value writes), comment edit history + minimization, issue/PR locking, PR.milestone — all with real `gh` CLI smoke tests in `bleephub/test/run-gh-test.sh`. P161.28 closeout: 12 new vibe-coding anti-patterns (24–35) appended to `docs/VIBE_CODING.md` from Phase 161 fix lessons + late-2025/2026 external research; `avoid-vibe-slop` skill expanded from 17 to 26 checklist items. |
 | Last merged | PR #160 — Phase 160 skills + complete component-README adaptor-led sweep (2026-05-16, merged at `aeb0ac6e`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |

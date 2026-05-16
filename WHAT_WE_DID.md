@@ -54,11 +54,30 @@ The BUG-994 comment cleanup surfaced 5 legacy-support patterns the user's direct
 
 Done in this PR: **BUG-1008** delete legacy OTel `InitTracer` entry point across 6 modules. The other three rip-outs (BUG-1006, BUG-1007, BUG-1009) are multi-file structural changes worth their own focused Phase 162 rather than ballooning #161 past the point of useful review.
 
-### Final shape
+### Final shape (after the user-driven scope expansions)
 
-13 BUGs closed in #161: 994 (phase/BUG refs), 995 (handler `s.self` delegation), 996 (sim ReadJSON sweep), 997 (persistence write fail-loud), 998 (decodeRegistryAuth dead-code + handleImagePush fail-loud), 999 (InstanceID deprecation cleanup), 1000 (OAuth auth-bypass), 1001 (GraphQL fake-data resolvers), 1002 (Azure ACR parent-exists), 1003 (single-call-site inline), 1004 (bph_ → ghp_), 1005 (defensive nil chain), 1008 (InitTracer dead legacy). 4 BUGs Open after merge: 1001 (lower priority; placeholder is honest), 1006 + 1007 + 1009 (staged for Phase 162). One reclassification (1010 → false positive). BUGS.md: `1011 filed / 1006 fixed / 4 open / 2 false positives`.
+18 BUGs closed in #161: every one of the 12 originally filed, plus 1006/1007/1008/1009/1011 surfaced or finished during the sweep. The bleephub GraphQL completion sub-phase (P161.16-25) wired PR.comments, PR.reviewThreads, ProjectV2 (with fields + field-value writes), comment edit history, minimization, issue/PR locking, and PR.milestone — every surface backed by real `gh` CLI smoke tests in `bleephub/test/run-gh-test.sh`. ProjectManager rewrite (P161.24, BUG-1011) dropped the legacy "1 sim + 1 backend" dual-shape `ProjectConfig` in favour of instance-based lifecycle. CI regressions surfaced during PR review (P161.27): `TestRunpbVolumeFromBackingGCSFuseRejected` was anchored to the literal `"BUG-944"` substring (pattern 28); `TestComposeContainerLabelFilter` regressed because BUG-995's delegation lost the unconditional `MatchContainerFilters` post-filter (pattern 34) — both fixed by strengthening the contract, not relaxing the test. BUGS.md: `1012 filed / 1012 fixed / 0 open / 2 false positives`.
 
-The catalogue at `docs/VIBE_CODING.md` now has a worked-example history: the sweep is no longer hypothetical.
+### Catalogue refresh (P161.28)
+
+The Phase 161 fix work surfaced enough recurring shapes — and external sources had published enough new analyses between Phase 158 (catalogue's last update) and now — to warrant a major refresh of `docs/VIBE_CODING.md`. Twelve new anti-patterns appended (24–35), every entry with a verbatim source quote + Phase 161 sub-task mapping where applicable:
+
+- **24 Sycophantic agreement** — first-pass review trusts the wrong things. BUG-1001 needed three passes; the first stamped "complete" on a fix that still had `staticReactionGroups` ignoring the real `ReactionStore`. Source: Addy Osmani's *80% Problem* + Matt Pocock's dictionary-of-ai-coding.
+- **25 Comprehension debt** — the dual-shape `ProjectConfig` (BUG-1011) took multiple Read passes to confirm which fields were load-bearing. Source: O'Reilly Radar, *Comprehension Debt*.
+- **26 Iteration-addiction loop** — distinct from #20 (70% problem) with a sunk-cost-on-the-human angle. Source: Addy Osmani again.
+- **27 AI as expansion engine, no pruning** — phase 161 surfaced ~5 distinct dead-code surfaces (`InitTracer`, `decodeRegistryAuth`, `MigrateLegacyProjects`, `staticReactionGroups`, `bph_` legacy admin token) that no incremental session had pruned. Source: Adam Wespiser + Klement Gunndu / Ox Security study.
+- **28 Tautological / behaviour-snapshot tests** — `TestRunpbVolumeFromBackingGCSFuseRejected` asserting on `"BUG-944"` substring (P161.27). Source: Christopher Montes, *Lint Against the Machine*.
+- **29 Mock drift** — the sockerless "no mocks" rule has always existed; the catalogue now names the pattern it prevents. Source: CopilotKit + Speedscale.
+- **30 Assumption-propagation cascades** — BUG-1004 propagated `bph_` across 14 fixture files; WAFv2 us-east-1 quirk propagated a "global = no region" assumption. Source: Addy Osmani.
+- **31 Pre-commit-hook clobbering** — the README-badge auto-fix kept rolling back commits in P161.25 etc. Source: anthropics/claude-code issue #45073 (upstream-confirmed shape).
+- **32 Verification-bottleneck inversion** — BUG-1001 took three explicit re-verification passes. Source: Addy Osmani + Bryan Finster.
+- **33 Documentation drift after refactor** — BUG-994 was partly this (comments documenting a state of the world that no longer existed). Source: Red Hat Developer + Mergify.
+- **34 Refactor-induced safety-net loss (Phase 161 native)** — BUG-995's delegation lost the unconditional label-filter post-pass. The exact mechanism isn't in any external catalogue I found; sockerless gets to name it.
+- **35 Text-rewriting scripts lose semantic information (Phase 161 native)** — the BUG-994 stripping script joined 3 lines; the BUG-1007 sed for `, ""` ate args across 9 sites. Same lesson on language-aware tools beating sed for code.
+
+The `avoid-vibe-slop` skill grew from 17 to 26 checklist items. New checks cover refactor-delegation audits, language-aware text rewrites, metadata-in-test-assertions, pruning audits, doc-sync, post-commit SHA verification, and explicit re-verification cycles. The skill's *Output* section was rewritten to emphasise picking 1-2 relevant items per change (reciting all 26 is itself a sycophancy trap).
+
+The catalogue's category table grew two new rows: **Refactor / pruning hygiene** (patterns 11, 12, 14, 27, 34, 35) and **Operational gotchas** (patterns 31, 32).
 
 ## 2026-05-16 — Phase 160: codify Phase 159 lessons as project-local skills (merged 2026-05-16 at `aeb0ac6e` as PR #160)
 
