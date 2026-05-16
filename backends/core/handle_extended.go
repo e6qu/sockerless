@@ -2,9 +2,7 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -413,25 +411,65 @@ func (s *BaseServer) handleContainerChanges(w http.ResponseWriter, r *http.Reque
 	WriteJSON(w, http.StatusOK, result)
 }
 
-// collectAllContainers returns containers from Store, CloudState, and PendingCreates,
-// deduplicated by container ID. This ensures cloud backends that keep containers
-// only in cloud state (not in Store.Containers) are included in system df output.
-func (s *BaseServer) collectAllContainers(ctx context.Context) []api.Container {
-	seen := make(map[string]bool)
+// collectContainers returns the "current truth" view: CloudState is the source
+// when present (stateless cloud backends), otherwise the local Store covers
+// passthrough backends. PendingCreates are folded in either way so in-flight
+// containers stay visible. The `all` flag and `filters` apply to PendingCreates
+// gating; CloudState honors them via its own ListContainers signature.
+func (s *BaseServer) collectContainers(ctx context.Context, all bool, filters map[string][]string) []api.Container {
+	seen := map[string]bool{}
 	var result []api.Container
 
-	// 1. Local store containers
+	if s.CloudState != nil {
+		if cc, err := s.CloudState.ListContainers(ctx, all, filters); err == nil {
+			for _, c := range cc {
+				if !seen[c.ID] {
+					seen[c.ID] = true
+					result = append(result, c)
+				}
+			}
+		}
+	} else {
+		for _, c := range s.Store.Containers.List() {
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				result = append(result, c)
+			}
+		}
+	}
+
+	if s.PendingCreates != nil {
+		for _, pc := range s.PendingCreates.List() {
+			if seen[pc.ID] {
+				continue
+			}
+			if !all && !pc.State.Running {
+				continue
+			}
+			seen[pc.ID] = true
+			result = append(result, pc)
+		}
+	}
+
+	return result
+}
+
+// collectAllContainers returns the union of Store + CloudState + PendingCreates,
+// Store first (Store wins on duplicate IDs). Used by SystemDf for disk-usage
+// accounting where Store may carry tags / labels CloudState doesn't.
+func (s *BaseServer) collectAllContainers(ctx context.Context) []api.Container {
+	seen := map[string]bool{}
+	var result []api.Container
+
 	for _, c := range s.Store.Containers.List() {
 		if !seen[c.ID] {
 			seen[c.ID] = true
 			result = append(result, c)
 		}
 	}
-
-	// 2. Cloud state containers (cloud backends keep truth in the cloud)
 	if s.CloudState != nil {
-		if cloudContainers, err := s.CloudState.ListContainers(ctx, true, nil); err == nil {
-			for _, c := range cloudContainers {
+		if cc, err := s.CloudState.ListContainers(ctx, true, nil); err == nil {
+			for _, c := range cc {
 				if !seen[c.ID] {
 					seen[c.ID] = true
 					result = append(result, c)
@@ -439,8 +477,6 @@ func (s *BaseServer) collectAllContainers(ctx context.Context) []api.Container {
 			}
 		}
 	}
-
-	// 3. Pending creates (containers between create and start, not yet in cloud)
 	if s.PendingCreates != nil {
 		for _, c := range s.PendingCreates.List() {
 			if !seen[c.ID] {
@@ -449,136 +485,16 @@ func (s *BaseServer) collectAllContainers(ctx context.Context) []api.Container {
 			}
 		}
 	}
-
 	return result
 }
 
 func (s *BaseServer) handleSystemDf(w http.ResponseWriter, r *http.Request) {
-	// Collect all containers: Store + CloudState + PendingCreates, deduplicated by ID
-	allContainers := s.collectAllContainers(r.Context())
-
-	// Build image→container count map
-	imgContainerCount := make(map[string]int64)
-	for _, c := range allContainers {
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			imgContainerCount[img.ID]++
-		}
+	resp, err := s.self.SystemDf()
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-
-	var images []*api.ImageSummary
-	for _, img := range s.Store.Images.List() {
-		created, _ := time.Parse(time.RFC3339Nano, img.Created)
-		size := img.Size
-		if size <= 0 {
-			size = img.VirtualSize // fallback
-		}
-		images = append(images, &api.ImageSummary{
-			ID:          img.ID,
-			RepoTags:    img.RepoTags,
-			RepoDigests: img.RepoDigests,
-			Created:     created.Unix(),
-			Size:        size,
-			VirtualSize: img.VirtualSize,
-			SharedSize:  0,
-			Labels:      img.Config.Labels,
-			Containers:  imgContainerCount[img.ID],
-		})
-	}
-
-	var containers []*api.ContainerSummary
-	for _, c := range allContainers {
-		created, _ := time.Parse(time.RFC3339Nano, c.Created)
-		command := c.Path
-		if len(c.Args) > 0 {
-			command += " " + strings.Join(c.Args, " ")
-		}
-		// Resolve image ID
-		imageID := ""
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			imageID = img.ID
-		} else {
-			h := sha256.Sum256([]byte(c.Config.Image))
-			imageID = fmt.Sprintf("sha256:%x", h)
-		}
-		// Labels
-		labels := c.Config.Labels
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		// Mounts
-		mounts := c.Mounts
-		if mounts == nil {
-			mounts = []api.MountPoint{}
-		}
-		cs := &api.ContainerSummary{
-			ID:              c.ID,
-			Names:           []string{c.Name},
-			Image:           c.Config.Image,
-			ImageID:         imageID,
-			Command:         command,
-			Created:         created.Unix(),
-			State:           c.State.Status,
-			Status:          FormatStatus(c.State),
-			Labels:          labels,
-			Ports:           buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
-			Mounts:          mounts,
-			NetworkSettings: &api.SummaryNetworkSettings{Networks: c.NetworkSettings.Networks},
-			HostConfig:      &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},
-		}
-		// Calculate real container size from container rootDir
-		if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
-			cs.SizeRw = DirSize(rootPath)
-		}
-		// SizeRootFs from image
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			cs.SizeRootFs = img.Size
-		}
-		containers = append(containers, cs)
-	}
-
-	// Build volume→container reference count map
-	volRefCount := make(map[string]int64)
-	for _, c := range allContainers {
-		for _, m := range c.Mounts {
-			if m.Name != "" {
-				volRefCount[m.Name]++
-			}
-		}
-	}
-
-	var volumes []*api.Volume
-	for _, v := range s.Store.Volumes.List() {
-		vCopy := v
-		// Calculate real volume size from temp dir
-		size := int64(-1)
-		if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-			size = DirSize(dir.(string))
-			vCopy.Status = map[string]any{"Size": size}
-		}
-		vCopy.UsageData = &api.VolumeUsageData{
-			RefCount: volRefCount[v.Name],
-			Size:     size,
-		}
-		volumes = append(volumes, &vCopy)
-	}
-
-	// Deduplicate images by ID
-	seen := make(map[string]bool, len(images))
-	dedupImages := make([]*api.ImageSummary, 0, len(images))
-	for _, img := range images {
-		if seen[img.ID] {
-			continue
-		}
-		seen[img.ID] = true
-		dedupImages = append(dedupImages, img)
-	}
-
-	WriteJSON(w, http.StatusOK, api.DiskUsageResponse{
-		Images:     dedupImages,
-		Containers: containers,
-		Volumes:    volumes,
-		BuildCache: []*api.BuildCache{},
-	})
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // MatchLabels checks whether a container's labels satisfy label filter expressions.

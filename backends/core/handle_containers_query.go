@@ -1,10 +1,7 @@
 package core
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +53,6 @@ func normalizeContainerTimes(c *api.Container) {
 
 func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true"
-	// Read size query parameter
 	includeSize := r.URL.Query().Get("size") == "1" || r.URL.Query().Get("size") == "true"
 	filters := ParseFilters(r.URL.Query().Get("filters"))
 	limit := 0
@@ -64,100 +60,30 @@ func (s *BaseServer) handleContainerList(w http.ResponseWriter, r *http.Request)
 		limit, _ = strconv.Atoi(l)
 	}
 
-	// Use cloud state provider when available
-	var containers []api.Container
-	if s.CloudState != nil {
-		cloudContainers, err := s.CloudState.ListContainers(r.Context(), all, filters)
-		if err == nil {
-			containers = cloudContainers
-		}
-	}
-	// Also include pending creates (not yet in cloud)
-	for _, pc := range s.PendingCreates.List() {
-		if all || pc.State.Running {
-			containers = append(containers, pc)
-		}
-	}
-	// Fall back to Store when CloudState is nil or returned nothing
-	if s.CloudState == nil {
-		containers = s.Store.Containers.List()
+	// Self-dispatch — docker passthrough overrides ContainerList to query the
+	// upstream daemon; cloud backends override to use CloudState; the BaseServer
+	// default handles plain in-memory cases. before/since/limit post-filters
+	// run against the result below because they require Store access to resolve
+	// container references.
+	result, err := s.self.ContainerList(api.ContainerListOptions{
+		All:     all,
+		Filters: filters,
+	})
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
 
-	var result []*api.ContainerSummary
-	for _, c := range containers {
-		if s.CloudState == nil && !all && !c.State.Running {
-			continue
-		}
-		if s.CloudState == nil && !MatchContainerFilters(c, filters) {
-			continue
-		}
-		if !all && !c.State.Running {
-			continue
-		}
-		if !MatchContainerFilters(c, filters) {
-			continue
-		}
-
-		command := c.Path
-		if len(c.Args) > 0 {
-			command += " " + strings.Join(c.Args, " ")
-		}
-
-		created, _ := time.Parse(time.RFC3339Nano, c.Created)
-		status := FormatStatus(c.State)
-
-		imageID := ""
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			imageID = img.ID
-		} else {
-			h := sha256.Sum256([]byte(c.Config.Image))
-			imageID = fmt.Sprintf("sha256:%x", h)
-		}
-
-		labels := c.Config.Labels
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		mounts := c.Mounts
-		if mounts == nil {
-			mounts = []api.MountPoint{}
-		}
-		summary := &api.ContainerSummary{
-			ID:      c.ID,
-			Names:   []string{c.Name},
-			Image:   c.Config.Image,
-			ImageID: imageID,
-			Command: command,
-			Created: created.Unix(),
-			State:   c.State.Status,
-			Status:  status,
-			Ports:   buildPortList(c.HostConfig.PortBindings, c.Config.ExposedPorts),
-			Labels:  labels,
-			HostConfig: &api.HostConfigSummary{
-				NetworkMode: c.HostConfig.NetworkMode,
-			},
-			Mounts: mounts,
-			NetworkSettings: &api.SummaryNetworkSettings{
-				Networks: c.NetworkSettings.Networks,
-			},
-		}
-		// Populate size fields when requested
-		if includeSize {
-			if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
+	if includeSize {
+		for _, summary := range result {
+			if img, ok := s.Store.ResolveImage(summary.Image); ok {
 				summary.SizeRootFs = img.Size
 			}
-			// Populate SizeRw from container root dir
-			if rootPath, err := s.Drivers.Filesystem.RootPath(c.ID); err == nil && rootPath != "" {
+			if rootPath, err := s.Drivers.Filesystem.RootPath(summary.ID); err == nil && rootPath != "" {
 				summary.SizeRw = DirSize(rootPath)
 			}
 		}
-		result = append(result, summary)
 	}
-
-	// Sort by Created descending (newest first), matching Docker API behavior
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Created > result[j].Created
-	})
 
 	// Apply before/since post-filters (need Store access to resolve references)
 	if beforeRef := filters["before"]; len(beforeRef) > 0 {

@@ -1702,46 +1702,83 @@ func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error)
 
 // ImagePrune removes unused images.
 func (s *BaseServer) ImagePrune(filters map[string][]string) (*api.ImagePruneResponse, error) {
-	inUseIDs := make(map[string]bool)
+	referencedImages := make(map[string]bool)
 	for _, c := range s.Store.Containers.List() {
-		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
-			inUseIDs[img.ID] = true
+		referencedImages[c.Config.Image] = true
+		referencedImages[c.Image] = true
+	}
+
+	danglingOnly := false
+	if vals, ok := filters["dangling"]; ok {
+		for _, v := range vals {
+			if v == "true" || v == "1" {
+				danglingOnly = true
+			}
 		}
 	}
 
-	seen := make(map[string]bool)
 	var deleted []*api.ImageDeleteResponse
 	var spaceReclaimed uint64
+	prunedIDs := make(map[string]bool)
 
 	for _, img := range s.Store.Images.List() {
-		if seen[img.ID] || inUseIDs[img.ID] {
+		if prunedIDs[img.ID] {
 			continue
 		}
-		seen[img.ID] = true
 
-		// Skip images with real tags unless dangling filter
-		if danglingVals, ok := filters["dangling"]; ok {
-			if danglingVals[0] != "true" && danglingVals[0] != "1" {
+		inUse := referencedImages[img.ID]
+		if !inUse {
+			for _, tag := range img.RepoTags {
+				if referencedImages[tag] {
+					inUse = true
+					break
+				}
+				if idx := strings.Index(tag, ":"); idx >= 0 {
+					if referencedImages[tag[:idx]] {
+						inUse = true
+						break
+					}
+				}
+			}
+		}
+		if inUse {
+			continue
+		}
+
+		if danglingOnly && len(img.RepoTags) > 0 {
+			hasRealTag := false
+			for _, tag := range img.RepoTags {
+				if !strings.Contains(tag, "<none>") {
+					hasRealTag = true
+					break
+				}
+			}
+			if hasRealTag {
 				continue
 			}
 		}
 
+		prunedIDs[img.ID] = true
+
+		if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
+			os.RemoveAll(stagingDir.(string))
+		}
+
 		for _, tag := range img.RepoTags {
 			deleted = append(deleted, &api.ImageDeleteResponse{Untagged: tag})
-			s.Store.Images.Delete(tag)
-			parts := strings.SplitN(tag, ":", 2)
-			s.Store.Images.Delete(parts[0])
 			s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
 		}
 		deleted = append(deleted, &api.ImageDeleteResponse{Deleted: img.ID})
+		s.emitEvent("image", "delete", img.ID, map[string]string{"name": img.ID})
 		spaceReclaimed += uint64(img.Size)
+
 		s.Store.Images.Delete(img.ID)
-
-		if ctxDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-			os.RemoveAll(ctxDir.(string))
+		for _, tag := range img.RepoTags {
+			s.Store.Images.Delete(tag)
+			if idx := strings.Index(tag, ":"); idx >= 0 {
+				s.Store.Images.Delete(tag[:idx])
+			}
 		}
-
-		s.emitEvent("image", "delete", img.ID, nil)
 	}
 
 	if deleted == nil {
