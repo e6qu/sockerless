@@ -6,6 +6,28 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-16 — Phase 160: codify Phase 159 lessons as project-local skills (in flight on PR #160)
+
+Phase 159 closed with 11 sub-tasks across six AWS service families. Reviewing the commit history surfaced four recurring kinds of CI-red iteration — each one a wire-shape detail that the model "knew" from API-name patterns but didn't actually know:
+
+1. **SDK serializer source is authoritative when `--debug` isn't enough.** ACM timestamps as Unix-epoch numbers, CloudFront `?WithTags` query dispatch, WAFv2 `us-east-1`+`global/` ARN region, Amplify branch-level deployments — all four facts only visible in `aws-sdk-go-v2/service/<svc>/serializers.go`, none of them obvious from API names.
+2. **Terraform-provider Read crashes from nil-deref on omitted optional fields.** The cfNormalizeConfig pattern. Reproducible across services; the fix is always a single normalisation pass before responding.
+3. **Cross-resource Read API asymmetry.** `aws_iam_service_linked_role.Read` calls `GetRole`, not `GetServiceLinkedRole`. The sim must implement *both* sides or shadow-write between them.
+4. **Trailing-slash routing trap.** `aws` CLI uses `POST /rrset/`, the SDK uses `POST /rrset`; Go 1.22 mux treats them as distinct patterns. Both must be registered.
+
+Plus one positive lesson from `TestStackProductionShape` itself: asserting cross-resource invariants from `terraform output -json` catches a whole class of "apply passes but references don't actually resolve to each other" bugs that per-verb SDK tests never see.
+
+Phase 160 codifies all five into project-local Claude skills:
+
+- **New `sim-handler-checklist`** — pre-write checklist for any new `simulators/<cloud>/<service>.go` file, with the four checks above as explicit steps and worked examples from Phase 159 (`cfNormalizeConfig`, the SLR shadow-write, the `/rrset` + `/rrset/` registration).
+- **New `cross-resource-stack-test`** — codifies the `TestStackProductionShape` pattern: declare `output` blocks per cross-resource attribute, read `terraform output -json` in Go, assert what references resolve to, not just that apply doesn't crash.
+- **Refined `adaptor-fidelity-check`** — step 1a (read SDK serializer source when `--debug` can't surface client-side encoding choices) and step 1b (read TF provider `resourceXxxRead` for nil-deref patterns + verify which API Read calls). New failure modes added.
+- **`docs/VIBE_CODING.md`** — project-local-skills section updated to five skills with one-line descriptions of what each one covers; "Last updated" date refreshed.
+
+No code-surface changes; doc + skill changes only. The point is that the *next* sim service should ship without rediscovering these four traps.
+
+User direction at phase open: one PR for all of these. Single branch off `origin/main`.
+
 ## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
 
 Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).

@@ -4,11 +4,17 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 159 (AWS simulator: CloudFront + Amplify + supporting IAM/Route 53/WAFv2/ACM) **complete** on `phase-159-aws-sim-cloudfront-amplify` — PR #159 open, all sub-tasks P159.0 … P159.10 committed + pushed. CI green on every push (last green: P159.9 = 11/11 checks 2026-05-15).
+Phase 159 merged 2026-05-15 (PR #159, commit `236a387f` on origin/main).
 
-P159.10 (final sub-task) closed 2026-05-15: `API_SPEC.md` extended with §8–13 (CloudFront, ACM, Route 53, WAFv2, Amplify, IAM SLR/OIDC), `simulators/aws/README.md` rewritten in Phase 157 adaptor-led shape, end-to-end `TestStackProductionShape` added (asserts WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront domain_name, ACM ARN region == us-east-1).
+Phase 160 in flight on `phase-160-skills-from-159-lessons`: codify the four load-bearing Phase 159 lessons into new project-local Claude skills and refine `adaptor-fidelity-check`. No code-surface changes — `.claude/skills/`, `docs/VIBE_CODING.md`, and continuity docs only.
 
-Awaiting user merge of PR #159. Default "user merges every PR" remains in force.
+P160 acceptance:
+- New skill `sim-handler-checklist` covers SDK serializer source, TF provider `resourceXxxRead` inspection, asymmetric Create/Read APIs, trailing-slash routing.
+- New skill `cross-resource-stack-test` codifies the `TestStackProductionShape` pattern.
+- `adaptor-fidelity-check` gains steps 1a (SDK serializer) and 1b (TF provider Read inspection).
+- `docs/VIBE_CODING.md` project-local-skills section reflects all five skills.
+
+Default "user merges every PR" remains in force.
 
 ## Phase 159 scope (locked-in)
 

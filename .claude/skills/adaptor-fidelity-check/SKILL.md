@@ -42,6 +42,49 @@ terraform plan -refresh=true  # then inspect .terraform/plugin*.log
 
 Copy the exact path + method + headers + body the adaptor emits. **This is the spec.** Not what the model thinks; what the adaptor actually does.
 
+#### 1a. When `--debug` isn't enough, read the SDK serializer source
+
+`--debug` shows wire bytes, but it can't surface client-side encoding choices for paths that the request never reaches (because validation rejected it first). For SDK-driven handlers the **serializer source code is the authoritative spec**:
+
+```bash
+# AWS Go SDK v2
+find ~/go/pkg/mod/github.com/aws/aws-sdk-go-v2 -name "serializers.go" \
+  | xargs grep -l "<OpName>"
+
+#   awsRestxml_serializeOp<OpName>     — REST + XML route + body
+#   awsRestjson_serializeOp<OpName>    — REST + JSON
+#   awsAwsjson11_serializeOp<OpName>   — AWS-JSON 1.1
+#   awsAwsquery_serializeOp<OpName>    — AWS Query Protocol
+
+# GCP / Azure SDKs: same pattern under their service-client directories.
+```
+
+Phase 159 caught four wire-shape facts only visible in the serializer:
+
+- **ACM** encodes timestamps as Unix-epoch JSON numbers, not RFC3339 strings.
+- **CloudFront `CreateDistributionWithTags`** is a distinct serializer at the same path, dispatched by `?WithTags` query.
+- **WAFv2 ARNs for CLOUDFRONT scope** have region `us-east-1` (not `global`) with `global/` in the path.
+- **Amplify `CreateDeployment`** is branch-level (`/apps/{appId}/branches/{name}/deployments`), not app-level.
+
+If a sim-handler change is failing in ways `--debug` doesn't explain, the answer is in `service/<svc>/serializers.go` or `deserializers.go`.
+
+#### 1b. For Terraform-consumed handlers, also read `resource<X>Read` in the provider source
+
+Real failure mode: SDK test green, CLI test green, `terraform apply` panics or reports "couldn't find resource". Causes:
+
+- **TF Read calls a different API than Create.** `aws_iam_service_linked_role.Read` calls `GetRole` (not `GetServiceLinkedRole`). Your sim must implement *both* sides. Fix pattern: shadow-write to the Read store on Create (see `simulators/aws/iam_slr_oidc.go`).
+- **TF Read derefs deeply-nested optional fields without nil-checks.** Returning a minimal response panics the provider. Fix pattern: a `<svc>NormalizeConfig` pass that fills empty containers before responding (see `cfNormalizeConfig` in `simulators/aws/cloudfront.go`).
+- **TF Read paginates with a cursor that must be honoured.** `aws_route53_record.Read` uses `StartRecordName`/`StartRecordType`; without cursor filtering, seeded records (NS/SOA) come back first and TF reports "record not found".
+
+Check what your resource's Read actually does:
+
+```bash
+git -C ~/code/terraform-provider-aws show v6.32.1:internal/service/<svc>/<resource>.go \
+  | grep -A 50 "func resource<X>Read"
+# Note every conn.<Op>(...) call; each is a sim handler you need.
+# Look for d.Set("foo", flatten(out.Config.A.B.C)) — every deep chain is a nil-deref risk.
+```
+
 ### 2. Diff against the sockerless handler
 
 Open the corresponding handler in the codebase. Compare field-by-field:
@@ -99,6 +142,9 @@ Update the component's README (per Phase 157 doc shape):
 - "Looks like the test passes" — but the test uses fixtures captured 8 months ago, not a live `gh` call (pattern 3).
 - "I only changed the response shape for ECS; should be fine" — but `lambda` and `aca` share the same handler (pattern 12).
 - "I'll add a `null` check in the parser" — when the real adaptor never sends null in that field (pattern 22).
+- **"The SDK and CLI tests pass, so the wire shape is right"** — but the CLI uses trailing-slash on the route the SDK doesn't (Route 53 `/rrset/`). Register both forms; run both tests.
+- **"Apply works, so the cross-resource refs work"** — they only *compile*. Use the `cross-resource-stack-test` skill to assert what references resolve to.
+- **"TF apply passed once, ship it"** — but the next plan after restart shows drift because the Read response omitted optional fields. Use `1b` to read the provider's Read function and normalise the response shape.
 
 ## Compile-time guardrails for adaptor contracts
 

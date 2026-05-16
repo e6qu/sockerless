@@ -54,6 +54,21 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
 
+### Phase 160 — Codify Phase 159 lessons as project-local Claude skills (in flight on PR #160)
+
+Phase 159's commit history surfaced four recurring CI-red iteration causes (SDK serializer source vs `--debug` blind spot, Terraform-provider Read nil-deref on omitted optional fields, cross-resource Read API asymmetry, trailing-slash routing) plus one positive pattern (`TestStackProductionShape` asserting cross-resource invariants from `terraform output -json`). Phase 160 captures these into project-local Claude skills so the next sim service doesn't re-discover them.
+
+Scope:
+- `.claude/skills/sim-handler-checklist/SKILL.md` (new) — pre-write checklist for any new `simulators/<cloud>/<service>.go` file. Four explicit checks with worked examples from Phase 159.
+- `.claude/skills/cross-resource-stack-test/SKILL.md` (new) — codifies the `TestStackProductionShape` pattern.
+- `.claude/skills/adaptor-fidelity-check/SKILL.md` (refined) — new step 1a (SDK serializer source) + 1b (TF provider `resourceXxxRead` inspection) + new failure-mode entries.
+- `docs/VIBE_CODING.md` — project-local-skills section bumped 3 → 5 skills; "Last updated" 2026-05-13 → 2026-05-16.
+- Continuity docs (STATUS.md, DO_NEXT.md, WHAT_WE_DID.md, PLAN.md, MEMORY.md).
+
+Out of scope: no code-surface changes, no new test files. Doc + skill content only.
+
+Acceptance: PR #160 CI green on the standard 11 checks; no review-time discovery of additional lessons that should have been captured.
+
 ### Phase 159 — AWS simulator: CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (complete on PR #159, awaiting merge)
 
 Expand `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most AWS Terraform stacks reach into. **All 11 sub-tasks shipped on `phase-159-aws-sim-cloudfront-amplify`** (P159.0 dep tidy → P159.10 docs + end-to-end stack test). CI green on every push; awaiting user merge.
