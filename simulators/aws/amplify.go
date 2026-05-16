@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -961,6 +960,3 @@ func amplifyRemoveTagsForARN(arn string, keys []string) bool {
 	}
 	return false
 }
-
-// strings import kept ready for future filter logic.
-var _ = strings.ToLower

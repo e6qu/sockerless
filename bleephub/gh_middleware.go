@@ -32,27 +32,23 @@ func ghAppFromContext(ctx context.Context) *App {
 
 // ghInstallationFromContext extracts the installation associated with the request,
 // if authenticated by a ghs_ installation token. Returns nil for other auth shapes.
-// Consumed by the permission decorator + Checks handlers ( / ).
-//
-//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+// Consumed by gh_apps_rest.go (installation introspection) and the permission
+// decorator.
 func ghInstallationFromContext(ctx context.Context) *Installation {
 	i, _ := ctx.Value(ctxInstallation).(*Installation)
 	return i
 }
 
 // ghInstallationTokenFromContext extracts the installation token used to authenticate
-// the request, if any.
-//
-//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+// the request, if any. Consumed by gh_apps_perms.go (permission decorator) and
+// gh_apps_rest.go (introspection endpoints).
 func ghInstallationTokenFromContext(ctx context.Context) *InstallationToken {
 	t, _ := ctx.Value(ctxInstallationToken).(*InstallationToken)
 	return t
 }
 
 // ghUserToServerTokenFromContext extracts the gho_/ghu_ token used to authenticate,
-// if any.
-//
-//nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
+// if any. Consumed by gh_apps_perms.go (permission decorator's user-to-server path).
 func ghUserToServerTokenFromContext(ctx context.Context) *UserToServerToken {
 	t, _ := ctx.Value(ctxUserToServerToken).(*UserToServerToken)
 	return t

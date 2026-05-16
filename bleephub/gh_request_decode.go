@@ -13,9 +13,9 @@ import (
 // Bleephub must accept the same so `gh` CLI works natively. This isn't a
 // fallback — it's the GitHub API spec the official client relies on.
 //
-// Use the `flexBool` / `flexInt` / `flexInt64` field types in request structs
-// instead of `bool` / `int` / `int64`. They Marshal back to the typed form,
-// so JSON responses keep the proper shape.
+// Use the `flexBool` / `flexInt` field types in request structs instead of
+// `bool` / `int`. They Marshal back to the typed form, so JSON responses
+// keep the proper shape.
 
 // flexBool decodes either `true`/`false` (typed) or `"true"`/`"false"` (string).
 // Empty string → false (matches Rails strong params coercion).
@@ -92,48 +92,6 @@ func (i *flexInt) UnmarshalJSON(data []byte) error {
 
 func (i flexInt) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.Itoa(int(i))), nil
-}
-
-// flexInt64 is the int64 variant. Reserved for int64 fields that gh CLI
-// might send — currently not consumed by any handler; kept available for
-// future fields (check_run / check_suite IDs in request bodies).
-//
-//nolint:unused // available for upcoming endpoints; mirrors flexInt for int64 surfaces
-type flexInt64 int64
-
-//nolint:unused // see type flexInt64 doc comment
-func (i *flexInt64) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		*i = 0
-		return nil
-	}
-	if data[0] == '"' {
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
-			return err
-		}
-		if s == "" {
-			*i = 0
-			return nil
-		}
-		n, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return err
-		}
-		*i = flexInt64(n)
-		return nil
-	}
-	var n int64
-	if err := json.Unmarshal(data, &n); err != nil {
-		return err
-	}
-	*i = flexInt64(n)
-	return nil
-}
-
-//nolint:unused // see type flexInt64 doc comment
-func (i flexInt64) MarshalJSON() ([]byte, error) {
-	return []byte(strconv.FormatInt(int64(i), 10)), nil
 }
 
 // coerceBool extracts a bool from an interface{} that may be a bool, a
