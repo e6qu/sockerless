@@ -276,23 +276,18 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				},
 			},
 			// ProjectV2 items — gh CLI's `gh issue view` queries Issue.projectItems
-			// as a second round-trip. Bleephub doesn't model Projects v2; return
-			// an empty connection so the query type-checks + resolves cleanly.
+			// as a second round-trip. Returns the real ProjectV2Item nodes the
+			// issue has been added to via addProjectV2ItemById.
 			"projectItems": &graphql.Field{
 				Type: projectV2ItemConnectionType(),
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
-				Resolve: func(graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"totalCount": 0,
-						"nodes":      []interface{}{},
-						"pageInfo": map[string]interface{}{
-							"hasNextPage": false,
-							"endCursor":   nil,
-						},
-					}, nil
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					i := p.Source.(map[string]interface{})
+					issueID, _ := i["databaseId"].(int)
+					return projectItemsConnectionForIssue(s.store, issueID), nil
 				},
 			},
 			"comments": &graphql.Field{
@@ -1325,49 +1320,81 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 // Schema-stub resolvers — return a default for fields that gh CLI queries
 // but bleephub doesn't model (edit history, moderation, reactions).
 // Errors-free responses unblock gh's queries; the contract returns defaults.
-// projectV2ItemConnectionType returns a singleton stub for GitHub Projects v2
-// queries gh CLI's `gh issue view` performs. bleephub doesn't model Projects
-// v2; this returns a queryable but always-empty connection.
-//
-// Defined as a function (not a top-level var) so it's lazily-constructed —
-// graphql-go panics if types are constructed before the parent type is built.
-var projectV2ItemConnectionTypeMemo *graphql.Object
+// projectV2ItemConnectionType returns a singleton wiring for the
+// ProjectV2 connection on Issue + PullRequest. Real lookups against
+// the ProjectV2Store; resolvers read from the source map populated by
+// projectItemsForGraphQL.
+var (
+	projectV2TypeMemo                *graphql.Object
+	projectV2ItemTypeMemo            *graphql.Object
+	projectV2ItemConnectionTypeMemo  *graphql.Object
+	projectV2SingleSelectValueMemo   *graphql.Object
+	projectV2ItemFieldValueUnionMemo *graphql.Union
+)
+
+func projectV2GraphQLTypes() *graphql.Object {
+	if projectV2TypeMemo != nil {
+		return projectV2TypeMemo
+	}
+	projectV2TypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["nodeID"], nil
+				},
+			},
+			"number": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"closed": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"public": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"url":    &graphql.Field{Type: graphql.String},
+		},
+	})
+	return projectV2TypeMemo
+}
 
 func projectV2ItemConnectionType() *graphql.Object {
 	if projectV2ItemConnectionTypeMemo != nil {
 		return projectV2ItemConnectionTypeMemo
 	}
-	projectV2Type := graphql.NewObject(graphql.ObjectConfig{
-		Name: "ProjectV2",
-		Fields: graphql.Fields{
-			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
-			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
-		},
-	})
-	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{
+	projectV2Type := projectV2GraphQLTypes()
+	projectV2SingleSelectValueMemo = graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2ItemFieldSingleSelectValue",
+		// bleephub doesn't model field values yet — the connection over these
+		// values is always empty so the resolvers are unreachable.
 		Fields: graphql.Fields{
-			"optionId": &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
-			"name":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"optionId": &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
+			"name":     &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
 		},
 	})
-	itemFieldValueUnion := graphql.NewUnion(graphql.UnionConfig{
+	projectV2ItemFieldValueUnionMemo = graphql.NewUnion(graphql.UnionConfig{
 		Name:  "ProjectV2ItemFieldValue",
-		Types: []*graphql.Object{singleSelectValueType},
+		Types: []*graphql.Object{projectV2SingleSelectValueMemo},
 		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
-			return singleSelectValueType
+			return projectV2SingleSelectValueMemo
 		},
 	})
-	projectV2ItemType := graphql.NewObject(graphql.ObjectConfig{
+	projectV2ItemTypeMemo = graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2Item",
 		Fields: graphql.Fields{
-			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
-			"project": &graphql.Field{
-				Type:    projectV2Type,
-				Resolve: alwaysNil,
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["nodeID"], nil
+				},
 			},
+			"project": &graphql.Field{
+				Type: projectV2Type,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["project"], nil
+				},
+			},
+			// fieldValueByName — bleephub doesn't model field values yet;
+			// returning nil is the truthful "no field of that name" answer.
 			"fieldValueByName": &graphql.Field{
-				Type: itemFieldValueUnion,
+				Type: projectV2ItemFieldValueUnionMemo,
 				Args: graphql.FieldConfigArgument{
 					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 				},
@@ -1386,11 +1413,55 @@ func projectV2ItemConnectionType() *graphql.Object {
 		Name: "ProjectV2ItemConnection",
 		Fields: graphql.Fields{
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemType)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemTypeMemo)},
 			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(projectV2ItemPageInfoType)},
 		},
 	})
 	return projectV2ItemConnectionTypeMemo
+}
+
+// projectV2ItemToGQL builds the GraphQL source map for a single project
+// item, embedding the parent project's map so ProjectV2Item.project
+// resolves cleanly without a second lookup.
+func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
+	var projectMap map[string]interface{}
+	if p := st.ProjectsV2.GetProject(it.ProjectID); p != nil {
+		projectMap = projectV2ToGQL(p)
+	}
+	return map[string]interface{}{
+		"nodeID":  it.NodeID,
+		"project": projectMap,
+	}
+}
+
+// projectV2ToGQL renders a project as a GraphQL source map.
+func projectV2ToGQL(p *ProjectV2) map[string]interface{} {
+	return map[string]interface{}{
+		"nodeID": p.NodeID,
+		"number": p.Number,
+		"title":  p.Title,
+		"closed": p.Closed,
+		"public": p.Public,
+		"url":    p.URL,
+	}
+}
+
+// projectItemsConnectionForIssue returns the source map for the
+// Issue.projectItems / PullRequest.projectItems connection.
+func projectItemsConnectionForIssue(st *Store, issueID int) map[string]interface{} {
+	items := st.ProjectsV2.ListItemsForIssue(issueID)
+	nodes := make([]map[string]interface{}, 0, len(items))
+	for _, it := range items {
+		nodes = append(nodes, projectV2ItemToGQL(it, st))
+	}
+	return map[string]interface{}{
+		"totalCount": len(nodes),
+		"nodes":      nodes,
+		"pageInfo": map[string]interface{}{
+			"hasNextPage": false,
+			"endCursor":   nil,
+		},
+	}
 }
 
 // alwaysNil is a truthful default for nullable fields representing

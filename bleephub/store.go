@@ -95,6 +95,7 @@ type Store struct {
 	Deployments        *DeploymentStore              // deployments + statuses + environments
 	PRReviewComments   *PRReviewCommentStore         // PR review comments (inline / threads)
 	Misc               *MiscStore                    // long-tail surfaces
+	ProjectsV2         *ProjectV2Store               // GitHub Projects v2
 	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
@@ -234,6 +235,7 @@ func NewStore() *Store {
 		Deployments:        newDeploymentStore(),
 		PRReviewComments:   newPRReviewCommentStore(),
 		Misc:               newMiscStore(),
+		ProjectsV2:         newProjectV2Store(),
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
