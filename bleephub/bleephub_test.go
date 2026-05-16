@@ -2,12 +2,20 @@ package bleephub
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,21 +96,108 @@ func TestConnectionData(t *testing.T) {
 }
 
 func TestOAuthToken(t *testing.T) {
-	resp, err := http.Post(testBaseURL+"/_apis/v1/auth/", "application/x-www-form-urlencoded", nil)
+	// Register a runner with an RSA public key, then exchange a signed
+	// client_assertion JWT for an access token — the real Azure DevOps
+	// agent OAuth2 jwt-bearer flow the actions/runner uses.
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	mod := base64.StdEncoding.EncodeToString(key.N.Bytes())
+	exp := base64.StdEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())
+	regBody := fmt.Sprintf(`{"name":"oauth-test","version":"2.0","authorization":{"publicKey":{"modulus":%q,"exponent":%q}}}`, mod, exp)
+	regResp, err := http.Post(testBaseURL+"/_apis/v1/Agent/1", "application/json", bytes.NewBufferString(regBody))
+	if err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	defer regResp.Body.Close()
+	if regResp.StatusCode != 200 {
+		t.Fatalf("agent register: expected 200, got %d", regResp.StatusCode)
+	}
+	var agent struct {
+		ID            int `json:"id"`
+		Authorization struct {
+			ClientID string `json:"clientId"`
+		} `json:"authorization"`
+	}
+	if err := json.NewDecoder(regResp.Body).Decode(&agent); err != nil {
+		t.Fatalf("decode agent: %v", err)
+	}
+	if agent.Authorization.ClientID == "" {
+		t.Fatal("missing clientId on registered agent")
+	}
+
+	assertion := signTestAssertion(t, key, agent.Authorization.ClientID)
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+	form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+	form.Set("client_assertion", assertion)
+
+	resp, err := http.Post(testBaseURL+"/_apis/v1/auth/", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
 	}
 
 	var data map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&data)
-
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if data["access_token"] == nil {
 		t.Fatal("missing access_token")
 	}
+}
+
+func TestOAuthTokenRejectsMissingAssertion(t *testing.T) {
+	resp, err := http.Post(testBaseURL+"/_apis/v1/auth/", "application/x-www-form-urlencoded", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("expected 400 for empty body, got %d", resp.StatusCode)
+	}
+}
+
+func TestOAuthTokenRejectsUnknownClient(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	assertion := signTestAssertion(t, key, "00000000-0000-0000-0000-000000000000")
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+	form.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+	form.Set("client_assertion", assertion)
+	resp, err := http.Post(testBaseURL+"/_apis/v1/auth/", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unregistered clientId, got %d", resp.StatusCode)
+	}
+}
+
+func signTestAssertion(t *testing.T, key *rsa.PrivateKey, clientID string) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	now := time.Now().Unix()
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"iss":%q,"iat":%d,"exp":%d}`, clientID, now, now+300,
+	)))
+	signInput := header + "." + payload
+	hash := sha256.Sum256([]byte(signInput))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return signInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
 func TestRunnerRegistration(t *testing.T) {
