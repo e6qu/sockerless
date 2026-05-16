@@ -122,7 +122,7 @@ if [ -z "${SIM_PID_EXTERNAL:-}" ]; then
         if [ "$(uname)" = "Darwin" ]; then
             echo "ERROR: Azure terraform integration tests require Linux (Docker)."
             echo "On macOS, Go uses Security.framework and ignores SSL_CERT_FILE."
-            echo "Run with: make docker-tf-int-test-azure"
+            echo "Run with: make tf-int-test-azure  (Docker-based — see top-level Makefile)"
             exit 1
         fi
         echo "=== Generating TLS certificates ==="

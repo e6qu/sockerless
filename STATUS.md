@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-162-vibe-slop-catalogue-refresh` — to open as PR #162. |
-| In-flight | **Phase 162 — vibe-coding anti-pattern catalogue refresh.** Doc-only follow-on to PR #161 (merged). 12 new patterns (24–35) in `docs/VIBE_CODING.md` from Phase 161 fix lessons + late-2025/2026 external research; `avoid-vibe-slop` skill expanded from 17 to 26 checklist items. No code-surface changes. |
-| Last merged | PR #161 — Phase 161 vibe-slop sweep + 18 BUGs closed + bleephub GraphQL completion (2026-05-16, merged at `841f2456`). |
+| Active branch | `phase-163-legacy-make-rip-out` — to open as PR #163. |
+| In-flight | **Phase 163 — Makefile legacy alias rip-out + docs sweep.** Removed the entire "Legacy aliases" section from the top-level `Makefile` (`sim-test-*`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`); reframed the surviving Docker-driven cross-cutting suites (`smoke-test-*`, `tf-int-test-*`, `e2e-{github,gitlab}-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers. Pattern rule now uses a `FORCE` dep so path delegation works when a target name collides with a real subdir (e.g. `bleephub/test/`). Continuity sweep across `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale doc refs to invented targets (`stack-aws-ecs-up`/`-down`, `e2e-github-aws-ecs`, `docker-tf-int-test-azure`) replaced with the real names. |
+| Last merged | PR #162 — Phase 162 vibe-coding catalogue refresh (2026-05-16, merged at `4f602988`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 1012 fixed (1012 total filed) · 2 false positives. |
@@ -46,14 +46,19 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 162 — vibe-coding catalogue refresh (in flight)
+## Phase 163 — Makefile legacy rip-out + docs sweep (in flight)
 
-Doc-only follow-on to PR #161. Phase 161 fix work surfaced enough recurring shapes — and external sources published enough new analyses between Phase 158 (catalogue's last update) and now — to warrant a major catalogue refresh. Twelve new patterns appended (24–35) with verbatim source quotes + Phase 161 sub-task mappings. `avoid-vibe-slop` skill grew from 17 to 26 checklist items.
+User directive: "sockerless has no legacy, it's under active development." The top-level Makefile carried a `# ── Legacy aliases ──` section that preserved pure-alias targets purely for muscle-memory / pre-Phase-79 CI invocations: `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`. Every one of those just delegated `$(MAKE) -C <dir> <target>` — which the standard `%/<target>` path-delegation rule already covers. Dropped them; reframed the remaining real recipes (Docker-driven `smoke-test-*`, `tf-int-test-*`, `e2e-github-*`, `e2e-gitlab-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers (no "legacy" framing).
+
+Side-fix surfaced during verification: the `%/test %/test-integration …` pattern rule was being short-circuited when a target like `bleephub/test` happened to collide with a real directory on disk (`bleephub/test/`). Added a `FORCE` phony dep so the recipe always runs.
+
+Docs sweep — replaced every `make sim-test-*`, `make bleephub-test`, `make bleephub-gh-test`, `make test-{unit,e2e,agent,core,bleephub}` reference with its canonical path-delegation form (`make backends/<x>/test-integration`, `make bleephub/test`, `make bleephub/test-integration`, `make tests/test`, `make agent/test`, `make backends/core/test`). Three stale doc refs to make targets that never existed (`stack-aws-ecs-up`, `stack-aws-ecs-down`, `e2e-github-aws-ecs`, `docker-tf-int-test-azure`) replaced with the real names. Stripped "legacy 1-sim + 1-backend tuple" comments from `make/stack.mk` + `make/components.mk` — the pre-canned topology is canonical, not legacy.
 
 ## Recently closed phases
 
 | PR | Phase | Headline |
 |---|---|---|
+| #162 | 162 | Vibe-coding catalogue refresh — 12 new patterns (24–35) in `docs/VIBE_CODING.md` from Phase 161 fix lessons + late-2025/2026 external research; `avoid-vibe-slop` skill expanded from 17 to 26 checklist items. Doc-only. Merged at `4f602988`. |
 | #161 | 161 | Comprehensive vibe-slop sweep + 18 BUGs closed (994–1011 minus 1010 false-positive) + bleephub GraphQL completion (PR.comments, reviewThreads, ProjectV2 with fields, edit history, minimization, issue/PR locking, PR.milestone, real `gh` CLI smoke tests) + ProjectManager instance-based lifecycle rewrite. All 11 CI checks green; merged at `841f2456`. |
 | #160 | 160 | Project-local Claude skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement + complete component-README adaptor-led sweep across 6 cloud backends + 2 simulators + bleephub + `cmd/sockerless` + new `cmd/sockerless-admin/README.md` + rewritten `simulators/README.md`. Phase 157 Track A closed. |
 | #159 | 159 | AWS sim CloudFront + ACM + Route 53 + WAFv2 + Amplify + IAM SLR/OIDC (11 sub-tasks, `TestStackProductionShape` cross-resource invariants). |

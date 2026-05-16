@@ -362,14 +362,16 @@ See [STATUS.md](STATUS.md) for overall test counts.
 
 ### Simulator Integration Tests
 
-All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`:
+All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`. Run the top-level fan-out or invoke a single backend via path delegation:
 
 ```bash
-make sim-test-all   # all 6 backends against simulators
-make sim-test-ecs   # just ECS
-make sim-test-aws   # ECS + Lambda
-make sim-test-gcp   # Cloud Run + GCF
-make sim-test-azure # ACA + AZF
+make test-integration                       # every backend + sim/cli/sdk test category
+make backends/ecs/test-integration          # just ECS
+make backends/lambda/test-integration       # just Lambda
+make backends/cloudrun/test-integration     # just Cloud Run
+make backends/cloudrun-functions/test-integration   # just GCF
+make backends/aca/test-integration          # just ACA
+make backends/azure-functions/test-integration      # just AZF
 ```
 
 | Backend   | Sim Tests | PASS | Known Failures |

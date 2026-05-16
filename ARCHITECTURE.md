@@ -594,14 +594,14 @@ Each backend and simulator is a separate Go module connected via `go.work`. Simu
 ```mermaid
 graph TB
     subgraph "Unit / Integration"
-        IT["Core tests<br/><i>cd backends/core && go test</i>"]
-        ST["Sim-backend tests<br/><i>make sim-test-all</i>"]
+        IT["Core tests<br/><i>make backends/core/test</i>"]
+        ST["Sim-backend tests<br/><i>make test-integration</i>"]
     end
 
     subgraph "E2E (CI Runners)"
         GH["act (GitHub Actions)<br/><i>make e2e-github-all</i>"]
         GL["GitLab Runner<br/><i>make e2e-gitlab-all</i>"]
-        BPH["Official GitHub Runner<br/><i>make bleephub-test</i>"]
+        BPH["Official GitHub Runner<br/><i>make bleephub/test-integration</i>"]
     end
 
     subgraph "Infrastructure"
@@ -618,5 +618,5 @@ graph TB
 
 - **Sim-backend tests**: Start a simulator + backend pair, run 59 Docker SDK test functions against them.
 - **E2E tests (act + GitLab)**: Start the full stack (simulator + backend), run real CI workflows (GitHub Actions via `act`, GitLab CI via `gitlab-runner`) that exercise container create/start/exec/stop/remove.
-- **E2E tests (official runner)**: Start bleephub + Sockerless backend, run the official `actions/runner` through the full job lifecycle (`make bleephub-test`, Docker-only).
+- **E2E tests (official runner)**: Start bleephub + Sockerless backend, run the official `actions/runner` through the full job lifecycle (`make bleephub/test-integration`, Docker-only).
 - **Terraform integration tests**: Apply real Terraform modules against simulators to verify IaC compatibility.

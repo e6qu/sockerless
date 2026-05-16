@@ -42,25 +42,26 @@ pkill -f sockerless-backend-docker
 ### `backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}`
 
 ```bash
-# 1. Start the matching simulator
-make sim-<cloud>-up    # aws | gcp | azure
+# 1. Bring up sim + backend + admin together via the canonical stack target.
+#    Pick the cell that matches the backend under test:
+make stack-aws-ecs           # sim-aws + backend-ecs + admin
+make stack-aws-lambda        # sim-aws + backend-lambda + admin
+make stack-gcp-cloudrun      # sim-gcp + backend-cloudrun + admin
+make stack-gcp-gcf           # sim-gcp + backend-gcf + admin
+make stack-azure-aca         # sim-azure + backend-aca + admin
+make stack-azure-azf         # sim-azure + backend-azf + admin
 
-# 2. Build + start the backend
-cd backends/<name> && make build
-SOCKERLESS_<CLOUD>_SIM_ENDPOINT=http://localhost:<sim-port> \
-  ./sockerless-backend-<name> -addr :3375 &
-
-# 3. Drive via docker (the frontend adaptor)
+# 2. Drive via docker (the frontend adaptor)
 DOCKER_HOST=tcp://localhost:3375 docker run --rm alpine echo hi
 
-# 4. (also) drive via the cloud adaptor against the SIMULATOR to confirm the
+# 3. (also) drive via the cloud adaptor against the SIMULATOR to confirm the
 #    cloud side of the action was reproduced fully
-aws --endpoint-url http://localhost:<sim-port> ecs list-tasks --cluster <cluster>
-gcloud --api-endpoint-overrides http://localhost:<sim-port> run jobs list
-az --endpoint http://localhost:<sim-port> containerapp list
+aws --endpoint-url http://localhost:4566 ecs list-tasks --cluster <cluster>
+gcloud --api-endpoint-overrides http://localhost:4567 run jobs list
+az --endpoint http://localhost:4568 containerapp list
 
-# 5. Cleanup
-pkill -f sockerless-backend-<name>; make sim-<cloud>-down
+# 4. Cleanup
+make stack-down
 ```
 
 ### `simulators/{aws,gcp,azure}`
@@ -109,9 +110,9 @@ make bleephub-gh-docker-test
 ### Full e2e (sim + backend + runner)
 
 ```bash
-make stack-aws-ecs-up                  # sim + backend + bleephub
-make e2e-github-aws-ecs                # official actions/runner end-to-end
-make stack-aws-ecs-down
+make stack-aws-ecs           # sim + backend + admin (add bleephub: make stack-bleephub-up)
+make e2e-github-ecs          # official actions/runner end-to-end against the sim-mode ECS backend
+make stack-down
 ```
 
 ## What "real captured output" looks like

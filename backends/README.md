@@ -74,13 +74,16 @@ Backends support two configuration methods:
 Backend integration tests run against the [simulators](../simulators/):
 
 ```sh
-# Run all simulator-backend integration tests
-make sim-test-all
+# Run all simulator-backend integration tests (and every other integration suite)
+make test-integration
 
-# Run tests for a specific cloud
-make sim-test-aws
-make sim-test-gcp
-make sim-test-azure
+# Per-backend integration tests via path delegation
+make backends/ecs/test-integration                  # AWS: ECS
+make backends/lambda/test-integration               # AWS: Lambda
+make backends/cloudrun/test-integration             # GCP: Cloud Run
+make backends/cloudrun-functions/test-integration   # GCP: Cloud Run Functions
+make backends/aca/test-integration                  # Azure: Container Apps
+make backends/azure-functions/test-integration      # Azure: Azure Functions
 ```
 
 Full Terraform integration tests deploy real cloud resources:

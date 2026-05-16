@@ -9,18 +9,26 @@
 #   make help              # list targets
 #   make build             # build every app
 #   make test              # unit-test every app
+#   make test-integration  # integration-test every app
 #   make lint              # lint every app
 #   make clean             # clean every app
 #
-#   make backends/ecs/build       # build a single app via path
-#   make cmd/sockerless-admin/run # run a single app via path
+#   make backends/ecs/build              # build a single app via path
+#   make backends/ecs/test-integration   # sim-backed integration tests
+#   make bleephub/test-integration       # bleephub gh-runner integration
+#   make tests/test                      # cross-backend e2e suite
+#   make cmd/sockerless-admin/run        # run a single app via path
 #
 #   make stack-aws-ecs     # bring up sim+backend+admin for AWS-ECS
 #   make stack-status      # show running stack
 #   make stack-down        # stop running stack
 #
-# Legacy aliases preserved at the bottom (sim-test-*, smoke-test-*,
-# e2e-*, upstream-test-*, tf-int-test-*).
+# Cross-cutting Docker-driven suites live in dedicated sections below
+# (smoke-test-*, tf-int-test-*, e2e-github-*, e2e-gitlab-*,
+# upstream-test-*, bleephub-gh-docker-test). Per-app aliases were
+# removed — sockerless is under active development and carries no
+# legacy compatibility surface; use the path-delegation form
+# (`make <dir>/<target>`) instead.
 
 include make/help.mk
 include make/colors.mk
@@ -141,7 +149,14 @@ _fanout:
 # Works for any standardized target. `$*` is the path; `$@` carries
 # the full target with the suffix appended.
 
-%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/lint %/clean %/preview %/help:
+# FORCE keeps the recipe from being short-circuited when a directory
+# happens to share the target name (e.g. `bleephub/test/` exists on
+# disk, so without FORCE `make bleephub/test` would silently report
+# "up to date" instead of delegating into bleephub's Makefile).
+.PHONY: FORCE
+FORCE:
+
+%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/lint %/clean %/preview %/help: FORCE
 	@$(MAKE) -s -C $* $(notdir $@)
 
 # ── Stack orchestration ─────────────────────────────────────────────
@@ -149,44 +164,21 @@ _fanout:
 include make/components.mk
 include make/stack.mk
 
-# ── Legacy aliases ──────────────────────────────────────────────────
+# ── api.Backend coverage gate ───────────────────────────────────────
 #
-# Preserved so existing CI invocations and developer muscle memory
-# keep working. Each delegates to the appropriate per-app or
-# test-category Makefile where possible.
+# Compiler-style check that every backend implements every method on
+# api.Backend. Lives in its own tool module under tools/.
 
-# sim-test-* — sim-vs-backend integration tests via env-var-gated runs
-# in each backend. Backend integration tests pick up the colocated
-# `make test-integration` target.
-.PHONY: sim-test-ecs sim-test-lambda sim-test-cloudrun sim-test-gcf sim-test-aca sim-test-azf
-.PHONY: sim-test-aws sim-test-gcp sim-test-azure sim-test-all
-
-sim-test-ecs:        ; @$(MAKE) -s -C backends/ecs                test-integration
-sim-test-lambda:     ; @$(MAKE) -s -C backends/lambda             test-integration
-sim-test-cloudrun:   ; @$(MAKE) -s -C backends/cloudrun           test-integration
-sim-test-gcf:        ; @$(MAKE) -s -C backends/cloudrun-functions test-integration
-sim-test-aca:        ; @$(MAKE) -s -C backends/aca                test-integration
-sim-test-azf:        ; @$(MAKE) -s -C backends/azure-functions    test-integration
-sim-test-aws:    sim-test-ecs sim-test-lambda
-sim-test-gcp:    sim-test-cloudrun sim-test-gcf
-sim-test-azure:  sim-test-aca sim-test-azf
-sim-test-all:    sim-test-aws sim-test-gcp sim-test-azure
-
-# Top-level test alias for the cross-backend e2e suite.
-.PHONY: test-unit test-e2e test-agent test-core test-bleephub
-test-agent:    ; @$(MAKE) -s -C agent          test
-test-core:     ; @$(MAKE) -s -C backends/core  test
-test-bleephub: ; @$(MAKE) -s -C bleephub       test
-test-e2e:      ; @$(MAKE) -s -C tests          test
-test-unit: test-agent test-core test-bleephub
-
-# check-backend-coverage — has its own tool dir, kept inline.
 .PHONY: check-backend-coverage check-backend-coverage-enforce
 check-backend-coverage:         ; @cd tools/check-backend-coverage && GOWORK=off go run .
 check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off go run . --enforce
 
-# Smoke-tests (Docker-based) — kept inline; small enough that
-# delegation buys nothing.
+# ── Smoke tests (Docker-based) ──────────────────────────────────────
+#
+# Each target builds a self-contained Docker image that boots the
+# sim + backend + a tiny workload inside the container and asserts
+# the round-trip. Kept inline at the top level because the recipes
+# are short and don't share state with any per-app Makefile.
 .PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
 
@@ -214,7 +206,7 @@ smoke-test-gitlab-aca:
 	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=aca docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 smoke-test-gitlab-all: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca
 
-# Terraform integration tests — kept inline (Docker-based per-cloud).
+# ── Terraform integration tests (Docker-based) ──────────────────────
 .PHONY: tf-int-test-ecs tf-int-test-lambda tf-int-test-cloudrun tf-int-test-gcf tf-int-test-aca tf-int-test-azf
 .PHONY: tf-int-test-aws tf-int-test-gcp tf-int-test-azure tf-int-test-all tf-int-build
 
@@ -234,7 +226,10 @@ tf-int-test-gcp:   tf-int-test-cloudrun tf-int-test-gcf
 tf-int-test-azure: tf-int-test-aca tf-int-test-azf
 tf-int-test-all:   tf-int-test-aws tf-int-test-gcp tf-int-test-azure
 
-# E2E live tests — GitHub Actions runner (per-cloud Docker images).
+# ── E2E live tests — GitHub Actions runner ──────────────────────────
+#
+# Per-cloud Docker images that run the official `actions/runner` end
+# to end through a real workflow against a sim-mode backend.
 .PHONY: e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
 .PHONY: e2e-github-ecs e2e-github-lambda e2e-github-cloudrun e2e-github-gcf e2e-github-aca e2e-github-azf
 .PHONY: e2e-github-all e2e-gitlab-all e2e-all
@@ -269,7 +264,11 @@ e2e-gitlab-all:
 
 e2e-all: e2e-github-all e2e-gitlab-all
 
-# Upstream test suites — act / gitlab-ci-local (kept inline, Docker-based).
+# ── Upstream test suites — act + gitlab-ci-local ────────────────────
+#
+# Run real upstream CI tooling (nektos/act, gitlab-ci-local) against
+# sockerless sim-mode backends. Per-cloud Docker images keep the
+# host clean of node/python/go toolchains.
 .PHONY: upstream-test-act-build-aws upstream-test-act-build-gcp upstream-test-act-build-azure
 .PHONY: upstream-test-act upstream-test-act-individual
 .PHONY: upstream-test-act-ecs upstream-test-act-lambda upstream-test-act-cloudrun
@@ -317,15 +316,12 @@ upstream-test-gcl-all:
 	  $(MAKE) -s upstream-test-gcl-$$b || true; \
 	done
 
-# Bleephub-specific tests (preserved aliases).
-.PHONY: bleephub-test bleephub-gh-test bleephub-gh-docker-test
-bleephub-test:    ; @$(MAKE) -s -C bleephub test
-bleephub-gh-test: ; @$(MAKE) -s -C bleephub test-integration
-
-# Docker-based gh CLI parity harness (Phase 153 P153.13). Builds a Docker
-# image that bundles bleephub + the official `gh` binary, then runs
-# bleephub/test/run-gh-test.sh against it. Real gh, real TLS, real HTTP.
-# Image build is roughly 60s on a cold cache; subsequent runs take ~10s.
+# ── Bleephub gh CLI parity harness (Docker) ─────────────────────────
+#
+# Builds a Docker image that bundles bleephub + the official `gh`
+# binary, then runs bleephub/test/run-gh-test.sh against it. Real gh,
+# real TLS, real HTTP. Image build is ~60s cold, ~10s warm.
+.PHONY: bleephub-gh-docker-test
 bleephub-gh-docker-test:
 	@printf "$(COLOR_CYAN)▸ Building bleephub gh-test image…$(COLOR_RESET)\n"
 	@docker build -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .

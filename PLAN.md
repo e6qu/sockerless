@@ -113,7 +113,13 @@ Each commit:
 - Updates `specs/BLEEPHUB_GITHUB_API_PARITY.md` row for the closed surface
 - Updates BUGS.md (BUG-1001 finally closes after P161.18)
 
-### Phase 162 — Legacy / fallback rip-out (continued from Phase 161)
+### Phase 163 — Makefile legacy alias rip-out + docs sweep (in flight)
+
+User directive: "remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either; sweep docs for old `make` calls and replace them with new ones."
+
+Single commit on `phase-163-legacy-make-rip-out`. Scope = Makefile + make/*.mk + docs. Zero Go-file changes. Per-backend integration tests reached via the existing `%/<target>` pattern rule (now with a `FORCE` dep so the rule isn't short-circuited by a target colliding with a real subdir).
+
+### Track — Continued legacy / fallback rip-out (filed during Phase 161, still open)
 
 Filed during Phase 161 but staged out of scope:
 

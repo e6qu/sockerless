@@ -78,9 +78,11 @@ STACK_SIM_CLOUD_aca       := azure
 STACK_SIM_CLOUD_azf       := azure
 
 # stack-up — internal target. Composes per-component start-component
-# calls (from make/components.mk) so the legacy 1-sim + 1-backend +
-# admin shape stays available even after Phase 79's per-instance
-# orchestration lands. Each component lives at .stack-pids/<name>.
+# calls (from make/components.mk) into the pre-canned 1-sim +
+# 1-backend + admin topology. Per-instance orchestration (multiple
+# sims / backends / projects) goes through admin directly; this
+# macro is the operator shortcut for the single-cell workflow.
+# Each component lives at .stack-pids/<name>.
 stack-up:
 	@if [ -z "$(STACK_SIM)" ] || [ -z "$(STACK_BE)" ]; then \
 	  echo "stack-up requires STACK_SIM and STACK_BE"; exit 1; \

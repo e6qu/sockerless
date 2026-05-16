@@ -6,6 +6,53 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-16 — Phase 163: Makefile legacy alias rip-out + docs sweep (in flight on `phase-163-legacy-make-rip-out`)
+
+User directive: *"let's remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either."* Follow-up after the first wave of work: *"make sure to also sweep docs for old `make` calls and replace them with new ones."*
+
+The top-level Makefile carried a `# ── Legacy aliases ──` section that existed solely to preserve pre-Phase-79 muscle memory. Every target in it was a pure alias (`$(MAKE) -s -C <dir> <target>`) — the standard `%/<target>` path-delegation rule above it already covered the same job. Removing the aliases cuts 60 lines of stale framing and forces docs / CI / operators onto the single canonical surface.
+
+### What got ripped
+
+- `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf}` (per-backend) — use `make backends/<x>/test-integration`.
+- `sim-test-{aws,gcp,azure,all}` (per-cloud composites) — use `make test-integration` fan-out, or chain the per-backend targets.
+- `test-{unit,e2e,agent,core,bleephub}` — use `make agent/test`, `make backends/core/test`, `make bleephub/test`, `make tests/test`.
+- `bleephub-test`, `bleephub-gh-test` — use `make bleephub/test`, `make bleephub/test-integration`.
+
+The `bleephub-gh-docker-test`, `smoke-test-*`, `tf-int-test-*`, `e2e-github-*`, `e2e-gitlab-*`, `upstream-test-*`, `check-backend-coverage{,-enforce}` targets all stayed — they're real Docker-driven recipes that do non-trivial work, not aliases. Reframed under canonical section headers (`# ── Smoke tests (Docker-based) ──`, `# ── Terraform integration tests (Docker-based) ──`, etc.) so the Makefile no longer reads "old stuff at the bottom."
+
+### Pattern-rule short-circuit fix
+
+`make bleephub/test` returned `make: 'bleephub/test' is up to date.` instead of delegating into `bleephub/Makefile`'s `test` target. Why: `bleephub/test/` exists as a real directory (the gh-CLI parity harness scripts live there). GNU make's implicit-rule lookup sees the target as a present "file" and short-circuits the recipe. Fix: add a `.PHONY: FORCE` / `FORCE:` pair and depend the pattern rule on `FORCE`. Recipe now always fires regardless of whether a directory of the same name exists.
+
+This bug had been latent since Phase 79 added the pattern rule — it was masked by the legacy `bleephub-test` alias, which bypassed the pattern. Removing the alias exposed it. So Phase 163 didn't just remove dead surface area; it surfaced (and fixed) a real pattern-rule defect.
+
+### Docs sweep
+
+15 files touched. Replaced every removed-alias invocation with the canonical path-delegation form:
+
+- `README.md` (the big one — replaced the "Legacy aliases (preserved at top level)" subsection with "Cross-cutting test suites + coverage gates").
+- `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`.
+- `docs/MAKEFILE_STANDARD.md` (planning doc — added an "as-implemented in Phase 163" gloss on the migration-plan section).
+- `.claude/skills/manual-test/SKILL.md` (also fixed stale invented targets: `stack-aws-ecs-up`/`-down` → real `stack-aws-ecs`/`stack-down`; `e2e-github-aws-ecs` → `e2e-github-ecs`).
+- `tests/terraform-integration/run-test.sh` (error message referenced `make docker-tf-int-test-azure` — that target never existed; fixed to the real `make tf-int-test-azure`).
+- `make/stack.mk` + `make/components.mk`: stripped two comments framing the pre-canned 1-sim + 1-backend + admin topology as "legacy" — it's the canonical single-cell shape used by operators every day.
+
+### What was NOT touched
+
+- **No tests removed or reduced** — user directive. Every Go module's existing `go test ./...` still runs, every backend's `test-integration` still exists, every cross-cutting Docker suite still exists.
+- **No CI reduced** — `.github/workflows/ci.yml`, `.github/workflows/e2e-vs-simulators.yml`, `.gitlab-ci.yml` use `make lint`, `make e2e-github-<backend>`, `make e2e-gitlab-<backend>`, `cd simulators/<cloud> && make sdk-test|cli-test` — all of those targets survive untouched.
+- **No Go-file changes.** Zero behavioral risk.
+
+### Verification
+
+- `make help` parses cleanly; output shows the standard fan-out + stack + observability targets, no "Legacy aliases" section.
+- `make -n backends/ecs/test-integration` resolves to `make -s -C backends/ecs test-integration` → `SOCKERLESS_TEST_TARGET=sim go test -tags noui -v -timeout 15m ./...`.
+- `make -n bleephub/test` resolves to `make -s -C bleephub test` → `CGO_ENABLED=0 go test ./...` (post-FORCE fix).
+- `make -n tests/test` resolves to `make -s -C tests test` → `GOWORK=off go test ./...`.
+- `go test ./...` green in `api`, `agent`, `bleephub`, `backends/core`, `cmd/sockerless-admin` (sanity smoke after the make/docs rewrite).
+- `grep -r "make sim-test\|make bleephub-test\|make bleephub-gh-test\|make test-{unit,…}"` over docs / scripts / CI returns nothing.
+
 ## 2026-05-16 — Phase 161: comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
 
 Phase 158 shipped [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) — a 23-pattern catalogue of vibe-coding anti-patterns sourced from working programmers, project maintainers, and incident write-ups. Phase 158 also added the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) skill that loads before every non-trivial code change. The point of those two artifacts is **to apply the catalogue at write-time**, not to admire it.
