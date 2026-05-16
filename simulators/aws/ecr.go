@@ -154,7 +154,10 @@ func handleECRDescribePullThroughCacheRules(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		EcrRepositoryPrefixes []string `json:"ecrRepositoryPrefixes"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 
 	var rules []ECRPullThroughCacheRule
 	if len(req.EcrRepositoryPrefixes) == 0 {
@@ -307,8 +310,10 @@ func handleECRDeleteRepository(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleECRGetAuthorizationToken(w http.ResponseWriter, r *http.Request) {
-	// Consume request body
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 
 	token := base64.StdEncoding.EncodeToString([]byte("AWS:password"))
 	expiresAt := time.Now().Add(12 * time.Hour).Unix()
@@ -596,14 +601,19 @@ func handleECRDeleteLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 
 func handleECRListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	// Terraform uses this to read tags for ECR repositories
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tags": []any{},
 	})
 }
 
 func handleECRTagResource(w http.ResponseWriter, r *http.Request) {
-	// Accept and discard tag operations
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

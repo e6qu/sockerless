@@ -126,10 +126,48 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"authorAssociation": &graphql.Field{Type: graphql.String},
 			// Fields gh CLI's `gh issue view` queries on IssueComment — defaults
 			// fine for bleephub (we don't model edit history or moderation).
-			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
-			"reactionGroups":      &graphql.Field{Type: graphql.NewList(reactionGroupType), Resolve: emptyList},
+			"includesCreatedEdit": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["includesCreatedEdit"], nil
+				},
+			},
+			"lastEditedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["lastEditedAt"], nil
+				},
+			},
+			"editor": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["editor"], nil
+				},
+			},
+			"isMinimized": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["isMinimized"], nil
+				},
+			},
+			"minimizedReason": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["minimizedReason"], nil
+				},
+			},
+			"reactionGroups": &graphql.Field{
+				Type: graphql.NewList(reactionGroupType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["reactionGroups"], nil
+				},
+			},
 		},
 	})
 
@@ -183,17 +221,19 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return i["nodeID"], nil
 				},
 			},
-			"databaseId":  &graphql.Field{Type: graphql.Int},
-			"number":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"title":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"body":        &graphql.Field{Type: graphql.String},
-			"state":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"stateReason": &graphql.Field{Type: graphql.String},
-			"url":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"createdAt":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"closedAt":    &graphql.Field{Type: graphql.String},
-			"isPinned":    &graphql.Field{Type: graphql.Boolean},
+			"databaseId":       &graphql.Field{Type: graphql.Int},
+			"number":           &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"body":             &graphql.Field{Type: graphql.String},
+			"state":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"stateReason":      &graphql.Field{Type: graphql.String},
+			"url":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"createdAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"closedAt":         &graphql.Field{Type: graphql.String},
+			"isPinned":         &graphql.Field{Type: graphql.Boolean},
+			"locked":           &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"activeLockReason": &graphql.Field{Type: graphql.String},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -236,23 +276,18 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				},
 			},
 			// ProjectV2 items — gh CLI's `gh issue view` queries Issue.projectItems
-			// as a second round-trip. Bleephub doesn't model Projects v2; return
-			// an empty connection so the query type-checks + resolves cleanly.
+			// as a second round-trip. Returns the real ProjectV2Item nodes the
+			// issue has been added to via addProjectV2ItemById.
 			"projectItems": &graphql.Field{
 				Type: projectV2ItemConnectionType(),
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
-				Resolve: func(graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"totalCount": 0,
-						"nodes":      []interface{}{},
-						"pageInfo": map[string]interface{}{
-							"hasNextPage": false,
-							"endCursor":   nil,
-						},
-					}, nil
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					i := p.Source.(map[string]interface{})
+					issueID, _ := i["databaseId"].(int)
+					return projectItemsConnectionForIssue(s.store, issueID), nil
 				},
 			},
 			"comments": &graphql.Field{
@@ -269,7 +304,8 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(reactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return staticReactionGroups(), nil
+					i := p.Source.(map[string]interface{})
+					return i["reactionGroups"], nil
 				},
 			},
 		},
@@ -997,7 +1033,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	// Comments
 	commentNodes := make([]map[string]interface{}, 0)
 	for _, c := range st.Comments {
-		if c.IssueID == issue.ID {
+		if c.ParentType == "issue" && c.IssueID == issue.ID {
 			commentNodes = append(commentNodes, commentToGQLLocked(c, st))
 		}
 	}
@@ -1020,19 +1056,21 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"nodeID":      issue.NodeID,
-		"databaseId":  issue.ID,
-		"number":      issue.Number,
-		"title":       issue.Title,
-		"body":        issue.Body,
-		"state":       issue.State,
-		"stateReason": stateReason,
-		"url":         url,
-		"createdAt":   issue.CreatedAt.Format(time.RFC3339),
-		"updatedAt":   issue.UpdatedAt.Format(time.RFC3339),
-		"closedAt":    closedAt,
-		"isPinned":    false,
-		"author":      author,
+		"nodeID":           issue.NodeID,
+		"databaseId":       issue.ID,
+		"number":           issue.Number,
+		"title":            issue.Title,
+		"body":             issue.Body,
+		"state":            issue.State,
+		"stateReason":      stateReason,
+		"url":              url,
+		"createdAt":        issue.CreatedAt.Format(time.RFC3339),
+		"updatedAt":        issue.UpdatedAt.Format(time.RFC3339),
+		"closedAt":         closedAt,
+		"isPinned":         false,
+		"locked":           issue.Locked,
+		"activeLockReason": nilStr(issue.ActiveLockReason),
+		"author":           author,
 		"labels": map[string]interface{}{
 			"nodes":      labelNodes,
 			"totalCount": len(labelNodes),
@@ -1064,6 +1102,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 				"endCursor":       nil,
 			},
 		},
+		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "issue", issue.ID),
 	}
 }
 
@@ -1102,29 +1141,73 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 	if u, ok := st.Users[c.AuthorID]; ok {
 		author = userToGraphQL(u)
 	}
+	var editor map[string]interface{}
+	var lastEditedAt interface{}
+	if c.LastEditedAt != nil {
+		lastEditedAt = c.LastEditedAt.Format(time.RFC3339)
+		if u, ok := st.Users[c.EditorID]; ok {
+			editor = userToGraphQL(u)
+		}
+	}
 	return map[string]interface{}{
-		"nodeID":            c.NodeID,
-		"body":              c.Body,
-		"url":               "",
-		"createdAt":         c.CreatedAt.Format(time.RFC3339),
-		"updatedAt":         c.UpdatedAt.Format(time.RFC3339),
-		"author":            author,
-		"authorAssociation": "OWNER",
+		"nodeID":              c.NodeID,
+		"body":                c.Body,
+		"url":                 "",
+		"createdAt":           c.CreatedAt.Format(time.RFC3339),
+		"updatedAt":           c.UpdatedAt.Format(time.RFC3339),
+		"author":              author,
+		"authorAssociation":   "OWNER",
+		"includesCreatedEdit": c.LastEditedAt != nil,
+		"lastEditedAt":        lastEditedAt,
+		"editor":              editor,
+		"isMinimized":         c.MinimizedReason != "",
+		"minimizedReason":     nilStr(c.MinimizedReason),
+		"reactionGroups":      reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
 	}
 }
 
-func staticReactionGroups() []map[string]interface{} {
-	contents := []string{"THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"}
-	groups := make([]map[string]interface{}, 0, len(contents))
-	for _, c := range contents {
-		groups = append(groups, map[string]interface{}{
-			"content": c,
-			"users": map[string]interface{}{
-				"totalCount": 0,
-			},
+// nilStr returns nil for empty strings (so nullable GraphQL String fields
+// resolve to null rather than ""), or the string itself.
+func nilStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// reactionGroupsForGraphQL returns a GraphQL-shaped `[ReactionGroup]` list
+// for the given parent, querying the real ReactionStore so per-content
+// totalCount values reflect actual reactions. Used by Issue, IssueComment,
+// and any other reactable type's `reactionGroups` field.
+func reactionGroupsForGraphQL(rs *ReactionStore, parentType string, parentID int) []map[string]interface{} {
+	counts := map[string]int{
+		"+1": 0, "-1": 0, "laugh": 0, "confused": 0,
+		"heart": 0, "hooray": 0, "rocket": 0, "eyes": 0,
+	}
+	if rs != nil && parentID != 0 {
+		for _, r := range rs.ListReactions(parentType, parentID, "") {
+			counts[r.Content]++
+		}
+	}
+	// Order matches real GitHub's GraphQL response.
+	mapping := [...]struct{ rest, gql string }{
+		{"+1", "THUMBS_UP"},
+		{"-1", "THUMBS_DOWN"},
+		{"laugh", "LAUGH"},
+		{"hooray", "HOORAY"},
+		{"confused", "CONFUSED"},
+		{"heart", "HEART"},
+		{"rocket", "ROCKET"},
+		{"eyes", "EYES"},
+	}
+	out := make([]map[string]interface{}, 0, len(mapping))
+	for _, m := range mapping {
+		out = append(out, map[string]interface{}{
+			"content": m.gql,
+			"users":   map[string]interface{}{"totalCount": counts[m.rest]},
 		})
 	}
-	return groups
+	return out
 }
 
 // --- Node ID lookup helpers ---
@@ -1237,53 +1320,105 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 // Schema-stub resolvers — return a default for fields that gh CLI queries
 // but bleephub doesn't model (edit history, moderation, reactions).
 // Errors-free responses unblock gh's queries; the contract returns defaults.
-// projectV2ItemConnectionType returns a singleton stub for GitHub Projects v2
-// queries gh CLI's `gh issue view` performs. bleephub doesn't model Projects
-// v2; this returns a queryable but always-empty connection.
-//
-// Defined as a function (not a top-level var) so it's lazily-constructed —
-// graphql-go panics if types are constructed before the parent type is built.
-var projectV2ItemConnectionTypeMemo *graphql.Object
+// projectV2ItemConnectionType returns a singleton wiring for the
+// ProjectV2 connection on Issue + PullRequest. Real lookups against
+// the ProjectV2Store; resolvers read from the source map populated by
+// projectItemsForGraphQL.
+var (
+	projectV2TypeMemo                *graphql.Object
+	projectV2ItemTypeMemo            *graphql.Object
+	projectV2ItemConnectionTypeMemo  *graphql.Object
+	projectV2SingleSelectValueMemo   *graphql.Object
+	projectV2ItemFieldValueUnionMemo *graphql.Union
+)
+
+func projectV2GraphQLTypes() *graphql.Object {
+	if projectV2TypeMemo != nil {
+		return projectV2TypeMemo
+	}
+	projectV2TypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["nodeID"], nil
+				},
+			},
+			"number": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"closed": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"public": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"url":    &graphql.Field{Type: graphql.String},
+		},
+	})
+	return projectV2TypeMemo
+}
 
 func projectV2ItemConnectionType() *graphql.Object {
 	if projectV2ItemConnectionTypeMemo != nil {
 		return projectV2ItemConnectionTypeMemo
 	}
-	projectV2Type := graphql.NewObject(graphql.ObjectConfig{
-		Name: "ProjectV2",
-		Fields: graphql.Fields{
-			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
-			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
-		},
-	})
-	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{
+	projectV2Type := projectV2GraphQLTypes()
+	projectV2SingleSelectValueMemo = graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2ItemFieldSingleSelectValue",
 		Fields: graphql.Fields{
-			"optionId": &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
-			"name":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"optionId": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["optionId"], nil
+				},
+			},
+			"name": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["name"], nil
+				},
+			},
 		},
 	})
-	itemFieldValueUnion := graphql.NewUnion(graphql.UnionConfig{
+	projectV2ItemFieldValueUnionMemo = graphql.NewUnion(graphql.UnionConfig{
 		Name:  "ProjectV2ItemFieldValue",
-		Types: []*graphql.Object{singleSelectValueType},
+		Types: []*graphql.Object{projectV2SingleSelectValueMemo},
 		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
-			return singleSelectValueType
+			return projectV2SingleSelectValueMemo
 		},
 	})
-	projectV2ItemType := graphql.NewObject(graphql.ObjectConfig{
+	projectV2ItemTypeMemo = graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2Item",
 		Fields: graphql.Fields{
-			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
-			"project": &graphql.Field{
-				Type:    projectV2Type,
-				Resolve: alwaysNil,
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["nodeID"], nil
+				},
 			},
+			"project": &graphql.Field{
+				Type: projectV2Type,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["project"], nil
+				},
+			},
+			// fieldValueByName — looks up the named field on the item's
+			// project, returns the stored value (nil when unset).
 			"fieldValueByName": &graphql.Field{
-				Type: itemFieldValueUnion,
+				Type: projectV2ItemFieldValueUnionMemo,
 				Args: graphql.FieldConfigArgument{
 					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 				},
-				Resolve: alwaysNil,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src := p.Source.(map[string]interface{})
+					name, _ := p.Args["name"].(string)
+					byName, _ := src["fieldValuesByName"].(map[string]interface{})
+					if byName == nil {
+						return nil, nil
+					}
+					v, ok := byName[name]
+					if !ok {
+						return nil, nil
+					}
+					return v, nil
+				},
 			},
 		},
 	})
@@ -1298,14 +1433,76 @@ func projectV2ItemConnectionType() *graphql.Object {
 		Name: "ProjectV2ItemConnection",
 		Fields: graphql.Fields{
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemType)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemTypeMemo)},
 			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(projectV2ItemPageInfoType)},
 		},
 	})
 	return projectV2ItemConnectionTypeMemo
 }
 
-func alwaysFalse(graphql.ResolveParams) (interface{}, error)       { return false, nil }
-func alwaysNil(graphql.ResolveParams) (interface{}, error)         { return nil, nil }
-func emptyList(graphql.ResolveParams) (interface{}, error)         { return []interface{}{}, nil }
-func alwaysEmptyString(graphql.ResolveParams) (interface{}, error) { return "", nil }
+// projectV2ItemToGQL builds the GraphQL source map for a single project
+// item, embedding the parent project's map so ProjectV2Item.project
+// resolves cleanly without a second lookup. Field values are
+// pre-resolved into fieldValuesByName so the fieldValueByName(name:)
+// resolver is a direct map lookup.
+func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
+	var projectMap map[string]interface{}
+	if p := st.ProjectsV2.GetProject(it.ProjectID); p != nil {
+		projectMap = projectV2ToGQL(p)
+	}
+	byName := map[string]interface{}{}
+	for fieldID, val := range it.FieldValues {
+		field := st.ProjectsV2.GetField(fieldID)
+		if field == nil {
+			continue
+		}
+		byName[field.Name] = projectV2FieldValueToGQL(val)
+	}
+	return map[string]interface{}{
+		"nodeID":            it.NodeID,
+		"project":           projectMap,
+		"fieldValuesByName": byName,
+	}
+}
+
+// projectV2FieldValueToGQL renders a field value as its GraphQL union
+// shape. Only SINGLE_SELECT is wired into the union today — TEXT and
+// NUMBER variants are stored but not exposed as union members; future
+// expansion can add ProjectV2ItemFieldTextValue + NumberValue object
+// types and grow the union.
+func projectV2FieldValueToGQL(v *ProjectV2ItemFieldValue) map[string]interface{} {
+	return map[string]interface{}{
+		"optionId": v.OptionID,
+		"name":     v.OptionName,
+	}
+}
+
+// projectV2ToGQL renders a project as a GraphQL source map.
+func projectV2ToGQL(p *ProjectV2) map[string]interface{} {
+	return map[string]interface{}{
+		"nodeID": p.NodeID,
+		"number": p.Number,
+		"title":  p.Title,
+		"closed": p.Closed,
+		"public": p.Public,
+		"url":    p.URL,
+	}
+}
+
+// projectItemsConnectionForIssue returns the source map for the
+// Issue.projectItems / PullRequest.projectItems connection.
+func projectItemsConnectionForIssue(st *Store, issueID int) map[string]interface{} {
+	items := st.ProjectsV2.ListItemsForIssue(issueID)
+	nodes := make([]map[string]interface{}, 0, len(items))
+	for _, it := range items {
+		nodes = append(nodes, projectV2ItemToGQL(it, st))
+	}
+	return map[string]interface{}{
+		"totalCount": len(nodes),
+		"nodes":      nodes,
+		"pageInfo": map[string]interface{}{
+			"hasNextPage": false,
+			"endCursor":   nil,
+		},
+	}
+}

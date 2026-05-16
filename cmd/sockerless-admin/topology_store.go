@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -162,42 +161,6 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// MigrateLegacyProjects reads any project JSONs at legacyDir, derives
-// instances via DeriveLegacyInstances, and returns a Topology with one
-// ProjectConfig per file. Used once at admin startup when
-// sockerless.yaml is missing but per-project JSONs exist.
-//
-// Returns (nil, os.ErrNotExist) when legacyDir doesn't exist.
-func MigrateLegacyProjects(legacyDir string) (*Topology, error) {
-	if _, err := os.Stat(legacyDir); errors.Is(err, os.ErrNotExist) {
-		return nil, os.ErrNotExist
-	}
-	cfgs, err := LoadProjects(legacyDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(cfgs) == 0 {
-		return nil, os.ErrNotExist
-	}
-	t := &Topology{
-		Projects: make([]ProjectConfig, 0, len(cfgs)),
-		Ports:    PortConfig{Ranges: DefaultPortRanges()},
-	}
-	for _, c := range cfgs {
-		// Copy to avoid mutating the slice element.
-		p := *c
-		if len(p.Instances) == 0 {
-			p.Instances = DeriveLegacyInstances(p)
-		}
-		t.Projects = append(t.Projects, p)
-	}
-	// Stable order for round-trip determinism.
-	sort.SliceStable(t.Projects, func(i, j int) bool {
-		return strings.Compare(t.Projects[i].Name, t.Projects[j].Name) < 0
-	})
-	return t, nil
 }
 
 // DefaultTopologyPath is the conventional location admin reads from

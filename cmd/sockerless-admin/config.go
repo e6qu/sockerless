@@ -32,13 +32,6 @@ type ProcessConfig struct {
 	Type   string            `json:"type"` // backend, frontend, simulator, coordinator
 }
 
-// contextConfig mirrors the CLI context config structure.
-type contextConfig struct {
-	Backend string            `json:"backend"`
-	Addr    string            `json:"addr,omitempty"`
-	Env     map[string]string `json:"env"`
-}
-
 // sockerlessDir returns the sockerless configuration directory.
 func sockerlessDir() string {
 	if d := os.Getenv("SOCKERLESS_HOME"); d != "" {
@@ -74,55 +67,11 @@ func loadConfigFile(reg *Registry, path string) (*adminConfig, error) {
 	return &cfg, nil
 }
 
-// discoverFromContexts scans config.yaml or ~/.sockerless/contexts/ for component addresses.
+// discoverFromContexts populates the registry from `config.yaml` + `admin.json`.
+// The legacy `~/.sockerless/contexts/*/config.json` shape is no longer
+// supported — operators on older state must run `sockerless config migrate`.
 func discoverFromContexts(reg *Registry) {
-	// Try config.yaml first
-	if discoverFromYAMLConfig(reg) {
-		// Also check for admin.json in the sockerless dir
-		adminPath := filepath.Join(sockerlessDir(), "admin.json")
-		if _, err := os.Stat(adminPath); err == nil {
-			if _, err := loadConfigFile(reg, adminPath); err != nil {
-				log.Printf("warning: failed to load %s: %v", adminPath, err)
-			}
-		}
-		return
-	}
-
-	// Fallback: old JSON contexts
-	contextsDir := filepath.Join(sockerlessDir(), "contexts")
-	entries, err := os.ReadDir(contextsDir)
-	if err != nil {
-		return // no contexts directory — not an error
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		data, err := os.ReadFile(filepath.Join(contextsDir, name, "config.json"))
-		if err != nil {
-			continue
-		}
-		var cfg contextConfig
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			continue
-		}
-
-		if cfg.Addr != "" {
-			compName := cfg.Backend
-			if compName == "" {
-				compName = name
-			}
-			reg.Add(Component{
-				Name: compName,
-				Type: "backend",
-				Addr: normalizeAddr(cfg.Addr),
-			})
-		}
-	}
-
-	// Also check for admin.json in the sockerless dir
+	discoverFromYAMLConfig(reg)
 	adminPath := filepath.Join(sockerlessDir(), "admin.json")
 	if _, err := os.Stat(adminPath); err == nil {
 		if _, err := loadConfigFile(reg, adminPath); err != nil {
@@ -131,43 +80,10 @@ func discoverFromContexts(reg *Registry) {
 	}
 }
 
-// listContexts returns all CLI contexts with their configs.
+// listContexts returns all CLI contexts from `config.yaml`. Returns nil when
+// no config.yaml is present — callers render an empty list.
 func listContexts() []map[string]any {
-	// Try config.yaml first
-	if results := listContextsFromYAML(); results != nil {
-		return results
-	}
-
-	// Fallback: old JSON contexts
-	contextsDir := filepath.Join(sockerlessDir(), "contexts")
-	entries, err := os.ReadDir(contextsDir)
-	if err != nil {
-		return nil
-	}
-
-	activeCtx := activeContextName()
-	var contexts []map[string]any
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		ctx := map[string]any{
-			"name":   name,
-			"active": name == activeCtx,
-		}
-
-		data, err := os.ReadFile(filepath.Join(contextsDir, name, "config.json"))
-		if err == nil {
-			var cfg contextConfig
-			if json.Unmarshal(data, &cfg) == nil {
-				ctx["backend"] = cfg.Backend
-				ctx["addr"] = cfg.Addr
-			}
-		}
-		contexts = append(contexts, ctx)
-	}
-	return contexts
+	return listContextsFromYAML()
 }
 
 // activeContextName returns the active context name.

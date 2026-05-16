@@ -35,9 +35,11 @@ type Server struct {
 //   - BLEEPHUB_DATA_DIR  — directory for SQLite DB + artifact store.
 //   - BLEEPHUB_PERSIST   — when "true", enables SQLite-backed state.
 //     Operator-requested persistence that fails to open will log.Fatalf
-//     (BUG-985/986 pattern). State buckets persisted: users, tokens, apps,
-//     oauth_apps, installations, installation_tokens, user_to_server_tokens,
-//     refresh_tokens, repos. Git storage stays in-memory.
+//
+// . State buckets persisted: users, tokens, apps,
+//
+//	oauth_apps, installations, installation_tokens, user_to_server_tokens,
+//	refresh_tokens, repos. Git storage stays in-memory.
 func NewServer(addr string, logger zerolog.Logger) *Server {
 	maxWF := 10
 	if v := os.Getenv("BLEEPHUB_MAX_WORKFLOWS"); v != "" {

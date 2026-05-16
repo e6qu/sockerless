@@ -9,7 +9,7 @@ import (
 // `kind` that is (a) not already claimed by any instance in the
 // topology and (b) currently free on the host (TCP listen check).
 //
-// Used by admin lifecycle endpoints (Phase 79 step 6) when the
+// Used by admin lifecycle endpoints when the
 // operator picks "auto" rather than a literal port for a new instance.
 //
 // Fail-loud: returns an error when the kind has no configured range

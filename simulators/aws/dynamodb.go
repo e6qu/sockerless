@@ -355,7 +355,10 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	if _, ok := ddbTables.Get(req.TableName); !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
@@ -384,7 +387,10 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	if _, ok := ddbTables.Get(req.TableName); !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)

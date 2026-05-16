@@ -12,8 +12,8 @@ import (
 func setupConfigServer(t *testing.T) (*TopologyManager, *http.ServeMux) {
 	t.Helper()
 	tmp := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{{
@@ -159,8 +159,8 @@ func TestReloadLifecycleNil(t *testing.T) {
 
 func TestReloadInstanceNotFound(t *testing.T) {
 	tmp := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	_ = mgr.Load()
 	_ = mgr.Replace(Topology{Projects: []ProjectConfig{{Name: "p"}}})
 	mux := http.NewServeMux()
 	registerTopologyAPI(mux, mgr, NewInstanceLifecycle(tmp, 0))

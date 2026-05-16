@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// Phase 154 (P154.3) — Actions extras gh CLI / Octokit hit.
-//
+// Actions extras gh CLI / Octokit hit.
 //   POST /repos/{o}/{r}/dispatches                          repository_dispatch
 //   GET  /repos/{o}/{r}/actions/runs/{run_id}/logs           run-level logs zip
 //   POST /repos/{o}/{r}/actions/runs/{run_id}/rerun-failed-jobs
@@ -157,7 +156,7 @@ func (s *Server) handleRepoArtifacts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRunApprovals — env-pending-approvals stub. Empty until Environments
-// land (P154.4).
+// land.
 func (s *Server) handleRunApprovals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []interface{}{})
 }

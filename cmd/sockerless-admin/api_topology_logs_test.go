@@ -45,8 +45,8 @@ func setupLogsServer(t *testing.T) (*TopologyManager, *http.ServeMux, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	chdirTo(t, tmp)
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{{

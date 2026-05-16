@@ -128,7 +128,7 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 	}
 	st.AppsByClientID[app.ClientID] = app
 	if st.persist != nil {
-		_ = st.persist.Put("apps", strconv.Itoa(id), app)
+		st.persist.MustPut("apps", strconv.Itoa(id), app)
 	}
 	return app
 }
@@ -144,7 +144,7 @@ func (st *Store) UpdateAppHookConfig(appID int, fn func(a *App)) bool {
 	fn(app)
 	app.UpdatedAt = time.Now()
 	if st.persist != nil {
-		_ = st.persist.Put("apps", strconv.Itoa(appID), app)
+		st.persist.MustPut("apps", strconv.Itoa(appID), app)
 	}
 	return true
 }
@@ -192,7 +192,7 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 	}
 	st.Installations[id] = inst
 	if st.persist != nil {
-		_ = st.persist.Put("installations", strconv.Itoa(id), inst)
+		st.persist.MustPut("installations", strconv.Itoa(id), inst)
 	}
 	return inst
 }
@@ -241,7 +241,7 @@ func (st *Store) DeleteInstallation(id int) bool {
 	}
 	delete(st.Installations, id)
 	if st.persist != nil {
-		_ = st.persist.Delete("installations", strconv.Itoa(id))
+		st.persist.MustDelete("installations", strconv.Itoa(id))
 	}
 	return true
 }
@@ -251,7 +251,7 @@ func (st *Store) persistInstallation(inst *Installation) {
 	if st.persist == nil || inst == nil {
 		return
 	}
-	_ = st.persist.Put("installations", strconv.Itoa(inst.ID), inst)
+	st.persist.MustPut("installations", strconv.Itoa(inst.ID), inst)
 }
 
 // SuspendInstallation marks the installation suspended. Returns false if not found
@@ -390,7 +390,7 @@ func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL
 	}
 	st.OAuthApps[clientID] = app
 	if st.persist != nil {
-		_ = st.persist.Put("oauth_apps", clientID, app)
+		st.persist.MustPut("oauth_apps", clientID, app)
 	}
 	return app
 }
@@ -456,7 +456,7 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 	}
 	st.InstallationTokens[tokenStr] = token
 	if st.persist != nil {
-		_ = st.persist.Put("installation_tokens", tokenStr, token)
+		st.persist.MustPut("installation_tokens", tokenStr, token)
 	}
 	return token
 }
@@ -472,7 +472,7 @@ func (st *Store) RevokeInstallationToken(tokenStr string) bool {
 	}
 	delete(st.InstallationTokens, tokenStr)
 	if st.persist != nil {
-		_ = st.persist.Delete("installation_tokens", tokenStr)
+		st.persist.MustDelete("installation_tokens", tokenStr)
 	}
 	return true
 }

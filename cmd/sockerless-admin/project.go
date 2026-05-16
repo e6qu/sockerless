@@ -35,35 +35,33 @@ const (
 	BackendAZF      BackendType = "azf"
 )
 
-// ProjectConfig defines a project configuration.
-//
-// Two shapes coexist during the Phase 79 migration:
-//   - Legacy: a project = (1 sim + 1 backend) tuple. Carried by
-//     SimPort / BackendPort. Existing on-disk JSONs use this.
-//   - Modern: a project = a list of independently lifecyclable
-//     Instances (0..N of each kind). Carried by Instances.
-//
-// Both fields can coexist on a single ProjectConfig — the loader
-// derives Instances from SimPort/BackendPort when Instances is empty
-// (DeriveLegacyInstances) so transitional reads work either way. New
-// admin writes populate Instances.
+// ProjectConfig defines a project configuration as a name + a list of
+// independently lifecyclable Instances (sim / backend / bleephub). Each
+// instance carries its own cloud / backend / port / config.
 type ProjectConfig struct {
-	Name        string      `json:"name" yaml:"name"`
-	Cloud       CloudType   `json:"cloud,omitempty" yaml:"cloud,omitempty"`
-	Backend     BackendType `json:"backend,omitempty" yaml:"backend,omitempty"`
-	LogLevel    string      `json:"log_level,omitempty" yaml:"log_level,omitempty"`
-	SimPort     int         `json:"sim_port,omitempty" yaml:"sim_port,omitempty"`
-	BackendPort int         `json:"backend_port,omitempty" yaml:"backend_port,omitempty"`
-	CreatedAt   string      `json:"created_at,omitempty" yaml:"created_at,omitempty"`
-	Instances   []Instance  `json:"instances,omitempty" yaml:"instances,omitempty"`
+	Name      string     `json:"name" yaml:"name"`
+	CreatedAt string     `json:"created_at,omitempty" yaml:"created_at,omitempty"`
+	Instances []Instance `json:"instances,omitempty" yaml:"instances,omitempty"`
 }
 
-// ProjectStatus combines config with runtime status.
+// ProjectInstanceStatus reports per-instance runtime status under a
+// ProjectStatus. Distinct from cmd/sockerless-admin's other
+// InstanceStatus type (in instance_status.go) which serves the
+// independent /v1/instance/{name}/status surface.
+type ProjectInstanceStatus struct {
+	Instance
+	Status string `json:"status"`
+}
+
+// ProjectStatus combines config with per-instance runtime status. The
+// aggregate Status is "running" when every instance is running,
+// "stopped" when every instance is stopped, "partial" when some are
+// running, "starting"/"stopping" during a transition, "failed" when any
+// instance is in a failed state.
 type ProjectStatus struct {
 	ProjectConfig
-	Status        string `json:"status"`
-	SimStatus     string `json:"sim_status"`
-	BackendStatus string `json:"backend_status"`
+	Status    string                  `json:"status"`
+	Instances []ProjectInstanceStatus `json:"instance_statuses,omitempty"`
 }
 
 // ProjectConnection holds Docker/Podman connection info.
@@ -148,10 +146,11 @@ func BackendBinary(backend BackendType) string {
 	}
 }
 
-// processNames returns the 2 process names for a project.
-func processNames(name string) (sim, backend string) {
-	return fmt.Sprintf("proj-%s-sim", name),
-		fmt.Sprintf("proj-%s-backend", name)
+// instanceProcessName returns the ProcessManager process name for a
+// given (project, instance) pair. Used by ProjectManager to register +
+// look up processes when driving lifecycle from the topology Instances.
+func instanceProcessName(projectName, instanceName string) string {
+	return fmt.Sprintf("proj-%s-%s", projectName, instanceName)
 }
 
 // PortAllocator allocates ephemeral ports and tracks them per project.

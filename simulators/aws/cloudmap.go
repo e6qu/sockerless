@@ -480,7 +480,10 @@ func handleCMListServices(w http.ResponseWriter, r *http.Request) {
 			Condition string   `json:"Condition"`
 		} `json:"Filters"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 
 	services := cmServices.List()
 
@@ -588,14 +591,20 @@ func handleCMGetOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCMListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Tags": []any{},
 	})
 }
 
 func handleCMTagResource(w http.ResponseWriter, r *http.Request) {
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

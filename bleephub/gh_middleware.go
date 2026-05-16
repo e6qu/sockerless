@@ -32,7 +32,7 @@ func ghAppFromContext(ctx context.Context) *App {
 
 // ghInstallationFromContext extracts the installation associated with the request,
 // if authenticated by a ghs_ installation token. Returns nil for other auth shapes.
-// Consumed by the permission decorator + Checks handlers (P153.6 / P153.8).
+// Consumed by the permission decorator + Checks handlers ( / ).
 //
 //nolint:unused // wired through ctx now; consumers ship in subsequent commits on this branch
 func ghInstallationFromContext(ctx context.Context) *Installation {

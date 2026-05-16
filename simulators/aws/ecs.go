@@ -1203,7 +1203,10 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"resourceArn"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 
 	var tags []ECSTag
 

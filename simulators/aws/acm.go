@@ -15,7 +15,7 @@ import (
 // AWS Certificate Manager. Wire: AWS-JSON 1.1 (POST /, X-Amz-Target =
 // "CertificateManager.<Op>"). Sim eagerly transitions issued
 // certificates to Status=ISSUED instead of synthesising the real
-// AWS DNS-validation polling window (out of scope per Phase 159 plan).
+// AWS DNS-validation polling window (out of scope).
 
 // ---------- Types ----------
 

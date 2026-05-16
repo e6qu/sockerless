@@ -70,7 +70,7 @@ func (s *Server) resolveImageURI(ctx context.Context, ref string) (string, error
 	// `public.ecr.aws/docker/library/<local-name>` reference would
 	// fail to resolve and the container would either pull a wrong
 	// image or fail at task launch. Using the ref as-is keeps local
-	// containers running off the local image directly. (BUG-865)
+	// containers running off the local image directly.
 	if _, ok := s.Store.ResolveImage(ref); ok {
 		s.Logger.Debug().Str("ref", ref).Msg("image found in local Store; no registry rewrite needed")
 		return ref, nil

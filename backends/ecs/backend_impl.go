@@ -300,7 +300,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// Restore the container to PendingCreates so the rest of the
 		// start flow (taskdef registration, RunTask, waitForRunning)
 		// finds it via the existing path. The entry is removed again
-		// after waitForTaskRunning per the BUG-858 lifecycle.
+		// after waitForTaskRunning lifecycle.
 		s.PendingCreates.Put(c.ID, c)
 	}
 	id := c.ID
@@ -1365,7 +1365,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	// container would inherit the source image's entrypoint, which for
 	// the gitlab-runner-helper image is a bash-detect wrapper that
 	// blocks reading stdin — and Fargate has no remote stdin channel
-	// for a running task, so the container hangs (BUG-867 regression).
+	// for a running task, so the container hangs.
 	if len(script) == 0 {
 		cycleConfig.Entrypoint = []string{"sh", "-c"}
 		cycleConfig.Cmd = []string{"exit 0"}

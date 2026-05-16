@@ -1,9 +1,13 @@
 package bleephub
 
 import (
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -128,16 +132,154 @@ func (s *Server) handleConnectionData(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleOAuthToken exchanges a JWT assertion for an OAuth bearer token.
+// handleOAuthToken exchanges a runner-signed client_assertion JWT for a
+// session access token. The runner registered its RSA public key on
+// /_apis/v1/Agent/{poolId}; the assertion's iss claim names the agent's
+// ClientID and must verify against that stored public key.
 func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
-	s.logger.Debug().Msg("oauth token exchange")
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "failed to parse form body: "+err.Error())
+		return
+	}
+	if grant := r.PostFormValue("grant_type"); grant != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", fmt.Sprintf("grant_type %q is not supported", grant))
+		return
+	}
+	if at := r.PostFormValue("client_assertion_type"); at != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("client_assertion_type %q is not supported", at))
+		return
+	}
+	assertion := r.PostFormValue("client_assertion")
+	if assertion == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_assertion is required")
+		return
+	}
 
+	agent, err := s.verifyAgentClientAssertion(assertion)
+	if err != nil {
+		s.logger.Warn().Err(err).Msg("agent client_assertion validation failed")
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", err.Error())
+		return
+	}
+
+	s.logger.Debug().Int("agentId", agent.ID).Str("clientId", agent.Authorization.ClientID).Msg("oauth token issued")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"access_token": makeJWT("bleephub", "bleephub"),
+		"access_token": makeJWT(agent.Authorization.ClientID, "bleephub"),
 		"expires_in":   604800,
 		"scope":        "/",
 		"token_type":   "access_token",
 	})
+}
+
+func writeOAuthError(w http.ResponseWriter, status int, code, desc string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body, _ := json.Marshal(map[string]string{"error": code, "error_description": desc})
+	_, _ = w.Write(body)
+}
+
+// verifyAgentClientAssertion validates an RS256 JWT signed by the agent's
+// registered RSA private key. The JWT's iss claim must match a known agent
+// ClientID; the signature is verified against that agent's public key.
+func (s *Server) verifyAgentClientAssertion(token string) (*Agent, error) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed JWT: expected 3 parts")
+	}
+
+	headerBytes, err := base64urlDecode(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("decode JWT header: %w", err)
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, fmt.Errorf("parse JWT header: %w", err)
+	}
+	if header.Alg != "RS256" {
+		return nil, fmt.Errorf("unsupported JWT algorithm %q (expected RS256)", header.Alg)
+	}
+
+	payloadBytes, err := base64urlDecode(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode JWT payload: %w", err)
+	}
+	var payload struct {
+		Iss string  `json:"iss"`
+		Exp float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return nil, fmt.Errorf("parse JWT payload: %w", err)
+	}
+	if payload.Iss == "" {
+		return nil, fmt.Errorf("missing iss claim")
+	}
+	if exp := int64(payload.Exp); exp > 0 && time.Now().Unix() > exp {
+		return nil, fmt.Errorf("JWT expired")
+	}
+
+	agent := s.store.LookupAgentByClientID(payload.Iss)
+	if agent == nil {
+		return nil, fmt.Errorf("no agent registered with clientId %q", payload.Iss)
+	}
+	if agent.Authorization == nil || agent.Authorization.PublicKey == nil {
+		return nil, fmt.Errorf("agent %d has no registered public key", agent.ID)
+	}
+	pubKey, err := agentRSAPublicKey(agent.Authorization.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("build agent public key: %w", err)
+	}
+
+	sigBytes, err := base64urlDecode(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("decode JWT signature: %w", err)
+	}
+	signInput := parts[0] + "." + parts[1]
+	hash := sha256.Sum256([]byte(signInput))
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, hash[:], sigBytes); err != nil {
+		return nil, fmt.Errorf("invalid JWT signature: %w", err)
+	}
+	return agent, nil
+}
+
+// agentRSAPublicKey reconstructs an *rsa.PublicKey from the modulus+exponent
+// pair the runner sent during agent registration. The runner encodes both as
+// standard base64 (per the Azure DevOps agent protocol); fall back to base64url
+// if the standard alphabet rejects.
+func agentRSAPublicKey(pk *AgentPublicKey) (*rsa.PublicKey, error) {
+	modBytes, err := decodeStdOrURL(pk.Modulus)
+	if err != nil {
+		return nil, fmt.Errorf("decode modulus: %w", err)
+	}
+	expBytes, err := decodeStdOrURL(pk.Exponent)
+	if err != nil {
+		return nil, fmt.Errorf("decode exponent: %w", err)
+	}
+	if len(modBytes) == 0 || len(expBytes) == 0 {
+		return nil, fmt.Errorf("empty modulus or exponent")
+	}
+	e := 0
+	for _, b := range expBytes {
+		e = e<<8 | int(b)
+	}
+	if e == 0 {
+		return nil, fmt.Errorf("invalid public exponent (zero)")
+	}
+	return &rsa.PublicKey{N: new(big.Int).SetBytes(modBytes), E: e}, nil
+}
+
+func decodeStdOrURL(s string) ([]byte, error) {
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(s)
 }
 
 // makeJWT creates a minimal unsigned JWT (alg:none) the runner can parse.

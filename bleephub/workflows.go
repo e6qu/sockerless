@@ -406,11 +406,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 
 	// Matrix fail-fast: if this job failed and it's in a matrix group, cancel siblings
 	if foundJob.Result == "failure" && foundJob.MatrixGroup != "" {
-		failFast := true // default per GitHub Actions spec
-		if foundJob.Def != nil && foundJob.Def.Strategy != nil && foundJob.Def.Strategy.FailFast != nil {
-			failFast = *foundJob.Def.Strategy.FailFast
-		}
-		if failFast {
+		if foundJob.Def.FailFast() {
 			for _, sibling := range foundWf.Jobs {
 				if sibling.Key == foundJob.Key {
 					continue

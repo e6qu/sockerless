@@ -440,7 +440,10 @@ func registerAzureFiles(srv *sim.Server) {
 		name := sim.PathParam(r, "containerName")
 
 		var req BlobContainer
-		_ = sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+			return
+		}
 
 		resourceID := fmt.Sprintf(
 			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s/blobServices/default/containers/%s",

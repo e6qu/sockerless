@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.5) — OAuth applications token management endpoints.
-//
+// OAuth applications token management endpoints.
 // Real GitHub exposes a parallel surface for OAuth Apps + GitHub Apps acting
 // as OAuth clients. Authentication is HTTP Basic with client_id:client_secret.
 // `client_id` resolves to either an OAuth App or a GitHub App (looked up in

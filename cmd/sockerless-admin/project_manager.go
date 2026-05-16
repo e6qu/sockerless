@@ -11,11 +11,15 @@ import (
 	"time"
 )
 
-// ProjectManager manages projects with orchestrated lifecycle.
+// ProjectManager owns the lifecycle of every admin-managed project.
+// Each project is a name + a list of Instances. ProjectManager
+// registers one ProcessManager process per instance, allocates ports
+// for any instance with Port==0, and orchestrates ordered start/stop
+// so backends wait on their referenced simulators.
 type ProjectManager struct {
 	mu       sync.Mutex
 	projects map[string]*ProjectConfig
-	opLock   map[string]string // per-project operation guard (name -> op)
+	opLock   map[string]string
 	pm       *ProcessManager
 	reg      *Registry
 	ports    *PortAllocator
@@ -36,7 +40,8 @@ func NewProjectManager(pm *ProcessManager, reg *Registry, storeDir string) *Proj
 	}
 }
 
-// Create creates a new project and registers its 2 processes.
+// Create registers a new project and its instances' processes. Each
+// instance with Port==0 gets an ephemeral port allocated.
 func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -50,48 +55,42 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 	if _, ok := m.projects[cfg.Name]; ok {
 		return fmt.Errorf("project %q already exists", cfg.Name)
 	}
-	if !IsValidCloud(cfg.Cloud) {
-		return fmt.Errorf("invalid cloud %q", cfg.Cloud)
-	}
-	if !IsValidBackend(cfg.Cloud, cfg.Backend) {
-		return fmt.Errorf("invalid backend %q for cloud %q", cfg.Backend, cfg.Cloud)
+	if len(cfg.Instances) == 0 {
+		return fmt.Errorf("project %q must declare at least one instance", cfg.Name)
 	}
 
-	// Allocate ports for any that are 0 (auto)
-	needed := 0
-	if cfg.SimPort == 0 {
-		needed++
+	// Allocate ephemeral ports for any instance with Port==0.
+	autoIdx := []int{}
+	for i, inst := range cfg.Instances {
+		if inst.Port == 0 {
+			autoIdx = append(autoIdx, i)
+		}
 	}
-	if cfg.BackendPort == 0 {
-		needed++
-	}
-
-	if needed > 0 {
-		ports, err := m.ports.Allocate(cfg.Name, needed)
+	if len(autoIdx) > 0 {
+		ports, err := m.ports.Allocate(cfg.Name, len(autoIdx))
 		if err != nil {
 			return fmt.Errorf("port allocation: %w", err)
 		}
-		idx := 0
-		if cfg.SimPort == 0 {
-			cfg.SimPort = ports[idx]
-			idx++
-		}
-		if cfg.BackendPort == 0 {
-			cfg.BackendPort = ports[idx]
+		for j, i := range autoIdx {
+			cfg.Instances[i].Port = ports[j]
 		}
 	}
 
-	// Reserve explicit ports (non-zero ports not auto-allocated above)
-	var explicitPorts []int
-	for _, p := range []int{cfg.SimPort, cfg.BackendPort} {
-		if p > 0 {
-			explicitPorts = append(explicitPorts, p)
-		}
+	// Reserve any explicitly-set ports.
+	var explicit []int
+	for _, inst := range cfg.Instances {
+		explicit = append(explicit, inst.Port)
 	}
-	if len(explicitPorts) > 0 {
-		if err := m.ports.Reserve(cfg.Name, explicitPorts); err != nil {
+	if err := m.ports.Reserve(cfg.Name, explicit); err != nil {
+		m.ports.Release(cfg.Name)
+		return err
+	}
+
+	// Validate each instance now that ports are filled in.
+	for _, inst := range cfg.Instances {
+		if err := inst.Validate(); err != nil {
 			m.ports.Release(cfg.Name)
-			return err
+			return fmt.Errorf("invalid instance: %w", err)
 		}
 	}
 
@@ -99,47 +98,94 @@ func (m *ProjectManager) Create(cfg ProjectConfig) error {
 		cfg.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	// Register 2 processes
-	simName, backendName := processNames(cfg.Name)
-
-	simEnvSlice := SimulatorEnv(cfg.Cloud, cfg.SimPort, cfg.LogLevel)
-	simEnvMap := sliceToEnvMap(simEnvSlice)
-	m.pm.AddProcess(ProcessConfig{
-		Name:   simName,
-		Binary: SimulatorBinary(cfg.Cloud),
-		Env:    simEnvMap,
-		Addr:   fmt.Sprintf(":%d", cfg.SimPort),
-		Type:   "simulator",
-	})
-
-	backendEnvSlice := BackendEnv(cfg.Cloud, cfg.Backend, cfg.SimPort, cfg.Name)
-	backendEnvMap := sliceToEnvMap(backendEnvSlice)
-	m.pm.AddProcess(ProcessConfig{
-		Name:   backendName,
-		Binary: BackendBinary(cfg.Backend),
-		Args:   BackendArgs(cfg.BackendPort, cfg.LogLevel),
-		Env:    backendEnvMap,
-		Addr:   fmt.Sprintf(":%d", cfg.BackendPort),
-		Type:   "backend",
-	})
+	// Register one process per instance, building the env from its
+	// kind-specific config.
+	for _, inst := range cfg.Instances {
+		m.pm.AddProcess(m.instanceToProcessConfig(cfg.Name, inst))
+	}
 
 	stored := cfg
 
-	// Persist before in-memory registration so failures can be rolled back
 	if m.storeDir != "" {
 		if err := SaveProject(m.storeDir, &stored); err != nil {
-			_ = m.pm.RemoveProcess(backendName)
-			_ = m.pm.RemoveProcess(simName)
+			for _, inst := range cfg.Instances {
+				_ = m.pm.RemoveProcess(instanceProcessName(cfg.Name, inst.Name))
+			}
 			m.ports.Release(cfg.Name)
 			return fmt.Errorf("persist project: %w", err)
 		}
 	}
 	m.projects[cfg.Name] = &stored
-
 	return nil
 }
 
-// Start performs orchestrated startup of a project's 2 processes.
+// instanceToProcessConfig builds the ProcessConfig that the
+// ProcessManager runs for a given instance. Per-kind env builders fill
+// in cloud + simulator + log-level details.
+func (m *ProjectManager) instanceToProcessConfig(projectName string, inst Instance) ProcessConfig {
+	name := instanceProcessName(projectName, inst.Name)
+	switch inst.Kind {
+	case InstanceKindSim:
+		return ProcessConfig{
+			Name:   name,
+			Binary: SimulatorBinary(inst.Cloud),
+			Env:    sliceToEnvMap(SimulatorEnv(inst.Cloud, inst.Port, inst.Config["log_level"])),
+			Addr:   fmt.Sprintf(":%d", inst.Port),
+			Type:   "simulator",
+		}
+	case InstanceKindBackend:
+		// Backend connects to its sim sibling when one is declared.
+		simPort := 0
+		if inst.Sim != "" {
+			if sib := m.findSiblingInstance(projectName, inst.Sim); sib != nil {
+				simPort = sib.Port
+			}
+		}
+		return ProcessConfig{
+			Name:   name,
+			Binary: BackendBinary(inst.Backend),
+			Args:   BackendArgs(inst.Port, inst.Config["log_level"]),
+			Env:    sliceToEnvMap(BackendEnv(inst.Cloud, inst.Backend, simPort, projectName)),
+			Addr:   fmt.Sprintf(":%d", inst.Port),
+			Type:   "backend",
+		}
+	case InstanceKindBleephub:
+		env := map[string]string{
+			"BLEEPHUB_PORT":      fmt.Sprintf("%d", inst.Port),
+			"BLEEPHUB_LOG_LEVEL": inst.Config["log_level"],
+		}
+		for k, v := range inst.Config {
+			env[k] = v
+		}
+		return ProcessConfig{
+			Name:   name,
+			Binary: "bleephub",
+			Env:    env,
+			Addr:   fmt.Sprintf(":%d", inst.Port),
+			Type:   "bleephub",
+		}
+	}
+	return ProcessConfig{Name: name, Addr: fmt.Sprintf(":%d", inst.Port)}
+}
+
+// findSiblingInstance returns the named instance from the same project,
+// or nil. Caller must hold m.mu when reading m.projects.
+func (m *ProjectManager) findSiblingInstance(projectName, instanceName string) *Instance {
+	p, ok := m.projects[projectName]
+	if !ok {
+		return nil
+	}
+	for i := range p.Instances {
+		if p.Instances[i].Name == instanceName {
+			return &p.Instances[i]
+		}
+	}
+	return nil
+}
+
+// Start brings up every instance in dependency order: sims first, then
+// backends (which wait for their sim's health endpoint), then bleephub
+// instances. Returns the first error and rolls back partial state.
 func (m *ProjectManager) Start(name string) error {
 	m.mu.Lock()
 	cfg, ok := m.projects[name]
@@ -151,51 +197,97 @@ func (m *ProjectManager) Start(name string) error {
 		m.mu.Unlock()
 		return err
 	}
-	simName, backendName := processNames(name)
-	cloud := cfg.Cloud
-	backend := cfg.Backend
-	simPort := cfg.SimPort
-	backendPort := cfg.BackendPort
+	instances := append([]Instance(nil), cfg.Instances...)
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
-	// 1. Start simulator
-	if err := m.pm.Start(simName); err != nil {
-		return fmt.Errorf("start simulator: %w", err)
+	started := []string{}
+	startOrder := orderInstancesForStart(instances)
+	for _, inst := range startOrder {
+		procName := instanceProcessName(name, inst.Name)
+		if err := m.pm.Start(procName); err != nil {
+			m.rollback(name, started)
+			return fmt.Errorf("start %s/%s: %w", name, inst.Name, err)
+		}
+		if err := m.waitForInstanceHealth(inst); err != nil {
+			_ = m.pm.Stop(procName)
+			m.rollback(name, started)
+			return fmt.Errorf("%s/%s health check: %w", name, inst.Name, err)
+		}
+		// Backends post-start: run cloud bootstrap (cluster create etc.)
+		// against their sim sibling.
+		if inst.Kind == InstanceKindBackend && inst.Sim != "" {
+			sim := findInstanceByName(instances, inst.Sim)
+			if sim != nil {
+				simAddr := fmt.Sprintf("http://localhost:%d", sim.Port)
+				if err := BootstrapSimulator(inst.Cloud, inst.Backend, simAddr, name, m.client); err != nil {
+					_ = m.pm.Stop(procName)
+					m.rollback(name, started)
+					return fmt.Errorf("%s/%s bootstrap: %w", name, inst.Name, err)
+				}
+			}
+		}
+		started = append(started, procName)
 	}
-
-	simAddr := fmt.Sprintf("http://localhost:%d", simPort)
-	if err := waitForHealth(m.client, simAddr, "/health", 10*time.Second); err != nil {
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("simulator health check: %w", err)
-	}
-
-	// 2. Bootstrap (ECS cluster creation, etc.)
-	if err := BootstrapSimulator(cloud, backend, simAddr, name, m.client); err != nil {
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("bootstrap: %w", err)
-	}
-
-	// 3. Start backend (serves Docker API directly)
-	if err := m.pm.Start(backendName); err != nil {
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("start backend: %w", err)
-	}
-
-	backendAddr := fmt.Sprintf("http://localhost:%d", backendPort)
-	if err := waitForHealth(m.client, backendAddr, "/internal/v1/healthz", 15*time.Second); err != nil {
-		_ = m.pm.Stop(backendName)
-		_ = m.pm.Stop(simName)
-		return fmt.Errorf("backend health check: %w", err)
-	}
-
 	return nil
 }
 
-// Stop performs reverse-order shutdown of a project's processes.
+// rollback stops every process in `started` in reverse order.
+func (m *ProjectManager) rollback(projectName string, started []string) {
+	for i := len(started) - 1; i >= 0; i-- {
+		_ = m.pm.Stop(started[i])
+	}
+}
+
+// orderInstancesForStart returns instances ordered so sims start before
+// backends that reference them, and bleephub instances start last.
+func orderInstancesForStart(instances []Instance) []Instance {
+	sims := []Instance{}
+	backends := []Instance{}
+	bleephubs := []Instance{}
+	for _, inst := range instances {
+		switch inst.Kind {
+		case InstanceKindSim:
+			sims = append(sims, inst)
+		case InstanceKindBackend:
+			backends = append(backends, inst)
+		case InstanceKindBleephub:
+			bleephubs = append(bleephubs, inst)
+		}
+	}
+	out := make([]Instance, 0, len(instances))
+	out = append(out, sims...)
+	out = append(out, backends...)
+	out = append(out, bleephubs...)
+	return out
+}
+
+func findInstanceByName(instances []Instance, name string) *Instance {
+	for i := range instances {
+		if instances[i].Name == name {
+			return &instances[i]
+		}
+	}
+	return nil
+}
+
+// waitForInstanceHealth polls the right health endpoint for the
+// instance's kind.
+func (m *ProjectManager) waitForInstanceHealth(inst Instance) error {
+	addr := fmt.Sprintf("http://localhost:%d", inst.Port)
+	switch inst.Kind {
+	case InstanceKindSim, InstanceKindBleephub:
+		return waitForHealth(m.client, addr, "/health", 10*time.Second)
+	case InstanceKindBackend:
+		return waitForHealth(m.client, addr, "/internal/v1/healthz", 15*time.Second)
+	}
+	return nil
+}
+
+// Stop performs reverse-order shutdown.
 func (m *ProjectManager) Stop(name string) error {
 	m.mu.Lock()
-	_, ok := m.projects[name]
+	cfg, ok := m.projects[name]
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("project %q not found", name)
@@ -204,35 +296,32 @@ func (m *ProjectManager) Stop(name string) error {
 		m.mu.Unlock()
 		return err
 	}
+	instances := append([]Instance(nil), cfg.Instances...)
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
-	return m.stopProcesses(name)
+	return m.stopProcesses(name, instances)
 }
 
-// stopProcesses stops a project's 2 processes in reverse order without acquiring the op lock.
-func (m *ProjectManager) stopProcesses(name string) error {
-	simName, backendName := processNames(name)
-
-	// Stop in reverse order: backend → simulator
+// stopProcesses stops every instance in reverse-of-start order.
+func (m *ProjectManager) stopProcesses(name string, instances []Instance) error {
+	order := orderInstancesForStart(instances)
 	var errs []error
-	if err := m.stopIfRunning(backendName); err != nil {
-		errs = append(errs, err)
+	for i := len(order) - 1; i >= 0; i-- {
+		if err := m.stopIfRunning(instanceProcessName(name, order[i].Name)); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if err := m.stopIfRunning(simName); err != nil {
-		errs = append(errs, err)
-	}
-
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
 	return nil
 }
 
-// Delete stops and removes a project and its processes.
+// Delete stops a project and removes its processes + persisted file.
 func (m *ProjectManager) Delete(name string) error {
 	m.mu.Lock()
-	_, ok := m.projects[name]
+	cfg, ok := m.projects[name]
 	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("project %q not found", name)
@@ -241,34 +330,25 @@ func (m *ProjectManager) Delete(name string) error {
 		m.mu.Unlock()
 		return err
 	}
+	instances := append([]Instance(nil), cfg.Instances...)
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.unlockOp(name); m.mu.Unlock() }()
 
-	// Stop if running (using stopProcesses directly to avoid re-acquiring op lock)
-	_ = m.stopProcesses(name)
-
-	simName, backendName := processNames(name)
-
-	// Remove processes
-	_ = m.pm.RemoveProcess(backendName)
-	_ = m.pm.RemoveProcess(simName)
-
+	_ = m.stopProcesses(name, instances)
+	for _, inst := range instances {
+		_ = m.pm.RemoveProcess(instanceProcessName(name, inst.Name))
+	}
 	m.mu.Lock()
 	delete(m.projects, name)
 	m.mu.Unlock()
-
-	// Release ports
 	m.ports.Release(name)
-
-	// Delete persisted file
 	if m.storeDir != "" {
 		_ = DeleteProjectFile(m.storeDir, name)
 	}
-
 	return nil
 }
 
-// Get returns the status of a project.
+// Get returns a project's status.
 func (m *ProjectManager) Get(name string) (ProjectStatus, bool) {
 	m.mu.Lock()
 	cfg, ok := m.projects[name]
@@ -278,7 +358,6 @@ func (m *ProjectManager) Get(name string) (ProjectStatus, bool) {
 	}
 	cfgCopy := *cfg
 	m.mu.Unlock()
-
 	return m.buildStatus(cfgCopy), true
 }
 
@@ -298,44 +377,42 @@ func (m *ProjectManager) List() []ProjectStatus {
 	return statuses
 }
 
-// Logs returns logs for a project component.
+// Logs returns logs for a specific instance, or aggregated across all.
+// The `component` query param matches an instance's Name (or "all"/"").
 func (m *ProjectManager) Logs(name, component string, lines int) ([]string, error) {
 	m.mu.Lock()
-	_, ok := m.projects[name]
+	cfg, ok := m.projects[name]
 	if !ok {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("project %q not found", name)
 	}
+	instances := append([]Instance(nil), cfg.Instances...)
 	m.mu.Unlock()
 
-	simName, backendName := processNames(name)
-
-	var procName string
-	switch component {
-	case "sim", "simulator":
-		procName = simName
-	case "backend":
-		procName = backendName
-	case "", "all":
-		// Aggregate all logs
+	if component == "" || component == "all" {
 		var allLogs []string
-		for _, pn := range []string{simName, backendName} {
-			logs, err := m.pm.GetLogs(pn, lines)
+		for _, inst := range instances {
+			logs, err := m.pm.GetLogs(instanceProcessName(name, inst.Name), lines)
 			if err == nil {
 				for _, line := range logs {
-					allLogs = append(allLogs, "["+componentLabel(pn, name)+"] "+line)
+					allLogs = append(allLogs, "["+inst.Name+"] "+line)
 				}
 			}
 		}
 		return allLogs, nil
-	default:
-		return nil, fmt.Errorf("invalid component %q", component)
 	}
 
-	return m.pm.GetLogs(procName, lines)
+	for _, inst := range instances {
+		if inst.Name == component {
+			return m.pm.GetLogs(instanceProcessName(name, inst.Name), lines)
+		}
+	}
+	return nil, fmt.Errorf("invalid component %q", component)
 }
 
-// Connection returns Docker/Podman connection info for a project.
+// Connection returns Docker/Podman connection info for the project's
+// first backend instance. Returns an empty ProjectConnection when the
+// project has no backend instance declared.
 func (m *ProjectManager) Connection(name string) (ProjectConnection, error) {
 	m.mu.Lock()
 	cfg, ok := m.projects[name]
@@ -346,116 +423,103 @@ func (m *ProjectManager) Connection(name string) (ProjectConnection, error) {
 	c := *cfg
 	m.mu.Unlock()
 
-	dockerHost := fmt.Sprintf("tcp://localhost:%d", c.BackendPort)
-	return ProjectConnection{
+	var backend, sim *Instance
+	for i := range c.Instances {
+		inst := &c.Instances[i]
+		if backend == nil && inst.Kind == InstanceKindBackend {
+			backend = inst
+		}
+		if sim == nil && inst.Kind == InstanceKindSim {
+			sim = inst
+		}
+	}
+	if backend == nil {
+		return ProjectConnection{}, nil
+	}
+
+	dockerHost := fmt.Sprintf("tcp://localhost:%d", backend.Port)
+	conn := ProjectConnection{
 		DockerHost:       dockerHost,
 		EnvExport:        fmt.Sprintf("export DOCKER_HOST=%s", dockerHost),
 		PodmanConnection: fmt.Sprintf("podman system connection add %s %s", c.Name, dockerHost),
-		SimulatorAddr:    fmt.Sprintf("http://localhost:%d", c.SimPort),
-		BackendAddr:      fmt.Sprintf("http://localhost:%d", c.BackendPort),
-	}, nil
+		BackendAddr:      fmt.Sprintf("http://localhost:%d", backend.Port),
+	}
+	if sim != nil {
+		conn.SimulatorAddr = fmt.Sprintf("http://localhost:%d", sim.Port)
+	}
+	return conn, nil
 }
 
 // StopAll stops all running projects.
 func (m *ProjectManager) StopAll() {
 	m.mu.Lock()
-	names := make([]string, 0, len(m.projects))
-	for name := range m.projects {
-		names = append(names, name)
+	configs := make([]ProjectConfig, 0, len(m.projects))
+	for _, cfg := range m.projects {
+		configs = append(configs, *cfg)
 	}
 	m.mu.Unlock()
-
-	for _, name := range names {
-		_ = m.stopProcesses(name)
+	for _, cfg := range configs {
+		_ = m.stopProcesses(cfg.Name, cfg.Instances)
 	}
 }
 
-// LoadProject loads a persisted project config and registers its processes.
+// LoadProject loads a persisted project config and registers its
+// processes without starting them.
 func (m *ProjectManager) LoadProject(cfg *ProjectConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	stored := *cfg
 	m.projects[cfg.Name] = &stored
 
-	// Reserve ports
-	if err := m.ports.Reserve(cfg.Name, []int{cfg.SimPort, cfg.BackendPort}); err != nil {
+	ports := []int{}
+	for _, inst := range cfg.Instances {
+		ports = append(ports, inst.Port)
+	}
+	if err := m.ports.Reserve(cfg.Name, ports); err != nil {
 		log.Printf("warning: port conflict loading project %q: %v", cfg.Name, err)
 	}
-
-	// Register processes
-	simName, backendName := processNames(cfg.Name)
-
-	simEnvSlice := SimulatorEnv(cfg.Cloud, cfg.SimPort, cfg.LogLevel)
-	simEnvMap := sliceToEnvMap(simEnvSlice)
-	m.pm.AddProcess(ProcessConfig{
-		Name:   simName,
-		Binary: SimulatorBinary(cfg.Cloud),
-		Env:    simEnvMap,
-		Addr:   fmt.Sprintf(":%d", cfg.SimPort),
-		Type:   "simulator",
-	})
-
-	backendEnvSlice := BackendEnv(cfg.Cloud, cfg.Backend, cfg.SimPort, cfg.Name)
-	backendEnvMap := sliceToEnvMap(backendEnvSlice)
-	m.pm.AddProcess(ProcessConfig{
-		Name:   backendName,
-		Binary: BackendBinary(cfg.Backend),
-		Args:   BackendArgs(cfg.BackendPort, cfg.LogLevel),
-		Env:    backendEnvMap,
-		Addr:   fmt.Sprintf(":%d", cfg.BackendPort),
-		Type:   "backend",
-	})
+	for _, inst := range cfg.Instances {
+		m.pm.AddProcess(m.instanceToProcessConfig(cfg.Name, inst))
+	}
 }
 
-// buildStatus builds a ProjectStatus from a config by checking process states.
+// buildStatus aggregates per-instance process status into the project's
+// status.
 func (m *ProjectManager) buildStatus(cfg ProjectConfig) ProjectStatus {
-	simName, backendName := processNames(cfg.Name)
-
-	simInfo, _ := m.pm.Get(simName)
-	backendInfo, _ := m.pm.Get(backendName)
+	instanceStatuses := make([]ProjectInstanceStatus, 0, len(cfg.Instances))
+	running, failed, starting, stopping := 0, 0, 0, 0
+	for _, inst := range cfg.Instances {
+		info, _ := m.pm.Get(instanceProcessName(cfg.Name, inst.Name))
+		instanceStatuses = append(instanceStatuses, ProjectInstanceStatus{Instance: inst, Status: info.Status})
+		switch info.Status {
+		case "running":
+			running++
+		case "failed":
+			failed++
+		case "starting":
+			starting++
+		case "stopping":
+			stopping++
+		}
+	}
 
 	status := "stopped"
-	running := 0
-	failed := 0
-	for _, s := range []string{simInfo.Status, backendInfo.Status} {
-		if s == "running" {
-			running++
-		}
-		if s == "failed" {
-			failed++
-		}
-	}
-
-	if running == 2 {
+	switch {
+	case stopping > 0:
+		status = "stopping"
+	case starting > 0:
+		status = "starting"
+	case running == len(cfg.Instances) && len(cfg.Instances) > 0:
 		status = "running"
-	} else if running > 0 {
+	case running > 0:
 		status = "partial"
-	} else if failed > 0 {
+	case failed > 0:
 		status = "failed"
 	}
-
-	// Check if any is starting
-	for _, s := range []string{simInfo.Status, backendInfo.Status} {
-		if s == "starting" {
-			status = "starting"
-			break
-		}
-	}
-
-	// Check if any is stopping
-	for _, s := range []string{simInfo.Status, backendInfo.Status} {
-		if s == "stopping" {
-			status = "stopping"
-			break
-		}
-	}
-
 	return ProjectStatus{
 		ProjectConfig: cfg,
 		Status:        status,
-		SimStatus:     simInfo.Status,
-		BackendStatus: backendInfo.Status,
+		Instances:     instanceStatuses,
 	}
 }
 
@@ -511,13 +575,4 @@ func (m *ProjectManager) tryLockOp(name, op string) error {
 // unlockOp clears the operation lock for a project. Must be called under m.mu.
 func (m *ProjectManager) unlockOp(name string) {
 	delete(m.opLock, name)
-}
-
-// componentLabel returns a short label for a process name.
-func componentLabel(procName, projectName string) string {
-	simName, _ := processNames(projectName)
-	if procName == simName {
-		return "sim"
-	}
-	return "backend"
 }

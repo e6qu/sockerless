@@ -1,9 +1,9 @@
 package bleephub
 
-// Phase 131 — workflow-file REST surface (`/api/v3/repos/{o}/{r}/actions/workflows`).
-// Phase 130 covered run-level state (`actions/runs`); this file covers
-// the YAML files themselves so `gh workflow list` + `gh workflow run`
-// + the GitHub UI's workflow-dispatch form work against bleephub.
+// workflow-file REST surface (`/api/v3/repos/{o}/{r}/actions/workflows`).
+// The run-level state lives at `actions/runs`; this file covers the YAML
+// files themselves so `gh workflow list` + `gh workflow run` + the
+// GitHub UI's workflow-dispatch form work against bleephub.
 
 import (
 	"encoding/json"

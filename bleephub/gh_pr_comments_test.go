@@ -21,7 +21,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 
 	create := func(path string, body []byte) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", path, bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+		req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 		w := httptest.NewRecorder()
 		s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 		return w
@@ -70,7 +70,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 
 	// List comments → 3 (root + 2 replies).
 	req := httptest.NewRequest("GET", "/api/v3/repos/admin/rc-repo/pulls/"+itoa(pr.Number)+"/comments", nil)
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w = httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	var list []map[string]any
@@ -81,7 +81,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 
 	// Get single comment by id via /pulls/comments/{id}.
 	req = httptest.NewRequest("GET", "/api/v3/repos/admin/rc-repo/pulls/comments/"+itoa(rootID), nil)
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w = httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -91,7 +91,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 	// PATCH body
 	patch, _ := json.Marshal(map[string]string{"body": "EDITED"})
 	req = httptest.NewRequest("PATCH", "/api/v3/repos/admin/rc-repo/pulls/comments/"+itoa(rootID), bytes.NewReader(patch))
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w = httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -105,7 +105,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 
 	// Review threads — 1 thread with 3 comments (root + 2 replies share a thread).
 	req = httptest.NewRequest("GET", "/api/v3/repos/admin/rc-repo/pulls/"+itoa(pr.Number)+"/review-threads", nil)
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w = httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	var threads []map[string]any
@@ -129,7 +129,7 @@ func TestPRReviewComments_MissingBody422(t *testing.T) {
 
 	bad, _ := json.Marshal(map[string]any{"path": "x.go"})
 	req := httptest.NewRequest("POST", "/api/v3/repos/admin/rc2/pulls/"+itoa(pr.Number)+"/comments", bytes.NewReader(bad))
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w := httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusUnprocessableEntity {

@@ -103,37 +103,3 @@ func (i Instance) Validate() error {
 	}
 	return nil
 }
-
-// DeriveLegacyInstances returns the implicit instance list for an old-
-// shape ProjectConfig that pre-dates the Instances slice. Used by the
-// loader so existing on-disk JSONs continue to enumerate as a project
-// with one sim + one backend without a manual migration step.
-//
-// The names are derived from the project name so they're predictable
-// across reloads.
-func DeriveLegacyInstances(p ProjectConfig) []Instance {
-	out := []Instance{}
-	if p.SimPort > 0 {
-		out = append(out, Instance{
-			Name:  p.Name + "-sim",
-			Kind:  InstanceKindSim,
-			Cloud: p.Cloud,
-			Port:  p.SimPort,
-		})
-	}
-	if p.BackendPort > 0 {
-		simName := ""
-		if p.SimPort > 0 {
-			simName = p.Name + "-sim"
-		}
-		out = append(out, Instance{
-			Name:    p.Name + "-backend",
-			Kind:    InstanceKindBackend,
-			Cloud:   p.Cloud,
-			Backend: p.Backend,
-			Port:    p.BackendPort,
-			Sim:     simName,
-		})
-	}
-	return out
-}

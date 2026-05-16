@@ -387,7 +387,10 @@ func registerContainerApps(srv *sim.Server) {
 			Containers     []JobContainer `json:"containers,omitempty"`
 			InitContainers []JobContainer `json:"initContainers,omitempty"`
 		}
-		_ = sim.ReadJSON(r, &override)
+		if err := sim.ReadJSON(r, &override); err != nil {
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+			return
+		}
 
 		execName := fmt.Sprintf("%s-%s", name, randomSuffix(7))
 		execID := fmt.Sprintf("%s/executions/%s", resourceID, execName)

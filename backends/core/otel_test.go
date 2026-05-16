@@ -15,13 +15,13 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-func TestInitTracerNoEndpoint(t *testing.T) {
+func TestInitObservabilityTracerNoEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer obs.Shutdown(context.Background())
 
 	// With no endpoint, the global TracerProvider should remain the default no-op.
 	tracer := otel.Tracer("test")
@@ -33,17 +33,15 @@ func TestInitTracerNoEndpoint(t *testing.T) {
 	}
 }
 
-func TestInitTracerWithEndpoint(t *testing.T) {
-	// Point at a dummy endpoint — we don't need it to actually accept traces
+func TestInitObservabilityTracerWithEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer obs.Shutdown(context.Background())
 
-	// The global TracerProvider should now be a real one.
 	tracer := otel.Tracer("test")
 	_, span := tracer.Start(context.Background(), "test-span")
 	defer span.End()
@@ -52,7 +50,6 @@ func TestInitTracerWithEndpoint(t *testing.T) {
 		t.Error("expected valid SpanContext when OTEL_EXPORTER_OTLP_ENDPOINT is set")
 	}
 
-	// Reset to no-op for other tests
 	otel.SetTracerProvider(noop.NewTracerProvider())
 }
 

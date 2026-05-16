@@ -266,7 +266,7 @@ func (s *BaseServer) handleImageList(w http.ResponseWriter, r *http.Request) {
 	// (which merges Store + cloud registry). The old in-handler logic
 	// read s.Store.Images.List() directly, which returned [] for any
 	// backend that doesn't track images in its local Store — exactly
-	// the BUG-991 fallback-hiding-bug shape, just for list endpoints.
+	// the fallback-hiding-bug shape, just for list endpoints.
 	opts := api.ImageListOptions{
 		All:     r.URL.Query().Get("all") == "1" || r.URL.Query().Get("all") == "true",
 		Filters: ParseFilters(r.URL.Query().Get("filters")),
@@ -404,103 +404,12 @@ func (s *BaseServer) handleImageHistory(w http.ResponseWriter, r *http.Request) 
 
 func (s *BaseServer) handleImagePrune(w http.ResponseWriter, r *http.Request) {
 	filters := ParseFilters(r.URL.Query().Get("filters"))
-
-	// Collect image IDs referenced by running or stopped containers
-	referencedImages := make(map[string]bool)
-	for _, c := range s.Store.Containers.List() {
-		referencedImages[c.Config.Image] = true
-		referencedImages[c.Image] = true
+	resp, err := s.self.ImagePrune(filters)
+	if err != nil {
+		WriteError(w, err)
+		return
 	}
-
-	// Check dangling filter
-	danglingOnly := false
-	if vals, ok := filters["dangling"]; ok {
-		for _, v := range vals {
-			if v == "true" || v == "1" {
-				danglingOnly = true
-			}
-		}
-	}
-
-	var deleted []*api.ImageDeleteResponse
-	var spaceReclaimed uint64
-
-	// Deduplicate: Images store has many aliases pointing to the same image.
-	// Track which image IDs we've already pruned.
-	prunedIDs := make(map[string]bool)
-
-	for _, img := range s.Store.Images.List() {
-		if prunedIDs[img.ID] {
-			continue
-		}
-
-		// Skip images referenced by any container
-		inUse := referencedImages[img.ID]
-		if !inUse {
-			for _, tag := range img.RepoTags {
-				if referencedImages[tag] {
-					inUse = true
-					break
-				}
-				// Also check name without tag
-				if idx := strings.Index(tag, ":"); idx >= 0 {
-					if referencedImages[tag[:idx]] {
-						inUse = true
-						break
-					}
-				}
-			}
-		}
-		if inUse {
-			continue
-		}
-
-		// If dangling filter is set, only prune images with no tags
-		if danglingOnly && len(img.RepoTags) > 0 {
-			hasRealTag := false
-			for _, tag := range img.RepoTags {
-				if !strings.Contains(tag, "<none>") {
-					hasRealTag = true
-					break
-				}
-			}
-			if hasRealTag {
-				continue
-			}
-		}
-
-		prunedIDs[img.ID] = true
-
-		// Clean up build context staging directory
-		if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-			os.RemoveAll(stagingDir.(string))
-		}
-
-		for _, tag := range img.RepoTags {
-			deleted = append(deleted, &api.ImageDeleteResponse{Untagged: tag})
-			s.emitEvent("image", "untag", img.ID, map[string]string{"name": tag})
-		}
-		deleted = append(deleted, &api.ImageDeleteResponse{Deleted: img.ID})
-		s.emitEvent("image", "delete", img.ID, map[string]string{"name": img.ID})
-		spaceReclaimed += uint64(img.Size)
-
-		// Remove from store (all aliases)
-		s.Store.Images.Delete(img.ID)
-		for _, tag := range img.RepoTags {
-			s.Store.Images.Delete(tag)
-			if idx := strings.Index(tag, ":"); idx >= 0 {
-				s.Store.Images.Delete(tag[:idx])
-			}
-		}
-	}
-
-	if deleted == nil {
-		deleted = []*api.ImageDeleteResponse{}
-	}
-	WriteJSON(w, http.StatusOK, api.ImagePruneResponse{
-		ImagesDeleted:  deleted,
-		SpaceReclaimed: spaceReclaimed,
-	})
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
@@ -524,13 +433,19 @@ func (s *BaseServer) handleAuth(w http.ResponseWriter, r *http.Request) {
 func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("name")
 
-	// Accept auth query param (base64-encoded JSON credentials)
 	if authB64 := r.URL.Query().Get("auth"); authB64 != "" {
-		if data, err := base64.StdEncoding.DecodeString(authB64); err == nil {
-			var cred api.AuthRequest
-			if json.Unmarshal(data, &cred) == nil && cred.ServerAddress != "" {
-				s.Store.Creds.Put(cred.ServerAddress, cred)
-			}
+		data, err := base64.StdEncoding.DecodeString(authB64)
+		if err != nil {
+			WriteError(w, &api.InvalidParameterError{Message: "auth: invalid base64: " + err.Error()})
+			return
+		}
+		var cred api.AuthRequest
+		if err := json.Unmarshal(data, &cred); err != nil {
+			WriteError(w, &api.InvalidParameterError{Message: "auth: invalid JSON: " + err.Error()})
+			return
+		}
+		if cred.ServerAddress != "" {
+			s.Store.Creds.Put(cred.ServerAddress, cred)
 		}
 	}
 
@@ -592,28 +507,4 @@ func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, results)
-}
-
-// decodeRegistryAuth decodes Docker's X-Registry-Auth header value.
-// The header is base64-encoded JSON: {"username":"...","password":"..."}.
-// Returns empty strings on any decoding failure.
-func decodeRegistryAuth(header string) (user, pass string) {
-	if header == "" {
-		return "", ""
-	}
-	decoded, err := base64.URLEncoding.DecodeString(header)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(header)
-		if err != nil {
-			return "", ""
-		}
-	}
-	var auth struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if json.Unmarshal(decoded, &auth) != nil {
-		return "", ""
-	}
-	return auth.Username, auth.Password
 }

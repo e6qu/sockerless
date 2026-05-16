@@ -315,7 +315,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	// Sim path: dispatch through Docker, never os/exec a workload on the
 	// sim host. The function spec's SimImage carries the image; SimCommand
 	// is the entrypoint+args override; SimArchitecture (default empty =
-	// image default) carries the workload's arch. Closes BUG-949.
+	// image default) carries the workload's arch. Closes
 	var entrypoint, userCmd []string
 	if fn.ServiceConfig != nil {
 		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_ENTRYPOINT"]; ok {

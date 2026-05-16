@@ -183,7 +183,7 @@ type ComputeSubnetwork struct {
 }
 
 // ComputeDisk mirrors `compute#disk` — the zonal persistent-disk
-// resource. Phase 127's `pd-ephemeral` storage driver provisions one
+// resource. 's `pd-ephemeral` storage driver provisions one
 // disk per runner-task and attaches it to the runner's compute
 // instance for the duration of the task. Field set covers what the Go
 // SDK's `compute.NewDisksRESTClient` round-trips for create / get /
@@ -673,7 +673,7 @@ func regionFromZone(zone string) string {
 }
 
 // registerComputeDisks wires the zonal Compute Disks REST surface that
-// Phase 127's `pd-ephemeral` storage driver provisions against. Real
+// 's `pd-ephemeral` storage driver provisions against. Real
 // GCP exposes Disks via `compute#disk` at
 // `/compute/v1/projects/{p}/zones/{z}/disks` plus an aggregated list
 // across zones at `/compute/v1/projects/{p}/aggregated/disks`. The

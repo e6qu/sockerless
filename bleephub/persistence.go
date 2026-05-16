@@ -12,8 +12,7 @@ import (
 	_ "modernc.org/sqlite" // SQLite driver — pure Go, no CGO
 )
 
-// Phase 153 (P153.12) — SQLite persistence for bleephub state.
-//
+// SQLite persistence for bleephub state.
 // Strategy: KV-style table `kv(bucket, key, value)` where value is the
 // JSON-encoded entity. Memory-first design — on startup, persistence layer
 // loads every row of each bucket into the corresponding in-memory map, then
@@ -23,7 +22,7 @@ import (
 // Gated on `BLEEPHUB_PERSIST=true`. The on-disk path defaults to
 // `${BLEEPHUB_DATA_DIR}/bleephub.db` or `./bleephub.db` if the env is unset.
 //
-// Fail-loud invariant (BUG-985/986 pattern): if the operator requested
+// Fail-loud invariant: if the operator requested
 // persistence and the DB can't be opened, server startup `log.Fatalf`s
 // instead of silently falling back to in-memory.
 //
@@ -78,7 +77,7 @@ CREATE TABLE IF NOT EXISTS counters (
 	return &Persistence{db: db}, nil
 }
 
-// MustNewPersistence is NewPersistence with the BUG-985 fail-loud behaviour:
+// MustNewPersistence is NewPersistence with the fail-loud behaviour:
 // persistence requested + open failure → log.Fatalf.
 func MustNewPersistence() *Persistence {
 	p, err := NewPersistence()
@@ -86,6 +85,23 @@ func MustNewPersistence() *Persistence {
 		log.Fatalf("BLEEPHUB_PERSIST=true requested but persistence failed: %v", err)
 	}
 	return p
+}
+
+// MustPut wraps Put with the fail-loud invariant: if persistence is enabled
+// and the write fails, the process exits via log.Fatalf rather than silently
+// diverging on-disk state from the in-memory map. Mirrors MustNewPersistence
+// for write failures.
+func (p *Persistence) MustPut(bucket, key string, v interface{}) {
+	if err := p.Put(bucket, key, v); err != nil {
+		log.Fatalf("bleephub persistence write %s/%s failed: %v", bucket, key, err)
+	}
+}
+
+// MustDelete is the Delete counterpart to MustPut.
+func (p *Persistence) MustDelete(bucket, key string) {
+	if err := p.Delete(bucket, key); err != nil {
+		log.Fatalf("bleephub persistence delete %s/%s failed: %v", bucket, key, err)
+	}
 }
 
 // Put writes/replaces a JSON-encoded entity under (bucket, key).

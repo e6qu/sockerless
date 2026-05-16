@@ -114,6 +114,23 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &agent)
 }
 
+// LookupAgentByClientID returns the agent whose Authorization.ClientID matches,
+// or nil if no agent has registered with that ClientID. Agent count is bounded
+// by the number of registered runners, so the linear scan is fine.
+func (st *Store) LookupAgentByClientID(clientID string) *Agent {
+	if clientID == "" {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, a := range st.Agents {
+		if a.Authorization != nil && a.Authorization.ClientID == clientID {
+			return a
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	nameFilter := r.URL.Query().Get("agentName")
 

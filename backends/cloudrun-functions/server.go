@@ -127,7 +127,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// — its absence is logged but not fatal so backends without GCS access
 	// still boot for unit tests. gcs-fuse is deliberately NOT registered:
 	// Gen2 functions run on Cloud Run Services which rejects the cache-TTL
-	// gcsfuse flags needed for cross-task safety (BUG-944) — the translator
+	// gcsfuse flags needed for cross-task safety — the translator
 	// rejects gcs-fuse with a pointer at gcs-sync.
 	s.storageBackings = core.NewStorageBackingRegistry()
 	if syncDriver, err := gcpcommon.NewGCSSyncDriver(context.Background()); err == nil {

@@ -5,30 +5,30 @@ import (
 	"testing"
 )
 
-func TestInitTracerNoEndpoint(t *testing.T) {
+func TestInitObservabilityNoEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	if shutdown == nil {
-		t.Fatal("expected non-nil shutdown")
+	if obs == nil || obs.Shutdown == nil {
+		t.Fatal("expected non-nil Observability with Shutdown")
 	}
-	if err := shutdown(context.Background()); err != nil {
-		t.Errorf("no-op shutdown should return nil, got %v", err)
+	if err := obs.Shutdown(context.Background()); err != nil {
+		t.Errorf("no-op Shutdown should return nil, got %v", err)
 	}
 }
 
-func TestInitTracerWithEndpoint(t *testing.T) {
+func TestInitObservabilityWithEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	if shutdown == nil {
-		t.Fatal("expected non-nil shutdown")
+	if obs == nil || obs.Shutdown == nil {
+		t.Fatal("expected non-nil Observability with Shutdown")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_ = shutdown(ctx)
+	_ = obs.Shutdown(ctx)
 }

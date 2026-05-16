@@ -30,8 +30,8 @@ func upstreamBackendOnPort(t *testing.T, status int, body string) (port int, sto
 func setupRollupServer(t *testing.T, instances []Instance) *http.ServeMux {
 	t.Helper()
 	tmp := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{{

@@ -13,13 +13,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestInitTracerNoEndpoint(t *testing.T) {
+func TestInitObservabilityNoEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer obs.Shutdown(context.Background())
 
 	tracer := otel.Tracer("test")
 	_, span := tracer.Start(context.Background(), "test-span")
@@ -30,14 +30,14 @@ func TestInitTracerNoEndpoint(t *testing.T) {
 	}
 }
 
-func TestInitTracerWithEndpoint(t *testing.T) {
+func TestInitObservabilityWithEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
-	shutdown, err := InitTracer("test-service")
+	obs, err := InitObservability("test-service")
 	if err != nil {
-		t.Fatalf("InitTracer failed: %v", err)
+		t.Fatalf("InitObservability failed: %v", err)
 	}
-	defer shutdown(context.Background())
+	defer obs.Shutdown(context.Background())
 
 	tracer := otel.Tracer("test")
 	_, span := tracer.Start(context.Background(), "test-span")

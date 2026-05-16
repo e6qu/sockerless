@@ -37,8 +37,8 @@ func upstreamServerOnLocalhost(t *testing.T, handler http.HandlerFunc) (port int
 func setupProxyServer(t *testing.T, port int) *http.ServeMux {
 	t.Helper()
 	tmp := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{{

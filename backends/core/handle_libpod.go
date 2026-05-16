@@ -270,23 +270,9 @@ func (s *BaseServer) handleLibpodContainerList(w http.ResponseWriter, r *http.Re
 		Status     string            `json:"Status"`
 	}
 
-	// Prefer cloud-derived state on stateless backends so podman ps
-	// sees the same containers as docker ps.
-	var containers []api.Container
-	if s.CloudState != nil {
-		cc, err := s.CloudState.ListContainers(r.Context(), all, filters)
-		if err == nil {
-			containers = cc
-		}
-	}
-	for _, pc := range s.PendingCreates.List() {
-		if all || pc.State.Running {
-			containers = append(containers, pc)
-		}
-	}
-	if s.CloudState == nil {
-		containers = s.Store.Containers.List()
-	}
+	// Source containers from the shared helper so this handler and
+	// handleContainerList / BaseServer.SystemDf can't drift.
+	containers := s.collectContainers(r.Context(), all, filters)
 
 	var result []libpodContainer
 	for _, c := range containers {

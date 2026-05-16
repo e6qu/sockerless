@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Phase 154 (P154.4) — Deployments + Deployment Statuses + Environments.
-//
+// Deployments + Deployment Statuses + Environments.
 // Endpoints:
 //   POST   /repos/{o}/{r}/deployments
 //   GET    /repos/{o}/{r}/deployments

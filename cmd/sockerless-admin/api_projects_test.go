@@ -37,7 +37,10 @@ func TestHandleProjectCreate(t *testing.T) {
 	projMgr := newTestProjectManager(t)
 	handler := handleProjectCreate(projMgr)
 
-	body := `{"name":"test-aws","cloud":"aws","backend":"ecs","log_level":"debug"}`
+	body := `{"name":"test-aws","instances":[
+		{"name":"sim","kind":"sim","cloud":"aws","port":0},
+		{"name":"backend","kind":"backend","cloud":"aws","backend":"ecs","port":0,"sim":"sim"}
+	]}`
 	req := httptest.NewRequest("POST", "/api/v1/projects", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, req)
@@ -51,10 +54,11 @@ func TestHandleProjectCreate(t *testing.T) {
 	if status.Name != "test-aws" {
 		t.Errorf("name = %s, want test-aws", status.Name)
 	}
-	if status.Cloud != CloudAWS {
-		t.Errorf("cloud = %s, want aws", status.Cloud)
+	simInst := projectInstance(status, "sim")
+	if simInst.Cloud != CloudAWS {
+		t.Errorf("sim cloud = %s, want aws", simInst.Cloud)
 	}
-	if status.SimPort == 0 {
+	if simInst.Port == 0 {
 		t.Error("expected auto-assigned sim port")
 	}
 }
@@ -63,7 +67,10 @@ func TestHandleProjectCreateInvalidCloud(t *testing.T) {
 	projMgr := newTestProjectManager(t)
 	handler := handleProjectCreate(projMgr)
 
-	body := `{"name":"bad","cloud":"invalid","backend":"ecs"}`
+	body := `{"name":"bad","instances":[
+		{"name":"sim","kind":"sim","cloud":"invalid","port":0},
+		{"name":"backend","kind":"backend","cloud":"invalid","backend":"ecs","port":0,"sim":"sim"}
+	]}`
 	req := httptest.NewRequest("POST", "/api/v1/projects", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, req)
@@ -77,7 +84,10 @@ func TestHandleProjectCreateInvalidBackend(t *testing.T) {
 	projMgr := newTestProjectManager(t)
 	handler := handleProjectCreate(projMgr)
 
-	body := `{"name":"bad","cloud":"aws","backend":"cloudrun"}`
+	body := `{"name":"bad","instances":[
+		{"name":"sim","kind":"sim","cloud":"aws","port":0},
+		{"name":"backend","kind":"backend","cloud":"aws","backend":"cloudrun","port":0,"sim":"sim"}
+	]}`
 	req := httptest.NewRequest("POST", "/api/v1/projects", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler(w, req)
@@ -89,7 +99,7 @@ func TestHandleProjectCreateInvalidBackend(t *testing.T) {
 
 func TestHandleProjectGet(t *testing.T) {
 	projMgr := newTestProjectManager(t)
-	projMgr.Create(ProjectConfig{Name: "test-gcp", Cloud: CloudGCP, Backend: BackendCloudRun})
+	_ = projMgr.Create(testProject("test-gcp", CloudGCP, BackendCloudRun, 0, 0))
 
 	handler := handleProjectGet(projMgr)
 	req := httptest.NewRequest("GET", "/api/v1/projects/test-gcp", nil)
@@ -124,7 +134,7 @@ func TestHandleProjectGetNotFound(t *testing.T) {
 
 func TestHandleProjectDelete(t *testing.T) {
 	projMgr := newTestProjectManager(t)
-	projMgr.Create(ProjectConfig{Name: "del-me", Cloud: CloudAzure, Backend: BackendACA})
+	_ = projMgr.Create(testProject("del-me", CloudAzure, BackendACA, 0, 0))
 
 	handler := handleProjectDelete(projMgr)
 	req := httptest.NewRequest("DELETE", "/api/v1/projects/del-me", nil)
@@ -145,7 +155,7 @@ func TestHandleProjectDelete(t *testing.T) {
 
 func TestHandleProjectConnection(t *testing.T) {
 	projMgr := newTestProjectManager(t)
-	projMgr.Create(ProjectConfig{Name: "conn", Cloud: CloudAWS, Backend: BackendLambda})
+	_ = projMgr.Create(testProject("conn", CloudAWS, BackendLambda, 0, 0))
 
 	handler := handleProjectConnection(projMgr)
 	req := httptest.NewRequest("GET", "/api/v1/projects/conn/connection", nil)

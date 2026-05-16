@@ -6,8 +6,7 @@ import (
 	"strconv"
 )
 
-// Phase 154 (P154.6) — PR review thread resolve/unresolve.
-//
+// PR review thread resolve/unresolve.
 // Real GH only exposes thread resolve as a GraphQL mutation:
 //   resolveReviewThread(input: {threadId})   → ReviewThread
 //   unresolveReviewThread(input: {threadId}) → ReviewThread
@@ -72,11 +71,11 @@ func mustAtoi(s string) int {
 
 // graphqlMutationResolveReviewThread is invoked from the GraphQL handler
 // when gh CLI sends `mutation { resolveReviewThread(input: {threadId})}`.
-// Wired into the schema as part of P154.6.
+// Wired into the schema as part of .
 
 // --- GraphQL mutation wiring ---
 
-// Phase 154 also adds resolveReviewThread + unresolveReviewThread mutations
+// also adds resolveReviewThread + unresolveReviewThread mutations
 // to the existing graphqlSchema. Done in initGraphQLSchema via a helper to
 // avoid widening schema setup further. The mutation accepts an input object
 // {threadId, clientMutationId} and returns {thread, clientMutationId}.

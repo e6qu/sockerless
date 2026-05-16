@@ -485,8 +485,8 @@ func ResolveLocalImage(image string) string {
 		dockerPath = strings.TrimPrefix(dockerPath, "library/")
 		return dockerPath
 	}
-	// AWS Public Gallery (BUG-865). The ECS backend's resolveImageURI
-	// (BUG-846) routes Docker Hub library refs to
+	// AWS Public Gallery. The ECS backend's resolveImageURI
+	// routes Docker Hub library refs to
 	// `public.ecr.aws/docker/library/<name>:<tag>` for direct pulls
 	// from Fargate. The simulator runs containers locally on Podman /
 	// Docker; locally-built test images and standard Docker Hub

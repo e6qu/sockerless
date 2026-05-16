@@ -7,7 +7,7 @@ package main
 // debit would exceed the budget, the simulator rejects the deploy with
 // the same `Quota exceeded for total allowable CPU per project per
 // region` error string the live cloud produces, so backends + tests can
-// reproduce BUG-942 / BUG-948 deterministically without burning real
+// reproduce deterministically without burning real
 // quota.
 //
 // Configurable via env:
@@ -16,7 +16,7 @@ package main
 //   SIM_GCP_CPU_QUOTA_WINDOW       — sliding window duration (default 1m)
 //
 // Set the quota to 0 (default) when running unrelated tests so deploys
-// don't fail spuriously. Tests targeting BUG-942/948 explicitly raise
+// don't fail spuriously. Tests targeting explicitly raise
 // the env to a small value (e.g. `2`) and observe the failure mode.
 
 import (

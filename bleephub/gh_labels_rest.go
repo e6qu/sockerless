@@ -32,6 +32,14 @@ func (s *Server) registerGHIssueRoutes() {
 	// Issue comments
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.requirePerm("issues", permWrite, s.handleCreateIssueComment))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.handleListIssueComments)
+	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}", s.requirePerm("issues", permWrite, s.handleUpdateIssueComment))
+
+	// Issue + PR moderation — comment-by-id delete + lock/unlock collide at
+	// `/issues/{p1}/{p2}` because Go 1.22's mux can't disambiguate
+	// `/issues/comments/{id}` from `/issues/{n}/lock`. Dispatch via a
+	// single 2-segment handler at delete time.
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/issues/{p1}/{p2}", s.requirePerm("issues", permWrite, s.handleIssuesDeleteDispatch))
+	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/issues/{number}/lock", s.requirePerm("issues", permWrite, s.handleLockIssue))
 
 	// Issue label management
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.requirePerm("issues", permWrite, s.handleAddIssueLabels))

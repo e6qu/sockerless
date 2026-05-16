@@ -7,8 +7,8 @@ import (
 
 func TestAllocatePortHappy(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	port, err := mgr.AllocatePort(InstanceKindBleephub)
@@ -23,8 +23,8 @@ func TestAllocatePortHappy(t *testing.T) {
 
 func TestAllocatePortSkipsClaimed(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	_ = mgr.Load()
 	// Claim the bottom of the bleephub range explicitly so allocation
 	// has to skip past it. Replace fully overrides Ports too, so seed
 	// the ranges back so AllocatePort can find them.
@@ -50,8 +50,8 @@ func TestAllocatePortSkipsClaimed(t *testing.T) {
 
 func TestAllocatePortNoRange(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	_ = mgr.Load()
 	// Replace with a topology that explicitly drops the bleephub range.
 	if err := mgr.Replace(Topology{
 		Ports: PortConfig{Ranges: map[InstanceKind]PortRange{
@@ -67,8 +67,8 @@ func TestAllocatePortNoRange(t *testing.T) {
 
 func TestAllocatePortExhausted(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	_ = mgr.Load()
 	// Tiny range — claim every port.
 	if err := mgr.Replace(Topology{
 		Projects: []ProjectConfig{{Name: "p", Instances: []Instance{

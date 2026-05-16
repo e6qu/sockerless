@@ -91,7 +91,7 @@ git config --global user.name "Test User"
 git config --global init.defaultBranch main
 
 # Default token
-TOKEN="bph_0000000000000000000000000000000000000000"
+TOKEN="ghp_0000000000000000000000000000000000000000"
 BASE="https://localhost"
 HOST="localhost"
 
@@ -484,6 +484,125 @@ ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
 assert_eq "Phase153 /applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
 
 log "Phase 153 parity probes complete"
+
+# ============================================================
+# Phase 161 parity — PR conversation, review threads, ProjectV2,
+# edit history, minimization, locking, PR.milestone.
+# Each block here exercises the surface added during Phase 161.
+# ============================================================
+log "Phase 161 parity probes…"
+
+P161_REPO="admin/gh-test-repo"
+
+# --- PR.comments — gh pr comment + gh pr view --json comments ---
+if gh pr comment 2 --repo "$P161_REPO" --body "P161 first comment" >/dev/null 2>&1; then
+    pass "Phase161 gh pr comment exited 0"
+else
+    fail "Phase161 gh pr comment exited non-zero"
+fi
+PR_COMMENTS=$(gh pr view 2 --repo "$P161_REPO" --json comments 2>/dev/null || echo '{}')
+PR_COMMENT_COUNT=$(echo "$PR_COMMENTS" | jq '.comments | length')
+if [ "$PR_COMMENT_COUNT" -ge 1 ]; then
+    pass "Phase161 PR.comments includes the new comment"
+else
+    fail "Phase161 PR.comments empty after gh pr comment ($PR_COMMENTS)"
+fi
+PR_COMMENT_BODY=$(echo "$PR_COMMENTS" | jq -r '.comments[0].body')
+assert_eq "Phase161 PR.comments[0].body" "P161 first comment" "$PR_COMMENT_BODY"
+
+# --- Comment edit history — PATCH a comment and verify lastEditedAt + body ---
+PR_COMMENT_ID=$(api "$BASE/api/v3/repos/$P161_REPO/issues/2/comments" | jq -r '.[0].id')
+if [ -n "$PR_COMMENT_ID" ] && [ "$PR_COMMENT_ID" != "null" ]; then
+    EDITED=$(api -X PATCH "$BASE/api/v3/repos/$P161_REPO/issues/comments/$PR_COMMENT_ID" -f body="P161 edited")
+    EDITED_BODY=$(echo "$EDITED" | jq -r '.body')
+    assert_eq "Phase161 edited comment body" "P161 edited" "$EDITED_BODY"
+    # GraphQL view should report includesCreatedEdit=true now.
+    EDIT_FLAG=$(gh pr view 2 --repo "$P161_REPO" --json comments \
+        | jq -r '.comments[0].includesCreatedEdit // empty')
+    if [ "$EDIT_FLAG" = "true" ]; then
+        pass "Phase161 comments[0].includesCreatedEdit after PATCH"
+    else
+        fail "Phase161 includesCreatedEdit not flipped after PATCH (got $EDIT_FLAG)"
+    fi
+else
+    fail "Phase161 could not resolve PR comment id for edit test"
+fi
+
+# --- Minimization — direct GraphQL minimizeComment ---
+COMMENT_NODE_ID=$(echo "$PR_COMMENTS" | jq -r '.comments[0].id')
+if [ -n "$COMMENT_NODE_ID" ] && [ "$COMMENT_NODE_ID" != "null" ]; then
+    MIN_RESP=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+        -d "{\"query\":\"mutation { minimizeComment(input: {subjectId: \\\"$COMMENT_NODE_ID\\\", classifier: OFF_TOPIC}) { minimizedComment { id isMinimized minimizedReason } } }\"}" \
+        "$BASE/api/graphql")
+    IS_MIN=$(echo "$MIN_RESP" | jq -r '.data.minimizeComment.minimizedComment.isMinimized')
+    MIN_REASON=$(echo "$MIN_RESP" | jq -r '.data.minimizeComment.minimizedComment.minimizedReason')
+    assert_eq "Phase161 minimizeComment isMinimized=true" "true" "$IS_MIN"
+    assert_eq "Phase161 minimizeComment minimizedReason" "OFF_TOPIC" "$MIN_REASON"
+fi
+
+# --- Locking — REST PUT /lock then attempt a new comment → expect 403 ---
+LOCK_CODE=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+    -d '{"lock_reason":"too heated"}' \
+    "$BASE/api/v3/repos/$P161_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase161 lock PR 204" "204" "$LOCK_CODE"
+POST_COMMENT_LOCKED=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+    -d '{"body":"should be rejected"}' \
+    "$BASE/api/v3/repos/$P161_REPO/issues/2/comments" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase161 comment on locked PR 403" "403" "$POST_COMMENT_LOCKED"
+UNLOCK_CODE=$(curl -sSk -X DELETE -H "Authorization: token $TOKEN" \
+    "$BASE/api/v3/repos/$P161_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
+assert_eq "Phase161 unlock PR 204" "204" "$UNLOCK_CODE"
+
+# --- ProjectV2 — createProjectV2 + createProjectV2Field + addProjectV2ItemById + updateProjectV2ItemFieldValue ---
+ADMIN_NODE_ID=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+    -d '{"query":"{ viewer { id } }"}' "$BASE/api/graphql" | jq -r '.data.viewer.id')
+if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
+    CREATE_PROJ=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+        -d "{\"query\":\"mutation { createProjectV2(input: {ownerId: \\\"$ADMIN_NODE_ID\\\", title: \\\"P161 Board\\\"}) { projectV2 { id title number } } }\"}" \
+        "$BASE/api/graphql")
+    PROJ_NODE_ID=$(echo "$CREATE_PROJ" | jq -r '.data.createProjectV2.projectV2.id')
+    PROJ_TITLE=$(echo "$CREATE_PROJ" | jq -r '.data.createProjectV2.projectV2.title')
+    assert_not_empty "Phase161 createProjectV2 id" "$PROJ_NODE_ID"
+    assert_eq "Phase161 createProjectV2 title" "P161 Board" "$PROJ_TITLE"
+
+    # Add a field with single-select options.
+    CREATE_FIELD=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+        -d "{\"query\":\"mutation { createProjectV2Field(input: {projectId: \\\"$PROJ_NODE_ID\\\", dataType: SINGLE_SELECT, name: \\\"Status\\\", singleSelectOptions: [{name: \\\"Todo\\\"}, {name: \\\"Done\\\"}]}) { projectV2Field { id name dataType } } }\"}" \
+        "$BASE/api/graphql")
+    FIELD_NODE_ID=$(echo "$CREATE_FIELD" | jq -r '.data.createProjectV2Field.projectV2Field.id')
+    FIELD_NAME=$(echo "$CREATE_FIELD" | jq -r '.data.createProjectV2Field.projectV2Field.name')
+    assert_not_empty "Phase161 createProjectV2Field id" "$FIELD_NODE_ID"
+    assert_eq "Phase161 createProjectV2Field name" "Status" "$FIELD_NAME"
+
+    # Add issue #1 as a project item.
+    ISSUE_NODE_ID=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+        -d "{\"query\":\"{ repository(owner: \\\"admin\\\", name: \\\"gh-test-repo\\\") { issue(number: 1) { id } } }\"}" \
+        "$BASE/api/graphql" | jq -r '.data.repository.issue.id')
+    if [ -n "$ISSUE_NODE_ID" ] && [ "$ISSUE_NODE_ID" != "null" ]; then
+        ADD_ITEM=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { addProjectV2ItemById(input: {projectId: \\\"$PROJ_NODE_ID\\\", contentId: \\\"$ISSUE_NODE_ID\\\"}) { item { id } } }\"}" \
+            "$BASE/api/graphql")
+        ITEM_NODE_ID=$(echo "$ADD_ITEM" | jq -r '.data.addProjectV2ItemById.item.id')
+        assert_not_empty "Phase161 addProjectV2ItemById id" "$ITEM_NODE_ID"
+
+        # Verify Issue.projectItems now returns the item via gh issue view --json projectItems
+        # (gh CLI shells the GraphQL query for us).
+        if gh issue view 1 --repo "$P161_REPO" --json projectItems >/tmp/p161.json 2>/dev/null; then
+            ITEMS_LEN=$(jq '.projectItems | length' /tmp/p161.json)
+            if [ "$ITEMS_LEN" -ge 1 ]; then
+                pass "Phase161 Issue.projectItems has the added item"
+            else
+                fail "Phase161 Issue.projectItems empty after addItem"
+            fi
+        else
+            fail "Phase161 gh issue view --json projectItems failed"
+        fi
+    else
+        fail "Phase161 could not resolve issue node id"
+    fi
+fi
+
+log "Phase 161 parity probes complete"
 
 # ============================================================
 # Summary

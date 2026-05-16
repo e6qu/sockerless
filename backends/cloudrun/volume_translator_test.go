@@ -64,7 +64,8 @@ func TestRunpbVolumeFromBackingPDEphemeralRejected(t *testing.T) {
 	// Cloud Run Services don't expose PD as a volume primitive.
 	// Translator rejects loudly with a concrete pointer at gcs-sync
 	// + the GCE-backend bookmark. (gcs-fuse was removed as a Cloud Run
-	// pointer in Phase 92 — it's also broken on Cloud Run per BUG-944.)
+	// pointer earlier; it's also broken on Cloud Run because the cache-TTL
+	// gcsfuse flags needed for cross-task safety are rejected by Cloud Run.)
 	spec := core.BackingSpec{
 		Kind: core.BackingPDEphemeral,
 		PDEphemeral: &core.PDEphemeralSpec{
@@ -85,9 +86,9 @@ func TestRunpbVolumeFromBackingPDEphemeralRejected(t *testing.T) {
 }
 
 func TestRunpbVolumeFromBackingGCSFuseRejected(t *testing.T) {
-	// gcs-fuse on Cloud Run is broken per BUG-944 — Cloud Run rejects
-	// the cache-TTL flags it needs to be safe across tasks. Translator
-	// must reject with a concrete pointer at gcs-sync.
+	// gcs-fuse on Cloud Run is broken — Cloud Run rejects the cache-TTL
+	// flags gcsfuse needs to be safe across tasks. Translator must reject
+	// with a concrete pointer at the gcs-sync alternative.
 	spec := core.BackingSpec{
 		Kind: core.BackingGCSFuse,
 		GCS:  &core.GCSSpec{Bucket: "test-bucket"},
@@ -97,7 +98,10 @@ func TestRunpbVolumeFromBackingGCSFuseRejected(t *testing.T) {
 		t.Fatal("expected error for BackingGCSFuse on Cloud Run")
 	}
 	msg := err.Error()
-	for _, want := range []string{"gcs-fuse", "Cloud Run", "gcs-sync", "BUG-944"} {
+	// Assertions are on contract-level substrings, not BUG-IDs: the error
+	// must name the rejected backing, the cloud, the safety concern, and
+	// the recommended alternative.
+	for _, want := range []string{"gcs-fuse", "Cloud Run", "cache-TTL", "gcs-sync"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error missing %q: %s", want, msg)
 		}

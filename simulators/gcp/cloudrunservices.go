@@ -193,8 +193,8 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 
 		// Cloud Run regional CPU quota check. When SIM_GCP_CPU_QUOTA_PER_REGION
 		// is set, each fresh revision deploy debits its CPU load against the
-		// per-(project, region) sliding-window budget. Reproduces BUG-942 /
-		// BUG-948 deterministically — the live cloud rejects with this same
+		// per-(project, region) sliding-window budget. Reproduces /
+		// deterministically — the live cloud rejects with this same
 		// error when the regional cpu_allocation quota is exhausted.
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(svc)) {
 			regionalCPUQuotaErrorJSON(w, project, location, name)
@@ -277,7 +277,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		// Cloud Run revisions are immutable, so each PATCH spawns a new
 		// revision. Charge its CPU load against the regional sliding-window
 		// quota — a quota-exhausted UpdateService is the failure mode
-		// behind BUG-948 (the gcf overlay-and-swap path issues an Update
+		// behind (the gcf overlay-and-swap path issues an Update
 		// to flip the stub Buildpacks image to the real overlay).
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(update)) {
 			regionalCPUQuotaErrorJSON(w, project, location, name)

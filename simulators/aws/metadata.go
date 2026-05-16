@@ -12,8 +12,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// Phase 135c — AWS host-metadata services.
-//
+// AWS host-metadata services.
 // Two distinct metadata layers exist in real AWS:
 //
 //  1. **EC2 IMDSv2** — `169.254.169.254/latest/meta-data/...` for any

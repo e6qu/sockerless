@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Phase 154 (P154.2) — Releases API.
-//
+// Releases API.
 // Real GH endpoints:
 //   POST   /repos/{o}/{r}/releases                     create
 //   GET    /repos/{o}/{r}/releases                     list (paginated)

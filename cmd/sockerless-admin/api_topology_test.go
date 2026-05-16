@@ -12,8 +12,8 @@ import (
 func setupTopologyServer(t *testing.T) (*TopologyManager, *http.ServeMux) {
 	t.Helper()
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	mux := http.NewServeMux()

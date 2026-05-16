@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
 
+// contextConfig is the on-disk shape `sockerless config migrate` reads from
+// the deprecated `~/.sockerless/contexts/<name>/config.json` layout to fold
+// into `config.yaml`. The runtime no longer consults this shape directly.
 type contextConfig struct {
 	Backend string            `json:"backend"`
 	Addr    string            `json:"addr,omitempty"`
@@ -23,6 +25,19 @@ func (f *multiFlag) String() string { return strings.Join(*f, ", ") }
 func (f *multiFlag) Set(v string) error {
 	*f = append(*f, v)
 	return nil
+}
+
+func requireConfigFile() *unifiedConfig {
+	if !configFileExists() {
+		fmt.Fprintln(os.Stderr, "error: no config.yaml present. Run `sockerless config init` or `sockerless config migrate` first.")
+		os.Exit(1)
+	}
+	cfg, err := loadConfigFile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	return cfg
 }
 
 func contextCreate(args []string) {
@@ -45,138 +60,43 @@ func contextCreate(args []string) {
 		os.Exit(1)
 	}
 
-	// If config.yaml exists, add to it
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
-			os.Exit(1)
-		}
-		env := &environment{
-			Backend:   *backend,
-			Addr:      *addr,
-			Simulator: *simulator,
-		}
-		cfg.Environments[name] = env
-		if err := saveConfigFile(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Context %q created (backend: %s)\n", name, *backend)
-		return
+	cfg := requireConfigFile()
+	env := &environment{
+		Backend:   *backend,
+		Addr:      *addr,
+		Simulator: *simulator,
 	}
-
-	// Fallback: old JSON context
-	env := make(map[string]string)
-	for _, s := range sets {
-		k, v, ok := strings.Cut(s, "=")
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: invalid --set value %q (expected KEY=VALUE)\n", s)
-			os.Exit(1)
-		}
-		env[k] = v
-	}
-
-	cfg := contextConfig{
-		Backend: *backend,
-		Addr:    *addr,
-		Env:     env,
-	}
-
-	dir := contextDir(name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	cfg.Environments[name] = env
+	if err := saveConfigFile(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
 		os.Exit(1)
 	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
 	fmt.Printf("Context %q created (backend: %s)\n", name, *backend)
 }
 
 func contextList() {
-	// Try config.yaml first
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		if len(cfg.Environments) == 0 {
-			fmt.Println("No contexts configured.")
-			return
-		}
-		active := activeContextName()
-		names := make([]string, 0, len(cfg.Environments))
-		for n := range cfg.Environments {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			marker := "  "
-			if name == active {
-				marker = "* "
-			}
-			env := cfg.Environments[name]
-			extra := env.Backend
-			if env.Simulator != "" {
-				extra += ", sim:" + env.Simulator
-			}
-			fmt.Printf("%s%-20s (%s)\n", marker, name, extra)
-		}
-		return
-	}
-
-	// Fallback: old JSON contexts
-	contextsDir := filepath.Join(sockerlessDir(), "contexts")
-	entries, err := os.ReadDir(contextsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Println("No contexts configured.")
-			return
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	active := activeContextName()
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
-	if len(names) == 0 {
+	cfg := requireConfigFile()
+	if len(cfg.Environments) == 0 {
 		fmt.Println("No contexts configured.")
 		return
 	}
-
+	active := activeContextName()
+	names := make([]string, 0, len(cfg.Environments))
+	for n := range cfg.Environments {
+		names = append(names, n)
+	}
+	sort.Strings(names)
 	for _, name := range names {
 		marker := "  "
 		if name == active {
 			marker = "* "
 		}
-		data, err := os.ReadFile(filepath.Join(contextsDir, name, "config.json"))
-		if err != nil {
-			fmt.Printf("%s%s\n", marker, name)
-			continue
+		env := cfg.Environments[name]
+		extra := env.Backend
+		if env.Simulator != "" {
+			extra += ", sim:" + env.Simulator
 		}
-		var cfg contextConfig
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			fmt.Printf("%s%s\n", marker, name)
-			continue
-		}
-		fmt.Printf("%s%-20s (%s)\n", marker, name, cfg.Backend)
+		fmt.Printf("%s%-20s (%s)\n", marker, name, extra)
 	}
 }
 
@@ -191,79 +111,37 @@ func contextShow(args []string) {
 	}
 	name := args[0]
 
-	// Try config.yaml first
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		env, ok := cfg.Environments[name]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
-			os.Exit(1)
-		}
-		fmt.Printf("Context:   %s\n", name)
-		fmt.Printf("Backend:   %s\n", env.Backend)
-		if env.Addr != "" {
-			fmt.Printf("Address:   %s\n", env.Addr)
-		}
-		if env.LogLevel != "" {
-			fmt.Printf("Log Level: %s\n", env.LogLevel)
-		}
-		if env.Simulator != "" {
-			fmt.Printf("Simulator: %s\n", env.Simulator)
-		}
-		if env.AWS != nil {
-			fmt.Printf("AWS Region: %s\n", env.AWS.Region)
-		}
-		if env.GCP != nil {
-			fmt.Printf("GCP Project: %s\n", env.GCP.Project)
-		}
-		if env.Azure != nil {
-			fmt.Printf("Azure Subscription: %s\n", env.Azure.SubscriptionID)
-		}
-		if env.Common.AgentImage != "" {
-			fmt.Printf("Agent Image: %s\n", env.Common.AgentImage)
-		}
-		if env.Common.PollInterval != "" {
-			fmt.Printf("Poll Interval: %s\n", env.Common.PollInterval)
-		}
-		return
-	}
-
-	// Fallback: old JSON context
-	data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
-		} else {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		}
+	cfg := requireConfigFile()
+	env, ok := cfg.Environments[name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
 		os.Exit(1)
 	}
-
-	var cfg contextConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid config: %v\n", err)
-		os.Exit(1)
+	fmt.Printf("Context:   %s\n", name)
+	fmt.Printf("Backend:   %s\n", env.Backend)
+	if env.Addr != "" {
+		fmt.Printf("Address:   %s\n", env.Addr)
 	}
-
-	fmt.Printf("Context: %s\n", name)
-	fmt.Printf("Backend: %s\n", cfg.Backend)
-	if cfg.Addr != "" {
-		fmt.Printf("Address: %s\n", cfg.Addr)
+	if env.LogLevel != "" {
+		fmt.Printf("Log Level: %s\n", env.LogLevel)
 	}
-	if len(cfg.Env) > 0 {
-		fmt.Println("Environment:")
-		keys := make([]string, 0, len(cfg.Env))
-		for k := range cfg.Env {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Printf("  %s=%s\n", k, cfg.Env[k])
-		}
+	if env.Simulator != "" {
+		fmt.Printf("Simulator: %s\n", env.Simulator)
+	}
+	if env.AWS != nil {
+		fmt.Printf("AWS Region: %s\n", env.AWS.Region)
+	}
+	if env.GCP != nil {
+		fmt.Printf("GCP Project: %s\n", env.GCP.Project)
+	}
+	if env.Azure != nil {
+		fmt.Printf("Azure Subscription: %s\n", env.Azure.SubscriptionID)
+	}
+	if env.Common.AgentImage != "" {
+		fmt.Printf("Agent Image: %s\n", env.Common.AgentImage)
+	}
+	if env.Common.PollInterval != "" {
+		fmt.Printf("Poll Interval: %s\n", env.Common.PollInterval)
 	}
 }
 
@@ -274,21 +152,10 @@ func contextUse(args []string) {
 	}
 	name := args[0]
 
-	// Verify context exists in config.yaml or old JSON
-	found := false
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err == nil {
-			if _, ok := cfg.Environments[name]; ok {
-				found = true
-			}
-		}
-	}
-	if !found {
-		if _, err := os.Stat(filepath.Join(contextDir(name), "config.json")); err != nil {
-			fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
-			os.Exit(1)
-		}
+	cfg := requireConfigFile()
+	if _, ok := cfg.Environments[name]; !ok {
+		fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
+		os.Exit(1)
 	}
 
 	dir := sockerlessDir()
@@ -312,47 +179,19 @@ func contextDelete(args []string) {
 	}
 	name := args[0]
 
-	// Try config.yaml first
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		if _, ok := cfg.Environments[name]; ok {
-			delete(cfg.Environments, name)
-			if err := saveConfigFile(cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if activeContextName() == name {
-				os.Remove(activeFile())
-			}
-			fmt.Printf("Context %q deleted\n", name)
-			return
-		}
-	}
-
-	// Fallback: old JSON context
-	dir := contextDir(name)
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
-		} else {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		}
+	cfg := requireConfigFile()
+	if _, ok := cfg.Environments[name]; !ok {
+		fmt.Fprintf(os.Stderr, "error: context %q not found\n", name)
 		os.Exit(1)
 	}
-
-	if err := os.RemoveAll(dir); err != nil {
+	delete(cfg.Environments, name)
+	if err := saveConfigFile(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-
 	if activeContextName() == name {
 		os.Remove(activeFile())
 	}
-
 	fmt.Printf("Context %q deleted\n", name)
 }
 

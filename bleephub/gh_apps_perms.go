@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// Phase 153 (P153.6) — permission enforcement decorator.
-//
+// permission enforcement decorator.
 // `requirePerm` wraps an http.HandlerFunc, returning 403 if the request's
 // auth shape lacks the required permission/level.
 //

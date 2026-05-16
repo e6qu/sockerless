@@ -44,6 +44,17 @@ type StrategyDef struct {
 	MaxParallel int       `yaml:"max-parallel"`
 }
 
+// FailFast returns the matrix strategy's fail-fast value. Defaults to true
+// per the GitHub Actions spec when the strategy or the field is absent.
+// Lets callers consult the resolved value with a single deref instead of
+// stacking nil guards at every level of the chain.
+func (j *JobDef) FailFast() bool {
+	if j == nil || j.Strategy == nil || j.Strategy.FailFast == nil {
+		return true
+	}
+	return *j.Strategy.FailFast
+}
+
 // MatrixDef represents a matrix strategy configuration.
 type MatrixDef struct {
 	Values  map[string][]interface{} // non-reserved keys

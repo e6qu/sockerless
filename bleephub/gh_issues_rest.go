@@ -272,9 +272,22 @@ func (s *Server) handleCreateIssueComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	issue := s.store.GetIssueByNumber(repo.ID, num)
-	if issue == nil {
+	// /issues/{n}/comments routes resolve to either an Issue or a PR by
+	// number — real GitHub treats PRs as issues for this endpoint.
+	parentType := "issue"
+	var parentID, parentNumber int
+	var locked bool
+	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
+		parentID, parentNumber, locked = issue.ID, issue.Number, issue.Locked
+	} else if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
+		parentType = "pull_request"
+		parentID, parentNumber, locked = pr.ID, pr.Number, pr.Locked
+	} else {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if locked {
+		writeGHError(w, http.StatusForbidden, "Conversation is locked.")
 		return
 	}
 
@@ -290,13 +303,13 @@ func (s *Server) handleCreateIssueComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	comment := s.store.CreateComment(issue.ID, user.ID, req.Body)
+	comment := s.store.CreateCommentFor(parentType, parentID, user.ID, req.Body)
 	if comment == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Comment creation failed")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, commentToJSON(comment, s.store, s.baseURL(r), repo.FullName, issue.Number))
+	writeJSON(w, http.StatusCreated, commentToJSON(comment, s.store, s.baseURL(r), repo.FullName, parentNumber))
 }
 
 func (s *Server) handleListIssueComments(w http.ResponseWriter, r *http.Request) {
@@ -315,17 +328,23 @@ func (s *Server) handleListIssueComments(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	issue := s.store.GetIssueByNumber(repo.ID, num)
-	if issue == nil {
+	parentType := "issue"
+	var parentID, parentNumber int
+	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
+		parentID, parentNumber = issue.ID, issue.Number
+	} else if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
+		parentType = "pull_request"
+		parentID, parentNumber = pr.ID, pr.Number
+	} else {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 
-	comments := s.store.ListComments(issue.ID)
+	comments := s.store.ListCommentsFor(parentType, parentID)
 	base := s.baseURL(r)
 	result := make([]map[string]interface{}, 0, len(comments))
 	for _, c := range comments {
-		result = append(result, commentToJSON(c, s.store, base, repo.FullName, issue.Number))
+		result = append(result, commentToJSON(c, s.store, base, repo.FullName, parentNumber))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -489,7 +508,7 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 	// Count comments while holding the lock
 	commentCount := 0
 	for _, c := range st.Comments {
-		if c.IssueID == issue.ID {
+		if c.ParentType == "issue" && c.IssueID == issue.ID {
 			commentCount++
 		}
 	}

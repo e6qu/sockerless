@@ -71,7 +71,7 @@ func TestRequirePerm_PATBypass(t *testing.T) {
 	// Use the seeded admin PAT (bph_-prefixed via Tokens map) — should bypass.
 	body, _ := json.Marshal(map[string]string{"title": "test"})
 	req := httptest.NewRequest("POST", "/api/v3/repos/admin/pat-target/issues", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w := httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {

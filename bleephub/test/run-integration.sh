@@ -317,7 +317,7 @@ sleep 3
 log "===== TEST 7: Secrets injection ====="
 
 # PUT a secret via API
-TOKEN="bph_0000000000000000000000000000000000000000"
+TOKEN="ghp_0000000000000000000000000000000000000000"
 curl -sf -X PUT "http://$BLEEPHUB_ADDR/api/v3/repos/bleephub/test/actions/secrets/TEST_SECRET" \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/json" \

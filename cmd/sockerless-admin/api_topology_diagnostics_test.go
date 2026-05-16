@@ -18,8 +18,8 @@ func setupDiagnosticsServer(t *testing.T) (*TopologyManager, *http.ServeMux, str
 	}
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 
-	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(tmp, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{{

@@ -163,13 +163,15 @@ func TestBackendBinary(t *testing.T) {
 	}
 }
 
-func TestProcessNames(t *testing.T) {
-	sim, backend := processNames("myapp")
-	if sim != "proj-myapp-sim" {
-		t.Errorf("sim = %s, want proj-myapp-sim", sim)
+func TestInstanceProcessName(t *testing.T) {
+	if got := instanceProcessName("myapp", "sim"); got != "proj-myapp-sim" {
+		t.Errorf("sim = %s, want proj-myapp-sim", got)
 	}
-	if backend != "proj-myapp-backend" {
-		t.Errorf("backend = %s, want proj-myapp-backend", backend)
+	if got := instanceProcessName("myapp", "backend"); got != "proj-myapp-backend" {
+		t.Errorf("backend = %s, want proj-myapp-backend", got)
+	}
+	if got := instanceProcessName("myapp", "bleephub-eu"); got != "proj-myapp-bleephub-eu" {
+		t.Errorf("bleephub = %s, want proj-myapp-bleephub-eu", got)
 	}
 }
 
@@ -202,11 +204,7 @@ func TestProjectManagerCreateInvalidName(t *testing.T) {
 	pm := NewProcessManager(nil)
 	projMgr := NewProjectManager(pm, nil, "")
 
-	err := projMgr.Create(ProjectConfig{
-		Name:    "../evil",
-		Cloud:   CloudAWS,
-		Backend: BackendECS,
-	})
+	err := projMgr.Create(testProject("../evil", CloudAWS, BackendECS, 0, 0))
 	if err == nil {
 		t.Error("expected error for invalid project name")
 	}
@@ -219,11 +217,7 @@ func TestProjectManagerCreateGetListDelete(t *testing.T) {
 	projMgr := NewProjectManager(pm, reg, storeDir)
 
 	// Create
-	err := projMgr.Create(ProjectConfig{
-		Name:    "test-aws",
-		Cloud:   CloudAWS,
-		Backend: BackendECS,
-	})
+	err := projMgr.Create(testProject("test-aws", CloudAWS, BackendECS, 0, 0))
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
@@ -233,19 +227,21 @@ func TestProjectManagerCreateGetListDelete(t *testing.T) {
 	if !ok {
 		t.Fatal("project not found after create")
 	}
-	if status.Cloud != CloudAWS {
-		t.Errorf("cloud = %s, want aws", status.Cloud)
+	simInst := projectInstance(status, "sim")
+	backendInst := projectInstance(status, "backend")
+	if simInst.Cloud != CloudAWS {
+		t.Errorf("sim cloud = %s, want aws", simInst.Cloud)
 	}
-	if status.Backend != BackendECS {
-		t.Errorf("backend = %s, want ecs", status.Backend)
+	if backendInst.Backend != BackendECS {
+		t.Errorf("backend kind = %s, want ecs", backendInst.Backend)
 	}
 	if status.Status != "stopped" {
 		t.Errorf("status = %s, want stopped", status.Status)
 	}
-	if status.SimPort == 0 {
+	if simInst.Port == 0 {
 		t.Error("expected auto-assigned sim port")
 	}
-	if status.BackendPort == 0 {
+	if backendInst.Port == 0 {
 		t.Error("expected auto-assigned backend port")
 	}
 	// List
@@ -275,17 +271,9 @@ func TestProjectManagerCreateDuplicate(t *testing.T) {
 	pm := NewProcessManager(nil)
 	projMgr := NewProjectManager(pm, nil, "")
 
-	_ = projMgr.Create(ProjectConfig{
-		Name:    "dup",
-		Cloud:   CloudAWS,
-		Backend: BackendECS,
-	})
+	_ = projMgr.Create(testProject("dup", CloudAWS, BackendECS, 0, 0))
 
-	err := projMgr.Create(ProjectConfig{
-		Name:    "dup",
-		Cloud:   CloudAWS,
-		Backend: BackendECS,
-	})
+	err := projMgr.Create(testProject("dup", CloudAWS, BackendECS, 0, 0))
 	if err == nil {
 		t.Error("expected error for duplicate project")
 	}
@@ -295,11 +283,7 @@ func TestProjectManagerCreateInvalidCloud(t *testing.T) {
 	pm := NewProcessManager(nil)
 	projMgr := NewProjectManager(pm, nil, "")
 
-	err := projMgr.Create(ProjectConfig{
-		Name:    "bad",
-		Cloud:   "invalid",
-		Backend: BackendECS,
-	})
+	err := projMgr.Create(testProject("bad", "invalid", BackendECS, 0, 0))
 	if err == nil {
 		t.Error("expected error for invalid cloud")
 	}
@@ -309,11 +293,7 @@ func TestProjectManagerCreateInvalidBackend(t *testing.T) {
 	pm := NewProcessManager(nil)
 	projMgr := NewProjectManager(pm, nil, "")
 
-	err := projMgr.Create(ProjectConfig{
-		Name:    "bad",
-		Cloud:   CloudAWS,
-		Backend: BackendCloudRun,
-	})
+	err := projMgr.Create(testProject("bad", CloudAWS, BackendCloudRun, 0, 0))
 	if err == nil {
 		t.Error("expected error for invalid backend/cloud combination")
 	}
@@ -323,11 +303,7 @@ func TestProjectManagerConnection(t *testing.T) {
 	pm := NewProcessManager(nil)
 	projMgr := NewProjectManager(pm, nil, "")
 
-	_ = projMgr.Create(ProjectConfig{
-		Name:    "conn-test",
-		Cloud:   CloudGCP,
-		Backend: BackendCloudRun,
-	})
+	_ = projMgr.Create(testProject("conn-test", CloudGCP, BackendCloudRun, 0, 0))
 
 	conn, err := projMgr.Connection("conn-test")
 	if err != nil {
@@ -335,7 +311,8 @@ func TestProjectManagerConnection(t *testing.T) {
 	}
 
 	status, _ := projMgr.Get("conn-test")
-	expectedHost := "tcp://localhost:" + itoa(status.BackendPort)
+	backendInst := projectInstance(status, "backend")
+	expectedHost := "tcp://localhost:" + itoa(backendInst.Port)
 	if conn.DockerHost != expectedHost {
 		t.Errorf("DockerHost = %s, want %s", conn.DockerHost, expectedHost)
 	}
@@ -381,11 +358,7 @@ func TestProjectManagerOpLockBlocking(t *testing.T) {
 	pm := NewProcessManager(reg)
 	projMgr := NewProjectManager(pm, reg, "")
 
-	_ = projMgr.Create(ProjectConfig{
-		Name:    "lock-test",
-		Cloud:   CloudAWS,
-		Backend: BackendECS,
-	})
+	_ = projMgr.Create(testProject("lock-test", CloudAWS, BackendECS, 0, 0))
 
 	// Manually set an op lock to simulate a busy project
 	projMgr.mu.Lock()
@@ -444,32 +417,18 @@ func TestCreateReserveFailureReleasePorts(t *testing.T) {
 	projMgr := NewProjectManager(pm, reg, "")
 
 	// Create first project that takes specific ports
-	_ = projMgr.Create(ProjectConfig{
-		Name:        "blocker",
-		Cloud:       CloudAWS,
-		Backend:     BackendECS,
-		SimPort:     9000,
-		BackendPort: 9001,
-	})
+	_ = projMgr.Create(testProject("blocker", CloudAWS, BackendECS, 9000, 9001))
 
-	// Create second project with auto-allocated ports but one explicit port that conflicts
-	err := projMgr.Create(ProjectConfig{
-		Name:        "leaker",
-		Cloud:       CloudGCP,
-		Backend:     BackendCloudRun,
-		SimPort:     9000, // conflicts with blocker
-		BackendPort: 0,    // auto-allocated
-	})
+	// Create second project with one explicit port that conflicts +
+	// one auto-allocated port — should release the auto-allocated one
+	// when the explicit reservation fails.
+	err := projMgr.Create(testProject("leaker", CloudGCP, BackendCloudRun, 9000, 0))
 	if err == nil {
 		t.Fatal("expected port conflict error")
 	}
 
 	// The auto-allocated ports should have been released — creating another project should work
-	err = projMgr.Create(ProjectConfig{
-		Name:    "after-leak",
-		Cloud:   CloudGCP,
-		Backend: BackendCloudRun,
-	})
+	err = projMgr.Create(testProject("after-leak", CloudGCP, BackendCloudRun, 0, 0))
 	if err != nil {
 		t.Fatalf("create after port-leak fix should work: %v", err)
 	}

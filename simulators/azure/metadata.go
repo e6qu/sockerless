@@ -67,8 +67,7 @@ func registerMetadata(srv *sim.Server) {
 		}
 	})
 
-	// Phase 135c — Azure IMDS instance metadata. Real Azure exposes
-	//
+	// Azure IMDS instance metadata. Real Azure exposes	//
 	//   GET http://169.254.169.254/metadata/instance?api-version=2021-02-01
 	//
 	// returning a {compute, network} document used by:

@@ -216,19 +216,11 @@ func registerArtifactRegistry(srv *sim.Server) {
 		})
 	})
 
-	// OCI Distribution API
-	// We use a single catch-all handler under /v2/ and manually parse the path
-	// because OCI image names can contain multiple path segments (e.g., project/repo/image)
-	// and Go 1.22+ ServeMux only supports {wildcard...} as the last path element.
-	ociHandler := buildOCIHandler(manifests, blobs, uploads, dockerImages)
-	srv.Handle("/v2/", ociHandler)
-}
-
-// buildOCIHandler returns an http.Handler that routes OCI Distribution API requests.
-// It manually parses the path to extract the image name (which can span multiple segments)
-// and the operation type (manifests, blobs, uploads).
-func buildOCIHandler(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], uploads sim.Store[OCIUpload], dockerImages sim.Store[DockerImage]) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// OCI Distribution API — single catch-all handler under /v2/ that manually
+	// parses the path. OCI image names can span multiple segments (e.g.
+	// project/repo/image) and Go 1.22+ ServeMux only supports {wildcard...} as
+	// the last path element.
+	srv.Handle("/v2/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
 		// API version check: GET /v2/
@@ -278,7 +270,7 @@ func buildOCIHandler(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob],
 		}
 
 		http.NotFound(w, r)
-	})
+	}))
 }
 
 func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Store[OCIManifest], dockerImages sim.Store[DockerImage], imageName, reference string) {

@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -46,31 +43,24 @@ func mgmtPost(addr, path string) ([]byte, error) {
 	return body, nil
 }
 
-// activeAddr reads the server address from the active context.
+// activeAddr reads the server address from the active context in config.yaml.
+// Legacy per-context JSON files are no longer consulted; operators on older
+// state must run `sockerless config migrate`.
 func activeAddr() string {
 	name := activeContextName()
 	if name == "" {
 		return ""
 	}
-
-	// Try config.yaml first
-	if configFileExists() {
-		cfg, err := loadConfigFile()
-		if err == nil {
-			if env, ok := cfg.Environments[name]; ok && env.Addr != "" {
-				return env.Addr
-			}
-		}
+	if !configFileExists() {
+		return ""
 	}
-
-	// Fallback: old JSON context
-	data, err := os.ReadFile(filepath.Join(contextDir(name), "config.json"))
+	cfg, err := loadConfigFile()
 	if err != nil {
 		return ""
 	}
-	var cfg contextConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	env, ok := cfg.Environments[name]
+	if !ok {
 		return ""
 	}
-	return cfg.Addr
+	return env.Addr
 }
