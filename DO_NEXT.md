@@ -101,23 +101,24 @@ terraform plan -refresh=true  # endpoints { cloudfront = "http://localhost:5566/
 
 ### Track A — Phase 157 component-adaptor sweep (CLOSED in Phase 160)
 
-The 8 README rewrites that carried forward from Phase 157 all landed in PR #160:
+Every component README now follows the canonical Phase 157 adaptor-led shape:
 
 | Component | Reference adaptor | Status |
 |---|---|---|
+| `backends/docker` | docker CLI/SDK + podman CLI | ✅ #157 |
 | `backends/ecs` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
 | `backends/lambda` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
 | `backends/cloudrun` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
 | `backends/cloudrun-functions` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
 | `backends/aca` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
 | `backends/azure-functions` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `simulators/aws` | aws CLI + AWS SDK + Terraform aws | ✅ P159.10 |
 | `simulators/gcp` | gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
 | `simulators/azure` | az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
-| `simulators/aws` | aws CLI + AWS SDK + Terraform aws | ✅ P159.10 |
-| `backends/docker` | docker CLI/SDK + podman CLI | ✅ #157 |
-| `bleephub` | gh CLI + actions/runner + smart-HTTP git + GitHub REST/GraphQL specs | ✅ Phase 160 (reference-adaptor section added) |
-
-**Still un-rewritten (low priority, deferred):** `cmd/sockerless/README.md`, `cmd/sockerless-admin/README.md`, `simulators/README.md` end-to-end showcase. These can pick up a future small phase if needed.
+| `simulators/` (top-level) | end-to-end showcase + navigation hub | ✅ Phase 160 |
+| `bleephub` | gh CLI + actions/runner + smart-HTTP git + GitHub REST/GraphQL specs | ✅ Phase 160 |
+| `cmd/sockerless` (CLI) | user terminal + backend management API + Docker REST | ✅ Phase 160 |
+| `cmd/sockerless-admin` | browser/UI + REST clients + per-component `/v1/health` polling | ✅ Phase 160 (new file) |
 
 ### Track B — Skill maturation (post-Phase 158)
 

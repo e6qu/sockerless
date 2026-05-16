@@ -42,6 +42,16 @@ Folded into Phase 160 same PR:
 
 The "keep some redundancy" call paid off: env var tables stay in each backend README (single-glance quickstarts) rather than getting consolidated to `specs/CONFIG.md`, which is still the canonical full schema and cross-linked from every backend.
 
+### Second mid-phase expansion: pull the deferred items in
+
+User then asked to fold the three remaining deferred items into the same PR. Done same session:
+
+- **`cmd/sockerless/README.md`** rewritten in adaptor-led shape. The CLI's "reference adaptors" are the user's terminal + the backend management API + the [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/) (since `sockerless ps`, `metrics`, `check` go through it) + the per-package `*_test.go` files. Crucially, the README states what the CLI explicitly *does not* do: speak any cloud API directly.
+- **`cmd/sockerless-admin/README.md`** newly written (file did not exist before). The admin's reference adaptors are the embedded React UI + REST clients hitting `/api/*` + the admin's own outbound polling of each registered component's `/v1/health` + `/v1/info`. Documents the load-bearing `--backend name=addr` / `--simulator name=addr` / `--bleephub addr` flags and the priority order for component discovery. Reaffirms the components-decoupled invariant.
+- **`simulators/README.md`** rewritten as a true end-to-end showcase + navigation hub. The "Three governing principles" stay; the reference-adaptor table now appears upfront cross-cloud (SDK / CLI / Terraform-provider per cloud, with spec hyperlinks); the end-to-end showcase combines all three sims under one workflow including a pointer to `TestStackProductionShape`. Updated to reflect Phase 159's expansion of `simulators/aws` to include CloudFront / ACM / Route 53 / WAFv2 / Amplify.
+
+`PLAN.md` and `DO_NEXT.md` Track A tables updated to show all 14 component READMEs ticked. No "still un-rewritten" carryover.
+
 ## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
 
 Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).

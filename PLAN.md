@@ -121,9 +121,9 @@ Out of scope:
 - ACM certificate DNS-validation polling loops (`pendingValidation` → `issued` transition can be eager).
 - Service-linked role *enforcement* (sim accepts requests without verifying the SLR exists; create the records on demand).
 
-### Phase 157 — Component ⇄ reference-adaptor docs sweep (closed across #157 + P159.10 + #160)
+### Phase 157 — Component ⇄ reference-adaptor docs sweep (CLOSED across #157 + P159.10 + #160)
 
-PR #157 covered `backends/docker` only. `simulators/aws/README.md` followed in P159.10. **Phase 160 (PR #160)** completed the sweep across the remaining cloud backends + simulators (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`, `simulators/{gcp,azure}/README.md`) plus the `bleephub/README.md` reference-adaptor section. Still un-rewritten in the same shape (low-priority, out-of-scope for #160): `cmd/sockerless/README.md`, `cmd/sockerless-admin/README.md`, `simulators/README.md` end-to-end showcase.
+PR #157 covered `backends/docker` only. `simulators/aws/README.md` followed in P159.10. **Phase 160 (PR #160)** completed the sweep across the remaining cloud backends + simulators (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`, `simulators/{gcp,azure}/README.md`), added a `bleephub/README.md` reference-adaptor section, and folded in `cmd/sockerless/README.md` (rewrite), `cmd/sockerless-admin/README.md` (new), and `simulators/README.md` (rewritten as end-to-end showcase + navigation hub). **All component READMEs now follow the canonical shape.**
 
 Doc shape (locked-in from #157): lead with reference adaptors (with min versions + spec hyperlinks), then validation (test paths + last-green dates), wiring, sample (real captured output), known issues, out-of-scope.
 
