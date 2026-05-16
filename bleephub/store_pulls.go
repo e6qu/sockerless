@@ -7,29 +7,31 @@ import (
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	ID           int
-	NodeID       string
-	Number       int // per-repo, SHARED with issues via NextIssueNumber
-	RepoID       int
-	Title        string
-	Body         string
-	State        string // "OPEN", "CLOSED", "MERGED"
-	IsDraft      bool
-	HeadRefName  string // source branch name
-	BaseRefName  string // target branch name
-	AuthorID     int
-	AssigneeIDs  []int
-	LabelIDs     []int
-	MilestoneID  int    // 0 = none
-	Mergeable    string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
-	Additions    int
-	Deletions    int
-	ChangedFiles int
-	MergedByID   int // 0 = not merged
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	ClosedAt     *time.Time
-	MergedAt     *time.Time
+	ID               int
+	NodeID           string
+	Number           int // per-repo, SHARED with issues via NextIssueNumber
+	RepoID           int
+	Title            string
+	Body             string
+	State            string // "OPEN", "CLOSED", "MERGED"
+	IsDraft          bool
+	HeadRefName      string // source branch name
+	BaseRefName      string // target branch name
+	AuthorID         int
+	AssigneeIDs      []int
+	LabelIDs         []int
+	MilestoneID      int    // 0 = none
+	Mergeable        string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
+	Additions        int
+	Deletions        int
+	ChangedFiles     int
+	MergedByID       int // 0 = not merged
+	Locked           bool
+	ActiveLockReason string // "", "off-topic", "too heated", "resolved", "spam"
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	ClosedAt         *time.Time
+	MergedAt         *time.Time
 }
 
 // PullRequestReview represents a review on a pull request.

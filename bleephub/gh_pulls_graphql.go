@@ -246,10 +246,41 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return c["author"], nil
 				},
 			},
-			// Edit history + moderation aren't modeled — truthful defaults.
-			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"includesCreatedEdit": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["includesCreatedEdit"], nil
+				},
+			},
+			"lastEditedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["lastEditedAt"], nil
+				},
+			},
+			"editor": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["editor"], nil
+				},
+			},
+			"isMinimized": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["isMinimized"], nil
+				},
+			},
+			"minimizedReason": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["minimizedReason"], nil
+				},
+			},
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(prReactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -263,9 +294,64 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	prCommentConnectionType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRCommentConnection",
 		Fields: graphql.Fields{
-			"nodes":      &graphql.Field{Type: graphql.NewList(prCommentType), Resolve: emptyList},
+			"nodes":      &graphql.Field{Type: graphql.NewList(prCommentType)},
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(prCommentPageInfoType)},
+		},
+	})
+
+	// --- PR Review thread types ---
+	prReviewCommentType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PullRequestReviewComment",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["nodeID"], nil
+				},
+			},
+			"body":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"path":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"diffHunk":  &graphql.Field{Type: graphql.String},
+			"line":      &graphql.Field{Type: graphql.Int},
+			"position":  &graphql.Field{Type: graphql.Int},
+			"createdAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"state":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"author": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["author"], nil
+				},
+			},
+		},
+	})
+	prReviewCommentConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PullRequestReviewCommentConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(prReviewCommentType)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+	prReviewThreadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PullRequestReviewThread",
+		Fields: graphql.Fields{
+			"id":         &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"isResolved": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"isOutdated": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"resolvedBy": &graphql.Field{Type: userType},
+			"path":       &graphql.Field{Type: graphql.String},
+			"line":       &graphql.Field{Type: graphql.Int},
+			"comments":   &graphql.Field{Type: graphql.NewNonNull(prReviewCommentConnectionType)},
+		},
+	})
+	prReviewThreadConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PullRequestReviewThreadConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(prReviewThreadType)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 		},
 	})
 
@@ -306,26 +392,28 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return pr["nodeID"], nil
 				},
 			},
-			"databaseId":     &graphql.Field{Type: graphql.Int},
-			"number":         &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"title":          &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"body":           &graphql.Field{Type: graphql.String},
-			"state":          &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"isDraft":        &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"url":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"headRefName":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"baseRefName":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"headRefOid":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"mergeable":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"merged":         &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"mergedAt":       &graphql.Field{Type: graphql.String},
-			"additions":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"deletions":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"changedFiles":   &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"createdAt":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"closedAt":       &graphql.Field{Type: graphql.String},
-			"reviewDecision": &graphql.Field{Type: graphql.String},
+			"databaseId":       &graphql.Field{Type: graphql.Int},
+			"number":           &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"body":             &graphql.Field{Type: graphql.String},
+			"state":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"isDraft":          &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"url":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"headRefName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"baseRefName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"headRefOid":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"mergeable":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"merged":           &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"mergedAt":         &graphql.Field{Type: graphql.String},
+			"additions":        &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"deletions":        &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"changedFiles":     &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"locked":           &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"activeLockReason": &graphql.Field{Type: graphql.String},
+			"createdAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"closedAt":         &graphql.Field{Type: graphql.String},
+			"reviewDecision":   &graphql.Field{Type: graphql.String},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -390,6 +478,17 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
 					return pr["comments"], nil
+				},
+			},
+			"reviewThreads": &graphql.Field{
+				Type: prReviewThreadConnectionType,
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					return pr["reviewThreads"], nil
 				},
 			},
 			// `milestone` — gh CLI's issue view fragment queries it on PR too
@@ -982,6 +1081,9 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		}
 	}
 
+	// Review threads — inline file-line review comments grouped by thread.
+	reviewThreadNodes := reviewThreadsForGraphQL(st.PRReviewComments.ListThreads(pr.ID), st)
+
 	// URL
 	repo := st.Repos[pr.RepoID]
 	url := ""
@@ -1001,30 +1103,32 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"__typename":     "PullRequest",
-		"nodeID":         pr.NodeID,
-		"databaseId":     pr.ID,
-		"number":         pr.Number,
-		"title":          pr.Title,
-		"body":           pr.Body,
-		"state":          pr.State,
-		"isDraft":        pr.IsDraft,
-		"url":            url,
-		"headRefName":    pr.HeadRefName,
-		"baseRefName":    pr.BaseRefName,
-		"headRefOid":     sha,
-		"mergeable":      pr.Mergeable,
-		"merged":         pr.State == "MERGED",
-		"mergedAt":       mergedAt,
-		"mergedBy":       mergedBy,
-		"additions":      pr.Additions,
-		"deletions":      pr.Deletions,
-		"changedFiles":   pr.ChangedFiles,
-		"reviewDecision": reviewDecision,
-		"author":         author,
-		"createdAt":      pr.CreatedAt.Format(time.RFC3339),
-		"updatedAt":      pr.UpdatedAt.Format(time.RFC3339),
-		"closedAt":       closedAt,
+		"__typename":       "PullRequest",
+		"nodeID":           pr.NodeID,
+		"databaseId":       pr.ID,
+		"number":           pr.Number,
+		"title":            pr.Title,
+		"body":             pr.Body,
+		"state":            pr.State,
+		"isDraft":          pr.IsDraft,
+		"url":              url,
+		"headRefName":      pr.HeadRefName,
+		"baseRefName":      pr.BaseRefName,
+		"headRefOid":       sha,
+		"mergeable":        pr.Mergeable,
+		"merged":           pr.State == "MERGED",
+		"mergedAt":         mergedAt,
+		"mergedBy":         mergedBy,
+		"additions":        pr.Additions,
+		"deletions":        pr.Deletions,
+		"changedFiles":     pr.ChangedFiles,
+		"reviewDecision":   reviewDecision,
+		"author":           author,
+		"createdAt":        pr.CreatedAt.Format(time.RFC3339),
+		"updatedAt":        pr.UpdatedAt.Format(time.RFC3339),
+		"closedAt":         closedAt,
+		"locked":           pr.Locked,
+		"activeLockReason": nilStr(pr.ActiveLockReason),
 		"labels": map[string]interface{}{
 			"nodes":      labelNodes,
 			"totalCount": len(labelNodes),
@@ -1073,7 +1177,71 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			"totalCount": 1,
 		},
 		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "pull_request", pr.ID),
+		"reviewThreads": map[string]interface{}{
+			"nodes":      reviewThreadNodes,
+			"totalCount": len(reviewThreadNodes),
+		},
 	}
+}
+
+// reviewThreadsForGraphQL renders ReviewThread + PRReviewComment
+// records as the GraphQL source map shape expected by the
+// PullRequestReviewThread / PullRequestReviewComment types below.
+// Caller must hold st.mu.RLock.
+func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(threads))
+	for _, t := range threads {
+		commentNodes := make([]map[string]interface{}, 0, len(t.Comments))
+		for _, c := range t.Comments {
+			var author map[string]interface{}
+			if u, ok := st.Users[c.AuthorID]; ok {
+				author = userToGraphQL(u)
+			}
+			var line interface{}
+			if c.Line != nil {
+				line = *c.Line
+			}
+			var position interface{}
+			if c.Position != nil {
+				position = *c.Position
+			}
+			commentNodes = append(commentNodes, map[string]interface{}{
+				"nodeID":    c.NodeID,
+				"body":      c.Body,
+				"path":      c.Path,
+				"diffHunk":  c.DiffHunk,
+				"line":      line,
+				"position":  position,
+				"createdAt": c.CreatedAt.Format(time.RFC3339),
+				"updatedAt": c.UpdatedAt.Format(time.RFC3339),
+				"author":    author,
+				"state":     "SUBMITTED",
+			})
+		}
+		// The thread's path/line tracks the root comment.
+		var threadPath string
+		var threadLine interface{}
+		if len(t.Comments) > 0 {
+			root := t.Comments[0]
+			threadPath = root.Path
+			if root.Line != nil {
+				threadLine = *root.Line
+			}
+		}
+		out = append(out, map[string]interface{}{
+			"id":         fmt.Sprintf("PRT_kgDO%08d", t.ID),
+			"isResolved": t.IsResolved,
+			"isOutdated": false,
+			"resolvedBy": nil,
+			"path":       threadPath,
+			"line":       threadLine,
+			"comments": map[string]interface{}{
+				"nodes":      commentNodes,
+				"totalCount": len(commentNodes),
+			},
+		})
+	}
+	return out
 }
 
 // prCommentToGQLLocked builds the GraphQL source map for a single
@@ -1083,13 +1251,26 @@ func prCommentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 	if u, ok := st.Users[c.AuthorID]; ok {
 		author = userToGraphQL(u)
 	}
+	var editor map[string]interface{}
+	var lastEditedAt interface{}
+	if c.LastEditedAt != nil {
+		lastEditedAt = c.LastEditedAt.Format(time.RFC3339)
+		if u, ok := st.Users[c.EditorID]; ok {
+			editor = userToGraphQL(u)
+		}
+	}
 	return map[string]interface{}{
-		"nodeID":            c.NodeID,
-		"body":              c.Body,
-		"createdAt":         c.CreatedAt.Format(time.RFC3339),
-		"author":            author,
-		"authorAssociation": "OWNER",
-		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
+		"nodeID":              c.NodeID,
+		"body":                c.Body,
+		"createdAt":           c.CreatedAt.Format(time.RFC3339),
+		"author":              author,
+		"authorAssociation":   "OWNER",
+		"includesCreatedEdit": c.LastEditedAt != nil,
+		"lastEditedAt":        lastEditedAt,
+		"editor":              editor,
+		"isMinimized":         c.MinimizedReason != "",
+		"minimizedReason":     nilStr(c.MinimizedReason),
+		"reactionGroups":      reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
 	}
 }
 

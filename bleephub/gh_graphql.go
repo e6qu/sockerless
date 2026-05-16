@@ -61,6 +61,9 @@ func (s *Server) initGraphQLSchema() {
 	// Add pull request types, queries, and mutations
 	s.addPullRequestFieldsToSchema(userType, issueType, repoType, mutationType, queryType)
 
+	// Add moderation mutations (minimize/unminimize comment, lock/unlock).
+	s.addModerationMutationsToSchema(mutationType)
+
 	schema, err := graphql.NewSchema(graphql.SchemaConfig{
 		Query:    queryType,
 		Mutation: mutationType,

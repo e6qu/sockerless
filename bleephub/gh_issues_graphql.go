@@ -126,9 +126,41 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"authorAssociation": &graphql.Field{Type: graphql.String},
 			// Fields gh CLI's `gh issue view` queries on IssueComment — defaults
 			// fine for bleephub (we don't model edit history or moderation).
-			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"includesCreatedEdit": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["includesCreatedEdit"], nil
+				},
+			},
+			"lastEditedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["lastEditedAt"], nil
+				},
+			},
+			"editor": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["editor"], nil
+				},
+			},
+			"isMinimized": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["isMinimized"], nil
+				},
+			},
+			"minimizedReason": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["minimizedReason"], nil
+				},
+			},
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(reactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -189,17 +221,19 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return i["nodeID"], nil
 				},
 			},
-			"databaseId":  &graphql.Field{Type: graphql.Int},
-			"number":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"title":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"body":        &graphql.Field{Type: graphql.String},
-			"state":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"stateReason": &graphql.Field{Type: graphql.String},
-			"url":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"createdAt":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"closedAt":    &graphql.Field{Type: graphql.String},
-			"isPinned":    &graphql.Field{Type: graphql.Boolean},
+			"databaseId":       &graphql.Field{Type: graphql.Int},
+			"number":           &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"body":             &graphql.Field{Type: graphql.String},
+			"state":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"stateReason":      &graphql.Field{Type: graphql.String},
+			"url":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"createdAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"closedAt":         &graphql.Field{Type: graphql.String},
+			"isPinned":         &graphql.Field{Type: graphql.Boolean},
+			"locked":           &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"activeLockReason": &graphql.Field{Type: graphql.String},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -1027,19 +1061,21 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"nodeID":      issue.NodeID,
-		"databaseId":  issue.ID,
-		"number":      issue.Number,
-		"title":       issue.Title,
-		"body":        issue.Body,
-		"state":       issue.State,
-		"stateReason": stateReason,
-		"url":         url,
-		"createdAt":   issue.CreatedAt.Format(time.RFC3339),
-		"updatedAt":   issue.UpdatedAt.Format(time.RFC3339),
-		"closedAt":    closedAt,
-		"isPinned":    false,
-		"author":      author,
+		"nodeID":           issue.NodeID,
+		"databaseId":       issue.ID,
+		"number":           issue.Number,
+		"title":            issue.Title,
+		"body":             issue.Body,
+		"state":            issue.State,
+		"stateReason":      stateReason,
+		"url":              url,
+		"createdAt":        issue.CreatedAt.Format(time.RFC3339),
+		"updatedAt":        issue.UpdatedAt.Format(time.RFC3339),
+		"closedAt":         closedAt,
+		"isPinned":         false,
+		"locked":           issue.Locked,
+		"activeLockReason": nilStr(issue.ActiveLockReason),
+		"author":           author,
 		"labels": map[string]interface{}{
 			"nodes":      labelNodes,
 			"totalCount": len(labelNodes),
@@ -1110,16 +1146,38 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 	if u, ok := st.Users[c.AuthorID]; ok {
 		author = userToGraphQL(u)
 	}
-	return map[string]interface{}{
-		"nodeID":            c.NodeID,
-		"body":              c.Body,
-		"url":               "",
-		"createdAt":         c.CreatedAt.Format(time.RFC3339),
-		"updatedAt":         c.UpdatedAt.Format(time.RFC3339),
-		"author":            author,
-		"authorAssociation": "OWNER",
-		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
+	var editor map[string]interface{}
+	var lastEditedAt interface{}
+	if c.LastEditedAt != nil {
+		lastEditedAt = c.LastEditedAt.Format(time.RFC3339)
+		if u, ok := st.Users[c.EditorID]; ok {
+			editor = userToGraphQL(u)
+		}
 	}
+	return map[string]interface{}{
+		"nodeID":              c.NodeID,
+		"body":                c.Body,
+		"url":                 "",
+		"createdAt":           c.CreatedAt.Format(time.RFC3339),
+		"updatedAt":           c.UpdatedAt.Format(time.RFC3339),
+		"author":              author,
+		"authorAssociation":   "OWNER",
+		"includesCreatedEdit": c.LastEditedAt != nil,
+		"lastEditedAt":        lastEditedAt,
+		"editor":              editor,
+		"isMinimized":         c.MinimizedReason != "",
+		"minimizedReason":     nilStr(c.MinimizedReason),
+		"reactionGroups":      reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
+	}
+}
+
+// nilStr returns nil for empty strings (so nullable GraphQL String fields
+// resolve to null rather than ""), or the string itself.
+func nilStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // reactionGroupsForGraphQL returns a GraphQL-shaped `[ReactionGroup]` list
@@ -1335,20 +1393,11 @@ func projectV2ItemConnectionType() *graphql.Object {
 	return projectV2ItemConnectionTypeMemo
 }
 
-// emptyList resolves a connection's nodes/edges to an empty list. Used by
-// connection types representing surfaces bleephub doesn't track (e.g.
-// ProjectV2Item, PRComment) so the connection-level shape gh CLI requires
-// stays valid while the underlying field-level resolvers below stay
-// unreachable. Truthful — bleephub has zero items in those surfaces, not
-// "we hid the items."
-func emptyList(graphql.ResolveParams) (interface{}, error) { return []interface{}{}, nil }
-
-// alwaysFalse / alwaysNil are truthful defaults for fields representing
-// dimensions bleephub doesn't model (comment minimization, edit history).
-// Real GitHub returns false / null on the same fields for surfaces that
-// haven't been minimized; bleephub matches the spec.
-func alwaysFalse(graphql.ResolveParams) (interface{}, error) { return false, nil }
-func alwaysNil(graphql.ResolveParams) (interface{}, error)   { return nil, nil }
+// alwaysNil is a truthful default for nullable fields representing
+// dimensions bleephub doesn't model on the parent type (e.g. PR.milestone
+// — bleephub doesn't track PR milestones today). Real GitHub returns
+// null on the same fields when unset; bleephub matches the spec.
+func alwaysNil(graphql.ResolveParams) (interface{}, error) { return nil, nil }
 
 // unreachableFieldErr resolves a field that should never be invoked at query
 // time because its parent connection always returns an empty nodes/edges

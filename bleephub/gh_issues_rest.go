@@ -276,13 +276,18 @@ func (s *Server) handleCreateIssueComment(w http.ResponseWriter, r *http.Request
 	// number — real GitHub treats PRs as issues for this endpoint.
 	parentType := "issue"
 	var parentID, parentNumber int
+	var locked bool
 	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
-		parentID, parentNumber = issue.ID, issue.Number
+		parentID, parentNumber, locked = issue.ID, issue.Number, issue.Locked
 	} else if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
 		parentType = "pull_request"
-		parentID, parentNumber = pr.ID, pr.Number
+		parentID, parentNumber, locked = pr.ID, pr.Number, pr.Locked
 	} else {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if locked {
+		writeGHError(w, http.StatusForbidden, "Conversation is locked.")
 		return
 	}
 
