@@ -54,8 +54,8 @@ func main() {
 	reg := NewRegistry()
 	procMgr := NewProcessManager(reg)
 	projectMgr := NewProjectManager(procMgr, reg, defaultProjectStoreDir())
-	topologyMgr := NewTopologyManager(DefaultTopologyPath(), defaultProjectStoreDir())
-	if err := topologyMgr.LoadOrMigrate(); err != nil {
+	topologyMgr := NewTopologyManager(DefaultTopologyPath())
+	if err := topologyMgr.Load(); err != nil {
 		log.Fatalf("topology load failed: %v", err)
 	}
 
@@ -70,10 +70,10 @@ func main() {
 		}
 	}
 
-	// 2. Auto-discover from ~/.sockerless/contexts/
+	// 2. Auto-discover from config.yaml + admin.json
 	discoverFromContexts(reg)
 
-	// 3. Load persisted projects
+	// 3. Load persisted projects from the per-project JSON store.
 	if projects, err := LoadProjects(defaultProjectStoreDir()); err == nil {
 		for _, p := range projects {
 			projectMgr.LoadProject(p)

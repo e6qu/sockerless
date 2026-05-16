@@ -348,11 +348,9 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 		// Orphan pod-Service sweep. List all sockerless-managed
 		// `sockerless-svc-*` Services and delete those whose owner
 		// label points to a non-live (gone or terminal) runner-task.
-		// Services without an owner label are legacy (pre-owner-label
-		// rollout) — leave them alone here so a stale label doesn't
-		// reap an active pod-Service from a dispatcher version skew.
-		// A separate idle-time sweep will handle legacy
-		// orphans once the rollout is past the inflection point.
+		// Services without an owner label violate the dispatcher's
+		// labeling contract — surface as an error so the operator
+		// notices instead of leaving stale resources behind.
 		services, err := spawner.ListManagedServices(ctx, label.Project, label.Region)
 		if err != nil {
 			log.Printf("cleanup: list managed services on %s failed: %v", key, err)
@@ -360,6 +358,7 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 		}
 		for _, s := range services {
 			if s.OwnerRunnerJob == "" {
+				log.Printf("cleanup: managed service %s missing owner label — this violates the dispatcher labeling contract; delete the service manually or investigate the producer", s.Name)
 				continue
 			}
 			if liveOwners[s.OwnerRunnerJob] {

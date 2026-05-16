@@ -12,36 +12,28 @@ import (
 // HTTP handlers can't race each other to a half-written state.
 //
 // Lifecycle:
-//   - NewTopologyManager loads the file from `path`. Missing file is
-//     not an error (returns an empty Topology). Operators routinely
-//     start admin in a fresh repo with no sockerless.yaml.
-//   - LoadOrMigrate (used at startup) prefers the YAML; if absent,
-//     migrates from the legacy per-project JSONs at `legacyDir` and
-//     writes the YAML so subsequent reads use the new path.
+//   - NewTopologyManager binds to a path; the file is read by Load.
+//     Missing file is not an error — admin comes up with an empty
+//     topology so operators can populate via the UI / API.
 //   - Get returns a defensive copy so callers can't mutate internal state.
 //   - Replace validates + writes + replaces atomically.
 type TopologyManager struct {
-	mu        sync.RWMutex
-	path      string
-	legacyDir string
-	current   *Topology
+	mu      sync.RWMutex
+	path    string
+	current *Topology
 }
 
-// NewTopologyManager constructs a manager bound to a YAML path + a
-// legacy-projects-dir for one-shot migration. Either may be empty
-// (legacyDir empty disables migration).
-func NewTopologyManager(path, legacyDir string) *TopologyManager {
+// NewTopologyManager constructs a manager bound to a YAML path.
+func NewTopologyManager(path string) *TopologyManager {
 	return &TopologyManager{
-		path:      path,
-		legacyDir: legacyDir,
-		current:   &Topology{Ports: PortConfig{Ranges: DefaultPortRanges()}},
+		path:    path,
+		current: &Topology{Ports: PortConfig{Ranges: DefaultPortRanges()}},
 	}
 }
 
-// LoadOrMigrate is the startup hook. Returns nil on success — admin
-// is allowed to come up with an empty topology when neither the YAML
-// nor any legacy JSONs exist.
-func (m *TopologyManager) LoadOrMigrate() error {
+// Load reads the topology file. Returns nil on success — admin is
+// allowed to come up with an empty topology when the YAML is missing.
+func (m *TopologyManager) Load() error {
 	t, err := LoadTopology(m.path)
 	if err == nil {
 		if vErr := t.Validate(); vErr != nil {
@@ -52,30 +44,10 @@ func (m *TopologyManager) LoadOrMigrate() error {
 		m.mu.Unlock()
 		return nil
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	// YAML missing — try legacy migration if a dir was supplied.
-	if m.legacyDir == "" {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	migrated, mErr := MigrateLegacyProjects(m.legacyDir)
-	if mErr != nil {
-		if errors.Is(mErr, os.ErrNotExist) {
-			return nil
-		}
-		return mErr
-	}
-	if vErr := migrated.Validate(); vErr != nil {
-		return fmt.Errorf("legacy migration produced invalid topology: %w", vErr)
-	}
-	if sErr := SaveTopology(m.path, migrated); sErr != nil {
-		return fmt.Errorf("write migrated topology to %s: %w", m.path, sErr)
-	}
-	m.mu.Lock()
-	m.current = migrated
-	m.mu.Unlock()
-	return nil
+	return err
 }
 
 // Get returns a defensive copy of the current topology.

@@ -7,8 +7,8 @@ import (
 
 func TestTopologyManagerEmptyOnFirstLoad(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	got := mgr.Get()
@@ -20,37 +20,10 @@ func TestTopologyManagerEmptyOnFirstLoad(t *testing.T) {
 	}
 }
 
-func TestTopologyManagerLoadMigrate(t *testing.T) {
-	dir := t.TempDir()
-	legacy := filepath.Join(dir, "legacy")
-	if err := SaveProject(legacy, &ProjectConfig{
-		Name: "old", Cloud: CloudAWS, Backend: BackendECS, SimPort: 4566, BackendPort: 3375,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	yamlPath := filepath.Join(dir, "sockerless.yaml")
-	mgr := NewTopologyManager(yamlPath, legacy)
-	if err := mgr.LoadOrMigrate(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	got := mgr.Get()
-	if len(got.Projects) != 1 || got.Projects[0].Name != "old" {
-		t.Fatalf("want migrated project 'old', got %+v", got.Projects)
-	}
-	if len(got.Projects[0].Instances) != 2 {
-		t.Errorf("want 2 derived instances, got %d", len(got.Projects[0].Instances))
-	}
-	// Should have written the YAML.
-	if _, err := LoadTopology(yamlPath); err != nil {
-		t.Errorf("expected sockerless.yaml after migration: %v", err)
-	}
-}
-
 func TestTopologyManagerReplace(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	if err := mgr.LoadOrMigrate(); err != nil {
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	if err := mgr.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	next := Topology{Projects: []ProjectConfig{
@@ -81,8 +54,8 @@ func TestTopologyManagerReplace(t *testing.T) {
 
 func TestTopologyManagerInstancesFlat(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	_ = mgr.Load()
 	if err := mgr.Replace(Topology{Projects: []ProjectConfig{
 		{Name: "p1", Instances: []Instance{
 			{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500},
@@ -116,8 +89,8 @@ func TestTopologyManagerInstancesFlat(t *testing.T) {
 
 func TestTopologyManagerGetIsCopy(t *testing.T) {
 	dir := t.TempDir()
-	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"), "")
-	_ = mgr.LoadOrMigrate()
+	mgr := NewTopologyManager(filepath.Join(dir, "sockerless.yaml"))
+	_ = mgr.Load()
 	_ = mgr.Replace(Topology{Projects: []ProjectConfig{
 		{Name: "p", Instances: []Instance{
 			{Name: "s", Kind: InstanceKindSim, Cloud: CloudAWS, Port: 4500,

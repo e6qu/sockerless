@@ -129,7 +129,13 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
 			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
 			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
-			"reactionGroups":      &graphql.Field{Type: graphql.NewList(reactionGroupType), Resolve: emptyList},
+			"reactionGroups": &graphql.Field{
+				Type: graphql.NewList(reactionGroupType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["reactionGroups"], nil
+				},
+			},
 		},
 	})
 
@@ -269,7 +275,8 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(reactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return staticReactionGroups(), nil
+					i := p.Source.(map[string]interface{})
+					return i["reactionGroups"], nil
 				},
 			},
 		},
@@ -1064,6 +1071,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 				"endCursor":       nil,
 			},
 		},
+		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "issue", issue.ID),
 	}
 }
 
@@ -1110,21 +1118,43 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		"updatedAt":         c.UpdatedAt.Format(time.RFC3339),
 		"author":            author,
 		"authorAssociation": "OWNER",
+		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
 	}
 }
 
-func staticReactionGroups() []map[string]interface{} {
-	contents := []string{"THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"}
-	groups := make([]map[string]interface{}, 0, len(contents))
-	for _, c := range contents {
-		groups = append(groups, map[string]interface{}{
-			"content": c,
-			"users": map[string]interface{}{
-				"totalCount": 0,
-			},
+// reactionGroupsForGraphQL returns a GraphQL-shaped `[ReactionGroup]` list
+// for the given parent, querying the real ReactionStore so per-content
+// totalCount values reflect actual reactions. Used by Issue, IssueComment,
+// and any other reactable type's `reactionGroups` field.
+func reactionGroupsForGraphQL(rs *ReactionStore, parentType string, parentID int) []map[string]interface{} {
+	counts := map[string]int{
+		"+1": 0, "-1": 0, "laugh": 0, "confused": 0,
+		"heart": 0, "hooray": 0, "rocket": 0, "eyes": 0,
+	}
+	if rs != nil && parentID != 0 {
+		for _, r := range rs.ListReactions(parentType, parentID, "") {
+			counts[r.Content]++
+		}
+	}
+	// Order matches real GitHub's GraphQL response.
+	mapping := [...]struct{ rest, gql string }{
+		{"+1", "THUMBS_UP"},
+		{"-1", "THUMBS_DOWN"},
+		{"laugh", "LAUGH"},
+		{"hooray", "HOORAY"},
+		{"confused", "CONFUSED"},
+		{"heart", "HEART"},
+		{"rocket", "ROCKET"},
+		{"eyes", "EYES"},
+	}
+	out := make([]map[string]interface{}, 0, len(mapping))
+	for _, m := range mapping {
+		out = append(out, map[string]interface{}{
+			"content": m.gql,
+			"users":   map[string]interface{}{"totalCount": counts[m.rest]},
 		})
 	}
-	return groups
+	return out
 }
 
 // --- Node ID lookup helpers ---

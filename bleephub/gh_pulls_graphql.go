@@ -206,6 +206,12 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	// PRComment type — must match IssueComment's nullability for shared fields
 	// (body, createdAt). gh CLI's `gh issue view` query unions Issue|PR with
 	// shared `comments.nodes` field selections; the field types must merge.
+	// All resolvers are unreachable in practice — the parent connection
+	// always returns an empty nodes list because bleephub doesn't model
+	// review-comment fetching on the PR's `comments` field yet (real GH
+	// returns inline review comments here). If a future change starts
+	// emitting non-empty nodes without wiring real resolvers, the errors
+	// here surface the gap instead of leaking fake data.
 	prCommentType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRComment",
 		Fields: graphql.Fields{
@@ -213,11 +219,11 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"body":                &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
 			"createdAt":           &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
 			"authorAssociation":   &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
-			"author":              &graphql.Field{Type: userType, Resolve: alwaysNil},
-			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
-			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
-			"reactionGroups":      &graphql.Field{Type: graphql.NewList(prReactionGroupType), Resolve: emptyList},
+			"author":              &graphql.Field{Type: userType, Resolve: unreachableFieldErr},
+			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: unreachableFieldErr},
+			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: unreachableFieldErr},
+			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
+			"reactionGroups":      &graphql.Field{Type: graphql.NewList(prReactionGroupType), Resolve: unreachableFieldErr},
 		},
 	})
 
@@ -387,7 +393,8 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(prReactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return prStaticReactionGroups(), nil
+					pr := p.Source.(map[string]interface{})
+					return pr["reactionGroups"], nil
 				},
 			},
 		},
@@ -1022,6 +1029,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"commits": map[string]interface{}{
 			"totalCount": 1,
 		},
+		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "pull_request", pr.ID),
 	}
 }
 
@@ -1126,18 +1134,4 @@ func paginatePullRequestsGQL(prs []*PullRequest, st *Store, first int, after str
 			"endCursor":       endCursor,
 		},
 	}
-}
-
-func prStaticReactionGroups() []map[string]interface{} {
-	contents := []string{"THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY", "CONFUSED", "HEART", "ROCKET", "EYES"}
-	groups := make([]map[string]interface{}, 0, len(contents))
-	for _, c := range contents {
-		groups = append(groups, map[string]interface{}{
-			"content": c,
-			"users": map[string]interface{}{
-				"totalCount": 0,
-			},
-		})
-	}
-	return groups
 }

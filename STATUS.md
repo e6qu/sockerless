@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-161-vibe-slop-sweep` — to open as PR #161. |
-| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes.** 13 BUGs closed (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1008) covering 7 anti-pattern categories from `docs/VIBE_CODING.md` across backends/, simulators/, bleephub/, cmd/. 3 deeper legacy-rip-out BUGs (1006/1007/1009) surfaced during the sweep and staged for Phase 162 so #161 stays reviewable. |
+| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes.** 17 BUGs closed (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008 + 1009 partial). After re-verification: 2 open (1009 P3 escalation + 1011 ProjectManager instance-based rewrite). |
 | Last merged | PR #160 — Phase 160 skills + complete component-README adaptor-led sweep (2026-05-16, merged at `aeb0ac6e`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 4 open (1001, 1006, 1007, 1009) · 1006 fixed (1011 total filed) · 2 false positives. |
+| Bugs | 2 open (1009 P3 + 1011 P1) · 1010 fixed (1012 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
