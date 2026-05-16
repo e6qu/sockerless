@@ -203,27 +203,60 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
-	// PRComment type — must match IssueComment's nullability for shared fields
-	// (body, createdAt). gh CLI's `gh issue view` query unions Issue|PR with
-	// shared `comments.nodes` field selections; the field types must merge.
-	// All resolvers are unreachable in practice — the parent connection
-	// always returns an empty nodes list because bleephub doesn't model
-	// review-comment fetching on the PR's `comments` field yet (real GH
-	// returns inline review comments here). If a future change starts
-	// emitting non-empty nodes without wiring real resolvers, the errors
-	// here surface the gap instead of leaking fake data.
+	// PRComment type — must match IssueComment's nullability for shared
+	// fields (body, createdAt). gh CLI's `gh issue view` and `gh pr view`
+	// queries union Issue|PR with shared `comments.nodes` field
+	// selections; the field types must merge. Resolvers read from the
+	// source map populated by prCommentToGQLLocked above.
 	prCommentType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRComment",
 		Fields: graphql.Fields{
-			"id":                  &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
-			"body":                &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
-			"createdAt":           &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
-			"authorAssociation":   &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
-			"author":              &graphql.Field{Type: userType, Resolve: unreachableFieldErr},
-			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: unreachableFieldErr},
-			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: unreachableFieldErr},
-			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
-			"reactionGroups":      &graphql.Field{Type: graphql.NewList(prReactionGroupType), Resolve: unreachableFieldErr},
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["nodeID"], nil
+				},
+			},
+			"body": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.String),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["body"], nil
+				},
+			},
+			"createdAt": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.String),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["createdAt"], nil
+				},
+			},
+			"authorAssociation": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["authorAssociation"], nil
+				},
+			},
+			"author": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["author"], nil
+				},
+			},
+			// Edit history + moderation aren't modeled — truthful defaults.
+			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
+			"minimizedReason":     &graphql.Field{Type: graphql.String, Resolve: alwaysNil},
+			"reactionGroups": &graphql.Field{
+				Type: graphql.NewList(prReactionGroupType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["reactionGroups"], nil
+				},
+			},
 		},
 	})
 
@@ -940,6 +973,15 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		reviewDecision = rd
 	}
 
+	// Conversation comments (real GitHub: PRs and Issues share the same
+	// comment table; bleephub mirrors that via Comment.ParentType).
+	prCommentNodes := make([]map[string]interface{}, 0)
+	for _, c := range st.Comments {
+		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
+			prCommentNodes = append(prCommentNodes, prCommentToGQLLocked(c, st))
+		}
+	}
+
 	// URL
 	repo := st.Repos[pr.RepoID]
 	url := ""
@@ -1018,7 +1060,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			"totalCount": 0,
 		},
 		"comments": map[string]interface{}{
-			"totalCount": 0,
+			"nodes":      prCommentNodes,
+			"totalCount": len(prCommentNodes),
 			"pageInfo": map[string]interface{}{
 				"hasNextPage":     false,
 				"hasPreviousPage": false,
@@ -1030,6 +1073,23 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			"totalCount": 1,
 		},
 		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "pull_request", pr.ID),
+	}
+}
+
+// prCommentToGQLLocked builds the GraphQL source map for a single
+// PR conversation comment. Caller must hold st.mu.RLock.
+func prCommentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
+	var author map[string]interface{}
+	if u, ok := st.Users[c.AuthorID]; ok {
+		author = userToGraphQL(u)
+	}
+	return map[string]interface{}{
+		"nodeID":            c.NodeID,
+		"body":              c.Body,
+		"createdAt":         c.CreatedAt.Format(time.RFC3339),
+		"author":            author,
+		"authorAssociation": "OWNER",
+		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
 	}
 }
 

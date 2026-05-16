@@ -92,13 +92,30 @@ Out of scope:
 - Phase 91d (cloud-primitive blocker).
 - Slopsquatted-dependency audit — `check-latest-deps` already covers drift.
 
-### Phase 162 — Legacy / fallback rip-out (filed during Phase 161)
+### Phase 161 mid-PR expansion — bleephub GraphQL completion
 
-Three Open BUGs surfaced during Phase 161 that exceeded #161's reviewable scope: BUG-1006 (CLI + admin JSON-context fallback), BUG-1007 (admin legacy migration scaffolding), BUG-1009 (gh-runner-dispatcher legacy services). Per user direction, all three rip out legacy support entirely (no compat period, no deprecation, no opt-in fallback) — the project is under active development and no real users carry on-disk JSON contexts that need migrating from prod.
+Folded into PR #161 at user request after the re-verification pass. The placeholder-resolver pattern from BUG-1001 ("contract honest via `unreachableFieldErr`") proved that empty connections + unreachable resolvers is a tolerable interim, but the user's preference is to complete each surface with real lookups now rather than carry the placeholders.
 
-BUG-1001 also remains Open (real ProjectV2 / PR-review-thread implementation), but lower priority since the `unreachableFieldErr` from BUG-1001's interim fix makes the contract honest until the surfaces are actually implemented.
+Three surfaces, each landing in its own commit with real `gh` CLI smoke for fidelity:
 
-Branch + commit layout to be decided when the phase starts. Acceptance: 4 BUGs closed, 0 open, `bleephub/` + `cmd/sockerless-admin` + `cmd/sockerless` + `github-runner-dispatcher-gcp` tests green.
+- **P161.16 — `PullRequest.comments`**: Wire to bleephub's existing `Comments` store (real GitHub stores PR + Issue conversation comments in the same table; bleephub already does the same internally). Replace `PRComment` `unreachableFieldErr` resolvers with real data resolvers. Smoke: `gh pr comment` + `gh pr view --json comments`.
+- **P161.17 — `PullRequest.reviewThreads`**: Add `PullRequestReviewThread` + `PullRequestReviewComment` GraphQL types. Wire the new connection to the existing `PRReviewCommentStore` (already drives the REST `/pulls/{n}/comments` surface via `gh_pr_comments.go`). Smoke: `gh pr view --json reviewThreads`.
+- **P161.18 — ProjectV2**: New `ProjectV2Store` + REST endpoints (`/orgs/{org}/projectsV2`, `/projects/{project_id}/items`) + GraphQL types (`ProjectV2`, `ProjectV2Item`, `ProjectV2ItemFieldValue` with at least `SingleSelectValue`) + `addProjectV2ItemById` mutation. `Issue.projectItems` returns real items when issues are added to projects. Smoke: `gh project create` + `gh project item-add` + `gh issue view --json projectItems`.
+
+Each commit:
+- Lands the implementation
+- Lands a `gh` CLI smoke test under `bleephub/test/` or as a Go test that shells out to `gh`
+- Updates `specs/BLEEPHUB_GITHUB_API_PARITY.md` row for the closed surface
+- Updates BUGS.md (BUG-1001 finally closes after P161.18)
+
+### Phase 162 — Legacy / fallback rip-out (continued from Phase 161)
+
+Filed during Phase 161 but staged out of scope:
+
+- **BUG-1011** (P1) — `ProjectConfig.SimPort/BackendPort/LogLevel` + `project_manager.go` lifecycle. Rewrite ProjectManager to drive lifecycle from `Topology.Instances` instead of the legacy "1 sim + 1 backend per project" shape.
+- **BUG-1009** (P3 continued) — gh-runner-dispatcher escalation (hard error vs grace-window delete on unlabeled services).
+
+Branch + commit layout to be decided when the phase starts.
 
 ## Future phases
 

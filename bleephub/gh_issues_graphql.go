@@ -1004,7 +1004,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	// Comments
 	commentNodes := make([]map[string]interface{}, 0)
 	for _, c := range st.Comments {
-		if c.IssueID == issue.ID {
+		if c.ParentType == "issue" && c.IssueID == issue.ID {
 			commentNodes = append(commentNodes, commentToGQLLocked(c, st))
 		}
 	}

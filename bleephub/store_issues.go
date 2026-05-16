@@ -52,15 +52,21 @@ type Issue struct {
 	ClosedAt    *time.Time
 }
 
-// Comment represents a comment on an issue.
+// Comment represents a conversation comment on an issue or PR. Real
+// GitHub stores both in the same table because PRs are issues internally;
+// bleephub mirrors that by discriminating via ParentType ("issue" or
+// "pull_request"). The legacy field name IssueID is preserved for
+// existing call sites and now holds the issue *or* PR database ID
+// depending on ParentType.
 type Comment struct {
-	ID        int
-	NodeID    string
-	IssueID   int
-	AuthorID  int
-	Body      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID         int
+	NodeID     string
+	ParentType string // "issue" or "pull_request"
+	IssueID    int    // issue or PR database ID per ParentType
+	AuthorID   int
+	Body       string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // --- Label CRUD ---
@@ -352,37 +358,61 @@ func (st *Store) UpdateIssue(id int, fn func(*Issue)) bool {
 
 // --- Comment CRUD ---
 
-// CreateComment creates a new comment on an issue.
+// CreateComment creates a new conversation comment on an issue. Use
+// CreateCommentFor for PR conversation comments — real GitHub stores
+// both in the same table; bleephub mirrors that via ParentType.
 func (st *Store) CreateComment(issueID, authorID int, body string) *Comment {
+	return st.CreateCommentFor("issue", issueID, authorID, body)
+}
+
+// CreateCommentFor creates a comment on an issue (parentType="issue") or
+// pull request (parentType="pull_request"). The parent must already
+// exist in the matching store.
+func (st *Store) CreateCommentFor(parentType string, parentID, authorID int, body string) *Comment {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-
-	if _, ok := st.Issues[issueID]; !ok {
+	switch parentType {
+	case "issue":
+		if _, ok := st.Issues[parentID]; !ok {
+			return nil
+		}
+	case "pull_request":
+		if _, ok := st.PullRequests[parentID]; !ok {
+			return nil
+		}
+	default:
 		return nil
 	}
 
 	now := time.Now()
 	c := &Comment{
-		ID:        st.NextComment,
-		NodeID:    fmt.Sprintf("IC_kgDO%08d", st.NextComment),
-		IssueID:   issueID,
-		AuthorID:  authorID,
-		Body:      body,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         st.NextComment,
+		NodeID:     fmt.Sprintf("IC_kgDO%08d", st.NextComment),
+		ParentType: parentType,
+		IssueID:    parentID,
+		AuthorID:   authorID,
+		Body:       body,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	st.NextComment++
 	st.Comments[c.ID] = c
 	return c
 }
 
-// ListComments returns all comments for an issue.
+// ListComments returns all conversation comments for an issue.
 func (st *Store) ListComments(issueID int) []*Comment {
+	return st.ListCommentsFor("issue", issueID)
+}
+
+// ListCommentsFor returns all conversation comments for an issue
+// (parentType="issue") or pull request (parentType="pull_request").
+func (st *Store) ListCommentsFor(parentType string, parentID int) []*Comment {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	var comments []*Comment
 	for _, c := range st.Comments {
-		if c.IssueID == issueID {
+		if c.ParentType == parentType && c.IssueID == parentID {
 			comments = append(comments, c)
 		}
 	}
