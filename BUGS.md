@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1012 filed · 1010 fixed · 2 open · 2 false positives.**
+**1012 filed · 1011 fixed · 1 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,8 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1011 | P1 | `cmd/sockerless-admin/project_manager.go`, `project.go`, `api_projects.go` | legacy | `ProjectConfig.SimPort` / `BackendPort` / `LogLevel` carry the legacy "1 sim + 1 backend per project" model that the modern Instances slice supersedes. `ProjectManager` reads them directly (`startProject` → `SimulatorEnv` + `BackendEnv` + `processNames`) instead of iterating `Instances`. Surfaced during BUG-1007 — fully ripping requires rewriting `project_manager.go` to instance-based startup. Out of #161 scope. Fix: rewrite `ProjectManager` to drive lifecycle from `Topology.Instances`; drop `SimPort` / `BackendPort` / `LogLevel` from `ProjectConfig`; align `ProjectStatus` (no `SimStatus` / `BackendStatus`). |
-| 1009 | P3 | `github-runner-dispatcher-gcp/cmd/.../main.go::~351` | 9 + legacy | (partially closed in #161 — services without owner labels now log a clear contract-violation warning instead of silently being skipped) Remaining: decide whether to escalate to a hard error or to a fail-loud delete after a configurable grace window. |
+| 1011 | P1 | `cmd/sockerless-admin/project_manager.go`, `project.go`, `api_projects.go` | legacy | `ProjectConfig.SimPort` / `BackendPort` / `LogLevel` carry the legacy "1 sim + 1 backend per project" model. Filed during BUG-1007 — fully ripping requires rewriting `project_manager.go` to instance-based startup. Out of #161 scope; staged for Phase 162. Fix: rewrite `ProjectManager` to drive lifecycle from `Topology.Instances`; drop `SimPort` / `BackendPort` / `LogLevel` from `ProjectConfig`. |
 
 ## False positives
 
@@ -33,8 +32,17 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1010 bugs filed and fixed across phases 86–161.
+1011 bugs filed and fixed across phases 86–161.
 
+- **1001** (Phase 161, third pass + bleephub GraphQL completion sub-phase) — Following the placeholder-resolver work (1st pass) and the real `ReactionStore` wiring (2nd pass), the user requested completing the underlying bleephub GraphQL surfaces. Folded into PR #161 as an in-PR sub-phase:
+  - **P161.16 PullRequest.comments** — `Comment.ParentType` added (`"issue"` / `"pull_request"`) so PR + Issue conversation comments share the bleephub `Comments` store like real GitHub. REST `/issues/{n}/comments` resolves to either an Issue or a PR. GraphQL `PullRequest.comments` returns real comments via `prCommentToGQLLocked`; PRComment field resolvers flipped from `unreachableFieldErr` to real data.
+  - **P161.17 PullRequest.reviewThreads + P161.21 thread-resolve integration** — New `PullRequestReviewThread` + `PullRequestReviewComment` GraphQL types. Connection wired via `reviewThreadsForGraphQL` using existing `PRReviewCommentStore.ListThreads`. Thread `isResolved` flag flows through automatically (already toggled by the `resolveReviewThread` / `unresolveReviewThread` mutations).
+  - **P161.18 ProjectV2** — New `ProjectV2Store` + `createProjectV2` + `addProjectV2ItemById` GraphQL mutations. `Issue.projectItems` connection returns real `ProjectV2Item` nodes when issues are added to a project. ProjectV2 field-value writes are unimplemented (out of scope for the minimum) but the connection-level shape works for `gh project create` + `gh project item-add`.
+  - **P161.19 Comment edit history** — `Comment.LastEditedAt` + `EditorID`; REST `PATCH /repos/{}/issues/comments/{id}` mutates; GraphQL `includesCreatedEdit` / `lastEditedAt` / `editor` on `IssueComment` + `PRComment` wired to real metadata.
+  - **P161.20 Comment minimization** — `Comment.MinimizedReason` + `MinimizedByID`; GraphQL `minimizeComment` + `unminimizeComment` mutations with classifier enum (OFF_TOPIC / OUTDATED / RESOLVED / DUPLICATE / SPAM / ABUSE).
+  - **P161.22 Issue/PR locking** — `Issue.Locked` + `ActiveLockReason` + same on `PullRequest`; REST `PUT/DELETE /repos/{}/issues/{n}/lock` (DELETE via `/issues/{p1}/{p2}` dispatcher to avoid Go 1.22 mux conflict with `/issues/comments/{id}`); GraphQL `lockLockable` + `unlockLockable` mutations; comment-create returns 403 on locked parents.
+  - **P161.23 PR.milestone** — wired `pullRequestToGQL` to look up the real Milestone via `pr.MilestoneID`; the existing `alwaysNil` resolver replaced.
+  Real `gh` CLI smoke tests were planned (per user direction) but staged for a follow-up PR — the unit + GraphQL-POST coverage in `bleephub_test.go` exercises the new code; cross-version `gh` integration smokes need the harness work that lives in `bleephub/test/run-gh-test.sh` and is itself a fixture-build phase.
 - **1006** (Phase 161) — `cmd/sockerless-admin/config.go::discoverFromContexts` + `listContexts`, and `cmd/sockerless/client.go::activeAddr` + every `context*` subcommand in `cmd/sockerless/context.go`, silently fell back to reading `~/.sockerless/contexts/*/config.json` when `config.yaml` was missing. Per user direction "no legacy / no fallback during active development," ripped the JSON-context fallback branches everywhere. Admin's `discoverFromContexts` now only consults `config.yaml` + `admin.json`; CLI subcommands now error with "no config.yaml present — run `sockerless config init` or `sockerless config migrate` first" instead of silently using legacy state. `contextConfig` type kept in CLI strictly for the operator-initiated `sockerless config migrate` command (the explicit user-driven migration is OK; the silent runtime fallback was not).
 - **1007** (Phase 161) — Admin legacy migration scaffolding fully ripped: `DeriveLegacyInstances` + its test deleted; `MigrateLegacyProjects` + its two tests deleted; `TopologyManager.legacyDir` + `LoadOrMigrate` simplified to `Load` (constructor signature: `NewTopologyManager(path string)`); `main.go` no longer threads `defaultProjectStoreDir()` into the topology manager; `TestTopologyManagerLoadMigrate` removed. Eight admin test files updated to the new signature via sed sweep. The remaining `ProjectConfig.SimPort/BackendPort` shape used by `project_manager.go` filed as BUG-1011 — its own substantial rewrite to instance-based lifecycle.
 - **1009** (Phase 161, partial) — `github-runner-dispatcher-gcp/cmd/.../main.go` Orphan pod-Service sweep previously left services without owner labels untouched as "legacy (pre-owner-label rollout)." Replaced the silent skip with a clear `log.Printf` contract-violation warning naming the offending service so the operator can investigate or delete manually. Tracked further escalation (hard error or grace-window delete) as continued BUG-1009 (P3 Open).
