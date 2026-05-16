@@ -1362,11 +1362,19 @@ func projectV2ItemConnectionType() *graphql.Object {
 	projectV2Type := projectV2GraphQLTypes()
 	projectV2SingleSelectValueMemo = graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2ItemFieldSingleSelectValue",
-		// bleephub doesn't model field values yet — the connection over these
-		// values is always empty so the resolvers are unreachable.
 		Fields: graphql.Fields{
-			"optionId": &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
-			"name":     &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
+			"optionId": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["optionId"], nil
+				},
+			},
+			"name": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source.(map[string]interface{})["name"], nil
+				},
+			},
 		},
 	})
 	projectV2ItemFieldValueUnionMemo = graphql.NewUnion(graphql.UnionConfig{
@@ -1391,14 +1399,26 @@ func projectV2ItemConnectionType() *graphql.Object {
 					return p.Source.(map[string]interface{})["project"], nil
 				},
 			},
-			// fieldValueByName — bleephub doesn't model field values yet;
-			// returning nil is the truthful "no field of that name" answer.
+			// fieldValueByName — looks up the named field on the item's
+			// project, returns the stored value (nil when unset).
 			"fieldValueByName": &graphql.Field{
 				Type: projectV2ItemFieldValueUnionMemo,
 				Args: graphql.FieldConfigArgument{
 					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 				},
-				Resolve: alwaysNil,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src := p.Source.(map[string]interface{})
+					name, _ := p.Args["name"].(string)
+					byName, _ := src["fieldValuesByName"].(map[string]interface{})
+					if byName == nil {
+						return nil, nil
+					}
+					v, ok := byName[name]
+					if !ok {
+						return nil, nil
+					}
+					return v, nil
+				},
 			},
 		},
 	})
@@ -1422,15 +1442,38 @@ func projectV2ItemConnectionType() *graphql.Object {
 
 // projectV2ItemToGQL builds the GraphQL source map for a single project
 // item, embedding the parent project's map so ProjectV2Item.project
-// resolves cleanly without a second lookup.
+// resolves cleanly without a second lookup. Field values are
+// pre-resolved into fieldValuesByName so the fieldValueByName(name:)
+// resolver is a direct map lookup.
 func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
 	var projectMap map[string]interface{}
 	if p := st.ProjectsV2.GetProject(it.ProjectID); p != nil {
 		projectMap = projectV2ToGQL(p)
 	}
+	byName := map[string]interface{}{}
+	for fieldID, val := range it.FieldValues {
+		field := st.ProjectsV2.GetField(fieldID)
+		if field == nil {
+			continue
+		}
+		byName[field.Name] = projectV2FieldValueToGQL(val)
+	}
 	return map[string]interface{}{
-		"nodeID":  it.NodeID,
-		"project": projectMap,
+		"nodeID":            it.NodeID,
+		"project":           projectMap,
+		"fieldValuesByName": byName,
+	}
+}
+
+// projectV2FieldValueToGQL renders a field value as its GraphQL union
+// shape. Only SINGLE_SELECT is wired into the union today — TEXT and
+// NUMBER variants are stored but not exposed as union members; future
+// expansion can add ProjectV2ItemFieldTextValue + NumberValue object
+// types and grow the union.
+func projectV2FieldValueToGQL(v *ProjectV2ItemFieldValue) map[string]interface{} {
+	return map[string]interface{}{
+		"optionId": v.OptionID,
+		"name":     v.OptionName,
 	}
 }
 
@@ -1462,19 +1505,4 @@ func projectItemsConnectionForIssue(st *Store, issueID int) map[string]interface
 			"endCursor":   nil,
 		},
 	}
-}
-
-// alwaysNil is a truthful default for nullable fields representing
-// dimensions bleephub doesn't model on the parent type (e.g. PR.milestone
-// — bleephub doesn't track PR milestones today). Real GitHub returns
-// null on the same fields when unset; bleephub matches the spec.
-func alwaysNil(graphql.ResolveParams) (interface{}, error) { return nil, nil }
-
-// unreachableFieldErr resolves a field that should never be invoked at query
-// time because its parent connection always returns an empty nodes/edges
-// list. If it fires anyway, a feature got partially implemented (e.g. real
-// ProjectV2 items added without wiring the field resolvers); the error
-// surfaces the gap instead of returning fake "" / nil data.
-func unreachableFieldErr(p graphql.ResolveParams) (interface{}, error) {
-	return nil, fmt.Errorf("bleephub: field %q on type %q is unreachable; if you see this, the parent connection returned a non-empty list without wiring real resolvers", p.Info.FieldName, p.Info.ParentType.Name())
 }
