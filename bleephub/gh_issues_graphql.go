@@ -1252,8 +1252,8 @@ func projectV2ItemConnectionType() *graphql.Object {
 	projectV2Type := graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2",
 		Fields: graphql.Fields{
-			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
-			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
+			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
+			"title": &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
 		},
 	})
 	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{
@@ -1273,7 +1273,7 @@ func projectV2ItemConnectionType() *graphql.Object {
 	projectV2ItemType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "ProjectV2Item",
 		Fields: graphql.Fields{
-			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
+			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
 			"project": &graphql.Field{
 				Type:    projectV2Type,
 				Resolve: alwaysNil,
@@ -1305,7 +1305,26 @@ func projectV2ItemConnectionType() *graphql.Object {
 	return projectV2ItemConnectionTypeMemo
 }
 
-func alwaysFalse(graphql.ResolveParams) (interface{}, error)       { return false, nil }
-func alwaysNil(graphql.ResolveParams) (interface{}, error)         { return nil, nil }
-func emptyList(graphql.ResolveParams) (interface{}, error)         { return []interface{}{}, nil }
-func alwaysEmptyString(graphql.ResolveParams) (interface{}, error) { return "", nil }
+// emptyList resolves a connection's nodes/edges to an empty list. Used by
+// connection types representing surfaces bleephub doesn't track (e.g.
+// ProjectV2Item, PRComment) so the connection-level shape gh CLI requires
+// stays valid while the underlying field-level resolvers below stay
+// unreachable. Truthful — bleephub has zero items in those surfaces, not
+// "we hid the items."
+func emptyList(graphql.ResolveParams) (interface{}, error) { return []interface{}{}, nil }
+
+// alwaysFalse / alwaysNil are truthful defaults for fields representing
+// dimensions bleephub doesn't model (comment minimization, edit history).
+// Real GitHub returns false / null on the same fields for surfaces that
+// haven't been minimized; bleephub matches the spec.
+func alwaysFalse(graphql.ResolveParams) (interface{}, error) { return false, nil }
+func alwaysNil(graphql.ResolveParams) (interface{}, error)   { return nil, nil }
+
+// unreachableFieldErr resolves a field that should never be invoked at query
+// time because its parent connection always returns an empty nodes/edges
+// list. If it fires anyway, a feature got partially implemented (e.g. real
+// ProjectV2 items added without wiring the field resolvers); the error
+// surfaces the gap instead of returning fake "" / nil data.
+func unreachableFieldErr(p graphql.ResolveParams) (interface{}, error) {
+	return nil, fmt.Errorf("bleephub: field %q on type %q is unreachable; if you see this, the parent connection returned a non-empty list without wiring real resolvers", p.Info.FieldName, p.Info.ParentType.Name())
+}

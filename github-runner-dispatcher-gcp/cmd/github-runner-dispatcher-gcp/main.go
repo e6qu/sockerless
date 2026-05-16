@@ -351,7 +351,7 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 		// Services without an owner label are legacy (pre-owner-label
 		// rollout) — leave them alone here so a stale label doesn't
 		// reap an active pod-Service from a dispatcher version skew.
-		// A separate idle-time sweep (Phase 129) will handle legacy
+		// A separate idle-time sweep will handle legacy
 		// orphans once the rollout is past the inflection point.
 		services, err := spawner.ListManagedServices(ctx, label.Project, label.Region)
 		if err != nil {

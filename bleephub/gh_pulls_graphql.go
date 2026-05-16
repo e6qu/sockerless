@@ -209,10 +209,10 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	prCommentType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PRComment",
 		Fields: graphql.Fields{
-			"id":                  &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: alwaysEmptyString},
-			"body":                &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
-			"createdAt":           &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: alwaysEmptyString},
-			"authorAssociation":   &graphql.Field{Type: graphql.String, Resolve: alwaysEmptyString},
+			"id":                  &graphql.Field{Type: graphql.NewNonNull(graphql.ID), Resolve: unreachableFieldErr},
+			"body":                &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
+			"createdAt":           &graphql.Field{Type: graphql.NewNonNull(graphql.String), Resolve: unreachableFieldErr},
+			"authorAssociation":   &graphql.Field{Type: graphql.String, Resolve: unreachableFieldErr},
 			"author":              &graphql.Field{Type: userType, Resolve: alwaysNil},
 			"includesCreatedEdit": &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
 			"isMinimized":         &graphql.Field{Type: graphql.Boolean, Resolve: alwaysFalse},
@@ -532,7 +532,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
-	// BUG-989 fix — issueOrPullRequest as a real Issue|PullRequest union so
+	// fix — issueOrPullRequest as a real Issue|PullRequest union so
 	// gh CLI's `gh issue view <N>` `...on Issue` + `...on PullRequest`
 	// fragments type-check.
 	issueOrPRUnion := graphql.NewUnion(graphql.UnionConfig{

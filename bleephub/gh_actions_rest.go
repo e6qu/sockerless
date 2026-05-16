@@ -7,10 +7,10 @@ package bleephub
 // store; this file exposes that state via the public GitHub paths so
 // bleephub can stand in for real GitHub end-to-end.
 //
-// Phase 130 scope: actions/runs (with status filter), .../runs/{id},
+// scope: actions/runs (with status filter),.../runs/{id},
 // .../runs/{id}/jobs, .../jobs/{id}, .../jobs/{id}/logs, run cancel +
 // rerun + delete, runners list + delete. Workflows REST + dispatch
-// land in Phase 131.
+// land in.
 
 import (
 	"fmt"
@@ -468,7 +468,7 @@ func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request)
 // Real GitHub: 201 Created. Bleephub re-submits the run by looking up
 // the matching WorkflowFile (by name + repo) and replaying its cached
 // YAML through submitWorkflow with the original event metadata.
-// Returns 422 if no cached YAML exists (Phase 131-or-later WorkflowFile
+// Returns 422 if no cached YAML exists (-or-later WorkflowFile
 // not registered for this run) — caller should re-submit via
 // /api/v3/bleephub/workflow or push the YAML to git.
 func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) {

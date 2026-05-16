@@ -14,11 +14,11 @@ import (
 
 // AWS Amplify. Wire: REST + JSON, versionless paths (/apps, /apps/{id},
 // etc.). Sim covers the apps + branches + webhooks + jobs surface here;
-// domains + backendenvironments come in P159.8.
+// domains + backendenvironments come in .
 //
 // Sim policy:
 //   - Jobs synthesise SUCCEEDED eagerly (real Amplify runs a real build
-//     pipeline; sim doesn't have that). Per Phase 159 plan, out of scope.
+// pipeline; sim doesn't have that). Per plan, out of scope.
 
 // ---------- Types ----------
 
@@ -719,7 +719,7 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 	if req.JobId != "" {
 		jobID = req.JobId
 	}
-	// Per Phase 159 plan, sim synthesises SUCCEEDED eagerly. Real
+	// Per plan, sim synthesises SUCCEEDED eagerly. Real
 	// Amplify runs a real npm build pipeline; sim doesn't.
 	summary := AmplifyJobSummary{
 		JobArn:        amplifyJobARN(appID, branch, jobID),

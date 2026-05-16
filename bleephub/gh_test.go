@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const defaultToken = "bph_0000000000000000000000000000000000000000"
+const defaultToken = "ghp_0000000000000000000000000000000000000000"
 
 func ghGet(t *testing.T, path string, token string) *http.Response {
 	t.Helper()

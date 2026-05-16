@@ -23,29 +23,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// InitTracer sets up an OpenTelemetry TracerProvider with an OTLP HTTP exporter
-// if OTEL_EXPORTER_OTLP_ENDPOINT is set. Otherwise returns a no-op shutdown function.
-//
-// Phase 87b — kept for backward compat with callers that don't yet
-// want logs export. New callers should prefer InitObservability.
-func InitTracer(serviceName string) (func(context.Context) error, error) {
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		return func(context.Context) error { return nil }, nil
-	}
-	exp, err := otlptracehttp.New(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exp),
-		sdktrace.WithResource(resource.NewWithAttributes(
-			semconv.SchemaURL, semconv.ServiceNameKey.String(serviceName),
-		)),
-	)
-	otel.SetTracerProvider(tp)
-	return tp.Shutdown, nil
-}
-
 // Observability bundles trace + log SDK shutdown + a zerolog Writer
 // that mirrors entries to the OTel logs SDK. Mirror of
 // `backends/core.Observability` — bleephub is a separate Go module
@@ -59,7 +36,7 @@ type Observability struct {
 // OTEL_EXPORTER_OTLP_ENDPOINT is set. Returns a zero-value
 // Observability with a no-op Shutdown when OTel is disabled.
 //
-// Phase 87c. Components-decoupled invariant intact.
+// Components-decoupled invariant intact.
 func InitObservability(serviceName string) (*Observability, error) {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		return &Observability{

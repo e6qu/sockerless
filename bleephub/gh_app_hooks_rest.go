@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.4) — app-level webhook config + deliveries.
-//
+// app-level webhook config + deliveries.
 // Distinct from the per-repo webhooks (`/repos/{o}/{r}/hooks`) shipped earlier.
 // A GitHub App owns exactly one webhook URL; events targeted at the app
 // (installation, installation_repositories, github_app_authorization, plus

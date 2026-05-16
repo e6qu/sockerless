@@ -37,7 +37,7 @@ const (
 
 // ProjectConfig defines a project configuration.
 //
-// Two shapes coexist during the Phase 79 migration:
+// Two shapes coexist:
 //   - Legacy: a project = (1 sim + 1 backend) tuple. Carried by
 //     SimPort / BackendPort. Existing on-disk JSONs use this.
 //   - Modern: a project = a list of independently lifecyclable

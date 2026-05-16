@@ -15,9 +15,8 @@ import (
 // the process is alive (PID file points to a running process) and
 // whether `/v1/health` returns 2xx within a short timeout.
 //
-// Foundation for Phase 86 (health surface) and consumed by Phase 80
-// (admin UI showing per-row state). Components stay decoupled —
-// status uses only what they already expose.
+// Drives the admin UI's per-row health surface. Components stay
+// decoupled — status uses only what they already expose.
 type InstanceStatus struct {
 	Project string `json:"project"`
 	Name    string `json:"name"`
@@ -33,11 +32,11 @@ type InstanceStatus struct {
 	// admin UI to figure out why.
 	HealthDetail string `json:"health_detail,omitempty"`
 
-	// Exit captures the most recent process exit, if any. Phase 86
-	// adds an `.exit` file alongside `.pid` written by the
-	// start-component wrapper when the binary exits. Lets the UI
-	// distinguish "operator stopped" from "binary crashed" and show
-	// the exit code + timestamp.
+	// Exit captures the most recent process exit, if any. The
+	// start-component wrapper writes a `.exit` file alongside `.pid`
+	// when the binary exits, so the UI can distinguish
+	// "operator stopped" from "binary crashed" and show the exit code
+	// + timestamp.
 	Exit *InstanceExit `json:"exit,omitempty"`
 	// CrashedSinceStart: PID file present but process gone AND we
 	// have an exit record from after the PID file was written. Used
@@ -140,10 +139,9 @@ func readPidStatus(name string) (pid int, alive bool) {
 	return pid, true
 }
 
-// probeHealthTimeout is the cap on a single /v1/health probe.
-// Phase 86 bumped this from 1 s to 5 s — operator-grade reality is
-// that a backend under load needs >1 s to answer health while
-// completing in-flight requests. 5 s matches the brief in PLAN.md.
+// probeHealthTimeout is the cap on a single /v1/health probe. 5 s
+// because a backend under load needs >1 s to answer health while
+// completing in-flight requests.
 const probeHealthTimeout = 5 * time.Second
 
 func probeHealth(port int) (ok bool, detail string) {

@@ -138,7 +138,7 @@ func (s *SQLiteStore[T]) Update(id string, fn func(*T)) bool {
 // process exits via log.Fatalf rather than silently dropping that one
 // table back to memory while its neighbours stay durable. Half-
 // persistent state would surface as confusing "some data lost on
-// restart" reports later (BUG-986).
+// restart" reports later.
 //
 // All 100+ call sites are register*-time, so log.Fatalf here is the
 // equivalent of a startup error — operator sees the message and the

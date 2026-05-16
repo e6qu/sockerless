@@ -37,7 +37,7 @@ type Config struct {
 	// in a MultiLevelWriter so each zerolog event also flows to OTel
 	// logs via the OTelLogWriter bridge. main.go assigns this from
 	// InitObservability when the operator brought up the OTel stack
-	// (Phase 87c). Unset = today's stderr-only behaviour.
+	// . Unset = today's stderr-only behaviour.
 	LogWriter *OTelLogWriter
 }
 

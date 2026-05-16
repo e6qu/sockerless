@@ -271,7 +271,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	// not just the local Store. Passthrough backends (docker) keep
 	// containers in the upstream daemon; checking only s.Store would
 	// 404 (or worse, silently succeed on condition=removed) for
-	// containers the caller just created via the same backend. BUG-991.
+	// containers the caller just created via the same backend.
 	if _, err := s.self.ContainerInspect(ref); err != nil {
 		if _, isNotFound := err.(*api.NotFoundError); isNotFound {
 			if condition == "removed" {

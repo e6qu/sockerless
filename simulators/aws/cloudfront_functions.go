@@ -11,7 +11,7 @@ import (
 // Functions live at /2020-05-31/function and follow the Stage state
 // machine (DEVELOPMENT → LIVE via PublishFunction). The simulator
 // stores + returns the function code verbatim; it does NOT interpret
-// the JS (out of scope per Phase 159 plan, intentional limitation).
+// the JS (out of scope, intentional limitation).
 // Invalidations live at /2020-05-31/distribution/{DistributionId}/invalidation
 // and only matter for the create/get/list flow — they're operations,
 // not state, so no Terraform resource references them.

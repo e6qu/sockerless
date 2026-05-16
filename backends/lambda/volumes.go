@@ -171,7 +171,7 @@ func (s *Server) fileSystemConfigsForBinds(ctx context.Context, binds []string) 
 	// Lambda always uses BackingEFSEphemeral (only registered driver
 	// that produces a FileSystemConfig); the dispatch keeps the
 	// extension point in place for future per-volume Backing override
-	// (Phase 91+ open for SharedVolume.Backing).
+	// — per-volume Backing override is the next extension point.
 	driver, err := s.storageBackings.Resolve(core.BackingEFSEphemeral)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve efs-ephemeral driver: %w", err)

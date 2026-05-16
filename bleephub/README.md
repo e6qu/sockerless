@@ -42,7 +42,7 @@ sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
   ./sockerless-bleephub --addr :443 &
 
 # 4. Point gh at bleephub — --hostname is the key flag
-echo "bph_0000000000000000000000000000000000000000" \
+echo "ghp_0000000000000000000000000000000000000000" \
   | gh auth login --hostname localhost --with-token
 export GH_HOST=localhost                                     # make it the default host
 

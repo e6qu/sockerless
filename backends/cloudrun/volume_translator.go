@@ -78,11 +78,11 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		// them, the default 5s negative-cache hides freshly-written files
 		// from sibling containers. Backing: gcs-sync sidesteps FUSE
 		// entirely (per-exec tar/untar against a single GCS object) and
-		// has strong consistency. See BUG-944 + storage_gcsfuse.go.
+		// has strong consistency. See storage_gcsfuse.go for the driver.
 		return nil, fmt.Errorf(
 			"volume %q: backing %q is unsupported on Cloud Run — "+
 				"Cloud Run rejects the cache-TTL gcsfuse flags needed for "+
-				"cross-task safety (BUG-944). Use Backing: gcs-sync instead "+
+				"cross-task safety. Use Backing: gcs-sync instead "+
 				"(per-exec tar sync, no FUSE)",
 			name, spec.Kind)
 

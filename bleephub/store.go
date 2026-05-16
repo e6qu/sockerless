@@ -56,7 +56,7 @@ type Store struct {
 	UsersByLogin       map[string]*User
 	Tokens             map[string]*Token
 	DeviceCodes        map[string]*DeviceCode
-	AuthCodes          map[string]*authCode // OAuth web-flow codes (Phase 132)
+	AuthCodes          map[string]*authCode // OAuth web-flow codes
 	Repos              map[int]*Repo
 	ReposByName        map[string]*Repo              // "owner/name" → repo
 	GitStorages        map[string]*memory.Storage    // "owner/name" → go-git memory storage
@@ -72,7 +72,7 @@ type Store struct {
 	PullRequests       map[int]*PullRequest          // id → PR
 	PRReviews          map[int]*PullRequestReview    // id → review
 	Workflows          map[string]*Workflow          // id → workflow (run-level)
-	WorkflowFiles      map[int64]*WorkflowFile       // id → workflow file (file-level, Phase 131)
+	WorkflowFiles      map[int64]*WorkflowFile       // id → workflow file (file-level)
 	PendingMessages    []*TaskAgentMessage           // messages awaiting delivery
 	RepoSecrets        map[string]map[string]*Secret // "owner/repo" → name → secret
 	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
@@ -90,11 +90,11 @@ type Store struct {
 	CheckRuns          map[int64]*CheckRun           // id → check run
 	CheckSuites        map[int64]*CheckSuite         // id → check suite
 	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
-	Reactions          *ReactionStore                // P154.1 — reactions across all parent types
-	Releases           *ReleaseStore                 // P154.2 — release CRUD
-	Deployments        *DeploymentStore              // P154.4 — deployments + statuses + environments
-	PRReviewComments   *PRReviewCommentStore         // P154.5 — PR review comments (inline / threads)
-	Misc               *MiscStore                    // P154.7-12 — long-tail surfaces
+	Reactions          *ReactionStore                // reactions across all parent types
+	Releases           *ReleaseStore                 // release CRUD
+	Deployments        *DeploymentStore              // deployments + statuses + environments
+	PRReviewComments   *PRReviewCommentStore         // PR review comments (inline / threads)
+	Misc               *MiscStore                    // long-tail surfaces
 	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
@@ -266,7 +266,7 @@ func NewStore() *Store {
 // If persist is non-nil, this also loads existing rows from disk into the
 // in-memory maps. Idempotent — safe to call against an empty database.
 //
-// BUG-985 invariant: open-failure must be caught at the persistence-open
+// invariant: open-failure must be caught at the persistence-open
 // site (MustNewPersistence) so the operator gets a fail-loud signal
 // before we even get here.
 func (st *Store) SetPersistence(p *Persistence) error {
@@ -447,7 +447,7 @@ func (st *Store) SeedDefaultUser() {
 	}
 
 	t := &Token{
-		Value:     "bph_0000000000000000000000000000000000000000",
+		Value:     "ghp_0000000000000000000000000000000000000000",
 		UserID:    u.ID,
 		Scopes:    "repo, read:org, gist",
 		CreatedAt: now,
@@ -486,9 +486,7 @@ func (st *Store) CreateToken(userID int, scopes string) *Token {
 
 // generateTokenValue creates a ghp_-prefixed random token string (classic PAT).
 // Real GitHub uses ghp_ for classic PATs; bleephub matches the prefix so SDK
-// clients that branch on prefix recognise the token shape. The seeded admin
-// user keeps its bph_-prefixed token (see SeedDefaultUser) for backwards
-// compatibility with existing tests + integrations.
+// clients that branch on prefix recognise the token shape.
 func generateTokenValue() string {
 	b := make([]byte, 20)
 	_, _ = rand.Read(b)

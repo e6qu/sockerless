@@ -17,7 +17,7 @@ func do(s *Server, method, path string, body []byte) *httptest.ResponseRecorder 
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
-	req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 	w := httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	return w

@@ -140,7 +140,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	// GCSSyncDriver registered when the GCS client constructs
 	// successfully (the Cloud Run primitive for cross-task workspaces).
 	// gcs-fuse is deliberately NOT registered here — Cloud Run rejects
-	// the cache-TTL flags it needs to be safe (BUG-944), so the
+	// the cache-TTL flags it needs to be safe, so the
 	// translator rejects gcs-fuse with a pointer at gcs-sync. No-fallbacks
 	// directive: SharedVolumes with an unrecognized Backing fail at resolve
 	// time rather than silently selecting a default.

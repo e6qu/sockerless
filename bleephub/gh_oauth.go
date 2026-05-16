@@ -14,7 +14,7 @@ func (s *Server) registerGHOAuthRoutes() {
 	s.mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
 	s.mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)
 	s.mux.HandleFunc("GET /login/device", s.handleDevicePage)
-	// Phase 132 — OAuth web flow (companion to the device flow above).
+	// OAuth web flow (companion to the device flow above).
 	s.mux.HandleFunc("GET /login/oauth/authorize", s.handleOAuthAuthorize)
 	s.mux.HandleFunc("POST /login/oauth/authorize", s.handleOAuthAuthorizeApprove)
 }
@@ -70,7 +70,8 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 // fields the form carries:
 //
 //   - device_code  → device flow (existing behaviour, auto-approved)
-//   - code         → web flow with authorization code grant (Phase 132)
+//
+// - code → web flow with authorization code grant
 //
 // Both return `{access_token, token_type, scope}` on success and
 // `{error: ...}` on failure (200 OK with an error body, matching real
@@ -114,7 +115,7 @@ func (s *Server) handleDeviceTokenForm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleWebFlowTokenForm — web-flow leg (Phase 132). Exchanges a
+// handleWebFlowTokenForm — web-flow leg. Exchanges a
 // one-time-use authorization code (issued by /login/oauth/authorize)
 // for an access token. Real GitHub validates client_id + client_secret;
 // the sim doesn't gate on the secret (which the dispatcher-generic

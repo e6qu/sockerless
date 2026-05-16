@@ -443,7 +443,7 @@ type CFError struct {
 // cfStoredDistribution holds a Distribution with its current ETag. ETag
 // changes on every Update; If-Match on Update/Delete must match the
 // current value. Tags travel alongside the distribution but live in a
-// separate `ListTagsForResource` path (added in P159.3).
+// separate `ListTagsForResource` path (added in ).
 type cfStoredDistribution struct {
 	Distribution CFDistribution
 	ETag         string

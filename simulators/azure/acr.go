@@ -178,6 +178,15 @@ func registerACR(srv *sim.Server) {
 
 	// GET - List replications (azurerm provider reads this after creating a registry)
 	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/replications", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "registryName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s", sub, rg, name)
+		if _, ok := registries.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.ContainerRegistry/registries/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"value": []any{},
 		})

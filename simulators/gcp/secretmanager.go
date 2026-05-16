@@ -56,7 +56,10 @@ func registerSecretManager(srv *sim.Server) {
 		var req struct {
 			Labels map[string]string `json:"labels,omitempty"`
 		}
-		_ = sim.ReadJSON(r, &req)
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
 
 		name := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
 		if _, exists := smSecrets.Get(name); exists {

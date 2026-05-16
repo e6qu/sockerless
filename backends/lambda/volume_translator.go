@@ -1,6 +1,6 @@
 // Per-backend translator: cloud-agnostic core.BackingSpec → Lambda's
-// FileSystemConfig + companion artifacts. Phase 91c puts the framework
-// dispatch scaffolding in place; the deeper migration of
+// FileSystemConfig + companion artifacts. Framework dispatch
+// scaffolding is in place; the deeper migration of
 // `fileSystemConfigsForBinds` (which encodes Lambda-specific
 // constraints — at-most-one FSC per function, /mnt/[A-Za-z0-9_.\-]+
 // path constraint, sub-path collapse — and predates the BackingSpec

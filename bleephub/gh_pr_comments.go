@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Phase 154 (P154.5) — PR review comments (inline / file-line / range).
-//
+// PR review comments (inline / file-line / range).
 // Endpoints:
 //   POST   /repos/{o}/{r}/pulls/{number}/comments
 //   GET    /repos/{o}/{r}/pulls/{number}/comments

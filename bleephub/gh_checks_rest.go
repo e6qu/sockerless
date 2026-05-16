@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.8) — Checks API.
-//
+// Checks API.
 // CheckRun + CheckSuite are App-owned: real GitHub limits Create/Update to
 // GitHub App installation tokens. Bleephub permission-gates by "checks"
 // scope (read for reads, write for create/update).

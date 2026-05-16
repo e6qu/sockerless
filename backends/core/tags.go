@@ -16,8 +16,8 @@ type TagSet struct {
 	// Identity
 	ContainerID string // Full 64-char Docker container ID
 	Backend     string // ecs, lambda, cloudrun, etc.
-	InstanceID  string // Deprecated: use Cluster instead for stateless model
-	Cluster     string // Cluster/project/resource-group identifier
+	InstanceID  string // Sockerless instance owning the resource (typically hostname); drives RecoverOnStartup scanning
+	Cluster     string // Cloud-side resource grouping (ECS cluster / GCP project / Azure resource group)
 	CreatedAt   time.Time
 
 	// Docker-specific (no cloud equivalent)

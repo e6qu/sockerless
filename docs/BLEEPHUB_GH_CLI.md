@@ -26,7 +26,7 @@ Two consequences:
 export BLEEPHUB_HOST=localhost:8443     # or just `localhost` if you used :443
 
 # bleephub seeds a default admin user with a static PAT.
-TOKEN="bph_0000000000000000000000000000000000000000"
+TOKEN="ghp_0000000000000000000000000000000000000000"
 
 # Register bleephub as a GHES host — --hostname is THE key flag here.
 echo "$TOKEN" | gh auth login --hostname "$BLEEPHUB_HOST" --with-token

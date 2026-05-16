@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Phase 154 (P154.1) — Reactions API.
-//
+// Reactions API.
 // Real GitHub exposes reactions on issues, issue comments, PR review comments,
 // commits/commit comments, releases, and discussions. Eight content values:
 //   +1, -1, laugh, confused, heart, hooray, rocket, eyes.

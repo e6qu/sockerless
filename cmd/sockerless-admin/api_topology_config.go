@@ -76,7 +76,7 @@ func handleInstanceConfigUpdate(mgr *TopologyManager) http.HandlerFunc {
 
 // handleInstanceReload sends SIGHUP to the running component (via
 // `make reload-component`). Component-side handling is the
-// component's concern — Phase 85 adds the signal path; whether the
+// component's concern — admin provides the signal path; whether the
 // component does anything with SIGHUP is per-binary.
 //
 // Returns 503 when lifecycle is unconfigured (test path), 404 when

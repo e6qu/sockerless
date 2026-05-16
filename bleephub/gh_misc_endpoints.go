@@ -14,13 +14,12 @@ import (
 	"time"
 )
 
-// Phase 154 — long-tail GitHub API surfaces gh CLI / octokit / probot hit.
-//   P154.7  Users API extras  (keys, gpg_keys, emails, followers, following)
-//   P154.8  Actions OIDC       (signed token + JWKS + discovery)
-//   P154.9  GitHub Pages       (site CRUD + builds stubs)
-//   P154.10 Branch protection  (rules CRUD)
-//   P154.11 Org members + audit log
-//   P154.12 Marketplace        (listing plans/accounts)
+// long-tail GitHub API surfaces gh CLI / octokit / probot hit.// Users API extras (keys, gpg_keys, emails, followers, following)
+// Actions OIDC (signed token + JWKS + discovery)
+// GitHub Pages (site CRUD + builds stubs)
+// Branch protection (rules CRUD)
+// Org members + audit log
+// Marketplace (listing plans/accounts)
 //
 // Real-GH-shaped responses so callers don't 404; per-surface depth lands as
 // later phases when a real consumer needs it.
@@ -72,7 +71,7 @@ func (s *Server) registerGHMiscEndpoints() {
 		s.requirePerm("administration", permWrite, s.handleBranchProtectionDelete))
 
 	// Orgs depth (members listing + memberships CRUD already covered in
-	// gh_members_rest.go — Phase 130 implementation).
+	// gh_members_rest.go — implementation).
 	s.mux.HandleFunc("GET /api/v3/orgs/{org}/audit-log", s.handleOrgAuditLog)
 
 	// Marketplace

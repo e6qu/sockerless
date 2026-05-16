@@ -517,15 +517,19 @@ func handleCWPutRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCWListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	// Terraform uses this to read tags for log groups
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tags": map[string]string{},
 	})
 }
 
 func handleCWTagResource(w http.ResponseWriter, r *http.Request) {
-	// Accept and discard tag operations
-	_ = sim.ReadJSON(r, &struct{}{})
+	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

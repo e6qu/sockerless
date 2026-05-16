@@ -570,7 +570,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Predefined helpers (gitlab-runner) go through this same path:
 	// each stage gets a fresh `lambda.Invoke` with the stage's stdin
 	// script as the Payload — analogous to the per-stage Fargate task
-	// flow on ECS (Phase 114). Cross-stage state lives on EFS via the
+	// flow on ECS. Cross-stage state lives on EFS via the
 	// shared volume mounts gitlab-runner sets up itself, not on a
 	// long-lived Lambda execution.
 

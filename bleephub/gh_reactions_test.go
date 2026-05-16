@@ -34,7 +34,7 @@ func TestReactions_IssueLifecycle(t *testing.T) {
 		} else {
 			req = httptest.NewRequest(method, path, nil)
 		}
-		req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+		req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 		w := httptest.NewRecorder()
 		s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 		return w
@@ -125,7 +125,7 @@ func TestReactions_AllParentTypes(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"content": "rocket"})
 	for _, p := range parents {
 		req := httptest.NewRequest("POST", p, bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer bph_0000000000000000000000000000000000000000")
+		req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
 		w := httptest.NewRecorder()
 		s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 		if w.Code != http.StatusCreated {

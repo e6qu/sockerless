@@ -91,7 +91,7 @@ git config --global user.name "Test User"
 git config --global init.defaultBranch main
 
 # Default token
-TOKEN="bph_0000000000000000000000000000000000000000"
+TOKEN="ghp_0000000000000000000000000000000000000000"
 BASE="https://localhost"
 HOST="localhost"
 

@@ -575,7 +575,7 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 // in any of {PendingCreates, CloudState, Store}. Callers that want
 // "already removed = success" semantics (Docker's condition=removed
 // shortcut) must Inspect first themselves — silent success on a
-// missing container is a fallback-hiding-bug (BUG-991 lineage).
+// missing container is a fallback-hiding-bug.
 func (s *BaseServer) ContainerWait(ref string, condition string) (*api.ContainerWaitResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), ref)
 	if !ok {

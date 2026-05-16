@@ -11,7 +11,7 @@ import (
 )
 
 // WorkflowFile is the file-level workflow entity (the YAML on disk),
-// distinct from the run-level [Workflow]. Phase 131 introduces this so
+// distinct from the run-level [Workflow]. introduces this so
 // `GET /api/v3/repos/{o}/{r}/actions/workflows` can return the
 // GitHub-shape file listing — and the new dispatch endpoint can
 // reconstruct the YAML to submit a fresh run.

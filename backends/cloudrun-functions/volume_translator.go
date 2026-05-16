@@ -87,7 +87,7 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 
 	case core.BackingGCSFuse:
 		// Cloud Functions Gen2 sits on Cloud Run Services under the
-		// hood — same gcsfuse cache-TTL rejection per BUG-944. See
+		// hood — same gcsfuse cache-TTL rejection. See
 		// cloudrun translator for the full rationale.
 		return nil, fmt.Errorf(
 			"volume %q: backing %q is unsupported on Cloud Functions — "+

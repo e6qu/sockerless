@@ -39,7 +39,7 @@ type Server struct {
 // but the data directory cannot be opened. Operator asked for durable
 // state; degrading silently to in-memory would mask misconfiguration
 // (bad path, perms, full disk) and produce silent data loss across
-// restarts (BUG-985).
+// restarts.
 func NewServer(cfg Config) (*Server, error) {
 	level, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {
@@ -73,8 +73,8 @@ func NewServer(cfg Config) (*Server, error) {
 	// Build middleware chain. otelhttp.NewHandler is outermost so
 	// per-request spans see the post-routing path; the existing
 	// middlewares run inside the span. Spans emit to a no-op tracer
-	// unless main.go calls InitTracer with OTEL_EXPORTER_OTLP_ENDPOINT
-	// set in the env (Phase 87b).
+	// unless main.go calls InitObservability with OTEL_EXPORTER_OTLP_ENDPOINT
+	// set in the env.
 	var handler http.Handler = mux
 	handler = AuthPassthroughMiddleware(cfg.Provider)(handler)
 	handler = LoggingMiddleware(logger, cfg.Provider)(handler)

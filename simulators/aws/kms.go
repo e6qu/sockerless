@@ -71,7 +71,10 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		KeySpec     string  `json:"KeySpec"`
 		Tags        []SMTag `json:"Tags"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 
 	keyId := generateUUID()
 	if req.KeyUsage == "" {

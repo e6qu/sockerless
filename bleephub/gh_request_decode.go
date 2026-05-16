@@ -5,8 +5,7 @@ import (
 	"strconv"
 )
 
-// Phase 153 — request body decoding tolerant of string-coerced booleans + integers.
-//
+// request body decoding tolerant of string-coerced booleans + integers.
 // Real GitHub's REST API accepts both:
 //   - `{"private": false}`              (typed JSON boolean)
 //   - `{"private": "false"}`            (string-coerced; what `gh api -f` sends)

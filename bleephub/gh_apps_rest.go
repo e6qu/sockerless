@@ -24,14 +24,14 @@ func (s *Server) registerGHAppsRoutes() {
 	s.mux.HandleFunc("GET /api/v3/orgs/{org}/installation", s.handleGetOrgInstallation)
 	s.mux.HandleFunc("GET /api/v3/users/{username}/installation", s.handleGetUserInstallation)
 
-	// Phase 132 — installations from the authenticated user's perspective.
+	// installations from the authenticated user's perspective.
 	s.mux.HandleFunc("GET /api/v3/user/installations", s.handleListUserInstallations)
 	s.mux.HandleFunc("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
 	s.mux.HandleFunc("PUT /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleAddUserInstallationRepo)
 	s.mux.HandleFunc("DELETE /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleRemoveUserInstallationRepo)
 	s.mux.HandleFunc("DELETE /api/v3/installation/token", s.handleRevokeInstallationToken)
 
-	// Phase 153 — installation-token-scoped repositories list.
+	// installation-token-scoped repositories list.
 	s.mux.HandleFunc("GET /api/v3/installation/repositories", s.handleListInstallationRepositories)
 
 	// Management endpoints for testing

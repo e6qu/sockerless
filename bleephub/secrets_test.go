@@ -9,7 +9,7 @@ import (
 )
 
 func TestSecretsCreateAndList(t *testing.T) {
-	token := "bph_0000000000000000000000000000000000000000"
+	token := "ghp_0000000000000000000000000000000000000000"
 
 	// PUT a secret
 	req, _ := http.NewRequest("PUT", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/MY_SECRET",
@@ -47,7 +47,7 @@ func TestSecretsCreateAndList(t *testing.T) {
 }
 
 func TestSecretsUpdate(t *testing.T) {
-	token := "bph_0000000000000000000000000000000000000000"
+	token := "ghp_0000000000000000000000000000000000000000"
 
 	// Create
 	req, _ := http.NewRequest("PUT", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/UPDATE_ME",
@@ -79,7 +79,7 @@ func TestSecretsUpdate(t *testing.T) {
 }
 
 func TestSecretsValueNotExposed(t *testing.T) {
-	token := "bph_0000000000000000000000000000000000000000"
+	token := "ghp_0000000000000000000000000000000000000000"
 
 	// Create
 	req, _ := http.NewRequest("PUT", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/HIDDEN_VAL",
@@ -108,7 +108,7 @@ func TestSecretsValueNotExposed(t *testing.T) {
 }
 
 func TestSecretsDelete(t *testing.T) {
-	token := "bph_0000000000000000000000000000000000000000"
+	token := "ghp_0000000000000000000000000000000000000000"
 
 	// Create
 	req, _ := http.NewRequest("PUT", testBaseURL+"/api/v3/repos/owner/repo/actions/secrets/DELETE_ME",
@@ -159,7 +159,7 @@ func TestSecretsNoAuth401(t *testing.T) {
 }
 
 func TestSecretsMissingRepo404(t *testing.T) {
-	token := "bph_0000000000000000000000000000000000000000"
+	token := "ghp_0000000000000000000000000000000000000000"
 
 	req, _ := http.NewRequest("GET", testBaseURL+"/api/v3/repos/nonexist/repo/actions/secrets/NOPE", nil)
 	req.Header.Set("Authorization", "token "+token)

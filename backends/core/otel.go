@@ -23,29 +23,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// InitTracer sets up an OpenTelemetry TracerProvider with an OTLP HTTP exporter
-// if OTEL_EXPORTER_OTLP_ENDPOINT is set. Otherwise returns a no-op shutdown function.
-//
-// Phase 87b — kept for backward compat with callers that don't yet
-// want logs export. New callers should prefer InitObservability.
-func InitTracer(serviceName string) (func(context.Context) error, error) {
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
-		return func(context.Context) error { return nil }, nil
-	}
-	exp, err := otlptracehttp.New(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exp),
-		sdktrace.WithResource(resource.NewWithAttributes(
-			semconv.SchemaURL, semconv.ServiceNameKey.String(serviceName),
-		)),
-	)
-	otel.SetTracerProvider(tp)
-	return tp.Shutdown, nil
-}
-
 // Observability bundles trace + log SDK shutdown + a zerolog Writer
 // that mirrors entries to the OTel logs SDK.
 type Observability struct {
@@ -67,7 +44,7 @@ type Observability struct {
 // can ignore LogWriter being nil and the existing zerolog stderr path
 // keeps working unchanged.
 //
-// Phase 87c. Components-decoupled invariant intact: emission only
+// Components-decoupled invariant intact: emission only
 // when the env var is set.
 func InitObservability(serviceName string) (*Observability, error) {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {

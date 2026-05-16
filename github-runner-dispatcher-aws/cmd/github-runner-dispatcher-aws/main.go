@@ -6,17 +6,16 @@
 //
 // Usage:
 //
-//	gh auth token | xargs -I{} \
-//	  github-runner-dispatcher --repo owner/repo --token {}
+//		gh auth token | xargs -I{} \
+//		  github-runner-dispatcher --repo owner/repo --token {}
 //
-// Per the Phase 110a spec:
-//   - --repo is mandatory (no default; explicit-only).
-//   - --token defaults to $GITHUB_TOKEN; missing → fail with guidance.
-//   - Scopes verified at startup; missing → fail with `gh auth refresh`
-//     instructions.
-//   - Stateless 15-s polling loop; dedup via 5-min seen-set.
-//   - Failure handling: log + skip; the next poll retries.
-//   - Logs to stdout only.
+//	  - --repo is mandatory (no default; explicit-only).
+//	  - --token defaults to $GITHUB_TOKEN; missing → fail with guidance.
+//	  - Scopes verified at startup; missing → fail with `gh auth refresh`
+//	    instructions.
+//	  - Stateless 15-s polling loop; dedup via 5-min seen-set.
+//	  - Failure handling: log + skip; the next poll retries.
+//	  - Logs to stdout only.
 package main
 
 import (

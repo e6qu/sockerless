@@ -3,7 +3,7 @@
 // daemon `DOCKER_HOST` points at, including local Podman, Docker
 // Desktop, or sockerless. Doesn't import the docker SDK because the
 // dispatcher's stated coupling is "Docker public API / CLI" (see
-// PLAN.md Phase 110a).
+// PLAN.md ).
 //
 // One container per queued job. Container lifecycle:
 //  1. `docker run -d --pull never <image> …`  (returns container ID)

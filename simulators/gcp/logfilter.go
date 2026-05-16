@@ -50,9 +50,9 @@ type filterClause struct {
 // (https://cloud.google.com/logging/docs/view/logging-query-language#operators).
 // Real Cloud Logging supports it natively; the sockerless cloudrun backend
 // uses it for the `logName:"run.googleapis.com"` clause that filters out
-// Cloud Audit Logs (BUG-878). The sim must accept it too — without this
+// Cloud Audit Logs. The sim must accept it too — without this
 // branch the clause falls through to the wildcard `*` and silently matches
-// nothing, dropping every container's stdout from `docker logs` (BUG-887).
+// nothing, dropping every container's stdout from `docker logs`.
 func parseClause(s string) filterClause {
 	// Try >= first (before > to avoid partial match)
 	if idx := strings.Index(s, ">="); idx > 0 {

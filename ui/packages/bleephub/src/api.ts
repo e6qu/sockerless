@@ -66,7 +66,7 @@ export async function createApp(payload: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+      Authorization: "Bearer ghp_0000000000000000000000000000000000000000",
     },
     body: JSON.stringify(payload),
   });
@@ -79,7 +79,7 @@ export async function createApp(payload: {
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
   const res = await fetch("/api/v3/bleephub/oauth-apps", {
-    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+    headers: { Authorization: "Bearer ghp_0000000000000000000000000000000000000000" },
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
@@ -95,7 +95,7 @@ export async function createOAuthApp(payload: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+      Authorization: "Bearer ghp_0000000000000000000000000000000000000000",
     },
     body: JSON.stringify(payload),
   });
@@ -114,7 +114,7 @@ export async function createInstallation(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer bph_0000000000000000000000000000000000000000",
+      Authorization: "Bearer ghp_0000000000000000000000000000000000000000",
     },
     body: JSON.stringify(payload),
   });
@@ -129,7 +129,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
   const verb = suspend ? "suspend" : "unsuspend";
   const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {
     method: "POST",
-    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+    headers: { Authorization: "Bearer ghp_0000000000000000000000000000000000000000" },
   });
   if (!res.ok && res.status !== 409) {
     const text = await res.text();
@@ -140,7 +140,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 export async function deleteInstallation(installationID: number): Promise<void> {
   const res = await fetch(`/api/v3/bleephub/installations/${installationID}`, {
     method: "DELETE",
-    headers: { Authorization: "Bearer bph_0000000000000000000000000000000000000000" },
+    headers: { Authorization: "Bearer ghp_0000000000000000000000000000000000000000" },
   });
   if (!res.ok && res.status !== 404) {
     const text = await res.text();
