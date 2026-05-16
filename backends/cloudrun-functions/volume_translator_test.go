@@ -63,9 +63,9 @@ func TestRunpbVolumeFromBackingPDEphemeralRejectedGCF(t *testing.T) {
 }
 
 func TestRunpbVolumeFromBackingGCSFuseRejectedGCF(t *testing.T) {
-	// gcs-fuse on Gen2 functions is broken per BUG-944 — Gen2 sits on
-	// Cloud Run Services which rejects the cache-TTL flags. Translator
-	// must reject with a concrete pointer at gcs-sync.
+	// Gen2 functions sit on Cloud Run Services, which rejects the
+	// cache-TTL gcsfuse flags. Translator must reject with a concrete
+	// pointer at the supported alternative (gcs-sync).
 	spec := core.BackingSpec{
 		Kind: core.BackingGCSFuse,
 		GCS:  &core.GCSSpec{Bucket: "test-bucket"},
@@ -75,7 +75,7 @@ func TestRunpbVolumeFromBackingGCSFuseRejectedGCF(t *testing.T) {
 		t.Fatal("expected error for BackingGCSFuse on GCF")
 	}
 	msg := err.Error()
-	for _, want := range []string{"gcs-fuse", "Cloud Functions", "gcs-sync", "BUG-944"} {
+	for _, want := range []string{"gcs-fuse", "Cloud Functions", "gcs-sync"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error missing %q: %s", want, msg)
 		}

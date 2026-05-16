@@ -92,7 +92,7 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		return nil, fmt.Errorf(
 			"volume %q: backing %q is unsupported on Cloud Functions — "+
 				"Gen2 runs on Cloud Run Services which rejects the cache-TTL "+
-				"gcsfuse flags needed for cross-task safety (BUG-944). "+
+				"gcsfuse flags needed for cross-task safety. "+
 				"Use Backing: gcs-sync instead (per-exec tar sync, no FUSE)",
 			name, spec.Kind)
 

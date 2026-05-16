@@ -17,7 +17,7 @@ Default "user merges every PR" remains in force.
 | Sub | Status | BUG | What |
 |---|---|---|---|
 | **P164.0** | ✅ | — | Branch from `origin/main` + survey + 9 BUGs filed + continuity-doc opening. |
-| **P164.1** | ◻ | 1015 | `backends/cloudrun-functions/volume_translator.go:95` — strip `(BUG-944)` literal from operator-visible error string; rewrite `volume_translator_test.go:78` assertion from the contract ("gcs-sync" + "gcs-fuse" + "Cloud Functions") rather than the bug-ref substring. |
+| **P164.1** | ✅ | 1015 | `backends/cloudrun-functions/volume_translator.go:95` — stripped `(BUG-944)` literal from operator-visible error string; rewrote `volume_translator_test.go:78` assertion from the contract ("gcs-sync" + "gcs-fuse" + "Cloud Functions") rather than the bug-ref substring. |
 | **P164.2** | ◻ | 1016 | bleephub strict-decode: replace `_ = json.NewDecoder(r.Body).Decode(...)` in `gh_misc_endpoints.go` (OIDC custom sub PUT line 328, Pages create line 434, branch protection PUT line 508) + `gh_issue_moderation.go:144` with strict decode + 422/400 envelope. Real GitHub returns 400 on malformed JSON. |
 | **P164.3** | ◻ | 1017 | Sim strict-decode sweep: `simulators/aws/wafv2.go:696-697` (UpdateRuleGroup), `simulators/aws/amplify.go:834` (StartJob), `simulators/gcp/cloudfunctions.go:323+328` (entrypoint resolve), `simulators/gcp/cloudrunjobs.go:196` (Operation marshal-back), `simulators/gcp/artifactregistry.go:424` (manifest mediaType parse). Cross-cloud sibling of BUG-996. |
 | **P164.4** | ◻ | 1018 | `backends/core/handle_exec.go:95` strict-decode `ExecStartConfig` before hijacking; `backends/core/handle_libpod.go:120` decide the right shape for the podman specgen shim (either propagate or document why both decodes are tried in sequence). |
