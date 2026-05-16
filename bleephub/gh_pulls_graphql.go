@@ -491,9 +491,10 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return pr["reviewThreads"], nil
 				},
 			},
-			// `milestone` — gh CLI's issue view fragment queries it on PR too
-			// (real GH PRs have milestones). bleephub doesn't model PR milestones
-			// today; return nil so the field is queryable but always empty.
+			// PR.milestone — real GH PRs are issues internally so they
+			// share the Milestone table. pullRequestToGQL embeds the
+			// resolved milestone map in pr["milestone"] (or nil when the
+			// PR has no milestone assigned).
 			"milestone": &graphql.Field{
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "PRMilestone",
@@ -504,7 +505,14 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 						"dueOn":       &graphql.Field{Type: graphql.String},
 					},
 				}),
-				Resolve: alwaysNil,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					m, ok := pr["milestone"].(map[string]interface{})
+					if !ok || m == nil {
+						return nil, nil
+					}
+					return m, nil
+				},
 			},
 			"commits": &graphql.Field{
 				Type: prCommitConnectionType,
@@ -1129,6 +1137,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"closedAt":         closedAt,
 		"locked":           pr.Locked,
 		"activeLockReason": nilStr(pr.ActiveLockReason),
+		"milestone":        prMilestoneToGQLLocked(pr, st),
 		"labels": map[string]interface{}{
 			"nodes":      labelNodes,
 			"totalCount": len(labelNodes),
@@ -1242,6 +1251,30 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 		})
 	}
 	return out
+}
+
+// prMilestoneToGQLLocked returns the GraphQL source map for the PR's
+// milestone, or nil when the PR has no milestone or the referenced
+// milestone has been deleted. Real GitHub shares the Milestone table
+// between Issues and PRs; bleephub mirrors that.
+func prMilestoneToGQLLocked(pr *PullRequest, st *Store) interface{} {
+	if pr.MilestoneID == 0 {
+		return nil
+	}
+	ms, ok := st.Milestones[pr.MilestoneID]
+	if !ok {
+		return nil
+	}
+	var dueOn interface{}
+	if ms.DueOn != nil {
+		dueOn = ms.DueOn.Format(time.RFC3339)
+	}
+	return map[string]interface{}{
+		"number":      ms.Number,
+		"title":       ms.Title,
+		"description": ms.Description,
+		"dueOn":       dueOn,
+	}
 }
 
 // prCommentToGQLLocked builds the GraphQL source map for a single
