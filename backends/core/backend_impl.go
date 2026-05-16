@@ -203,7 +203,11 @@ func (s *BaseServer) ContainerList(opts api.ContainerListOptions) ([]*api.Contai
 		if !opts.All && !c.State.Running {
 			continue
 		}
-		if s.CloudState == nil && len(opts.Filters) > 0 && !MatchContainerFilters(c, opts.Filters) {
+		// Post-filter unconditionally — CloudState implementations vary
+		// in which filters they apply server-side (some forward all,
+		// others only id/state). MatchContainerFilters is idempotent so
+		// re-running it on results CloudState already filtered is cheap.
+		if len(opts.Filters) > 0 && !MatchContainerFilters(c, opts.Filters) {
 			continue
 		}
 
