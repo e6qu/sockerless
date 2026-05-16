@@ -6,7 +6,44 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-16 — Phase 160: codify Phase 159 lessons as project-local skills (in flight on PR #160)
+## 2026-05-16 — Phase 161: comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
+
+Phase 158 shipped [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) — a 23-pattern catalogue of vibe-coding anti-patterns sourced from working programmers, project maintainers, and incident write-ups. Phase 158 also added the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) skill that loads before every non-trivial code change. The point of those two artifacts is **to apply the catalogue at write-time**, not to admire it.
+
+Phase 161 is the explicit sweep that proves the catalogue is load-bearing: run the checklist across the entire codebase, file every concrete violation, fix everything in one PR. Anything less and the catalogue becomes a museum piece — "we know about these anti-patterns" is not the same as "our code doesn't have them."
+
+### The sweep
+
+Three parallel `Explore` subagents scanned `backends/`, `simulators/`, and `bleephub/ + cmd/ + agent/ + api/` against the 23-pattern checklist. A separate grep located all production-code comments referencing phases or BUG IDs (memory rule: that metadata belongs in commits / PRs / BUGS.md, never in source comments). Verification reads on each suspicious finding ruled out false positives (e.g. the simulator agent flagged ~109 occurrences of "duplicate JSON parse + error handler" — but each handler does unique work after the parse; that's idiomatic boilerplate, not Pattern 11).
+
+After dedup + verification, 12 BUGs filed (BUG-994 … BUG-1005) across 7 anti-pattern categories:
+
+- **Pattern 9 + 15 (auth bypass)** — `bleephub/auth.go::handleOAuthToken` issues a valid 1-year `alg:none` JWT for *any* input. No `grant_type` check, no `client_assertion` JWT verification, no anti-replay. Real GitHub's `/login/oauth/access_token` validates the JWT against the App's public key. This is the highest-severity finding by far. **BUG-1000.**
+- **Pattern 1 + persistence invariant violation** — `bleephub/{store,gh_apps_store,gh_apps_user_tokens}.go` Persistence writes use `_ = st.persist.Put(...)`. The "fail-loud on persistence-open failure" invariant from BUG-985/986 was wired for *open*, not *write*. **BUG-997.**
+- **Pattern 11/12 (handler bypassing `s.self`)** — BUG-991/992 lineage. `handleSystemDf`, `handleImagePrune`, `handleContainerList` (when `CloudState == nil`), `handleLibpodContainerList` all read `s.Store.*` directly instead of dispatching through `s.self.<Method>`. Cloud backend overrides never get reached from these HTTP paths. **BUG-995.**
+- **Pattern 1 (sim handler silent decode swallow)** — ~18 occurrences of `_ = sim.ReadJSON(r, &req)` across `simulators/{aws,gcp,azure}/*.go`. **BUG-996.**
+- **Pattern 1 (auth header silent decode)** — `decodeRegistryAuth` returns `("","")` on any base64 / JSON parse failure. Callers can't distinguish "no auth" from "malformed auth"; real Docker daemon returns 400 on malformed. **BUG-998.**
+- **Pattern 9 (faked GraphQL field data)** — bleephub's GraphQL has `alwaysNil` / `emptyList` / `alwaysEmptyString` resolvers wired to ProjectV2 + PR-review-thread fields. **BUG-1001.**
+- **Pattern 9 (missing parent-exists check)** — `simulators/azure/acr.go` Replications list returns empty array when the parent registry doesn't exist. **BUG-1002.**
+- **Pattern 8 (stale / misleading comments)** — `core.TagSet.InstanceID` marked `Deprecated` but 27+ callers; `bph_` legacy seeded admin token where the rule says ghp_; ~60 `// Phase X` / `// BUG-NNN` references in production code. **BUG-994, BUG-999, BUG-1004.**
+- **Pattern 5 (defensive nil chain)** — `bleephub/workflows.go` 3-deep `if foundJob.Def != nil && foundJob.Def.Strategy != nil && ...` matrix-fail-fast resolution. **BUG-1005.**
+- **Pattern 14 (premature abstraction)** — `simulators/gcp/artifactregistry.go::buildOCIHandler` single-call-site helper. **BUG-1003.**
+
+### Scope decisions made during the sweep
+
+- **One BUG per category, not per instance.** The phase/bug-comment cleanup is 60+ comments; filing 60 BUGs would be noise. One BUG-994 with a sweep fix is the right granularity. Same for BUG-996 (18 sites in sims) and BUG-995 (multiple handlers, one delegation pattern).
+- **Reject `(nil, nil)` Go idiom for "not found".** The bleephub sweep flagged `GetWorkflowAndJob` returning `nil, nil` on not-found. That's Go's standard "no result, no error" pattern when the caller checks for `nil`; it's only a bug if callers misinterpret. Audit showed callers handle correctly — not filed.
+- **Reject "duplicate JSON parse skeleton" as Pattern 11.** Each sim handler does unique work after the parse; the shared three-line preamble is idiomatic boilerplate.
+- **bph_ token vs ghp_** — the runtime accepts both (per memory the prefix family is `ghp_/gho_/ghu_/ghs_/ghr_/bph_`). But the seeded admin user keeps `bph_` for "backwards compatibility with existing tests + integrations" — the rule is "if real GitHub does X, bleephub does X." Real GitHub doesn't issue `bph_`. **BUG-1004.**
+- **UI sweep deferred.** TypeScript surfaces are large and the catalogue is currently Go-shaped. A separate phase if the Go sweep surfaces a sibling UI pattern.
+
+### Sub-task plan
+
+12 commits in severity order (auth bypass first, fail-loud invariant next, handler delegation next, then the bigger sweeps). Per-bug fix shape in [DO_NEXT.md § Phase 161](DO_NEXT.md) sub-task table.
+
+User direction at phase open: comprehensive sweep using the skill, document findings in BUGS.md, sync continuity docs, fix everything in one PR — make the continuity docs survive multiple compactions so the work-in-progress is easy to pick up.
+
+## 2026-05-16 — Phase 160: codify Phase 159 lessons as project-local skills (merged 2026-05-16 at `aeb0ac6e` as PR #160)
 
 Phase 159 closed with 11 sub-tasks across six AWS service families. Reviewing the commit history surfaced four recurring kinds of CI-red iteration — each one a wire-shape detail that the model "knew" from API-name patterns but didn't actually know:
 

@@ -1,15 +1,27 @@
 # Known Bugs
 
-**993 filed · 993 fixed · 0 open · 1 false positive.**
+**1005 filed · 993 fixed · 12 open · 1 false positive.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
-Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md).
+Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pattern numbers reference `docs/VIBE_CODING.md`.
 
 ## Open
 
-| ID | Sev | Area | One-liner |
-|----|-----|------|-----------|
+| ID | Sev | Area | Pattern | One-liner |
+|----|-----|------|---------|-----------|
+| 1000 | P0 | `bleephub/auth.go::handleOAuthToken` | 9 + 15 | OAuth token-exchange endpoint issues a valid 1-year `alg:none` JWT for *any* request — no `grant_type` check, no `client_assertion` JWT signature verification, no anti-replay. Real GitHub's `/login/oauth/access_token` validates the JWT against the App's public key. Auth-bypass-as-a-feature. Fix: verify the client-assertion JWT against the App's public key + accepted `grant_type` per real GitHub. |
+| 997 | P0 | `bleephub/{store,gh_apps_store,gh_apps_user_tokens}.go` | 1 + invariant | Persistence writes use `_ = st.persist.Put(...)` / `_ = st.persist.Delete(...)` — ignored return errors. The "opt-in persistence + fail-loud" rule (BUG-985/986) was wired for *open* but not *write*; an SQLite write failure now leaves the in-memory state diverged from disk silently. Fix: route every persist call through a helper that `log.Fatalf`s on write failure. |
+| 995 | P1 | `backends/core/handle_extended.go`, `handle_images.go`, `handle_libpod.go` | 11 / 12 | HTTP handlers read `s.Store.*` directly instead of dispatching through `s.self.<Method>`. Affected: `handleSystemDf` (volumes + images + containers branches), `collectAllContainers`, `handleContainerList` fallback (`CloudState == nil`), `handleImagePrune`, `handleLibpodContainerList`. Siblings of BUG-991 / BUG-992; cloud backend overrides never reached from these HTTP paths. Fix: delegate to `s.self.SystemDf`, `s.self.ImagePrune`, `s.self.ContainerList`, etc. |
+| 1001 | P1 | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | 9 | GraphQL resolvers for ProjectV2 + PR-review-thread fields wired to `alwaysNil` / `emptyList` / `alwaysEmptyString` — returns fake data instead of real not-found errors. Examples: `ProjectV2ItemFieldSingleSelectValue.optionId/name` always-nil; 11 PR comment editor / reviewer / suggested-edits fields always-nil. Fix: implement real lookups against the bleephub store, or return GraphQL field-level errors per the spec — never fake data. |
+| 998 | P1 | `backends/core/handle_images.go::decodeRegistryAuth` | 1 | Returns `("", "")` on base64 *or* JSON decode failure. Callers can't distinguish "no auth header" from "malformed auth header" — real Docker daemon returns 400 on malformed. Fix: split the function so empty-header is the only success-on-empty path; propagate decode errors to the HTTP handler. |
+| 1002 | P2 | `simulators/azure/acr.go` Replications list | 9 | `GET /registries/{r}/replications` returns empty array if `{r}` doesn't exist instead of `ResourceNotFound`. Real Azure returns the 404 envelope. Fix: verify parent registry exists; return the Azure error shape with `code: "RegistryNotFound"`. |
+| 996 | P2 | `simulators/{aws,gcp,azure}/*.go` | 1 | ~18 sites of `_ = sim.ReadJSON(r, &req)` swallow JSON-decode errors. Some handlers genuinely have an optional body; others should error. Fix: per-site audit — mandatory body → propagate parse error; optional body → switch to `io.Copy(io.Discard, r.Body)` with a `why` comment so the choice is explicit. |
+| 994 | P2 | repo-wide | 8 | ~60 production code comments reference phase numbers (`// Phase 87b`) or BUG IDs (`// BUG-944`). Memory rule + guiding principle 14: that metadata belongs in commits / PRs / BUGS.md, not in source comments — they rot. Fix: sweep `backends/`, `simulators/`, `bleephub/`, `cmd/`, `api/`, `agent/`, `github-runner-dispatcher-*/` — drop the phase / bug reference; preserve the *why* when load-bearing. |
+| 999 | P2 | `backends/core/tags.go::TagSet.InstanceID` | 8 | Field marked `Deprecated: use Cluster instead for stateless model` but has 27+ active callers across backends. Either the deprecation is real (migrate callers and remove the field) or it's stale (drop the misleading comment). Fix: audit callers; pick one. |
+| 1004 | P2 | `bleephub/store.go::SeedDefaultUser` | 8 | Seeded admin user keeps a `bph_`-prefixed token "for backwards compatibility with existing tests + integrations" while `CreateToken` now mints `ghp_`. Rule: if real GitHub does X, bleephub does X — and real GitHub doesn't issue `bph_`. Fix: switch seeded token to `ghp_`; update fixture references. |
+| 1005 | P3 | `bleephub/workflows.go::~410` | 5 | `if foundJob.Def != nil && foundJob.Def.Strategy != nil && foundJob.Def.Strategy.FailFast != nil` 3-deep nil chain when resolving matrix fail-fast. Fix: normalise on YAML parse (default `Strategy` + `FailFast` to non-nil zero values) so the runtime path is single-deref. |
+| 1003 | P3 | `simulators/gcp/artifactregistry.go::buildOCIHandler` | 14 | Single-call-site helper called once at line 223; the abstraction has no second consumer. Fix: inline. |
 
 ## False positives
 

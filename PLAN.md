@@ -2,23 +2,24 @@
 
 > **Goal:** Replace Docker Engine with Sockerless for any Docker API client — `docker run`, `docker compose`, TestContainers, CI runners — backed by real cloud infrastructure (AWS, GCP, Azure).
 
-State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/](specs/).
+State [STATUS.md](STATUS.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · architecture [specs/](specs/) · vibe catalogue [docs/VIBE_CODING.md](docs/VIBE_CODING.md).
 
 ## Guiding principles
 
 1. **Docker API fidelity** — match Docker's REST API exactly.
-2. **GitHub API fidelity (bleephub)** — match GitHub's REST + GraphQL paths and shapes exactly, modulo base domain. Including request-body tolerances: if real GitHub accepts string-coerced booleans (what `gh api -f` sends), bleephub accepts them too. The `gh` CLI must work directly against bleephub — not via URL hackery.
+2. **GitHub API fidelity (bleephub)** — match GitHub's REST + GraphQL paths and shapes exactly, modulo base domain. Real `gh` CLI must work directly against bleephub.
 3. **Real execution** — sims and backends actually run commands; no stubs, fakes, or mocks.
-4. **External validation** — proven by unmodified external test suites (the `gh` binary, the official `actions/runner`, real Docker SDKs, Terraform providers).
+4. **External validation** — proven by unmodified external test suites (`gh` binary, `actions/runner`, real Docker SDKs, Terraform providers).
 5. **Driver-first handlers** — handler code routes through driver interfaces.
 6. **LLM-editable files** — source files under 400 lines.
-7. **State persistence** — every task ends with a state save (STATUS.md / DO_NEXT.md / WHAT_WE_DID.md / MEMORY.md / `_tasks/done/`).
-8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces; cross-cloud sweep on every find. **In particular: we are not in legacy maintenance — no shims for old bleephub behavior.** If real GitHub does X, bleephub does X.
+7. **State persistence** — every task ends with a state save (STATUS / DO_NEXT / WHAT_WE_DID / MEMORY / `_tasks/done/`).
+8. **No fallbacks, no skips, no defers, no fakes** — every functional gap is a real bug; every bug gets a real fix in the same session it surfaces. We are not in legacy maintenance — no shims for old behaviour. If real GitHub does X, bleephub does X.
 9. **Sim parity per commit** — any new SDK call adds a sim handler + matrix row in the same commit.
 10. **Single work-branch rule** — all in-flight work lands on one branch. User handles every merge.
 11. **Cross-cloud is permanently off the table** — cloud-specific drivers extend the generic shape; cross-cloud duplication is fine, in-cloud duplication consolidates into `*-common`.
-12. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars). No admin-required env vars on components, no startup registration, no "I'm being managed" hooks.
-13. **Persistence is opt-in + fail-loud.** Operator-requested persistence (`BLEEPHUB_PERSIST=true`, `SIM_PERSIST=true`) that fails to open must `log.Fatalf`. Never silently fall back to in-memory (BUG-985/986).
+12. **Components stay decoupled from admin / UI.** Sims, backends, bleephub remain independently configurable, buildable, runnable. Admin reads only what they already expose (`/v1/health`, `/v1/info`, env vars).
+13. **Persistence is opt-in + fail-loud.** Operator-requested persistence (`BLEEPHUB_PERSIST=true`, `SIM_PERSIST=true`) that fails to open or write must surface the error, never silently degrade (BUG-985/986).
+14. **No phase or bug IDs in code comments.** Keep that metadata in commits / PRs / BUGS.md only; code comments document the *why*, not the lineage.
 
 ## Closed phases (PR index)
 
@@ -28,128 +29,75 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 |---|---|---|
 | #112–123 | 86–123 | Sim parity; stateless backends; FaaS pod overlays; storage-backing driver pilot; **8/8 runner cells GREEN.** |
 | #125 | CI reorg | Workflows reorganized: zero auto-fire on main; live-tests-{cloud}. |
-| #128 | 134 | Makefile standardization + per-app leaf Makefiles + stack orchestration. |
-| #129 | 135 | Sim host model + 3-tier coverage + native arm64 CI runners. |
-| #130 | 128 | Runner job timeout (bootstrap timer + cloud-native cap). |
-| #131 | 124 | Network discovery driver (host-aliases / cloud-dns / service-mesh / nat-gateway-only). |
-| #132 | 125 | DNS driver (cloud-map / cloud-dns-zone / private-dns-zone / service-discovery / none). |
-| #133 | 126 | Access driver (iam-role / id-token / mTLS / none-internal). |
-| #134 | 127 | Storage driver expansion (pd-ephemeral / efs-ephemeral / azure-files-ephemeral). |
+| #128–134 | 124–134 | Driver framework + makefile std + sim host model + arm64 CI runners + job timeout + network/dns/access/storage drivers. |
 | #135–136 | 121b | Azure sim hardening, driver consolidation pattern B, network-discovery adapter consolidation, AZF/Lambda DNS, Azure AD access. |
 | #137–142 | 78–84 | UI polish + admin orchestration (`sockerless.yaml` topology, `TopologyManager`, lifecycle endpoints, UI Topology page, per-instance logs + console, cloud-resources rollup, sim UI parity, per-instance state isolation + BUG-985/986). |
 | #143–144 | 85–86 | Config edit + hot reload; health + supervision surface (exit-code capture, `/diagnostics`, `<UnhealthyDiagnosticPanel>`). |
 | #145–146 | 87 + 87b | Observability stack (otel-collector + VictoriaLogs + Jaeger) + component-side OTel SDK wiring. |
 | #147–149 | 91 + 91b + 91c | `BackingMemory` translator across 5 backends; Lambda volume_translator framework migration; cloudrun + gcf `BackingPDEphemeral` rejection. |
 | #150 | 87c | zerolog → OTel logs bridge across all 12 components. |
-| #151 | 87d + 92 | Trace propagation + MeterProvider + runtime metrics + `make stack-observability-validate`; `Backing: gcs-fuse` deregistered on cloudrun + gcf (closes BUG-944, ships BUG-987). |
+| #151 | 87d + 92 | Trace propagation + MeterProvider + runtime metrics; `Backing: gcs-fuse` deregistered on cloudrun + gcf. |
 | #152 | docs | `docs/POD_MATERIALIZATION.md` — per-backend pod materialization walked through GH + GitLab runners. |
-| #153 | 153 | bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat (13 sub-tasks; Docker harness 50/50 PASS). |
+| #153 | 153 | bleephub ↔ GitHub API parity + SQLite persistence + real `gh` CLI compat. |
 | #154 | 154 | Broad GitHub API sweep — reactions, releases, deployments + environments, PR review comments + threads, Checks, Actions OIDC + JWKS, Pages, branch protection. |
-| #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md` block. |
-| #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP `google.golang.org/api` v0.278.0 → v0.279.0. |
-| #157 | 157 | Component ⇄ reference-adaptor docs sweep (started — only `backends/docker` covered). Experimental/security caveat on root README. BUG-991 surfaced + staged. **Sweep completed in Phase 160** (PR #160) for `backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}` + `simulators/{gcp,azure}`; `simulators/aws/` had already landed in P159.10. |
-| #158 | 158 | BUG-991 + BUG-992 fixes; `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue; 3 project-local Claude skills under `.claude/skills/`. |
+| #155–156 | 155–156 | bleephub-specific + project-wide docs refresh; GCP dep bump. |
+| #157 | 157 | Component ⇄ reference-adaptor docs sweep started (`backends/docker` only). |
+| #158 | 158 | BUG-991 + BUG-992 fixes; `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md`; 3 project-local Claude skills. |
+| #159 | 159 | AWS sim — CloudFront + ACM + Route 53 + WAFv2 + Amplify + IAM SLR/OIDC (11 sub-tasks, `TestStackProductionShape` cross-resource invariants). Merged 2026-05-15 at `236a387f`. |
+| #160 | 160 | Two new project-local skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement; component-README adaptor-led sweep completed across 6 backends + 2 simulators + bleephub + `cmd/sockerless` + new `cmd/sockerless-admin/README.md` + rewritten `simulators/README.md`. Phase 157 Track A closed. Merged 2026-05-16 at `aeb0ac6e`. |
 
-## Active + planned phases
+## Active phase
 
-Each entry: scope, why, acceptance. Pick from [DO_NEXT.md](DO_NEXT.md).
+### Phase 161 — Comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
 
-### Phase 160 — Codify Phase 159 lessons as project-local Claude skills (in flight on PR #160)
+Sockerless is a vibe-coded project. The published 23-pattern catalogue at [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) plus the project-local `avoid-vibe-slop` skill exist precisely so this sweep is an explicit phase, not a perpetual side-quest. Phase 161 runs the checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api), files every concrete violation as a BUG, and lands real fixes in one PR.
 
-Phase 159's commit history surfaced four recurring CI-red iteration causes (SDK serializer source vs `--debug` blind spot, Terraform-provider Read nil-deref on omitted optional fields, cross-resource Read API asymmetry, trailing-slash routing) plus one positive pattern (`TestStackProductionShape` asserting cross-resource invariants from `terraform output -json`). Phase 160 captures these into project-local Claude skills so the next sim service doesn't re-discover them.
+Scope locked at 12 BUGs (BUG-994 … BUG-1005). Per-bug detail in [BUGS.md](BUGS.md); fix-shape decisions in [DO_NEXT.md § Phase 161](DO_NEXT.md). Categories:
 
-Scope:
-- `.claude/skills/sim-handler-checklist/SKILL.md` (new) — pre-write checklist for any new `simulators/<cloud>/<service>.go` file. Four explicit checks with worked examples from Phase 159.
-- `.claude/skills/cross-resource-stack-test/SKILL.md` (new) — codifies the `TestStackProductionShape` pattern.
-- `.claude/skills/adaptor-fidelity-check/SKILL.md` (refined) — new step 1a (SDK serializer source) + 1b (TF provider `resourceXxxRead` inspection) + new failure-mode entries.
-- `docs/VIBE_CODING.md` — project-local-skills section bumped 3 → 5 skills; "Last updated" 2026-05-13 → 2026-05-16.
-- Continuity docs (STATUS.md, DO_NEXT.md, WHAT_WE_DID.md, PLAN.md, MEMORY.md).
-
-Out of scope: no code-surface changes, no new test files. Doc + skill content only.
-
-Acceptance: PR #160 CI green on the standard 11 checks; no review-time discovery of additional lessons that should have been captured.
-
-### Phase 159 — AWS simulator: CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (complete on PR #159, awaiting merge)
-
-Expand `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most AWS Terraform stacks reach into. **All 11 sub-tasks shipped on `phase-159-aws-sim-cloudfront-amplify`** (P159.0 dep tidy → P159.10 docs + end-to-end stack test). CI green on every push; awaiting user merge.
-
-Today's sim handles ECS / ECR / IAM / EC2 / EFS / Lambda / KMS / SSM / S3 / STS / SecretsManager / DynamoDB / CloudWatch / CloudMap / Lambda Runtime / metadata. Phase 159 adds:
-
-| Service | Wire | Why now |
-|---|---|---|
-| CloudFront | REST + XML | The CDN front-end for Amplify, S3 static sites, and most Terraform-stamped production stacks. |
-| AWS Amplify | JSON | Website hosting + branch-per-env deployments; depends on CloudFront under the hood. |
-| WAFv2 | JSON (scope-aware) | Web ACL associations on CloudFront distributions are the standard prod-shape. |
-| ACM | JSON (us-east-1 pin) | Cert issuance + DescribeCertificate for CloudFront distribution aliases. |
-| Route 53 (ALIAS records) | REST + XML | ALIAS A/AAAA records targeting CloudFront distribution DNS names; the production way to wire a custom domain. |
-| IAM additions | JSON (existing handler extended) | Service-linked roles `AWSServiceRoleForCloudFrontLogger` + `AWSServiceRoleForAmplify`; OIDC providers for Amplify SSR. |
-
-Reference adaptors per Phase 157 frame:
-
-- **`aws cloudfront` CLI** — `create-distribution`, `get-distribution`, `update-distribution`, `delete-distribution`, `list-distributions`, `create-invalidation`, `create-function`, `publish-function`, `create-origin-access-control`, `associate-alias`, tag CRUD.
-- **`aws amplify` CLI** — `create-app`, `update-app`, `delete-app`, `list-apps`, `create-branch`, `start-deployment`, `start-job`, `create-domain-association`, `create-webhook`.
-- **`aws wafv2` CLI** — `create-web-acl --scope CLOUDFRONT`, `associate-web-acl`, `list-web-acls`, `update-web-acl`, `delete-web-acl`.
-- **`aws acm` CLI** — `request-certificate`, `describe-certificate`, `delete-certificate`, `list-certificates`, `add-tags-to-certificate`.
-- **`aws route53` CLI** — `change-resource-record-sets` with `AliasTarget`, `list-resource-record-sets`.
-- **AWS Go SDK** — `aws-sdk-go-v2/service/{cloudfront,amplify,wafv2,acm,route53}`.
-- **Terraform `aws` provider resources** — `aws_cloudfront_distribution`, `aws_cloudfront_function`, `aws_cloudfront_origin_access_control`, `aws_amplify_app`, `aws_amplify_branch`, `aws_amplify_domain_association`, `aws_amplify_webhook`, `aws_wafv2_web_acl`, `aws_wafv2_web_acl_association`, `aws_acm_certificate`, `aws_route53_record` (with `alias{…}`).
-
-Wire-protocol notes (load-bearing):
-
-- **CloudFront speaks XML.** Path style is `/2020-05-31/distribution/{id}`; bodies are `<Distribution>…</Distribution>`. Existing sim handlers are JSON-only; need an XML encoder/decoder shape next to the JSON one. Match `aws-sdk-go-v2/service/cloudfront`'s exact element order — the SDK rejects out-of-order XML on some types.
-- **Route 53 speaks XML.** Same family.
-- **WAFv2 scope dimension** — `CLOUDFRONT` scope is global (us-east-1); `REGIONAL` is per-region (ALB/API Gateway). Phase 159 covers CLOUDFRONT scope; REGIONAL can come later if a backend needs it.
-- **ACM us-east-1 pin** — CloudFront only accepts certs from `us-east-1`. Sim must enforce this on `ViewerCertificate.ACMCertificateArn` references and reject mismatches with the same error shape the real AWS API uses.
+| BUG | Pattern (VIBE_CODING.md §) | Area | Fix shape |
+|---|---|---|---|
+| 994 | 8 — phase/bug refs in code comments | repo-wide (~60 occurrences) | Sweep: drop the phase/bug ID; rewrite as a *why* line if the context is load-bearing. |
+| 995 | 11/12 — HTTP handler reads `s.Store` directly | `backends/core/handle_extended.go`, `handle_images.go`, `handle_libpod.go` | Delegate to `s.self.<Method>` siblings of BUG-991/992. |
+| 996 | 1 — `_ = sim.ReadJSON(...)` swallows | `simulators/{aws,gcp,azure}/*.go` (~18 occurrences) | Either propagate the parse error (mandatory body) or drain via `io.Copy(io.Discard, …)` with a `why` comment (optional body). |
+| 997 | 1 + persistence invariant — `_ = st.persist.Put/Delete` | `bleephub/store.go`, `gh_apps_store.go`, `gh_apps_user_tokens.go` | Wrap puts via a `persistPut` helper that `log.Fatalf`s on write failure, matching the open-failure rule. |
+| 998 | 1 — `decodeRegistryAuth` returns `("","")` on malformed header | `backends/core/handle_images.go` | Distinguish empty header from malformed header; propagate decode error as `400` to caller. |
+| 999 | 8 — `core.TagSet.InstanceID` marked `Deprecated` but heavily used | `backends/core/tags.go` + ~27 callers | Either complete the migration to `Cluster` or remove the misleading deprecation comment. |
+| 1000 | 9 + 15 — `handleOAuthToken` returns valid 1-year `alg:none` JWT for any input | `bleephub/auth.go` | Validate `grant_type` + `client_assertion` JWT signature against the App's public key per real GitHub. |
+| 1001 | 9 — `alwaysNil` / `emptyList` GraphQL resolvers for ProjectV2 + PR review threads | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | Implement real lookups or return GraphQL field-level errors per the spec; never fake data. |
+| 1002 | 9 — Azure ACR replications list returns `[]` when registry missing | `simulators/azure/acr.go` | Verify parent registry exists; return `ResourceNotFound` Azure error shape. |
+| 1003 | 14 — single-call-site `buildOCIHandler` premature abstraction | `simulators/gcp/artifactregistry.go` | Inline the helper. |
+| 1004 | 8 — `bph_`-prefixed seeded admin token (legacy shim) | `bleephub/store.go` `SeedDefaultUser` | Switch seeded admin token to `ghp_` prefix per real GitHub; update fixtures. |
+| 1005 | 5 — 3-deep defensive nil chain in workflows fail-fast | `bleephub/workflows.go` | Trace upstream nil source; normalise on parse so the runtime path is single-deref. |
 
 Acceptance:
 
-- Per-service `simulators/aws/{cloudfront,amplify,wafv2,acm,route53}.go` handler files matching the existing per-service file pattern.
-- `simulators/aws/sdk-tests/` adds test functions per service driving the real AWS Go SDK against the running simulator.
-- `simulators/aws/terraform-tests/` adds Terraform plans per service using the real Terraform `aws` provider with `endpoints {}` block overriding to the sim.
-- `simulators/aws/cli-tests/` adds `aws` CLI smoke per service.
-- `simulators/aws/API_SPEC.md` updated to enumerate the new verbs covered + last-green count.
-- `simulators/aws/README.md` updated in Phase 157 adaptor-led shape (landed in P159.10).
-
-Sub-task breakdown + commit layout in [DO_NEXT.md § Phase 159](DO_NEXT.md). Each sub-task = one commit; CI runs per commit. Phase may span multiple sessions; state save discipline (per `.claude/skills/avoid-vibe-slop`) preserves continuity.
+- All 12 BUGs closed (Open → Resolved history in BUGS.md).
+- `go test ./...` green in every touched Go module.
+- `bun test` green in every touched UI package (if any touched).
+- No new BUGs surface during the sweep that aren't closed in the same PR — unfound vibe slop counts the same as un-found bugs.
+- BUGS.md count moves `993 filed / 993 fixed / 0 open` → `1005 filed / 1005 fixed / 0 open`.
+- This phase's PR (`#161`) opens against `main`. User merges.
 
 Out of scope:
 
-- WAFv2 REGIONAL scope (deferred until an ALB/API Gateway need surfaces).
-- CloudFront edge functions actually executing JavaScript (return success; do not interpret the code).
-- Lambda@Edge association beyond the metadata layer.
-- Amplify build orchestration actually running the build (`StartJob` returns success + a synthesised job ID; no real npm install).
-- ACM certificate DNS-validation polling loops (`pendingValidation` → `issued` transition can be eager).
-- Service-linked role *enforcement* (sim accepts requests without verifying the SLR exists; create the records on demand).
+- TypeScript / UI sweep — deferred to a follow-up phase if the Go sweep surfaces a sibling pattern in the UI.
+- Live-cloud validation track (separate cells, separate branches).
+- Phase 91d (cloud-primitive blocker).
+- Slopsquatted-dependency audit — `check-latest-deps` already covers drift; manual upstream-existence audit would be a separate phase if scope justifies it.
 
-### Phase 157 — Component ⇄ reference-adaptor docs sweep (CLOSED across #157 + P159.10 + #160)
+## Future phases
 
-PR #157 covered `backends/docker` only. `simulators/aws/README.md` followed in P159.10. **Phase 160 (PR #160)** completed the sweep across the remaining cloud backends + simulators (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`, `simulators/{gcp,azure}/README.md`), added a `bleephub/README.md` reference-adaptor section, and folded in `cmd/sockerless/README.md` (rewrite), `cmd/sockerless-admin/README.md` (new), and `simulators/README.md` (rewritten as end-to-end showcase + navigation hub). **All component READMEs now follow the canonical shape.**
+### Track A — Live-cloud validation (one branch per cell)
 
-Doc shape (locked-in from #157): lead with reference adaptors (with min versions + spec hyperlinks), then validation (test paths + last-green dates), wiring, sample (real captured output), known issues, out-of-scope.
+Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
 
-### Phase 153–156 — Closed
+### Track B — Skill maturation (post-Phase 158)
 
-bleephub ↔ GitHub API parity (153) + broad GitHub API sweep (154) + bleephub docs (155) + project-wide docs (156). Headlines in the PR index above; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail in [BUGS.md](BUGS.md). Spec at [specs/BLEEPHUB_GITHUB_API_PARITY.md](specs/BLEEPHUB_GITHUB_API_PARITY.md).
+Candidate additional skills as new patterns surface: `state-save`, `spec-first-implementation`, `cross-cloud-sweep`.
 
-### Phase 158 — Closed (PR #158)
+### Track C — Phase 91d (bookmarked indefinitely)
 
-BUG-991 + BUG-992 fixes (handler→`s.self` delegation closed two fallback-hiding-bugs); `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue; 3 project-local Claude skills under `.claude/skills/`. Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
-
-### Live-cloud validation track
-
-Per-backend live-cloud sweeps separate from unit/sim CI. Live-AWS ECS validated 2026-04-20. Outstanding:
-
-- Lambda live (deferred from Phase 86).
-- Cloud Run Services / ACA Apps live (closed in code 2026-04-21 behind `UseService` / `UseApp`).
-- AZF + cloud-dns on Azure live (new in #136).
-- Lambda + service-mesh on AWS live (new in #136).
-- ACA / AZF + Azure AD access on Azure live (new in #136).
-
-One branch per cell; teardown self-sufficient per `feedback_teardown_aggressive.md`.
-
-### Phase 91d — Real pd-ephemeral on cloudrun + gcf
-
-**Bookmarked indefinitely.** Cloud Run's `runpb.Volume` lacks a PD field; Admin API doesn't expose PD attach as a first-class primitive. Real implementation requires either a sockerless GCE-style backend or a Cloud Run feature change. Reject-with-pointers shape (Phase 91c, PR #149) stays in place.
+Real `pd-ephemeral` on cloudrun + gcf. Cloud Run's `runpb.Volume` lacks a PD field. Don't reopen until cloud capability changes.
 
 ## Driver phase template
 
@@ -169,4 +117,4 @@ Each phase starts with a `specs/CLOUD_RESOURCE_MAPPING.md` design pass.
 
 - GraphQL subscriptions for real-time event streaming.
 - Sockerless GCE-style backend (would unlock Phase 91d real `pd-ephemeral` for real workloads).
-- Marketplace / billing on bleephub (currently out of scope — most apps don't use them; revisit if a real consumer asks).
+- Marketplace / billing on bleephub — out of scope until a real consumer asks.
