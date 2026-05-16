@@ -193,7 +193,7 @@ func TestRollupEmpty(t *testing.T) {
 // Sanity: keep test runtime bounded under load.
 func TestRollupConcurrent(t *testing.T) {
 	if testing.Short() {
-		t.Skip()
+		t.Skip("skip concurrent rollup test in -short mode (spawns 5 upstream servers)")
 	}
 	// 5 backends each returning 2 resources → 10 rows.
 	var ports []int

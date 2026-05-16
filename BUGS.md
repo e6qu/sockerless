@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1025 filed · 1025 fixed · 0 open · 2 false positives.**
+**1028 filed · 1028 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -33,7 +33,11 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1025 bugs filed and fixed across phases 86–164.
+1028 bugs filed and fixed across phases 86–164.
+
+- **1026** (Phase 164 third-pass sweep) — Two test files asserted on Phase metadata in error strings (`docs/VIBE_CODING.md` pattern 28 — implementation-coupled tests asserting on bug-tracking metadata): `bleephub/gh_actions_test.go:233` "status = %d, want 422 (Phase 130 doesn't ship dispatch)" and `simulators/azure/auth_test.go:34` `"alg = %q, want HS256 (was alg:none before Phase 121b)"`. Re-derived both assertion messages from the contract — "rerun is unimplemented and must surface that, not silently succeed" and "alg:none is auth-bypass" — so the assertion remains useful long after the bug-tracking lineage is forgotten.
+- **1027** (Phase 164 third-pass sweep) — `cmd/sockerless-admin/api_topology_resources_test.go:196` had a naked `t.Skip()` with no message — operators reading CI output had no way to know *why* the test skipped (BUGS.md rule: "conditional `t.Skip` for missing config — all file as bugs and get real fixes. Tests run or fail loud; never skip silently"). Added explanatory message ("skip concurrent rollup test in -short mode (spawns 5 upstream servers)"). The other `t.Skip()` sites in the repo already carry messages.
+- **1028** (Phase 164 third-pass sweep) — `simulators/azure/terraform-tests/` docs↔code mismatch (pattern 33): `apply_test.go:11+22` + `README.md:3+29` referenced the `azurerm` provider, but `main.tf` actually uses `azurestack`. Aligned the docs + test comments to reflect the actual provider used (the sibling `azurerm` cloud provider drives the same ARM endpoints — clarified that both work against the sim).
 
 - **1023** (Phase 164 re-verification pass) — `github-runner-dispatcher-gcp/internal/spawner/spawner.go::stringifyJobState` was unused (zero callers) and carried `//nolint:unused // kept for diagnostics`. Same shape as the BUG-1021 `flexInt64` rip-out (dead code held for hypothetical future debug-helper use, pattern 14/27 per `docs/VIBE_CODING.md`). Deleted the function + its preceding doc-comment. If a future operator-facing diagnostic needs Job-definition reconciliation state, that PR adds the one-line helper back.
 - **1024** (Phase 164 re-verification pass) — `tools/http-trace/main.go:269` carried `var _ = httputil.DumpRequest // keep import for ad-hoc tweaks` — an explicit "keep the import in case I want to use it later" silencer + the `net/http/httputil` import that no other code path consumed. Same shape as BUG-1022. Dropped the silencer + the import; if a future tracer needs DumpRequest the import comes back as a one-liner.

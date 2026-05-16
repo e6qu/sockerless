@@ -31,7 +31,7 @@ func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 		t.Fatalf("header unmarshal: %v", err)
 	}
 	if h["alg"] != "HS256" {
-		t.Errorf("alg = %q, want HS256 (was alg:none before Phase 121b)", h["alg"])
+		t.Errorf("alg = %q, want HS256 — alg:none is auth-bypass", h["alg"])
 	}
 	if h["kid"] == "" {
 		t.Errorf("kid missing — clients that fetch JWKS rely on it")
