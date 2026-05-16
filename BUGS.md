@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1022 filed · 1021 fixed · 1 open · 2 false positives.**
+**1022 filed · 1022 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1014 | P2 | repo-wide | 8 | Phase / sub-phase metadata still appears in production code comments after the BUG-994 sweep — e.g. `simulators/aws/ecs.go:802` "Future sub-phase: derive from", `bleephub/persistence.go:29` "NOT persisted in this phase", `backends/lambda/cloud_state.go:98+198`, `simulators/aws/wafv2.go:17` "out of scope per Phase", `bleephub/gh_oauth.go:95` "pre-Phase-132 handler", `simulators/aws/lambda_runtime.go:313` "Future sub-phase", `simulators/testdata/lambda-runtime-handler/main.go:31` "Phase D", `simulators/gcp/iam.go:128`, `backends/ecs/backend_impl.go:997` "Phase-92-style teardown", `bleephub/gh_misc_endpoints.go:25`. Strip; preserve the *why* when load-bearing. |
+
+*(none — all BUGs filed during Phase 164 closed in this PR.)*
 
 ## False positives
 
@@ -32,7 +33,20 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1021 bugs filed and fixed across phases 86–164.
+1022 bugs filed and fixed across phases 86–164.
+
+- **1014** (Phase 164) — Continuation of the BUG-994 phase/BUG-ref sweep. 10 production-code sites still carried `Phase NNN` / `Phase NNNb` / `Phase D` / `pre-Phase-132` / `Phase-92-style` / `Future sub-phase` references in code comments. Stripped each — preserved the *why* in every case per the BUG-994 rule:
+  - `simulators/aws/wafv2.go:17` "REGIONAL scope out of scope per Phase 159 plan" → "REGIONAL scope intentionally out of scope".
+  - `backends/lambda/cloud_state.go:98,198` "Phase 89 / step 2 cross-cloud sibling" → comment header only (the *what* still documented).
+  - `simulators/aws/ecs.go:802` "Future sub-phase: derive from taskDef.RuntimePlatform.CpuArchitecture" → "taskDef.RuntimePlatform.CpuArchitecture is not yet honoured here — sim runs a single arch".
+  - `simulators/aws/lambda_runtime.go:313` "Future sub-phase: derive from fn.Architectures" → "fn.Architectures is not yet honoured here — sim runs a single arch".
+  - `simulators/gcp/iam.go:128` "Phase 126 (Access driver, id-token category) calls generateIdToken" → "Access driver's id-token category calls generateIdToken".
+  - `backends/ecs/backend_impl.go:997` "Phase-92-style teardown is a separate concern" → "whole-filesystem reclamation (docker system prune --volumes style) is a separate concern handled by the operator".
+  - `bleephub/gh_oauth.go:95` "preserved verbatim from the pre-Phase-132 handler. Auto-approved" → "Auto-approved (sim policy: device codes mint a token on the first poll instead of requiring an out-of-band user confirmation)".
+  - `simulators/testdata/lambda-runtime-handler/main.go:31` "ship the real sockerless-lambda-bootstrap in Phase D" → "this testdata fixture is single-shot so the sim's ECS-style 'start a container per invocation' wiring works against it".
+  - `bleephub/persistence.go:29` "NOT persisted in this phase — switching to filesystem.Storage is a separate refactor" → "Git storage (go-git in-memory) is not persisted — switching to filesystem.Storage is a separate refactor; repos do not survive a restart even with BLEEPHUB_PERSIST=true".
+  - `bleephub/gh_misc_endpoints.go:27` "per-surface depth lands as later phases when a real consumer needs it" → "per-surface depth deepens when a real consumer needs it".
+  The `backends/aws-common/build.go:239,240,241` references to `build.Phases` are *not* phase metadata — those are AWS CodeBuild SDK field names (`cbtypes.BuildPhase`). Verified by reading the SDK type.
 
 - **1020** (Phase 164) — `bleephub/webhooks_payloads.go` carried `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` since Phase 153, both with zero callers repo-wide. The `//nolint:unused // callers land in the workflow-trigger commit` directive promised the workflow-trigger commit would activate them — that commit never came. Same shape as BUG-1008 (the legacy `InitTracer` entry point ripped in Phase 161). Removed both helpers + the corresponding `var _ = json.Marshal` unused-import silencer (the file's only remaining `json.` reference) + the now-unused `encoding/json` import. AI-as-expansion-engine pattern 27 anti-pattern (no pruning) per `docs/VIBE_CODING.md`.
 - **1021** (Phase 164) — Stale `//nolint:unused` pragmas on `bleephub/gh_middleware.go` context helpers (`ghInstallationFromContext`, `ghInstallationTokenFromContext`, `ghUserToServerTokenFromContext`); the "consumers ship in subsequent commits on this branch" comment dated to Phase 153, but consumers DID land at `gh_apps_perms.go:60+61` and `gh_apps_rest.go:676+677`. Dropped the three nolint pragmas; rewrote each helper's docstring to name the actual consumers instead of pointing at a future commit. Also ripped `flexInt64` from `gh_request_decode.go` — its comment "Reserved for int64 fields that gh CLI might send — currently not consumed by any handler" + three `//nolint:unused` pragmas were dead code held for hypothetical future use (pattern 14 / 27); if a future endpoint needs flex int64, the endpoint's PR adds it back as a one-line `type flexInt64 int64` mirror of the existing `flexInt`.

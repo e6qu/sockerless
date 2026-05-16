@@ -95,8 +95,7 @@ func (p *lambdaCloudState) WaitForExit(ctx context.Context, containerID string) 
 	}
 }
 
-// ListImages queries ECR for every image sockerless can use. Phase
-// 89 /step 2 cross-cloud sibling.
+// ListImages queries ECR for every image sockerless can use.
 func (p *lambdaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, error) {
 	if p.server.aws.ECR == nil {
 		return nil, nil
@@ -195,8 +194,7 @@ func (p *lambdaCloudState) resolveFunctionARN(ctx context.Context, containerID s
 }
 
 // resolveLambdaState returns LambdaState for the given container ID,
-// deriving from cloud actuals when the in-memory cache is empty. Phase
-// 89 /cross-cloud sibling.
+// deriving from cloud actuals when the in-memory cache is empty.
 func (s *Server) resolveLambdaState(ctx context.Context, containerID string) (LambdaState, bool) {
 	if state, ok := s.Lambda.Get(containerID); ok && state.FunctionARN != "" {
 		return state, true

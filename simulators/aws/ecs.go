@@ -799,8 +799,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Architecture: sim's primary capacity is linux/arm64.
-				// Future sub-phase: derive from
-				// taskDef.RuntimePlatform.CpuArchitecture when set.
+				// taskDef.RuntimePlatform.CpuArchitecture is not yet
+				// honoured here — the sim runs a single arch.
 				// Host metadata: AWS SDK respects
 				// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4.
 				envWithMetadata := mergeEnv(cmdEnv, hostMetadataEnv(id))

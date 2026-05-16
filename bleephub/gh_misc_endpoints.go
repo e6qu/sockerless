@@ -23,8 +23,8 @@ import (
 // Org members + audit log
 // Marketplace (listing plans/accounts)
 //
-// Real-GH-shaped responses so callers don't 404; per-surface depth lands as
-// later phases when a real consumer needs it.
+// Real-GH-shaped responses so callers don't 404; per-surface depth deepens
+// when a real consumer needs it.
 
 func (s *Server) registerGHMiscEndpoints() {
 	// Users keys + emails + follow

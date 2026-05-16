@@ -994,8 +994,8 @@ func (s *Server) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 
 // VolumeRemove deletes the EFS access point bound to a named volume.
 // The backing filesystem is left in place so other volumes keep
-// working; `docker system prune --volumes` / Phase-92-style teardown
-// is a separate concern.
+// working; whole-filesystem reclamation (`docker system prune --volumes`
+// style) is a separate concern handled by the operator.
 func (s *Server) VolumeRemove(name string, force bool) error {
 	if name == "" {
 		return &api.InvalidParameterError{Message: "volume name is required"}
