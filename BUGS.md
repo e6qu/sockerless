@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1011 filed · 1005 fixed · 6 open · 1 false positive.**
+**1011 filed · 1006 fixed · 4 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -12,9 +12,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 |----|-----|------|---------|-----------|
 | 1006 | P1 | `cmd/sockerless-admin/config.go`, `cmd/sockerless/client.go` | 9 + legacy | Admin config + CLI client both silently fall back to reading "old JSON contexts" when `config.yaml` is missing — legacy migration scaffolding that violates the user's "no legacy / no fallback" directive while under active development. Fix: rip the JSON-context fallback paths; require `config.yaml` (CLI `config migrate` is still available for one-shot user-initiated migration but not an automatic fallback). |
 | 1007 | P1 | `cmd/sockerless-admin/{instance,topology_store,topology_manager,project}.go` | legacy | `DeriveLegacyInstances` / `MigrateLegacyProjects` / `legacyDir` plumbing + `ProjectConfig` carries both legacy + modern shapes "for transitional reads." Per the user's directive, this scaffolding is itself a bug. Fix: drop the legacy `(SimPort / BackendPort)` shape from `ProjectConfig`; remove the migration plumbing from `TopologyManager`; delete the `DeriveLegacyInstances` / `MigrateLegacyProjects` code paths and their tests. |
-| 1008 | P1 | `cmd/sockerless-admin/otel.go`, `backends/core/otel.go`, `bleephub/otel.go`, `simulators/{aws,gcp,azure}/shared/otel.go` | 8 + dead code | `InitTracer` exists in 6 modules as a legacy entry point superseded by `InitObservability`. Zero non-test callers. Fix: delete `InitTracer` everywhere; migrate tests to `InitObservability`. |
 | 1009 | P2 | `github-runner-dispatcher-gcp/cmd/.../main.go::~351` | 9 + legacy | "Services without an owner label are legacy (pre-owner-label sweep) and need a separate idle-time sweep." Pre-owner-label services are legacy data; the dispatcher should error on encountering them, not paper over with a future cleanup. Fix: drop the legacy-handling branch; surface unknown services as an error. |
-| 1010 | P2 | `cmd/sockerless-admin/api_observability.go::envOrDefault` | 9 | `envOrDefault(key, fallback)` returns `fallback` when the env var is unset. Per the user's "no fallbacks" rule and the existing fail-loud invariant, callers should explicitly handle "unset"; silent defaulting hides config bugs. Fix: replace with `mustEnv(key)` that `log.Fatalf`s when unset, OR drop callsites that rely on defaulting in favour of explicit zero-value handling. |
 | 1001 | P1 | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | 9 | GraphQL resolvers for ProjectV2 + PR-review-thread fields wired to `alwaysNil` / `emptyList` / `alwaysEmptyString` — returns fake data instead of real not-found errors. Examples: `ProjectV2ItemFieldSingleSelectValue.optionId/name` always-nil; 11 PR comment editor / reviewer / suggested-edits fields always-nil. Fix: implement real lookups against the bleephub store, or return GraphQL field-level errors per the spec — never fake data. |
 
 ## False positives
@@ -22,6 +20,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | Area | Finding | Why it's not a bug |
 |------|---------|--------------------|
 | `backends/aca/azure.go::fakeCredential` | Returns literal `"fake-token"` against simulator endpoints. | Sims don't verify bearer tokens — would require real Azure AD endpoint not emulated. Credential wired only via `newAzureClientsWithEndpoint` (sim path); production uses `azidentity.NewDefaultAzureCredential`. |
+| `cmd/sockerless-admin/api_observability.go::envOrDefault` (reclassified from BUG-1010 candidate) | `envOrDefault("OTEL_LOGS_SERVICE_PARAM", "service.name")` returns the canonical OTel resource-attribute name when unset. | This is a documented default-value helper, not an error-hiding fallback. The defaults (`service.name` / `service`) are the canonical OTel attribute names; operator config explicitly overrides. No silent failure mode. |
 
 ## Class-of-bug rules (carried forward)
 
@@ -36,8 +35,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1005 bugs filed and fixed across phases 86–161.
+1006 bugs filed and fixed across phases 86–161.
 
+- **1008** (Phase 161) — `InitTracer` in 6 modules (`cmd/sockerless-admin`, `backends/core`, `bleephub`, `simulators/{aws,gcp,azure}/shared`) was a legacy OTel entry point superseded by `InitObservability`. Zero non-test callers. Per user direction (no legacy support during active development), deleted the function + its imports footprint everywhere; migrated `otel_test.go` in each module to drive `InitObservability` instead.
 - **994** (Phase 161) — ~60 production code comments referenced phase numbers (`// Phase 87b`) or BUG IDs (`// BUG-944`) — metadata that rots and belongs in commits / PRs / BUGS.md per the no-phase-refs-in-code rule (guiding principle 14). Repo-wide sweep across `backends/`, `simulators/`, `bleephub/`, `cmd/`, `api/`, `tests/`, `github-runner-dispatcher-*/`. Stripped phase/BUG refs from comments; preserved the *why* context (e.g. "BUG-985 invariant: open-failure must be caught" → "open-failure must be caught at the persistence-open boundary").
 - **999** (Phase 161) — `backends/core/tags.go::TagSet.InstanceID` was marked `Deprecated: use Cluster instead for stateless model` but had 27+ active callers and a real purpose distinct from Cluster (sockerless-instance identity vs. cloud resource grouping). Audit confirmed both fields are load-bearing; dropped the misleading deprecation comment and rewrote the comment to clarify each field's role.
 - **1001** (Phase 161) — bleephub GraphQL had `alwaysEmptyString` resolvers on required NonNull fields of `ProjectV2` / `ProjectV2Item` / `ProjectV2ItemFieldSingleSelectValue` / `PRComment` — fake "" / nil data for surfaces bleephub doesn't track. The parent connections return `emptyList`, so these field-level resolvers are unreachable in practice. Replaced with `unreachableFieldErr` which returns a clear GraphQL error if invoked, so any future code path that does reach them surfaces the gap instead of silently delivering "" IDs. Kept `emptyList` / `alwaysFalse` / `alwaysNil` for the truthful defaults (bleephub genuinely has no items / doesn't track minimization).

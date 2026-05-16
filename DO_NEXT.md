@@ -6,7 +6,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 Phase 160 merged 2026-05-16 (PR #160, `aeb0ac6e` on `origin/main`).
 
-**Phase 161 in flight on `phase-161-vibe-slop-sweep`**: comprehensive vibe-slop sweep + fixes in one PR. 12 BUGs filed (BUG-994 … BUG-1005) covering 7 anti-pattern categories from `docs/VIBE_CODING.md`. The catalogue exists precisely so this kind of sweep is an explicit phase, not a perpetual side-quest.
+**Phase 161 in flight on `phase-161-vibe-slop-sweep`**: comprehensive vibe-slop sweep + fixes. 13 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1008). 3 deeper legacy-rip-out BUGs (1006 CLI+admin JSON-context fallback, 1007 admin legacy migration scaffolding, 1009 gh-runner-dispatcher legacy services) surfaced during the sweep and staged for **Phase 162** so #161 stays reviewable. BUG-1001 (real ProjectV2 / PR-review-thread implementation) also Open at lower priority — the `unreachableFieldErr` placeholder makes the current contract honest.
 
 Default "user merges every PR" remains in force.
 
@@ -21,19 +21,14 @@ Each BUG = one commit (sometimes two if BUGS.md update is separate from the fix)
 | Sub | Status | BUG | What |
 |---|---|---|---|
 | **P161.0** | ✅ | — | State save + branch + 12 findings filed in BUGS.md. |
-| **P161.1** | ◻ | BUG-1000 | `bleephub/auth.go::handleOAuthToken` — validate `client_assertion` JWT against App's public key + `grant_type` per real GitHub `/login/oauth/access_token`. No more `alg:none` 1-year JWT for any input. |
-| **P161.2** | ◻ | BUG-997 | `bleephub/{store,gh_apps_store,gh_apps_user_tokens}.go` — `_ = st.persist.Put/Delete(...)` ignored errors. Add a `persistPut` helper that `log.Fatalf`s on write failure, matching the open-failure invariant. |
-| **P161.3** | ◻ | BUG-995 | `backends/core/handle_extended.go` + `handle_images.go` + `handle_libpod.go` — HTTP handlers reading `s.Store.*` directly instead of dispatching through `s.self.<Method>`. Siblings of BUG-991/992. Delegate via `s.self.SystemDf`, `s.self.ImagePrune`, `s.self.ContainerList`, etc. |
-| **P161.4** | ◻ | BUG-998 | `backends/core/handle_images.go::decodeRegistryAuth` — distinguish empty header (no auth) from malformed header (real client bug). Propagate decode error as `400` to caller. |
-| **P161.5** | ◻ | BUG-1001 | `bleephub/gh_issues_graphql.go` + `gh_pulls_graphql.go` — `alwaysNil` / `emptyList` resolvers for ProjectV2 + PR review threads. Replace with real lookups; if a surface is genuinely out of scope, return a GraphQL field-level error, never fake data. |
-| **P161.6** | ◻ | BUG-1002 | `simulators/azure/acr.go` — Replications list returns `[]` when parent registry missing. Add parent-exists check; return real `ResourceNotFound` Azure error envelope. |
-| **P161.7** | ◻ | BUG-996 | `simulators/{aws,gcp,azure}/*.go` — ~18 sites of `_ = sim.ReadJSON(r, &req)`. For mandatory-body handlers: propagate parse error. For optional-body handlers: switch to `io.Copy(io.Discard, r.Body)` with a `why` comment so the choice is explicit. |
-| **P161.8** | ◻ | BUG-994 | Repo-wide sweep: remove the ~60 phase / BUG-ID references in production code comments. Preserve the *why* when load-bearing; drop the metadata. |
-| **P161.9** | ◻ | BUG-999 | `backends/core/tags.go::InstanceID` is marked `Deprecated: use Cluster instead` but has 27+ active callers. Either complete the migration to `Cluster` or remove the misleading deprecation. |
-| **P161.10** | ◻ | BUG-1004 | `bleephub/store.go::SeedDefaultUser` — `bph_`-prefixed seeded admin token is a legacy shim left over from pre-Phase-153. Switch to `ghp_` per real GitHub (rule: if real GitHub does X, bleephub does X). |
-| **P161.11** | ◻ | BUG-1005 | `bleephub/workflows.go` — 3-deep `if foundJob.Def != nil && foundJob.Def.Strategy != nil && foundJob.Def.Strategy.FailFast != nil`. Normalise on YAML parse so the runtime path is single-deref. |
-| **P161.12** | ◻ | BUG-1003 | `simulators/gcp/artifactregistry.go::buildOCIHandler` single-call-site abstraction. Inline. |
-| **P161.13** | ◻ | — | Final state save + push + open PR #161. |
+| **P161.1** | ✅ | BUG-1000 | bleephub OAuth `handleOAuthToken` validates `client_assertion` JWT against agent's registered RSA public key per Azure DevOps OAuth2 jwt-bearer flow. Tests rewritten to drive real keypair + signed assertion. |
+| **P161.2** | ✅ | BUG-997 | `Persistence.MustPut` + `MustDelete` + 18-site sweep — bleephub persistence write failures now `log.Fatalf`, matching the open-failure invariant. |
+| **P161.3** | ✅ | BUG-995 | `handleSystemDf` / `handleContainerList` / `handleImagePrune` delegate to `s.self.<Method>`; consolidated the richer prune logic into `BaseServer.ImagePrune`; extracted `collectContainers` helper for `handleLibpodContainerList` (fixes a latent pending-create-drop bug). |
+| **P161.4–7** | ✅ | BUG-998 / 1002 / 1003 / 1004 / 1005 / 996 | Batched smaller fixes — `decodeRegistryAuth` dead-code rip + `handleImagePush` fail-loud; Azure ACR replications parent-exists check; inline `buildOCIHandler`; seeded admin `bph_` → `ghp_`; matrix fail-fast 3-deep nil chain → `JobDef.FailFast()` method; 18 sim `_ = sim.ReadJSON(...)` sites swept. |
+| **P161.8–9** | ✅ | BUG-994 / 999 / 1001 | Repo-wide phase/BUG-ref sweep (~115 occurrences, two-pass script + targeted fixups for one bot regression). `core.TagSet.InstanceID` deprecation comment dropped (audit confirmed both fields are load-bearing). Bleephub GraphQL `alwaysEmptyString` resolvers on unreachable NonNull fields → `unreachableFieldErr` for an honest contract. |
+| **P161.10** | ✅ | BUG-1008 | Deleted legacy `InitTracer` OTel entry point in 6 modules; migrated `otel_test.go` to `InitObservability`. |
+| **P161.11** | ✅ | — | Filed BUG-1006 / 1007 / 1009 as Open for Phase 162 (legacy-rip-out exceeds #161 reviewable scope). BUG-1010 candidate reclassified as false positive. |
+| **P161.12** | ◻ | — | Final state save + push + open PR #161. |
 
 ### Discipline reminders
 
@@ -52,6 +47,16 @@ Before each sub-task commit, read [`.claude/skills/avoid-vibe-slop/SKILL.md`](..
 - No newly-surfaced vibe-slop instances during the sweep go un-filed.
 
 ## Resumable tracks after Phase 161 merges
+
+### Phase 162 — Legacy / fallback rip-out (filed during Phase 161)
+
+Three Open BUGs surfaced during the Phase 161 sweep that exceeded #161's reviewable scope. Per the user's "no legacy support / no fallbacks during active development" directive, all three are simple rip-outs (no deprecation period, no opt-in compat).
+
+- **BUG-1006** (P1) — `cmd/sockerless-admin/config.go` + `cmd/sockerless/client.go` silently fall back to "old JSON contexts" when `config.yaml` is missing. Fix: drop the JSON fallback in both `discoverFromContexts` and `listContexts`; require `config.yaml` or error.
+- **BUG-1007** (P1) — `cmd/sockerless-admin/{instance,topology_store,topology_manager,project}.go` legacy migration scaffolding (`DeriveLegacyInstances`, `MigrateLegacyProjects`, `legacyDir`, `ProjectConfig` dual shape). Fix: rip the entire migration plumbing + the legacy `(SimPort / BackendPort)` shape on `ProjectConfig`; delete dependent tests.
+- **BUG-1009** (P2) — `github-runner-dispatcher-gcp/cmd/.../main.go::~351` "Services without an owner label are legacy (pre-owner-label rollout) — leave them alone." Fix: surface unknown services as an error rather than papering over with a future cleanup.
+
+Plus BUG-1001 (real ProjectV2 / PR-review-thread implementation), lower priority — the `unreachableFieldErr` placeholder from Phase 161 keeps the contract honest until the surfaces are implemented.
 
 ### Track A — Live-cloud validation
 

@@ -50,40 +50,55 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ### Phase 161 — Comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
 
-Sockerless is a vibe-coded project. The published 23-pattern catalogue at [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) plus the project-local `avoid-vibe-slop` skill exist precisely so this sweep is an explicit phase, not a perpetual side-quest. Phase 161 runs the checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api), files every concrete violation as a BUG, and lands real fixes in one PR.
+Sockerless is a vibe-coded project. The published 23-pattern catalogue at [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) plus the project-local `avoid-vibe-slop` skill exist precisely so this sweep is an explicit phase, not a perpetual side-quest. Phase 161 runs the checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api), files every concrete violation as a BUG, and lands real fixes in one PR. User directive at phase open: no legacy support, no fallbacks, no error-swallowing — silent degradation is itself a bug.
 
-Scope locked at 12 BUGs (BUG-994 … BUG-1005). Per-bug detail in [BUGS.md](BUGS.md); fix-shape decisions in [DO_NEXT.md § Phase 161](DO_NEXT.md). Categories:
+Closed in this PR (13 fixes):
 
-| BUG | Pattern (VIBE_CODING.md §) | Area | Fix shape |
+| BUG | Pattern | Area | Fix |
 |---|---|---|---|
-| 994 | 8 — phase/bug refs in code comments | repo-wide (~60 occurrences) | Sweep: drop the phase/bug ID; rewrite as a *why* line if the context is load-bearing. |
-| 995 | 11/12 — HTTP handler reads `s.Store` directly | `backends/core/handle_extended.go`, `handle_images.go`, `handle_libpod.go` | Delegate to `s.self.<Method>` siblings of BUG-991/992. |
-| 996 | 1 — `_ = sim.ReadJSON(...)` swallows | `simulators/{aws,gcp,azure}/*.go` (~18 occurrences) | Either propagate the parse error (mandatory body) or drain via `io.Copy(io.Discard, …)` with a `why` comment (optional body). |
-| 997 | 1 + persistence invariant — `_ = st.persist.Put/Delete` | `bleephub/store.go`, `gh_apps_store.go`, `gh_apps_user_tokens.go` | Wrap puts via a `persistPut` helper that `log.Fatalf`s on write failure, matching the open-failure rule. |
-| 998 | 1 — `decodeRegistryAuth` returns `("","")` on malformed header | `backends/core/handle_images.go` | Distinguish empty header from malformed header; propagate decode error as `400` to caller. |
-| 999 | 8 — `core.TagSet.InstanceID` marked `Deprecated` but heavily used | `backends/core/tags.go` + ~27 callers | Either complete the migration to `Cluster` or remove the misleading deprecation comment. |
-| 1000 | 9 + 15 — `handleOAuthToken` returns valid 1-year `alg:none` JWT for any input | `bleephub/auth.go` | Validate `grant_type` + `client_assertion` JWT signature against the App's public key per real GitHub. |
-| 1001 | 9 — `alwaysNil` / `emptyList` GraphQL resolvers for ProjectV2 + PR review threads | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | Implement real lookups or return GraphQL field-level errors per the spec; never fake data. |
-| 1002 | 9 — Azure ACR replications list returns `[]` when registry missing | `simulators/azure/acr.go` | Verify parent registry exists; return `ResourceNotFound` Azure error shape. |
-| 1003 | 14 — single-call-site `buildOCIHandler` premature abstraction | `simulators/gcp/artifactregistry.go` | Inline the helper. |
-| 1004 | 8 — `bph_`-prefixed seeded admin token (legacy shim) | `bleephub/store.go` `SeedDefaultUser` | Switch seeded admin token to `ghp_` prefix per real GitHub; update fixtures. |
-| 1005 | 5 — 3-deep defensive nil chain in workflows fail-fast | `bleephub/workflows.go` | Trace upstream nil source; normalise on parse so the runtime path is single-deref. |
+| 1000 | 9 + 15 (auth bypass) | `bleephub/auth.go::handleOAuthToken` | Validate `client_assertion` RS256 JWT against the agent's registered RSA public key per Azure DevOps OAuth2 jwt-bearer flow. OAuth-envelope errors (400 / 401). Tests rewritten to drive a real keypair + signed assertion. |
+| 997 | 1 + persistence invariant | `bleephub/{store,store_repos,gh_apps_store,gh_apps_user_tokens,gh_oauth}.go` | Added `Persistence.MustPut` + `MustDelete` (`log.Fatalf` on write failure); swept 18 call-sites. |
+| 995 | 11/12 (handler bypasses `s.self`) | `backends/core/handle_extended.go`, `handle_images.go`, `handle_libpod.go`, `handle_containers_query.go` | Delegated `handleSystemDf` / `handleContainerList` / `handleImagePrune` to `s.self.<Method>`; consolidated the richer prune logic into `BaseServer.ImagePrune`; extracted `collectContainers` helper shared by `handleLibpodContainerList` (fixes a latent pending-create-drop bug in the no-CloudState branch). |
+| 998 | 1 (silent auth-decode swallow) | `backends/core/handle_images.go` | Deleted dead `decodeRegistryAuth`; tightened the inline `handleImagePush` auth path to return 400 on malformed base64 / JSON. Tests rewritten via httptest. |
+| 1001 | 9 (fake-data GraphQL resolvers) | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | Replaced `alwaysEmptyString` on NonNull ProjectV2 / PRComment fields with `unreachableFieldErr` that returns a clear GraphQL error if invoked (resolvers were unreachable in practice; making the contract honest). |
+| 1002 | 9 (missing parent-exists check) | `simulators/azure/acr.go` | Replications list verifies parent registry exists; returns Azure `ResourceNotFound` envelope. |
+| 996 | 1 (sim handler ReadJSON swallow) | `simulators/{aws,gcp,azure}/*.go` (18 sites) | Replaced every `_ = sim.ReadJSON(...)` with error-propagating pattern using cloud-appropriate error envelope (`AWSErrorf` / `AzureErrorf` / `GCPErrorf`). |
+| 994 | 8 (phase / BUG refs in code) | repo-wide (~115 occurrences) | Two-pass script across `backends/`, `simulators/`, `bleephub/`, `cmd/`, `api/`, `tests/`, `github-runner-dispatcher-*/`. Stripped phase/BUG references; preserved the *why* context when load-bearing. Caught + fixed one regression where the script lost trailing newlines on 3 lines. |
+| 999 | 8 (misleading deprecation) | `backends/core/tags.go::InstanceID` | Audit confirmed InstanceID + Cluster are distinct, both load-bearing. Dropped the misleading deprecation comment; clarified each field's role. |
+| 1004 | 8 (legacy shim) | `bleephub/store.go::SeedDefaultUser` | Switched seeded admin token from `bph_` to `ghp_` matching real GitHub; swept all fixture / test / doc / UI references. |
+| 1005 | 5 (defensive nil chain) | `bleephub/workflows.go` | Extracted into `JobDef.FailFast()` method handling every nil case (including nil receiver) — runtime path is now single-deref. |
+| 1003 | 14 (premature abstraction) | `simulators/gcp/artifactregistry.go::buildOCIHandler` | Inlined the single-call-site helper. |
+| 1008 | 8 + dead code | OTel `InitTracer` in 6 modules | Deleted the legacy entry point superseded by `InitObservability`; migrated `otel_test.go` in each module. |
 
-Acceptance:
+Surfaced + filed as new Open BUGs for Phase 162 (out of scope for #161 — staged so the PR stays reviewable; each is a multi-file rip-out):
 
-- All 12 BUGs closed (Open → Resolved history in BUGS.md).
+- **BUG-1006** — `cmd/sockerless-admin/config.go` + `cmd/sockerless/client.go` silently fall back to "old JSON contexts" when `config.yaml` is missing. Rip out the JSON fallback; require config.yaml or surface an error.
+- **BUG-1007** — `cmd/sockerless-admin` legacy migration scaffolding (`DeriveLegacyInstances`, `MigrateLegacyProjects`, `legacyDir`, `ProjectConfig` dual shape). Drop the entire migration plumbing.
+- **BUG-1009** — `github-runner-dispatcher-gcp` handles "services without an owner label" as legacy with a future cleanup. Drop the legacy branch; error on encountering them.
+
+Acceptance for #161:
+
+- 13 BUGs closed (994 + 995 + 996 + 997 + 998 + 999 + 1000 + 1001 + 1002 + 1003 + 1004 + 1005 + 1008).
+- 3 BUGs filed as Open + scoped for Phase 162 (1006, 1007, 1009).
+- 1 candidate finding reclassified as false positive (envOrDefault — documented-default-value semantics).
 - `go test ./...` green in every touched Go module.
-- `bun test` green in every touched UI package (if any touched).
-- No new BUGs surface during the sweep that aren't closed in the same PR — unfound vibe slop counts the same as un-found bugs.
-- BUGS.md count moves `993 filed / 993 fixed / 0 open` → `1005 filed / 1005 fixed / 0 open`.
-- This phase's PR (`#161`) opens against `main`. User merges.
+- BUGS.md count: `1011 filed / 1006 fixed / 4 open (1001 + 1006 + 1007 + 1009) / 2 false positives`.
+- This phase's PR opens against `main`. User merges.
 
 Out of scope:
 
-- TypeScript / UI sweep — deferred to a follow-up phase if the Go sweep surfaces a sibling pattern in the UI.
+- TypeScript / UI sweep — deferred.
 - Live-cloud validation track (separate cells, separate branches).
 - Phase 91d (cloud-primitive blocker).
-- Slopsquatted-dependency audit — `check-latest-deps` already covers drift; manual upstream-existence audit would be a separate phase if scope justifies it.
+- Slopsquatted-dependency audit — `check-latest-deps` already covers drift.
+
+### Phase 162 — Legacy / fallback rip-out (filed during Phase 161)
+
+Three Open BUGs surfaced during Phase 161 that exceeded #161's reviewable scope: BUG-1006 (CLI + admin JSON-context fallback), BUG-1007 (admin legacy migration scaffolding), BUG-1009 (gh-runner-dispatcher legacy services). Per user direction, all three rip out legacy support entirely (no compat period, no deprecation, no opt-in fallback) — the project is under active development and no real users carry on-disk JSON contexts that need migrating from prod.
+
+BUG-1001 also remains Open (real ProjectV2 / PR-review-thread implementation), but lower priority since the `unreachableFieldErr` from BUG-1001's interim fix makes the contract honest until the surfaces are actually implemented.
+
+Branch + commit layout to be decided when the phase starts. Acceptance: 4 BUGs closed, 0 open, `bleephub/` + `cmd/sockerless-admin` + `cmd/sockerless` + `github-runner-dispatcher-gcp` tests green.
 
 ## Future phases
 
