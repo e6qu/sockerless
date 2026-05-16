@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1031 filed · 1031 fixed · 0 open · 2 false positives.**
+**1032 filed · 1032 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -33,7 +33,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1031 bugs filed and fixed across phases 86–164.
+1032 bugs filed and fixed across phases 86–164.
+
+- **1032** (Phase 164 terraform-test expansion) — `simulators/azure/terraform-tests/main.tf` had only `azurestack_resource_group` coverage; expanded to also cover `azurestack_virtual_network`, `azurestack_subnet`, `azurestack_network_security_group`, `azurestack_network_security_rule`. Five resources now exercise five sim slices (Microsoft.Resources/resourceGroups, Microsoft.Network/virtualNetworks, /subnets, /networkSecurityGroups, /networkSecurityGroups/securityRules). `apply_test.go` now reads outputs and asserts canonical ARM-id round-trips. Pre-validated each PUT against the running sim via curl — all 5 returned 200/201 with the expected canonical-ARM-id payload. CI runs in Docker (the existing darwin-skip is preserved for local runs).
 
 - **1029** (Phase 164 terraform-test expansion) — `simulators/gcp/secretmanager.go` was missing `POST /v1/projects/{p}/secrets/{s}/versions/{v}:enable` / `:disable` / `:destroy` handlers. `terraform-provider-google` POSTs `:enable` immediately after `:addVersion` on create (versions default to ENABLED but the provider still expects the explicit enable to return 200); without the handler the `google_secret_manager_secret_version` resource always failed apply with 404. Added all three state-transition handlers plus a plain `GET .../versions/{v}` (no `:action` suffix) that the provider uses to read back the version after create.
 - **1030** (Phase 164 terraform-test expansion) — `simulators/gcp/terraform-tests/helpers_test.go` carried the same close-then-bind port-allocator race that Phase 160 fixed in `sdk-tests` (BUG-993). Pattern: allocate listener 1, capture port, close it, allocate listener 2 — between the close and the second allocate the OS could reassign the just-freed port to the second listener, causing the sim's HTTP and gRPC servers to want the same port. Fix: allocate both listeners while both are open, then close both — simultaneous-open listeners cannot collide.
