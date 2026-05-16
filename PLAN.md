@@ -51,32 +51,27 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Active phase
 
-### Phase 164 — Second vibe-slop sweep (in flight on `phase-164-vibe-slop-sweep-2`)
+### Phase 164 — Second vibe-slop sweep + terraform-provider test expansion (in flight on `phase-164-vibe-slop-sweep-2`)
 
-Phase 161 was the first comprehensive sweep (18 BUGs closed). Phase 164 reruns the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162 + the skill expanded from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — and it did.
+Phase 161 was the first comprehensive sweep (18 BUGs closed). Phase 164 re-runs the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162 + the skill expanded from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — it did. **19 new BUGs closed (1014–1032).**
 
-First-pass survey filed 9 BUGs in `BUGS.md § Open`:
+The phase ran in five passes per user direction (each pass = a new request layered onto the open PR):
 
-| BUG | Sev | Layer | Shape |
-|---|---|---|---|
-| 1014 | P2 | repo-wide | Phase / sub-phase metadata still appears in production code comments after BUG-994 sweep |
-| 1015 | P1 | `backends/cloudrun-functions/volume_translator.go` | `(BUG-944)` literally embedded in operator-visible error; test asserts on substring |
-| 1016 | P1 | `bleephub/gh_misc_endpoints.go` + `gh_issue_moderation.go` | Silent `_ = json.NewDecoder(r.Body).Decode(...)` on PUT/POST handlers |
-| 1017 | P1 | `simulators/{aws,gcp}/*` | Cross-cloud silent-decode sibling of BUG-996 in WAFv2 / Amplify / GCP sims |
-| 1018 | P1 | `backends/core/handle_exec.go` + `handle_libpod.go` | Silent decode in core HTTP handlers (incl. hijack-after-decode race) |
-| 1019 | P2 | `backends/cloudrun-functions/cloud_state.go` | Silent decode of Cloud Run docker labels JSON |
-| 1020 | P2 | `bleephub/webhooks_payloads.go` | Two dead helpers with `//nolint:unused // callers land later` from Phase 153 that never did |
-| 1021 | P3 | `bleephub/gh_middleware.go` | Stale `//nolint:unused` pragmas; consumers DID land |
-| 1022 | P3 | repo-wide | Unused-import silencers (`var _ = json.Marshal` + variants) |
+1. **First-pass survey** (P164.0–P164.8) — 9 BUGs (1014–1022) filed up front. Headlines: BUG-994 phase-ref sweep was incomplete at ~10 production-code sites; `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error string with a matching test substring assertion (pattern-28 anti-pattern); BUG-996 cross-cloud silent-decode sibling in bleephub handlers + AWS/GCP sims + `backends/core` exec & libpod handlers; dead helpers in `bleephub/webhooks_payloads.go` with `//nolint:unused // callers land in subsequent commits` directives that never landed; stale `//nolint:unused` pragmas on context helpers that now have real callers; six unused-import silencers.
+2. **Re-verification pass** (P164.9) — 3 further BUGs (1023–1025) per pattern 26 / 32: the `stringifyJobState` dead helper in github-runner-dispatcher-gcp; the `httputil.DumpRequest` silencer in tools/http-trace; three silent `pktline.Encoder` swallows in bleephub git_http.go (now Debug-level logged).
+3. **Third-pass user-requested sweep** — 3 more BUGs (1026–1028): two test files asserting on Phase metadata in error strings (pattern 28); one naked `t.Skip()` with no message; Azure terraform-tests docs↔code mismatch ("azurerm" in docs vs `azurestack` actually used).
+4. **Terraform-provider test expansion** (user-requested, P164.10) — GCP terraform-tests expanded from 4 resources to 11 covering 6 sim slices (compute, dns, artifactregistry, cloud_run_v2 Service + Job, storage, secretmanager). Surfaced + closed 3 sim defects: missing GCP secret-version state-transition handlers (`:enable`/`:disable`/`:destroy` + bare-version GET); same close-then-bind port-allocator race in terraform-tests that Phase 160 fixed only in sdk-tests; the test-coverage expansion itself.
+5. **Azure terraform expansion** (P164.11) — Azure terraform-tests expanded from 1 resource (resource_group) to 5 (+ virtual_network, subnet, network_security_group, network_security_rule). Pre-validated via curl; all 5 sim handlers return 200/201 with canonical ARM-id payload. AWS terraform-tests was already comprehensive (394 lines + cross-resource invariants from Phase 159) — not touched.
 
-Per the user directive *"any fixes to land on a single PR; if more extensive changes are needed they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time"*: granular commits on one branch, CI green between each, PR #164 opens once the first batch lands.
+Per the user directive *"any fixes to land on a single PR; if more extensive changes are needed they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time"*: 13 granular commits on one branch, CI green between each, single PR.
 
 Acceptance:
 
-- All 9 BUGs in `BUGS.md § Open` resolve through this PR.
-- `go test ./...` green in every touched module.
+- All 19 BUGs (1014–1032) closed in this PR.
+- `go test ./...` green in every touched module (bleephub / backends/core / backends/lambda / backends/ecs / simulators/gcp / simulators/aws/sdk-tests / cmd/sockerless-admin / github-runner-dispatcher-gcp).
+- GCP terraform-tests `TestTerraformApplyDestroy` PASSes locally (11 resources provisioned + destroyed).
+- Azure terraform-tests CI-validated in Docker.
 - 11 standard CI checks green per push.
-- Re-verification pass (P164.9) surfaces any second-pass findings before close.
 - User merges PR #164.
 
 Out of scope (filed as future BUGs if surfaced):
@@ -84,6 +79,7 @@ Out of scope (filed as future BUGs if surfaced):
 - Live-cloud validation track (separate cells, separate branches).
 - UI / TypeScript sweep (deferred from Phase 161).
 - Slopsquatted-dependency audit (handled by `check-latest-deps` hook).
+- File-length refactoring for the 14 Go files over 1000 lines (LLM-editability principle 6) — out of Phase 164 scope.
 
 ### Phase 161 — Comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
 

@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-164-vibe-slop-sweep-2` — to open as PR #164. |
-| In-flight | **Phase 164 — second vibe-slop sweep.** Re-running the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes against `origin/main` at `d5b9d22a` after `docs/VIBE_CODING.md` grew to 35 patterns in Phase 162. First-pass survey filed 9 new BUGs (1014–1022). Headline shapes: BUG-994 phase-ref sweep incomplete (still in `simulators/aws/ecs.go`, `bleephub/persistence.go`, `backends/lambda/cloud_state.go`, etc., plus `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error string with a test asserting on the substring); BUG-996 cross-cloud silent-decode sibling in bleephub handlers + AWS/GCP sims + `backends/core` exec & libpod handlers; dead helpers in `bleephub/webhooks_payloads.go` with zero callers but `//nolint:unused // callers land in subsequent commits` directives that never landed; stale `//nolint:unused` pragmas on context helpers that now have real callers; unused-import silencers (`var _ = json.Marshal`). |
+| Active branch | `phase-164-vibe-slop-sweep-2` — PR #164 open. |
+| In-flight | **Phase 164 — second vibe-slop sweep + terraform-provider test expansion.** PR #164 contains 13 commits closing 19 BUGs (1014–1032). Three sweep passes (first / re-verification / third-pass-user-requested) plus deeper terraform-provider coverage on GCP (4 → 11 resources across 6 sim slices) and Azure (1 → 5 resources across 5 sim slices). The expansion surfaced + fixed 3 real sim defects: BUG-1029 (missing GCP secret-version state-transition handlers + bare-version GET); BUG-1030 (GCP terraform-tests carried the BUG-993 close-then-bind port race fixed only in sdk-tests during Phase 160); BUG-1031 / 1032 (terraform-test main.tf expansions). |
 | Last merged | PR #163 — Phase 163 Makefile legacy alias rip-out + docs sweep (2026-05-16, merged at `d5b9d22a`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 9 open · 1013 fixed (1022 total filed) · 2 false positives. |
+| Bugs | 0 open · 1032 fixed (1032 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -46,23 +46,19 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 164 — Second vibe-slop sweep (in flight)
+## Phase 164 — Second vibe-slop sweep + terraform expansion (in flight)
 
-Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). After Phase 162 grew `docs/VIBE_CODING.md` from 23 → 35 patterns + expanded the `avoid-vibe-slop` skill from 17 → 26 checklist items, the catalogue surfaces a different shape of fault — sycophancy, comprehension debt, expansion-without-pruning, docs-vs-code drift, pre-commit hook rollback, language-aware-tooling-not-sed. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations.
+Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). Phase 164 re-runs the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after Phase 162 grew `docs/VIBE_CODING.md` from 23 → 35 patterns + expanded the skill from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — it did. **19 new BUGs closed (1014–1032).**
 
-First-pass survey output (9 BUGs in `BUGS.md § Open`):
+The phase ran in five layered passes per user direction:
 
-- **BUG-1014** — Phase / sub-phase refs in production code comments survived the BUG-994 sweep at ~10 sites.
-- **BUG-1015** — `backends/cloudrun-functions/volume_translator.go:95` embeds `(BUG-944)` in an operator-visible error string; `volume_translator_test.go:78` asserts on the literal `"BUG-944"` substring — classic pattern-28 anti-pattern.
-- **BUG-1016** — bleephub HTTP handlers silently swallow malformed JSON: OIDC custom sub PUT, Pages create, branch protection PUT, issue lock.
-- **BUG-1017** — Sim handlers silently swallow JSON decode: WAFv2 UpdateRuleGroup, Amplify StartJob, GCP AR proxy manifest parse, GCF entrypoint resolution, cloudrunjobs Operation marshal-back.
-- **BUG-1018** — Core HTTP handlers silently swallow request decode: `handleExecStart` (hijack-after-decode race), `handleLibpodContainerList` (podman specgen shim).
-- **BUG-1019** — `backends/cloudrun-functions/cloud_state.go:506` silently decodes Cloud Run docker labels JSON → ghost containers with empty labels on malformed state.
-- **BUG-1020** — `bleephub/webhooks_payloads.go` has two helpers with zero callers carrying `//nolint:unused // callers land in the workflow-trigger commit`; the commit never landed.
-- **BUG-1021** — Stale `//nolint:unused` pragmas on `gh_middleware.go` context helpers that now have real callers.
-- **BUG-1022** — Unused-import silencers (`var _ = json.Marshal` etc.) scattered across bleephub + AWS sim — refusal to delete (pattern 27).
+1. **First-pass survey** — 9 BUGs (1014–1022) filed up front in `BUGS.md`; sub-task table in `DO_NEXT.md`.
+2. **Severity-ordered fix wave** — P164.1..P164.8 closed each BUG in its own commit. Headlines: stripped `(BUG-944)` literal from a Cloud Functions volume-translator operator-visible error string + rewrote the matching test assertion from the contract; strict-decode on all four bleephub write handlers swallowing malformed JSON; strict-decode sweep across AWS + GCP sims (WAFv2, Amplify, GCP AR/CRJ/GCF); strict-decode on `backends/core` exec + libpod handlers; strict-decode on `cloudrun-functions` cloud-state docker-label JSON; ripped two dead `bleephub/webhooks_payloads.go` helpers + the matching `var _ = json.Marshal` silencer; dropped stale `//nolint:unused` pragmas + the unused `flexInt64` type from `gh_request_decode.go`; swept five more unused-import silencers across `bleephub/` + `simulators/aws/`; finished the BUG-994 phase-ref sweep at 10 production-code sites.
+3. **Re-verification pass** (pattern 26 / 32) — 3 further BUGs (1023–1025): the `stringifyJobState` dead helper in github-runner-dispatcher-gcp, the `httputil.DumpRequest` silencer in tools/http-trace, and three silent `pktline.Encoder` Encodef/Flush swallows in bleephub git_http.go (now Debug-level logged).
+4. **Third-pass user-requested sweep** — 3 more BUGs (1026–1028): two test files asserting on Phase metadata in error strings (pattern 28), one naked `t.Skip()` with no message, and the Azure terraform-tests docs↔code mismatch (README + apply_test.go said "azurerm" while main.tf used "azurestack").
+5. **Terraform-provider test expansion** (user-requested) — 4 more BUGs (1029–1032). GCP terraform-tests expanded from 4 resources (compute_network, compute_disk, public+private DNS zones) to 11 resources covering 6 sim slices: compute, dns, artifactregistry, cloud_run_v2 Service + Job, storage, secretmanager. Azure terraform-tests expanded from 1 (resource_group) to 5 (+ virtual_network, subnet, network_security_group, network_security_rule). Expansion surfaced two real sim defects: missing GCP secret-version state-transition handlers (`:enable`/`:disable`/`:destroy`) + the same close-then-bind port-allocator race in GCP terraform-tests that Phase 160 fixed in sdk-tests. Both closed in the same commit as the test expansion. AWS terraform-tests was already comprehensive (394 lines + cross-resource invariants from Phase 159) — not touched.
 
-Sub-task ordering = severity. P164.1 → P164.9. Granular commits, CI green between each, single PR.
+PR #164 acceptance: 19 BUGs closed, 0 open, 11 standard CI checks green per push, user merges.
 
 ## Phase 163 — Makefile legacy rip-out + docs sweep (merged)
 
