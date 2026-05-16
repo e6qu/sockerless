@@ -2,6 +2,8 @@ package bleephub
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -140,8 +142,13 @@ func (s *Server) handleLockIssue(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LockReason string `json:"lock_reason"`
 	}
-	// Body is optional; ignore parse errors and proceed with an empty reason.
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	// Body is optional (empty = lock with no reason); a present-but-malformed
+	// body must still be rejected so silent decode errors don't drop a real
+	// lock_reason on the floor.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
 	if req.LockReason != "" && !validLockReasons[req.LockReason] {
 		writeGHError(w, http.StatusUnprocessableEntity, "Invalid lock reason")
 		return
