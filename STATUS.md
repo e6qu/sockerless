@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-161-vibe-slop-sweep` — to open as PR #161. |
-| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes + bleephub GraphQL completion.** 17 BUGs closed (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008/1009). Plus an in-PR sub-phase wiring real bleephub GraphQL surfaces (PR.comments, PR.reviewThreads, ProjectV2, comment edit history + minimization, issue/PR locking, PR.milestone). |
+| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes + bleephub GraphQL completion + ProjectManager instance rewrite.** 18 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008/1009/1011). Plus an in-PR bleephub-completion sub-phase covering PR.comments, PR.reviewThreads, ProjectV2 (incl. fields + field-value writes), comment edit history + minimization, issue/PR locking, PR.milestone, all with real `gh` CLI smoke tests in `bleephub/test/run-gh-test.sh`. |
 | Last merged | PR #160 — Phase 160 skills + complete component-README adaptor-led sweep (2026-05-16, merged at `aeb0ac6e`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1 open (1011 P1 — ProjectManager instance-based rewrite, staged Phase 162) · 1011 fixed (1012 total filed) · 2 false positives. |
+| Bugs | 0 open · 1012 fixed (1012 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
