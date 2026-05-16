@@ -28,6 +28,20 @@ No code-surface changes; doc + skill changes only. The point is that the *next* 
 
 User direction at phase open: one PR for all of these. Single branch off `origin/main`.
 
+### Mid-phase scope expansion: docs sweep
+
+Once the skills landed, the user requested *"review and tighten all docs… every component has an external component / api / sdk / CLI surface — fix wrong info, make info easier to navigate, cross-link where possible, remove unneeded redundancy while keeping some redundancy for follow-ability."* The docs inventory surfaced an obvious gap: 6 backend READMEs + 2 simulator READMEs still hadn't adopted the Phase 157 adaptor-led shape (PR #157 only covered `backends/docker`; PR #159's P159.10 brought `simulators/aws`).
+
+Folded into Phase 160 same PR:
+
+- **6 backend READMEs rewritten** (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`). Each now leads with a two-direction reference-adaptor table (frontend Docker API + backend cloud API), followed by a validation table with test paths + last-green dates, wiring (CLI flags + env vars + config example — env tables kept per the user's "keep some redundancy" direction), captured-output sample showing `docker run` driving the Docker frontend with a verifiable cloud-side observation via the cloud CLI, known issues, out-of-scope. Every reference-adaptor row links to the official upstream spec (Docker REST API at docs.docker.com, AWS / GCP / Azure SDK godoc, CLI docs, Terraform provider registry).
+- **2 simulator READMEs rewritten** (`simulators/{gcp,azure}/README.md`). Each follows the `simulators/aws` template (canonical from P159.10). Existing rich Quick-start content preserved as "Extended examples" at the bottom; new reference-adaptor + validation + wiring + sample + known-issues + out-of-scope sections added at the top.
+- **bleephub README** gained an explicit "Reference adaptors" section with `gh` CLI / `actions/runner` / smart-HTTP git / GitHub REST / GitHub GraphQL all linked to their authoritative specs, plus a pointer to `specs/BLEEPHUB_GITHUB_API_PARITY.md` for the per-route audit artifact.
+- **Cross-links** added bidirectionally: every cloud backend README points at its simulator counterpart for local-dev / CI; every simulator README points back at the backends that consume it.
+- **Phase 157 Track A officially closed** in PLAN.md + DO_NEXT.md (the dangling cross-refs to "Track A" in three places now point at the resolved state).
+
+The "keep some redundancy" call paid off: env var tables stay in each backend README (single-glance quickstarts) rather than getting consolidated to `specs/CONFIG.md`, which is still the canonical full schema and cross-linked from every backend.
+
 ## 2026-05-15 — Phase 159: AWS sim CloudFront + Amplify + IAM/Route 53/WAFv2/ACM (in flight on PR #159)
 
 Expanding `simulators/aws/` to cover the front-of-house CDN + website-hosting surface most production Terraform stacks reach into. Six service families: CloudFront (the big one — REST + XML wire, ~10 sub-resources), Amplify, WAFv2 (CLOUDFRONT scope), ACM (us-east-1 pinned), Route 53 (XML), IAM extensions (SLRs + OIDC).

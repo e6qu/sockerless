@@ -1,13 +1,78 @@
 # simulator-azure
 
-Local reimplementation of the Azure APIs used by the Sockerless ACA and Azure Functions backends. This is not a mock — Container Apps job executions respect `replicaTimeout` for completion, Azure Functions invoke and produce real AppTraces entries, KQL queries parse and filter against real log data, and ACR stores real OCI manifests with chunked upload support.
+Local reimplementation of the Azure slice that sockerless touches. Not a mock — Container Apps job executions respect `replicaTimeout` for completion, Azure Functions invoke and produce real AppTraces entries, KQL queries parse and filter against real log data, and ACR stores real OCI manifests with chunked upload support.
+
+## Reference adaptor
+
+The simulator exposes one HTTP endpoint (default `:4568`) that fronts all Azure services. Three external tools exercise that endpoint at Azure-API fidelity:
+
+| Adaptor | Min version | What it proves |
+|---|---|---|
+| [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk) (`armappcontainers`, `armappservice`, `armcontainerregistry`, ...) | v3+ | Wire-level SDK compatibility — ARM REST shape, OData filters, async LRO polling (`Azure-AsyncOperation` / `Location` headers). |
+| [`az` CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.60+ | Endpoint-override fidelity (the sim accepts `https://management.azure.com` traffic when fronted with TLS). |
+| [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs) | v4+ | Full plan → apply → destroy round-trip across `azurerm_resource_group`, `azurerm_container_app_environment`, `azurerm_container_app_job`, `azurerm_linux_function_app`, `azurerm_log_analytics_workspace`, `azurerm_container_registry`, `azurerm_storage_account`, `azurerm_private_dns_zone`, etc. **Docker-only** (macOS Go 1.20+ ignores `SSL_CERT_FILE`). |
+
+Anything any of these three tools does against the real Azure endpoint, it must do against this simulator. Gaps from that contract are real bugs (see [BUGS.md](../../BUGS.md)).
+
+The simulator is the **upstream** for the [Azure Container Apps](../../backends/aca/README.md) and [Azure Functions](../../backends/azure-functions/README.md) backends during local development and CI.
+
+## Validation
+
+| Test path | What runs | Last green |
+|---|---|---|
+| `sdk-tests/` (31 tests) | Real Azure SDK for Go clients against the sim. Per-op assertions on ARM response shape + error envelopes. | 2026-05-13 |
+| `cli-tests/` (17 tests) | Real `az` CLI invoked via `os/exec` (using `az rest` for raw ARM calls). | 2026-05-13 |
+| `terraform-tests/` (Docker-only, TLS) | Real Terraform `azurerm` provider against the sim. | 2026-05-13 |
+| `make simulators/azure/test` | Leaf-Makefile unit + integration suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-13 |
+
+## Wiring the adaptor
+
+```bash
+# 1. Build + start the sim (default :4568).
+cd simulators/azure
+go build -o simulator-azure .
+SIM_LISTEN_ADDR=:4568 ./simulator-azure
+```
+
+```bash
+# 2. Point Azure clients at it.
+# For az CLI: use az rest with explicit URL.
+az rest --method GET --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001?api-version=2021-04-01"
+
+# For the Go SDK:
+```
+
+```go
+import "github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+
+cfg := cloud.Configuration{
+    ActiveDirectoryAuthorityHost: "http://localhost:4568",
+    Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+        cloud.ResourceManager: {Endpoint: "http://localhost:4568", Audience: "http://localhost:4568"},
+    },
+}
+```
+
+For Terraform, use TLS + Docker (see `terraform-tests/` Makefile):
+
+```hcl
+provider "azurerm" {
+  features {}
+  environment      = "custom"
+  metadata_host    = "localhost:4568"
+  client_id        = "00000000-0000-0000-0000-000000000001"
+  tenant_id        = "00000000-0000-0000-0000-000000000001"
+  subscription_id  = "00000000-0000-0000-0000-000000000001"
+  skip_provider_registration = true
+}
+```
 
 ## Services
 
 ### Authentication & Metadata
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **OAuth2** | Token endpoint (`/{tenantId}/oauth2/v2.0/token`), OpenID discovery, JWKS |
 | **Metadata** | `/metadata/endpoints` — cloud metadata (ARM endpoint, suffixes) |
 | **Subscription** | Get subscription, list providers |
@@ -15,28 +80,26 @@ Local reimplementation of the Azure APIs used by the Sockerless ACA and Azure Fu
 ### Compute & Containers
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **Container App Environments** | CRUD for managed environments |
 | **Container App Jobs** | CRUD, Start execution, Stop execution, List/Get executions |
 | **Azure Functions (Sites)** | CRUD for function apps, List functions, Invoke (`/api/function`) |
 | **App Service Plans** | CRUD (serverFarms) |
-| **ACR** | Registry CRUD, Name availability, OCI Distribution (`/v2/` manifests + blobs + chunked upload) |
+| **ACR** | Registry CRUD, Name availability, [OCI Distribution](https://github.com/opencontainers/distribution-spec) (`/v2/` manifests + blobs + chunked upload) |
 
 ### Infrastructure
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **Resource Groups** | CRUD, List resources, HEAD existence check |
-| **Virtual Networks** | CRUD |
-| **Subnets** | CRUD (with delegations, NSG references) |
-| **Network Security Groups** | CRUD (with security rules) |
+| **Virtual Networks / Subnets / NSGs** | CRUD (subnets with delegations + NSG references; NSGs with security rules) |
 | **Managed Identity** | User-assigned identity CRUD |
 | **Authorization** | Role definitions (list with OData filter), Role assignments at any scope |
 
 ### Storage & Data
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **Storage Accounts** | CRUD, List keys |
 | **File Shares** | CRUD under storage accounts |
 | **Storage Data-Plane** | Host-based routing (`{account}.blob.localhost:{port}`) for blob/file service properties and ACLs |
@@ -44,7 +107,7 @@ Local reimplementation of the Azure APIs used by the Sockerless ACA and Azure Fu
 ### Monitoring
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **Log Analytics Workspaces** | CRUD, Shared keys |
 | **Log Ingestion** | POST entries via data collection rules |
 | **Log Query** | KQL query execution (simple `where`/`take` parsing) |
@@ -53,49 +116,49 @@ Local reimplementation of the Azure APIs used by the Sockerless ACA and Azure Fu
 ### DNS
 
 | Service | Endpoints |
-|---------|-----------|
+|---|---|
 | **Private DNS Zones** | CRUD (auto-creates SOA record) |
 | **A Records** | CRUD under zones |
 | **Virtual Network Links** | CRUD |
 
 ## Special handling
 
-- **Double-slash cleanup** — `CleanPathMiddleware` strips leading `//` from paths (azurerm provider appends trailing slash to ARM endpoint)
-- **Case-insensitive paths** — `AzurePathNormalizationMiddleware` normalizes known segments (e.g., `/resourcegroups/` -> `/resourceGroups/`)
-- **Auth outside mux** — OAuth2 token endpoints are handled as outer middleware to avoid conflicts with ACR's `/v2/` catch-all
-- **TLS for Terraform** — Azure Terraform tests use self-signed certs because the azurestack provider hardcodes `https://`; Docker-only (macOS Go 1.20+ ignores `SSL_CERT_FILE`)
-- **Storage subdomain routing** — Data-plane requests matched by Host header (`{account}.{service}.localhost`)
-- **Sync creates return 200** — go-azure-sdk treats 200 as immediate completion for `BeginCreate` LRO
+These are the load-bearing wire-quirks the sim implements to satisfy the real adaptors:
+
+- **Double-slash cleanup** — `CleanPathMiddleware` strips leading `//` from paths (the `azurerm` provider appends a trailing slash to the ARM endpoint).
+- **Case-insensitive paths** — `AzurePathNormalizationMiddleware` normalises known segments (e.g., `/resourcegroups/` → `/resourceGroups/`).
+- **Auth outside mux** — OAuth2 token endpoints are handled as outer middleware to avoid conflicts with ACR's `/v2/` catch-all.
+- **TLS for Terraform** — Azure Terraform tests use self-signed certs because the `azurestack` provider hardcodes `https://`. Docker-only (macOS Go 1.20+ ignores `SSL_CERT_FILE`).
+- **Storage subdomain routing** — Data-plane requests matched by Host header (`{account}.{service}.localhost`); pair with dnsmasq for real lookups.
+- **Sync creates return 200** — `go-azure-sdk` treats 200 as immediate completion for `BeginCreate` LRO; the sim returns 200 instead of 201 for synchronous creates.
 
 ## Building
 
-```sh
-cd simulators/azure
-go build -o simulator-azure .
+```bash
+cd simulators/azure && go build -o simulator-azure .
 ```
 
-## Running
+## Sample
 
-```sh
-# Default port 4568
-./simulator-azure
+End-to-end via `az rest`:
 
-# Custom port
-SIM_AZURE_PORT=5002 ./simulator-azure
+```bash
+$ SIM_LISTEN_ADDR=:4568 ./simulator-azure &
 
-# With TLS (required for Terraform)
-SIM_TLS_CERT=cert.pem SIM_TLS_KEY=key.pem ./simulator-azure
-```
+$ az rest --method PUT \
+    --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg?api-version=2021-04-01" \
+    --body '{"location":"eastus"}'
+{"name":"my-rg","location":"eastus","properties":{"provisioningState":"Succeeded"}}
 
-### SDK configuration
+$ az rest --method PUT \
+    --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job?api-version=2023-05-01" \
+    --body '{"location":"eastus","properties":{...,"template":{"containers":[{"image":"alpine","command":["echo","hello-from-aca"]}]}}}'
 
-```go
-cloud.Configuration{
-    ActiveDirectoryAuthorityHost: "http://localhost:4568",
-    Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-        cloud.ResourceManager: {Endpoint: "http://localhost:4568", Audience: "http://localhost:4568"},
-    },
-}
+$ az rest --method POST --url ".../jobs/my-job/start?api-version=2023-05-01" --body '{}'
+
+$ az rest --method POST --url "http://localhost:4568/v1/workspaces/default/query" \
+    --body '{"query":"ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"my-job\""}'
+{"tables":[{"rows":[["...","my-job","hello-from-aca","stdout"]]}]}
 ```
 
 ## Project structure
@@ -125,315 +188,114 @@ azure/
 └── terraform-tests/        Terraform apply/destroy tests (Docker-only, TLS)
 ```
 
-## Guides
+## Testing
 
-- [Using with the Azure CLI](docs/cli.md)
-- [Using with Terraform](docs/terraform.md)
-- [Using with the Azure SDK for Python](docs/python-sdk.md)
+```bash
+# SDK tests (Azure SDK for Go against the running sim)
+cd sdk-tests && go test -v ./...
+
+# CLI tests (az CLI shell-outs)
+cd cli-tests && go test -v ./...
+
+# Terraform tests (Docker-only, TLS — see Makefile)
+cd terraform-tests && go test -v ./...
+```
 
 ## Execution model
 
 Container Apps job executions honor the `replicaTimeout` configuration (in seconds). When a command is provided, the simulator executes it as a real process and streams output to Log Analytics. When a replica timeout is configured and no command is present, the execution auto-completes with `Succeeded` status after that duration. When no timeout and no command are set, the execution stays running until explicitly stopped. Azure Functions invocations are synchronous and inject AppTraces entries queryable via KQL.
 
-## Quick start
+## Known issues
 
-All examples below assume the simulator is running on port 4568. Start it with:
+None open. The Azure terraform tests being Docker-only (macOS `SSL_CERT_FILE` quirk) is a permanent platform limitation, not a bug.
 
-```bash
-export SIM_LISTEN_ADDR=:4568
-./simulator-azure
-```
+## What's out of scope
 
-Create a resource group (required by all ARM resources):
+- **Full KQL parser**: only `where` + `take` + `limit` + simple `==` / `>=` predicates are supported.
+- **gRPC for Application Insights ingestion**: REST only.
+- **Multi-region replication / availability zones**.
+- **Real authentication**: tokens are accepted but not cryptographically verified.
+- **Cost / billing surfaces**.
+- **Azure AD identity flows beyond OAuth2 token issuance** (`/.well-known/openid-configuration` + JWKS are provided so SDK validators pass; user / group / app management is not modelled).
 
-```bash
-az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg?api-version=2021-04-01" \
-  --body '{"location":"eastus"}'
-```
+## Extended examples
 
 ### Container Apps Jobs
 
-Create a job with an echo command, start an execution, then query the logs.
-
 ```bash
-# Create a Container Apps Job
+# Create job
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job?api-version=2023-05-01" \
+  --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job?api-version=2023-05-01" \
   --body '{
     "location": "eastus",
     "properties": {
-      "configuration": {
-        "replicaTimeout": 30,
-        "triggerType": "Manual",
-        "manualTriggerConfig": { "parallelism": 1, "replicaCompletionCount": 1 }
-      },
-      "template": {
-        "containers": [{
-          "name": "app",
-          "image": "alpine:latest",
-          "command": ["echo", "hello-from-aca"]
-        }]
-      }
+      "configuration": {"replicaTimeout": 30, "triggerType": "Manual", "manualTriggerConfig": {"parallelism":1,"replicaCompletionCount":1}},
+      "template": {"containers": [{"name":"app","image":"alpine:latest","command":["echo","hello-from-aca"]}]}
     }
   }'
-# => {"id":"/subscriptions/.../jobs/my-job","name":"my-job","properties":{"provisioningState":"Succeeded",...}}
 
-# Start an execution
-az rest --method POST \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job/start?api-version=2023-05-01" \
-  --body '{}'
-# => {"name":"my-job-abc1234","id":"..."}   (202 Accepted)
-
-# Wait a moment for the process to finish, then check execution status
-az rest --method GET \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job/executions?api-version=2023-05-01"
-# => {"value":[{"name":"my-job-abc1234","status":"Succeeded","startTime":"...","endTime":"..."}]}
+# Start execution
+az rest --method POST --url ".../jobs/my-job/start?api-version=2023-05-01" --body '{}'
 
 # Query Log Analytics for the execution output
-az rest --method POST \
-  --url "http://localhost:4568/v1/workspaces/default/query" \
+az rest --method POST --url "http://localhost:4568/v1/workspaces/default/query" \
   --body '{"query": "ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"my-job\""}'
-# => {"tables":[{"name":"PrimaryResult","columns":[...],"rows":[["...","my-job","hello-from-aca","stdout"],...]}]}
-```
-
-Go SDK:
-
-```go
-import (
-    "encoding/json"
-    "net/http"
-    "strings"
-)
-
-// Create job
-jobBody := `{
-    "location": "eastus",
-    "properties": {
-        "configuration": {"replicaTimeout": 30, "triggerType": "Manual"},
-        "template": {"containers": [{"name": "app", "image": "alpine:latest", "command": ["echo", "hello"]}]}
-    }
-}`
-req, _ := http.NewRequest("PUT",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job?api-version=2023-05-01",
-    strings.NewReader(jobBody))
-req.Header.Set("Content-Type", "application/json")
-req.Header.Set("Authorization", "Bearer fake-token")
-resp, _ := http.DefaultClient.Do(req)
-defer resp.Body.Close() // 200 OK or 201 Created
-
-// Start execution
-startReq, _ := http.NewRequest("POST",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.App/jobs/my-job/start?api-version=2023-05-01",
-    strings.NewReader("{}"))
-startReq.Header.Set("Content-Type", "application/json")
-startReq.Header.Set("Authorization", "Bearer fake-token")
-startResp, _ := http.DefaultClient.Do(startReq) // 202 Accepted
-defer startResp.Body.Close()
-
-var result map[string]string
-json.NewDecoder(startResp.Body).Decode(&result)
-execName := result["name"] // e.g. "my-job-abc1234"
-
-// Query logs via KQL
-kqlBody := `{"query": "ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"my-job\" | take 100"}`
-queryReq, _ := http.NewRequest("POST",
-    "http://localhost:4568/v1/workspaces/default/query",
-    strings.NewReader(kqlBody))
-queryReq.Header.Set("Content-Type", "application/json")
-queryResp, _ := http.DefaultClient.Do(queryReq) // 200 OK with {tables:[...]}
-defer queryResp.Body.Close()
 ```
 
 ### Azure Functions
 
-Create a function app with a simulated command, invoke it, and query AppTraces.
-
 ```bash
-# Create an App Service Plan (consumption tier)
+# Create App Service Plan (Consumption tier)
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Web/serverfarms/my-plan?api-version=2022-09-01" \
+  --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.Web/serverfarms/my-plan?api-version=2022-09-01" \
   --body '{"location":"eastus","sku":{"name":"Y1","tier":"Dynamic"}}'
-# => {"name":"my-plan","properties":{"provisioningState":"Succeeded",...}}
 
-# Create a Function App with simCommand (simulator-only field for real execution)
+# Create Function App with simCommand (simulator-only field for real execution)
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Web/sites/my-func-app?api-version=2022-09-01" \
+  --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.Web/sites/my-func-app?api-version=2022-09-01" \
   --body '{
-    "location": "eastus",
-    "kind": "functionapp",
+    "location": "eastus", "kind": "functionapp",
     "properties": {
-      "serverFarmId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Web/serverfarms/my-plan",
-      "siteConfig": {
-        "simCommand": ["echo", "hello-from-functions"],
-        "appSettings": [
-          {"name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4"},
-          {"name": "FUNCTIONS_WORKER_RUNTIME", "value": "node"}
-        ]
-      }
+      "serverFarmId": ".../serverfarms/my-plan",
+      "siteConfig": {"simCommand": ["echo","hello-from-functions"]}
     }
   }'
-# => {"name":"my-func-app","properties":{"state":"Running","defaultHostName":"localhost:4568",...}}
 
-# Invoke the function (returns process stdout as response body)
-az rest --method POST \
-  --url "http://localhost:4568/api/function" \
-  --body '{}'
+# Invoke (returns process stdout)
+az rest --method POST --url "http://localhost:4568/api/function" --body '{}'
 # => hello-from-functions
 
-# Query AppTraces for function execution logs
-az rest --method POST \
-  --url "http://localhost:4568/v1/workspaces/default/query" \
+# Query AppTraces
+az rest --method POST --url "http://localhost:4568/v1/workspaces/default/query" \
   --body '{"query": "AppTraces | where AppRoleName == \"my-func-app\""}'
-# => {"tables":[{"name":"PrimaryResult","columns":[...],"rows":[["...","hello-from-functions","my-func-app"]]}]}
-```
-
-Go SDK:
-
-```go
-// Create function app
-siteBody := `{
-    "location": "eastus",
-    "kind": "functionapp",
-    "properties": {
-        "serverFarmId": "/subscriptions/.../serverfarms/my-plan",
-        "siteConfig": {"simCommand": ["echo", "hello-from-functions"]}
-    }
-}`
-req, _ := http.NewRequest("PUT",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Web/sites/my-func-app?api-version=2022-09-01",
-    strings.NewReader(siteBody))
-req.Header.Set("Content-Type", "application/json")
-req.Header.Set("Authorization", "Bearer fake-token")
-resp, _ := http.DefaultClient.Do(req) // 200 OK
-defer resp.Body.Close()
-
-// Invoke the function
-invokeReq, _ := http.NewRequest("POST", "http://localhost:4568/api/function", strings.NewReader("{}"))
-invokeReq.Header.Set("Content-Type", "application/json")
-invokeResp, _ := http.DefaultClient.Do(invokeReq) // 200 OK, body = process stdout
-defer invokeResp.Body.Close()
-
-// Query AppTraces
-kqlBody := `{"query": "AppTraces | where AppRoleName == \"my-func-app\" | take 50"}`
-queryReq, _ := http.NewRequest("POST",
-    "http://localhost:4568/v1/workspaces/default/query",
-    strings.NewReader(kqlBody))
-queryReq.Header.Set("Content-Type", "application/json")
-queryResp, _ := http.DefaultClient.Do(queryReq) // 200 OK
-defer queryResp.Body.Close()
 ```
 
 ### Log Analytics
 
-Create a workspace, ingest log entries, and query with KQL.
-
 ```bash
-# Create a Log Analytics Workspace
+# Create workspace
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.OperationalInsights/workspaces/my-workspace?api-version=2022-10-01" \
+  --url ".../providers/Microsoft.OperationalInsights/workspaces/my-workspace?api-version=2022-10-01" \
   --body '{"location":"eastus","properties":{"retentionInDays":30}}'
-# => {"name":"my-workspace","properties":{"provisioningState":"Succeeded","customerId":"<uuid>",...}}
 
-# Get shared keys (used for linking to Container App Environments)
-az rest --method POST \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.OperationalInsights/workspaces/my-workspace/sharedKeys?api-version=2022-10-01"
-# => {"primarySharedKey":"dGVzdHByaW1hcnlrZXkK","secondarySharedKey":"dGVzdHNlY29uZGFyeWtleQo="}
-
-# Ingest log entries via data collection rule
+# Ingest entries via data collection rule
 az rest --method POST \
   --url "http://localhost:4568/dataCollectionRules/dcr-1/streams/Custom-Logs" \
-  --body '[
-    {"TimeGenerated":"2025-01-01T00:00:00Z","ContainerGroupName_s":"my-job","Log_s":"starting","Stream_s":"stdout"},
-    {"TimeGenerated":"2025-01-01T00:01:00Z","ContainerGroupName_s":"my-job","Log_s":"running","Stream_s":"stdout"}
-  ]'
-# => 204 No Content
+  --body '[{"TimeGenerated":"2025-01-01T00:00:00Z","ContainerGroupName_s":"my-job","Log_s":"running","Stream_s":"stdout"}]'
 
-# Query with KQL (supports where, take/limit, datetime filters)
-az rest --method POST \
-  --url "http://localhost:4568/v1/workspaces/default/query" \
+# KQL query (supports where, take/limit, datetime filters)
+az rest --method POST --url "http://localhost:4568/v1/workspaces/default/query" \
   --body '{"query": "ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"my-job\" | take 100"}'
-# => {"tables":[{"name":"PrimaryResult","columns":[
-#       {"name":"TimeGenerated","type":"datetime"},
-#       {"name":"ContainerGroupName_s","type":"string"},
-#       {"name":"Log_s","type":"string"},
-#       {"name":"Stream_s","type":"string"}
-#     ],"rows":[
-#       ["2025-01-01T00:00:00Z","my-job","starting","stdout"],
-#       ["2025-01-01T00:01:00Z","my-job","running","stdout"]
-#     ]}]}
-```
-
-Go SDK:
-
-```go
-import (
-    "encoding/json"
-    "net/http"
-    "strings"
-)
-
-// Create workspace
-wsBody := `{"location":"eastus","properties":{"retentionInDays":30}}`
-req, _ := http.NewRequest("PUT",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.OperationalInsights/workspaces/my-workspace?api-version=2022-10-01",
-    strings.NewReader(wsBody))
-req.Header.Set("Content-Type", "application/json")
-req.Header.Set("Authorization", "Bearer fake-token")
-resp, _ := http.DefaultClient.Do(req) // 200 OK
-defer resp.Body.Close()
-
-// Ingest logs
-entries := []map[string]string{
-    {"TimeGenerated": "2025-01-01T00:00:00Z", "ContainerGroupName_s": "my-job", "Log_s": "starting", "Stream_s": "stdout"},
-}
-body, _ := json.Marshal(entries)
-ingestReq, _ := http.NewRequest("POST",
-    "http://localhost:4568/dataCollectionRules/dcr-1/streams/Custom-Logs",
-    strings.NewReader(string(body)))
-ingestReq.Header.Set("Content-Type", "application/json")
-ingestResp, _ := http.DefaultClient.Do(ingestReq) // 204 No Content
-defer ingestResp.Body.Close()
-
-// KQL query
-kqlBody := `{"query": "ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"my-job\" | take 100"}`
-queryReq, _ := http.NewRequest("POST",
-    "http://localhost:4568/v1/workspaces/default/query",
-    strings.NewReader(kqlBody))
-queryReq.Header.Set("Content-Type", "application/json")
-queryResp, _ := http.DefaultClient.Do(queryReq) // 200 OK
-
-var result struct {
-    Tables []struct {
-        Name    string     `json:"name"`
-        Columns []struct {
-            Name string `json:"name"`
-            Type string `json:"type"`
-        } `json:"columns"`
-        Rows [][]any `json:"rows"`
-    } `json:"tables"`
-}
-json.NewDecoder(queryResp.Body).Decode(&result)
-// result.Tables[0].Rows contains the matching log entries
 ```
 
 ### ACR (Container Registry)
 
-Create a container registry.
-
 ```bash
-# Create an Azure Container Registry
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.ContainerRegistry/registries/myregistry?api-version=2023-01-01-preview" \
+  --url ".../providers/Microsoft.ContainerRegistry/registries/myregistry?api-version=2023-01-01-preview" \
   --body '{"location":"eastus","sku":{"name":"Basic"},"properties":{"adminUserEnabled":false}}'
-# => {"name":"myregistry","properties":{"loginServer":"myregistry.azurecr.io","provisioningState":"Succeeded",...}}
 
-# Verify the registry
-az rest --method GET \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.ContainerRegistry/registries/myregistry?api-version=2023-01-01-preview"
-# => {"name":"myregistry","sku":{"name":"Basic"},...}
-
-# OCI Distribution API — the registry also exposes /v2/ endpoints:
+# OCI Distribution endpoints under /v2/:
 #   GET  /v2/                                    → version check
 #   POST /v2/{repo}/blobs/uploads/               → initiate blob upload
 #   PATCH /v2/{repo}/blobs/uploads/{uuid}        → chunked upload
@@ -442,88 +304,15 @@ az rest --method GET \
 #   GET  /v2/{repo}/manifests/{ref}              → pull manifest
 ```
 
-Go SDK:
-
-```go
-// Create registry
-regBody := `{"location":"eastus","sku":{"name":"Basic"},"properties":{"adminUserEnabled":false}}`
-req, _ := http.NewRequest("PUT",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.ContainerRegistry/registries/myregistry?api-version=2023-01-01-preview",
-    strings.NewReader(regBody))
-req.Header.Set("Content-Type", "application/json")
-req.Header.Set("Authorization", "Bearer fake-token")
-resp, _ := http.DefaultClient.Do(req) // 200 OK
-defer resp.Body.Close()
-
-var registry struct {
-    Name       string `json:"name"`
-    Properties struct {
-        LoginServer       string `json:"loginServer"`
-        ProvisioningState string `json:"provisioningState"`
-    } `json:"properties"`
-}
-json.NewDecoder(resp.Body).Decode(&registry)
-// registry.Properties.LoginServer == "myregistry.azurecr.io"
-```
-
 ### Storage
 
-Create a storage account.
-
 ```bash
-# Create a Storage Account
 az rest --method PUT \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct?api-version=2023-05-01" \
+  --url ".../providers/Microsoft.Storage/storageAccounts/mystorageacct?api-version=2023-05-01" \
   --body '{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"}}'
-# => {"name":"mystorageacct","properties":{"provisioningState":"Succeeded","primaryEndpoints":{"blob":"http://mystorageacct.blob.localhost:4568/","file":"http://mystorageacct.file.localhost:4568/",...}}}
 
-# Verify the account
-az rest --method GET \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct?api-version=2023-05-01"
-# => {"name":"mystorageacct","kind":"StorageV2","sku":{"name":"Standard_LRS"},...}
-
-# List account keys
 az rest --method POST \
-  --url "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct/listKeys?api-version=2023-05-01"
-# => {"keys":[{"keyName":"key1","value":"dGVzdGtleTEK","permissions":"FULL"},{"keyName":"key2",...}]}
+  --url ".../providers/Microsoft.Storage/storageAccounts/mystorageacct/listKeys?api-version=2023-05-01"
 ```
 
-Go SDK:
-
-```go
-// Create storage account
-acctBody := `{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`
-req, _ := http.NewRequest("PUT",
-    "http://localhost:4568/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/my-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct?api-version=2023-05-01",
-    strings.NewReader(acctBody))
-req.Header.Set("Content-Type", "application/json")
-req.Header.Set("Authorization", "Bearer fake-token")
-resp, _ := http.DefaultClient.Do(req) // 200 OK
-defer resp.Body.Close()
-
-var account struct {
-    Name       string `json:"name"`
-    Properties struct {
-        ProvisioningState string `json:"provisioningState"`
-        PrimaryEndpoints  struct {
-            Blob string `json:"blob"`
-            File string `json:"file"`
-        } `json:"primaryEndpoints"`
-    } `json:"properties"`
-}
-json.NewDecoder(resp.Body).Decode(&account)
-// account.Properties.PrimaryEndpoints.Blob == "http://mystorageacct.blob.localhost:4568/"
-```
-
-## Testing
-
-```sh
-# SDK tests (uses Azure SDK for Go)
-cd sdk-tests && go test -v ./...
-
-# CLI tests (uses az CLI via `az rest`)
-cd cli-tests && go test -v ./...
-
-# Terraform tests (Docker-only, needs TLS)
-cd terraform-tests && go test -v ./...
-```
+See also: [`backends/aca/README.md`](../../backends/aca/README.md), [`backends/azure-functions/README.md`](../../backends/azure-functions/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Azure`](../../specs/CLOUD_RESOURCE_MAPPING.md).

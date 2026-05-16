@@ -47,7 +47,7 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #154 | 154 | Broad GitHub API sweep — reactions, releases, deployments + environments, PR review comments + threads, Checks, Actions OIDC + JWKS, Pages, branch protection. |
 | #155 | 155 | bleephub-specific docs refresh — `bleephub/README.md`, `docs/BLEEPHUB_GH_CLI.md`, `specs/BLEEPHUB_GITHUB_API_PARITY.md`, `ARCHITECTURE.md` block. |
 | #156 | 156 | Project-wide docs refresh + bleephub Quick start + `gh` CLI `--hostname` clarification + GCP `google.golang.org/api` v0.278.0 → v0.279.0. |
-| #157 | 157 | Component ⇄ reference-adaptor docs sweep (only `backends/docker` covered; remaining components queued as Track A in DO_NEXT.md). Experimental/security caveat on root README. BUG-991 surfaced + staged. |
+| #157 | 157 | Component ⇄ reference-adaptor docs sweep (started — only `backends/docker` covered). Experimental/security caveat on root README. BUG-991 surfaced + staged. **Sweep completed in Phase 160** (PR #160) for `backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}` + `simulators/{gcp,azure}`; `simulators/aws/` had already landed in P159.10. |
 | #158 | 158 | BUG-991 + BUG-992 fixes; `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md` 15-approach research-only catalogue; 3 project-local Claude skills under `.claude/skills/`. |
 
 ## Active + planned phases
@@ -108,7 +108,7 @@ Acceptance:
 - `simulators/aws/terraform-tests/` adds Terraform plans per service using the real Terraform `aws` provider with `endpoints {}` block overriding to the sim.
 - `simulators/aws/cli-tests/` adds `aws` CLI smoke per service.
 - `simulators/aws/API_SPEC.md` updated to enumerate the new verbs covered + last-green count.
-- `simulators/aws/README.md` updated in Phase 157 adaptor-led shape (currently part of Track A; can be folded in here).
+- `simulators/aws/README.md` updated in Phase 157 adaptor-led shape (landed in P159.10).
 
 Sub-task breakdown + commit layout in [DO_NEXT.md § Phase 159](DO_NEXT.md). Each sub-task = one commit; CI runs per commit. Phase may span multiple sessions; state save discipline (per `.claude/skills/avoid-vibe-slop`) preserves continuity.
 
@@ -121,11 +121,11 @@ Out of scope:
 - ACM certificate DNS-validation polling loops (`pendingValidation` → `issued` transition can be eager).
 - Service-linked role *enforcement* (sim accepts requests without verifying the SLR exists; create the records on demand).
 
-### Phase 157 — Component ⇄ reference-adaptor docs sweep (partial; Track A in DO_NEXT.md)
+### Phase 157 — Component ⇄ reference-adaptor docs sweep (closed across #157 + P159.10 + #160)
 
-PR #157 covered `backends/docker` only. The remaining components (backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, simulators/README.md showcase, cmd/sockerless, cmd/sockerless-admin) carry forward as Track A. Note: the `simulators/aws/README.md` portion likely lands inside Phase 159 since the new services are being added there.
+PR #157 covered `backends/docker` only. `simulators/aws/README.md` followed in P159.10. **Phase 160 (PR #160)** completed the sweep across the remaining cloud backends + simulators (`backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}/README.md`, `simulators/{gcp,azure}/README.md`) plus the `bleephub/README.md` reference-adaptor section. Still un-rewritten in the same shape (low-priority, out-of-scope for #160): `cmd/sockerless/README.md`, `cmd/sockerless-admin/README.md`, `simulators/README.md` end-to-end showcase.
 
-Doc shape (locked-in from #157): lead with adaptor, then validation, wiring, sample (real captured output), out-of-scope.
+Doc shape (locked-in from #157): lead with reference adaptors (with min versions + spec hyperlinks), then validation (test paths + last-green dates), wiring, sample (real captured output), known issues, out-of-scope.
 
 ### Phase 153–156 — Closed
 

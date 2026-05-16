@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-160-skills-from-159-lessons` — open as PR #160. |
-| In-flight | **Phase 160 — Codify Phase 159 lessons into new project-local Claude skills.** Two new skills: `sim-handler-checklist` (pre-write for new `simulators/<cloud>/<service>.go` — covers SDK serializer source, TF provider Read inspection, asymmetric Create/Read APIs, trailing-slash routing); `cross-resource-stack-test` (codifies the `TestStackProductionShape` `terraform output -json` + Go-assertion pattern). Plus `adaptor-fidelity-check` refinement with new steps 1a (SDK serializer source) and 1b (TF provider Read inspection). |
+| In-flight | **Phase 160 — Skills + docs sweep.** Two new project-local skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement (steps 1a + 1b) capturing the four recurring Phase 159 lessons. **PLUS** docs-tightening: 6 backend READMEs (ecs/lambda/cloudrun/cloudrun-functions/aca/azure-functions) + 2 simulator READMEs (gcp/azure) rewritten in the Phase 157 adaptor-led shape with external spec hyperlinks (Docker REST API, AWS/GCP/Azure SDK + CLI, Terraform provider registry, GitHub REST/GraphQL). bleephub README gains an explicit Reference-adaptor section linking to the BLEEPHUB_GITHUB_API_PARITY spec. This closes the Phase 157 Track A sweep. |
 | Last merged | PR #159 — Phase 159 AWS sim CloudFront/ACM/Route 53/WAFv2/Amplify/IAM SLR+OIDC (2026-05-15, merged at `236a387f`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |

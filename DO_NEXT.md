@@ -99,24 +99,25 @@ terraform plan -refresh=true  # endpoints { cloudfront = "http://localhost:5566/
 
 ## Resumable tracks after Phase 159 merges
 
-### Track A — Resume Phase 157 component-adaptor sweep (deferred during 158 + 159)
+### Track A — Phase 157 component-adaptor sweep (CLOSED in Phase 160)
 
-Phase 157 PR #157 only covered `backends/docker`. Remaining: backends/{ecs,lambda,cloudrun,cloudrun-functions,aca,azure-functions}, simulators/{aws,gcp,azure}, `simulators/README.md` end-to-end showcase, cmd/sockerless, cmd/sockerless-admin. The `simulators/aws/README.md` portion likely folds into P159.12.
+The 8 README rewrites that carried forward from Phase 157 all landed in PR #160:
 
-Component matrix:
-
-| Component | Reference adaptor | Validation entry point |
+| Component | Reference adaptor | Status |
 |---|---|---|
-| `backends/ecs` | aws CLI/SDK + Terraform aws; docker CLI | `simulators/aws/sdk-tests` + Docker SDK e2e |
-| `backends/lambda` | aws CLI/SDK + Terraform aws; docker CLI | same |
-| `backends/cloudrun` | gcloud + Go SDK + Terraform google; docker CLI | `simulators/gcp/sdk-tests` |
-| `backends/cloudrun-functions` | gcloud + Go SDK + Terraform google; docker CLI | same |
-| `backends/aca` | az + Go SDK + Terraform azurerm; docker CLI | `simulators/azure/sdk-tests` |
-| `backends/azure-functions` | az + Go SDK + Terraform azurerm; docker CLI | same |
-| `simulators/gcp` | gcloud + Go SDK + Terraform google | `simulators/gcp/{sdk-tests,terraform-tests}` |
-| `simulators/azure` | az + Go SDK + Terraform azurerm | `simulators/azure/{sdk-tests,terraform-tests}` |
-| `cmd/sockerless` (CLI) | itself — CLI is adaptor for backends | `cmd/sockerless/*_test.go` |
-| `cmd/sockerless-admin` | browser / REST clients against `/v1/*` | `cmd/sockerless-admin/*_test.go` |
+| `backends/ecs` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
+| `backends/lambda` | docker SDK/CLI + aws CLI/SDK + Terraform aws | ✅ Phase 160 |
+| `backends/cloudrun` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `backends/cloudrun-functions` | docker SDK/CLI + gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `backends/aca` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `backends/azure-functions` | docker SDK/CLI + az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `simulators/gcp` | gcloud + GCP SDK + Terraform google | ✅ Phase 160 |
+| `simulators/azure` | az + Azure SDK + Terraform azurerm | ✅ Phase 160 |
+| `simulators/aws` | aws CLI + AWS SDK + Terraform aws | ✅ P159.10 |
+| `backends/docker` | docker CLI/SDK + podman CLI | ✅ #157 |
+| `bleephub` | gh CLI + actions/runner + smart-HTTP git + GitHub REST/GraphQL specs | ✅ Phase 160 (reference-adaptor section added) |
+
+**Still un-rewritten (low priority, deferred):** `cmd/sockerless/README.md`, `cmd/sockerless-admin/README.md`, `simulators/README.md` end-to-end showcase. These can pick up a future small phase if needed.
 
 ### Track B — Skill maturation (post-Phase 158)
 

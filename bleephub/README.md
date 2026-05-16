@@ -4,6 +4,20 @@ bleephub is a self-contained Go reimplementation of GitHub's server-side surface
 
 The runner-server protocol uses GHES-style `/_apis/` paths over five internal services. The REST + GraphQL API uses GHES-style `/api/v3/` (REST) and `/api/graphql`. Both are served from the same binary on the same port.
 
+## Reference adaptors
+
+bleephub is paired with the external GitHub-compatible tools that drive it. Anything these tools do against `github.com` (or a GHES instance) must work against bleephub.
+
+| Adaptor | Min version | What it proves |
+|---|---|---|
+| [`gh` CLI](https://cli.github.com/manual/) | 2.50+ | End-to-end CLI verbs against `--hostname localhost` — repos, issues, PRs, releases, run / view / list. See [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md). |
+| [`actions/runner`](https://github.com/actions/runner) (official binary) | v2.319+ | The runner-server `/_apis/` protocol — token, agent registration, broker long-poll, run service, timeline/logs upload. |
+| [Smart-HTTP git](https://git-scm.com/docs/http-protocol) (`go-git`) | git 2.40+ | `git clone` / `git push` over `https://localhost/{owner}/{repo}.git`. Used by `actions/checkout`. |
+| [GitHub REST API spec](https://docs.github.com/en/rest) | 2022-11-28 | The authoritative reference for paths, request bodies, response envelopes, and `Link`-header pagination. |
+| [GitHub GraphQL schema](https://docs.github.com/en/graphql/reference) | 2022-11-28 | The `IssueOrPullRequest` union, connection shapes, enum values. |
+
+The audit artifact mapping bleephub's coverage to GitHub-real shapes (per-route + per-field) lives at [`specs/BLEEPHUB_GITHUB_API_PARITY.md`](../specs/BLEEPHUB_GITHUB_API_PARITY.md).
+
 ## Quick start — bleephub + `gh` CLI in 5 steps
 
 `gh` is HTTPS-only against any non-`github.com` host, and it identifies the target by **hostname** (no base URL flag). The `--hostname` argument on `gh auth login` is what wires it up; once that and `GH_HOST` are set, every `gh` command builds `https://<host>/api/v3/...` automatically and bleephub serves it.
