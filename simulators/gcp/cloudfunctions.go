@@ -315,17 +315,31 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	// Sim path: dispatch through Docker, never os/exec a workload on the
 	// sim host. The function spec's SimImage carries the image; SimCommand
 	// is the entrypoint+args override; SimArchitecture (default empty =
-	// image default) carries the workload's arch. Closes
+	// image default) carries the workload's arch.
+	//
+	// SOCKERLESS_USER_ENTRYPOINT / _USER_CMD are set by the cloudrun-functions
+	// backend as base64(json.Marshal(argv)) — both decode steps are part of
+	// the backend↔sim contract. A malformed value means the backend produced
+	// garbage; surface it as an invocation error rather than silently invoke
+	// with an empty argv.
 	var entrypoint, userCmd []string
 	if fn.ServiceConfig != nil {
 		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_ENTRYPOINT"]; ok {
-			if decoded, err := base64.StdEncoding.DecodeString(epB64); err == nil {
-				_ = json.Unmarshal(decoded, &entrypoint)
+			decoded, err := base64.StdEncoding.DecodeString(epB64)
+			if err != nil {
+				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_ENTRYPOINT base64: %s"}`, err.Error())), 1
+			}
+			if err := json.Unmarshal(decoded, &entrypoint); err != nil {
+				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_ENTRYPOINT JSON: %s"}`, err.Error())), 1
 			}
 		}
 		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_CMD"]; ok {
-			if decoded, err := base64.StdEncoding.DecodeString(cmdB64); err == nil {
-				_ = json.Unmarshal(decoded, &userCmd)
+			decoded, err := base64.StdEncoding.DecodeString(cmdB64)
+			if err != nil {
+				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_CMD base64: %s"}`, err.Error())), 1
+			}
+			if err := json.Unmarshal(decoded, &userCmd); err != nil {
+				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_CMD JSON: %s"}`, err.Error())), 1
 			}
 		}
 		if len(entrypoint) == 0 && len(userCmd) == 0 {

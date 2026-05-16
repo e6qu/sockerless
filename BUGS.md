@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1022 filed · 1015 fixed · 7 open · 2 false positives.**
+**1022 filed · 1016 fixed · 6 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -11,7 +11,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
 | 1014 | P2 | repo-wide | 8 | Phase / sub-phase metadata still appears in production code comments after the BUG-994 sweep — e.g. `simulators/aws/ecs.go:802` "Future sub-phase: derive from", `bleephub/persistence.go:29` "NOT persisted in this phase", `backends/lambda/cloud_state.go:98+198`, `simulators/aws/wafv2.go:17` "out of scope per Phase", `bleephub/gh_oauth.go:95` "pre-Phase-132 handler", `simulators/aws/lambda_runtime.go:313` "Future sub-phase", `simulators/testdata/lambda-runtime-handler/main.go:31` "Phase D", `simulators/gcp/iam.go:128`, `backends/ecs/backend_impl.go:997` "Phase-92-style teardown", `bleephub/gh_misc_endpoints.go:25`. Strip; preserve the *why* when load-bearing. |
-| 1017 | P1 | `simulators/aws/wafv2.go:696-697`, `simulators/aws/amplify.go:834`, `simulators/gcp/cloudfunctions.go:323+328`, `simulators/gcp/artifactregistry.go:424`, `simulators/gcp/cloudrunjobs.go:196` | 1 | Sim handlers / state codecs silently swallow `_ = json.Unmarshal(...)` / `_ = json.NewDecoder(...).Decode(...)`. WAFv2 UpdateRuleGroup + Amplify StartJob silently accept malformed JSON; AR proxy manifest parse + GCF zip-entrypoint decode + cloudrunjobs Operation marshal-back hide all error info. Cross-cloud sibling of BUG-996. |
 | 1018 | P1 | `backends/core/handle_exec.go:95`, `backends/core/handle_libpod.go:120` | 1 + 7 | Core HTTP handlers silently swallow request decode: `handleExecStart` does `_ = ReadJSON(r, &req)` — a malformed ExecStartConfig body becomes an empty struct, then we hijack the conn and start the wrong exec mode. `handleLibpodContainerList` does `_ = json.Unmarshal(bodyBytes, &spec)` for the podman specgen shim; if the body is malformed JSON the Docker-compat decode that *is* checked next will fail loudly, but the asymmetry is confusing. Decode strictly; propagate the error envelope. |
 | 1019 | P2 | `backends/cloudrun-functions/cloud_state.go:506` | 1 | `_ = json.Unmarshal(raw, &dockerLabels)` silently accepts malformed Cloud Run label JSON during state reconstruction. Failure mode = ghost containers reported with empty labels. Either decode strictly + skip the resource with a log line, or surface via the function's existing error return. |
 | 1020 | P2 | `bleephub/webhooks_payloads.go:121,166` | 8 + 27 | `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` have **zero callers** repo-wide; `//nolint:unused // callers land in the workflow-trigger commit` from Phase 153 lineage never landed those callers. Same comment-shape as BUG-1008 (legacy InitTracer entry point). Rip both helpers + the nolint pragmas. |
@@ -38,7 +37,15 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1015 bugs filed and fixed across phases 86–164.
+1016 bugs filed and fixed across phases 86–164.
+
+- **1017** (Phase 164) — Five silent JSON-decode sites across AWS + GCP sims swallowed errors and emitted success. Fix shape per site, all matching the surrounding handler's existing error envelope:
+  - `simulators/aws/wafv2.go::handleWAFUpdateRuleGroup` — `body, _ := readBodyJSON(r.Body); _ = json.Unmarshal(body, &req); _ = json.Unmarshal(body, &idReq)` → check every error and return `WAFInvalidParameterException` envelope, matching siblings `handleWAFCreateRuleGroup` / `handleWAFGetRuleGroup` / `handleWAFDeleteRuleGroup`.
+  - `simulators/aws/amplify.go::handleAmplifyStartDeployment` — `_ = json.NewDecoder(r.Body).Decode(&req)` → strict decode with `errors.Is(err, io.EOF)` carve-out (StartJob body has only optional fields per real Amplify); malformed → 400 `BadRequestException`.
+  - `simulators/gcp/cloudfunctions.go::invokeCloudFunctionProcess` — `SOCKERLESS_USER_ENTRYPOINT` / `SOCKERLESS_USER_CMD` base64+JSON decode pair silently emitted empty argv on malformed input. The backend↔sim contract is "always base64(json.Marshal(argv))" — a violation means a real bug in the backend → sim handoff. Surface as invocation error (`{"error":"malformed SOCKERLESS_USER_ENTRYPOINT base64: ..."}`, exit code 1) so the test harness sees the failure.
+  - `simulators/gcp/artifactregistry.go::registerDockerImageFromManifest` — `_ = json.Unmarshal(data, &manifest)` for `mediaType` extraction. Manifest was validated upstream so this shouldn't fail; if it does, log to stderr + fall back to `contentType` from request header (better than silently recording empty mediaType).
+  - `simulators/gcp/cloudrunjobs.go::newLRO` — `data, _ := json.Marshal(resource); _ = json.Unmarshal(data, &responseMap)`. The struct is in-process; marshal can only fail on chan/func/unsafe.Pointer fields — a regression there would be invisible in prod and break every consuming SDK. Panic with the resource typeName so the test failure is loud.
+  Verified: `cd simulators/gcp && SOCKERLESS_TEST_TARGET=sim go test ./...` green; `cd simulators/aws/sdk-tests && SOCKERLESS_TEST_TARGET=sim go test -run 'WAF|Amplify|Stack'` green.
 
 - **1016** (Phase 164) — Four bleephub write handlers silently swallowed malformed JSON: `handleOIDCCustomSubPut`, `handlePagesCreate`, `handleBranchProtectionPut`, `handleLockIssue`. A runner shipping `{"include_claim_keys":` (truncated body) would receive 201/200/204 and never learn its mistake. Real GitHub returns 400 with `{"message":"Problems parsing JSON",...}` on malformed JSON; bleephub now matches via `if err := Decode(...); err != nil && !errors.Is(err, io.EOF) { writeGHError(400, "Problems parsing JSON") }`. The `io.EOF` carve-out preserves the legitimate "no body provided" path for issue-lock (where empty body = lock with no reason, matching real `gh issue lock`). Coverage: new `bleephub/gh_misc_endpoints_decode_test.go` with 6 assertions — 4 malformed-JSON → 400, OIDC empty-body → 201, issue-lock empty-body → 204.
 

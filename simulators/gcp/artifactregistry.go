@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -416,12 +417,22 @@ func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs sim.Store
 
 // registerDockerImageFromManifest registers a docker image in the Artifact Registry
 // docker images store when a manifest is pushed.
+//
+// The manifest is a docker manifest v2 / OCI image manifest already validated
+// upstream by the manifest-PUT handler; we re-read the embedded mediaType
+// here only to populate the AR DockerImage row. A genuinely malformed manifest
+// would have failed the upload — but if the JSON decode does fail we log it
+// and fall back to contentType from the request header rather than silently
+// recording an empty mediaType.
 func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageName, reference, contentType string, data []byte) {
-	// Try to parse the manifest to extract media type
 	var manifest struct {
 		MediaType string `json:"mediaType"`
 	}
-	_ = json.Unmarshal(data, &manifest) // best-effort: manifest may not contain mediaType
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "[sim-gcp-ar] mediaType extraction from manifest failed (image=%s ref=%s): %v\n",
+			imageName, reference, err)
+		manifest.MediaType = contentType
+	}
 
 	now := nowTimestamp()
 	imgName := imageName + "/dockerImages/" + reference
