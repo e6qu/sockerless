@@ -29,14 +29,13 @@ func handleProjectList(projectMgr *ProjectManager) http.HandlerFunc {
 	}
 }
 
-// CreateProjectRequest is the JSON body for creating a project.
+// CreateProjectRequest is the JSON body for creating a project. The
+// request enumerates instances directly — there are no implicit sim +
+// backend slots. Callers (the admin UI / API tests / migration tools)
+// build the instance list explicitly.
 type CreateProjectRequest struct {
-	Name        string      `json:"name"`
-	Cloud       CloudType   `json:"cloud"`
-	Backend     BackendType `json:"backend"`
-	LogLevel    string      `json:"log_level"`
-	SimPort     int         `json:"sim_port"`
-	BackendPort int         `json:"backend_port"`
+	Name      string     `json:"name"`
+	Instances []Instance `json:"instances"`
 }
 
 // handleProjectCreate creates a new project.
@@ -49,12 +48,8 @@ func handleProjectCreate(projectMgr *ProjectManager) http.HandlerFunc {
 		}
 
 		cfg := ProjectConfig{
-			Name:        req.Name,
-			Cloud:       req.Cloud,
-			Backend:     req.Backend,
-			LogLevel:    req.LogLevel,
-			SimPort:     req.SimPort,
-			BackendPort: req.BackendPort,
+			Name:      req.Name,
+			Instances: req.Instances,
 		}
 
 		if err := projectMgr.Create(cfg); err != nil {
