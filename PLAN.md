@@ -45,8 +45,45 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #158 | 158 | BUG-991 + BUG-992 fixes; `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md`; 3 project-local Claude skills. |
 | #159 | 159 | AWS sim — CloudFront + ACM + Route 53 + WAFv2 + Amplify + IAM SLR/OIDC (11 sub-tasks, `TestStackProductionShape` cross-resource invariants). Merged 2026-05-15 at `236a387f`. |
 | #160 | 160 | Two new project-local skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement; component-README adaptor-led sweep completed across 6 backends + 2 simulators + bleephub + `cmd/sockerless` + new `cmd/sockerless-admin/README.md` + rewritten `simulators/README.md`. Phase 157 Track A closed. Merged 2026-05-16 at `aeb0ac6e`. |
+| #161 | 161 | Comprehensive vibe-slop sweep — 18 BUGs closed + bleephub GraphQL completion. Merged 2026-05-16 at `841f2456`. |
+| #162 | 162 | Vibe-coding catalogue refresh — 12 new patterns (24–35) + `avoid-vibe-slop` skill expanded 17 → 26 checklist items. Doc-only. Merged 2026-05-16 at `4f602988`. |
+| #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
 
 ## Active phase
+
+### Phase 164 — Second vibe-slop sweep (in flight on `phase-164-vibe-slop-sweep-2`)
+
+Phase 161 was the first comprehensive sweep (18 BUGs closed). Phase 164 reruns the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162 + the skill expanded from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — and it did.
+
+First-pass survey filed 9 BUGs in `BUGS.md § Open`:
+
+| BUG | Sev | Layer | Shape |
+|---|---|---|---|
+| 1014 | P2 | repo-wide | Phase / sub-phase metadata still appears in production code comments after BUG-994 sweep |
+| 1015 | P1 | `backends/cloudrun-functions/volume_translator.go` | `(BUG-944)` literally embedded in operator-visible error; test asserts on substring |
+| 1016 | P1 | `bleephub/gh_misc_endpoints.go` + `gh_issue_moderation.go` | Silent `_ = json.NewDecoder(r.Body).Decode(...)` on PUT/POST handlers |
+| 1017 | P1 | `simulators/{aws,gcp}/*` | Cross-cloud silent-decode sibling of BUG-996 in WAFv2 / Amplify / GCP sims |
+| 1018 | P1 | `backends/core/handle_exec.go` + `handle_libpod.go` | Silent decode in core HTTP handlers (incl. hijack-after-decode race) |
+| 1019 | P2 | `backends/cloudrun-functions/cloud_state.go` | Silent decode of Cloud Run docker labels JSON |
+| 1020 | P2 | `bleephub/webhooks_payloads.go` | Two dead helpers with `//nolint:unused // callers land later` from Phase 153 that never did |
+| 1021 | P3 | `bleephub/gh_middleware.go` | Stale `//nolint:unused` pragmas; consumers DID land |
+| 1022 | P3 | repo-wide | Unused-import silencers (`var _ = json.Marshal` + variants) |
+
+Per the user directive *"any fixes to land on a single PR; if more extensive changes are needed they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time"*: granular commits on one branch, CI green between each, PR #164 opens once the first batch lands.
+
+Acceptance:
+
+- All 9 BUGs in `BUGS.md § Open` resolve through this PR.
+- `go test ./...` green in every touched module.
+- 11 standard CI checks green per push.
+- Re-verification pass (P164.9) surfaces any second-pass findings before close.
+- User merges PR #164.
+
+Out of scope (filed as future BUGs if surfaced):
+
+- Live-cloud validation track (separate cells, separate branches).
+- UI / TypeScript sweep (deferred from Phase 161).
+- Slopsquatted-dependency audit (handled by `check-latest-deps` hook).
 
 ### Phase 161 — Comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
 

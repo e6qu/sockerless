@@ -4,11 +4,29 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 162 merged 2026-05-16 (PR #162, `4f602988` on `origin/main`) — vibe-coding catalogue refresh, doc-only.
+Phase 163 merged 2026-05-16 (PR #163, `d5b9d22a` on `origin/main`) — Makefile legacy alias rip-out + docs sweep.
 
-**Phase 163 in flight on `phase-163-legacy-make-rip-out`**: user directive — "remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either; sweep docs for old `make` calls and replace them with new ones." No code-surface changes; Makefile + docs only.
+**Phase 164 in flight on `phase-164-vibe-slop-sweep-2`**: second vibe-slop sweep, user directive: *"re-familiarize yourself with the docs here and then run the vibe slop removal skill; we want any fixes to land on a single PR; if more extensive changes are needed then they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time."*
+
+First-pass survey filed 9 BUGs (1014–1022) in `BUGS.md § Open`; sub-task table below.
 
 Default "user merges every PR" remains in force.
+
+## Phase 164 sub-task table (sub-task ordering = severity)
+
+| Sub | Status | BUG | What |
+|---|---|---|---|
+| **P164.0** | ✅ | — | Branch from `origin/main` + survey + 9 BUGs filed + continuity-doc opening. |
+| **P164.1** | ◻ | 1015 | `backends/cloudrun-functions/volume_translator.go:95` — strip `(BUG-944)` literal from operator-visible error string; rewrite `volume_translator_test.go:78` assertion from the contract ("gcs-sync" + "gcs-fuse" + "Cloud Functions") rather than the bug-ref substring. |
+| **P164.2** | ◻ | 1016 | bleephub strict-decode: replace `_ = json.NewDecoder(r.Body).Decode(...)` in `gh_misc_endpoints.go` (OIDC custom sub PUT line 328, Pages create line 434, branch protection PUT line 508) + `gh_issue_moderation.go:144` with strict decode + 422/400 envelope. Real GitHub returns 400 on malformed JSON. |
+| **P164.3** | ◻ | 1017 | Sim strict-decode sweep: `simulators/aws/wafv2.go:696-697` (UpdateRuleGroup), `simulators/aws/amplify.go:834` (StartJob), `simulators/gcp/cloudfunctions.go:323+328` (entrypoint resolve), `simulators/gcp/cloudrunjobs.go:196` (Operation marshal-back), `simulators/gcp/artifactregistry.go:424` (manifest mediaType parse). Cross-cloud sibling of BUG-996. |
+| **P164.4** | ◻ | 1018 | `backends/core/handle_exec.go:95` strict-decode `ExecStartConfig` before hijacking; `backends/core/handle_libpod.go:120` decide the right shape for the podman specgen shim (either propagate or document why both decodes are tried in sequence). |
+| **P164.5** | ◻ | 1019 | `backends/cloudrun-functions/cloud_state.go:506` — strict-decode Cloud Run docker labels JSON; on malformed labels log + skip the resource (do not emit a ghost container with empty labels). |
+| **P164.6** | ◻ | 1020 | Rip `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` from `bleephub/webhooks_payloads.go` (zero callers; `//nolint:unused // callers land in the workflow-trigger commit` from Phase 153 lineage never landed). |
+| **P164.7** | ◻ | 1021 + 1022 | Drop stale `//nolint:unused` pragmas on `bleephub/gh_middleware.go` context helpers (consumers DID land — pattern 27 / 8 / 33). Sweep unused-import silencers (`var _ = json.Marshal` + variants) across `bleephub/webhooks_payloads.go`, `gh_pr_threads.go`, `gh_app_hooks_rest.go`, `simulators/aws/amplify.go`. Audit `bleephub/gh_request_decode.go` flexInt64 nolint:unused pragmas for live callers before stripping. |
+| **P164.8** | ◻ | 1014 | Repo-wide phase-ref sweep continuation. Touch the ~10 production-code sites the BUG-994 sweep missed; preserve the *why* when load-bearing per the BUG-994 rule. |
+| **P164.9** | ◻ | — | Re-verification pass (pattern 26 / 32). Walk the avoid-vibe-slop checklist again with fresh eyes; file any new findings. |
+| **P164.10** | ◻ | — | Final state save + push + open PR. |
 
 ## Phase 163 scope
 

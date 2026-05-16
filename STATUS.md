@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-163-legacy-make-rip-out` — to open as PR #163. |
-| In-flight | **Phase 163 — Makefile legacy alias rip-out + docs sweep.** Removed the entire "Legacy aliases" section from the top-level `Makefile` (`sim-test-*`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`); reframed the surviving Docker-driven cross-cutting suites (`smoke-test-*`, `tf-int-test-*`, `e2e-{github,gitlab}-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers. Pattern rule now uses a `FORCE` dep so path delegation works when a target name collides with a real subdir (e.g. `bleephub/test/`). Continuity sweep across `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale doc refs to invented targets (`stack-aws-ecs-up`/`-down`, `e2e-github-aws-ecs`, `docker-tf-int-test-azure`) replaced with the real names. |
-| Last merged | PR #162 — Phase 162 vibe-coding catalogue refresh (2026-05-16, merged at `4f602988`). |
+| Active branch | `phase-164-vibe-slop-sweep-2` — to open as PR #164. |
+| In-flight | **Phase 164 — second vibe-slop sweep.** Re-running the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes against `origin/main` at `d5b9d22a` after `docs/VIBE_CODING.md` grew to 35 patterns in Phase 162. First-pass survey filed 9 new BUGs (1014–1022). Headline shapes: BUG-994 phase-ref sweep incomplete (still in `simulators/aws/ecs.go`, `bleephub/persistence.go`, `backends/lambda/cloud_state.go`, etc., plus `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error string with a test asserting on the substring); BUG-996 cross-cloud silent-decode sibling in bleephub handlers + AWS/GCP sims + `backends/core` exec & libpod handlers; dead helpers in `bleephub/webhooks_payloads.go` with zero callers but `//nolint:unused // callers land in subsequent commits` directives that never landed; stale `//nolint:unused` pragmas on context helpers that now have real callers; unused-import silencers (`var _ = json.Marshal`). |
+| Last merged | PR #163 — Phase 163 Makefile legacy alias rip-out + docs sweep (2026-05-16, merged at `d5b9d22a`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 1012 fixed (1012 total filed) · 2 false positives. |
+| Bugs | 9 open · 1013 fixed (1022 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -46,7 +46,25 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 163 — Makefile legacy rip-out + docs sweep (in flight)
+## Phase 164 — Second vibe-slop sweep (in flight)
+
+Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). After Phase 162 grew `docs/VIBE_CODING.md` from 23 → 35 patterns + expanded the `avoid-vibe-slop` skill from 17 → 26 checklist items, the catalogue surfaces a different shape of fault — sycophancy, comprehension debt, expansion-without-pruning, docs-vs-code drift, pre-commit hook rollback, language-aware-tooling-not-sed. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations.
+
+First-pass survey output (9 BUGs in `BUGS.md § Open`):
+
+- **BUG-1014** — Phase / sub-phase refs in production code comments survived the BUG-994 sweep at ~10 sites.
+- **BUG-1015** — `backends/cloudrun-functions/volume_translator.go:95` embeds `(BUG-944)` in an operator-visible error string; `volume_translator_test.go:78` asserts on the literal `"BUG-944"` substring — classic pattern-28 anti-pattern.
+- **BUG-1016** — bleephub HTTP handlers silently swallow malformed JSON: OIDC custom sub PUT, Pages create, branch protection PUT, issue lock.
+- **BUG-1017** — Sim handlers silently swallow JSON decode: WAFv2 UpdateRuleGroup, Amplify StartJob, GCP AR proxy manifest parse, GCF entrypoint resolution, cloudrunjobs Operation marshal-back.
+- **BUG-1018** — Core HTTP handlers silently swallow request decode: `handleExecStart` (hijack-after-decode race), `handleLibpodContainerList` (podman specgen shim).
+- **BUG-1019** — `backends/cloudrun-functions/cloud_state.go:506` silently decodes Cloud Run docker labels JSON → ghost containers with empty labels on malformed state.
+- **BUG-1020** — `bleephub/webhooks_payloads.go` has two helpers with zero callers carrying `//nolint:unused // callers land in the workflow-trigger commit`; the commit never landed.
+- **BUG-1021** — Stale `//nolint:unused` pragmas on `gh_middleware.go` context helpers that now have real callers.
+- **BUG-1022** — Unused-import silencers (`var _ = json.Marshal` etc.) scattered across bleephub + AWS sim — refusal to delete (pattern 27).
+
+Sub-task ordering = severity. P164.1 → P164.9. Granular commits, CI green between each, single PR.
+
+## Phase 163 — Makefile legacy rip-out + docs sweep (merged)
 
 User directive: "sockerless has no legacy, it's under active development." The top-level Makefile carried a `# ── Legacy aliases ──` section that preserved pure-alias targets purely for muscle-memory / pre-Phase-79 CI invocations: `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`. Every one of those just delegated `$(MAKE) -C <dir> <target>` — which the standard `%/<target>` path-delegation rule already covers. Dropped them; reframed the remaining real recipes (Docker-driven `smoke-test-*`, `tf-int-test-*`, `e2e-github-*`, `e2e-gitlab-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers (no "legacy" framing).
 

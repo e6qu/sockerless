@@ -6,6 +6,34 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-16 — Phase 164: second vibe-slop sweep (in flight on `phase-164-vibe-slop-sweep-2`)
+
+User directive: *"re-familiarize yourself with the docs here and then run the vibe slop removal skill; we want any fixes to land on a single PR; if more extensive changes are needed then they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time."*
+
+Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). Phase 164 reruns the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes against `origin/main` at `d5b9d22a` after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162. New patterns (24–35) surface a different shape of fault — sycophancy, comprehension debt, expansion-without-pruning, docs-vs-code drift, pre-commit hook rollback, language-aware-tooling-not-sed — and the second-pass discipline (pattern 26 / 32: re-verification with fresh eyes) explicitly warned that the first sweep would rubber-stamp some violations.
+
+First pass findings filed as BUG-1014..1022 (P1 / P2 / P3). Headline shapes:
+
+- **Phase-ref sweep was incomplete (BUG-1014)** — `simulators/aws/ecs.go`, `bleephub/persistence.go`, `backends/lambda/cloud_state.go`, `simulators/aws/wafv2.go`, `bleephub/gh_oauth.go`, `simulators/testdata/lambda-runtime-handler/main.go`, `simulators/gcp/iam.go`, `backends/ecs/backend_impl.go`, `bleephub/gh_misc_endpoints.go`, plus `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error message (BUG-1015) and a test that anchors on the `"BUG-944"` substring — exact pattern 28 (test asserts on impl metadata).
+- **BUG-996 cross-cloud sibling (BUG-1016+1017+1018+1019)** — silent `_ = json.NewDecoder(...).Decode(...)` / `_ = json.Unmarshal(...)` in bleephub handlers (OIDC custom sub PUT, Pages create, branch protection PUT, issue lock), AWS sim (WAFv2 UpdateRuleGroup, Amplify StartJob), GCP sim (artifactregistry manifest parse, cloudfunctions entrypoint resolution, cloudrunjobs Operation marshal-back), and `backends/core` handlers (handle_exec, handle_libpod, cloudrun-functions cloud state).
+- **Dead code held for never-shipped commits (BUG-1020+1021+1022)** — `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` in `bleephub/webhooks_payloads.go` have zero callers since Phase 153 yet carry `//nolint:unused // callers land in the workflow-trigger commit`. Three context helpers in `bleephub/gh_middleware.go` carry stale `//nolint:unused` but actually do have callers now. Five `var _ = pkg.Symbol` unused-import silencers across `bleephub` + `simulators/aws/amplify.go` + `tools/http-trace`.
+
+### Fix plan
+
+Single PR (#164 TBD). Granular commits, CI green between each. Sub-task order = severity:
+
+| Sub | BUG | Layer |
+|---|---|---|
+| P164.1 | 1015 | `backends/cloudrun-functions/volume_translator.go` + test |
+| P164.2 | 1016 | bleephub gh_misc_endpoints + gh_issue_moderation |
+| P164.3 | 1017 | simulators/{aws,gcp}/* — wafv2 + amplify + artifactregistry + cloudfunctions + cloudrunjobs |
+| P164.4 | 1018 | backends/core handle_exec + handle_libpod |
+| P164.5 | 1019 | backends/cloudrun-functions cloud_state |
+| P164.6 | 1020 | bleephub/webhooks_payloads — rip dead helpers |
+| P164.7 | 1021 + 1022 | nolint:unused + var _ = pkg.X silencers |
+| P164.8 | 1014 | repo-wide phase-ref sweep (last because it touches many files; smallest risk) |
+| P164.9 | — | re-verification pass; surface anything the first sweep missed |
+
 ## 2026-05-16 — Phase 163: Makefile legacy alias rip-out + docs sweep (in flight on `phase-163-legacy-make-rip-out`)
 
 User directive: *"let's remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either."* Follow-up after the first wave of work: *"make sure to also sweep docs for old `make` calls and replace them with new ones."*

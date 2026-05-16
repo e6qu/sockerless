@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1013 filed · 1013 fixed · 0 open · 2 false positives.**
+**1022 filed · 1013 fixed · 9 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,8 +10,15 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-
-*(none — all BUGs filed during Phase 161 closed in this PR.)*
+| 1014 | P2 | repo-wide | 8 | Phase / sub-phase metadata still appears in production code comments after the BUG-994 sweep — e.g. `simulators/aws/ecs.go:802` "Future sub-phase: derive from", `bleephub/persistence.go:29` "NOT persisted in this phase", `backends/lambda/cloud_state.go:98+198`, `simulators/aws/wafv2.go:17` "out of scope per Phase", `bleephub/gh_oauth.go:95` "pre-Phase-132 handler", `simulators/aws/lambda_runtime.go:313` "Future sub-phase", `simulators/testdata/lambda-runtime-handler/main.go:31` "Phase D", `simulators/gcp/iam.go:128`, `backends/ecs/backend_impl.go:997` "Phase-92-style teardown", `bleephub/gh_misc_endpoints.go:25`. Strip; preserve the *why* when load-bearing. |
+| 1015 | P1 | `backends/cloudrun-functions/volume_translator.go:95` | 8 + 28 | Operator-visible error string literally embeds "(BUG-944)"; corresponding test (`volume_translator_test.go:78`) asserts on the `"BUG-944"` substring — exact catalogue pattern-28 anti-pattern (test asserting on impl metadata). Drop the bug-ref from the user-facing message; rewrite test assertion from the contract. |
+| 1016 | P1 | `bleephub/gh_misc_endpoints.go:328,434,508` + `gh_issue_moderation.go:144` | 1 + 7 | `_ = json.NewDecoder(r.Body).Decode(&req)` swallows malformed JSON on OIDC custom sub PUT, Pages create, branch protection PUT, and issue lock. Real GitHub returns 400 on malformed JSON bodies. Replace with strict decode + 422/400 envelope. |
+| 1017 | P1 | `simulators/aws/wafv2.go:696-697`, `simulators/aws/amplify.go:834`, `simulators/gcp/cloudfunctions.go:323+328`, `simulators/gcp/artifactregistry.go:424`, `simulators/gcp/cloudrunjobs.go:196` | 1 | Sim handlers / state codecs silently swallow `_ = json.Unmarshal(...)` / `_ = json.NewDecoder(...).Decode(...)`. WAFv2 UpdateRuleGroup + Amplify StartJob silently accept malformed JSON; AR proxy manifest parse + GCF zip-entrypoint decode + cloudrunjobs Operation marshal-back hide all error info. Cross-cloud sibling of BUG-996. |
+| 1018 | P1 | `backends/core/handle_exec.go:95`, `backends/core/handle_libpod.go:120` | 1 + 7 | Core HTTP handlers silently swallow request decode: `handleExecStart` does `_ = ReadJSON(r, &req)` — a malformed ExecStartConfig body becomes an empty struct, then we hijack the conn and start the wrong exec mode. `handleLibpodContainerList` does `_ = json.Unmarshal(bodyBytes, &spec)` for the podman specgen shim; if the body is malformed JSON the Docker-compat decode that *is* checked next will fail loudly, but the asymmetry is confusing. Decode strictly; propagate the error envelope. |
+| 1019 | P2 | `backends/cloudrun-functions/cloud_state.go:506` | 1 | `_ = json.Unmarshal(raw, &dockerLabels)` silently accepts malformed Cloud Run label JSON during state reconstruction. Failure mode = ghost containers reported with empty labels. Either decode strictly + skip the resource with a log line, or surface via the function's existing error return. |
+| 1020 | P2 | `bleephub/webhooks_payloads.go:121,166` | 8 + 27 | `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` have **zero callers** repo-wide; `//nolint:unused // callers land in the workflow-trigger commit` from Phase 153 lineage never landed those callers. Same comment-shape as BUG-1008 (legacy InitTracer entry point). Rip both helpers + the nolint pragmas. |
+| 1021 | P3 | `bleephub/gh_middleware.go:37+46+55` | 8 | Three `//nolint:unused // consumers ship in subsequent commits on this branch` pragmas on `ghInstallationFromContext` / `ghInstallationTokenFromContext` / `ghUserToServerTokenFromContext` — but consumers DID land (`gh_apps_perms.go`, `gh_apps_rest.go`). Stale lint-suppression; drop the pragmas. Same shape in `bleephub/gh_request_decode.go:101+104+134` for `flexInt64` — but check whether those have callers before stripping. |
+| 1022 | P3 | repo-wide | 8 + 27 | Unused-import silencers: `var _ = json.Marshal` in `bleephub/webhooks_payloads.go:61` + `bleephub/gh_pr_threads.go:88`; `var _ = time.Now` in `bleephub/gh_app_hooks_rest.go:213`; `var _ = strings.ToLower` in `simulators/aws/amplify.go:961`; `_ = plumbing.ZeroHash // silence unused-import false alarm` in `bleephub/store_workflow_files.go:166`; `_ = ownerLogin // suppress unused` in `bleephub/gh_issues_graphql.go:669`. If the import is unused, drop it; if it becomes used by the same file's body, drop the silencer. Refusal to delete = pattern 27. |
 
 ## False positives
 
