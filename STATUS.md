@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-161-vibe-slop-sweep` — to open as PR #161. |
-| In-flight | **Phase 161 — comprehensive vibe-slop sweep + fixes + bleephub GraphQL completion + ProjectManager instance rewrite.** 18 BUGs closed in this PR (994/995/996/997/998/999/1000/1001/1002/1003/1004/1005/1006/1007/1008/1009/1011). Plus an in-PR bleephub-completion sub-phase covering PR.comments, PR.reviewThreads, ProjectV2 (incl. fields + field-value writes), comment edit history + minimization, issue/PR locking, PR.milestone, all with real `gh` CLI smoke tests in `bleephub/test/run-gh-test.sh`. |
-| Last merged | PR #160 — Phase 160 skills + complete component-README adaptor-led sweep (2026-05-16, merged at `aeb0ac6e`). |
+| Active branch | `phase-162-vibe-slop-catalogue-refresh` — to open as PR #162. |
+| In-flight | **Phase 162 — vibe-coding anti-pattern catalogue refresh.** Doc-only follow-on to PR #161 (merged). 12 new patterns (24–35) in `docs/VIBE_CODING.md` from Phase 161 fix lessons + late-2025/2026 external research; `avoid-vibe-slop` skill expanded from 17 to 26 checklist items. No code-surface changes. |
+| Last merged | PR #161 — Phase 161 vibe-slop sweep + 18 BUGs closed + bleephub GraphQL completion (2026-05-16, merged at `841f2456`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 0 open · 1012 fixed (1012 total filed) · 2 false positives. |
@@ -46,16 +46,15 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 161 — vibe-slop sweep + fixes (in flight)
+## Phase 162 — vibe-coding catalogue refresh (in flight)
 
-Sweep scope + 12-BUG breakdown lives in [PLAN.md § Phase 161](PLAN.md). Resume / sub-task ordering in [DO_NEXT.md § Phase 161](DO_NEXT.md). Per-bug detail in [BUGS.md](BUGS.md).
-
-Highest-severity items: BUG-1000 (auth bypass in bleephub OAuth token endpoint), BUG-997 (persistence write swallows violate fail-loud invariant), BUG-995 (handlers bypass `s.self` — BUG-991/992 lineage).
+Doc-only follow-on to PR #161. Phase 161 fix work surfaced enough recurring shapes — and external sources published enough new analyses between Phase 158 (catalogue's last update) and now — to warrant a major catalogue refresh. Twelve new patterns appended (24–35) with verbatim source quotes + Phase 161 sub-task mappings. `avoid-vibe-slop` skill grew from 17 to 26 checklist items.
 
 ## Recently closed phases
 
 | PR | Phase | Headline |
 |---|---|---|
+| #161 | 161 | Comprehensive vibe-slop sweep + 18 BUGs closed (994–1011 minus 1010 false-positive) + bleephub GraphQL completion (PR.comments, reviewThreads, ProjectV2 with fields, edit history, minimization, issue/PR locking, PR.milestone, real `gh` CLI smoke tests) + ProjectManager instance-based lifecycle rewrite. All 11 CI checks green; merged at `841f2456`. |
 | #160 | 160 | Project-local Claude skills (`sim-handler-checklist`, `cross-resource-stack-test`) + `adaptor-fidelity-check` refinement + complete component-README adaptor-led sweep across 6 cloud backends + 2 simulators + bleephub + `cmd/sockerless` + new `cmd/sockerless-admin/README.md` + rewritten `simulators/README.md`. Phase 157 Track A closed. |
 | #159 | 159 | AWS sim CloudFront + ACM + Route 53 + WAFv2 + Amplify + IAM SLR/OIDC (11 sub-tasks, `TestStackProductionShape` cross-resource invariants). |
 | #158 | 158 | BUG-991 + BUG-992 fixes (handler→`s.self` delegation); `docs/VIBE_CODING.md` 23-pattern catalogue; `docs/GOLANG_STRONG_TYPING.md`; first 3 project-local Claude skills. |
