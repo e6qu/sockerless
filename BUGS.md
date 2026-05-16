@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1022 filed · 1022 fixed · 0 open · 2 false positives.**
+**1025 filed · 1025 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -33,7 +33,11 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1022 bugs filed and fixed across phases 86–164.
+1025 bugs filed and fixed across phases 86–164.
+
+- **1023** (Phase 164 re-verification pass) — `github-runner-dispatcher-gcp/internal/spawner/spawner.go::stringifyJobState` was unused (zero callers) and carried `//nolint:unused // kept for diagnostics`. Same shape as the BUG-1021 `flexInt64` rip-out (dead code held for hypothetical future debug-helper use, pattern 14/27 per `docs/VIBE_CODING.md`). Deleted the function + its preceding doc-comment. If a future operator-facing diagnostic needs Job-definition reconciliation state, that PR adds the one-line helper back.
+- **1024** (Phase 164 re-verification pass) — `tools/http-trace/main.go:269` carried `var _ = httputil.DumpRequest // keep import for ad-hoc tweaks` — an explicit "keep the import in case I want to use it later" silencer + the `net/http/httputil` import that no other code path consumed. Same shape as BUG-1022. Dropped the silencer + the import; if a future tracer needs DumpRequest the import comes back as a one-liner.
+- **1025** (Phase 164 re-verification pass) — `bleephub/git_http.go` smart-HTTP advertise path silently swallowed `pktline.Encoder.Encodef` + `Flush` errors at three sites (the initial `# service=...` advertisement + the two empty-repo flushes inside the upload-pack / receive-pack branches). If the response connection drops mid-advertisement the operator gets no log entry. Added `s.logger.Debug()` calls on each error (Debug level because the client is gone — there's nothing recoverable, but the cause should be greppable). The post-encode `info.Encode(w)` error paths were already logged via `s.logger.Error()`.
 
 - **1014** (Phase 164) — Continuation of the BUG-994 phase/BUG-ref sweep. 10 production-code sites still carried `Phase NNN` / `Phase NNNb` / `Phase D` / `pre-Phase-132` / `Phase-92-style` / `Future sub-phase` references in code comments. Stripped each — preserved the *why* in every case per the BUG-994 rule:
   - `simulators/aws/wafv2.go:17` "REGIONAL scope out of scope per Phase 159 plan" → "REGIONAL scope intentionally out of scope".

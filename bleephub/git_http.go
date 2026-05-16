@@ -114,10 +114,18 @@ func (s *Server) handleGitInfoRefs(w http.ResponseWriter, r *http.Request, owner
 	w.Header().Set("Content-Type", fmt.Sprintf("application/x-%s-advertisement", service))
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// Write pkt-line header
+	// Write pkt-line header. Encode/Flush errors at this point mean the
+	// response connection dropped before we sent the advertisement — log
+	// at Debug (the client is gone, nothing further to do).
 	enc := pktline.NewEncoder(w)
-	_ = enc.Encodef("# service=%s\n", service)
-	_ = enc.Flush()
+	if err := enc.Encodef("# service=%s\n", service); err != nil {
+		s.logger.Debug().Err(err).Str("service", service).Msg("git-http: pkt-line advertisement encode failed (client disconnected?)")
+		return
+	}
+	if err := enc.Flush(); err != nil {
+		s.logger.Debug().Err(err).Str("service", service).Msg("git-http: pkt-line advertisement flush failed (client disconnected?)")
+		return
+	}
 
 	switch service {
 	case "git-upload-pack":
@@ -129,7 +137,9 @@ func (s *Server) handleGitInfoRefs(w http.ResponseWriter, r *http.Request, owner
 		info, err := sess.AdvertisedReferencesContext(r.Context())
 		if err != nil {
 			if err == transport.ErrEmptyRemoteRepository {
-				_ = enc.Flush()
+				if flushErr := enc.Flush(); flushErr != nil {
+					s.logger.Debug().Err(flushErr).Str("service", service).Msg("git-http: empty-repo flush failed")
+				}
 				return
 			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -148,7 +158,9 @@ func (s *Server) handleGitInfoRefs(w http.ResponseWriter, r *http.Request, owner
 		info, err := sess.AdvertisedReferencesContext(r.Context())
 		if err != nil {
 			if err == transport.ErrEmptyRemoteRepository {
-				_ = enc.Flush()
+				if flushErr := enc.Flush(); flushErr != nil {
+					s.logger.Debug().Err(flushErr).Str("service", service).Msg("git-http: empty-repo flush failed")
+				}
 				return
 			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)

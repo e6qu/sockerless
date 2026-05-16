@@ -22,7 +22,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"strings"
@@ -265,5 +264,3 @@ func isPrintable(p []byte) bool {
 	}
 	return true
 }
-
-var _ = httputil.DumpRequest // keep import for ad-hoc tweaks
