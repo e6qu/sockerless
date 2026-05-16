@@ -443,7 +443,7 @@ func (st *Store) SeedDefaultUser() {
 	st.UsersByLogin[u.Login] = u
 	st.NextUser++
 	if st.persist != nil {
-		_ = st.persist.Put("users", fmt.Sprintf("%d", u.ID), u)
+		st.persist.MustPut("users", fmt.Sprintf("%d", u.ID), u)
 	}
 
 	t := &Token{
@@ -454,7 +454,7 @@ func (st *Store) SeedDefaultUser() {
 	}
 	st.Tokens[t.Value] = t
 	if st.persist != nil {
-		_ = st.persist.Put("tokens", t.Value, t)
+		st.persist.MustPut("tokens", t.Value, t)
 	}
 }
 

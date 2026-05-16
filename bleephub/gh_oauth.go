@@ -292,7 +292,7 @@ func (st *Store) createTokenLocked(userID int, scopes string) *Token {
 	}
 	st.Tokens[t.Value] = t
 	if st.persist != nil {
-		_ = st.persist.Put("tokens", t.Value, t)
+		st.persist.MustPut("tokens", t.Value, t)
 	}
 	return t
 }

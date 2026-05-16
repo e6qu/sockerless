@@ -88,6 +88,23 @@ func MustNewPersistence() *Persistence {
 	return p
 }
 
+// MustPut wraps Put with the fail-loud invariant: if persistence is enabled
+// and the write fails, the process exits via log.Fatalf rather than silently
+// diverging on-disk state from the in-memory map. Mirrors MustNewPersistence
+// for write failures.
+func (p *Persistence) MustPut(bucket, key string, v interface{}) {
+	if err := p.Put(bucket, key, v); err != nil {
+		log.Fatalf("bleephub persistence write %s/%s failed: %v", bucket, key, err)
+	}
+}
+
+// MustDelete is the Delete counterpart to MustPut.
+func (p *Persistence) MustDelete(bucket, key string) {
+	if err := p.Delete(bucket, key); err != nil {
+		log.Fatalf("bleephub persistence delete %s/%s failed: %v", bucket, key, err)
+	}
+}
+
 // Put writes/replaces a JSON-encoded entity under (bucket, key).
 func (p *Persistence) Put(bucket, key string, v interface{}) error {
 	if p == nil {
