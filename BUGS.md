@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1028 filed · 1028 fixed · 0 open · 2 false positives.**
+**1031 filed · 1031 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -33,7 +33,11 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1028 bugs filed and fixed across phases 86–164.
+1031 bugs filed and fixed across phases 86–164.
+
+- **1029** (Phase 164 terraform-test expansion) — `simulators/gcp/secretmanager.go` was missing `POST /v1/projects/{p}/secrets/{s}/versions/{v}:enable` / `:disable` / `:destroy` handlers. `terraform-provider-google` POSTs `:enable` immediately after `:addVersion` on create (versions default to ENABLED but the provider still expects the explicit enable to return 200); without the handler the `google_secret_manager_secret_version` resource always failed apply with 404. Added all three state-transition handlers plus a plain `GET .../versions/{v}` (no `:action` suffix) that the provider uses to read back the version after create.
+- **1030** (Phase 164 terraform-test expansion) — `simulators/gcp/terraform-tests/helpers_test.go` carried the same close-then-bind port-allocator race that Phase 160 fixed in `sdk-tests` (BUG-993). Pattern: allocate listener 1, capture port, close it, allocate listener 2 — between the close and the second allocate the OS could reassign the just-freed port to the second listener, causing the sim's HTTP and gRPC servers to want the same port. Fix: allocate both listeners while both are open, then close both — simultaneous-open listeners cannot collide.
+- **1031** (Phase 164 terraform-test expansion) — Surfaced + fixed three under-covered GCP terraform-provider slices by expanding `simulators/gcp/terraform-tests/main.tf` from 4 resources (compute_network, compute_disk, public+private DNS zones) to 11 resources covering compute, dns, artifactregistry, cloud_run_v2 (Service + Job), storage, secretmanager. Provider endpoint settings (`artifact_registry_custom_endpoint`, `cloud_run_v2_custom_endpoint`, `secret_manager_custom_endpoint`) added with the right `/v1/` or `/v2/` suffix. Cloud Run v2 Service + Job both require `deletion_protection = false` for terraform destroy to clean up. `TestTerraformApplyDestroy` now asserts on canonical resource-path round-trip for AR repo `.id` (`projects/.../locations/.../repositories/...`), CR Job `.id`, GCS bucket URL prefix (`gs://`), and Secret version ID structure.
 
 - **1026** (Phase 164 third-pass sweep) — Two test files asserted on Phase metadata in error strings (`docs/VIBE_CODING.md` pattern 28 — implementation-coupled tests asserting on bug-tracking metadata): `bleephub/gh_actions_test.go:233` "status = %d, want 422 (Phase 130 doesn't ship dispatch)" and `simulators/azure/auth_test.go:34` `"alg = %q, want HS256 (was alg:none before Phase 121b)"`. Re-derived both assertion messages from the contract — "rerun is unimplemented and must surface that, not silently succeed" and "alg:none is auth-bypass" — so the assertion remains useful long after the bug-tracking lineage is forgotten.
 - **1027** (Phase 164 third-pass sweep) — `cmd/sockerless-admin/api_topology_resources_test.go:196` had a naked `t.Skip()` with no message — operators reading CI output had no way to know *why* the test skipped (BUGS.md rule: "conditional `t.Skip` for missing config — all file as bugs and get real fixes. Tests run or fail loud; never skip silently"). Added explanatory message ("skip concurrent rollup test in -short mode (spawns 5 upstream servers)"). The other `t.Skip()` sites in the repo already carry messages.

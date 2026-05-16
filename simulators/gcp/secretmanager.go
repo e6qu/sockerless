@@ -149,7 +149,21 @@ func registerSecretManager(srv *sim.Server) {
 			secretID := sim.PathParam(r, "secret")
 			versionAction := sim.PathParam(r, "versionAction")
 			versionID, action, found := strings.Cut(versionAction, ":")
-			if !found || action != "access" {
+			if !found {
+				// Plain GetSecretVersion (no `:action` suffix): return the
+				// version metadata. tf-google reads back the version after
+				// create to populate the resource state.
+				versionID = versionAction
+				versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
+				ver, ok := smSecretVersions.Get(versionName)
+				if !ok {
+					sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
+					return
+				}
+				sim.WriteJSON(w, http.StatusOK, ver)
+				return
+			}
+			if action != "access" {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
 				return
 			}
@@ -164,6 +178,45 @@ func registerSecretManager(srv *sim.Server) {
 					"data": base64.StdEncoding.EncodeToString(payload),
 				},
 			})
+		})
+
+	// Enable / Disable / Destroy secret versions:
+	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:enable
+	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:disable
+	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:destroy
+	// The terraform-provider-google secret_version resource POSTs :enable
+	// after creating a version (versions default to ENABLED on create; the
+	// explicit enable is a no-op but the provider still expects 200).
+	srv.HandleFunc("POST /v1/projects/{project}/secrets/{secret}/versions/{versionAction}",
+		func(w http.ResponseWriter, r *http.Request) {
+			project := sim.PathParam(r, "project")
+			secretID := sim.PathParam(r, "secret")
+			versionAction := sim.PathParam(r, "versionAction")
+			versionID, action, found := strings.Cut(versionAction, ":")
+			if !found {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "missing :action suffix on version %q", versionAction)
+				return
+			}
+			versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
+			ver, ok := smSecretVersions.Get(versionName)
+			if !ok {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
+				return
+			}
+			switch action {
+			case "enable":
+				ver.State = "ENABLED"
+			case "disable":
+				ver.State = "DISABLED"
+			case "destroy":
+				ver.State = "DESTROYED"
+				ver.payload = nil
+			default:
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
+				return
+			}
+			smSecretVersions.Put(versionName, ver)
+			sim.WriteJSON(w, http.StatusOK, ver)
 		})
 }
 
