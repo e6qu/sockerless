@@ -22,19 +22,23 @@ import (
 // — opaque to SDK callers (treated as bytes), reversible by the sim,
 // and round-tripped exactly through the wire shape callers expect.
 type KMSKey struct {
-	KeyId        string           `json:"KeyId"`
-	Arn          string           `json:"Arn"`
-	Description  string           `json:"Description,omitempty"`
-	KeyState     string           `json:"KeyState"`
-	KeyUsage     string           `json:"KeyUsage,omitempty"`
-	KeyManager   string           `json:"KeyManager,omitempty"`
-	Origin       string           `json:"Origin,omitempty"`
-	CreationDate float64          `json:"CreationDate,omitempty"`
-	Aliases      []string         `json:"Aliases,omitempty"`
-	Tags         []SMTag          `json:"Tags,omitempty"`
-	Policy       map[string]any   `json:"Policy,omitempty"`
-	Grants       []map[string]any `json:"Grants,omitempty"`
-	Spec         string           `json:"KeySpec,omitempty"`
+	KeyId        string   `json:"KeyId"`
+	Arn          string   `json:"Arn"`
+	Description  string   `json:"Description,omitempty"`
+	KeyState     string   `json:"KeyState"`
+	KeyUsage     string   `json:"KeyUsage,omitempty"`
+	KeyManager   string   `json:"KeyManager,omitempty"`
+	Origin       string   `json:"Origin,omitempty"`
+	CreationDate float64  `json:"CreationDate,omitempty"`
+	Aliases      []string `json:"Aliases,omitempty"`
+	Tags         []SMTag  `json:"Tags,omitempty"`
+	// PolicyJSON holds the JSON-encoded key policy document. Real KMS
+	// stores + returns this as a string (not a parsed object); the sim
+	// follows so GetKeyPolicy round-trips byte-identical to what
+	// CreateKey + PutKeyPolicy received.
+	PolicyJSON string           `json:"-"`
+	Grants     []map[string]any `json:"Grants,omitempty"`
+	Spec       string           `json:"KeySpec,omitempty"`
 }
 
 var (
@@ -61,6 +65,147 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.CreateAlias", handleKMSCreateAlias)
 	r.Register("TrentService.DeleteAlias", handleKMSDeleteAlias)
 	r.Register("TrentService.ListAliases", handleKMSListAliases)
+	r.Register("TrentService.GetKeyPolicy", handleKMSGetKeyPolicy)
+	r.Register("TrentService.PutKeyPolicy", handleKMSPutKeyPolicy)
+	r.Register("TrentService.ListResourceTags", handleKMSListResourceTags)
+	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
+}
+
+// kmsDefaultKeyPolicyJSON returns the default key policy that real AWS KMS
+// stamps on a newly-created customer master key when the operator hasn't
+// provided one. Matches the canonical "root account allow-all" doc that
+// real KMS publishes so terraform's GetKeyPolicy refresh round-trips
+// without spurious diffs.
+func kmsDefaultKeyPolicyJSON() string {
+	return fmt.Sprintf(`{"Version":"2012-10-17","Id":"key-default-1","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"*"}]}`, awsAccountID())
+}
+
+// handleKMSGetKeyPolicy returns the key policy for a KeyId. Real KMS
+// supports only one policy name ("default"); the sim follows suit.
+// Returns the custom policy stored on CreateKey / PutKeyPolicy if set,
+// otherwise the canonical AWS default key policy.
+func handleKMSGetKeyPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId      string `json:"KeyId"`
+		PolicyName string `json:"PolicyName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	policyName := req.PolicyName
+	if policyName == "" {
+		policyName = "default"
+	}
+	if policyName != "default" {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"No such policy: %s", policyName)
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	policy := key.PolicyJSON
+	if policy == "" {
+		policy = kmsDefaultKeyPolicyJSON()
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Policy":     policy,
+		"PolicyName": "default",
+	})
+}
+
+// handleKMSPutKeyPolicy persists the supplied policy doc on the key.
+// Real KMS accepts only one policy name ("default") + the JSON-encoded
+// policy string. terraform-provider-aws calls this when the user
+// supplies `aws_kms_key.policy` and on every subsequent change.
+func handleKMSPutKeyPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId      string `json:"KeyId"`
+		PolicyName string `json:"PolicyName"`
+		Policy     string `json:"Policy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	if req.PolicyName == "" {
+		req.PolicyName = "default"
+	}
+	if req.PolicyName != "default" {
+		sim.AWSErrorf(w, "MalformedPolicyDocumentException", http.StatusBadRequest,
+			"Unsupported policy name: %s", req.PolicyName)
+		return
+	}
+	if req.Policy == "" {
+		sim.AWSError(w, "MalformedPolicyDocumentException", "Policy is required", http.StatusBadRequest)
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	key.PolicyJSON = req.Policy
+	kmsKeys.Put(keyId, key)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSListResourceTags returns the tag set attached to a KMS key.
+// terraform-provider-aws calls this after CreateKey to populate `tags`.
+func handleKMSListResourceTags(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	tags := make([]map[string]any, 0, len(key.Tags))
+	for _, t := range key.Tags {
+		tags = append(tags, map[string]any{
+			"TagKey":   t.Key,
+			"TagValue": t.Value,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Tags":      tags,
+		"Truncated": false,
+	})
+}
+
+// handleKMSGetKeyRotationStatus returns whether automatic key rotation is
+// enabled. Real AWS defaults to false for customer-managed keys.
+// terraform-provider-aws calls this after CreateKey.
+func handleKMSGetKeyRotationStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := resolveKMSKey(req.KeyId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyRotationEnabled": false,
+	})
 }
 
 func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +214,7 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		KeyUsage    string  `json:"KeyUsage"`
 		Origin      string  `json:"Origin"`
 		KeySpec     string  `json:"KeySpec"`
+		Policy      string  `json:"Policy"`
 		Tags        []SMTag `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -97,6 +243,7 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		Spec:         req.KeySpec,
 		CreationDate: float64(time.Now().Unix()),
 		Tags:         req.Tags,
+		PolicyJSON:   req.Policy,
 	}
 	kmsKeys.Put(keyId, key)
 

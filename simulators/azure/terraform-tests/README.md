@@ -2,14 +2,25 @@
 
 Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for a Terraform provider (currently the `azurestack` Azure Stack Hub provider; the sibling `azurerm` cloud provider drives the same ARM endpoints but requires more wiring for a non-Azure-public host) to provision and tear down resources.
 
-Resources covered:
+Resources covered (azurestack):
 - `azurestack_resource_group`
 - `azurestack_virtual_network` / `azurestack_subnet`
 - `azurestack_network_security_group` / `azurestack_network_security_rule`
 - `azurestack_storage_account` (Azure Files / runner shared volumes)
 - `azurestack_key_vault` (runner credential storage)
 
-Resources NOT yet covered (sim implements the ARM endpoint but the `azurestack` provider catalogue doesn't expose the resource; requires `azurerm` integration research): ACA + ACR + AZF + App Insights + user-assigned identity + private DNS + Key Vault data-plane keys/secrets.
+Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token endpoint + JWKS so azurerm bootstraps against the sim instead of real Azure):
+- `azurerm_resource_group`
+- `azurerm_container_registry` (Standard)
+- `azurerm_user_assigned_identity`
+- `azurerm_private_dns_zone`
+- `azurerm_log_analytics_workspace`
+- `azurerm_application_insights`
+- `azurerm_container_app_environment` + `azurerm_container_app` + `azurerm_container_app_job` (the ACA runner backend host + workload + job primitives)
+- `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
+- `azurerm_storage_account` (azurerm-managed, used by Function App)
+
+NOT yet covered: Key Vault data-plane (keys/secrets — data-plane requires per-vault subdomain routing, separate sub-phase). Filed in BUGS.md if needed.
 
 ## Running
 

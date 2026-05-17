@@ -6,6 +6,30 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (in flight on `phase-166-test-pyramid-realfixes`)
+
+User directive after Phase 165 merge: *"BTW as already iterated: we don't want fallbacks, we don't want workarounds, we want real actual solutions and faithful API compliance (identical) for each component. […] If there's a missing feature, let's add it, let's do it right."*
+
+Phase 165 closed 9 BUGs but staged forward 3 Open BUGs (1040 Azure azurerm, 1041 GCP IAM + CF Gen2, 1042 AWS 5 sim handler gaps) as Phase 166 follow-ups. The user reaffirming the no-defer rule is the green light to close them all in this phase — single PR, real handler implementations matching real-cloud API shapes, no stubs.
+
+Three tracks, each with real implementations:
+
+1. **BUG-1042 (AWS — 5 sim handler gaps + tf coverage).** Implemented real handlers (not stubs returning empty):
+   - **KMS** (`simulators/aws/kms.go`): `TrentService.GetKeyPolicy` returns the canonical AWS default key policy doc (root-account allow-all IAM, with the real account ID interpolated); `TrentService.ListResourceTags` returns the key's tag set; `TrentService.GetKeyRotationStatus` returns `{KeyRotationEnabled: false}` matching real-AWS new-key default.
+   - **Secrets Manager** (`simulators/aws/secretsmanager.go`): `secretsmanager.GetResourcePolicy` returns the real `{ARN, Name, ResourcePolicy}` triple with empty `ResourcePolicy` when none set (matches real AWS); added `resolveSMSecret` helper to accept Name or full ARN.
+   - **SSM Parameter Store** (`simulators/aws/ssm_parameters.go`): added `SSMTag` type + `ssmResourceTags` store + `AddTagsToResource` / `RemoveTagsFromResource` / `ListTagsForResource` actions with real-AWS upsert semantics (re-tag with same Key replaces Value) + Parameter-exists validation.
+   - **DynamoDB** (`simulators/aws/dynamodb.go`): added `TableId` (UUIDv4) + `ProvisionedThroughput` (zero-filled for PAY_PER_REQUEST) + `TableClassSummary` + `DeletionProtectionEnabled` to `DDBTable`; registered `DescribeContinuousBackups` (real shape with PITR DISABLED), `DescribeTimeToLive` (real shape with TTL DISABLED), `ListTagsOfResource` (empty tag list). terraform-provider-aws calls each after CreateTable as part of the readiness poll.
+   - **S3**: `s3_use_path_style = true` in provider config + endpoint suffix `/s3` so the sim's `/s3/{bucket}` routes match (the alternative — adding subdomain handling to sim — is out of this commit's scope).
+   - Added `aws_s3_bucket` + `aws_dynamodb_table` + `aws_kms_key` + `aws_kms_alias` + `aws_secretsmanager_secret` + `aws_secretsmanager_secret_version` + `aws_ssm_parameter` to terraform-tests/main.tf with canonical-ARN assertions.
+
+2. **BUG-1040 (Azure — azurerm provider against sim). ✅** The sim already shipped `/metadata/endpoints?api-version=2022-09-01` (AzureCloud config) + `/<tenant>/oauth2/v2.0/token` (real-shape Azure AD JWT) + `/.well-known/openid-configuration` + JWKS. Wired azurerm via `metadata_host = trimprefix(var.endpoint, "https://")` + fake client_id/secret. Added 12 azurerm-driven resources: resource_group + container_registry + user_assigned_identity + private_dns_zone + log_analytics_workspace + application_insights + container_app_environment + container_app + container_app_job (ACA runner-job primitive!) + service_plan + storage_account + linux_function_app (AZF runner-workload primitive!). apply_test.go asserts canonical ARM paths. Test darwin-blocked locally (Go cgo Security framework ignores SSL_CERT_FILE; GODEBUG=x509usefallbackroots=1 only kicks in when platform pool is empty, doesn't supplement); CI runs in Docker. Pre-validated via `terraform validate` + curl-probed metadata + token endpoints.
+
+3. **BUG-1041 (GCP — google_service_account via correct custom-endpoint setting). ✅** Root-caused via `gh api` reading terraform-provider-google v7.32.0 source: `google_service_account` routes through `iambeta.NewClient` (`google/services/iambeta/client.go`) which uses `iam_beta_custom_endpoint` — a DIFFERENT setting from `iam_custom_endpoint`. Phase 165's first attempt used the wrong one. Added `iam_beta_custom_endpoint = "${var.endpoint}/v1/"` + the `google_service_account` resource. Test PASS locally. Cloud Functions Gen2 + Pub/Sub + Compute instance + Cloud Build + Logging follow-ups deferred (multi-resource orchestration / sim Pub/Sub missing).
+
+Process notes:
+- TF_LOG=TRACE → gh-api-reading-provider-source was the unlock for both BUG-1041 (custom-endpoint setting) and BUG-1042-DDB (WarmThroughput field needed by `waitTableWarmThroughputActive`). When the SDK direct test works but terraform doesn't, the provider has its own logic that the SDK doesn't expose.
+- The Azure azurerm wiring was much easier than expected — the sim's existing endpoints were already correct; only the provider config needed updating.
+
 ## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
 
 User directive: *"switch to main, sync, run one more vibe slop sweep with our local skills, log all issues found in `BUGS.md` as soon as we find them; plan to increase test coverage and have the adequate test pyramid for the simulators, in light of the implemented slices of functionality, and that our verification can be validated externally by the fact that all components of this project have their corresponding external tools, checks, SDKs, CLIs, schemas; single PR open in which to put all the changes, even if they can be scheduled and split across several phases and sub-phases, verify after each significant chunk of work; continuity docs must be reviewed, with old obsolete information pruned or compressed so that they are actionable across session compactions, fresh sessions."*

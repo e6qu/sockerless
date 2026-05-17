@@ -22,6 +22,10 @@ provider "google" {
   cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
   storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
+  # iam_beta_custom_endpoint routes the `google_service_account` resource's
+  # iambeta.NewClient → iam.googleapis.com surface; without it the resource
+  # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
+  iam_beta_custom_endpoint = "${var.endpoint}/v1/"
 }
 
 # ---------- Compute (network + disks) ----------
@@ -186,6 +190,17 @@ resource "google_secret_manager_secret_version" "tf_secret_v1" {
   secret_data = "tf-test-secret-payload"
 }
 
+# ---------- IAM (service account) ----------
+
+# Service accounts are the runner identity primitive. The sim exposes
+# POST /v1/projects/{}/serviceAccounts; terraform-provider-google routes
+# google_service_account through iambeta.NewClient which is configured
+# via iam_beta_custom_endpoint (above).
+resource "google_service_account" "tf_sa" {
+  account_id   = "tf-test-runner-sa"
+  display_name = "tf-test runner service account"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "compute_disk_self_link" {
@@ -226,4 +241,12 @@ output "firewall_id" {
 
 output "gcs_object_self_link" {
   value = google_storage_bucket_object.tf_artifact.self_link
+}
+
+output "service_account_email" {
+  value = google_service_account.tf_sa.email
+}
+
+output "service_account_name" {
+  value = google_service_account.tf_sa.name
 }

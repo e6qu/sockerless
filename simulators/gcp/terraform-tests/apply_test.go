@@ -11,8 +11,8 @@ import (
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
 // (compute network + disk + subnet + firewall, public + private DNS zones,
 // Artifact Registry, Cloud Run v2 Service + Job, Cloud Storage bucket +
-// object, Secret Manager) in a single terraform apply round-trip and
-// asserts the cross-resource references converged.
+// object, Secret Manager, IAM service account) in a single terraform
+// apply round-trip and asserts the cross-resource references converged.
 //
 // Slices exercised against the simulator:
 //   - compute.googleapis.com (networks + disks + subnetworks + firewalls)
@@ -21,6 +21,9 @@ import (
 //   - run.googleapis.com v2 (Service + Job)
 //   - storage.googleapis.com (bucket + object)
 //   - secretmanager.googleapis.com (secret + version)
+//   - iam.googleapis.com (service account — via iam_beta_custom_endpoint;
+//     terraform-provider-google routes the resource through iambeta.NewClient
+//     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
 func TestTerraformApplyDestroy(t *testing.T) {
 	init := terraformCmd("init")
 	init.Stdout = nil
@@ -74,6 +77,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"GCS object self_link must reference the object name; got %s", gcsObjLink)
 	require.Contains(t, gcsObjLink, "tf-test-bucket-",
 		"GCS object self_link must reference the parent bucket; got %s", gcsObjLink)
+
+	saEmail := outputs.must(t, "service_account_email")
+	require.Equal(t, "tf-test-runner-sa@test-project.iam.gserviceaccount.com", saEmail,
+		"service-account email must match the canonical {account_id}@{project}.iam.gserviceaccount.com shape; got %s", saEmail)
+
+	saName := outputs.must(t, "service_account_name")
+	require.Equal(t, "projects/test-project/serviceAccounts/tf-test-runner-sa@test-project.iam.gserviceaccount.com", saName,
+		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()

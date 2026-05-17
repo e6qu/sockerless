@@ -35,7 +35,25 @@ type SSMParameter struct {
 	AllowedPattern   string  `json:"AllowedPattern,omitempty"`
 }
 
+// SSMTag mirrors `aws.ssm.Tag` — used by AddTagsToResource /
+// RemoveTagsFromResource / ListTagsForResource. Real SSM tags are
+// resource-scoped (per Parameter, per Document, etc.), keyed by the
+// (ResourceType, ResourceId) pair.
+type SSMTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
 var ssmParams sim.Store[SSMParameter]
+
+// ssmResourceTags maps "<ResourceType>/<ResourceId>" → []SSMTag.
+// Real SSM stores tags out-of-band from the resource itself; the sim
+// follows suit so tag CRUD doesn't mutate the parameter row.
+var ssmResourceTags sim.Store[[]SSMTag]
+
+func ssmTagKey(resourceType, resourceID string) string {
+	return resourceType + "/" + resourceID
+}
 
 func ssmParamArn(name string) string {
 	// Real ARN: arn:aws:ssm:<region>:<account>:parameter<name-with-leading-slash>
@@ -51,6 +69,7 @@ func ensureLeadingSlash(s string) string {
 
 func registerSSMParameterStore(r *sim.AWSRouter, srv *sim.Server) {
 	ssmParams = sim.MakeStore[SSMParameter](srv.DB(), "ssm_parameters")
+	ssmResourceTags = sim.MakeStore[[]SSMTag](srv.DB(), "ssm_resource_tags")
 
 	r.Register("AmazonSSM.PutParameter", handleSSMPutParameter)
 	r.Register("AmazonSSM.GetParameter", handleSSMGetParameter)
@@ -59,6 +78,119 @@ func registerSSMParameterStore(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonSSM.DescribeParameters", handleSSMDescribeParameters)
 	r.Register("AmazonSSM.DeleteParameter", handleSSMDeleteParameter)
 	r.Register("AmazonSSM.DeleteParameters", handleSSMDeleteParameters)
+	r.Register("AmazonSSM.AddTagsToResource", handleSSMAddTagsToResource)
+	r.Register("AmazonSSM.RemoveTagsFromResource", handleSSMRemoveTagsFromResource)
+	r.Register("AmazonSSM.ListTagsForResource", handleSSMListTagsForResource)
+}
+
+// handleSSMAddTagsToResource attaches tags to a Parameter / Document /
+// MaintenanceWindow / etc. Real SSM accepts any of the documented
+// ResourceType values; the sim only models Parameter today (Documents
+// + Windows aren't implemented). terraform-provider-aws calls this
+// after PutParameter when tags are set.
+func handleSSMAddTagsToResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceType string   `json:"ResourceType"`
+		ResourceId   string   `json:"ResourceId"`
+		Tags         []SSMTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceType == "" || req.ResourceId == "" {
+		sim.AWSError(w, "InvalidResourceId", "ResourceType and ResourceId are required", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceType == "Parameter" {
+		if _, ok := ssmParams.Get(ensureLeadingSlash(req.ResourceId)); !ok {
+			sim.AWSErrorf(w, "InvalidResourceId", http.StatusBadRequest,
+				"The Parameter %q does not exist", req.ResourceId)
+			return
+		}
+	}
+	key := ssmTagKey(req.ResourceType, req.ResourceId)
+	existing, _ := ssmResourceTags.Get(key)
+	// Real SSM upsert semantics: re-tag with same Key replaces Value.
+	merged := make([]SSMTag, 0, len(existing)+len(req.Tags))
+	override := map[string]string{}
+	for _, t := range req.Tags {
+		override[t.Key] = t.Value
+	}
+	for _, t := range existing {
+		if _, replaced := override[t.Key]; !replaced {
+			merged = append(merged, t)
+		}
+	}
+	merged = append(merged, req.Tags...)
+	ssmResourceTags.Put(key, merged)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleSSMRemoveTagsFromResource removes tag keys from a resource.
+// Real SSM silently ignores missing keys; the sim mirrors that.
+func handleSSMRemoveTagsFromResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceType string   `json:"ResourceType"`
+		ResourceId   string   `json:"ResourceId"`
+		TagKeys      []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceType == "" || req.ResourceId == "" {
+		sim.AWSError(w, "InvalidResourceId", "ResourceType and ResourceId are required", http.StatusBadRequest)
+		return
+	}
+	key := ssmTagKey(req.ResourceType, req.ResourceId)
+	existing, _ := ssmResourceTags.Get(key)
+	remove := map[string]bool{}
+	for _, k := range req.TagKeys {
+		remove[k] = true
+	}
+	filtered := existing[:0]
+	for _, t := range existing {
+		if !remove[t.Key] {
+			filtered = append(filtered, t)
+		}
+	}
+	ssmResourceTags.Put(key, filtered)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleSSMListTagsForResource returns the tag set for a resource.
+// terraform-provider-aws calls this after PutParameter / on refresh
+// to populate the resource's `tags` attribute. Real SSM returns an
+// empty TagList (not nil) when nothing is attached.
+func handleSSMListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceType string `json:"ResourceType"`
+		ResourceId   string `json:"ResourceId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceType == "" || req.ResourceId == "" {
+		sim.AWSError(w, "InvalidResourceId", "ResourceType and ResourceId are required", http.StatusBadRequest)
+		return
+	}
+	// Validate the underlying resource exists when we model it.
+	if req.ResourceType == "Parameter" {
+		if _, ok := ssmParams.Get(ensureLeadingSlash(req.ResourceId)); !ok {
+			sim.AWSErrorf(w, "InvalidResourceId", http.StatusBadRequest,
+				"The Parameter %q does not exist", req.ResourceId)
+			return
+		}
+	}
+	tags, _ := ssmResourceTags.Get(ssmTagKey(req.ResourceType, req.ResourceId))
+	if tags == nil {
+		tags = []SSMTag{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"TagList": tags,
+	})
 }
 
 func handleSSMPutParameter(w http.ResponseWriter, r *http.Request) {

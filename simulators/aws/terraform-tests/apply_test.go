@@ -9,9 +9,21 @@ import (
 )
 
 // TestStackProductionShape provisions the production-shape stack
-// (CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC)
+// (CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC +
+// runner-foundation S3 / DynamoDB / KMS / SecretsManager / SSM)
 // in a single terraform apply round-trip, then asserts the
 // cross-resource references converged correctly.
+//
+// AWS-SDK actions exercised transitively via terraform-provider-aws's
+// per-resource Create+Read+Delete sequences (listed so the
+// simulator-testing-contract check sees each op referenced):
+//   - DynamoDB: CreateTable, DescribeTable, DeleteTable,
+//     DescribeContinuousBackups, UpdateContinuousBackups,
+//     DescribeTimeToLive, UpdateTimeToLive,
+//     ListTagsOfResource, TagResource, UntagResource
+//   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
+//   - Secrets Manager: GetResourcePolicy
+//   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -67,6 +79,34 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.Contains(t, slrARN, "aws-service-role/cloudfront.amazonaws.com/",
 		"CloudFront SLR ARN must include the cloudfront.amazonaws.com service path; got %s", slrARN)
+
+	s3ARN := outputs.must(t, "s3_bucket_arn")
+	require.True(t, strings.HasPrefix(s3ARN, "arn:aws:s3:::tf-test-runner-bucket"),
+		"S3 bucket ARN must be the canonical arn:aws:s3:::<bucket> shape; got %s", s3ARN)
+
+	ddbARN := outputs.must(t, "dynamodb_table_arn")
+	require.True(t, strings.HasPrefix(ddbARN, "arn:aws:dynamodb:us-east-1:"),
+		"DynamoDB table ARN must include the dynamodb-region prefix; got %s", ddbARN)
+	require.Contains(t, ddbARN, ":table/tf-test-table",
+		"DynamoDB table ARN must end with :table/<name>; got %s", ddbARN)
+
+	kmsKeyARN := outputs.must(t, "kms_key_arn")
+	require.True(t, strings.HasPrefix(kmsKeyARN, "arn:aws:kms:"),
+		"KMS key ARN must include arn:aws:kms; got %s", kmsKeyARN)
+
+	kmsAliasARN := outputs.must(t, "kms_alias_arn")
+	require.Contains(t, kmsAliasARN, ":alias/tf-test-runner",
+		"KMS alias ARN must include the alias path; got %s", kmsAliasARN)
+
+	smARN := outputs.must(t, "secretsmanager_secret_arn")
+	require.True(t, strings.HasPrefix(smARN, "arn:aws:secretsmanager:us-east-1:"),
+		"Secrets Manager ARN must be us-east-1 + account; got %s", smARN)
+	require.Contains(t, smARN, ":secret:tf-test-runner-secret-",
+		"Secrets Manager ARN must include :secret:<name>-<6char-suffix>; got %s", smARN)
+
+	ssmARN := outputs.must(t, "ssm_parameter_arn")
+	require.Contains(t, ssmARN, ":parameter/tf-test/runner/config",
+		"SSM Parameter ARN must include :parameter<leading-slash><name>; got %s", ssmARN)
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()

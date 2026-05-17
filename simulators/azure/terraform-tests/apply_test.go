@@ -10,11 +10,14 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions a foundation set of Azure
-// resources against the Azure simulator using the `azurestack` provider,
-// then asserts canonical resource-id paths round-trip and terraform
-// destroy cleans up.
+// resources against the Azure simulator using both the `azurestack`
+// provider (for network primitives + storage + key vault control plane)
+// and the `azurerm` provider (for ACR, Container Apps, Function App,
+// Application Insights, managed identity, private DNS — surfaces the
+// azurestack provider catalogue doesn't expose). Then asserts canonical
+// resource-id paths round-trip and terraform destroy cleans up.
 //
-// Slices exercised against the simulator:
+// Slices exercised against the simulator (azurestack):
 //   - Microsoft.Resources/resourceGroups
 //   - Microsoft.Network/virtualNetworks
 //   - Microsoft.Network/virtualNetworks/subnets
@@ -23,23 +26,29 @@ import (
 //   - Microsoft.Storage/storageAccounts
 //   - Microsoft.KeyVault/vaults
 //
-// The sibling `azurerm` cloud provider drives the same ARM endpoints
-// (the azurestack provider is used here because it supports `arm_endpoint`
-// pointing at a non-Azure-public host; azurerm requires more wiring to
-// route through a custom OAuth + ARM endpoint).
+// Slices exercised via azurerm (sim ships /metadata/endpoints + OAuth2
+// token endpoint + JWKS so azurerm can bootstrap its cloud config + auth
+// without ever reaching real Azure):
+//   - Microsoft.ContainerRegistry/registries
+//   - Microsoft.ManagedIdentity/userAssignedIdentities
+//   - Microsoft.Network/privateDnsZones
+//   - Microsoft.OperationalInsights/workspaces
+//   - Microsoft.Insights/components
+//   - Microsoft.App/managedEnvironments + containerApps + jobs
+//   - Microsoft.Web/serverfarms + sites (Function App)
+//   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
-	// The azurestack terraform provider (and the azurerm sibling)
-	// validates the sim's self-signed HTTPS cert against the OS trust
-	// store. On Linux it honours SSL_CERT_FILE (set by terraformCmd).
-	// On darwin, Go's cgo-backed crypto/x509.SystemCertPool() reads
-	// from the Security framework keychain and ignores SSL_CERT_FILE —
-	// so terraform's outbound calls to the sim fail with `x509:
-	// "localhost" certificate is not trusted`. We don't ship a darwin
-	// workaround (would require sudo + persistent keychain trust).
-	// Fail loud so the dev sees the limitation explicitly instead of
-	// silently skipping. Run these tests in a Linux container or in CI.
+	// The azurestack + azurerm terraform providers validate the sim's
+	// self-signed HTTPS cert against the OS trust store. On Linux they
+	// honour SSL_CERT_FILE (set by terraformCmd). On darwin, Go's
+	// cgo-backed crypto/x509.SystemCertPool() reads from the Security
+	// framework keychain and ignores SSL_CERT_FILE; GODEBUG=
+	// x509usefallbackroots=1 doesn't bridge it (it only kicks in when
+	// the platform pool comes back empty, not to *supplement* it).
+	// Fail loud so the dev sees the limitation; run via CI or a Linux
+	// container.
 	if runtime.GOOS == "darwin" {
-		t.Fatal("darwin: SSL_CERT_FILE ignored by Go cgo SystemCertPool — terraform azurestack cannot validate the sim's self-signed cert. Run via a Linux Docker container or in CI.")
+		t.Fatal("darwin: SSL_CERT_FILE ignored by Go cgo SystemCertPool — terraform azurestack/azurerm cannot validate the sim's self-signed cert. Run via Docker or in CI.")
 	}
 
 	init := terraformCmd("init")
@@ -89,6 +98,58 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	kvURI := outputs.must(t, "key_vault_uri")
 	require.True(t, strings.Contains(kvURI, "tf-test-kv.vault."),
 		"vault uri must include vault subdomain (azurerm/keyvault SDK parses URLs this way); got %s", kvURI)
+
+	// azurerm-driven resources — provider routes via custom cloud
+	// metadata + OAuth2 token endpoint exposed by the sim. Each
+	// canonical ARM path is asserted so a future provider/SDK upgrade
+	// that mangles the URL surfaces in CI.
+	azrmRG := outputs.must(t, "azrm_resource_group_id")
+	require.True(t, strings.HasSuffix(azrmRG, "/resourceGroups/tf-azrm-rg"),
+		"azurerm RG id must end with /resourceGroups/{name}; got %s", azrmRG)
+
+	azrmACR := outputs.must(t, "azrm_acr_id")
+	require.Contains(t, azrmACR, "/providers/Microsoft.ContainerRegistry/registries/tfazrmacr",
+		"azurerm ACR id must include canonical ARM path; got %s", azrmACR)
+
+	azrmUAI := outputs.must(t, "azrm_uai_id")
+	require.Contains(t, azrmUAI, "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tf-azrm-uai",
+		"azurerm managed identity id must include canonical ARM path; got %s", azrmUAI)
+
+	azrmDNS := outputs.must(t, "azrm_private_dns_zone_id")
+	require.Contains(t, azrmDNS, "/providers/Microsoft.Network/privateDnsZones/tf-azrm.internal",
+		"azurerm private DNS zone id must include canonical ARM path; got %s", azrmDNS)
+
+	azrmLAW := outputs.must(t, "azrm_law_id")
+	require.Contains(t, azrmLAW, "/providers/Microsoft.OperationalInsights/workspaces/tf-azrm-law",
+		"azurerm Log Analytics workspace id must include canonical ARM path; got %s", azrmLAW)
+
+	azrmAI := outputs.must(t, "azrm_appins_id")
+	require.Contains(t, azrmAI, "/providers/Microsoft.Insights/components/tf-azrm-ai",
+		"azurerm Application Insights id must include canonical ARM path; got %s", azrmAI)
+
+	azrmCAE := outputs.must(t, "azrm_container_app_env_id")
+	require.Contains(t, azrmCAE, "/providers/Microsoft.App/managedEnvironments/tf-azrm-cae",
+		"azurerm Container App Environment id must include canonical ARM path; got %s", azrmCAE)
+
+	azrmCA := outputs.must(t, "azrm_container_app_id")
+	require.Contains(t, azrmCA, "/providers/Microsoft.App/containerApps/tf-azrm-ca",
+		"azurerm Container App id must include canonical ARM path; got %s", azrmCA)
+
+	azrmCAJ := outputs.must(t, "azrm_container_app_job_id")
+	require.Contains(t, azrmCAJ, "/providers/Microsoft.App/jobs/tf-azrm-caj",
+		"azurerm Container App Job id must include canonical ARM path; got %s", azrmCAJ)
+
+	azrmSP := outputs.must(t, "azrm_service_plan_id")
+	require.Contains(t, azrmSP, "/providers/Microsoft.Web/serverfarms/tf-azrm-sp",
+		"azurerm Service Plan id must include canonical ARM path; got %s", azrmSP)
+
+	azrmST := outputs.must(t, "azrm_storage_account_id")
+	require.Contains(t, azrmST, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345",
+		"azurerm storage account id must include canonical ARM path; got %s", azrmST)
+
+	azrmFA := outputs.must(t, "azrm_function_app_id")
+	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
+		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()
