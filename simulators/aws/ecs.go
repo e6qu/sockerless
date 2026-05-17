@@ -816,6 +816,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					OpenStdin:    wantTTY,
 					Binds:        binds,
 					ExtraHosts:   hostMetadataExtraHosts(),
+					Sandbox:      sim.SandboxFargate, // BUG-1077: real Fargate restrictions.
 				}, sink)
 				if err != nil {
 					stoppedAt := time.Now().Unix()

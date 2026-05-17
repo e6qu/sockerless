@@ -459,6 +459,7 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 			"sockerless-site":     site.Name,
 		},
 		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxAZF, // BUG-1077.
 	}, collectSink)
 	if err != nil {
 		injectAppTrace(site.Name,

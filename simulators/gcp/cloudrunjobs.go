@@ -505,6 +505,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 					Labels:       map[string]string{"sockerless-sim-execution": id},
 					Binds:        binds,
 					ExtraHosts:   hostMetadataExtraHosts(),
+					Sandbox:      sim.SandboxCloudRun, // BUG-1077.
 				}, sink)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)

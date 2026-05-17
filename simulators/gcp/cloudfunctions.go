@@ -391,6 +391,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		Timeout:      timeout,
 		Labels:       map[string]string{"sockerless-sim-function": functionID},
 		ExtraHosts:   hostMetadataExtraHosts(),
+		Sandbox:      sim.SandboxGCFGen2, // BUG-1077: Cloud Run Functions Gen2 sandbox parity.
 	}, collectSink)
 	if err != nil {
 		injectCloudFunctionLog(project, functionID,
@@ -588,6 +589,7 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 			"sockerless-sim-function": functionID,
 		},
 		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxGCFGen2,
 	})
 	if err != nil {
 		return nil, -1, fmt.Errorf("start overlay container: %w", err)

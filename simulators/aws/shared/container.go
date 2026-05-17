@@ -60,6 +60,15 @@ type ContainerConfig struct {
 	OpenStdin    bool              // keep stdin open
 	Binds        []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts   []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
+
+	// Sandbox: per-platform capability + permission restrictions
+	// (BUG-1077). Each cloud-product handler picks the matching
+	// profile (SandboxLambda, SandboxFargate, …). Zero value = no
+	// sandbox enforcement — callers that haven't migrated to BUG-1077
+	// see a one-time warning at startup but the container still runs;
+	// this lets the migration land incrementally. Production callers
+	// must always set Sandbox.
+	Sandbox SandboxProfile
 }
 
 // ContainerHandle manages a running container.
@@ -305,6 +314,14 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	hostCfg := &container.HostConfig{
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
+	}
+
+	// BUG-1077: enforce sandbox parity with the real cloud platform.
+	// Empty profile = no enforcement (transitional; warned once at
+	// startup elsewhere). Non-empty must apply cleanly — caller error
+	// (e.g. host net + DenyHostNetwork) fails loud.
+	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
+		return "", fmt.Errorf("sandbox enforce: %w", err)
 	}
 
 	var networkCfg *network.NetworkingConfig

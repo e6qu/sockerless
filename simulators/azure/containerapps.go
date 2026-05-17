@@ -517,6 +517,7 @@ func registerContainerApps(srv *sim.Server) {
 					NetworkAliases: netAliases,
 					Binds:          binds,
 					ExtraHosts:     hostMetadataExtraHosts(),
+					Sandbox:        sim.SandboxACA, // BUG-1077.
 				}, sink)
 				if err != nil {
 					succeeded = false
