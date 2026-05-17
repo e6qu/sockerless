@@ -21,6 +21,15 @@ import (
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
 
+func isImplicitDockerNetwork(networkID string) bool {
+	switch strings.TrimSpace(networkID) {
+	case "", "default", "bridge", "host", "none":
+		return true
+	default:
+		return false
+	}
+}
+
 // ContainerCreate creates a container backed by a Cloud Run Job.
 func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.ContainerCreateResponse, error) {
 	name := req.Name
@@ -801,7 +810,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
+		if ep != nil && !isImplicitDockerNetwork(ep.NetworkID) {
 			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
 			}

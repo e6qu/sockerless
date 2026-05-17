@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
-| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9 is in progress. Latest chunk: Cloud Run + GCF overlay-baked bootstrap exec is green against the GCP simulator, including reverse-agent registration and `docker exec` over WebSocket. BUG-1070 / 1078 / 1079 / 1080 closed. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; docs/state save, PR title/body refresh, codex review, and CI checks continue on PR #168. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9 is in progress. Latest chunk: Cloud Run + GCF overlay-baked bootstrap exec is green against the GCP simulator, including reverse-agent registration and `docker exec` over WebSocket. Full backend package simulator suites now pass after BUG-1081/1082 harness + cleanup fixes. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; PR title/body refresh and CI checks continue on PR #168. External `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1080 filed · 1071 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
+| Bugs | 1082 filed · 1073 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

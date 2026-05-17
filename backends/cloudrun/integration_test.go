@@ -39,6 +39,8 @@ var dockerClient *client.Client
 var backendPort int
 var evalImageName string
 
+const cloudRunExecE2EEnv = "SOCKERLESS_CLOUDRUN_EXEC_E2E"
+
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
 	v := os.Getenv(name)
@@ -211,22 +213,29 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
-		bootstrapPath = repoRoot + "/agent/sockerless-cloudrun-bootstrap-test"
-		if abs, absErr := filepath.Abs(bootstrapPath); absErr == nil {
-			bootstrapPath = abs
+		if os.Getenv(cloudRunExecE2EEnv) == "1" {
+			bootstrapPath = filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-test-%d", os.Getpid()))
+			if abs, absErr := filepath.Abs(bootstrapPath); absErr == nil {
+				bootstrapPath = abs
+			}
+			fmt.Println("[sim] Building sockerless-cloudrun-bootstrap...")
+			buildCtx, buildCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer buildCancel()
+			bootstrapBuild := exec.CommandContext(buildCtx, "go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
+			bootstrapBuild.Dir = repoRoot + "/agent"
+			bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+			bootstrapBuild.Stdout = os.Stderr
+			bootstrapBuild.Stderr = os.Stderr
+			if err := bootstrapBuild.Run(); err != nil {
+				failClean("ERROR: build sockerless-cloudrun-bootstrap: %v\n", err)
+			}
+			cleanups = append(cleanups, func() { _ = os.Remove(bootstrapPath) })
+		} else {
+			// Keep the existing simulator package tests on the direct
+			// user-image path. The overlay/bootstrap Service-path e2e
+			// runs in a dedicated subprocess via TestCloudRunContainerExec.
+			bootstrapPath = ""
 		}
-		fmt.Println("[sim] Building sockerless-cloudrun-bootstrap...")
-		buildCtx, buildCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer buildCancel()
-		bootstrapBuild := exec.CommandContext(buildCtx, "go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
-		bootstrapBuild.Dir = repoRoot + "/agent"
-		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
-		bootstrapBuild.Stdout = os.Stderr
-		bootstrapBuild.Stderr = os.Stderr
-		if err := bootstrapBuild.Run(); err != nil {
-			failClean("ERROR: build sockerless-cloudrun-bootstrap: %v\n", err)
-		}
-		cleanups = append(cleanups, func() { _ = os.Remove(bootstrapPath) })
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
@@ -271,7 +280,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		// ADC source for storage.NewClient + cloudbuild.NewRESTClient.
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 	)
-	if target == "sim" {
+	if target == "sim" && os.Getenv(cloudRunExecE2EEnv) == "1" {
 		backendEnv = append(backendEnv,
 			"SOCKERLESS_GCR_USE_SERVICE=1",
 			"SOCKERLESS_GCR_VPC_CONNECTOR=projects/sim-project/locations/us-central1/connectors/sim-connector",
@@ -331,8 +340,9 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	// Create
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"tail", "-f", "/dev/null"},
+			Image:     "alpine:latest",
+			Cmd:       []string{"tail", "-f", "/dev/null"},
+			OpenStdin: true,
 		},
 		nil, nil, nil, "cloudrun_"+testID,
 	)
@@ -402,6 +412,7 @@ func TestCloudRunContainerLogs(t *testing.T) {
 		&container.Config{
 			Image:      "alpine:latest",
 			Entrypoint: []string{"sh", "-c", "echo hello-cloudrun && sleep 5"},
+			OpenStdin:  true,
 		},
 		nil, nil, nil, "cloudrun_logs_"+testID,
 	)
@@ -470,6 +481,16 @@ func TestCloudRunContainerList(t *testing.T) {
 }
 
 func TestCloudRunContainerExec(t *testing.T) {
+	if os.Getenv(cloudRunExecE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestCloudRunContainerExec$", "-test.v")
+		cmd.Env = append(os.Environ(), cloudRunExecE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("overlay exec subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})

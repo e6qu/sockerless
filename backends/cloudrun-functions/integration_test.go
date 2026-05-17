@@ -40,6 +40,8 @@ var evalImageName string
 // reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/gcf/reverse`).
 var backendPort int
 
+const gcfExecE2EEnv = "SOCKERLESS_GCF_EXEC_E2E"
+
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
 	v := os.Getenv(name)
@@ -130,12 +132,12 @@ func TestMain(m *testing.M) {
 	step := func(label string) { fmt.Fprintf(os.Stderr, "[testmain] %s\n", label) }
 	step("entered TestMain (target=" + target + ")")
 
-	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract.
+	// Multi-stage Docker build forced to linux/amd64 because the GCF
+	// backend builds overlay images with that platform.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	step("docker build " + evalImageName + " (linux/arm64)")
-	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	step("docker build " + evalImageName + " (linux/amd64)")
+	fmt.Printf("[sim] Building %s (linux/amd64)...\n", evalImageName)
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively; ECR Public Gallery mirrors the Docker
@@ -149,7 +151,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", "linux/amd64",
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
@@ -277,8 +279,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
-		// Build the sockerless-gcf-bootstrap binary.
-		gcfBootstrapPath = repoRoot + "/agent/sockerless-gcf-bootstrap-test"
+		// Build the sockerless-gcf-bootstrap binary for the same platform
+		// used by the backend's overlay Cloud Build path.
+		bootstrapArch := "amd64"
+		gcfBootstrapPath = filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-gcf-bootstrap-test-%s-%d", bootstrapArch, os.Getpid()))
 		if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
 			gcfBootstrapPath = abs
 		}
@@ -288,7 +292,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		defer buildCancel3()
 		bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 		bootstrapBuild.Dir = repoRoot + "/agent"
-		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH="+bootstrapArch)
 		bootstrapBuild.Stdout = os.Stderr
 		bootstrapBuild.Stderr = os.Stderr
 		if err := bootstrapBuild.Run(); err != nil {
@@ -553,6 +557,16 @@ func TestGCFContainerStopNoOp(t *testing.T) {
 }
 
 func TestGCFContainerExec(t *testing.T) {
+	if os.Getenv(gcfExecE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestGCFContainerExec$", "-test.v")
+		cmd.Env = append(os.Environ(), gcfExecE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("overlay exec subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
