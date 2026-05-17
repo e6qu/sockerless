@@ -237,6 +237,9 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fullName string, c
 		// Pool is full — delete this entry instead of returning to pool.
 		op, err := s.gcp.Functions.DeleteFunction(ctx, &functionspb.DeleteFunctionRequest{Name: fullName})
 		if err != nil {
+			if gcpcommon.IsNotFound(err) {
+				return nil
+			}
 			return fmt.Errorf("delete function %s: %w", fullName, err)
 		}
 		if err := op.Wait(ctx); err != nil {
@@ -246,8 +249,15 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fullName string, c
 	}
 
 	// Pool has room — release back by clearing the allocation label.
+	// Function-already-gone is idempotent success per the no-fallback
+	// cleanup contract: ContainerRemove's job is to ensure the cloud
+	// is in the "gone" state, and a missing function already satisfies
+	// that.
 	fn, err := s.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fullName})
 	if err != nil {
+		if gcpcommon.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("get function %s for release: %w", fullName, err)
 	}
 	updated := proto_clone_function(fn)

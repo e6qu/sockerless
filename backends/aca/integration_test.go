@@ -20,6 +20,11 @@ import (
 )
 
 var dockerClient *client.Client
+
+// backendPort exposes the sockerless backend port so
+// dialFakeReverseAgent (BUG-1066) can dial the WS endpoint from a test
+// as if it were the in-App/Job bootstrap.
+var backendPort int
 var evalImageName string
 
 // requireEnv reads a required env var or dies loud.
@@ -203,7 +208,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
 	// Start backend pointed at the resolved endpoint.
-	backendPort := findFreePort()
+	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-aca on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
@@ -214,6 +219,8 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_ACA_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
+		// Required at NewServer per Phase 168 (no fallback).
+		"SOCKERLESS_CALLBACK_URL="+endpointURL,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -282,6 +289,9 @@ func TestACAContainerLifecycle(t *testing.T) {
 	// Start (ACA may take longer — 10 min timeout)
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}

@@ -136,6 +136,9 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fnName, contentTag
 			FunctionName: aws.String(fnName),
 		})
 		if err != nil {
+			if strings.Contains(err.Error(), "ResourceNotFoundException") {
+				return nil
+			}
 			return fmt.Errorf("delete function %s: %w", fnName, err)
 		}
 		return nil
@@ -151,6 +154,12 @@ func (s *Server) releaseOrDeleteFunction(ctx context.Context, fnName, contentTag
 		},
 	})
 	if err != nil {
+		// Function-already-gone is idempotent success: ContainerRemove's
+		// job is to ensure the cloud is in the "gone" state, and a
+		// missing function already satisfies that.
+		if strings.Contains(err.Error(), "ResourceNotFoundException") {
+			return nil
+		}
 		return fmt.Errorf("release function %s: %w", fnName, err)
 	}
 	return nil

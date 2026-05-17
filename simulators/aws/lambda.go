@@ -97,6 +97,7 @@ func registerLambda(srv *sim.Server) {
 	mux.HandleFunc("GET /2015-03-31/functions/", handleLambdaListFunctions)
 	mux.HandleFunc("GET /2017-03-31/tags/{arn...}", handleLambdaListTags)
 	mux.HandleFunc("POST /2017-03-31/tags/{arn...}", handleLambdaTagResource)
+	mux.HandleFunc("DELETE /2017-03-31/tags/{arn...}", handleLambdaUntagResource)
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
@@ -473,6 +474,48 @@ func (s *lambdaLogSink) WriteLog(line sim.LogLine) {
 			IngestionTime: nowMs,
 		})
 	})
+}
+
+// handleLambdaUntagResource implements DELETE /2017-03-31/tags/{arn}?tagKeys=a&tagKeys=b.
+// Real Lambda's UntagResource takes ARN + list of tag keys to remove;
+// idempotent (deleting a non-existent key returns 204). The sim
+// previously had only GET + POST for this path; sockerless's pool
+// release path calls UntagResource and was getting a generic 405 from
+// the default mux, surfaced as a JSON-decode error in the SDK.
+//
+// Pattern carry-forward: ARN parsing is lenient — the function-name
+// portion is the key, and any account-ID embedded in the ARN is
+// ignored. Matches handleLambdaTagResource's behaviour so a single
+// sim can serve calls with different operator-supplied account IDs
+// (the sim's lambdaArn helper hardcodes 123456789012).
+func handleLambdaUntagResource(w http.ResponseWriter, r *http.Request) {
+	arn := r.PathValue("arn")
+	name := arn
+	if strings.Contains(arn, ":function:") {
+		parts := strings.SplitN(arn, ":function:", 2)
+		if len(parts) == 2 {
+			name = parts[1]
+		}
+	}
+
+	tagKeys := r.URL.Query()["tagKeys"]
+
+	found := lambdaFunctions.Update(name, func(fn *LambdaFunction) {
+		if fn.Tags == nil {
+			return
+		}
+		for _, k := range tagKeys {
+			delete(fn.Tags, k)
+		}
+	})
+
+	if !found {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Function not found: %s", lambdaArn(name))
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleLambdaTagResource(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,11 @@ import (
 )
 
 var dockerClient *client.Client
+
+// backendPort exposes the sockerless backend port so
+// dialFakeReverseAgent (BUG-1066) can dial the WS endpoint from a test
+// as if it were the in-function bootstrap.
+var backendPort int
 var evalImageName string
 
 // requireEnv reads a required env var or dies loud.
@@ -178,7 +183,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	backendPort := findFreePort()
+	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-azf on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
@@ -188,6 +193,8 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_AZF_SUBSCRIPTION_ID="+subscriptionID,
 		"SOCKERLESS_AZF_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_AZF_STORAGE_ACCOUNT="+storageAccount,
+		// Required at NewServer per Phase 168 (no fallback).
+		"SOCKERLESS_CALLBACK_URL="+endpointURL,
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -238,6 +245,10 @@ func TestAZFContainerLogs(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
