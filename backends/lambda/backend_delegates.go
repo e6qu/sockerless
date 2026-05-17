@@ -203,6 +203,14 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded Lambda's max invocation lifetime (15 min hard cap). "+
+				"FaaS pods are not extended transparently — use the ECS backend for longer-running pods, "+
+				"or split the workload across multiple shorter pods. (FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
+	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+

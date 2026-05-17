@@ -30,14 +30,42 @@ type ReverseAgentRegistry struct {
 	// WaitForAgent to block on this so the first ExecStart can't
 	// race the bootstrap dial-back.
 	waiters map[string]chan struct{}
+	// lifetimeExpired tracks containers whose in-FaaS bootstrap
+	// signalled it's about to hit the platform's max invocation
+	// deadline. Set by MarkLifetimeExpired; checked by ExecStart so
+	// the operator sees an actionable error instead of a generic
+	// timeout or 500 (BUG-1053).
+	lifetimeExpired map[string]struct{}
 }
 
 // NewReverseAgentRegistry creates an empty registry.
 func NewReverseAgentRegistry() *ReverseAgentRegistry {
 	return &ReverseAgentRegistry{
-		sessions: map[string]*agent.ReverseAgentConn{},
-		waiters:  map[string]chan struct{}{},
+		sessions:        map[string]*agent.ReverseAgentConn{},
+		waiters:         map[string]chan struct{}{},
+		lifetimeExpired: map[string]struct{}{},
 	}
+}
+
+// MarkLifetimeExpired records that the in-container bootstrap for
+// `id` is about to be torn down by its FaaS platform (Lambda 15min,
+// GCF Gen2 60min, etc.). Called by HandleReverseAgentWS when the
+// bootstrap sends agent.TypeLifetimeExpired. Inspected by ExecStart
+// so the operator gets a clear "use long-lived backend instead"
+// error rather than a generic 500 / hung exec.
+func (r *ReverseAgentRegistry) MarkLifetimeExpired(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lifetimeExpired[id] = struct{}{}
+}
+
+// IsLifetimeExpired reports whether the container has been marked
+// past its FaaS pod lifetime cap.
+func (r *ReverseAgentRegistry) IsLifetimeExpired(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.lifetimeExpired[id]
+	return ok
 }
 
 // Register saves a session keyed by container ID, closing any prior
@@ -102,6 +130,9 @@ func (r *ReverseAgentRegistry) Resolve(id string) (*agent.ReverseAgentConn, bool
 }
 
 // Drop closes + removes a session (used by ContainerStop/Remove).
+// Also clears the lifetime-expired marker so subsequent Register
+// (e.g. a new container reusing the same ID after restart) starts
+// fresh.
 func (r *ReverseAgentRegistry) Drop(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -109,6 +140,7 @@ func (r *ReverseAgentRegistry) Drop(id string) {
 		_ = c.Close()
 		delete(r.sessions, id)
 	}
+	delete(r.lifetimeExpired, id)
 }
 
 // wsUpgrader used by every reverse-agent WebSocket endpoint. Origin
@@ -133,6 +165,12 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 			return
 		}
 		rc := agent.NewReverseAgentConn(ws)
+		rc.OnSystemMessage = func(m agent.Message) {
+			if m.Type == agent.TypeLifetimeExpired {
+				reg.MarkLifetimeExpired(sessionID)
+				logger.Warn().Str("container", sessionID).Msg("reverse-agent reported FaaS pod lifetime expiring; future exec will return operator-guidance error")
+			}
+		}
 		reg.Register(sessionID, rc)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session registered")
 

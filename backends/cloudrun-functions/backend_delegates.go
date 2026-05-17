@@ -210,6 +210,14 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		s.Logger.Warn().Str("execID", id).Str("container", exec.ContainerID).Msg("ExecStart: container has been removed")
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded Cloud Functions Gen2's max invocation lifetime (60 min hard cap). "+
+				"FaaS pods are not extended transparently — use the Cloud Run Services backend for longer-running pods, "+
+				"or split the workload. (FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
+	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+

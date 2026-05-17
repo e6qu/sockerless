@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1056 filed · 1055 fixed · 1 open · 2 false positives.**
+**1056 filed · 1056 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1053 | P2 | FaaS pod lifetime > platform max | 9 (no-extension-hack) | When a pod exceeds platform max invocation duration (Lambda 15min, GCF Gen2 / AZF 60min), the bootstrap's WS closes near the deadline. Currently the next `docker exec` returns a generic 500. Fix: bootstrap monitors deadline (Lambda `context.RemainingTime`; GCF/AZF equivalent), sends `lifetime_expired` WS message at T-5s, closes WS. Sockerless's reverse-agent handler marks container Stopped with reason `FaaSPodLifetimeExceeded`; next ExecStart returns operator-guidance error ("use ECS / ACA / Cloud Run Services for longer pods"). No transparent re-invoke / warm-pool / checkpoint-restart. User confirmed FaaS max is a hard limit (2026-05-17). |
 
 ## False positives
 

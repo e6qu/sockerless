@@ -165,6 +165,14 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded ACA's max invocation lifetime. "+
+				"FaaS pods are not extended transparently — for sustained workloads use ACA Apps (always-on replicas) "+
+				"or switch to a longer-lived backend. (FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
+	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+

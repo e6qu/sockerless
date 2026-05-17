@@ -76,6 +76,25 @@ func TestWaitForAgent_TimeoutReturnsContextError(t *testing.T) {
 	}
 }
 
+func TestLifetimeExpired_MarkAndCheck(t *testing.T) {
+	r := NewReverseAgentRegistry()
+	if r.IsLifetimeExpired("c1") {
+		t.Fatal("unexpected initial lifetime-expired state")
+	}
+	r.MarkLifetimeExpired("c1")
+	if !r.IsLifetimeExpired("c1") {
+		t.Fatal("MarkLifetimeExpired didn't stick")
+	}
+	if r.IsLifetimeExpired("c2") {
+		t.Fatal("lifetime-expired leaked across IDs")
+	}
+	// Drop clears the marker so a fresh container reusing the same ID starts clean.
+	r.Drop("c1")
+	if r.IsLifetimeExpired("c1") {
+		t.Fatal("Drop didn't clear lifetime-expired")
+	}
+}
+
 func TestWaitForAgent_MultipleConcurrentWaiters(t *testing.T) {
 	r := NewReverseAgentRegistry()
 

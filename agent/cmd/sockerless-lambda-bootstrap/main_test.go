@@ -97,7 +97,7 @@ func TestHandleOneInvocation_RoundTrip(t *testing.T) {
 	t.Setenv(envUserEntrypoint, encodeArgv([]string{"/bin/cat"}))
 	t.Setenv(envUserCmd, "")
 
-	if err := handleOneInvocation(srv.URL); err != nil {
+	if err := handleOneInvocation(srv.URL, nil, nil); err != nil {
 		t.Fatalf("handleOneInvocation: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestHandleOneInvocation_UserError(t *testing.T) {
 	t.Setenv(envUserEntrypoint, encodeArgv([]string{"/bin/sh"}))
 	t.Setenv(envUserCmd, encodeArgv([]string{"-c", "exit 7"}))
 
-	if err := handleOneInvocation(srv.URL); err != nil {
+	if err := handleOneInvocation(srv.URL, nil, nil); err != nil {
 		t.Fatalf("handleOneInvocation: %v", err)
 	}
 

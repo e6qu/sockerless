@@ -135,6 +135,8 @@ func main() {
 	// standalone sockerless-agent, so TypeExec messages from the
 	// Lambda backend spawn subprocesses inside this container and
 	// stream stdout/stderr/exit back over the WebSocket.
+	var raConn *websocket.Conn
+	var raMu *sync.Mutex
 	if callbackURL != "" && containerID != "" {
 		conn, err := dialReverseAgent(callbackURL, containerID)
 		if err != nil {
@@ -148,11 +150,13 @@ func main() {
 		go serveReverseAgent(conn, connMu)
 		go sendHeartbeats(conn, connMu)
 		defer func() { _ = conn.Close() }()
+		raConn = conn
+		raMu = connMu
 	}
 
 	// Runtime-API polling loop.
 	for {
-		if err := handleOneInvocation(base); err != nil {
+		if err := handleOneInvocation(base, raConn, raMu); err != nil {
 			fmt.Fprintf(os.Stderr, "bootstrap: invocation error: %v\n", err)
 			// Runtime API errors on /next usually mean Lambda is
 			// shutting us down; exit cleanly.
@@ -164,8 +168,12 @@ func main() {
 // handleOneInvocation blocks on /next, spawns the user entrypoint with
 // the invocation payload as stdin, and posts the result to /response or
 // error. The deadline header is enforced as a subprocess-level
-// context timeout.
-func handleOneInvocation(base string) error {
+// context timeout. When a reverse-agent connection is supplied, a
+// timer fires at deadline-5s to signal TypeLifetimeExpired so
+// sockerless can surface operator-guidance on the next ExecStart
+// rather than a generic 500 / hung exec when Lambda kills the
+// invocation at its hard cap.
+func handleOneInvocation(base string, raConn *websocket.Conn, raMu *sync.Mutex) error {
 	resp, err := http.Get(base + runtimeAPIPath + "/next")
 	if err != nil {
 		return fmt.Errorf("GET /next: %w", err)
@@ -185,6 +193,27 @@ func handleOneInvocation(base string) error {
 
 	ctx, cancel := contextWithDeadlineMs(deadlineMs)
 	defer cancel()
+
+	// Lifetime-expired signal: if the WS is connected and we have a
+	// deadline, fire TypeLifetimeExpired at deadline-5s. The done
+	// channel cancels the timer if the invocation returns normally.
+	done := make(chan struct{})
+	defer close(done)
+	if raConn != nil && raMu != nil && deadlineMs != "" {
+		if dl, ok := ctx.Deadline(); ok {
+			go func() {
+				select {
+				case <-time.After(time.Until(dl) - 5*time.Second):
+					if err := agent.SendLifetimeExpired(raConn, raMu); err != nil {
+						fmt.Fprintf(os.Stderr, "bootstrap: send lifetime_expired failed: %v\n", err)
+					} else {
+						fmt.Fprintf(os.Stderr, "bootstrap: sent lifetime_expired at T-5s (Lambda invocation about to hit cap)\n")
+					}
+				case <-done:
+				}
+			}()
+		}
+	}
 
 	stdout, stderr, exitCode := runUserInvocation(ctx, payload)
 
