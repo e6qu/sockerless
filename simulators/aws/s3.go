@@ -176,6 +176,13 @@ func handleS3DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleS3GetBucket dispatches GET /s3/{bucket} based on sub-resource
+// query strings. Real S3 uses the query-string (e.g. `?policy`,
+// `?versioning`) to differentiate between ListObjects (no query) and the
+// various Get* / Describe* sub-resources. terraform-provider-aws fans out
+// across many of these on Create+Read to populate the resource's
+// attributes; the sim has to mirror real behaviour for each so the
+// provider's response parsers don't NPE or mis-decode.
 func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	bucket := sim.PathParam(r, "bucket")
 
@@ -185,6 +192,96 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sub-resource dispatch. Real S3 treats the presence of any of these
+	// keys (with empty or non-empty value) as the action selector — so
+	// `r.URL.Query().Has(...)` is the right check, not value-based.
+	q := r.URL.Query()
+	switch {
+	case q.Has("policy"):
+		// No policy set on any sim bucket today; real S3 returns 404 + NoSuchBucketPolicy.
+		sim.S3ErrorXML(w, "NoSuchBucketPolicy", "The bucket policy does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("versioning"):
+		// Real S3 returns an empty <VersioningConfiguration/> when versioning was never enabled.
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		return
+	case q.Has("accelerate"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		return
+	case q.Has("logging"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><BucketLoggingStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		return
+	case q.Has("location"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + awsRegion() + `</LocationConstraint>`))
+		return
+	case q.Has("lifecycle"):
+		sim.S3ErrorXML(w, "NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("cors"):
+		sim.S3ErrorXML(w, "NoSuchCORSConfiguration", "The CORS configuration does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("website"):
+		sim.S3ErrorXML(w, "NoSuchWebsiteConfiguration", "The website configuration does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("replication"):
+		sim.S3ErrorXML(w, "ReplicationConfigurationNotFoundError", "The replication configuration was not found",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("encryption"):
+		sim.S3ErrorXML(w, "ServerSideEncryptionConfigurationNotFoundError", "The server side encryption configuration was not found",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("tagging"):
+		sim.S3ErrorXML(w, "NoSuchTagSet", "The TagSet does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("policyStatus"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><PolicyStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsPublic>false</IsPublic></PolicyStatus>`))
+		return
+	case q.Has("publicAccessBlock"):
+		sim.S3ErrorXML(w, "NoSuchPublicAccessBlockConfiguration", "The public access block configuration was not found",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("object-lock"):
+		sim.S3ErrorXML(w, "ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("ownershipControls"):
+		sim.S3ErrorXML(w, "OwnershipControlsNotFoundError", "The bucket ownership controls were not found",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	case q.Has("requestPayment"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><RequestPaymentConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Payer>BucketOwner</Payer></RequestPaymentConfiguration>`))
+		return
+	case q.Has("notification"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		return
+	case q.Has("acl"):
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>` + awsAccountID() + `</ID><DisplayName>simulator</DisplayName></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>` + awsAccountID() + `</ID><DisplayName>simulator</DisplayName></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>`))
+		return
+	}
+
+	// No sub-resource → ListObjects(V2). Falls through to the existing path below.
 	prefix := r.URL.Query().Get("prefix")
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	maxKeys := 1000

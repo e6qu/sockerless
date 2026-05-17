@@ -80,6 +80,15 @@ func terraformCmd(args ...string) *exec.Cmd {
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("TF_VAR_endpoint=%s", baseURL),
 	)
+	// Pass through TF_LOG / TF_LOG_PATH when the operator wants
+	// terraform-provider-aws's request/response trace (debugging sim
+	// handler gaps surfaced by the provider's call sequence).
+	if v := os.Getenv("TF_LOG"); v != "" {
+		cmd.Env = append(cmd.Env, "TF_LOG="+v)
+	}
+	if v := os.Getenv("TF_LOG_PATH"); v != "" {
+		cmd.Env = append(cmd.Env, "TF_LOG_PATH="+v)
+	}
 	return cmd
 }
 

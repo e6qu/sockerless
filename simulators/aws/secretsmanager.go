@@ -62,6 +62,53 @@ func registerSecretsManager(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("secretsmanager.ListSecrets", handleSMListSecrets)
 	r.Register("secretsmanager.TagResource", handleSMTagResource)
 	r.Register("secretsmanager.UntagResource", handleSMUntagResource)
+	r.Register("secretsmanager.GetResourcePolicy", handleSMGetResourcePolicy)
+}
+
+// handleSMGetResourcePolicy returns the resource policy attached to a
+// secret. Real Secrets Manager returns the {ARN, Name, ResourcePolicy}
+// triple — ResourcePolicy is the empty string when no policy is set
+// (the most common case for fresh secrets, including everything created
+// in this sim). terraform-provider-aws calls this after CreateSecret to
+// populate the resource's `policy` attribute.
+func handleSMGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId string `json:"SecretId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	secret, ok := resolveSMSecret(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret: %s", req.SecretId)
+		return
+	}
+	// Real Secrets Manager omits ResourcePolicy entirely when no policy
+	// is attached (the SDK's response struct has it as *string + omitempty).
+	// Returning ResourcePolicy: "" makes terraform-provider-aws try to
+	// JSON-parse the empty string and crash with "unexpected end of JSON
+	// input". Match real behavior: omit the field unless a policy exists.
+	resp := map[string]any{
+		"ARN":  secret.ARN,
+		"Name": secret.Name,
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// resolveSMSecret accepts either a Name or full ARN and returns the
+// stored secret. Mirrors how the other SM handlers do lookup.
+func resolveSMSecret(idOrArn string) (SMSecret, bool) {
+	if secret, ok := smSecrets.Get(idOrArn); ok {
+		return secret, true
+	}
+	for _, s := range smSecrets.List() {
+		if s.ARN == idOrArn {
+			return s, true
+		}
+	}
+	return SMSecret{}, false
 }
 
 func handleSMCreateSecret(w http.ResponseWriter, r *http.Request) {

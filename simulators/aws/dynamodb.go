@@ -1,6 +1,21 @@
 package main
 
+// AWS DynamoDB uses the awsJson1_0 protocol. The AWS SDK Go v2's
+// deserializer requires responses to carry `Content-Type:
+// application/x-amz-json-1.0` (not `application/json`); without it the
+// SDK silently fails to decode the body and the result struct is nil,
+// which terraform-provider-aws then treats as ResourceNotFound (its
+// waiter loops 21 times then errors "couldn't find resource").
+//
+// `sim.WriteJSON` (used elsewhere) sets `application/json`. The
+// `writeDDBJSON` wrapper below sets the per-protocol header instead so
+// each DynamoDB success response carries the right CT. Errors keep going
+// through `sim.AWSErrorf` which already sets `application/x-amz-json-1.1`
+// (real AWS uses 1.1 for errors across JSON-RPC services, regardless of
+// the service's own payload protocol).
+
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -27,15 +42,52 @@ import (
 // hash key, no range key) and falls through to the slow path for
 // composite keys when a RangeKey is declared.
 type DDBTable struct {
-	TableName            string                 `json:"TableName"`
-	TableArn             string                 `json:"TableArn"`
-	TableStatus          string                 `json:"TableStatus"`
-	CreationDateTime     float64                `json:"CreationDateTime"`
-	AttributeDefinitions []DDBAttributeDef      `json:"AttributeDefinitions"`
-	KeySchema            []DDBKeySchemaEntry    `json:"KeySchema"`
-	BillingModeSummary   *DDBBillingModeSummary `json:"BillingModeSummary,omitempty"`
-	ItemCount            int64                  `json:"ItemCount"`
-	TableSizeBytes       int64                  `json:"TableSizeBytes"`
+	TableName                 string                    `json:"TableName"`
+	TableId                   string                    `json:"TableId"`
+	TableArn                  string                    `json:"TableArn"`
+	TableStatus               string                    `json:"TableStatus"`
+	CreationDateTime          float64                   `json:"CreationDateTime"`
+	AttributeDefinitions      []DDBAttributeDef         `json:"AttributeDefinitions"`
+	KeySchema                 []DDBKeySchemaEntry       `json:"KeySchema"`
+	BillingModeSummary        *DDBBillingModeSummary    `json:"BillingModeSummary,omitempty"`
+	ProvisionedThroughput     *DDBProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
+	ItemCount                 int64                     `json:"ItemCount"`
+	TableSizeBytes            int64                     `json:"TableSizeBytes"`
+	DeletionProtectionEnabled bool                      `json:"DeletionProtectionEnabled"`
+	TableClassSummary         *DDBTableClassSummary     `json:"TableClassSummary,omitempty"`
+	WarmThroughput            *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
+}
+
+// DDBProvisionedThroughput mirrors the SDK shape. For PAY_PER_REQUEST
+// tables real AWS still returns a zero-filled struct so terraform's
+// reader doesn't NPE — the sim follows.
+type DDBProvisionedThroughput struct {
+	NumberOfDecreasesToday int64   `json:"NumberOfDecreasesToday"`
+	ReadCapacityUnits      int64   `json:"ReadCapacityUnits"`
+	WriteCapacityUnits     int64   `json:"WriteCapacityUnits"`
+	LastIncreaseDateTime   float64 `json:"LastIncreaseDateTime,omitempty"`
+	LastDecreaseDateTime   float64 `json:"LastDecreaseDateTime,omitempty"`
+}
+
+// DDBTableClassSummary mirrors the SDK shape — STANDARD (default) or
+// STANDARD_INFREQUENT_ACCESS. Real AWS returns this on every Describe.
+type DDBTableClassSummary struct {
+	TableClass         string  `json:"TableClass"`
+	LastUpdateDateTime float64 `json:"LastUpdateDateTime,omitempty"`
+}
+
+// DDBWarmThroughput mirrors `types.TableWarmThroughputDescription`. Real
+// AWS DynamoDB returns this on every DescribeTable response, with
+// Status=ACTIVE on a fresh on-demand table. terraform-provider-aws v6
+// added `waitTableWarmThroughputActive` after `waitTableActive` in the
+// Create flow — that wait function returns empty state and loops 21
+// times if `output.WarmThroughput == nil`, so the field MUST be present
+// on every response or terraform errors "waiting for update ... couldn't
+// find resource".
+type DDBWarmThroughput struct {
+	ReadUnitsPerSecond  int64  `json:"ReadUnitsPerSecond"`
+	Status              string `json:"Status"`
+	WriteUnitsPerSecond int64  `json:"WriteUnitsPerSecond"`
 }
 
 // DDBAttributeDef matches the SDK's `AttributeDefinition` shape.
@@ -67,6 +119,17 @@ var (
 	ddbItemsMu sync.Mutex
 )
 
+// writeDDBJSON writes a DynamoDB success response with the awsJson1_0
+// content-type. The AWS SDK Go v2 DynamoDB deserializer requires the
+// exact `application/x-amz-json-1.0` value — `application/json` causes
+// silent decode failure where output.Table comes back nil, which
+// terraform-provider-aws then treats as ResourceNotFound.
+func writeDDBJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 func ddbTableArn(name string) string {
 	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", awsRegion(), awsAccountID(), name)
 }
@@ -86,6 +149,177 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("DynamoDB_20120810.DeleteItem", handleDDBDeleteItem)
 	r.Register("DynamoDB_20120810.Query", handleDDBQuery)
 	r.Register("DynamoDB_20120810.Scan", handleDDBScan)
+	r.Register("DynamoDB_20120810.DescribeContinuousBackups", handleDDBDescribeContinuousBackups)
+	r.Register("DynamoDB_20120810.UpdateContinuousBackups", handleDDBUpdateContinuousBackups)
+	r.Register("DynamoDB_20120810.DescribeTimeToLive", handleDDBDescribeTimeToLive)
+	r.Register("DynamoDB_20120810.UpdateTimeToLive", handleDDBUpdateTimeToLive)
+	r.Register("DynamoDB_20120810.ListTagsOfResource", handleDDBListTagsOfResource)
+	r.Register("DynamoDB_20120810.TagResource", handleDDBTagResource)
+	r.Register("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
+}
+
+// handleDDBUpdateContinuousBackups enables/disables PITR. Real DynamoDB
+// returns the new ContinuousBackupsDescription; terraform-provider-aws
+// polls DescribeContinuousBackups after this to confirm convergence.
+func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName                        string `json:"TableName"`
+		PointInTimeRecoverySpecification struct {
+			PointInTimeRecoveryEnabled bool `json:"PointInTimeRecoveryEnabled"`
+		} `json:"PointInTimeRecoverySpecification"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ddbTables.Get(req.TableName); !ok {
+		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
+			"Table not found: %s", req.TableName)
+		return
+	}
+	status := "DISABLED"
+	if req.PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled {
+		status = "ENABLED"
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"ContinuousBackupsDescription": map[string]any{
+			"ContinuousBackupsStatus": "ENABLED",
+			"PointInTimeRecoveryDescription": map[string]any{
+				"PointInTimeRecoveryStatus": status,
+			},
+		},
+	})
+}
+
+// handleDDBUpdateTimeToLive enables/disables TTL on a table attribute.
+// Real DynamoDB returns the TimeToLiveSpecification echo; terraform polls
+// DescribeTimeToLive after this until status matches.
+func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName               string `json:"TableName"`
+		TimeToLiveSpecification struct {
+			Enabled       bool   `json:"Enabled"`
+			AttributeName string `json:"AttributeName"`
+		} `json:"TimeToLiveSpecification"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ddbTables.Get(req.TableName); !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: Table: %s not found", req.TableName)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"TimeToLiveSpecification": map[string]any{
+			"Enabled":       req.TimeToLiveSpecification.Enabled,
+			"AttributeName": req.TimeToLiveSpecification.AttributeName,
+		},
+	})
+}
+
+// handleDDBTagResource attaches tags. Real DynamoDB returns empty body.
+func handleDDBTagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string  `json:"ResourceArn"`
+		Tags        []SMTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceArn == "" {
+		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleDDBUntagResource removes tag keys. Real DynamoDB returns empty body.
+func handleDDBUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string   `json:"ResourceArn"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceArn == "" {
+		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleDDBDescribeContinuousBackups returns the PITR status for a table.
+// Real DynamoDB enables PITR on demand; new tables default to DISABLED.
+// terraform-provider-aws calls this after CreateTable.
+func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName string `json:"TableName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ddbTables.Get(req.TableName); !ok {
+		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
+			"Table not found: %s", req.TableName)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"ContinuousBackupsDescription": map[string]any{
+			"ContinuousBackupsStatus": "ENABLED",
+			"PointInTimeRecoveryDescription": map[string]any{
+				"PointInTimeRecoveryStatus": "DISABLED",
+			},
+		},
+	})
+}
+
+// handleDDBDescribeTimeToLive returns TTL config for a table. Real
+// DynamoDB defaults to DISABLED. terraform-provider-aws calls this
+// after CreateTable.
+func handleDDBDescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName string `json:"TableName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ddbTables.Get(req.TableName); !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: Table: %s not found", req.TableName)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"TimeToLiveDescription": map[string]any{
+			"TimeToLiveStatus": "DISABLED",
+		},
+	})
+}
+
+// handleDDBListTagsOfResource returns tag list for a table ARN. Real
+// DynamoDB tracks tags out-of-band; the sim returns an empty list
+// since CreateTable doesn't currently persist tags.
+func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string `json:"ResourceArn"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceArn == "" {
+		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
+		return
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"Tags": []map[string]any{},
+	})
 }
 
 func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
@@ -112,19 +346,40 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 	if billingMode == "" {
 		billingMode = "PROVISIONED"
 	}
+	now := float64(time.Now().Unix())
 	table := DDBTable{
 		TableName:            req.TableName,
+		TableId:              generateUUID(),
 		TableArn:             ddbTableArn(req.TableName),
 		TableStatus:          "ACTIVE",
-		CreationDateTime:     float64(time.Now().Unix()),
+		CreationDateTime:     now,
 		AttributeDefinitions: req.AttributeDefinitions,
 		KeySchema:            req.KeySchema,
 		BillingModeSummary: &DDBBillingModeSummary{
 			BillingMode: billingMode,
 		},
+		// Real AWS returns a zero-filled ProvisionedThroughput even for
+		// PAY_PER_REQUEST tables so terraform's reader doesn't NPE.
+		ProvisionedThroughput: &DDBProvisionedThroughput{
+			NumberOfDecreasesToday: 0,
+			ReadCapacityUnits:      0,
+			WriteCapacityUnits:     0,
+		},
+		TableClassSummary: &DDBTableClassSummary{
+			TableClass: "STANDARD",
+		},
+		// Real DynamoDB returns WarmThroughput on every Describe with
+		// Status=ACTIVE for on-demand tables; terraform-provider-aws v6's
+		// waitTableWarmThroughputActive depends on this field being
+		// present + non-nil.
+		WarmThroughput: &DDBWarmThroughput{
+			ReadUnitsPerSecond:  12000,
+			WriteUnitsPerSecond: 4000,
+			Status:              "ACTIVE",
+		},
 	}
 	ddbTables.Put(req.TableName, table)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
 }
 
 func handleDDBDescribeTable(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +396,7 @@ func handleDDBDescribeTable(w http.ResponseWriter, r *http.Request) {
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Table": t})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"Table": t})
 }
 
 func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +414,7 @@ func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ddbTables.Delete(req.TableName)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"TableDescription": t})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": t})
 }
 
 func handleDDBListTables(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +423,7 @@ func handleDDBListTables(w http.ResponseWriter, r *http.Request) {
 	for _, t := range all {
 		names = append(names, t.TableName)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"TableNames": names})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"TableNames": names})
 }
 
 // ddbItemKey encodes the primary-key attribute values into a stable
@@ -242,7 +497,7 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Put(itemKey, req.Item)
 	ddbItemNames.Put(itemKey, itemKey)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
@@ -264,10 +519,10 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 	item, ok := ddbItems.Get(itemKey)
 	if !ok {
 		// Real DynamoDB returns 200 with no Item field for missing keys.
-		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		writeDDBJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Item": item})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"Item": item})
 }
 
 func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +567,7 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Put(itemKey, item)
 	ddbItemNames.Put(itemKey, itemKey)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Attributes": item})
+	writeDDBJSON(w, http.StatusOK, map[string]any{"Attributes": item})
 }
 
 func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
@@ -344,7 +599,7 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Delete(itemKey)
 	ddbItemNames.Delete(itemKey)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
 // handleDDBQuery returns all items in the table whose hash key matches
@@ -377,7 +632,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []map[string]any{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"Items": items,
 		"Count": len(items),
 	})
@@ -406,7 +661,7 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []map[string]any{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"Items": items,
 		"Count": len(items),
 	})

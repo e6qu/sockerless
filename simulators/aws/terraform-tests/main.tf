@@ -14,6 +14,12 @@ provider "aws" {
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
 
+  # Force path-style addressing for S3 so the bucket name appears in the
+  # URL path (https://<endpoint>/<bucket>/...) instead of the subdomain
+  # (https://<bucket>.<endpoint>/...). The sim mounts S3 routes under
+  # /s3/{bucket} which only the path-style form reaches.
+  s3_use_path_style = true
+
   endpoints {
     ecs              = var.endpoint
     sts              = var.endpoint
@@ -25,6 +31,11 @@ provider "aws" {
     wafv2            = var.endpoint
     amplify          = var.endpoint
     iam              = var.endpoint
+    s3               = "${var.endpoint}/s3"
+    dynamodb         = var.endpoint
+    kms              = var.endpoint
+    secretsmanager   = var.endpoint
+    ssm              = var.endpoint
   }
 }
 
@@ -358,6 +369,55 @@ resource "aws_cloudfront_distribution" "tf_dist" {
   }
 }
 
+# ---------- Runner foundation (S3 / DynamoDB / KMS / SecretsManager / SSM) ----------
+
+# S3 bucket — runner backends stash workflow artifacts + terraform state.
+resource "aws_s3_bucket" "tf_bucket" {
+  bucket        = "tf-test-runner-bucket"
+  force_destroy = true
+}
+
+# DynamoDB table — runner state-locking + per-pod registries.
+resource "aws_dynamodb_table" "tf_table" {
+  name         = "tf-test-table"
+  hash_key     = "LockID"
+  billing_mode = "PAY_PER_REQUEST"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+}
+
+# KMS key — encrypts SecretsManager secrets and S3 objects.
+resource "aws_kms_key" "tf_kms" {
+  description             = "tf-test runner KMS key"
+  deletion_window_in_days = 7
+}
+
+resource "aws_kms_alias" "tf_kms_alias" {
+  name          = "alias/tf-test-runner"
+  target_key_id = aws_kms_key.tf_kms.key_id
+}
+
+# Secrets Manager secret + version — runner credentials.
+resource "aws_secretsmanager_secret" "tf_secret" {
+  name                    = "tf-test-runner-secret"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "tf_secret_v1" {
+  secret_id     = aws_secretsmanager_secret.tf_secret.id
+  secret_string = "tf-test-runner-secret-payload"
+}
+
+# SSM Parameter — runtime config injection (ECS task-def envFrom).
+resource "aws_ssm_parameter" "tf_param" {
+  name  = "/tf-test/runner/config"
+  type  = "String"
+  value = "tf-test-config-value"
+}
+
 # Phase 159.10 end-to-end stack outputs — verify the production-shape
 # cross-resource links converge after apply. apply_test.go asserts that
 # WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront
@@ -391,4 +451,22 @@ output "amplify_app_arn" {
 }
 output "iam_slr_arn" {
   value = aws_iam_service_linked_role.tf_slr_cloudfront.arn
+}
+output "s3_bucket_arn" {
+  value = aws_s3_bucket.tf_bucket.arn
+}
+output "dynamodb_table_arn" {
+  value = aws_dynamodb_table.tf_table.arn
+}
+output "kms_key_arn" {
+  value = aws_kms_key.tf_kms.arn
+}
+output "kms_alias_arn" {
+  value = aws_kms_alias.tf_kms_alias.arn
+}
+output "secretsmanager_secret_arn" {
+  value = aws_secretsmanager_secret.tf_secret.arn
+}
+output "ssm_parameter_arn" {
+  value = aws_ssm_parameter.tf_param.arn
 }
