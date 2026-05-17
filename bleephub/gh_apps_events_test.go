@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.7) — installation/installation_repositories event emission +
-// X-GitHub-Hook-* headers + X-Hub-Signature (SHA1) + installation:{id} payload.
+// installation / installation_repositories webhook events — emission +
+// X-GitHub-Hook-* headers + X-Hub-Signature SHA1 + SHA256 +
+// installation:{id} payload, matching the GitHub-spec wire shape.
 
 func TestInstallationCreatedFiresAppWebhook(t *testing.T) {
 	// Sink captures the incoming webhook.

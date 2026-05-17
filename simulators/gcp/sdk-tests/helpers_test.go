@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 
 	// Build the Docker image hosting eval-arithmetic. The build is a
 	// multi-stage Docker build so the workload binary's architecture
-	// matches the image's (never the sim host's) — Phase 135.
+	// matches the image's (never the sim host's).
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build

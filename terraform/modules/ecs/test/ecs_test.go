@@ -247,7 +247,7 @@ func TestECSModule_PlanResourceCount(t *testing.T) {
 	// We just verify it plans to create *something* reasonable.
 	// Use a regex match that requires the literal "0 to add" with a
 	// word boundary on the left so "40 to add" doesn't trigger a
-	// false positive (BUG-864).
+	// false positive.
 	assert.Contains(t, planLine, "to add")
 	assert.NotRegexp(t, `(^|\s)0 to add`, planLine)
 }

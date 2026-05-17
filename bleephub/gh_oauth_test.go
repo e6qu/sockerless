@@ -9,7 +9,9 @@ import (
 	"testing"
 )
 
-// Phase 132 — OAuth web flow tests.
+// OAuth web flow — /login/oauth/authorize redirects + /login/oauth/access_token
+// code exchange + device-code polling against the GitHub-compatible OAuth
+// surface (uses RS256 client_assertion JWT, not client_secret).
 
 func TestOAuth_AuthorizeRendersForm(t *testing.T) {
 	s := newTestServer()
@@ -166,7 +168,8 @@ func TestOAuth_WebFlow_CodeIsOneTimeUse(t *testing.T) {
 }
 
 func TestOAuth_DeviceFlow_StillWorks(t *testing.T) {
-	// Phase 132 must not break the existing device flow.
+	// Web-flow code-exchange must not regress the older device-code flow
+	// (both routes share the /login/oauth/access_token endpoint).
 	s := newTestServer()
 	s.store.SeedDefaultUser()
 	s.registerGHOAuthRoutes()

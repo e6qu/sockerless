@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — AWS host-metadata services.
+// AWS host-metadata services.
 //
 // IMDSv2 (PUT /latest/api/token + GET /latest/meta-data/...) and ECS
 // task metadata v4 (/v4/{id}/task) served on the sim's main listener.

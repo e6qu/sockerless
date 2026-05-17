@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// Phase 154 (P154.2) — Releases API parity.
+// Releases API parity — release CRUD + asset upload/download + tag-based
+// lookup against /repos/{}/releases, matching the GitHub-compatible shape.
 
 func TestReleases_FullLifecycle(t *testing.T) {
 	s := newTestServer()

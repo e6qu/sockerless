@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — SDK-driven Azure managed-identity test. Validates
+// SDK-driven Azure managed-identity test. Validates
 // azidentity.NewManagedIdentityCredential routes via IDENTITY_ENDPOINT +
 // IDENTITY_HEADER (App Service / Container Apps style) and accepts the
-// sim's response shape.
+// sim's response shape end-to-end (external-validation principle).
 
 func TestAzureSDK_ManagedIdentityToken(t *testing.T) {
 	u, err := url.Parse(baseURL)

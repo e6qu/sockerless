@@ -143,8 +143,8 @@ func TestCompute_Firewall_DefaultsToIngressPriority1000(t *testing.T) {
 	assert.Equal(t, int64(1000), got.Priority, "default priority must match real GCP")
 }
 
-// TestCompute_Disks_CRUD covers the Phase 127 GCP `pd-ephemeral`
-// storage driver prereq: zonal Compute Disks insert / get / list /
+// TestCompute_Disks_CRUD covers the GCP `pd-ephemeral` storage-driver
+// prereq: zonal Compute Disks insert / get / list /
 // resize / setLabels / delete + aggregated list across zones. Real
 // GCP returns zonal operations for every mutation; the sim's ops
 // endpoint always reports DONE so the SDK's polling loop completes

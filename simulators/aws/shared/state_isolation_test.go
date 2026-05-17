@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// Phase 84 invariant: two simulators pointed at different
-// SIM_DATA_DIR values share no state. Verifies the data path admin
-// composes per topology instance — the simplest test that proves
+// Per-instance state isolation invariant: two simulators pointed at
+// different SIM_DATA_DIR values share no state. Verifies the data path
+// admin composes per topology instance — the simplest test that proves
 // isolation works at the persistence layer.
 func TestPersistenceIsolatedAcrossDataDirs(t *testing.T) {
 	tmp := t.TempDir()
@@ -111,9 +111,10 @@ func TestPersistenceSurvivesReopen(t *testing.T) {
 }
 
 // NewServer with cfg.Persist=true must surface OpenDB failures via
-// its returned error (BUG-985 regression guard). Pointing DataDir at
-// a path that can't be created (e.g. under a read-only file) is the
-// simplest reproduction.
+// its returned error. Pointing DataDir at a path that can't be created
+// (e.g. under a read-only file) is the simplest reproduction; the
+// fail-loud-on-persist-open contract refuses to silently fall back to
+// in-memory state.
 func TestNewServerPersistFailLoud(t *testing.T) {
 	tmp := t.TempDir()
 	// Create a regular file then try to use it as a directory — mkdir

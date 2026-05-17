@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — SDK-driven IMDS client tests. Validates our handlers
-// match what aws-sdk-go-v2/feature/ec2/imds expects (IMDSv2 token
-// dance, metadata header echoes, PUT vs GET routing). Raw-HTTP
-// coverage lives in metadata_test.go; this file proves the AWS SDK
-// client accepts our responses.
+// SDK-driven IMDS client tests. Validates our handlers match what
+// aws-sdk-go-v2/feature/ec2/imds expects (IMDSv2 token dance, metadata
+// header echoes, PUT vs GET routing). Raw-HTTP coverage lives in
+// metadata_test.go; this file proves the real AWS SDK client accepts our
+// responses end-to-end (external-validation principle).
 
 func imdsSDKClient(t *testing.T) *imds.Client {
 	t.Helper()

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Phase 135d — workload-dispatch invariant.
+// Workload-dispatch invariant.
 //
 // No sim handler may execute a workload via `os/exec`. Every workload
 // runs on a Docker host (StartContainerSync / StartHTTPContainer)

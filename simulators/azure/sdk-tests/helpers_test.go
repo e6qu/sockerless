@@ -63,7 +63,6 @@ func TestMain(m *testing.M) {
 
 	// Build the Docker image hosting eval-arithmetic. Multi-stage Docker
 	// build forced to linux/arm64 — sim's primary capacity contract.
-	// Phase 135.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build

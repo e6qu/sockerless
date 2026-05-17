@@ -44,7 +44,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract. Phase 135.
+	// capacity contract.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build

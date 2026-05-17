@@ -39,7 +39,7 @@ var simBackends = map[string]simBackendInfo{
 			"SOCKERLESS_ECS_CLUSTER":            "sim-cluster",
 			"SOCKERLESS_ECS_SUBNETS":            "subnet-0123456789abcdef0",
 			"SOCKERLESS_ECS_EXECUTION_ROLE_ARN": "arn:aws:iam::000000000000:role/sim",
-			// BUG-848 made arch mandatory; no default.
+			// Architecture is mandatory; no default.
 			"SOCKERLESS_ECS_CPU_ARCHITECTURE": "ARM64",
 		},
 	},

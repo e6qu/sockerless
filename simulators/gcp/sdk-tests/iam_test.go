@@ -102,7 +102,7 @@ func iamCredentialsService(t *testing.T) *iamcredentials.Service {
 	return svc
 }
 
-// TestIAMCredentials_GenerateIdToken — Phase 126 (Access driver) prep.
+// TestIAMCredentials_GenerateIdToken — Access driver's id-token category.
 // Cross-Service auth chains call generateIdToken with a target audience
 // (the receiving service's URL); the mint returns a JWT whose `aud`
 // claim equals that audience. The sim signs with HS256 against a per-

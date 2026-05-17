@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// --- Phase 153 (P153.3) — added/updated endpoints
+// --- additional / refined App-management endpoints
 
 func TestGetAppBySlug_AnonReadable(t *testing.T) {
 	s := newTestServer()

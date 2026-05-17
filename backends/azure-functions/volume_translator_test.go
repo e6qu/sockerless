@@ -11,7 +11,7 @@ func TestTranslateBackingSpecMemoryRejected(t *testing.T) {
 	// Azure Functions WebApps storage surface is BYOS-only; no
 	// tmpfs primitive exists at the AzureStorageInfoValue layer.
 	// Per-invocation /tmp is the closest analogue but not a
-	// Docker-style mount. Translator rejects loudly. Phase 91b.
+	// Docker-style mount. Translator rejects loudly.
 	spec := core.BackingSpec{
 		Kind:   core.BackingMemory,
 		Memory: &core.MemorySpec{SizeMB: 64},

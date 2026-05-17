@@ -8,7 +8,9 @@ import (
 	"testing"
 )
 
-// Phase 154 (P154.3 + P154.4) — Deployments + Environments + repository_dispatch.
+// Deployments + Environments + repository_dispatch APIs — CRUD against the
+// /repos/{}/deployments + /repos/{}/environments surfaces and the
+// repository_dispatch trigger that emits a custom-event webhook.
 
 func do(s *Server, method, path string, body []byte) *httptest.ResponseRecorder {
 	var req *http.Request

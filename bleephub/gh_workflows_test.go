@@ -245,9 +245,9 @@ func TestWorkflows_Dispatch_NoYAMLCached(t *testing.T) {
 }
 
 func TestWorkflows_Rerun_ViaCachedYAML(t *testing.T) {
-	// Phase 130's rerun handler now wires through the WorkflowFile
-	// cache: register a file matching the run's name, then POST rerun,
-	// expect 201 Created instead of 422.
+	// The rerun handler dispatches through the WorkflowFile cache: register
+	// a file matching the run's name, then POST rerun, expect 201 Created
+	// instead of 422 (the no-cached-yaml fallback).
 	s := newTestServer()
 	s.registerGHActionsRoutes()
 	s.registerGHWorkflowsRoutes()

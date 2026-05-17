@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.5) — /applications/{client_id}/token family + OAuth App mgmt.
+// /applications/{client_id}/token family + OAuth App management — token
+// inspection, revocation, refresh, and OAuth App create/update against the
+// GitHub-compatible app-management surface (uses Basic auth with the OAuth
+// App credentials, not bearer tokens).
 
 func TestOAuthAppCreate_AndCheckTokenWithBasicAuth(t *testing.T) {
 	s := newTestServer()

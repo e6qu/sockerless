@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// Phase 153 (P153.12) — SQLite persistence: create entities, close, reopen,
-// verify they're still there.
+// SQLite persistence round-trip — create entities, close the store, reopen,
+// verify they're still there. Exercises BLEEPHUB_PERSIST=true + the
+// MustPut / MustDelete fail-loud-on-write contract.
 
 func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 	dir := t.TempDir()
