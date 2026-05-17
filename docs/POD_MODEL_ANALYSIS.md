@@ -23,11 +23,11 @@ Goals (per the request that opened the phase):
 |---|---|---|---|---|---|
 | **docker** | Local container | `docker create` | reuse via `docker exec` | host bind-mount (none) | 1 container for whole job |
 | **ecs** | Fargate task | `ecs.RunTask` | per-step `ecs.RunTask` sub-tasks (siblings of runner task) | `efs-ephemeral` | 1 runner task + N sub-tasks |
-| **lambda** | Lambda function (image mode + overlay) | `lambda.CreateFunction` | **Path A** WS exec OR **Path B** fresh `Invoke` per `docker exec` | `efs-ephemeral` | 1 runner-Lambda; each step's `docker create` makes a NEW sub-Lambda from pool |
+| **lambda** | Lambda function (image mode + overlay) | `lambda.CreateFunction` | Path A WS exec preferred; Path B fresh `Invoke` silent fallback | `efs-ephemeral` | 1 runner-Lambda; each step's `docker create` makes a NEW sub-Lambda from pool |
 | **cloudrun** | Cloud Run Service revision | `run.Services.CreateService` + `CreateRevision` | per-step new revision; pre/post tar/untar to GCS | `gcs-sync` (exotic `pd-ephemeral` opt-in) | 1 Service, many revisions |
-| **gcf** | Cloud Functions Gen2 (underlying Cloud Run Service) | `functions.CreateFunction` + `run.Services.UpdateService` escape hatch | per-`docker create`: pool query → cache hit reuse OR fresh function | `gcs-sync` (exotic `pd-ephemeral` opt-in) | Pool-reusable functions; 1 logical job potentially across multiple functions |
+| **gcf** | Cloud Functions Gen2 (underlying Cloud Run Service) | `functions.CreateFunction` + `run.Services.UpdateService` escape hatch | Path B (fresh function URL POST) is the DEFAULT for non-interactive; Path A WS for interactive only | `gcs-sync` (exotic `pd-ephemeral` opt-in) | Pool-reusable functions; 1 logical job potentially across multiple functions |
 | **aca** | Container Apps app revision | `armappcontainers.ContainerAppsClient.CreateOrUpdate` | per-step new revision; **persistent Azure Files mount** (no tar/untar) | `azure-files-ephemeral` | 1 App, many revisions |
-| **azf** | Function App (Linux Flex Consumption) | `armappservice.WebAppsClient.BeginCreateOrUpdate` | per-`docker create`: new Function App OR supervisor-overlay if multi-pod | `azure-files-ephemeral` | 1 Function App per `docker create` (potentially many per job) |
+| **azf** | Function App (Linux Flex Consumption) | `armappservice.WebAppsClient.BeginCreateOrUpdate` | Path A WS only (no Path B); refuses exec if no agent | `azure-files-ephemeral` | 1 Function App per `docker create` (potentially many per job) |
 
 ### What "uniform" actually means
 
@@ -94,25 +94,56 @@ For FaaS, both runner contracts map to per-step *function dispatch* — for GH t
 
 ## 4. The "12 steps = 12 min" root cause
 
-### Hypothesis (load-bearing)
+### Per-backend exec-path realities (CORRECTED after codex review)
 
-The user observed a 12-step CI job taking ~12+ min with ~1 min initialization per step. The pattern matches **Lambda's Path B (fresh `Invoke` per `docker exec`)** being taken instead of Path A (reverse-agent WebSocket).
+| Backend | Default path | Fallback | NotImpl if neither |
+|---|---|---|---|
+| **lambda** | **Path A (WS)** | Path B (fresh `Invoke`) | never — always falls through to Path B |
+| **gcf** | **Path B (fresh function URL POST)** for non-interactive (the CI-step case!) | Path A (WS) for interactive (TTY+stdin) | yes — NotImpl if neither available |
+| **azf** | **Path A (WS) only** | none | yes — NotImpl on missing agent (no Path B exists) |
 
-Smoking-gun code, `backends/lambda/backend_delegates.go:201`:
+Smoking-gun code:
 
+`backends/lambda/backend_delegates.go:201` — Path A preferred, Path B silent fallback:
 ```go
-func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
-    ...
-    if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
-        return s.BaseServer.ExecStart(id, opts)  // Path A (WS — fast)
-    }
-    return s.execStartViaInvoke(id, exec, opts)  // Path B (fresh Invoke — cold-start)
+if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+    return s.BaseServer.ExecStart(id, opts)  // Path A (WS — fast)
 }
+return s.execStartViaInvoke(id, exec, opts)  // Path B (fresh Invoke — cold-start)
 ```
 
-The same Path A/B split exists in `backends/cloudrun-functions/backend_delegates.go:216-223` (gcf) and `backends/azure-functions/backend_delegates.go:203` (azf).
+`backends/cloudrun-functions/backend_delegates.go:213` — Path B PREFERRED for non-interactive:
+```go
+interactive := opts.Tty && exec.OpenStdin
+if !interactive {
+    if rwc, err := s.execStartViaInvoke(id, exec); err == nil {
+        return rwc, nil  // Path B — every CI step takes this!
+    }
+    ...
+}
+if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+    return nil, NotImplementedError  // only reached if Path B failed AND no WS agent
+}
+return s.BaseServer.ExecStart(id, opts)  // Path A — interactive only
+```
 
-When the reverse-agent inside the container hasn't dialed back yet (or didn't dial back at all), every `docker exec` becomes a fresh `lambda.Invoke`. Image-based Lambdas with EFS + VPC ENI attach cold-start in **30–90 sec** (ENI attach alone is ~10 sec; image pull + bootstrap is the rest). For a 12-step job, 12 cold-starts ≈ 12 min — exactly the symptom reported.
+`backends/azure-functions/backend_delegates.go:203` — Path A only, no Path B:
+```go
+if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+    return nil, NotImplementedError  // refuses if no WS agent
+}
+return s.BaseServer.ExecStart(id, opts)  // Path A only
+```
+
+### Hypothesis (load-bearing, per-backend)
+
+**If the 12-step job ran on Lambda:** Path B fallback was hit — reverse-agent dial-back didn't connect or wasn't reachable, so every `docker exec` became a fresh `lambda.Invoke`. Image-based Lambdas with EFS + VPC ENI attach cold-start in 30–90 sec; 12 cold-starts ≈ 12 min — exactly the symptom reported.
+
+**If the 12-step job ran on GCF:** Path B is the *intended default* for non-interactive exec, not a fallback. Every CI step *is supposed to* be a fresh `POST /function-url` — but each POST that hits an idle Cloud Functions Gen2 cold-starts the underlying Cloud Run revision (~5–60 sec depending on image size + concurrency). For a 12-step job with concurrency=1, that's still 12 cold-starts in series. This isn't a bug — it's the design — but it produces the same wall-clock symptom and arguably should be inverted: Path A (warm WS) for *all* execs, Path B only as last-resort. The original GCF design probably picked Path B as default because it has fewer moving parts (no WS callback URL) and the symptom only bites at high step counts.
+
+**If the 12-step job ran on AZF:** can't reproduce with Path B (there is no Path B). The symptom would have to come from per-step cold-start at the Function App layer (new Function App per `docker create`, not per `docker exec`) — which only fires if the test was creating 12 containers, not 12 steps in one container. Need clarification from operator on the actual scenario.
+
+The original analysis incorrectly claimed all three FaaS backends had the same Path A/B split. Reality: each backend made a different default choice. The "12 min" hypothesis still holds for Lambda + GCF (different reasons); AZF needs the operator to confirm whether the test was 12 steps × 1 container or 12 containers × 1 step.
 
 ### Path A failure modes (why the reverse-agent might not be there)
 
@@ -158,9 +189,13 @@ Cycle 1 of `ContainerStart` legitimately needs `FunctionActiveV2Waiter` (functio
 
 The 5-sec poll for `s.stdinPipes.Load(id)` only matters if the runner is sending stdin. For exec-driven runners (GH Actions) and most GitLab stages, there's no stdin attach for cycle 2+. Detect "no /attach happened" and skip the poll.
 
-### 5.5 GCP/Azure FaaS: same Path A/B simplification
+### 5.5 GCF: invert the default from Path B to Path A
 
-`backends/cloudrun-functions/backend_delegates.go:216-223` and `backends/azure-functions/backend_delegates.go:203` have the same structure. Apply the same "mandatory Path A" rule.
+GCF currently *prefers* Path B (fresh per-exec function POST) for non-interactive — every CI step pays whatever cold-start the underlying Cloud Run revision has. Inverting to "try Path A first, fall back to Path B if no WS agent" matches Lambda's flow and brings the per-step cost down from "cold-start of Cloud Run revision" to "one HTTP round-trip on a warm WebSocket." Same blocking-on-reverse-agent question as 5.1 applies.
+
+### 5.6 AZF: already optimal — no change needed
+
+AZF already does Path A only and refuses if the WS agent doesn't connect. That's the strict-A behaviour 5.1 (a) proposes for Lambda. **Confirms the design direction.** What AZF *can* still suffer from is "12 containers × 1 step" (a new Function App per `docker create`) if the runner is configured to bring up multiple services. That's a different fix surface — pod materialization / supervisor pattern. Out of scope for this analysis.
 
 ### 5.6 Storage: nothing to simplify by default
 
