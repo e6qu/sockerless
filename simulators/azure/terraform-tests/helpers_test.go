@@ -204,6 +204,12 @@ func terraformCmd(args ...string) *exec.Cmd {
 		"ARM_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001",
 		fmt.Sprintf("ARM_ENDPOINT=%s", baseURL),
 	)
+	if v := os.Getenv("TF_LOG"); v != "" {
+		cmd.Env = append(cmd.Env, "TF_LOG="+v)
+	}
+	if v := os.Getenv("TF_LOG_PATH"); v != "" {
+		cmd.Env = append(cmd.Env, "TF_LOG_PATH="+v)
+	}
 	return cmd
 }
 
