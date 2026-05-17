@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.8) — Checks API.
+// Checks API parity — check-run + check-suite CRUD against the
+// GitHub-compatible /repos/{}/check-runs surface.
 
 func TestCheckRunLifecycle(t *testing.T) {
 	s := newTestServer()

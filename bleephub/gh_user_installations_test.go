@@ -9,7 +9,8 @@ import (
 	"testing"
 )
 
-// Phase 132 — /user/installations + /installation/token tests.
+// /user/installations + /installation/token surface — listing the
+// installations a user has access to + minting an installation token.
 //
 // The handlers go through ghHeadersMiddleware to populate ctxUser /
 // ctxInstallation; the middleware reads the Authorization header. To

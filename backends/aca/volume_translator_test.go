@@ -10,7 +10,7 @@ import (
 func TestTranslateBackingSpecMemoryEmptyDir(t *testing.T) {
 	// ACA revisions support StorageTypeEmptyDir as a first-class
 	// volume type — direct match for the cloud-agnostic memory
-	// backing. Phase 91b.
+	// backing.
 	spec := core.BackingSpec{
 		Kind:   core.BackingMemory,
 		Memory: &core.MemorySpec{SizeMB: 128},

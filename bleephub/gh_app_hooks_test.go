@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.4) — app-level webhook config + deliveries.
+// App-level webhook config + deliveries — GET/PATCH /app/hook/config + the
+// per-app /app/hook/deliveries listing surface, matching GitHub's
+// installation-vs-app distinction.
 
 func TestAppHookConfig_GetPatch(t *testing.T) {
 	s := newTestServer()

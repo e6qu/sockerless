@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract. Phase 135.
+	// capacity contract.
 	evalDir := findModuleDir("simulators/testdata/eval-arithmetic")
 	fmt.Println("Building eval-arithmetic Docker image (linux/arm64)...")
 	evalImageName = "sockerless-eval-arithmetic:test"
@@ -140,9 +140,9 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_ECS_CLUSTER=sim-cluster",
 		"SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0",
 		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim",
-		// BUG-848 made architecture mandatory; integration tests must
-		// declare it (no default — sockerless reports the cloud
-		// workload's arch, not its own host arch).
+		// Architecture is mandatory; integration tests must declare it
+		// (no default — sockerless reports the cloud workload's arch,
+		// not its own host arch).
 		"SOCKERLESS_ECS_CPU_ARCHITECTURE=ARM64",
 		"SOCKERLESS_AGENT_TIMEOUT=2s",
 		"SOCKERLESS_POLL_INTERVAL=500ms",

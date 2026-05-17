@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// Phase 154 (P154.5) — PR review comments.
+// PR review comments — root + reply CRUD against
+// /repos/{}/pulls/{}/comments + thread navigation (in_reply_to_id).
 
 func TestPRReviewComments_RootAndReply(t *testing.T) {
 	s := newTestServer()

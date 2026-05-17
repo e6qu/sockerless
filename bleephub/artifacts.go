@@ -318,7 +318,7 @@ func (s *Server) handleDownloadArtifact(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(art.Data)))
 	w.WriteHeader(http.StatusOK)
-	w.Write(art.Data)
+	_, _ = w.Write(art.Data)
 }
 
 // --- Cache stubs ---

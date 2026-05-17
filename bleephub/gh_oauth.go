@@ -168,7 +168,7 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 // handleDevicePage renders a simple HTML confirmation page.
 func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html><html><body><h1>Auto-approved by bleephub</h1><p>You can close this page.</p></body></html>`))
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><h1>Auto-approved by bleephub</h1><p>You can close this page.</p></body></html>`))
 }
 
 // handleOAuthAuthorize — GET /login/oauth/authorize.

@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// Phase 135d — workload-dispatch invariant. No sim handler may execute
-// a workload via `os/exec`. See feedback_sim_host_model.md.
+// Workload-dispatch invariant. No sim handler may execute a workload via
+// `os/exec` — every workload runs in a Docker host honouring the workload's
+// Architecture field. See feedback_sim_host_model.md.
 func TestNoOsExecOfWorkloads(t *testing.T) {
 	// cloudbuild.go uses os/exec to spawn the `docker` CLI for build
 	// steps — that's sim tooling, not a workload.

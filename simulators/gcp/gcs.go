@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -263,9 +264,25 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		// Real GCS percent-encodes the object component in selfLink /
+		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
+		// Use url.PathEscape so consumers parsing the URL back into the
+		// (bucket, object) pair don't pick up a different object.
+		escapedObject := url.PathEscape(objectName)
+		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
+		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":        "storage#object",
+			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),
+			"selfLink":    selfLink,
+			"mediaLink":   mediaLink,
 			"name":        obj.Name,
 			"bucket":      obj.Bucket,
+			"generation":  "1",
 			"size":        obj.Size,
 			"contentType": obj.ContentType,
 			"timeCreated": obj.TimeCreated,
@@ -386,9 +403,29 @@ func registerGCS(srv *sim.Server) {
 		key := bucketName + "/" + objectName
 		objects.Put(key, obj)
 
+		// Real GCS object responses include `kind` + `id` + `selfLink` +
+		// `mediaLink`. terraform-provider-google's `google_storage_bucket_object`
+		// reads `selfLink` into the resource's `self_link` attribute on
+		// apply, so missing it means the attribute is empty downstream.
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		// Real GCS percent-encodes the object component in selfLink /
+		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
+		// Use url.PathEscape so consumers parsing the URL back into the
+		// (bucket, object) pair don't pick up a different object.
+		escapedObject := url.PathEscape(objectName)
+		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
+		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":        "storage#object",
+			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),
+			"selfLink":    selfLink,
+			"mediaLink":   mediaLink,
 			"name":        obj.Name,
 			"bucket":      obj.Bucket,
+			"generation":  "1",
 			"size":        obj.Size,
 			"contentType": obj.ContentType,
 			"timeCreated": obj.TimeCreated,

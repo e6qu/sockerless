@@ -1,10 +1,10 @@
-// Phase 120 cells 5-8 live-GCP harness. Build-tag-gated so the default
-// `go test ./...` doesn't try to dispatch real workflows.
+// Live-GCP runner-integration cells 5-8 harness. Build-tag-gated so the
+// default `go test ./...` doesn't try to dispatch real workflows.
 //
 // All four cells use the docker-executor pattern (no k8s, no GKE, no
-// ARC). Cells 5+6 (gh) are dispatched via the existing
-// github-runner-dispatcher-gcp (Phase 122). Cells 7+8 (gl) are picked up
-// by long-lived sockerless-managed gitlab-runner containers.
+// ARC). Cells 5+6 (gh) are dispatched via github-runner-dispatcher-gcp.
+// Cells 7+8 (gl) are picked up by long-lived sockerless-managed
+// gitlab-runner containers.
 //
 // Each test:
 //

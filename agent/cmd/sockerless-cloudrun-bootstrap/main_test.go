@@ -150,11 +150,9 @@ func TestExpectedBinaryName(t *testing.T) {
 	}
 }
 
-// Phase 128 — bootstrap timer.
-//
-// runWithTimeout: a subprocess that finishes within budget exits with
-// its own code; one that exceeds budget gets SIGTERM/SIGKILL and the
-// helper returns timedOut=true.
+// Bootstrap timeout helper. runWithTimeout: a subprocess that finishes
+// within budget exits with its own code; one that exceeds budget gets
+// SIGTERM/SIGKILL and the helper returns timedOut=true.
 
 func TestRunWithTimeout_FinishesEarly(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "exit 7")

@@ -1,6 +1,15 @@
 # simulator-azure-terraform-tests
 
-Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for a Terraform provider (currently the `azurestack` Azure Stack Hub provider; the sibling `azurerm` cloud provider drives the same ARM endpoints) to provision and tear down resources.
+Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for a Terraform provider (currently the `azurestack` Azure Stack Hub provider; the sibling `azurerm` cloud provider drives the same ARM endpoints but requires more wiring for a non-Azure-public host) to provision and tear down resources.
+
+Resources covered:
+- `azurestack_resource_group`
+- `azurestack_virtual_network` / `azurestack_subnet`
+- `azurestack_network_security_group` / `azurestack_network_security_rule`
+- `azurestack_storage_account` (Azure Files / runner shared volumes)
+- `azurestack_key_vault` (runner credential storage)
+
+Resources NOT yet covered (sim implements the ARM endpoint but the `azurestack` provider catalogue doesn't expose the resource; requires `azurerm` integration research): ACA + ACR + AZF + App Insights + user-assigned identity + private DNS + Key Vault data-plane keys/secrets.
 
 ## Running
 

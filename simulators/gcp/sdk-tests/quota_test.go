@@ -66,7 +66,7 @@ func startQuotaIsolatedSim(t *testing.T, budget float64) string {
 // SIM_GCP_CPU_QUOTA_PER_REGION set to 2 vCPU-min and the test
 // deploying 1 vCPU services, the third deploy must be rejected with
 // the canonical "Quota exceeded for total allowable CPU per project
-// per region" error. Reproduces BUG-942 / BUG-948 deterministically.
+// per region" error.
 func TestSDK_RegionalCPUQuota_RejectsCloudRunDeployOverBudget(t *testing.T) {
 	url := startQuotaIsolatedSim(t, 2)
 
@@ -161,8 +161,7 @@ func TestSDK_RegionalCPUQuota_PartitionedByRegion(t *testing.T) {
 // underlying Cloud Run service (cloudfunctions.go:registerCloudFunctions
 // stamps a backing ServiceV2). The function's AvailableCpu is the
 // container CPU limit on that backing service — so the same regional
-// quota check fires, just one layer deeper. This is the exact path
-// BUG-948 hits live.
+// quota check fires, just one layer deeper.
 func TestSDK_RegionalCPUQuota_RejectsCloudFunctionsDeploy(t *testing.T) {
 	url := startQuotaIsolatedSim(t, 1)
 
@@ -198,7 +197,7 @@ func TestSDK_RegionalCPUQuota_RejectsCloudFunctionsDeploy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Second function: would push us over budget=1. Rejected with the
-	// canonical quota message — same shape gcf backend sees in BUG-948.
+	// canonical quota message — same wire shape the gcf backend matches on.
 	_, err = fnClient.CreateFunction(ctx, mkFn("fn-b"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Quota exceeded for total allowable CPU per project per region",

@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — SDK-driven metadata client tests. Validates our handlers
-// match what cloud.google.com/go/compute/metadata expects (header
-// casing, JSON shape, error semantics). Raw-HTTP coverage lives in
-// metadata_test.go; this file proves the GCP SDK client accepts our
-// responses.
+// SDK-driven metadata client tests. Validates our handlers match what
+// cloud.google.com/go/compute/metadata expects (header casing, JSON
+// shape, error semantics). Raw-HTTP coverage lives in metadata_test.go;
+// this file proves the real GCP SDK client accepts our responses
+// end-to-end (external-validation principle).
 //
 // metadata.NewClient lets us point the SDK at the sim's listener.
 func gcpMetadataClient(t *testing.T) *metadata.Client {

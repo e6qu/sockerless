@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — GCE compute metadata server.
+// GCE compute metadata server.
 //
 // Workloads on Cloud Run, Cloud Run Jobs, and Cloud Functions read
 // metadata.google.internal/computeMetadata/v1/... at runtime. The sim

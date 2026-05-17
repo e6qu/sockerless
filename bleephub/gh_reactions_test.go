@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// Phase 154 (P154.1) — Reactions API parity.
+// Reactions API parity — issue / PR / commit / comment reaction CRUD against
+// the GitHub-compatible /repos/{}/issues/{}/reactions surface.
 
 func TestReactions_IssueLifecycle(t *testing.T) {
 	s := newTestServer()

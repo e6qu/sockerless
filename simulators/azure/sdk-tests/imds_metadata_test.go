@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 135c — Azure IMDS instance metadata.
+// Azure IMDS instance metadata.
 //
 // /metadata/instance returns {compute, network} on real Azure (port 80,
 // link-local 169.254.169.254). Sim serves it on its main listener so

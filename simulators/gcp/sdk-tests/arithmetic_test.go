@@ -25,8 +25,8 @@ func gcpCreateFunction(t *testing.T, fnID string, simCommand []string) {
 		},
 	}
 	if len(simCommand) > 0 {
-		// Phase 135: workloads dispatch through Docker — never os/exec on
-		// the sim host. Tests carry the image alongside the command.
+		// Workloads dispatch through Docker — never os/exec on the sim
+		// host. Tests carry the image alongside the command.
 		// evalImageName is built in TestMain and contains eval-arithmetic
 		// at /usr/local/bin/eval-arithmetic as ENTRYPOINT.
 		fn["serviceConfig"] = map[string]any{

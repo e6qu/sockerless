@@ -512,7 +512,9 @@ func (s *BaseServer) handleImageBuild(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, rc)
+	if _, err := io.Copy(w, rc); err != nil {
+		s.Logger.Debug().Err(err).Msg("build stream copy failed — client likely disconnected")
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}

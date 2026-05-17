@@ -33,8 +33,7 @@ func TestMain(m *testing.M) {
 	// Allocate both ports while both listeners are open. Closing the first
 	// before allocating the second lets the OS re-assign the just-freed
 	// port to the second listener, causing the sim's HTTP and gRPC servers
-	// to collide on the same port — same race fixed in sdk-tests during
-	// Phase 160 (BUG-993).
+	// to collide on the same port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatalf("Failed to find free port: %v", err)

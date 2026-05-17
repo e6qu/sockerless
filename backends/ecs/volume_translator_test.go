@@ -11,7 +11,7 @@ func TestTranslateBackingSpecMemoryRejected(t *testing.T) {
 	// ECS task-def Volumes don't have a tmpfs primitive; tmpfs lives
 	// at the ContainerDefinition.LinuxParameters layer. Translator
 	// rejects loudly rather than silently substituting Host{}
-	// (disk-backed). Phase 91b decision.
+	// (disk-backed).
 	spec := core.BackingSpec{
 		Kind:   core.BackingMemory,
 		Memory: &core.MemorySpec{SizeMB: 64},

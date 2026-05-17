@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-// Phase 153 (P153.6) — permission enforcement decorator.
+// Permission enforcement decorator — requirePerm wrappers gate ghs_ tokens
+// against the installation's granted permission set, returning 403 with a
+// GitHub-shaped error envelope when the requested perm is missing.
 
 func TestRequirePerm_GhsToken_PermsGate(t *testing.T) {
 	s := newTestServer()

@@ -2,12 +2,11 @@ package main
 
 import "testing"
 
-// TestParseClauseHasOperator covers BUG-887: the cloudrun + gcf
-// backends use `logName:"run.googleapis.com"` (Cloud Logging's `:`
-// substring operator) to scope `docker logs` to runtime stdout/stderr
-// and exclude Cloud Audit Logs. Pre-fix the sim's parseClause didn't
-// recognise `:` and fell through to the wildcard branch, silently
-// matching nothing.
+// TestParseClauseHasOperator — the cloudrun + gcf backends use
+// `logName:"run.googleapis.com"` (Cloud Logging's `:` substring
+// operator) to scope `docker logs` to runtime stdout/stderr and exclude
+// Cloud Audit Logs. parseClause must recognise `:` distinct from the
+// wildcard branch.
 func TestParseClauseHasOperator(t *testing.T) {
 	c := parseClause(`logName:"run.googleapis.com"`)
 	if c.field != "logName" {

@@ -48,118 +48,48 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #161 | 161 | Comprehensive vibe-slop sweep — 18 BUGs closed + bleephub GraphQL completion. Merged 2026-05-16 at `841f2456`. |
 | #162 | 162 | Vibe-coding catalogue refresh — 12 new patterns (24–35) + `avoid-vibe-slop` skill expanded 17 → 26 checklist items. Doc-only. Merged 2026-05-16 at `4f602988`. |
 | #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
+| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP terraform-tests 4 → 11 resources; Azure terraform-tests 1 → 5; surfaced + fixed 2 real sim defects (BUG-1029 GCP secret-version state handlers, BUG-1030 port-allocator race in terraform-tests). Merged 2026-05-17 at `616dcd98`. |
 
 ## Active phase
 
-### Phase 164 — Second vibe-slop sweep + terraform-provider test expansion (in flight on `phase-164-vibe-slop-sweep-2`)
+### Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
 
-Phase 161 was the first comprehensive sweep (18 BUGs closed). Phase 164 re-runs the [`avoid-vibe-slop`](.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162 + the skill expanded from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — it did. **19 new BUGs closed (1014–1032).**
+User directive (2026-05-17): re-run vibe-slop on a fresh main; plan test-pyramid expansion against real adaptors (SDK + terraform-provider + CLI) for implemented slices; single PR with sub-phases; verify after every significant chunk; prune obsolete continuity-doc info for cross-compaction durability.
 
-The phase ran in five passes per user direction (each pass = a new request layered onto the open PR):
+Three layered tracks on one PR:
 
-1. **First-pass survey** (P164.0–P164.8) — 9 BUGs (1014–1022) filed up front. Headlines: BUG-994 phase-ref sweep was incomplete at ~10 production-code sites; `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error string with a matching test substring assertion (pattern-28 anti-pattern); BUG-996 cross-cloud silent-decode sibling in bleephub handlers + AWS/GCP sims + `backends/core` exec & libpod handlers; dead helpers in `bleephub/webhooks_payloads.go` with `//nolint:unused // callers land in subsequent commits` directives that never landed; stale `//nolint:unused` pragmas on context helpers that now have real callers; six unused-import silencers.
-2. **Re-verification pass** (P164.9) — 3 further BUGs (1023–1025) per pattern 26 / 32: the `stringifyJobState` dead helper in github-runner-dispatcher-gcp; the `httputil.DumpRequest` silencer in tools/http-trace; three silent `pktline.Encoder` swallows in bleephub git_http.go (now Debug-level logged).
-3. **Third-pass user-requested sweep** — 3 more BUGs (1026–1028): two test files asserting on Phase metadata in error strings (pattern 28); one naked `t.Skip()` with no message; Azure terraform-tests docs↔code mismatch ("azurerm" in docs vs `azurestack` actually used).
-4. **Terraform-provider test expansion** (user-requested, P164.10) — GCP terraform-tests expanded from 4 resources to 11 covering 6 sim slices (compute, dns, artifactregistry, cloud_run_v2 Service + Job, storage, secretmanager). Surfaced + closed 3 sim defects: missing GCP secret-version state-transition handlers (`:enable`/`:disable`/`:destroy` + bare-version GET); same close-then-bind port-allocator race in terraform-tests that Phase 160 fixed only in sdk-tests; the test-coverage expansion itself.
-5. **Azure terraform expansion** (P164.11) — Azure terraform-tests expanded from 1 resource (resource_group) to 5 (+ virtual_network, subnet, network_security_group, network_security_rule). Pre-validated via curl; all 5 sim handlers return 200/201 with canonical ARM-id payload. AWS terraform-tests was already comprehensive (394 lines + cross-resource invariants from Phase 159) — not touched.
+1. **Vibe-slop sweep #3 (4 BUGs: 1033–1036).** Fresh-eyes pass after Phase 161 (18) + Phase 164 (19). 5 silent `io.Copy(w, rc)` swallows in image-stream + build response paths (1033); dead `fmt.Sprintf` silencer with misleading "used by demuxer" comment (1034); `w.Write` style inconsistency at 3 outlier sites (1035); ~50 test-file docstrings still anchored on Phase / sub-phase metadata — the BUG-994 / 1014 / 1026 sweep stopped at production-code (1036).
 
-Per the user directive *"any fixes to land on a single PR; if more extensive changes are needed they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time"*: 13 granular commits on one branch, CI green between each, single PR.
+2. **Sim test-pyramid expansion (3 P0 BUGs: 1037–1039).** External-validation principle (PLAN.md §1). Audit surfaced terraform-provider gaps: AWS missing 11 load-bearing resources (Lambda, S3, DynamoDB, KMS, SecretsManager, EFS, SSM, EC2); GCP missing 8 (Cloud Functions Gen2 — runner-workload primitive! — IAM, GCS object, Compute, Build, Logging, PubSub); Azure widest — only 5 networking primitives covered, both runner backends (ACA + AZF) entirely terraform-uncovered.
+
+3. **Continuity-doc compression.** STATUS / DO_NEXT / PLAN / WHAT_WE_DID grew to ~1700 lines across 5 files. Prune to actionable-across-compaction shape: keep invariants + active-phase scope + last-3-phase headlines + forward tracks; drop closed-phase sub-task tables + per-BUG narratives (covered by BUGS.md). Target ≤ ~50% current line count.
+
+Sub-task layout (P165.0–P165.10) in [DO_NEXT.md](DO_NEXT.md).
 
 Acceptance:
-
-- All 19 BUGs (1014–1032) closed in this PR.
-- `go test ./...` green in every touched module (bleephub / backends/core / backends/lambda / backends/ecs / simulators/gcp / simulators/aws/sdk-tests / cmd/sockerless-admin / github-runner-dispatcher-gcp).
-- GCP terraform-tests `TestTerraformApplyDestroy` PASSes locally (11 resources provisioned + destroyed).
-- Azure terraform-tests CI-validated in Docker.
-- 11 standard CI checks green per push.
-- User merges PR #164.
-
-Out of scope (filed as future BUGs if surfaced):
-
-- Live-cloud validation track (separate cells, separate branches).
-- UI / TypeScript sweep (deferred from Phase 161).
-- Slopsquatted-dependency audit (handled by `check-latest-deps` hook).
-- File-length refactoring for the 14 Go files over 1000 lines (LLM-editability principle 6) — out of Phase 164 scope.
-
-### Phase 161 — Comprehensive vibe-slop sweep + fixes (in flight on `phase-161-vibe-slop-sweep`)
-
-Sockerless is a vibe-coded project. The published 23-pattern catalogue at [`docs/VIBE_CODING.md`](docs/VIBE_CODING.md) plus the project-local `avoid-vibe-slop` skill exist precisely so this sweep is an explicit phase, not a perpetual side-quest. Phase 161 runs the checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api), files every concrete violation as a BUG, and lands real fixes in one PR. User directive at phase open: no legacy support, no fallbacks, no error-swallowing — silent degradation is itself a bug.
-
-Closed in this PR (13 fixes):
-
-| BUG | Pattern | Area | Fix |
-|---|---|---|---|
-| 1000 | 9 + 15 (auth bypass) | `bleephub/auth.go::handleOAuthToken` | Validate `client_assertion` RS256 JWT against the agent's registered RSA public key per Azure DevOps OAuth2 jwt-bearer flow. OAuth-envelope errors (400 / 401). Tests rewritten to drive a real keypair + signed assertion. |
-| 997 | 1 + persistence invariant | `bleephub/{store,store_repos,gh_apps_store,gh_apps_user_tokens,gh_oauth}.go` | Added `Persistence.MustPut` + `MustDelete` (`log.Fatalf` on write failure); swept 18 call-sites. |
-| 995 | 11/12 (handler bypasses `s.self`) | `backends/core/handle_extended.go`, `handle_images.go`, `handle_libpod.go`, `handle_containers_query.go` | Delegated `handleSystemDf` / `handleContainerList` / `handleImagePrune` to `s.self.<Method>`; consolidated the richer prune logic into `BaseServer.ImagePrune`; extracted `collectContainers` helper shared by `handleLibpodContainerList` (fixes a latent pending-create-drop bug in the no-CloudState branch). |
-| 998 | 1 (silent auth-decode swallow) | `backends/core/handle_images.go` | Deleted dead `decodeRegistryAuth`; tightened the inline `handleImagePush` auth path to return 400 on malformed base64 / JSON. Tests rewritten via httptest. |
-| 1001 | 9 (fake-data GraphQL resolvers) | `bleephub/gh_issues_graphql.go`, `gh_pulls_graphql.go` | Replaced `alwaysEmptyString` on NonNull ProjectV2 / PRComment fields with `unreachableFieldErr` that returns a clear GraphQL error if invoked (resolvers were unreachable in practice; making the contract honest). |
-| 1002 | 9 (missing parent-exists check) | `simulators/azure/acr.go` | Replications list verifies parent registry exists; returns Azure `ResourceNotFound` envelope. |
-| 996 | 1 (sim handler ReadJSON swallow) | `simulators/{aws,gcp,azure}/*.go` (18 sites) | Replaced every `_ = sim.ReadJSON(...)` with error-propagating pattern using cloud-appropriate error envelope (`AWSErrorf` / `AzureErrorf` / `GCPErrorf`). |
-| 994 | 8 (phase / BUG refs in code) | repo-wide (~115 occurrences) | Two-pass script across `backends/`, `simulators/`, `bleephub/`, `cmd/`, `api/`, `tests/`, `github-runner-dispatcher-*/`. Stripped phase/BUG references; preserved the *why* context when load-bearing. Caught + fixed one regression where the script lost trailing newlines on 3 lines. |
-| 999 | 8 (misleading deprecation) | `backends/core/tags.go::InstanceID` | Audit confirmed InstanceID + Cluster are distinct, both load-bearing. Dropped the misleading deprecation comment; clarified each field's role. |
-| 1004 | 8 (legacy shim) | `bleephub/store.go::SeedDefaultUser` | Switched seeded admin token from `bph_` to `ghp_` matching real GitHub; swept all fixture / test / doc / UI references. |
-| 1005 | 5 (defensive nil chain) | `bleephub/workflows.go` | Extracted into `JobDef.FailFast()` method handling every nil case (including nil receiver) — runtime path is now single-deref. |
-| 1003 | 14 (premature abstraction) | `simulators/gcp/artifactregistry.go::buildOCIHandler` | Inlined the single-call-site helper. |
-| 1008 | 8 + dead code | OTel `InitTracer` in 6 modules | Deleted the legacy entry point superseded by `InitObservability`; migrated `otel_test.go` in each module. |
-
-Surfaced + filed as new Open BUGs for Phase 162 (out of scope for #161 — staged so the PR stays reviewable; each is a multi-file rip-out):
-
-- **BUG-1006** — `cmd/sockerless-admin/config.go` + `cmd/sockerless/client.go` silently fall back to "old JSON contexts" when `config.yaml` is missing. Rip out the JSON fallback; require config.yaml or surface an error.
-- **BUG-1007** — `cmd/sockerless-admin` legacy migration scaffolding (`DeriveLegacyInstances`, `MigrateLegacyProjects`, `legacyDir`, `ProjectConfig` dual shape). Drop the entire migration plumbing.
-- **BUG-1009** — `github-runner-dispatcher-gcp` handles "services without an owner label" as legacy with a future cleanup. Drop the legacy branch; error on encountering them.
-
-Acceptance for #161:
-
-- 13 BUGs closed (994 + 995 + 996 + 997 + 998 + 999 + 1000 + 1001 + 1002 + 1003 + 1004 + 1005 + 1008).
-- 3 BUGs filed as Open + scoped for Phase 162 (1006, 1007, 1009).
-- 1 candidate finding reclassified as false positive (envOrDefault — documented-default-value semantics).
+- 7 BUGs (1033–1039) closed in this PR.
 - `go test ./...` green in every touched Go module.
-- BUGS.md count: `1011 filed / 1006 fixed / 4 open (1001 + 1006 + 1007 + 1009) / 2 false positives`.
-- This phase's PR opens against `main`. User merges.
+- `TestTerraformApplyDestroy` green for all three cloud terraform-tests modules after expansion.
+- Continuity docs ≤ ~50% current line count.
+- 11 standard CI checks green per push.
+- User merges PR #165.
 
-Out of scope:
+Out of scope (carry forward):
+- TypeScript / UI vibe-slop (Phase 161 backlog).
+- Live-cloud validation track.
+- P1 terraform-test deepening (CloudFront full-distribution, CloudWatch Metrics, Cloud Build, Application Insights, Operations).
 
-- TypeScript / UI sweep — deferred.
-- Live-cloud validation track (separate cells, separate branches).
-- Phase 91d (cloud-primitive blocker).
-- Slopsquatted-dependency audit — `check-latest-deps` already covers drift.
+### Phase 164 — Second vibe-slop sweep + terraform-provider test expansion (merged at `616dcd98`)
 
-### Phase 161 mid-PR expansion — bleephub GraphQL completion
+13 granular commits closed 19 BUGs (1014–1032) across five layered passes. GCP terraform-tests expanded 4 → 11 resources covering 6 sim slices (surfaced 2 real sim defects in the process); Azure terraform-tests expanded 1 → 5 resources. Narrative + per-pass breakdown in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-BUG fix detail in [BUGS.md](BUGS.md); per-commit detail in `git log 616dcd98^..616dcd98`.
 
-Folded into PR #161 at user request after the re-verification pass. The placeholder-resolver pattern from BUG-1001 ("contract honest via `unreachableFieldErr`") proved that empty connections + unreachable resolvers is a tolerable interim, but the user's preference is to complete each surface with real lookups now rather than carry the placeholders.
+### Phase 161 — First comprehensive vibe-slop sweep + bleephub GraphQL completion (merged at `841f2456`)
 
-Surfaces, each landing in its own commit with real `gh` CLI smoke for fidelity:
+User directive: no legacy support, no fallbacks, no error-swallowing — silent degradation is itself a bug. 13 fixes + mid-PR bleephub GraphQL completion (PR.comments, reviewThreads, ProjectV2 with fields, edit history, minimization, issue/PR locking, PR.milestone) with real `gh` CLI smoke tests + ProjectManager instance-based lifecycle rewrite. BUG-1006/1007/1009/1011 staged forward + closed across the rest of the 16x sub-task table. Per-fix detail in `git log 841f2456`; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-- **P161.16 — `PullRequest.comments` ✅**: Wired to bleephub's existing `Comments` store (real GitHub stores PR + Issue conversation comments in the same table; bleephub now mirrors via `Comment.ParentType`). `PRComment` `unreachableFieldErr` resolvers replaced with real data resolvers. Smoke: `gh pr comment` + `gh pr view --json comments`.
-- **P161.17 — `PullRequest.reviewThreads`**: Add `PullRequestReviewThread` + `PullRequestReviewComment` GraphQL types. Wire the new connection to the existing `PRReviewCommentStore` (drives the REST `/pulls/{n}/comments` surface via `gh_pr_comments.go`) + the `gh_pr_threads.go` resolve/unresolve state. Smoke: `gh pr view --json reviewThreads`.
-- **P161.18 — ProjectV2**: New `ProjectV2Store` + REST endpoints (`/orgs/{org}/projectsV2`, `/projects/{project_id}/items`) + GraphQL types (`ProjectV2`, `ProjectV2Item`, `ProjectV2ItemFieldValue` with at least `SingleSelectValue`) + `addProjectV2ItemById` mutation. `Issue.projectItems` returns real items when issues are added to projects. Smoke: `gh project create` + `gh project item-add` + `gh issue view --json projectItems`.
-- **P161.19 — Comment edit history**: Add `Comment.LastEditedAt *time.Time` + `Comment.EditorID int`. REST `PATCH /repos/{}/issues/comments/{id}` + `/pulls/comments/{id}` mutate the body + set edit metadata. GraphQL fields wired: `includesCreatedEdit`, `lastEditedAt`, `editor` on both `IssueComment` and `PRComment` (currently `alwaysFalse` / `alwaysNil`). Smoke: `gh api PATCH .../comments/{id}` then `gh pr view --json comments` shows the edited body + metadata.
-- **P161.20 — Comment minimization** (off-topic / outdated / resolved / duplicate / spam / abuse): GraphQL `minimizeComment` + `unminimizeComment` mutations against `IssueComment` / `PRComment`. `Comment.MinimizedReason` enum tracked on the store. `isMinimized` + `minimizedReason` GraphQL fields wired to real state (currently truthful-but-static `alwaysFalse` / `alwaysNil`). Smoke: GraphQL mutation directly + verify subsequent `comments` query reflects the minimized state.
-- **P161.21 — PR review thread resolve/unresolve integration**: `gh_pr_threads.go` already exposes `resolveReviewThread` / `unresolveReviewThread` mutations. Integrate the persisted resolution state into the new `PullRequest.reviewThreads` connection from P161.17 so each thread carries `isResolved` + `resolvedBy`. Smoke: `gh pr view --json reviewThreads` shows resolved state correctly after a resolve mutation.
-- **P161.22 — Issue / PR locking (moderation)** ✅: REST `PUT /repos/{}/issues/{n}/lock` + `DELETE /repos/{}/issues/{n}/lock` (also matches the PR-as-issue path since PRs share the issue lock endpoint on real GitHub). GraphQL `lockLockable` + `unlockLockable` mutations. `Issue.locked` + `Issue.activeLockReason` + `PullRequest.locked` + `PullRequest.activeLockReason` fields wired. `LockReason` enum (OFF_TOPIC, RESOLVED, SPAM, TOO_HEATED). Comment-create handlers reject with 403 when the parent is locked. Smoke: `gh issue lock` then attempt `gh issue comment` → expect 403.
-- **P161.23 — PR milestones**: PR.MilestoneID already tracked on the model. Wire `PullRequest.milestone` GraphQL resolver to look up the real Milestone (currently returns `alwaysNil`). REST `PATCH /repos/{}/pulls/{n}` accepts a `milestone` field to set/clear the PR's milestone. Smoke: `gh pr edit --milestone <num>` then `gh pr view --json milestone` returns the milestone.
+### Phase 163 — Makefile legacy alias rip-out + docs sweep (merged at `d5b9d22a`)
 
-Each commit:
-- Lands the implementation
-- Lands a `gh` CLI smoke test under `bleephub/test/` or as a Go test that shells out to `gh`
-- Updates `specs/BLEEPHUB_GITHUB_API_PARITY.md` row for the closed surface
-- Updates BUGS.md (BUG-1001 finally closes after P161.18)
-
-### Phase 163 — Makefile legacy alias rip-out + docs sweep (in flight)
-
-User directive: "remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either; sweep docs for old `make` calls and replace them with new ones."
-
-Single commit on `phase-163-legacy-make-rip-out`. Scope = Makefile + make/*.mk + docs. Zero Go-file changes. Per-backend integration tests reached via the existing `%/<target>` pattern rule (now with a `FORCE` dep so the rule isn't short-circuited by a target colliding with a real subdir).
-
-### Track — Continued legacy / fallback rip-out (filed during Phase 161, still open)
-
-Filed during Phase 161 but staged out of scope:
-
-- **BUG-1011** (P1) — `ProjectConfig.SimPort/BackendPort/LogLevel` + `project_manager.go` lifecycle. Rewrite ProjectManager to drive lifecycle from `Topology.Instances` instead of the legacy "1 sim + 1 backend per project" shape.
-- **BUG-1009** (P3 continued) — gh-runner-dispatcher escalation (hard error vs grace-window delete on unlabeled services).
-
-Branch + commit layout to be decided when the phase starts.
+Single commit. Dropped pure-alias targets (sim-test-*, test-{unit,e2e,agent,core,bleephub}, bleephub-test, bleephub-gh-test) — every alias just delegated to `$(MAKE) -C <dir>` which the `%/<target>` pattern rule already covers. Side-fix: `FORCE` dep so the pattern rule isn't short-circuited by a name-vs-dir collision (e.g. `bleephub/test/`).
 
 ## Future phases
 

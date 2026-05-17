@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
-	// Multi-stage Docker build forced to linux/arm64. Phase 135.
+	// Multi-stage Docker build forced to linux/arm64 (sim capacity contract).
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build

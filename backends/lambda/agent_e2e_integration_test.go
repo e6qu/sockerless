@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -162,7 +161,3 @@ func demuxDockerStream(raw []byte) []byte {
 	}
 	return out.Bytes()
 }
-
-// Catch compile-time dead-ref warnings; fmt is used by the framing
-// demuxer when debugging, keep the import pinned without a dead var.
-var _ = fmt.Sprintf

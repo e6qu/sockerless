@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Phase 127 + 135f — gcloud compute disks against the sim. Verifies the
-// new Compute Disks endpoints (Insert / Get / List / Delete / Resize)
-// round-trip through the gcloud CLI.
+// gcloud compute disks against the sim — verifies the Compute Disks
+// endpoints (Insert / Get / List / Delete / Resize) round-trip through
+// the real gcloud CLI (external-validation principle).
 
 func TestGcloudComputeDisks_CRUD(t *testing.T) {
 	zone := "us-central1-a"
