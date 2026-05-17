@@ -287,7 +287,7 @@ func registerAzureFunctions(srv *sim.Server) {
 				// Real Azure Functions returns HTTP error when function crashes
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write(responseBody)
+				_, _ = w.Write(responseBody)
 				return
 			}
 		} else {
