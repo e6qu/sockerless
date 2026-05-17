@@ -14,9 +14,9 @@ import (
 
 // AWS WAFv2 — JSON 1.1 over POST / + X-Amz-Target=AWSWAF_20190729.<Op>.
 // Sim covers the CLOUDFRONT scope (global, us-east-1). REGIONAL scope
-// (ALB / API Gateway path) is intentionally out of scope per Phase
-// 159 plan — would compose with the same handlers if a backend needs
-// it later. Resource bodies (Rules, VisibilityConfig, etc.) pass
+// (ALB / API Gateway path) is intentionally out of scope — would
+// compose with the same handlers if a backend needs it later.
+// Resource bodies (Rules, VisibilityConfig, etc.) pass
 // through as opaque json.RawMessage so the sim doesn't need to mirror
 // the full SDK type tree — Terraform round-trips correctly because
 // the wire bytes are preserved.
@@ -692,9 +692,19 @@ func handleWAFUpdateRuleGroup(w http.ResponseWriter, r *http.Request) {
 		Id        string `json:"Id"`
 		LockToken string `json:"LockToken"`
 	}
-	body, _ := readBodyJSON(r.Body)
-	_ = json.Unmarshal(body, &req)
-	_ = json.Unmarshal(body, &idReq)
+	body, err := readBodyJSON(r.Body)
+	if err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not read body: "+err.Error())
+		return
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if err := json.Unmarshal(body, &idReq); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
 	key := wafKey(req.Scope, idReq.Id)
 	stored, ok := wafRuleGroups.Get(key)
 	if !ok {

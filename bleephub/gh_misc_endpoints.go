@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"strconv"
@@ -21,8 +23,8 @@ import (
 // Org members + audit log
 // Marketplace (listing plans/accounts)
 //
-// Real-GH-shaped responses so callers don't 404; per-surface depth lands as
-// later phases when a real consumer needs it.
+// Real-GH-shaped responses so callers don't 404; per-surface depth deepens
+// when a real consumer needs it.
 
 func (s *Server) registerGHMiscEndpoints() {
 	// Users keys + emails + follow
@@ -325,7 +327,10 @@ func (s *Server) handleOIDCCustomSubPut(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		IncludeClaimKeys []string `json:"include_claim_keys"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
 }
 
@@ -431,7 +436,10 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 		} `json:"source"`
 		CNAME string `json:"cname"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
 	ownerLogin := "admin"
 	if repo.Owner != nil {
 		ownerLogin = repo.Owner.Login
@@ -505,7 +513,10 @@ func (s *Server) handleBranchProtectionPut(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var raw map[string]interface{}
-	_ = json.NewDecoder(r.Body).Decode(&raw)
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
 	if raw == nil {
 		raw = map[string]interface{}{}
 	}

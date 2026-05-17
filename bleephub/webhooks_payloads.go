@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -57,9 +56,6 @@ func buildInstallationRepositoriesEventPayload(app *App, action string, inst *In
 	return out
 }
 
-// quiet unused-import linter
-var _ = json.Marshal
-
 func buildPushPayload(repo *Repo, sender *User, ref, before, after string) map[string]interface{} {
 	return buildPushPayloadWithInstallation(repo, sender, ref, before, after, nil)
 }
@@ -113,16 +109,6 @@ func buildPullRequestPayload(repo *Repo, pr *PullRequest, sender *User, action s
 	return buildPullRequestPayloadInner(action, pr, prJSON, repo, sender, nil)
 }
 
-// buildPullRequestPayloadWithInstallation — used by triggerWorkflowsForEvent
-// when a webhook delivery is associated with an app installation. Wraps
-// buildPullRequestPayload with the installation:{id} top-level block.
-//
-//nolint:unused // wired into the emit path; callers land in the workflow-trigger commit
-func buildPullRequestPayloadWithInstallation(repo *Repo, pr *PullRequest, sender *User, action string, inst *Installation) map[string]interface{} {
-	p := buildPullRequestPayload(repo, pr, sender, action)
-	return attachInstallationBlock(p, inst)
-}
-
 func buildPullRequestPayloadInner(action string, pr *PullRequest, prJSON map[string]interface{}, repo *Repo, sender *User, inst *Installation) map[string]interface{} {
 	return attachInstallationBlock(map[string]interface{}{
 		"action":       action,
@@ -158,13 +144,6 @@ func buildIssuesPayload(repo *Repo, issue *Issue, sender *User, action string) m
 		"repository": repoPayload(repo),
 		"sender":     senderPayload(sender),
 	}, nil)
-}
-
-// buildIssuesPayloadWithInstallation wraps buildIssuesPayload, injecting installation:{id}.
-//
-//nolint:unused // wired into the emit path; callers land in the workflow-trigger commit
-func buildIssuesPayloadWithInstallation(repo *Repo, issue *Issue, sender *User, action string, inst *Installation) map[string]interface{} {
-	return attachInstallationBlock(buildIssuesPayload(repo, issue, sender, action), inst)
 }
 
 func buildPingPayload(repo *Repo, hook *Webhook) map[string]interface{} {

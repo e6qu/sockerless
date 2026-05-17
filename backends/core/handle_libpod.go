@@ -103,7 +103,12 @@ func (s *BaseServer) handleLibpodContainerCreate(w http.ResponseWriter, r *http.
 	// Podman's specgen JSON uses lowercase, flat fields (`image`,
 	// `command`, `env`, `work_dir`, etc.) instead of Docker's
 	// `ContainerConfig` wrapper. Pull the fields we care about out of
-	// the raw body before we try the Docker-compat unmarshal.
+	// the raw body before we try the Docker-compat unmarshal. Field
+	// names differ between the two structs (e.g. `command` vs `Cmd`),
+	// so a podman-shaped body with a type-mismatched lowercase field
+	// can fail the spec decode without failing the req decode below;
+	// propagate either error so the caller sees the real cause instead
+	// of a misleading "no image" downstream.
 	var spec struct {
 		Pod        string            `json:"pod"`
 		Name       string            `json:"name"`
@@ -117,7 +122,10 @@ func (s *BaseServer) handleLibpodContainerCreate(w http.ResponseWriter, r *http.
 		Stdin      bool              `json:"stdin"`
 		Networks   map[string]any    `json:"Networks"`
 	}
-	_ = json.Unmarshal(bodyBytes, &spec)
+	if err := json.Unmarshal(bodyBytes, &spec); err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: err.Error()})
+		return
+	}
 
 	// Parse the standard request
 	var req api.ContainerCreateRequest

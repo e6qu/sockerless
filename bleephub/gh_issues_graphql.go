@@ -652,11 +652,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"query": &graphql.ArgumentConfig{Type: graphql.String},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
-			ownerMap, _ := repo["owner"].(map[string]interface{})
-			ownerLogin, _ := ownerMap["login"].(string)
-
-			// Return all users (for simplicity — real GH returns org members or repo collaborators)
+			// Return all users — real GH scopes this to org members or repo
+			// collaborators; bleephub doesn't model membership/collab graphs yet
+			// (`p.Source` carries owner.login but it's intentionally unused
+			// until that surface lands).
 			s.store.mu.RLock()
 			var users []*User
 			for _, u := range s.store.Users {
@@ -666,7 +665,6 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 
 			// Filter by query
 			if q, ok := p.Args["query"].(string); ok && q != "" {
-				_ = ownerLogin // suppress unused
 				q = strings.ToLower(q)
 				var filtered []*User
 				for _, u := range users {

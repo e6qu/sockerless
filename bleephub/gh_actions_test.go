@@ -230,7 +230,7 @@ func TestActionsRuns_Rerun_NotImplemented(t *testing.T) {
 
 	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
 	if w.Code != http.StatusUnprocessableEntity {
-		t.Errorf("status = %d, want 422 (Phase 130 doesn't ship dispatch)", w.Code)
+		t.Errorf("status = %d, want 422 — rerun is unimplemented and must surface that, not silently succeed", w.Code)
 	}
 }
 

@@ -310,7 +310,7 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 	})
 
 	// Architecture: sim's primary capacity is linux/arm64.
-	// Future sub-phase: derive from fn.Architectures when set.
+	// fn.Architectures is not yet honoured here — sim runs a single arch.
 	// Host metadata: Lambda has its Runtime API (above) but workloads
 	// may still query EC2 IMDS for region/SA tokens via the AWS SDK.
 	// Pass empty taskID — Lambda doesn't expose ECS_CONTAINER_METADATA_URI_V4.

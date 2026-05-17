@@ -125,10 +125,10 @@ func registerIAM(srv *sim.Server) {
 	//   POST /v1/projects/{p}/serviceAccounts/{email}:generateIdToken
 	// Sockerless runner setup (gcloud auth application-default,
 	// google-github-actions/auth) calls generateAccessToken to mint
-	// scoped tokens against the workload-identity-federated SA. Phase
-	// 126 (Access driver, `id-token` category) calls generateIdToken
-	// for cross-Service impersonation flows where the runner SA mints
-	// an ID token for a different audience SA. The simulator returns
+	// scoped tokens against the workload-identity-federated SA. The
+	// Access driver's `id-token` category calls generateIdToken for
+	// cross-Service impersonation flows where the runner SA mints an
+	// ID token for a different audience SA. The simulator returns
 	// real-shape responses without validating the signature on the
 	// resulting tokens — sim audience handlers don't validate either.
 	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts/{emailAction}", func(w http.ResponseWriter, r *http.Request) {

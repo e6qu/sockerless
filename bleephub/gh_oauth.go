@@ -91,8 +91,9 @@ func (s *Server) handleOAuthAccessToken(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(`{"error":"unsupported_grant_type"}`))
 }
 
-// handleDeviceTokenForm — device-flow leg, preserved verbatim from the
-// pre-Phase-132 handler. Auto-approved.
+// handleDeviceTokenForm — device-flow leg. Auto-approved (sim policy:
+// device codes mint a token on the first poll instead of requiring an
+// out-of-band user confirmation).
 func (s *Server) handleDeviceTokenForm(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.FormValue("device_code")
 	s.store.mu.RLock()

@@ -27,8 +27,9 @@ func main() {
 	base := "http://" + api
 
 	// Single-pass handler (one invocation per container in the
-	// simulator today). Real Lambda's bootstrap loops; adjust once we
-	// ship the real sockerless-lambda-bootstrap in Phase D.
+	// simulator today). Real Lambda's bootstrap loops indefinitely;
+	// this testdata fixture is single-shot so the sim's ECS-style
+	// "start a container per invocation" wiring works against it.
 	fmt.Fprintf(os.Stderr, "lambda-runtime-handler: polling %s/2018-06-01/runtime/invocation/next\n", base)
 
 	client := &http.Client{Timeout: 0}

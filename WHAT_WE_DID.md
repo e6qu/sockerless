@@ -6,6 +6,39 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-16 — Phase 164: second vibe-slop sweep (in flight on `phase-164-vibe-slop-sweep-2`)
+
+User directive: *"re-familiarize yourself with the docs here and then run the vibe slop removal skill; we want any fixes to land on a single PR; if more extensive changes are needed then they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time."*
+
+Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). Phase 164 reruns the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes against `origin/main` at `d5b9d22a` after `docs/VIBE_CODING.md` grew from 23 → 35 patterns in Phase 162. New patterns (24–35) surface a different shape of fault — sycophancy, comprehension debt, expansion-without-pruning, docs-vs-code drift, pre-commit hook rollback, language-aware-tooling-not-sed — and the second-pass discipline (pattern 26 / 32: re-verification with fresh eyes) explicitly warned that the first sweep would rubber-stamp some violations.
+
+First pass findings filed as BUG-1014..1022 (P1 / P2 / P3). Headline shapes:
+
+- **Phase-ref sweep was incomplete (BUG-1014)** — `simulators/aws/ecs.go`, `bleephub/persistence.go`, `backends/lambda/cloud_state.go`, `simulators/aws/wafv2.go`, `bleephub/gh_oauth.go`, `simulators/testdata/lambda-runtime-handler/main.go`, `simulators/gcp/iam.go`, `backends/ecs/backend_impl.go`, `bleephub/gh_misc_endpoints.go`, plus `(BUG-944)` literally embedded in a Cloud Functions volume-translator operator-visible error message (BUG-1015) and a test that anchors on the `"BUG-944"` substring — exact pattern 28 (test asserts on impl metadata).
+- **BUG-996 cross-cloud sibling (BUG-1016+1017+1018+1019)** — silent `_ = json.NewDecoder(...).Decode(...)` / `_ = json.Unmarshal(...)` in bleephub handlers (OIDC custom sub PUT, Pages create, branch protection PUT, issue lock), AWS sim (WAFv2 UpdateRuleGroup, Amplify StartJob), GCP sim (artifactregistry manifest parse, cloudfunctions entrypoint resolution, cloudrunjobs Operation marshal-back), and `backends/core` handlers (handle_exec, handle_libpod, cloudrun-functions cloud state).
+- **Dead code held for never-shipped commits (BUG-1020+1021+1022)** — `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` in `bleephub/webhooks_payloads.go` have zero callers since Phase 153 yet carry `//nolint:unused // callers land in the workflow-trigger commit`. Three context helpers in `bleephub/gh_middleware.go` carry stale `//nolint:unused` but actually do have callers now. Five `var _ = pkg.Symbol` unused-import silencers across `bleephub` + `simulators/aws/amplify.go` + `tools/http-trace`.
+
+### Fix plan executed
+
+13 granular commits, PR #164 open with 19 BUGs closed (1014–1032). The phase grew under three user-layered asks: a re-verification pass, a third-pass slop sweep, and a terraform-provider test expansion. CI green checked per push.
+
+| Commit | Subs | BUGs | What |
+|---|---|---|---|
+| c2db065e | P164.0 | — | scaffold + 9 BUGs filed |
+| c5d4c952 | P164.1 | 1015 | strip `(BUG-944)` literal from cloudrun-functions volume_translator + test |
+| 54687fa8 | P164.2 | 1016 | bleephub strict-decode on 4 write handlers + 6 new tests |
+| be5c778d | — | — | badge refresh hook |
+| dcb4cf09 | P164.3 | 1017 | strict-decode 5 sim sites (WAFv2 / Amplify / AR manifest / CRJ Operation / GCF entrypoint) |
+| b3ad633c | P164.4 + 5 | 1018 + 1019 | core handle_exec hijack-after-decode + libpod specgen + cloudrun-functions cloud_state SOCKERLESS_LABELS |
+| 3bbba543 | P164.6 + 7 | 1020 + 1021 + 1022 | rip dead helpers + stale `//nolint:unused` + 6 import silencers |
+| 5ca8a550 | P164.8 | 1014 | 10 production-code Phase-ref strips |
+| 35ee30a0 | P164.9 | 1023 + 1024 + 1025 | re-verification — `stringifyJobState` dead helper + `httputil.DumpRequest` silencer + 3 git_http.go pktline swallows |
+| 9989927b | (3rd-pass) | 1026 + 1027 + 1028 | 2 test-assertion Phase metadata strips + 1 naked `t.Skip()` + Azure terraform docs↔code mismatch |
+| 72d7d4ac | P164.10 | 1029 + 1030 + 1031 | GCP terraform 4 → 11 resources + secret-version state handlers + port-race fix |
+| 784cc806 | P164.11 | 1032 | Azure terraform 1 → 5 resources |
+
+Sim defects surfaced by the terraform-test expansion (1029 + 1030) are why the user-requested expansion phase was high-value: real bugs exist in code paths that even the sdk-tests + cli-tests don't exercise (terraform-provider call sequences differ from raw SDK).
+
 ## 2026-05-16 — Phase 163: Makefile legacy alias rip-out + docs sweep (in flight on `phase-163-legacy-make-rip-out`)
 
 User directive: *"let's remove the legacy behaviour of the `make` actions as well as any other 'legacy' functionality; sockerless has no legacy, it's under active development; we must not remove or reduce tests or reduce CI either."* Follow-up after the first wave of work: *"make sure to also sweep docs for old `make` calls and replace them with new ones."*

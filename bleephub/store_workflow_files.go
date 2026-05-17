@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -163,7 +162,6 @@ func (st *Store) DiscoverWorkflowFilesFromGit(repoFullName string) int {
 		count++
 		return nil
 	})
-	_ = plumbing.ZeroHash // silence unused-import false alarm if go-git rev refactors
 	return count
 }
 

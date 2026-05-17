@@ -333,19 +333,6 @@ func executionStateForJob(ctx context.Context, j *runpb.Job) string {
 	return "EXECUTION_RUNNING"
 }
 
-// stringifyJobState reports the Job DEFINITION's reconciliation state
-// (Ready/NotReady) — distinct from execution state (use
-// executionStateForJob for that). Currently unused but kept for
-// debug/diagnostic logging of Job-level reconciliation issues.
-//
-//nolint:unused // kept for diagnostics
-func stringifyJobState(j *runpb.Job) string {
-	if j.TerminalCondition != nil {
-		return j.TerminalCondition.State.String()
-	}
-	return "unknown"
-}
-
 // ManagedService describes a sockerless-managed pod-Service the
 // dispatcher's orphan sweep needs to consider for deletion. The
 // dispatcher does not create these Services itself — sockerless on

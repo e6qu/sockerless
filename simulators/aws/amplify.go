@@ -4,9 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -831,7 +832,10 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		JobId     string `json:"jobId,omitempty"`
 		SourceUrl string `json:"sourceUrl,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode body: "+err.Error())
+		return
+	}
 	jobID := req.JobId
 	if jobID == "" {
 		jobID = amplifyJobID()
@@ -956,6 +960,3 @@ func amplifyRemoveTagsForARN(arn string, keys []string) bool {
 	}
 	return false
 }
-
-// strings import kept ready for future filter logic.
-var _ = strings.ToLower

@@ -92,7 +92,15 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req api.ExecStartRequest
-	_ = ReadJSON(r, &req)
+	// ReadJSON treats an empty body as nil (Docker SDK ships no body when the
+	// caller passes the default ExecStartCheck). A present-but-malformed body
+	// must still surface as 400 — the handler hijacks the connection two
+	// statements down, and once hijacked the client would parse error bytes
+	// as a multiplexed-stream frame and emit `unrecognized stream: <byte>`.
+	if err := ReadJSON(r, &req); err != nil {
+		WriteError(w, &api.InvalidParameterError{Message: err.Error()})
+		return
+	}
 
 	// Resolve exec metadata up front. The handler must surface a 404
 	// before hijacking, because once the conn is hijacked the client

@@ -19,7 +19,71 @@ provider "azurestack" {
   features {}
 }
 
+# ---------- Resource group (kept; foundation for everything below) ----------
+
 resource "azurestack_resource_group" "main" {
   name     = "tf-test-rg"
   location = "eastus"
+}
+
+# ---------- Virtual Network + Subnet ----------
+
+resource "azurestack_virtual_network" "main" {
+  name                = "tf-test-vnet"
+  resource_group_name = azurestack_resource_group.main.name
+  location            = azurestack_resource_group.main.location
+
+  address_space = ["10.0.0.0/16"]
+}
+
+resource "azurestack_subnet" "main" {
+  name                 = "tf-test-subnet"
+  resource_group_name  = azurestack_resource_group.main.name
+  virtual_network_name = azurestack_virtual_network.main.name
+  address_prefix       = "10.0.1.0/24"
+}
+
+# ---------- Network Security Group + rule ----------
+
+resource "azurestack_network_security_group" "main" {
+  name                = "tf-test-nsg"
+  resource_group_name = azurestack_resource_group.main.name
+  location            = azurestack_resource_group.main.location
+}
+
+resource "azurestack_network_security_rule" "allow_ssh" {
+  name                        = "allow-ssh"
+  resource_group_name         = azurestack_resource_group.main.name
+  network_security_group_name = azurestack_network_security_group.main.name
+
+  priority                   = 100
+  direction                  = "Inbound"
+  access                     = "Allow"
+  protocol                   = "Tcp"
+  source_port_range          = "*"
+  destination_port_range     = "22"
+  source_address_prefix      = "*"
+  destination_address_prefix = "*"
+}
+
+# ---------- Outputs (cross-resource invariants) ----------
+
+output "resource_group_id" {
+  value = azurestack_resource_group.main.id
+}
+
+output "vnet_id" {
+  value = azurestack_virtual_network.main.id
+}
+
+output "subnet_id" {
+  value = azurestack_subnet.main.id
+}
+
+output "nsg_id" {
+  value = azurestack_network_security_group.main.id
+}
+
+output "nsg_rule_id" {
+  value = azurestack_network_security_rule.allow_ssh.id
 }

@@ -26,8 +26,9 @@ import (
 // persistence and the DB can't be opened, server startup `log.Fatalf`s
 // instead of silently falling back to in-memory.
 //
-// Git storage (go-git in-memory) is NOT persisted in this phase —
-// switching to `filesystem.Storage` is a separate refactor.
+// Git storage (go-git in-memory) is not persisted — switching to
+// `filesystem.Storage` is a separate refactor; repos do not survive
+// a restart even with BLEEPHUB_PERSIST=true.
 
 type Persistence struct {
 	db *sql.DB

@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 )
@@ -82,7 +81,3 @@ func mustAtoi(s string) int {
 //
 // Implementation lives in initGraphQLSchema; this file just contains the
 // REST surface above.
-
-// Untyped int-parse helper to keep the REST code small; the real path always
-// hits a numeric thread_id from the URL.
-var _ = json.Marshal

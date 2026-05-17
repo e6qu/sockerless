@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-163-legacy-make-rip-out` — to open as PR #163. |
-| In-flight | **Phase 163 — Makefile legacy alias rip-out + docs sweep.** Removed the entire "Legacy aliases" section from the top-level `Makefile` (`sim-test-*`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`); reframed the surviving Docker-driven cross-cutting suites (`smoke-test-*`, `tf-int-test-*`, `e2e-{github,gitlab}-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers. Pattern rule now uses a `FORCE` dep so path delegation works when a target name collides with a real subdir (e.g. `bleephub/test/`). Continuity sweep across `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale doc refs to invented targets (`stack-aws-ecs-up`/`-down`, `e2e-github-aws-ecs`, `docker-tf-int-test-azure`) replaced with the real names. |
-| Last merged | PR #162 — Phase 162 vibe-coding catalogue refresh (2026-05-16, merged at `4f602988`). |
+| Active branch | `phase-164-vibe-slop-sweep-2` — PR #164 open. |
+| In-flight | **Phase 164 — second vibe-slop sweep + terraform-provider test expansion.** PR #164 contains 13 commits closing 19 BUGs (1014–1032). Three sweep passes (first / re-verification / third-pass-user-requested) plus deeper terraform-provider coverage on GCP (4 → 11 resources across 6 sim slices) and Azure (1 → 5 resources across 5 sim slices). The expansion surfaced + fixed 3 real sim defects: BUG-1029 (missing GCP secret-version state-transition handlers + bare-version GET); BUG-1030 (GCP terraform-tests carried the BUG-993 close-then-bind port race fixed only in sdk-tests during Phase 160); BUG-1031 / 1032 (terraform-test main.tf expansions). |
+| Last merged | PR #163 — Phase 163 Makefile legacy alias rip-out + docs sweep (2026-05-16, merged at `d5b9d22a`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 1012 fixed (1012 total filed) · 2 false positives. |
+| Bugs | 0 open · 1032 fixed (1032 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -46,7 +46,21 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 163 — Makefile legacy rip-out + docs sweep (in flight)
+## Phase 164 — Second vibe-slop sweep + terraform expansion (in flight)
+
+Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). Phase 164 re-runs the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after Phase 162 grew `docs/VIBE_CODING.md` from 23 → 35 patterns + expanded the skill from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — it did. **19 new BUGs closed (1014–1032).**
+
+The phase ran in five layered passes per user direction:
+
+1. **First-pass survey** — 9 BUGs (1014–1022) filed up front in `BUGS.md`; sub-task table in `DO_NEXT.md`.
+2. **Severity-ordered fix wave** — P164.1..P164.8 closed each BUG in its own commit. Headlines: stripped `(BUG-944)` literal from a Cloud Functions volume-translator operator-visible error string + rewrote the matching test assertion from the contract; strict-decode on all four bleephub write handlers swallowing malformed JSON; strict-decode sweep across AWS + GCP sims (WAFv2, Amplify, GCP AR/CRJ/GCF); strict-decode on `backends/core` exec + libpod handlers; strict-decode on `cloudrun-functions` cloud-state docker-label JSON; ripped two dead `bleephub/webhooks_payloads.go` helpers + the matching `var _ = json.Marshal` silencer; dropped stale `//nolint:unused` pragmas + the unused `flexInt64` type from `gh_request_decode.go`; swept five more unused-import silencers across `bleephub/` + `simulators/aws/`; finished the BUG-994 phase-ref sweep at 10 production-code sites.
+3. **Re-verification pass** (pattern 26 / 32) — 3 further BUGs (1023–1025): the `stringifyJobState` dead helper in github-runner-dispatcher-gcp, the `httputil.DumpRequest` silencer in tools/http-trace, and three silent `pktline.Encoder` Encodef/Flush swallows in bleephub git_http.go (now Debug-level logged).
+4. **Third-pass user-requested sweep** — 3 more BUGs (1026–1028): two test files asserting on Phase metadata in error strings (pattern 28), one naked `t.Skip()` with no message, and the Azure terraform-tests docs↔code mismatch (README + apply_test.go said "azurerm" while main.tf used "azurestack").
+5. **Terraform-provider test expansion** (user-requested) — 4 more BUGs (1029–1032). GCP terraform-tests expanded from 4 resources (compute_network, compute_disk, public+private DNS zones) to 11 resources covering 6 sim slices: compute, dns, artifactregistry, cloud_run_v2 Service + Job, storage, secretmanager. Azure terraform-tests expanded from 1 (resource_group) to 5 (+ virtual_network, subnet, network_security_group, network_security_rule). Expansion surfaced two real sim defects: missing GCP secret-version state-transition handlers (`:enable`/`:disable`/`:destroy`) + the same close-then-bind port-allocator race in GCP terraform-tests that Phase 160 fixed in sdk-tests. Both closed in the same commit as the test expansion. AWS terraform-tests was already comprehensive (394 lines + cross-resource invariants from Phase 159) — not touched.
+
+PR #164 acceptance: 19 BUGs closed, 0 open, 11 standard CI checks green per push, user merges.
+
+## Phase 163 — Makefile legacy rip-out + docs sweep (merged)
 
 User directive: "sockerless has no legacy, it's under active development." The top-level Makefile carried a `# ── Legacy aliases ──` section that preserved pure-alias targets purely for muscle-memory / pre-Phase-79 CI invocations: `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}`, `test-{unit,e2e,agent,core,bleephub}`, `bleephub-test`, `bleephub-gh-test`. Every one of those just delegated `$(MAKE) -C <dir> <target>` — which the standard `%/<target>` path-delegation rule already covers. Dropped them; reframed the remaining real recipes (Docker-driven `smoke-test-*`, `tf-int-test-*`, `e2e-github-*`, `e2e-gitlab-*`, `upstream-test-*`, `bleephub-gh-docker-test`) under canonical section headers (no "legacy" framing).
 

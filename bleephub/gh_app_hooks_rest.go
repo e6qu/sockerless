@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"time"
 )
 
 // app-level webhook config + deliveries.
@@ -207,7 +206,3 @@ func (s *Server) redeliverAppWebhook(app *App, original *WebhookDelivery) {
 	delivery.InstallationID = original.InstallationID
 	s.store.AddAppDelivery(app.ID, delivery)
 }
-
-// Quiet linter: ensure UpdateAt timestamp helper exists for store callers
-// outside this file. (No-op for now; placeholder for future broadcaster.)
-var _ = time.Now

@@ -1,6 +1,6 @@
 # simulator-azure-terraform-tests
 
-Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for the Terraform AzureRM provider to provision and tear down resources.
+Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for a Terraform provider (currently the `azurestack` Azure Stack Hub provider; the sibling `azurerm` cloud provider drives the same ARM endpoints) to provision and tear down resources.
 
 ## Running
 
@@ -33,7 +33,7 @@ The AzureRM Terraform provider and `azurestack` provider hardcode `https://` for
 1. `TestMain` generates a self-signed CA and server certificate
 2. Builds the Azure simulator binary and starts it with TLS on a free port
 3. Tests write Terraform configurations to a temp directory
-4. `terraform init` downloads the AzureRM provider
+4. `terraform init` downloads the `azurestack` provider
 5. `terraform apply -auto-approve` provisions resources against the simulator
 6. Test assertions verify the Terraform state
 7. `terraform destroy -auto-approve` tears down resources

@@ -190,10 +190,20 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	// Convert resource to a map and add @type for protobuf Any compatibility.
 	// GCP REST clients expect the response field to be a google.protobuf.Any
 	// which requires @type in the JSON representation.
+	//
+	// resource is always an in-process struct we declared; Marshal can only
+	// fail on unsupported types (chan/func/unsafe.Pointer). Surface that
+	// loudly rather than silently emitting an empty Operation — a regression
+	// here would be invisible in production and break every consuming SDK.
 	var responseMap map[string]any
 	if resource != nil {
-		data, _ := json.Marshal(resource)
-		_ = json.Unmarshal(data, &responseMap)
+		data, err := json.Marshal(resource)
+		if err != nil {
+			panic(fmt.Errorf("newLRO: marshal %s resource: %w", typeName, err))
+		}
+		if err := json.Unmarshal(data, &responseMap); err != nil {
+			panic(fmt.Errorf("newLRO: unmarshal %s response to map: %w", typeName, err))
+		}
 		if responseMap == nil {
 			responseMap = map[string]any{}
 		}

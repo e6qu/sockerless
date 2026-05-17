@@ -216,7 +216,12 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 		}
 		seen[containerID] = true
 
-		c := functionToContainer(fn, labels)
+		c, err := functionToContainer(fn, labels)
+		if err != nil {
+			p.server.Logger.Warn().Err(err).Str("function", fn.Name).
+				Msg("functionToContainer: skipping inconsistent function")
+			continue
+		}
 
 		// Overlay recorded invocation outcome so exited state is
 		// visible to docker ps / docker inspect / docker wait.
@@ -468,7 +473,10 @@ func podMemberToContainer(fn *functionspb.Function, labels map[string]string, m 
 }
 
 // functionToContainer reconstructs an api.Container from a Cloud Function and its labels.
-func functionToContainer(fn *functionspb.Function, labels map[string]string) api.Container {
+// Returns an error if SOCKERLESS_LABELS (the authoritative docker-labels
+// env var) is present but malformed — that means the writing backend
+// produced garbage and the function is in an inconsistent state.
+func functionToContainer(fn *functionspb.Function, labels map[string]string) (api.Container, error) {
 	// Full container ID from env vars (labels truncate at 63 chars, IDs are 64)
 	containerID := ""
 	if fn.ServiceConfig != nil {
@@ -494,20 +502,30 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 	// Map function state to Docker state
 	state := mapFunctionState(fn)
 
-	// Docker labels are carried as a base64-encoded JSON env var
-	// because GCP's label-value charset rejects the sockerless-labels
-	// JSON blob and Functions v2 has no Annotations field. Prefer the
-	// env-var source if present; fall back to the legacy
-	// split-across-labels path for resources created before the fix.
+	// Docker labels are carried as a base64-encoded JSON env var because
+	// GCP's label-value charset rejects the sockerless-labels JSON blob and
+	// Functions v2 has no Annotations field. The env-var source is the
+	// authoritative path; the split-across-labels path is only consulted
+	// when the env var is absent (Functions created before the env-var
+	// fix). A *malformed* env var means the writing backend produced
+	// garbage — return the decode error so the operator sees the
+	// inconsistent resource rather than getting a ghost container with
+	// labels reconstructed from a partial fallback.
 	dockerLabels := map[string]string{}
+	var sockerlessLabelsPresent bool
 	if fn.ServiceConfig != nil {
 		if b64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_LABELS"]; ok && b64 != "" {
-			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
-				_ = json.Unmarshal(raw, &dockerLabels)
+			sockerlessLabelsPresent = true
+			raw, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				return api.Container{}, fmt.Errorf("malformed SOCKERLESS_LABELS base64 on function %q: %w", fn.Name, err)
+			}
+			if err := json.Unmarshal(raw, &dockerLabels); err != nil {
+				return api.Container{}, fmt.Errorf("malformed SOCKERLESS_LABELS JSON on function %q: %w", fn.Name, err)
 			}
 		}
 	}
-	if len(dockerLabels) == 0 {
+	if !sockerlessLabelsPresent {
 		hyphenLabels := gcpLabelsToHyphenMap(labels)
 		if parsed := core.ParseLabelsFromTags(hyphenLabels); parsed != nil {
 			dockerLabels = parsed
@@ -548,7 +566,7 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) api
 		},
 		Platform: "linux",
 		Driver:   "cloud-run-functions",
-	}
+	}, nil
 }
 
 // mapFunctionState converts Cloud Function state to Docker container state.
