@@ -66,7 +66,9 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_GCR_LOG_ID` | `sockerless` | no | Cloud Logging log ID |
 | `SOCKERLESS_GCR_AGENT_IMAGE` | `sockerless/agent:latest` | no | Sidecar agent container image |
 | `SOCKERLESS_GCR_AGENT_TOKEN` | | no | Agent authentication token |
-| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent mode |
+| `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-Service bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |
+| `SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
+| `SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on cloudrun — set `Backing: gcs-sync` / `pd-ephemeral` per-volume for persistence. Per-container memory default raised to `4Gi` to fit. |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/gcp`](../../simulators/gcp/README.md)) |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |

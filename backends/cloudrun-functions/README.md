@@ -64,9 +64,11 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_GCF_REGION` | `us-central1` | no | Functions region |
 | `SOCKERLESS_GCF_SERVICE_ACCOUNT` | | no | Service account email for functions |
 | `SOCKERLESS_GCF_TIMEOUT` | `3600` | no | Function timeout in seconds (max 3600) |
-| `SOCKERLESS_GCF_MEMORY` | `1Gi` | no | Function memory allocation |
+| `SOCKERLESS_GCF_MEMORY` | `4Gi` | no | Function memory allocation. Raised in Phase 168 to fit the 2 GiB tmpfs default plus 256 MiB headroom. |
 | `SOCKERLESS_GCF_CPU` | `1` | no | Function CPU allocation |
-| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
+| `SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
+| `SOCKERLESS_GCF_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB). Memory is the default `Backing`; mismatched against `SOCKERLESS_GCF_MEMORY` → fail loud at startup. |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/gcp`](../../simulators/gcp/README.md)) |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |

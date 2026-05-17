@@ -106,7 +106,7 @@ One-screen view of every Docker/Podman concept and what backs it on each cloud, 
 |---|---|---|---|---|---|---|---|---|
 | ContainerCreate / Start / Stop | Fargate task (RunTask / StopTask) | `lambda.CreateFunction` (image-mode) + Invoke | Cloud Run Service revision (CreateService) | Cloud Run Function gen2 (CreateFunction) | Container App (CreateOrUpdate) | Function App (CreateOrUpdate) | Docker daemon | n/a (kind-specific) |
 | ContainerLogs / Attach (read) | CloudWatch Logs streams | CloudWatch Logs | Cloud Logging | Cloud Logging | Log Analytics | Log Analytics | Docker daemon | n/a |
-| ContainerExec / Attach (write) | SSM Session Manager (`ExecuteCommand`) | reverse-agent over WebSocket | reverse-agent OR HTTP envelope POST (Path B) | HTTP envelope POST against the Function URL | ACA console exec API OR reverse-agent | reverse-agent over WebSocket | Docker daemon | `ExecDriver` per-backend (reverse-agent vs cloud-native) |
+| ContainerExec / Attach (write) | SSM Session Manager (`ExecuteCommand`) | reverse-agent over WebSocket | reverse-agent over WebSocket | reverse-agent over WebSocket | reverse-agent over WebSocket | reverse-agent over WebSocket | Docker daemon | `ExecDriver` per-backend (reverse-agent only on FaaS; cloud-native exec retained for ECS via SSM) |
 | Container restart | RunTask with new revision | re-Invoke (or new revision for image swap) | RunRevision | new Function generation | new App revision | new Function App revision | Docker restart | n/a |
 
 ### Networks (peer discovery, ingress auth, search domain)
@@ -167,7 +167,7 @@ What it needs:
 What it needs:
 
 1. **Long-lived job container** with cmd=`tail -f /dev/null` + `OpenStdin=false`. Same long-lived primitive requirement as GitLab runner.
-2. **`docker exec` per step.** Each step → one `docker exec` against the long-lived container. Sockerless's HTTP envelope POST (Path B, see [§ Lessons](#lesson-8--lambda-execstartviainvoke-path-b-for-invocation-based-exec)) maps directly to `DockerExec`.
+2. **`docker exec` per step.** Each step → one `docker exec` against the long-lived container. After Phase 168 every FaaS-style backend routes this through the in-container reverse-agent WebSocket; the previous Path B (HTTP envelope POST per exec) was ripped (BUG-1046/1047/1050/1054 — see [§ Lessons](#lesson-8--lambda-execstartviainvoke-path-b-for-invocation-based-exec) for the historical rationale).
 3. **stdcopy-framed exec response.** `DockerExec` non-TTY response demands 8-byte stream-frame headers (`0x01` stdout / `0x02` stderr). Bare HTTP body breaks the runner with `Unrecognized input header: 115`. Backend wraps response via `writeMuxFrame` helper.
 4. **Per-step workspace state propagation between runner-task and JOB pod-Service.** GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` on the runner-task and `docker exec sh /__w/_temp/<uuid>.sh`. Both sides must see the same files. Today's path: GCS object sync via the `gcs-sync` storage backing driver — sockerless-backend tars on exec, bootstrap untars + runs + tars, sockerless-backend untars response. No FUSE in the data path.
 5. **Service containers** on the same per-job network (same long-lived multi-container primitive).
@@ -990,18 +990,15 @@ This is the only correct mapping of Docker's `-v` semantics onto Lambda's volume
 
 ### Lambda exec semantics
 
-Lambda has no native `docker exec` primitive — once a function is invoked, there's no inbound channel to push additional commands into the running execution environment. Sockerless implements `docker exec` against Lambda containers via two complementary translations:
+Lambda has no native `docker exec` primitive — once a function is invoked, there's no inbound channel to push additional commands into the running execution environment. After Phase 168 sockerless implements `docker exec` against Lambda containers via a single mandatory path:
 
-**Path A — reverse-agent (preferred when reachable):** the bootstrap dials a long-lived WebSocket back to sockerless at `SOCKERLESS_CALLBACK_URL` during init; sockerless pushes `TypeExec` messages over the WebSocket; the bootstrap spawns the command in the same execution environment, streams stdout/stderr/exit-code back. Preserves Docker fidelity (multiple execs share `/tmp`, file descriptors, etc.). Requires a stable inbound endpoint reachable from the sub-task's VPC subnets — typically API Gateway WebSocket API or a separate sockerless service running outside Lambda (e.g. ECS Fargate behind an NLB).
+**Reverse-agent (Path A — mandatory):** the bootstrap dials a long-lived WebSocket back to sockerless at `SOCKERLESS_CALLBACK_URL` during init; sockerless pushes `TypeExec` messages over the WebSocket; the bootstrap spawns the command in the same execution environment, streams stdout/stderr/exit-code back. Preserves Docker fidelity (multiple execs share `/tmp`, file descriptors, etc.). Requires a stable inbound endpoint reachable from the sub-task's VPC subnets — typically API Gateway WebSocket API or a separate sockerless service running outside Lambda (e.g. ECS Fargate behind an NLB).
 
-**Path B — exec-via-Invoke (fallback, native to Lambda's primitive):** each `docker exec` triggers a fresh `lambda.Invoke` whose Payload is a JSON envelope `{"sockerless":{"exec":{"argv":[...],"tty":...,"workdir":...,"env":[...]}}}`. The bootstrap parses the envelope, spawns the command, returns `{"sockerlessExecResult":{"exitCode":N,"stdout":"<base64>","stderr":"<base64>"}}` via `/response`. Sockerless tunnels the response into the docker-exec attach stream. Each exec is a separate Lambda invocation: the execution environment may or may not be reused (Lambda's warm-pool decision). State persistence between execs is via EFS-mounted volumes only — `/tmp` does NOT persist across invocations. Required when no inbound endpoint is available (e.g., sockerless baked into the runner-Lambda image with no fronting API Gateway).
+**Phase 168 changes (BUG-1046 / 1050):** the previous Path B fallback (`execStartViaInvoke`) — a fresh `lambda.Invoke` per `docker exec` carrying a JSON envelope — was ripped from `backends/lambda/exec_invoke.go` (file deleted) and the parallel `core.CloudExecDriver` interface removed. Path B silently degraded `docker exec` semantics (each exec was a separate Lambda invocation, no shared `/tmp`, paying cold-start every step — manifesting as the "12-step CI job = 12+ min" symptom). Per the no-fallback rule, missing reverse-agent now returns `&api.ServerError{Message: "reverse-agent WebSocket not registered for container N; Lambda exec requires SOCKERLESS_CALLBACK_URL reachable from inside the function..."}`. `SOCKERLESS_CALLBACK_URL` is now required at `NewServer` time (fail-loud, not silent-disable).
 
-Choice of path is per-container, decided at exec time:
-1. If `s.reverseAgents.Resolve(containerID)` returns a registered session → Path A.
-2. Else if the function is `Active` and reachable via `lambda.Invoke` → Path B.
-3. Else → `NotImplementedError` with a clear message.
+`ContainerStart` blocks until the bootstrap dials back or `SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC` elapses (default 90s) — the race between "function Active" and "first ExecStart finds an agent" is closed (BUG-1048).
 
-Path B's payload format matches what `agent/cmd/sockerless-lambda-bootstrap/main.go` parses in `runUserInvocation`. An empty Payload (or a non-JSON one) keeps the existing "run user entrypoint+cmd as a subprocess" behaviour for the function's main invocation.
+The single execution envelope (`{"sockerless":{"exec":{"argv":[...]}}}`) is still used by the gitlab-runner stdin-piped path (the main-invoke goroutine wraps the runner's bash script as an exec envelope so the bootstrap can run it). Per-step `docker exec` does NOT route through this envelope.
 
 ### ECS gitlab-runner script delivery (Fargate has no runtime stdin)
 
@@ -1119,14 +1116,14 @@ Notes:
 
 Notes:
 
-- **Resolution policy** (applies to ExecStart and ContainerAttach across every cloud backend): each call resolves the container, then dispatches as follows:
-  1. If a reverse-agent session is registered for the container → `BaseServer.{ExecStart,ContainerAttach}` runs through `Drivers.{Exec,Stream}` (= `core.ReverseAgent{Exec,Stream}Driver`), which bridges over the WebSocket.
-  2. Else, if the backend has a cloud-native exec surface (only ACA today via `cloudExecStart` against the ACA management API; ECS via SSM) → use that.
-  3. Else → return `NotImplementedError` naming the missing prerequisite (`SOCKERLESS_CALLBACK_URL` for the agent path) — never a silently-empty stream or exit-126.
+- **Resolution policy** (post-Phase-168, applies to ExecStart and ContainerAttach across every FaaS-style backend):
+  1. If `s.reverseAgents.IsLifetimeExpired(containerID)` → return `&api.ServerError{... FaaSPodLifetimeExceeded ...}` directing the operator to a longer-lived backend. No transparent re-invoke / warm-pool / checkpoint-restart (BUG-1053).
+  2. Else if a reverse-agent session is registered → `BaseServer.{ExecStart,ContainerAttach}` runs through `Drivers.{Exec,Stream}` (`core.ReverseAgent{Exec,Stream}Driver`), bridging over the WebSocket.
+  3. Else → return `&api.ServerError{...}` naming the missing `SOCKERLESS_CALLBACK_URL` prerequisite. No Path B fallback (`execStartViaInvoke` ripped in BUG-1046/1047/1050/1054); no ACA management-API fallback (`cloudExecStart` ripped in BUG-1056). Operator sees a clear actionable error instead of a silent semantic degradation.
 - **ECS**: real `ExecuteCommand` via SSM Session Manager. Requires task IAM role grants for `ssmmessages:*` + `EnableExecuteCommand: true` at RunTask + the SSM AgentMessage decoder in the backend.
-- **Lambda**: agent-as-handler. `sockerless-lambda-bootstrap` dials back to `/v1/lambda/reverse`; exec tunnels through.
-- **Cloud Run / GCF / AZF**: no native exec surface. Reverse-agent overlay is the only path; backends now route through `BaseServer.ExecStart` after verifying the session exists.
-- **ACA**: ACA has a native console exec API (`Microsoft.App/jobs/{job}/executions/{exec}/exec`) wired via `aca/exec_cloud.go::cloudExecStart`. The backend prefers the reverse-agent when present and falls back to cloudExecStart otherwise.
+- **Lambda**: agent-as-handler. `sockerless-lambda-bootstrap` dials back to `/v1/lambda/reverse`; exec tunnels through. `SOCKERLESS_CALLBACK_URL` required at NewServer (fail-loud).
+- **Cloud Run / GCF / AZF**: no native exec surface. Reverse-agent overlay is the only path; `SOCKERLESS_CALLBACK_URL` required at NewServer.
+- **ACA**: reverse-agent only after Phase 168 (BUG-1056). The previous "graceful degradation to ACA console exec API" silently swapped env / working dir / stream encoding and hid reverse-agent setup bugs.
 
 #### How other workload schedulers handle exec/attach
 

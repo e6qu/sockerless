@@ -69,7 +69,8 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AZF_APP_SERVICE_PLAN` | | no | App Service plan name |
 | `SOCKERLESS_AZF_TIMEOUT` | `600` | no | Function timeout in seconds |
 | `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` | | no | Log Analytics workspace resource ID |
-| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |
+| `SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/azure`](../../simulators/azure/README.md)) |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |
