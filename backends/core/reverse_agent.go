@@ -142,6 +142,27 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 	}
 }
 
+// TmpfsSizeFromEnv returns the per-backend tmpfs default size in MiB
+// from `SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB` (default 2048 MiB).
+// Invalid / non-positive values fail loud (no clamping). Consumed by
+// backends that register `MemoryDriver` as a default storage backing
+// (cloudrun + cloudrun-functions + ACA after Phase 168).
+func TmpfsSizeFromEnv(backend string) (int, error) {
+	name := "SOCKERLESS_" + strings.ToUpper(backend) + "_TMPFS_SIZE_MIB"
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 2048, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: %w (expected integer MiB)", name, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid %s=%d: must be positive MiB (no zero / negative — fail loud)", name, n)
+	}
+	return n, nil
+}
+
 // BootstrapTimeoutFromEnv returns the per-backend reverse-agent
 // bootstrap-dial-back timeout. `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC`
 // overrides; default 90 seconds. Invalid / non-positive values fail loud

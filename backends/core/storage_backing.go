@@ -228,7 +228,8 @@ type MemorySpec struct {
 // Register per driver) and look up by SharedVolume.Backing at materialize
 // + exec time.
 type StorageBackingRegistry struct {
-	drivers map[StorageBacking]StorageBackingDriver
+	drivers        map[StorageBacking]StorageBackingDriver
+	defaultBacking StorageBacking
 }
 
 // NewStorageBackingRegistry returns a registry pre-populated with the
@@ -249,18 +250,32 @@ func (r *StorageBackingRegistry) Register(d StorageBackingDriver) {
 	r.drivers[d.Backing()] = d
 }
 
-// Resolve returns the driver for the requested backing, or an error if
-// the backing isn't registered. Per the no-fallbacks directive, empty
-// or unknown values fail loudly — operators MUST explicitly configure
-// SharedVolume.Backing. The empty-Backing case in particular is
-// rejected because every cell has known cost/lifecycle requirements
-// and silent default selection masks operator misconfiguration.
+// SetDefault marks one of the registered backings as the per-backend
+// default for SharedVolumes that don't set Backing explicitly. Pass
+// "" to clear. Called by backends whose cloud platform exposes a
+// safe Docker-style scratch primitive (cloudrun / cloudrun-functions
+// / ACA all set BackingMemory after the corresponding
+// MemoryDriver.Register). Lambda + AZF deliberately do NOT set a
+// default — their volume translators reject BackingMemory and the
+// operator must opt into the ephemeral disk backing explicitly.
+func (r *StorageBackingRegistry) SetDefault(b StorageBacking) {
+	r.defaultBacking = b
+}
+
+// Resolve returns the driver for the requested backing. When the
+// backing is empty and SetDefault was called, the default applies.
+// Otherwise unknown / empty values fail loudly per the no-fallbacks
+// directive: backends without a configured default (Lambda + AZF)
+// surface a clear error rather than silently substituting.
 func (r *StorageBackingRegistry) Resolve(b StorageBacking) (StorageBackingDriver, error) {
 	if b == "" {
-		return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default — set explicitly: %q, %q, %q, %q, %q, %q, or %q)",
-			BackingEmptyDir, BackingGCSSync, BackingGCSFuse,
-			BackingPDEphemeral, BackingEFSEphemeral, BackingAzureFilesEphemeral,
-			BackingMemory)
+		if r.defaultBacking == "" {
+			return nil, fmt.Errorf("storage backing: SharedVolume.Backing is required (no default configured for this backend — set explicitly: %q, %q, %q, %q, %q, %q, or %q)",
+				BackingEmptyDir, BackingGCSSync, BackingGCSFuse,
+				BackingPDEphemeral, BackingEFSEphemeral, BackingAzureFilesEphemeral,
+				BackingMemory)
+		}
+		b = r.defaultBacking
 	}
 	if d, ok := r.drivers[b]; ok {
 		return d, nil

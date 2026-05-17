@@ -155,7 +155,17 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
-	s.storageBackings.Register(core.NewMemoryDriver(64))
+	tmpfsMiB, terr := core.TmpfsSizeFromEnv("cloudrun")
+	if terr != nil {
+		logger.Fatal().Err(terr).Msg("invalid SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB")
+	}
+	s.storageBackings.Register(core.NewMemoryDriver(tmpfsMiB))
+	// Default storage backing for SharedVolumes that don't set Backing
+	// explicitly: memory (tmpfs). Cloud Run Services / Jobs accept
+	// EmptyDir{Medium: MEMORY} natively, so memory is the cheapest
+	// safe default. Operators wanting durability across exec / restart
+	// must set Backing: gcs-sync or pd-ephemeral explicitly.
+	s.storageBackings.SetDefault(core.BackingMemory)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

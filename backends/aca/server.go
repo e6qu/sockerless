@@ -59,7 +59,16 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
-	s.storageBackings.Register(core.NewMemoryDriver(64))
+	tmpfsMiB, terr := core.TmpfsSizeFromEnv("aca")
+	if terr != nil {
+		logger.Fatal().Err(terr).Msg("invalid SOCKERLESS_ACA_TMPFS_SIZE_MIB")
+	}
+	s.storageBackings.Register(core.NewMemoryDriver(tmpfsMiB))
+	// Default backing for SharedVolumes without explicit Backing:
+	// memory (tmpfs). ACA Apps + Jobs accept EmptyDir{Medium: MEMORY}
+	// natively. Operators wanting durability must set Backing:
+	// azure-files-ephemeral explicitly.
+	s.storageBackings.SetDefault(core.BackingMemory)
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,

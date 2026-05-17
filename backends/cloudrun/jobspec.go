@@ -273,14 +273,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 }
 
 // mapCPUMemory returns the default Cloud Run resource limits.
-// Cloud Run valid CPU: 1, 2, 4, 8. 1Gi/container matches the gcf
-// backend default; 512Mi was insufficient for multi-container revisions
-// running a postgres service container alongside the JOB main (postgres
-// initdb OOM'd in 512Mi and Cloud Run reports the whole revision as
-// failed even though it's the sidecar that crashed, manifesting as a
-// port-8080-not-bound timeout on the main container).
+// Cloud Run valid CPU: 1, 2, 4, 8. 4Gi/container leaves headroom for
+// the in-Service bootstrap (~256 MiB), the 2 GiB tmpfs default
+// (`SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB`), and a postgres-style sidecar
+// (the historical OOM that forced 1Gi over 512Mi was a postgres initdb
+// in a multi-container revision).
 func mapCPUMemory() (string, string) {
-	return "1", "1Gi"
+	return "1", "4Gi"
 }
 
 // memoryLimitForContainer doubles the per-container memory for the main

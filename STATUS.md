@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
-| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** Phase 168 P168.1+.2+.3+.4 landed: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (commit `5f745039`); ContainerStart now blocks for in-container reverse-agent dial-back on all 5 FaaS-style backends with per-backend `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` (default 90s); `CallbackURL` required at NewServer for lambda/gcf/cloudrun/aca/azf (fail-loud, not silent-disable); ACA `cloudExecStart` management-API fallback ripped (BUG-1056); GCF was never injecting `SOCKERLESS_CALLBACK_URL` into the function env (BUG-1055 surfaced during P168.3 ContainerStart survey — fixed). Still ahead on this branch: P168.5 (tmpfs default for cloudrun/gcf/aca), P168.6 (ENOSPC bootstrap envelope), P168.7 (strict cleanup-path errors), P168.8 (FaaS lifetime-exceeded signal), P168.9 (E2E + docs + codex + PR). |
+| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** P168.1+.2+.3+.4+.5 landed. Headline: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (`5f745039`); ContainerStart blocks for reverse-agent on all 5 FaaS-style backends with per-backend timeout env (`9a9b6319`); tmpfs (in-memory EmptyDir) becomes the default storage backing for cloudrun + GCF + ACA with `SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB` (default 2048 MiB) + per-backend memory defaults bumped to fit (GCF 4Gi, cloudrun 4Gi/container, ACA 4Gi/2 vCPU). Lambda + AZF unchanged (their volume translators reject `BackingMemory`). Still ahead: P168.6 (ENOSPC bootstrap envelope), P168.7 (strict cleanup-path errors), P168.8 (FaaS lifetime-exceeded signal), P168.9 (E2E + docs + codex + PR). |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1052 fixed · 4 open · 2 false positives. Open this phase: BUG-1049, 1051, 1052, 1053 (all P168.5+ scope). |
+| Bugs | 1053 fixed · 3 open · 2 false positives. Open this phase: BUG-1051 (bootstrap ENOSPC envelope half), 1052 (cleanup-path strict errors), 1053 (FaaS lifetime-exceeded). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

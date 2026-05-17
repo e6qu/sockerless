@@ -185,9 +185,12 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 
 // mapCPUTier returns the default ACA CPU/memory tier.
 // Valid ACA CPU tiers: 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 4.0.
-// Default: 1.0 CPU, 2Gi.
+// Default: 2.0 CPU, 4Gi — leaves headroom for the in-container
+// bootstrap (~256 MiB) plus the 2 GiB tmpfs default
+// (`SOCKERLESS_ACA_TMPFS_SIZE_MIB`). ACA's CPU/memory pairing rule
+// (memory:cpu must be 2:1) forces CPU up when memory rises.
 func mapCPUTier() (float64, string) {
-	return 1.0, "2Gi"
+	return 2.0, "4Gi"
 }
 
 func ptr[T any](v T) *T {

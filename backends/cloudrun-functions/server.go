@@ -139,7 +139,29 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
-	s.storageBackings.Register(core.NewMemoryDriver(64))
+	tmpfsMiB, terr := core.TmpfsSizeFromEnv("gcf")
+	if terr != nil {
+		logger.Fatal().Err(terr).Msg("invalid SOCKERLESS_GCF_TMPFS_SIZE_MIB")
+	}
+	// Validate tmpfs fits inside the configured function memory with a
+	// 256 MiB headroom for kernel + bootstrap process. No silent
+	// clamping per the no-fallback rule — operators must align config.
+	if memMiB, perr := core.ParseMemoryMiB(config.Memory); perr != nil {
+		logger.Fatal().Err(perr).Str("Memory", config.Memory).Msg("invalid SOCKERLESS_GCF_MEMORY (expected forms: 512Mi, 1Gi, 2Gi)")
+	} else if tmpfsMiB+256 > memMiB {
+		logger.Fatal().
+			Int("tmpfsMiB", tmpfsMiB).
+			Int("memoryMiB", memMiB).
+			Int("reservedMiB", 256).
+			Msg("SOCKERLESS_GCF_TMPFS_SIZE_MIB + 256 MiB headroom exceeds SOCKERLESS_GCF_MEMORY — either lower the tmpfs cap or raise the function memory")
+	}
+	s.storageBackings.Register(core.NewMemoryDriver(tmpfsMiB))
+	// Default backing for SharedVolumes without explicit Backing:
+	// memory (tmpfs). Cloud Run Services / Functions Gen2 accept
+	// EmptyDir{Medium: MEMORY} natively, so memory is the cheapest
+	// safe default. Operators wanting durability across exec / restart
+	// must set Backing: gcs-sync or pd-ephemeral explicitly.
+	s.storageBackings.SetDefault(core.BackingMemory)
 
 	s.SetSelf(s)
 	// Network-discovery driver. Selected via Config.NetworkDiscovery
