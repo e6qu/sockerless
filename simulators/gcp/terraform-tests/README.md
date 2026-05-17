@@ -9,8 +9,9 @@ Resources covered:
 - `google_cloud_run_v2_service` + `google_cloud_run_v2_job`
 - `google_storage_bucket` + `google_storage_bucket_object`
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
+- `google_service_account` (via `iam_beta_custom_endpoint`)
 
-Resources NOT yet covered (filed as follow-ups): `google_service_account` + IAM binding/member (terraform-provider-google's IAM resources don't honour `iam_custom_endpoint`, hit real iam.googleapis.com); `google_cloudfunctions2_function` (build_config requires a real source archive); `google_compute_instance` + `_instance_template`; `google_cloudbuild_trigger`; `google_logging_project_sink` + `_metric`; `google_pubsub_topic` + `_subscription`.
+Resources NOT yet covered (filed as follow-ups): `google_cloudfunctions2_function` (build_config requires a real source archive — multi-resource orchestration); `google_compute_instance` + `_instance_template`; `google_cloudbuild_trigger`; `google_logging_project_sink` + `_metric`; `google_pubsub_topic` + `_subscription` (sim probably doesn't model Pub/Sub yet).
 
 ## Running
 
