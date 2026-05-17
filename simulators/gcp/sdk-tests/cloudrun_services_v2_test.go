@@ -44,7 +44,13 @@ func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {
 			Ingress: runpb.IngressTraffic_INGRESS_TRAFFIC_INTERNAL_ONLY,
 			Template: &runpb.RevisionTemplate{
 				Containers: []*runpb.Container{
-					{Image: "gcr.io/test-project/hello"},
+					{
+						Image: "gcr.io/test-project/hello",
+						Env: []*runpb.EnvVar{
+							{Name: "SOCKERLESS_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: "ws://host.docker.internal:3375/v1/cloudrun/reverse"}},
+							{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: "abc123"}},
+						},
+					},
 				},
 				Scaling: &runpb.RevisionScaling{
 					MinInstanceCount: 1,
@@ -74,11 +80,21 @@ func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {
 	require.NotNil(t, svc.Template.VpcAccess)
 	assert.Equal(t, "projects/test-project/locations/us-central1/connectors/test-connector", svc.Template.VpcAccess.Connector)
 	assert.Equal(t, runpb.VpcAccess_ALL_TRAFFIC, svc.Template.VpcAccess.Egress)
+	require.Len(t, svc.Template.Containers, 1)
+	require.Len(t, svc.Template.Containers[0].Env, 2)
+	assert.Equal(t, "SOCKERLESS_CALLBACK_URL", svc.Template.Containers[0].Env[0].Name)
+	assert.Equal(t, "ws://host.docker.internal:3375/v1/cloudrun/reverse", svc.Template.Containers[0].Env[0].GetValue())
+	assert.Equal(t, "SOCKERLESS_CONTAINER_ID", svc.Template.Containers[0].Env[1].Name)
+	assert.Equal(t, "abc123", svc.Template.Containers[0].Env[1].GetValue())
 
 	got, err := client.GetService(ctx, &runpb.GetServiceRequest{Name: svc.Name})
 	require.NoError(t, err)
 	assert.Equal(t, svc.Name, got.Name)
 	assert.Equal(t, "true", got.Labels["sockerless_managed"])
+	require.Len(t, got.Template.Containers, 1)
+	require.Len(t, got.Template.Containers[0].Env, 2)
+	assert.Equal(t, "ws://host.docker.internal:3375/v1/cloudrun/reverse", got.Template.Containers[0].Env[0].GetValue())
+	assert.Equal(t, "abc123", got.Template.Containers[0].Env[1].GetValue())
 
 	it := client.ListServices(ctx, &runpb.ListServicesRequest{
 		Parent: "projects/test-project/locations/us-central1",

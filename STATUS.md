@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
-| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: fixed PR #168 CI run `26002912832` regressions by making Cloud Run/ACA smoke declare the real callback/stdin/host-runtime-image contract and by changing the GCP simulator overlay readiness probe from `GET /` to TCP listener dial so it cannot run the user's invocation during readiness. Local focused Cloud Run/GCF exec and Cloud Run/ACA smoke are green; next is push and CI re-check on the same PR. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; external `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: fixed PR #168 CI run `26003621756`'s remaining Cloud Run package failure by making the GCP Cloud Run v2 Service simulator decode both real EnvVar proto-JSON oneof shapes and adding SDK env round-trip coverage for `SOCKERLESS_CALLBACK_URL` / `SOCKERLESS_CONTAINER_ID`. Earlier in this chunk, Cloud Run/ACA smoke was fixed and passed CI. Next is push and CI re-check on the same PR. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; external `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1084 filed · 1075 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
+| Bugs | 1085 filed · 1076 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
