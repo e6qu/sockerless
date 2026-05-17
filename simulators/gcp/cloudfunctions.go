@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -674,26 +675,51 @@ func pickFreeTCPPort() (int, error) {
 	return port, nil
 }
 
-// waitForHTTP polls `url` until any response is received (2xx, 4xx,
-// 5xx — all OK) or the deadline elapses. Used to detect that the
-// container's HTTP server has bound to its port and is accepting
-// connections; the response status doesn't matter, only that the
-// server answered.
+// waitForHTTP polls the TCP address in `url` until the container's
+// HTTP listener accepts connections or the deadline elapses. It does
+// not issue an HTTP request because the Cloud Run / GCF bootstrap's
+// root route is the real invocation endpoint; a readiness probe must
+// not run the user's command.
 func waitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
+	parsed, err := urlpkgParse(url)
+	if err != nil {
+		return err
+	}
+	addr := parsed.Host
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		switch parsed.Scheme {
+		case "http":
+			addr = net.JoinHostPort(addr, "80")
+		case "https":
+			addr = net.JoinHostPort(addr, "443")
+		default:
+			return fmt.Errorf("url %q has no explicit port", url)
+		}
+	}
 	deadline := time.Now().Add(timeout)
-	client := &http.Client{Timeout: 1 * time.Second}
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		resp, err := client.Get(url)
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
-			resp.Body.Close()
+			_ = conn.Close()
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout after %s", timeout)
+}
+
+func urlpkgParse(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse url %q: %w", raw, err)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("url %q has no host", raw)
+	}
+	return parsed, nil
 }
