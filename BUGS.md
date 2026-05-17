@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1039 filed · 1033 fixed · 6 open · 2 false positives.**
+**1039 filed · 1034 fixed · 5 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1034 | P3 | `backends/lambda/agent_e2e_integration_test.go:168` | 27 (no pruning) + 14 (single-use silencer) | `var _ = fmt.Sprintf // fmt is used by the framing demuxer when debugging` — the claimed consumer `demuxDockerStream()` (lines 144–164) never calls `fmt`. Same shape as BUG-1022/1024 dead-import silencers. Delete the silencer + the `fmt` import; if a future debug path needs it, the import comes back as a one-liner. |
 | 1035 | P3 | `bleephub/{gh_oauth.go:171,artifacts.go:321}` + `simulators/azure/functions.go:290` | 1 (style inconsistency hiding real swallow) | Three `w.Write([]byte(...))` / `w.Write(data)` sites omit the standard `_, _ = w.Write(...)` form used everywhere else in the same packages. Inconsistent style hides whether the swallow is intentional. Either standardise on the explicit-discard form with a comment naming the client-disconnect-only failure mode, or log the err. |
 | 1036 | P2 | repo-wide test files | 8 (phase metadata in code) | The BUG-994 / 1014 / 1026 sweep was production-code only. ~50 test files still carry `// Phase NNN (PNNN.x) — …` lineage headers (bleephub/gh_*_test.go, simulators/{aws,gcp,azure}/{sdk,cli}-tests/*, agent/cmd/sockerless-cloudrun-bootstrap/main_test.go, tests/main_test.go, etc.) plus a handful of `// BUG-NNN` refs in test bodies. Same shape as BUG-1026 but the prior sweep stopped at error-string assertions. Rewrite each header to describe the contract under test, not the phase that introduced it. |
 | 1037 | P0 | `simulators/aws/terraform-tests/main.tf` | 2 (external-validation gap) | AWS terraform-tests cover 26 resources but skip the load-bearing-for-runner-pods set: Lambda function, S3 bucket + object, DynamoDB table, KMS key + alias, Secrets Manager secret + version, EFS file system + access point + mount target, SSM parameter, EC2 (VPC + subnet + security group + security group rule). Each is implemented in the sim but only sdk-tests exercise the wire shape — terraform-provider's call sequence is materially different (matches BUG-1029 surface pattern: provider POSTs `:enable` immediately after `:addVersion` etc.). One missing handler or canonical-id divergence will only surface live. |
@@ -38,6 +37,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 ## Resolved history (compressed)
 
 1033 bugs filed and fixed across phases 86–165.
+
+- **1034** (Phase 165) — `backends/lambda/agent_e2e_integration_test.go:168` carried `var _ = fmt.Sprintf` with the lying comment "fmt is used by the framing demuxer when debugging." The claimed consumer `demuxDockerStream()` (lines 144–164) never calls `fmt`; the only `fmt.` reference in the file was the silencer itself. Same shape as BUG-1022/1024 dead-import silencers. Dropped the silencer + the `fmt` import. If a future debug path needs `fmt`, the import comes back as a one-liner with the print site.
 
 - **1033** (Phase 165) — Five `io.Copy(w, rc)` calls in image-streaming + build response paths in `backends/core/{build.go,handle_images.go}` swallowed the mid-stream copy error silently. Sites: `build.go:515` (build event stream), `handle_images.go:80` (image pull), `:115` (image load non-quiet), `:472` (image push), `:493` (image save tar). Fix shape per site: `if _, err := io.Copy(w, rc); err != nil { s.Logger.Debug().Err(err).Msg("<op> stream copy failed — client likely disconnected") }`. Debug level because by the time io.Copy fails, the response headers are already committed and the client is gone — there's nothing recoverable, but the cause should be greppable (matches the BUG-1025 pktline pattern). Verified: `cd backends/core && go test ./...` green.
 
