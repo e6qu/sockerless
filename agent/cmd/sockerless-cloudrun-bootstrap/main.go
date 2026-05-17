@@ -35,11 +35,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/sockerless/agent"
 )
@@ -214,6 +217,7 @@ func main() {
 		connMu := &sync.Mutex{}
 		go agent.ServeReverseAgent(conn, connMu)
 		go agent.StartHeartbeats(conn, connMu)
+		go sendLifetimeExpiredOnSIGTERM(conn, connMu)
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
 	} else {
 		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled (backend ExecStart will return operator-guidance)")
@@ -237,6 +241,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	<-sigCh
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.SendLifetimeExpired(conn, connMu)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: send lifetime_expired on SIGTERM failed: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sent lifetime_expired on SIGTERM")
+		}
+	case <-time.After(2 * time.Second):
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: timed out sending lifetime_expired on SIGTERM")
+	}
+	os.Exit(0)
 }
 
 // handleInvoke dispatches: if the request body parses as an
