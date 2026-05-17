@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTerraformApplyDestroy provisions resource group, virtual network,
-// subnet, NSG, and NSG security rule against the Azure simulator using
-// the `azurestack` provider, then asserts canonical resource-id paths
-// round-trip and terraform destroy cleans up.
+// TestTerraformApplyDestroy provisions a foundation set of Azure
+// resources against the Azure simulator using the `azurestack` provider,
+// then asserts canonical resource-id paths round-trip and terraform
+// destroy cleans up.
 //
 // Slices exercised against the simulator:
 //   - Microsoft.Resources/resourceGroups
@@ -20,8 +20,13 @@ import (
 //   - Microsoft.Network/virtualNetworks/subnets
 //   - Microsoft.Network/networkSecurityGroups
 //   - Microsoft.Network/networkSecurityGroups/securityRules
+//   - Microsoft.Storage/storageAccounts
+//   - Microsoft.KeyVault/vaults
 //
-// The sibling `azurerm` cloud provider drives the same ARM endpoints.
+// The sibling `azurerm` cloud provider drives the same ARM endpoints
+// (the azurestack provider is used here because it supports `arm_endpoint`
+// pointing at a non-Azure-public host; azurerm requires more wiring to
+// route through a custom OAuth + ARM endpoint).
 func TestTerraformApplyDestroy(t *testing.T) {
 	// The azurestack terraform provider (and the azurerm sibling)
 	// validates the sim's self-signed HTTPS cert against the OS trust
@@ -68,6 +73,22 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	nsgRuleID := outputs.must(t, "nsg_rule_id")
 	require.Contains(t, nsgRuleID, "/networkSecurityGroups/tf-test-nsg/securityRules/allow-ssh",
 		"nsg rule id must include the canonical ARM path; got %s", nsgRuleID)
+
+	storageID := outputs.must(t, "storage_account_id")
+	require.Contains(t, storageID, "/providers/Microsoft.Storage/storageAccounts/tftestsa12345",
+		"storage account id must include the canonical ARM path; got %s", storageID)
+
+	blobEndpoint := outputs.must(t, "storage_account_blob_endpoint")
+	require.True(t, strings.Contains(blobEndpoint, "tftestsa12345.blob."),
+		"blob endpoint must include account subdomain (azurerm storage SDK parses URLs this way); got %s", blobEndpoint)
+
+	kvID := outputs.must(t, "key_vault_id")
+	require.Contains(t, kvID, "/providers/Microsoft.KeyVault/vaults/tf-test-kv",
+		"key vault id must include the canonical ARM path; got %s", kvID)
+
+	kvURI := outputs.must(t, "key_vault_uri")
+	require.True(t, strings.Contains(kvURI, "tf-test-kv.vault."),
+		"vault uri must include vault subdomain (azurerm/keyvault SDK parses URLs this way); got %s", kvURI)
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()

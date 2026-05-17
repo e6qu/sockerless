@@ -66,6 +66,28 @@ resource "azurestack_network_security_rule" "allow_ssh" {
   destination_address_prefix = "*"
 }
 
+# ---------- Storage account (Azure Files / runner shared volumes) ----------
+
+resource "azurestack_storage_account" "main" {
+  name                     = "tftestsa12345"
+  resource_group_name      = azurestack_resource_group.main.name
+  location                 = azurestack_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+}
+
+# ---------- Key vault (runner credential storage) ----------
+
+resource "azurestack_key_vault" "main" {
+  name                = "tf-test-kv"
+  resource_group_name = azurestack_resource_group.main.name
+  location            = azurestack_resource_group.main.location
+  tenant_id           = "11111111-1111-1111-1111-111111111111"
+
+  sku_name = "standard"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "resource_group_id" {
@@ -86,4 +108,20 @@ output "nsg_id" {
 
 output "nsg_rule_id" {
   value = azurestack_network_security_rule.allow_ssh.id
+}
+
+output "storage_account_id" {
+  value = azurestack_storage_account.main.id
+}
+
+output "storage_account_blob_endpoint" {
+  value = azurestack_storage_account.main.primary_blob_endpoint
+}
+
+output "key_vault_id" {
+  value = azurestack_key_vault.main.id
+}
+
+output "key_vault_uri" {
+  value = azurestack_key_vault.main.vault_uri
 }
