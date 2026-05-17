@@ -4,145 +4,74 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 163 merged 2026-05-16 (PR #163, `d5b9d22a` on `origin/main`) — Makefile legacy alias rip-out + docs sweep.
+Phase 164 merged 2026-05-17 (PR #164, `616dcd98` on `origin/main`) — second vibe-slop sweep + terraform-provider test expansion (19 BUGs).
 
-**Phase 164 in flight on `phase-164-vibe-slop-sweep-2`**: second vibe-slop sweep, user directive: *"re-familiarize yourself with the docs here and then run the vibe slop removal skill; we want any fixes to land on a single PR; if more extensive changes are needed then they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time."*
+**Phase 165 in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`** — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression. 7 BUGs filed up front (1033–1039); sub-task table below. Single PR. Verify after every significant chunk.
 
-First-pass survey filed 9 BUGs (1014–1022) in `BUGS.md § Open`; sub-task table below.
+Default "never auto-merge / user merges every PR" remains in force.
 
-Default "user merges every PR" remains in force.
+## Phase 165 sub-task table (severity-ordered)
 
-## Phase 164 sub-task table (sub-task ordering = severity)
-
-| Sub | Status | BUG | What |
+| Sub | Status | BUG(s) | What |
 |---|---|---|---|
-| **P164.0** | ✅ | — | Branch from `origin/main` + survey + 9 BUGs filed + continuity-doc opening. |
-| **P164.1** | ✅ | 1015 | `backends/cloudrun-functions/volume_translator.go:95` — stripped `(BUG-944)` literal from operator-visible error string; rewrote `volume_translator_test.go:78` assertion from the contract ("gcs-sync" + "gcs-fuse" + "Cloud Functions") rather than the bug-ref substring. |
-| **P164.2** | ✅ | 1016 | bleephub strict-decode: replaced `_ = json.NewDecoder(r.Body).Decode(...)` in `gh_misc_endpoints.go` (OIDC custom sub PUT, Pages create, branch protection PUT) + `gh_issue_moderation.go` (issue lock) with `if err := Decode(...); err != nil && !errors.Is(err, io.EOF) { writeGHError(400, "Problems parsing JSON") }`. `io.EOF` carve-out preserves the legitimate empty-body path. New `gh_misc_endpoints_decode_test.go` covers malformed-JSON → 400 + empty-body OK on the two endpoints that accept empty bodies. |
-| **P164.3** | ✅ | 1017 | Sim strict-decode sweep: WAFv2 UpdateRuleGroup checks every Unmarshal error per surrounding sibling envelope; Amplify StartJob strict-decodes with `io.EOF` carve-out; GCP cloud functions surfaces malformed `SOCKERLESS_USER_ENTRYPOINT/_CMD` as invocation error (`{"error":"…"}, exit=1`); AR `registerDockerImageFromManifest` logs decode failure + falls back to request `contentType`; cloudrunjobs `newLRO` panics with typeName on the in-process marshal/unmarshal — would be a programmer error if ever hit. Verified `SOCKERLESS_TEST_TARGET=sim go test ./...` green in `simulators/gcp` + `simulators/aws/sdk-tests` (WAF / Amplify / Stack). |
-| **P164.4** | ✅ | 1018 | `handleExecStart` now surfaces `InvalidParameterError` before hijacking the conn (a malformed body would otherwise emit `unrecognized stream` on the wire once hijacked). `handleLibpodContainerCreate` checks both unmarshal errors — Docker-compat + podman specgen — since field sets differ (`command` vs `Cmd`); a malformed lowercase field would have passed the second decode while failing the first, yielding misleading "no image" downstream. |
-| **P164.5** | ✅ | 1019 | `functionToContainer` now returns `(api.Container, error)`; surfaces explicit "malformed SOCKERLESS_LABELS base64/JSON on function X" errors. `queryFunctions` caller logs `Warn` + skips the inconsistent resource (matches `queryPodServiceContainers` partial-failure pattern). Sentinel `sockerlessLabelsPresent` distinguishes "env var absent → legacy fallback" from "present but malformed → error". |
-| **P164.6** | ✅ | 1020 | Ripped `buildPullRequestPayloadWithInstallation` + `buildIssuesPayloadWithInstallation` from `bleephub/webhooks_payloads.go` (zero callers; "callers land in the workflow-trigger commit" pragma from Phase 153 never resolved) + the file's `var _ = json.Marshal` silencer + the now-unused `encoding/json` import. |
-| **P164.7** | ✅ | 1021 + 1022 | Dropped three `//nolint:unused` pragmas on `bleephub/gh_middleware.go` context helpers; rewrote each docstring to name the *actual* consumers (`gh_apps_perms.go` / `gh_apps_rest.go`) instead of a hypothetical future commit. Ripped `flexInt64` from `gh_request_decode.go` (zero callers, "reserved for future"). Swept `var _ = json.Marshal` / `time.Now` / `strings.ToLower` / `plumbing.ZeroHash` / `_ = ownerLogin // suppress unused` across `gh_pr_threads.go`, `gh_app_hooks_rest.go`, `store_workflow_files.go`, `gh_issues_graphql.go`, `simulators/aws/amplify.go` — dropped silencer + dead import for each. |
-| **P164.8** | ✅ | 1014 | Repo-wide phase-ref sweep continuation. Stripped Phase / sub-phase / BUG metadata from 10 production-code sites: `simulators/aws/wafv2.go`, `backends/lambda/cloud_state.go` (×2), `simulators/aws/ecs.go`, `simulators/aws/lambda_runtime.go`, `simulators/gcp/iam.go`, `backends/ecs/backend_impl.go`, `bleephub/gh_oauth.go`, `simulators/testdata/lambda-runtime-handler/main.go`, `bleephub/persistence.go`, `bleephub/gh_misc_endpoints.go`. Preserved the *why* in every case (per the BUG-994 rule). `backends/aws-common/build.go:239+240+241` `build.Phases` references are real AWS CodeBuild SDK field names, not phase metadata. |
-| **P164.9** | ✅ | 1023 + 1024 + 1025 | Re-verification pass — surfaced + closed three further findings: `stringifyJobState` dead helper in github-runner-dispatcher-gcp (1023); `httputil.DumpRequest` unused-import silencer in tools/http-trace (1024); pkt-line Encode/Flush silent swallows in bleephub/git_http.go (1025, replaced with Debug-level logger). |
-| **P164.10** | ✅ | 1029 + 1030 + 1031 | GCP terraform-tests expanded from 4 → 11 resources across 6 sim slices (compute / dns / artifactregistry / cloud_run_v2 / storage / secretmanager). Surfaced + fixed: missing `:enable`/`:disable`/`:destroy` + plain-version GET handlers in `simulators/gcp/secretmanager.go`; the BUG-993 close-then-bind port-allocator race in `terraform-tests/helpers_test.go` (Phase 160 fixed it in sdk-tests but missed terraform-tests). |
-| **P164.11** | ✅ | 1032 | Azure terraform-tests expanded from 1 → 5 resources (added vnet + subnet + nsg + nsg_rule). Pre-validated via curl against running sim — all 5 PUTs return 200/201 with canonical ARM-id payload. CI runs the full terraform round-trip in Docker. |
-| **P164.12** | ✅ | — | Final state save: STATUS / DO_NEXT / WHAT_WE_DID / PLAN updated to reflect the closed phase. |
+| **P165.0** | ✅ | — | Branch from `origin/main@616dcd98` + survey + 7 BUGs (1033–1039) filed in `BUGS.md` + continuity-doc opening. |
+| **P165.1** | ◻ | 1033 | `backends/core/{build.go:515,handle_images.go:80/115/472/493}` — 5 silent `io.Copy(w, rc)` swallows on image-stream + build response paths. Capture err + `s.logger.Debug(...)` (Debug because the connection is already gone; mirrors the BUG-1025 pktline pattern). Cross-cloud sweep: confirm sibling backend handlers (ECS/Lambda/CloudRun/etc. fs/stats/reverse-agent adapt layers) already check `_, err = io.Copy(...)`. |
+| **P165.2** | ◻ | 1034 | `backends/lambda/agent_e2e_integration_test.go:168` — drop the `var _ = fmt.Sprintf // fmt is used by the framing demuxer when debugging` silencer + the `fmt` import. Re-grep the test file for any other false-claim silencers. |
+| **P165.3** | ◻ | 1035 | Standardise on `_, _ = w.Write(...)` form at the three outlier sites (`bleephub/gh_oauth.go:171`, `bleephub/artifacts.go:321`, `simulators/azure/functions.go:290`). Add a single-word comment naming the client-disconnect-only failure mode where the surrounding pattern is silent. |
+| **P165.4** | ◻ | 1036 | Sweep ~50 test-file docstrings carrying `// Phase NNN (PNNN.x) — …` / `// BUG-NNN` lineage. Rewrite each header to describe the **contract under test** (e.g. "issue / PR locking moderation enforces 403 on locked-parent comment-create"), not the phase that introduced it. Use `rg` to bound the sweep; preserve `// Phase 1: …` style runner-lifecycle phase labels in `tests/gitlab_runner_e2e_test.go` (those are docker-compose lifecycle phase numbers, not project phases — verified). |
+| **P165.5** | ◻ | 1039 | **Azure terraform-tests expansion** — biggest cloud gap. Add `azurestack_storage_account` (Azure Files), `azurestack_key_vault` + key, `azurestack_container_registry`, `azurestack_container_app_environment` + `azurestack_container_app` + `azurestack_container_app_job`, `azurestack_function_app` + service plan, `azurestack_application_insights`, `azurestack_user_assigned_identity`, `azurestack_private_dns_zone` + record. Pre-validate each PUT against the running sim via curl (matches Phase 164.11 discipline). Surface any missing handlers as own-BUGs filed in this PR. |
+| **P165.6** | ◻ | 1038 | **GCP terraform-tests expansion** — add `google_cloudfunctions2_function` (the runner-workload primitive!), `google_service_account` + `_iam_binding` + `_iam_member`, `google_storage_bucket_object`, `google_compute_subnetwork` + `_firewall` + `_instance` + `_instance_template`, `google_cloudbuild_trigger`, `google_logging_project_sink` + `_metric`, `google_pubsub_topic` + `_subscription`. Same discipline: surface missing handlers as new BUGs in this PR. |
+| **P165.7** | ◻ | 1037 | **AWS terraform-tests expansion** — add `aws_lambda_function`, `aws_s3_bucket` + `_object`, `aws_dynamodb_table`, `aws_kms_key` + `_alias`, `aws_secretsmanager_secret` + `_version`, `aws_efs_file_system` + `_access_point` + `_mount_target`, `aws_ssm_parameter`, `aws_vpc` + `_subnet` + `_security_group` + `_security_group_rule`. Same discipline: pre-validate, surface gap-BUGs. |
+| **P165.8** | ◻ | — | **Continuity-doc compression** — STATUS / DO_NEXT / PLAN / WHAT_WE_DID / README. Goal: actionable-across-compaction shape. Keep invariants block + active-phase scope + last 3 phase headlines + forward-looking tracks. Drop: closed-phase per-sub-task tables, per-BUG narrative paragraphs (covered by BUGS.md), duplicated "what's a vibe-slop sweep" prose. Target: ≤ ~50% current line count. Re-verify continuity by re-reading each doc as a cold-start operator would. |
+| **P165.9** | ◻ | — | Final state save: STATUS / DO_NEXT / WHAT_WE_DID / PLAN / MEMORY updated to reflect every closed sub-task. Phase 165 narrative entry in WHAT_WE_DID. |
+| **P165.10** | ◻ | — | Push branch, open PR #165, wait for 11 standard CI checks green per push, ping user for merge. |
 
-## Phase 163 scope
+## Verification discipline
 
-Rip the "Legacy aliases" section out of the top-level Makefile + the make/*.mk legacy framing. Sweep all docs to replace removed `make X` invocations with their canonical path-delegation form. Keep every recipe that does real work (Docker harnesses for smoke / tf-int / e2e / upstream / bleephub-gh-docker-test, plus `check-backend-coverage{,-enforce}`); only drop pure aliases.
+- `go test ./...` in every touched Go module before staging the commit.
+- For terraform-test expansions: `cd simulators/<cloud>/terraform-tests && SOCKERLESS_TEST_TARGET=sim go test -run TestTerraformApplyDestroy` must PASS locally before the commit.
+- For each new terraform resource: `curl -v` the sim handler with the canonical body the provider will send (capture via `TF_LOG=DEBUG` once) — verifies the wire shape independent of the provider's call sequence.
+- `git log --oneline -1` after every commit to confirm SHA advanced (pattern 31).
+- Re-verification pass against the diff after every sub-task closes (pattern 26 / 32).
 
-### Changes
+## Resumable tracks after Phase 165 merges
 
-| Layer | Removed | Replaced with |
-|---|---|---|
-| Top-level Makefile | `sim-test-{ecs,lambda,cloudrun,gcf,aca,azf}` | `make backends/<name>/test-integration` |
-| Top-level Makefile | `sim-test-{aws,gcp,azure,all}` (composites) | `make test-integration` fan-out, or chain per-backend targets |
-| Top-level Makefile | `test-{unit,e2e,agent,core,bleephub}` | `make agent/test`, `make backends/core/test`, `make bleephub/test`, `make tests/test` |
-| Top-level Makefile | `bleephub-test`, `bleephub-gh-test` | `make bleephub/test`, `make bleephub/test-integration` |
-| Makefile header | `# Legacy aliases preserved at the bottom (…)` comment | Section-header explanation of the surviving cross-cutting Docker suites |
-| Makefile pattern rule | `%/<target>: ...` short-circuited when target name collides with real dir (e.g. `bleephub/test/`) | Added `FORCE` phony dep so recipe always delegates into the per-app Makefile |
-| make/stack.mk | "legacy 1-sim + 1-backend tuple" comment | "pre-canned 1-sim + 1-backend + admin topology" |
-| make/components.mk | same | same |
-
-Docs updated: `README.md`, `FEATURE_MATRIX.md`, `ARCHITECTURE.md`, `backends/README.md`, `simulators/README.md`, `bleephub/README.md`, `tests/README.md`, `docs/MAKEFILE_STANDARD.md`, `.claude/skills/manual-test/SKILL.md`. Stale invented targets fixed: `stack-aws-ecs-up`/`-down` → `stack-aws-ecs`/`stack-down`; `e2e-github-aws-ecs` → `e2e-github-ecs`; `docker-tf-int-test-azure` → `tf-int-test-azure`.
-
-### Acceptance bar (Phase 163)
-
-- `make help` parses cleanly.
-- `make backends/ecs/test-integration` (and equivalents for the other 5 backends) resolves and delegates.
-- `make bleephub/test`, `make bleephub/test-integration`, `make tests/test`, `make agent/test`, `make backends/core/test` all resolve through the pattern rule despite the `bleephub/test/` directory collision.
-- `go test ./...` green in `api`, `agent`, `bleephub`, `backends/core`, `cmd/sockerless-admin` (touched zero Go files, but sanity smoke confirms nothing regressed).
-- No `make sim-test-*`, `make bleephub-test`, `make bleephub-gh-test`, `make test-{unit,e2e,agent,core,bleephub}` refs remain in docs / scripts / CI.
-- CI workflows (`ci.yml`, `e2e-vs-simulators.yml`, `.gitlab-ci.yml`) untouched in the Makefile-target columns they relied on (`make lint`, `make e2e-github-*`, `make e2e-gitlab-*`, `simulators/<cloud> && make sdk-test`).
-
-## Earlier phases (closed)
-
-### Phase 161 — Vibe-slop sweep (merged PR #161)
-
-Run the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist across **every layer** (backends, simulators, bleephub, cmd, agent, api). File every concrete violation. Fix every BUG in this PR.
-
-### Sub-task / commit layout
-
-Each BUG = one commit (sometimes two if BUGS.md update is separate from the fix). Commits land in severity order — auth-bypass first, fail-loud invariant next, handler-delegation next, then the bigger sweeps.
-
-| Sub | Status | BUG | What |
-|---|---|---|---|
-| **P161.0** | ✅ | — | State save + branch + 12 findings filed in BUGS.md. |
-| **P161.1** | ✅ | BUG-1000 | bleephub OAuth `handleOAuthToken` validates `client_assertion` JWT against agent's registered RSA public key per Azure DevOps OAuth2 jwt-bearer flow. Tests rewritten to drive real keypair + signed assertion. |
-| **P161.2** | ✅ | BUG-997 | `Persistence.MustPut` + `MustDelete` + 18-site sweep — bleephub persistence write failures now `log.Fatalf`, matching the open-failure invariant. |
-| **P161.3** | ✅ | BUG-995 | `handleSystemDf` / `handleContainerList` / `handleImagePrune` delegate to `s.self.<Method>`; consolidated the richer prune logic into `BaseServer.ImagePrune`; extracted `collectContainers` helper for `handleLibpodContainerList` (fixes a latent pending-create-drop bug). |
-| **P161.4–7** | ✅ | BUG-998 / 1002 / 1003 / 1004 / 1005 / 996 | Batched smaller fixes — `decodeRegistryAuth` dead-code rip + `handleImagePush` fail-loud; Azure ACR replications parent-exists check; inline `buildOCIHandler`; seeded admin `bph_` → `ghp_`; matrix fail-fast 3-deep nil chain → `JobDef.FailFast()` method; 18 sim `_ = sim.ReadJSON(...)` sites swept. |
-| **P161.8–9** | ✅ | BUG-994 / 999 / 1001 | Repo-wide phase/BUG-ref sweep (~115 occurrences, two-pass script + targeted fixups for one bot regression). `core.TagSet.InstanceID` deprecation comment dropped (audit confirmed both fields are load-bearing). Bleephub GraphQL `alwaysEmptyString` resolvers on unreachable NonNull fields → `unreachableFieldErr` for an honest contract. |
-| **P161.10** | ✅ | BUG-1008 | Deleted legacy `InitTracer` OTel entry point in 6 modules; migrated `otel_test.go` to `InitObservability`. |
-| **P161.11** | ✅ | — | Filed BUG-1006 / 1007 / 1009 as Open for Phase 162 (legacy-rip-out exceeds #161 reviewable scope). BUG-1010 candidate reclassified as false positive. |
-| **P161.12** | ◻ | — | Final state save + push + open PR #161. |
-
-### Discipline reminders
-
-Before each sub-task commit, read [`.claude/skills/avoid-vibe-slop/SKILL.md`](../.claude/skills/avoid-vibe-slop/SKILL.md). Specifically:
-
-- Q2 "What is the reference adaptor?" — every fix must preserve the reference-adaptor contract (`gh` CLI for bleephub; Docker SDK for backends/core; AWS/GCP/Azure SDK + Terraform for sims).
-- Q5 "Right fix, not quick fix" — BUG-994 is *not* "delete every line that says Phase". It's "preserve the *why* when load-bearing, drop the metadata." BUG-995 is *not* "add a stub `SystemDf` method on every backend". It's "the `api.Backend` method already exists — call it."
-- Q8 "Is the test driving the real adaptor?" — fixes that touch BUG-1000 (OAuth JWT validation) get verified with a real `gh auth login` flow against bleephub, not a mock.
-
-### Acceptance bar
-
-- All 12 BUGs in BUGS.md move from `Open` to `Resolved history`.
-- `go test ./...` green in every touched Go module.
-- `bun test` green in every touched UI package (none expected; flag if any touched).
-- CI green on the PR's 11 standard checks.
-- No newly-surfaced vibe-slop instances during the sweep go un-filed.
-
-## Resumable tracks after Phase 161 merges
-
-### Phase 162 — Legacy / fallback rip-out (filed during Phase 161)
-
-Three Open BUGs surfaced during the Phase 161 sweep that exceeded #161's reviewable scope. Per the user's "no legacy support / no fallbacks during active development" directive, all three are simple rip-outs (no deprecation period, no opt-in compat).
-
-- **BUG-1006** (P1) — `cmd/sockerless-admin/config.go` + `cmd/sockerless/client.go` silently fall back to "old JSON contexts" when `config.yaml` is missing. Fix: drop the JSON fallback in both `discoverFromContexts` and `listContexts`; require `config.yaml` or error.
-- **BUG-1007** (P1) — `cmd/sockerless-admin/{instance,topology_store,topology_manager,project}.go` legacy migration scaffolding (`DeriveLegacyInstances`, `MigrateLegacyProjects`, `legacyDir`, `ProjectConfig` dual shape). Fix: rip the entire migration plumbing + the legacy `(SimPort / BackendPort)` shape on `ProjectConfig`; delete dependent tests.
-- **BUG-1009** (P2) — `github-runner-dispatcher-gcp/cmd/.../main.go::~351` "Services without an owner label are legacy (pre-owner-label rollout) — leave them alone." Fix: surface unknown services as an error rather than papering over with a future cleanup.
-
-Plus BUG-1001 (real ProjectV2 / PR-review-thread implementation), lower priority — the `unreachableFieldErr` placeholder from Phase 161 keeps the contract honest until the surfaces are implemented.
-
-### Track A — Live-cloud validation
+### Track A — Live-cloud validation (carried from Phase 164)
 
 Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell; teardown self-sufficient per `feedback_teardown_aggressive.md`.
 
-### Track B — UI vibe-slop sweep
+### Track B — UI / TypeScript vibe-slop sweep (carried from Phase 161)
 
-TypeScript / UI sweep deferred from Phase 161. If the Go sweep surfaces a sibling pattern in the UI (`ui/packages/*/src/`), this is the follow-up.
+Sibling pattern check on `ui/packages/*/src/`. Open as Phase 166 if Phase 165 surfaces a parallel finding.
 
-### Track C — Skill maturation
+### Track C — Test-pyramid deepening (P1 follow-up to Phase 165)
 
-Candidate additional skills as new patterns surface from Phase 161 close-out: `state-save`, `spec-first-implementation`, `cross-cloud-sweep`.
+After P165.5–7 close the P0 gaps, the remaining P1 surfaces (CloudFront full-distribution lifecycle, CloudWatch Metrics terraform, GCP Cloud Build terraform, Azure Application Insights terraform, GCP Operations terraform) can stage into a Phase 166 follow-up if leverage materialises.
 
 ### Track D — Phase 91d (bookmarked indefinitely)
 
-Real `pd-ephemeral` on cloudrun + gcf. Don't reopen until cloud capability changes.
+Real `pd-ephemeral` on cloudrun + gcf. Cloud Run's `runpb.Volume` lacks a PD field. Don't reopen until cloud capability changes.
 
 ## Invariants snapshot (full list in STATUS.md + VIBE_CODING.md)
 
 - Never auto-merge; user merges every PR.
 - Components decoupled from admin / UI.
 - No fakes / no fallbacks / no silent shims.
-- Persistence opt-in + fail-loud on both open AND write (BUG-985/986/997).
-- HTTP handlers dispatch through `s.self.<Method>`; never read `s.Store` directly (BUG-991/992/995).
-- No phase / BUG-ID references in code comments (BUG-994).
+- Persistence opt-in + fail-loud on both open AND write.
+- HTTP handlers dispatch through `s.self.<Method>`; never read `s.Store` directly.
+- No phase / BUG-ID references in code comments (BUG-994 — extends to test docstrings per BUG-1036).
 - `gh` CLI is the reference adaptor for bleephub.
 - `aws --debug` + SDK serializer source are the reference for sim handler wire shapes.
+- Terraform provider call sequences are materially different from raw SDK — both layers must be exercised (BUG-1029 lineage; ground for the P165.5–7 expansion).
 - `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for cloud-mapping.
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout phase-161-vibe-slop-sweep && git pull` (or `git checkout main && git pull --ff-only` if 161 merged).
+1. `git fetch origin && git checkout phase-165-vibe-slop-sweep-3-test-pyramid && git pull` (or `git checkout main && git pull --ff-only` if 165 merged).
 2. `git log --oneline -15` to see what's already on the branch.
-3. Read STATUS.md + this file + the recent commits + BUGS.md § Open.
-4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](../.claude/skills/avoid-vibe-slop/SKILL.md) before writing any fix.
-5. Pick the next `◻` row from the sub-task table above; the table is ordered by severity, so lowest unchecked = next.
+3. Read STATUS.md + this file + the last 2 commits + BUGS.md § Open.
+4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before writing any fix.
+5. Pick the next `◻` row from the sub-task table above (severity-ordered).
 6. Fix it. `go test ./...` in the touched module. Move the BUG from Open → Resolved history in BUGS.md with a one-line summary.
 7. State save: update this file's sub-task status, STATUS.md bug counts, WHAT_WE_DID.md narrative.
 8. Commit and push. CI green per push.

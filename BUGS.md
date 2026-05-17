@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1032 filed · 1032 fixed · 0 open · 2 false positives.**
+**1039 filed · 1032 fixed · 7 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,8 +10,13 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-
-*(none — all BUGs filed during Phase 164 closed in this PR.)*
+| 1033 | P2 | `backends/core/{build.go,handle_images.go}` | 1 (silent error swallow) | Five `io.Copy(w, rc)` calls in image-streaming + build response paths drop the copy error silently (build.go:515, handle_images.go:80/115/472/493). Mid-stream client disconnects or response-buffer-full failures vanish — operator gets a truncated tarball / event stream with no log entry. Fix: capture err and `s.logger.Debug(...)` (Debug because the connection is gone; similar to BUG-1025 pktline pattern). |
+| 1034 | P3 | `backends/lambda/agent_e2e_integration_test.go:168` | 27 (no pruning) + 14 (single-use silencer) | `var _ = fmt.Sprintf // fmt is used by the framing demuxer when debugging` — the claimed consumer `demuxDockerStream()` (lines 144–164) never calls `fmt`. Same shape as BUG-1022/1024 dead-import silencers. Delete the silencer + the `fmt` import; if a future debug path needs it, the import comes back as a one-liner. |
+| 1035 | P3 | `bleephub/{gh_oauth.go:171,artifacts.go:321}` + `simulators/azure/functions.go:290` | 1 (style inconsistency hiding real swallow) | Three `w.Write([]byte(...))` / `w.Write(data)` sites omit the standard `_, _ = w.Write(...)` form used everywhere else in the same packages. Inconsistent style hides whether the swallow is intentional. Either standardise on the explicit-discard form with a comment naming the client-disconnect-only failure mode, or log the err. |
+| 1036 | P2 | repo-wide test files | 8 (phase metadata in code) | The BUG-994 / 1014 / 1026 sweep was production-code only. ~50 test files still carry `// Phase NNN (PNNN.x) — …` lineage headers (bleephub/gh_*_test.go, simulators/{aws,gcp,azure}/{sdk,cli}-tests/*, agent/cmd/sockerless-cloudrun-bootstrap/main_test.go, tests/main_test.go, etc.) plus a handful of `// BUG-NNN` refs in test bodies. Same shape as BUG-1026 but the prior sweep stopped at error-string assertions. Rewrite each header to describe the contract under test, not the phase that introduced it. |
+| 1037 | P0 | `simulators/aws/terraform-tests/main.tf` | 2 (external-validation gap) | AWS terraform-tests cover 26 resources but skip the load-bearing-for-runner-pods set: Lambda function, S3 bucket + object, DynamoDB table, KMS key + alias, Secrets Manager secret + version, EFS file system + access point + mount target, SSM parameter, EC2 (VPC + subnet + security group + security group rule). Each is implemented in the sim but only sdk-tests exercise the wire shape — terraform-provider's call sequence is materially different (matches BUG-1029 surface pattern: provider POSTs `:enable` immediately after `:addVersion` etc.). One missing handler or canonical-id divergence will only surface live. |
+| 1038 | P0 | `simulators/gcp/terraform-tests/main.tf` | 2 (external-validation gap) | GCP terraform-tests cover 11 resources (compute network + disk, DNS public + private, AR docker repo, Cloud Run v2 service + job, GCS bucket, Secret Manager secret + version, random_id) but skip: Cloud Functions Gen2 (the runner-workload primitive!), IAM service account + binding + member, GCS object, Compute subnet + firewall + instance + instance_template, Cloud Build trigger, Cloud Logging sink + metric, Pub/Sub topic + subscription. |
+| 1039 | P0 | `simulators/azure/terraform-tests/main.tf` | 2 (external-validation gap) | Azure terraform-tests cover only 5 networking primitives (resource_group + vnet + subnet + nsg + nsg rule) — the rest of the implemented sim surface has no terraform-provider validation: storage_account (Azure Files), key_vault + key_vault_key, container_registry, container_app_environment + container_app + container_app_job, function_app + service_plan, application_insights, user_assigned_identity, private_dns_zone + record. Biggest cloud gap of the three; both runner backends (ACA + AZF) are entirely uncovered at the terraform-provider layer. |
 
 ## False positives
 

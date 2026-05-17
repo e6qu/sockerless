@@ -6,7 +6,30 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-16 — Phase 164: second vibe-slop sweep (in flight on `phase-164-vibe-slop-sweep-2`)
+## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
+
+User directive: *"switch to main, sync, run one more vibe slop sweep with our local skills, log all issues found in `BUGS.md` as soon as we find them; plan to increase test coverage and have the adequate test pyramid for the simulators, in light of the implemented slices of functionality, and that our verification can be validated externally by the fact that all components of this project have their corresponding external tools, checks, SDKs, CLIs, schemas; single PR open in which to put all the changes, even if they can be scheduled and split across several phases and sub-phases, verify after each significant chunk of work; continuity docs must be reviewed, with old obsolete information pruned or compressed so that they are actionable across session compactions, fresh sessions."*
+
+Three layered tracks landing in a single PR (per the standing single-branch rule):
+
+1. **Vibe-slop sweep #3 (BUGs 1033–1036).** Fresh-eyes pass against `origin/main@616dcd98` after Phase 161 (18) + Phase 164 (19). Survey found:
+   - 5 silent `io.Copy(w, rc)` swallows in image-stream + build response paths (`backends/core/build.go:515` + `handle_images.go:80/115/472/493`) — pattern 1. Mid-stream client disconnect or response-buffer-full failure produces a truncated tarball with no log entry.
+   - Dead `var _ = fmt.Sprintf` silencer in `backends/lambda/agent_e2e_integration_test.go:168` with the false claim "fmt is used by the framing demuxer when debugging" — `demuxDockerStream()` never calls `fmt`. Pattern 14 + 27 (dead code held for hypothetical future use).
+   - `w.Write` style inconsistency: 3 sites omit the `_, _ = w.Write(...)` form that everywhere else in the same packages uses. Inconsistent style hides whether the swallow is intentional.
+   - ~50 test-file docstrings still anchored on Phase / sub-phase metadata. The BUG-994 / 1014 / 1026 sweep was production-code only; tests carry `// Phase 153 (P153.x) — Reactions API parity.` headers as lineage rather than contract documentation.
+
+2. **Sim test-pyramid expansion (BUGs 1037–1039).** Audit found that even after Phase 164's expansion (GCP 4 → 11 resources; Azure 1 → 5), substantial parts of each cloud's implemented sim surface have no terraform-provider validation. Per PLAN.md principle 4 ("proven by unmodified external test suites"), each implemented slice needs at minimum one real-adaptor test at each layer (SDK + terraform-provider + CLI). The terraform-provider's call sequence is materially different from raw SDK (BUG-1029 lineage — provider POSTs `:enable` immediately after `:addVersion`, plain SDK does not) so the gap is real coverage, not duplication. P0 gaps:
+   - **AWS**: 11 missing resources — Lambda, S3 (bucket + object), DynamoDB, KMS (key + alias), Secrets Manager (secret + version), EFS (FS + AP + mount target), SSM parameter, EC2 (VPC + subnet + SG + SG rule).
+   - **GCP**: 8 missing — Cloud Functions Gen2 (the runner-workload primitive!), IAM (SA + binding + member), GCS object, Compute (subnet + firewall + instance + instance_template), Cloud Build trigger, Cloud Logging sink + metric, Pub/Sub topic + subscription.
+   - **Azure**: widest gap — only 5 networking primitives covered today; both runner backends (ACA + AZF) entirely terraform-uncovered. Missing: storage_account (Azure Files), key_vault + key, ACR, container_app_environment + container_app + container_app_job, function_app + service_plan, application_insights, user_assigned_identity, private_dns_zone + record.
+
+3. **Continuity-doc compression pass.** STATUS / DO_NEXT / PLAN / WHAT_WE_DID grew to ~1700 lines across 5 files. Closed-phase sub-task tables + per-BUG narrative paragraphs + duplicated "what's a vibe-slop sweep" prose are noise after merge; they don't help cross-compaction or fresh-session resume. Target shape: invariants + active-phase scope + last-3-phase headlines + forward-looking tracks; per-BUG detail stays in BUGS.md + `git log`. Target ≤ ~50% current line count.
+
+### Fix plan
+
+11 sub-tasks (P165.0–P165.10) in [DO_NEXT.md](DO_NEXT.md). Verify after every significant chunk per user directive. Single PR per the standing single-branch rule.
+
+## 2026-05-16 — Phase 164: second vibe-slop sweep (merged at `616dcd98`)
 
 User directive: *"re-familiarize yourself with the docs here and then run the vibe slop removal skill; we want any fixes to land on a single PR; if more extensive changes are needed then they can be planned into multiple phases, and use the so-called 'continuity' docs on this repo, with granular commits and check of CI each time."*
 

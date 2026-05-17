@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-164-vibe-slop-sweep-2` — PR #164 open. |
-| In-flight | **Phase 164 — second vibe-slop sweep + terraform-provider test expansion.** PR #164 contains 13 commits closing 19 BUGs (1014–1032). Three sweep passes (first / re-verification / third-pass-user-requested) plus deeper terraform-provider coverage on GCP (4 → 11 resources across 6 sim slices) and Azure (1 → 5 resources across 5 sim slices). The expansion surfaced + fixed 3 real sim defects: BUG-1029 (missing GCP secret-version state-transition handlers + bare-version GET); BUG-1030 (GCP terraform-tests carried the BUG-993 close-then-bind port race fixed only in sdk-tests during Phase 160); BUG-1031 / 1032 (terraform-test main.tf expansions). |
-| Last merged | PR #163 — Phase 163 Makefile legacy alias rip-out + docs sweep (2026-05-16, merged at `d5b9d22a`). |
+| Active branch | `phase-165-vibe-slop-sweep-3-test-pyramid` — PR TBD. |
+| In-flight | **Phase 165 — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression.** User directive: re-run vibe-slop on a fresh main, plan test-pyramid expansion against real adaptors (SDK / terraform-provider / CLI) for implemented slices, single PR with sub-phases, verify after each significant chunk, prune obsolete continuity-doc info for cross-compaction durability. 7 new BUGs filed (1033–1039): vibe-slop = silent `io.Copy` swallows in image-streaming paths (1033), dead fmt-silencer in lambda e2e test (1034), `w.Write` style inconsistency (1035), Phase-metadata in ~50 test-file docstrings (1036 — continuation of BUG-994 sweep, prior passes were prod-code only). Test pyramid = three P0 terraform-provider gaps (1037 AWS / 1038 GCP / 1039 Azure) — Azure is the widest (only 5 networking primitives covered, both runner backends ACA + AZF entirely missing at the terraform-provider layer). |
+| Last merged | PR #164 — Phase 164 second vibe-slop sweep + terraform-provider test expansion (2026-05-17, merged at `616dcd98`). |
 | Standing merge auth | **None.** Default "never auto-merge" rule active. User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 0 open · 1032 fixed (1032 total filed) · 2 false positives. |
+| Bugs | 7 open · 1032 fixed (1039 total filed) · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -46,7 +46,35 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` / `flexInt64` / `flexIntSlice` accept both typed and string-coerced JSON (what `gh api -f` sends). Not a fallback; this is the GitHub Rails-layer behavior made explicit.
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000. The token endpoint must verify the client-assertion JWT signature against the App's public key, per GitHub's `/login/oauth/access_token` contract.
 
-## Phase 164 — Second vibe-slop sweep + terraform expansion (in flight)
+## Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight)
+
+User directive (2026-05-17): *"switch to main, sync, run one more vibe slop sweep with our local skills, log all issues found in `BUGS.md` as soon as we find them; plan to increase test coverage and have the adequate test pyramid for the simulators, in light of the implemented slices of functionality, and that our verification can be validated externally by the fact that all components of this project have their corresponding external tools, checks, SDKs, CLIs, schemas; single PR open in which to put all the changes, even if they can be scheduled and split across several phases and sub-phases, verify after each significant chunk of work; continuity docs must be reviewed, with old obsolete information pruned or compressed so that they are actionable across session compactions, fresh sessions."*
+
+Three layered tracks on one PR:
+
+1. **Vibe-slop sweep #3 (4 BUGs: 1033–1036).** After Phase 161 (18) + Phase 164 (19), the catalogue's pattern-26 / 32 (re-verification with fresh eyes) predicts each pass surfaces violations the prior rubber-stamped. Fresh-eyes pass against `origin/main@616dcd98` surfaced: 5 silent `io.Copy(w, rc)` on image-stream + build response paths in `backends/core/{build.go,handle_images.go}` (1033); dead `var _ = fmt.Sprintf` silencer with misleading "used by demuxer when debugging" comment in lambda e2e test (1034); `w.Write` style inconsistency at 3 sites where surrounding code uses `_, _ = w.Write(...)` (1035); ~50 test-file docstrings still anchored on Phase / sub-phase metadata (1036 — BUG-994 / 1014 / 1026 swept prod-code only, tests carry "// Phase 153 (P153.x) — …" lineage headers everywhere).
+
+2. **Sim test-pyramid expansion (3 P0 BUGs: 1037–1039).** External-validation principle 4 (PLAN.md) — "proven by unmodified external test suites." Each sim must have at minimum one real-adaptor test (SDK + terraform-provider + CLI) per implemented slice. Audit surfaced terraform-provider gaps:
+   - **AWS (1037)**: 11 missing — Lambda, S3 (bucket + object), DynamoDB, KMS (key + alias), Secrets Manager (secret + version), EFS (FS + AP + mount target), SSM parameter, EC2 (VPC + subnet + SG + SG rule).
+   - **GCP (1038)**: 8 missing — Cloud Functions Gen2 (the runner-workload primitive!), IAM (SA + binding + member), GCS object, Compute (subnet + firewall + instance + instance_template), Cloud Build trigger, Cloud Logging sink + metric, Pub/Sub topic + subscription.
+   - **Azure (1039)**: widest gap — only 5 networking primitives covered; both runner backends (ACA + AZF) are entirely terraform-uncovered. Missing: storage_account (Azure Files), key_vault + key, ACR, container_app_environment + container_app + container_app_job, function_app + service_plan, application_insights, user_assigned_identity, private_dns_zone + record.
+
+3. **Continuity-doc compression pass.** STATUS / DO_NEXT / PLAN / WHAT_WE_DID grew to ~1700 lines across 5 files. Closed-phase tables + per-BUG narratives + sub-task tables for already-merged phases are mostly noise after the merge. Goal: prune to actionable-across-compaction shape. Keep the invariants block, the active-phase scope, the last 3 phases' headlines, and forward-looking tracks. Per-bug detail stays in BUGS.md + `git log`.
+
+Acceptance:
+- All 7 BUGs (1033–1039) closed in this PR (test-pyramid BUGs may stage into sub-phase commits but all land before merge).
+- `go test ./...` green in every touched Go module.
+- `cd simulators/<cloud>/terraform-tests && SOCKERLESS_TEST_TARGET=sim go test -run TestTerraformApplyDestroy` green for all three clouds after the expansion.
+- Continuity docs ≤ ~50% of current total lines after compression pass.
+- 11 standard CI checks green per push.
+- User merges PR #165.
+
+Out of scope (carry forward to later phases):
+- TypeScript / UI vibe-slop sweep (Phase 161 backlog).
+- Live-cloud validation track (separate cells).
+- CloudFront-distribution-lifecycle deepening on AWS (P1, not P0).
+
+## Phase 164 — Second vibe-slop sweep + terraform expansion (merged)
 
 Phase 161 was the first comprehensive vibe-slop sweep (18 BUGs closed). Phase 164 re-runs the [`avoid-vibe-slop`](../.claude/skills/avoid-vibe-slop/SKILL.md) checklist with fresh eyes after Phase 162 grew `docs/VIBE_CODING.md` from 23 → 35 patterns + expanded the skill from 17 → 26 checklist items. Pattern 26 / 32 (re-verification with fresh eyes) explicitly predicted the first sweep would rubber-stamp some violations — it did. **19 new BUGs closed (1014–1032).**
 
