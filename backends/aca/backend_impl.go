@@ -2,6 +2,7 @@ package aca
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -535,16 +536,22 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// — delete the backing cloud resource. Jobs and Apps are
 	// distinct ARM resource types so cached state is unambiguous.
+	// Errors propagate per the no-fallback rule.
+	var cleanupErrs []error
 	if s.config.UseApp {
 		appState, _ := s.resolveAppACAState(s.ctx(), id)
 		if appState.AppName != "" {
-			s.deleteApp(appState.AppName)
+			if err := s.deleteAppStrict(appState.AppName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(appState.AppName)
 		}
 	} else {
 		acaState, _ := s.resolveACAState(s.ctx(), id)
 		if acaState.JobName != "" {
-			s.deleteJob(acaState.JobName)
+			if err := s.deleteJobStrict(acaState.JobName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(acaState.JobName)
 		}
 	}
@@ -575,7 +582,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -597,6 +606,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

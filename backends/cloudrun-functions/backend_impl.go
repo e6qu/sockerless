@@ -2,6 +2,7 @@ package gcf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -682,6 +683,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			fullName = fn.GetName()
 		}
 	}
+	var cleanupErrs []error
 	if fullName != "" {
 		fn, gerr := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullName})
 		contentTag := ""
@@ -689,7 +691,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			contentTag = fn.GetLabels()["sockerless_overlay_hash"]
 		}
 		if err := s.releaseOrDeleteFunction(s.ctx(), fullName, contentTag); err != nil {
-			s.Logger.Warn().Err(err).Str("function", fullName).Msg("pool release failed")
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("pool release function %q: %w", fullName, err))
 		}
 		s.Registry.MarkCleanedUp(fullName)
 	}
@@ -701,7 +703,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -722,6 +726,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

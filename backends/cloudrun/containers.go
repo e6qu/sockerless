@@ -1,6 +1,8 @@
 package cloudrun
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -63,14 +65,32 @@ func (s *Server) cancelExecution(executionName string) {
 	_, _ = op.Wait(s.ctx())
 }
 
-// deleteJob deletes a Cloud Run Job (best-effort), waiting for completion.
+// deleteJob deletes a Cloud Run Job (best-effort, error logged).
+// Used by rollback paths inside ContainerStart where the primary
+// error already carries the operator-visible context. ContainerRemove
+// uses deleteJobStrict instead — it propagates errors so `docker rm`
+// only succeeds when the cloud is actually clean.
 func (s *Server) deleteJob(jobName string) {
+	if err := s.deleteJobStrict(jobName); err != nil {
+		s.Logger.Warn().Err(err).Str("job", jobName).Msg("deleteJob: cloud delete failed (rollback path)")
+	}
+}
+
+// deleteJobStrict deletes a Cloud Run Job and returns nil on success
+// or when the job is already gone. Errors propagate. Used by
+// ContainerRemove for the no-fallback cleanup contract.
+func (s *Server) deleteJobStrict(jobName string) error {
 	op, err := s.gcp.Jobs.DeleteJob(s.ctx(), &runpb.DeleteJobRequest{
 		Name: jobName,
 	})
 	if err != nil {
-		s.Logger.Debug().Err(err).Str("job", jobName).Msg("failed to delete job")
-		return
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "does not exist") {
+			return nil
+		}
+		return fmt.Errorf("delete cloud run job %q: %w", jobName, err)
 	}
-	_, _ = op.Wait(s.ctx())
+	if _, werr := op.Wait(s.ctx()); werr != nil {
+		return fmt.Errorf("await delete cloud run job %q: %w", jobName, werr)
+	}
+	return nil
 }

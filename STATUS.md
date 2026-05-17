@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
-| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** P168.1+.2+.3+.4+.5+.6 landed. Headline: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (`5f745039`); ContainerStart blocks for reverse-agent on all 5 FaaS-style backends with per-backend timeout env (`9a9b6319`); tmpfs in-memory EmptyDir is the default storage backing for cloudrun + GCF + ACA (`0bef7b57`); bootstrap-side ENOSPC detection returns `exit_code=28` + operator-guidance message in the exec envelope (this commit). Lambda + AZF unchanged on tmpfs (their volume translators reject `BackingMemory`). Still ahead: P168.7 (strict cleanup-path errors), P168.8 (FaaS lifetime-exceeded signal), P168.9 (E2E + docs + codex + PR). |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1+.2+.3+.4+.5+.6+.7 landed. Headline: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (`5f745039`); ContainerStart blocks for reverse-agent on all 5 FaaS-style backends with per-backend timeout env (`9a9b6319`); tmpfs in-memory EmptyDir is the default storage backing for cloudrun + GCF + ACA (`0bef7b57`); bootstrap-side ENOSPC detection returns `exit_code=28` + operator-guidance message in the exec envelope (`e855df42`); ContainerRemove now propagates cloud cleanup errors on all 5 FaaS-style backends — `docker rm` succeeds only when the cloud is actually clean (this commit). Still ahead: P168.8 (FaaS lifetime-exceeded signal), P168.9 (E2E + docs + codex + PR). |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1054 fixed · 2 open · 2 false positives. Open this phase: BUG-1052 (cleanup-path strict errors), 1053 (FaaS lifetime-exceeded). |
+| Bugs | 1055 fixed · 1 open · 2 false positives. Open this phase: BUG-1053 (FaaS lifetime-exceeded). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

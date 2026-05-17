@@ -2,6 +2,8 @@ package aca
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -125,18 +127,30 @@ func (s *Server) startMultiContainerAppTyped(_ string, podContainers []api.Conta
 	return nil
 }
 
-// deleteApp deletes an ACA ContainerApp. Best-effort: errors are logged
-// but not propagated so cleanup paths stay simple.
+// deleteApp deletes an ACA ContainerApp (best-effort, error logged).
+// Used by rollback paths inside ContainerStart. ContainerRemove uses
+// deleteAppStrict which propagates errors per the no-fallback rule.
 func (s *Server) deleteApp(appName string) {
+	if err := s.deleteAppStrict(appName); err != nil {
+		s.Logger.Warn().Err(err).Str("app", appName).Msg("deleteApp: cloud delete failed (rollback path)")
+	}
+}
+
+// deleteAppStrict deletes an ACA ContainerApp and returns nil on
+// success or when the app is already gone. Errors propagate.
+func (s *Server) deleteAppStrict(appName string) error {
 	if appName == "" || s.azure == nil || s.azure.ContainerApps == nil {
-		return
+		return nil
 	}
 	poller, err := s.azure.ContainerApps.BeginDelete(context.Background(), s.config.ResourceGroup, appName, nil)
 	if err != nil {
-		s.Logger.Warn().Err(err).Str("app", appName).Msg("failed to initiate app delete")
-		return
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "ResourceNotFound") {
+			return nil
+		}
+		return fmt.Errorf("delete ACA app %q: %w", appName, err)
 	}
-	if _, err := poller.PollUntilDone(context.Background(), nil); err != nil {
-		s.Logger.Warn().Err(err).Str("app", appName).Msg("app delete wait failed")
+	if _, werr := poller.PollUntilDone(context.Background(), nil); werr != nil {
+		return fmt.Errorf("await delete ACA app %q: %w", appName, werr)
 	}
+	return nil
 }

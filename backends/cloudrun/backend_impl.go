@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -751,17 +752,23 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// — delete the backing cloud resource. Jobs and Services
 	// live in distinct GCP resource namespaces so cached state is
-	// unambiguous.
+	// unambiguous. Errors propagate per the no-fallback rule —
+	// `docker rm` succeeds only when the cloud is actually clean.
+	var cleanupErrs []error
 	if s.config.UseService {
 		svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
 		if svcState.ServiceName != "" {
-			s.deleteService(svcState.ServiceName)
+			if err := s.deleteServiceStrict(svcState.ServiceName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(svcState.ServiceName)
 		}
 	} else {
 		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		if crState.JobName != "" {
-			s.deleteJob(crState.JobName)
+			if err := s.deleteJobStrict(crState.JobName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
 	}
@@ -795,7 +802,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -816,6 +825,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

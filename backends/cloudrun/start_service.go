@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -488,21 +489,35 @@ func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) st
 	return ""
 }
 
-// deleteService deletes a Cloud Run Service and waits for the LRO to
-// complete. Best-effort: errors are logged, not propagated, so caller
-// cleanup paths stay simple.
+// deleteService deletes a Cloud Run Service (best-effort, error logged).
+// Used by rollback paths inside ContainerStart where the primary
+// error already carries operator-visible context. ContainerRemove
+// uses deleteServiceStrict — that one propagates errors so
+// `docker rm` only succeeds when the cloud is clean.
 func (s *Server) deleteService(serviceName string) {
+	if err := s.deleteServiceStrict(serviceName); err != nil {
+		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("deleteService: cloud delete failed (rollback path)")
+	}
+}
+
+// deleteServiceStrict deletes a Cloud Run Service and returns nil on
+// success or when the service is already gone. Errors propagate.
+// Used by ContainerRemove for the no-fallback cleanup contract.
+func (s *Server) deleteServiceStrict(serviceName string) error {
 	if serviceName == "" || s.gcp == nil || s.gcp.Services == nil {
-		return
+		return nil
 	}
 	op, err := s.gcp.Services.DeleteService(context.Background(), &runpb.DeleteServiceRequest{
 		Name: serviceName,
 	})
 	if err != nil {
-		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("failed to initiate service delete")
-		return
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "does not exist") {
+			return nil
+		}
+		return fmt.Errorf("delete cloud run service %q: %w", serviceName, err)
 	}
-	if _, err := op.Wait(context.Background()); err != nil {
-		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("service delete wait failed")
+	if _, werr := op.Wait(context.Background()); werr != nil {
+		return fmt.Errorf("await delete cloud run service %q: %w", serviceName, werr)
 	}
+	return nil
 }

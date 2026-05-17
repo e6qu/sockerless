@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -921,7 +922,10 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Pool-aware function release. Look up the function's overlay-hash
 	// tag so releaseOrDeleteFunction can decide between returning to the
 	// pool (clear allocation tag) or deleting (pool over POOL_MAX). On
-	// PoolMax=0 we always delete (pre-pool behavior).
+	// PoolMax=0 we always delete (pre-pool behavior). Cleanup errors
+	// propagate so `docker rm` only succeeds when the cloud is actually
+	// clean (no leaked Function in the operator's account).
+	var cleanupErrs []error
 	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		if s.config.PoolMax > 0 {
@@ -932,12 +936,14 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 				}
 			}
 			if err := s.releaseOrDeleteFunction(s.ctx(), lambdaState.FunctionName, contentTag); err != nil {
-				s.Logger.Warn().Err(err).Str("function", lambdaState.FunctionName).Msg("pool release failed; container remove continues")
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("pool release function %q: %w", lambdaState.FunctionName, err))
 			}
 		} else {
-			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
+			if _, derr := s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 				FunctionName: aws.String(lambdaState.FunctionName),
-			})
+			}); derr != nil && !strings.Contains(derr.Error(), "ResourceNotFoundException") {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete function %q: %w", lambdaState.FunctionName, derr))
+			}
 		}
 	}
 
@@ -952,7 +958,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -979,6 +987,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 
