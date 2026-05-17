@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1039 filed · 1032 fixed · 7 open · 2 false positives.**
+**1039 filed · 1033 fixed · 6 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1033 | P2 | `backends/core/{build.go,handle_images.go}` | 1 (silent error swallow) | Five `io.Copy(w, rc)` calls in image-streaming + build response paths drop the copy error silently (build.go:515, handle_images.go:80/115/472/493). Mid-stream client disconnects or response-buffer-full failures vanish — operator gets a truncated tarball / event stream with no log entry. Fix: capture err and `s.logger.Debug(...)` (Debug because the connection is gone; similar to BUG-1025 pktline pattern). |
 | 1034 | P3 | `backends/lambda/agent_e2e_integration_test.go:168` | 27 (no pruning) + 14 (single-use silencer) | `var _ = fmt.Sprintf // fmt is used by the framing demuxer when debugging` — the claimed consumer `demuxDockerStream()` (lines 144–164) never calls `fmt`. Same shape as BUG-1022/1024 dead-import silencers. Delete the silencer + the `fmt` import; if a future debug path needs it, the import comes back as a one-liner. |
 | 1035 | P3 | `bleephub/{gh_oauth.go:171,artifacts.go:321}` + `simulators/azure/functions.go:290` | 1 (style inconsistency hiding real swallow) | Three `w.Write([]byte(...))` / `w.Write(data)` sites omit the standard `_, _ = w.Write(...)` form used everywhere else in the same packages. Inconsistent style hides whether the swallow is intentional. Either standardise on the explicit-discard form with a comment naming the client-disconnect-only failure mode, or log the err. |
 | 1036 | P2 | repo-wide test files | 8 (phase metadata in code) | The BUG-994 / 1014 / 1026 sweep was production-code only. ~50 test files still carry `// Phase NNN (PNNN.x) — …` lineage headers (bleephub/gh_*_test.go, simulators/{aws,gcp,azure}/{sdk,cli}-tests/*, agent/cmd/sockerless-cloudrun-bootstrap/main_test.go, tests/main_test.go, etc.) plus a handful of `// BUG-NNN` refs in test bodies. Same shape as BUG-1026 but the prior sweep stopped at error-string assertions. Rewrite each header to describe the contract under test, not the phase that introduced it. |
@@ -38,7 +37,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1032 bugs filed and fixed across phases 86–164.
+1033 bugs filed and fixed across phases 86–165.
+
+- **1033** (Phase 165) — Five `io.Copy(w, rc)` calls in image-streaming + build response paths in `backends/core/{build.go,handle_images.go}` swallowed the mid-stream copy error silently. Sites: `build.go:515` (build event stream), `handle_images.go:80` (image pull), `:115` (image load non-quiet), `:472` (image push), `:493` (image save tar). Fix shape per site: `if _, err := io.Copy(w, rc); err != nil { s.Logger.Debug().Err(err).Msg("<op> stream copy failed — client likely disconnected") }`. Debug level because by the time io.Copy fails, the response headers are already committed and the client is gone — there's nothing recoverable, but the cause should be greppable (matches the BUG-1025 pktline pattern). Verified: `cd backends/core && go test ./...` green.
 
 - **1032** (Phase 164 terraform-test expansion) — `simulators/azure/terraform-tests/main.tf` had only `azurestack_resource_group` coverage; expanded to also cover `azurestack_virtual_network`, `azurestack_subnet`, `azurestack_network_security_group`, `azurestack_network_security_rule`. Five resources now exercise five sim slices (Microsoft.Resources/resourceGroups, Microsoft.Network/virtualNetworks, /subnets, /networkSecurityGroups, /networkSecurityGroups/securityRules). `apply_test.go` now reads outputs and asserts canonical ARM-id round-trips. Pre-validated each PUT against the running sim via curl — all 5 returned 200/201 with the expected canonical-ARM-id payload. CI runs in Docker (the existing darwin-skip is preserved for local runs).
 

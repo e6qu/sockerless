@@ -77,7 +77,9 @@ func (s *BaseServer) handleImagePull(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, rc)
+	if _, err := io.Copy(w, rc); err != nil {
+		s.Logger.Debug().Err(err).Msg("image pull stream copy failed — client likely disconnected")
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -112,7 +114,9 @@ func (s *BaseServer) handleImageLoad(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(w, rc)
+		if _, err := io.Copy(w, rc); err != nil {
+			s.Logger.Debug().Err(err).Msg("image load stream copy failed — client likely disconnected")
+		}
 	}
 }
 
@@ -469,7 +473,9 @@ func (s *BaseServer) handleImagePush(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, rc)
+	if _, err := io.Copy(w, rc); err != nil {
+		s.Logger.Debug().Err(err).Msg("image push stream copy failed — client likely disconnected")
+	}
 }
 
 func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
@@ -490,7 +496,9 @@ func (s *BaseServer) handleImageSave(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, rc)
+	if _, err := io.Copy(w, rc); err != nil {
+		s.Logger.Debug().Err(err).Msg("image save stream copy failed — client likely disconnected")
+	}
 }
 
 func (s *BaseServer) handleImageSearch(w http.ResponseWriter, r *http.Request) {
