@@ -9,17 +9,17 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
-// (compute network + disk, public + private DNS zones, Artifact Registry,
-// Cloud Run v2 Service + Job, Cloud Storage, Secret Manager) in a single
-// terraform apply round-trip and asserts the cross-resource references
-// converged.
+// (compute network + disk + subnet + firewall, public + private DNS zones,
+// Artifact Registry, Cloud Run v2 Service + Job, Cloud Storage bucket +
+// object, Secret Manager) in a single terraform apply round-trip and
+// asserts the cross-resource references converged.
 //
 // Slices exercised against the simulator:
-//   - compute.googleapis.com (networks + disks)
+//   - compute.googleapis.com (networks + disks + subnetworks + firewalls)
 //   - dns.googleapis.com (public + private managedZones)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
-//   - storage.googleapis.com (bucket)
+//   - storage.googleapis.com (bucket + object)
 //   - secretmanager.googleapis.com (secret + version)
 func TestTerraformApplyDestroy(t *testing.T) {
 	init := terraformCmd("init")
@@ -60,6 +60,20 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	secretVersionID := outputs.must(t, "secret_version_id")
 	require.Contains(t, secretVersionID, "projects/test-project/secrets/tf-test-secret/versions/",
 		"Secret version ID must include the canonical secret path; got %s", secretVersionID)
+
+	subnetID := outputs.must(t, "subnet_id")
+	require.Contains(t, subnetID, "projects/test-project/regions/us-central1/subnetworks/tf-test-subnet",
+		"subnet id must include the canonical region+name path; got %s", subnetID)
+
+	firewallID := outputs.must(t, "firewall_id")
+	require.Contains(t, firewallID, "projects/test-project/global/firewalls/tf-test-fw-allow-ssh",
+		"firewall id must include the canonical global path; got %s", firewallID)
+
+	gcsObjLink := outputs.must(t, "gcs_object_self_link")
+	require.Contains(t, gcsObjLink, "tf-test-artifact.txt",
+		"GCS object self_link must reference the object name; got %s", gcsObjLink)
+	require.Contains(t, gcsObjLink, "tf-test-bucket-",
+		"GCS object self_link must reference the parent bucket; got %s", gcsObjLink)
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()

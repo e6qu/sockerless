@@ -41,6 +41,31 @@ resource "google_compute_disk" "tf_disk" {
   type = "pd-balanced"
 }
 
+# Subnetwork inside the test network. Real runner pods get attached to
+# subnets; the sim's POST /compute/v1/projects/{}/regions/{}/subnetworks
+# is the wire surface terraform-provider-google calls.
+resource "google_compute_subnetwork" "tf_subnet" {
+  name          = "tf-test-subnet"
+  region        = "us-central1"
+  network       = google_compute_network.main.id
+  ip_cidr_range = "10.42.0.0/16"
+}
+
+# Global firewall rule attached to the network. Runner backends create
+# matching allow-rules for SSH / health-check ranges; this exercises the
+# /compute/v1/projects/{}/global/firewalls surface.
+resource "google_compute_firewall" "tf_fw" {
+  name    = "tf-test-fw-allow-ssh"
+  network = google_compute_network.main.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+}
+
 # ---------- DNS (public + private zone) ----------
 
 resource "google_dns_managed_zone" "main" {
@@ -138,6 +163,14 @@ resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
 
+# GCS object inside the bucket — runner workflows stage build artifacts
+# / function source archives here. Exercises POST /upload/storage/v1/b/{bucket}/o.
+resource "google_storage_bucket_object" "tf_artifact" {
+  name    = "tf-test-artifact.txt"
+  bucket  = google_storage_bucket.tf_bucket.name
+  content = "tf-test-payload"
+}
+
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
@@ -181,4 +214,16 @@ output "storage_bucket_url" {
 
 output "secret_version_id" {
   value = google_secret_manager_secret_version.tf_secret_v1.id
+}
+
+output "subnet_id" {
+  value = google_compute_subnetwork.tf_subnet.id
+}
+
+output "firewall_id" {
+  value = google_compute_firewall.tf_fw.id
+}
+
+output "gcs_object_self_link" {
+  value = google_storage_bucket_object.tf_artifact.self_link
 }
