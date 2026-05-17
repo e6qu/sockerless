@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -267,8 +268,13 @@ func registerGCS(srv *sim.Server) {
 		if r.TLS != nil {
 			scheme = "https"
 		}
-		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, objectName)
-		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, objectName)
+		// Real GCS percent-encodes the object component in selfLink /
+		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
+		// Use url.PathEscape so consumers parsing the URL back into the
+		// (bucket, object) pair don't pick up a different object.
+		escapedObject := url.PathEscape(objectName)
+		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
+		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":        "storage#object",
 			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),
@@ -405,8 +411,13 @@ func registerGCS(srv *sim.Server) {
 		if r.TLS != nil {
 			scheme = "https"
 		}
-		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, objectName)
-		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, objectName)
+		// Real GCS percent-encodes the object component in selfLink /
+		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
+		// Use url.PathEscape so consumers parsing the URL back into the
+		// (bucket, object) pair don't pick up a different object.
+		escapedObject := url.PathEscape(objectName)
+		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
+		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":        "storage#object",
 			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),

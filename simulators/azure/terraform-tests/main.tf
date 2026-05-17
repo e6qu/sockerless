@@ -74,7 +74,11 @@ resource "azurestack_storage_account" "main" {
   location                 = azurestack_resource_group.main.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
-  account_kind             = "StorageV2"
+  # azurestack provider validates account_kind ∈ {Storage, BlobStorage};
+  # StorageV2 is Azure-public-cloud only. The sim accepts both — but the
+  # provider rejects StorageV2 at plan time, so use the older "Storage"
+  # kind here.
+  account_kind = "Storage"
 }
 
 # ---------- Key vault (runner credential storage) ----------

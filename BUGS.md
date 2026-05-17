@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1042 filed · 1039 fixed · 3 open · 2 false positives.**
+**1044 filed · 1041 fixed · 3 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -35,6 +35,10 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 ## Resolved history (compressed)
 
 1033 bugs filed and fixed across phases 86–165.
+
+- **1043** (Phase 165, codex review finding) — `simulators/azure/terraform-tests/main.tf:77` set `account_kind = "StorageV2"` on the new `azurestack_storage_account` resource. The `azurestack` provider validates `account_kind ∈ {Storage, BlobStorage}` (StorageV2 is Azure-public-cloud only) and rejects the value at plan time before the request ever reaches the sim. Locally `terraform plan` reproduced the error: `expected account_kind to be one of [Storage BlobStorage], got StorageV2`. Fix: `account_kind = "Storage"` + a comment noting the sim accepts both but the azurestack provider doesn't. Caught by `codex review --base main` non-interactive CLI; would have CI-red'd on first push otherwise (azure terraform test is darwin-blocked, so the local `go test` in Phase 165.5 didn't surface it).
+
+- **1044** (Phase 165, codex review finding) — `simulators/gcp/gcs.go::POST /upload/storage/v1/b/{bucket}/o` + `GET /storage/v1/b/{bucket}/o/{object}` (the BUG-1038-sub-fix selfLink additions) interpolated the raw object name into the URL path without `url.PathEscape`. For object names containing `/`, ` `, `?`, `#`, etc., the resulting `selfLink` / `mediaLink` would point at a different object or be a malformed URL when consumers parse it back. The Phase 165 terraform-test happened to use `tf-test-artifact.txt` so the bug didn't bite; real GCS source-archive workflows commonly nest object names. Fix: `url.PathEscape(objectName)` for both link fields. Caught by `codex review --base main`.
 
 - **(BUG-1038 sub-fix: GCS object selfLink/id/mediaLink)** (Phase 165) — Surfaced + fixed during the BUG-1038 expansion. The sim's `POST /upload/storage/v1/b/{bucket}/o` and `GET /storage/v1/b/{bucket}/o/{object}` handlers omitted the `kind`/`id`/`selfLink`/`mediaLink`/`generation` fields that real GCS returns. terraform-provider-google's `google_storage_bucket_object` reads `selfLink` into the resource's `self_link` attribute on refresh; without the field, the attribute came back empty in terraform state. Added all five fields to both handlers; `self_link` round-trips correctly. Same shape as BUG-1029 — the terraform provider's call sequence surfaces canonical-field omissions the SDK happens to tolerate.
 
