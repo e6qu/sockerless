@@ -6,6 +6,27 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-17 — Phase 167: pod-model analysis + Phase 168 plan (doc-only, in flight on `phase-167-pod-model-analysis`)
+
+User directive: *"review the pod model of the backends and how it works with github runner and with gitlab runner; let's compare side by side how the drivers work and how the 'pod' abstraction is maintained for all backends; for FaaS backends in particular it can get complicated; is there some way to simplify? we want to also avoid using exotic storage options by default (do keep old drivers though) and stick to a common denominator if we can; note that hacks like separate VMs / instances are not allowed, but do ask me questions about it; for example I noticed that a 12 step job took 12+ minutes where we had a 1 min of initialization for each step; I think by accident the execution of the job was split across multiple functions when a single function would have done the job; let's check, first just analyze."*
+
+Three layered tracks, all doc-only:
+
+1. **Cross-backend pod model survey.** Long-lived backends (docker / ecs / cloudrun / aca) hold one container/task/revision for an entire CI job and route per-step `docker exec` directly. FaaS backends (lambda / gcf / azf) are invoke-on-demand — they create a *function* per logical pod and dispatch each step via either Path A (reverse-agent WebSocket, fast) or Path B (fresh per-step `Invoke` / function-URL POST, pays cold-start every step). Each backend made a *different* default choice; codex review caught me when I claimed they were all the same shape.
+
+2. **Driver model documentation.** Five driver dimensions (network discovery / DNS / access / storage backing / exec) live in `backends/core/<dim>_driver.go`. Each backend registers concrete implementations of the typed interfaces at `New()` time; the handlers in `backends/core/handle_*.go` dispatch through `s.Typed.<Dim>.Method(...)` without branching on cloud type. This is the pluggability the user wants preserved. *Two parallel "exec driver" concepts exist*: the typed `core.ExecDriver` (load-bearing, stays) and the parallel `core.CloudExecDriver` interface (built specifically as the "agent missing fallback" — gets ripped in Phase 168 since the fallback path is being deleted).
+
+3. **Root cause of the "12-step = 12+ min" symptom.** Smoking gun: `backends/lambda/backend_delegates.go:210-213` — `if hasAgent { Path A } else { execStartViaInvoke (Path B) }`. When the in-container bootstrap doesn't dial back (network unreachable, image missing bootstrap binary, timing race), every `docker exec` becomes a fresh `lambda.Invoke`. Image-based Lambdas with EFS + VPC cold-start in 30-90s. 12 steps × cold-start = the symptom. Same pattern with B-as-default in cloudrun-functions + cloudrun (I missed cloudrun in the first analysis pass; self-caught while answering the "does the exec driver still make sense" question). AZF doesn't have Path B at all (refuses if no agent — already the right shape).
+
+Codex review caught 3 corrections during Phase 167:
+- AZF is Path A only (no Path B) — opposite of my initial claim.
+- Tmpfs default scope cannot include lambda + azf (volume translators explicitly reject `BackingMemory` because the cloud platforms don't expose the primitive).
+- Tmpfs size clamping is itself a silent fallback (must fail-loud at startup, not auto-shrink).
+
+**Same failure mode repeated from earlier in the session**: I built a narrative ("FaaS backends are all the same") and treated agent summaries as authoritative without re-expanding to per-file evidence. Codex's diff-anchored review caught both rounds. Documented this meta-observation; should be added to `docs/VIBE_CODING.md` as "agent summary tables flatten cross-item differences; re-expand to per-item evidence before lifting into your own claims."
+
+Phase 168 plan output lives in PLAN.md § Active phase. 9 BUGs (1046–1054) drafted for filing at P168.0. 3 user decisions confirmed (no fallbacks; FaaS max lifetime is hard limit; ripping `execStartViaInvoke` entirely); 6 sizing / disposition questions still pending user confirmation (DO_NEXT.md).
+
 ## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (in flight on `phase-166-test-pyramid-realfixes`)
 
 User directive after Phase 165 merge: *"BTW as already iterated: we don't want fallbacks, we don't want workarounds, we want real actual solutions and faithful API compliance (identical) for each component. […] If there's a missing feature, let's add it, let's do it right."*

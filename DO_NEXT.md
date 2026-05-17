@@ -4,63 +4,84 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 165 merged 2026-05-17 (PR #165, `288b76d3` on `origin/main`). State-save PR #166 (post-merge doc state) open, awaits user merge.
+Phase 166 merged 2026-05-17 (PR #167, `49050c2d` on `origin/main`). All Open BUGs closed at that point.
 
-**Phase 166 in flight on `phase-166-test-pyramid-realfixes`** — real implementations for the 3 Open BUGs (1040 Azure azurerm, 1041 GCP IAM SA + CF Gen2 + Pub/Sub, 1042 AWS 5 sim handler gaps). User directive: *"we don't want fallbacks, we don't want workarounds, we want real actual solutions and faithful API compliance (identical) for each component"* — so each gap gets a real handler matching the real cloud's API shape, not a stub.
+**Phase 167 in flight on `phase-167-pod-model-analysis`** — doc-only analysis + Phase 168 plan. Branch contains the comparison of pod abstraction across 7 backends, root-cause of the "12-step CI job = 12+ min" symptom (Path B silent fallback in lambda + cloudrun + cloudrun-functions), and the Phase 168 design (see PLAN.md § Active phase for the full plan).
 
-Single PR per the standing single-branch rule. Verify per commit.
+**Phase 168 plan ready for user review** before implementation starts. 3 product decisions confirmed by user; 6 sizing / disposition questions still pending.
 
-## Phase 166 sub-task table (severity-ordered)
+## Phase 167 sub-task status
 
-| Sub | Status | BUG(s) | What |
-|---|---|---|---|
-| **P166.0** | ✅ | — | Branch from `origin/main@288b76d3` + sub-task layout. |
-| **P166.1** | ✅ | 1042 | **AWS — real sim handler additions, no stubs.** KMS GetKeyPolicy + ListResourceTags + GetKeyRotationStatus; SM GetResourcePolicy (omits field when no policy); SSM AddTagsToResource + Remove + List with real upsert semantics; DynamoDB: writeDDBJSON wrapper for `application/x-amz-json-1.0` + WarmThroughput field (terraform v6's waitTableWarmThroughputActive needs it) + DescribeContinuousBackups + DescribeTimeToLive + ListTagsOfResource + Update*+Tag/Untag + TableId/ProvisionedThroughput/etc; S3 14 sub-resource query handlers (?policy, ?versioning, ?lifecycle, etc.) returning real "not-configured" shape. main.tf 26→33 resources. Test PASS locally. |
-| **P166.2** | ✅ | 1040 | **Azure — `azurerm` provider against the sim.** Sim already shipped `/metadata/endpoints?api-version=2022-09-01` + `/<tenant>/oauth2/v2.0/token` + JWKS + OIDC discovery — just needed to point azurerm via `metadata_host = trimprefix(var.endpoint, ...)`. Added 12 azurerm-driven resources: resource_group + container_registry + user_assigned_identity + private_dns_zone + log_analytics_workspace + application_insights + container_app_environment + container_app + container_app_job + service_plan + storage_account + linux_function_app. Test darwin-blocked locally; CI runs in Docker. |
-| **P166.3** | ✅ | 1041 | **GCP — google_service_account.** Root-caused via gh-api reading the provider source (v7.32.0): `google_service_account` routes through `iambeta.NewClient` which uses `iam_beta_custom_endpoint` (NOT `iam_custom_endpoint`). Added the setting + the resource. Test PASS locally. Cloud Functions Gen2 + Pub/Sub + Compute instance/template + Cloud Build + Logging follow-ups staged for a future sub-phase (sim probably doesn't model Pub/Sub yet; CF2 needs real GCS source archive — multi-resource orchestration). |
-| **P166.4** | ◻ | — | Codex CLI review pass + fix any validated findings. |
-| **P166.5** | ◻ | — | State save + push + watch CI on PR #167. |
+| Sub | Status | What |
+|---|---|---|
+| **P167.0** | ✅ | Branch off main; scope pod-model analysis. |
+| **P167.1** | ✅ | Pod model survey per backend (parallel Explore agents). |
+| **P167.2** | ✅ | Runner ↔ backend call sequence trace (GH Actions + GitLab). |
+| **P167.3** | ✅ | Driver matrix (network / dns / access / storage). |
+| **P167.4** | ✅ | "12 steps = 12 min" root cause → Lambda Path B silent fallback (smoking gun: `backends/lambda/backend_delegates.go:210-213`). |
+| **P167.5** | ✅ | FaaS simplification options drafted (Models A / B / C); user picked A. |
+| **P167.6** | ✅ | Codex review caught 3 corrections (AZF Path-A-only, tmpfs scope, no clamping); applied. |
+| **P167.7** | ✅ | Phase 168 plan drafted + codex-reviewed + corrections applied. |
+| **P167.8** | ✅ | Consolidate to canonical docs (PLAN.md gets Phase 168 plan; temp `docs/POD_MODEL_*.md` files deleted). Self-caught: cloudrun also has Path B (filed as BUG-1054 added to scope). |
+| **P167.9** | ◻ | User reviews plan + answers 6 pending decisions. |
+| **P167.10** | ◻ | Open PR for Phase 167 (doc-only) once user is happy; user merges. |
 
-## Verification discipline (each sub-task)
+## Phase 168 pending decisions (user, please answer)
 
-- `go test ./...` in every touched module before staging the commit.
-- For sim handler additions: spin up the sim locally + `curl -v` the canonical request the provider sends.
-- For terraform-test additions: run `GOWORK=off go test -count=1 -run TestStackProductionShape` (AWS) / `TestTerraformApplyDestroy` (GCP/Azure) locally — must PASS before committing.
-- Per the user's faithful-API-compliance directive: every sim handler returns the real-AWS / real-GCP / real-Azure response shape exactly — no "good enough" approximations. Cross-check against real-cloud responses (saved as fixtures or via the SDK's request mocking).
+3 confirmed in PLAN.md § Active phase (Q4 execStartViaInvoke ripped; Q6 cleanup failures propagate; Q7 FaaS pod lifetime hard limit). 6 remaining:
 
-## Invariants snapshot (full list in STATUS.md + VIBE_CODING.md)
+| # | Question | My proposal |
+|---|---|---|
+| Q1 | tmpfs default size | 2 GiB |
+| Q2 | tmpfs exhaustion behaviour | fail loud + operator guidance ("raise SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB or switch SOCKERLESS_<BACKEND>_STORAGE_BACKING to a persistent driver") |
+| Q3 | reverse-agent registration timeout in ContainerStart | 90 sec; env-var `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` |
+| Q5 | `pd-ephemeral` disposition | stays registered as opt-in (no namespace move); operator can `SOCKERLESS_<BACKEND>_STORAGE_BACKING=pd-ephemeral` |
+| Q8 | tmpfs default scope (codex correction) | 3 backends only: cloudrun + cloudrun-functions + ACA (lambda + azf cloud platforms reject `BackingMemory`) |
+| Q9 | tmpfs size validation (codex correction) | startup fail-loud if `TMPFS_SIZE_MIB > function_memory - reserved`; no silent clamping |
 
-- **No fallbacks, no workarounds, no defers.** If a feature is missing, add it. Faithful API compliance (identical to the real cloud) for each component.
+## Phase 168 ready-to-start checklist
+
+Once user approves the plan:
+
+1. Branch off `origin/main` (after Phase 167 merges).
+2. File 9 BUGs at P168.0 (1046–1054):
+   - 1046: Lambda Path B silent fallback
+   - 1047: GCF Path B preferred default
+   - 1048: ContainerStart doesn't wait for reverse-agent dial-back
+   - 1049: tmpfs default + size config (scope = cloudrun + cloudrun-functions + ACA)
+   - 1050: delete execStartViaInvoke files + CloudExecDriver parallel interface
+   - 1051: tmpfs exhaustion guidance + startup size validation
+   - 1052: cleanup-path strict error propagation
+   - 1053: FaaS pod lifetime > platform max → fail loud at next exec
+   - 1054 (added by self-check): cloudrun Path B (missed in initial Phase 167 analysis)
+3. Implement P168.1..P168.10 per the plan in PLAN.md.
+4. E2E test acceptance: 12-step CI job <60s wall-clock on lambda / gcf / azf / cloudrun.
+5. Codex review pass before merge.
+
+## Invariants snapshot (full list in STATUS.md)
+
 - Never auto-merge; user merges every PR.
-- Single-branch rule: all in-flight work for one phase lands on one branch; many granular commits, one PR.
+- Single-branch rule.
 - File BUGs *before* fixing.
 - Verify each significant chunk; don't batch fixes.
-- Components decoupled from admin / UI.
-- Persistence opt-in + fail-loud on both open AND write.
-- HTTP handlers dispatch through `s.self.<Method>`; never read `s.Store` directly.
-- No phase / BUG-ID references in code comments or test docstrings.
+- **No fallbacks anywhere**: no silent substitution, no "best-effort with logging," no transparent re-invoke. If a primary path fails, surface it loudly to the operator.
+- Driver pluggability preserved: each backend registers ONE driver per dimension; operator can swap; no primary-with-backup pairs.
 - `gh` CLI is the reference adaptor for bleephub.
-- `aws --debug` + SDK serializer source are the reference for AWS sim handler wire shapes.
-- Terraform provider call sequences differ materially from raw SDK — both test layers required.
-- `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for cloud-mapping.
+- Terraform provider call sequences differ from raw SDK — both test layers required.
+- `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative.
 
 ## Resumable tracks (longer-horizon)
 
-### Track A — Live-cloud validation (one branch per cell)
-Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live.
-
-### Track B — UI / TypeScript vibe-slop sweep (carried from Phase 161)
-
-### Track C — Phase 91d (bookmarked indefinitely)
-Real `pd-ephemeral` on cloudrun + gcf.
+- **Track A** — Live-cloud validation (one branch per cell).
+- **Track B** — UI / TypeScript vibe-slop sweep (carried from Phase 161).
+- **Track C** — Phase 91d (bookmarked; needs cloud capability change).
+- **Track D** — Phase 166 follow-up gaps: GCP Cloud Functions Gen2 + Pub/Sub + Compute instance/template terraform coverage; Azure Key Vault data-plane terraform coverage. Filed informally; can become a Phase 169 if leverage materialises.
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout phase-166-test-pyramid-realfixes && git pull` (or `git checkout main && git pull --ff-only` if 166 merged).
-2. `git log --oneline -15` to see what's already on the branch.
-3. Read STATUS.md + this file + BUGS.md § Open (3 entries to close).
-4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before writing any fix.
-5. Pick the next `◻` row from the sub-task table above.
-6. Fix it real — no stubs that lie about success. `go test ./...` + spin-the-sim curl validation per commit.
-7. State save per commit.
-8. Push per commit. CI green per push.
+1. `git fetch origin && git checkout phase-167-pod-model-analysis && git pull` (or `git checkout main && git pull --ff-only` if 167 merged).
+2. `git log --oneline -10`.
+3. Read STATUS.md + this file + PLAN.md § Active phase (Phase 168 plan) + BUGS.md § Open.
+4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
+5. If user hasn't yet answered the 6 pending questions → wait or surface them again.
+6. Once approved, start P168.0.

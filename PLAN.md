@@ -48,48 +48,87 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #161 | 161 | Comprehensive vibe-slop sweep — 18 BUGs closed + bleephub GraphQL completion. Merged 2026-05-16 at `841f2456`. |
 | #162 | 162 | Vibe-coding catalogue refresh — 12 new patterns (24–35) + `avoid-vibe-slop` skill expanded 17 → 26 checklist items. Doc-only. Merged 2026-05-16 at `4f602988`. |
 | #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
-| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP terraform-tests 4 → 11 resources; Azure terraform-tests 1 → 5; surfaced + fixed 2 real sim defects (BUG-1029 GCP secret-version state handlers, BUG-1030 port-allocator race in terraform-tests). Merged 2026-05-17 at `616dcd98`. |
+| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP terraform-tests 4 → 11 resources; Azure terraform-tests 1 → 5. Merged 2026-05-17 at `616dcd98`. |
+| #165 | 165 | Third vibe-slop sweep (4 BUGs: 1033–1036) + sim test-pyramid expansion (2 BUGs: 1038/1039 + a GCS object selfLink sub-defect) + codex CLI review (2 BUGs: 1043/1044) + continuity-doc compression (~1700 → ~870 lines). 3 Open BUGs staged forward to Phase 166. Merged 2026-05-17 at `288b76d3`. |
+| #167 | 166 | Real fixes for the 3 Phase-165 follow-up Open BUGs (1040 Azure azurerm + 1041 GCP IAM SA via correct `iam_beta_custom_endpoint` setting + 1042 AWS 5 sim handler gaps closed real) + codex review finding state-persistence gaps (BUG-1045). 1044 fixed / 0 open at merge. Merged 2026-05-17 at `49050c2d`. |
 
 ## Active phase
 
-### Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
+### Phase 167 — Pod-model analysis + Phase 168 plan (in flight on `phase-167-pod-model-analysis`)
 
-User directive (2026-05-17): re-run vibe-slop on a fresh main; plan test-pyramid expansion against real adaptors (SDK + terraform-provider + CLI) for implemented slices; single PR with sub-phases; verify after every significant chunk; prune obsolete continuity-doc info for cross-compaction durability.
+User directive (2026-05-17): *"review the pod model of the backends and how it works with github runner and with gitlab runner; let's compare side by side how the drivers work and how the 'pod' abstraction is maintained for all backends; for FaaS backends in particular it can get complicated; is there some way to simplify? we want to also avoid using exotic storage options by default (do keep old drivers though) and stick to a common denominator if we can; note that hacks like separate VMs / instances are not allowed, but do ask me questions about it; for example I noticed that a 12 step job took 12+ minutes where we had a 1 min of initialization for each step; I think by accident the execution of the job was split across multiple functions when a single function would have done the job; let's check, first just analyze."*
 
-Three layered tracks on one PR:
+**Doc-only phase**. Narrative + Phase 168 design lives in `WHAT_WE_DID.md` (analysis findings) + this file's Phase 168 section below (the plan). No code changes. Followed by codex review which caught two material errors (AZF Path A only, not A/B; tmpfs default scope must exclude Lambda + AZF whose volume translators reject BackingMemory; tmpfs-size clamping is itself a silent fallback). Corrections applied.
 
-1. **Vibe-slop sweep #3 (4 BUGs: 1033–1036).** Fresh-eyes pass after Phase 161 (18) + Phase 164 (19). 5 silent `io.Copy(w, rc)` swallows in image-stream + build response paths (1033); dead `fmt.Sprintf` silencer with misleading "used by demuxer" comment (1034); `w.Write` style inconsistency at 3 outlier sites (1035); ~50 test-file docstrings still anchored on Phase / sub-phase metadata — the BUG-994 / 1014 / 1026 sweep stopped at production-code (1036).
+### Phase 168 — Exec model unification + tmpfs default + no-fallback hardening (pending user start)
 
-2. **Sim test-pyramid expansion (3 P0 BUGs: 1037–1039).** External-validation principle (PLAN.md §1). Audit surfaced terraform-provider gaps: AWS missing 11 load-bearing resources (Lambda, S3, DynamoDB, KMS, SecretsManager, EFS, SSM, EC2); GCP missing 8 (Cloud Functions Gen2 — runner-workload primitive! — IAM, GCS object, Compute, Build, Logging, PubSub); Azure widest — only 5 networking primitives covered, both runner backends (ACA + AZF) entirely terraform-uncovered.
+Builds directly on Phase 167's analysis. User direction:
+- **Model A for exec wherever the platform supports per-pod long-lived invocation** — lambda + cloudrun-functions + cloudrun + aca + azf converge on reverse-agent WebSocket as the sole exec dispatch. (ecs keeps SSM; docker keeps native exec — each is the right primitive for its platform.)
+- **In-memory tmpfs default** for backends whose cloud platform exposes a real EmptyDir / memory primitive (cloudrun + cloudrun-functions + ACA). Lambda + AZF keep their existing defaults — their volume translators explicitly reject `BackingMemory` because the platforms lack the primitive (codex review confirmed).
+- **Hard no-fallbacks rule** — no silent substitution anywhere. `execStartViaInvoke` (Path B) deleted entirely from lambda + cloudrun-functions + **cloudrun** (the last one was missed in initial Phase 167 analysis), not preserved as opt-in. The parallel `core.CloudExecDriver` interface (`backends/core/exec_driver.go`) ripped — it existed specifically to enable the "agent missing fallback" path which no longer exists. Cleanup failures propagate (docker rm fails if cloud cleanup fails). WS drop = container dead (no reconnect). Tmpfs size > function memory = startup error (no clamping). Lambda backend startup fails loud if `SOCKERLESS_CALLBACK_URL` is empty (currently silently registers Path B driver).
+- **FaaS max invocation duration is a hard limit** — no transparent re-invoke / warm-pool / checkpoint-restart hack. When the bootstrap approaches the deadline, the next `docker exec` returns `&api.ServerError{Message: "container N exceeded FaaS pod lifetime (N min); use ECS / ACA / Cloud Run Services for longer pods"}`.
+- **Driver pluggability preserved** — the typed `core.ExecDriver` abstraction (in `drivers_typed.go`) STAYS. Each backend registers ONE driver of the right kind for its platform (DockerExec / SSMExec / ReverseAgentExec). The handler call site stays generic. Future operators / maintainers can swap drivers at the registration site. The "no fallback" rule means: only one driver is registered per backend, never a primary-with-backup pair.
 
-3. **Continuity-doc compression.** STATUS / DO_NEXT / PLAN / WHAT_WE_DID grew to ~1700 lines across 5 files. Prune to actionable-across-compaction shape: keep invariants + active-phase scope + last-3-phase headlines + forward tracks; drop closed-phase sub-task tables + per-BUG narratives (covered by BUGS.md). Target ≤ ~50% current line count.
+User-confirmed decisions (2026-05-17):
+- Q4 — `execStartViaInvoke` ripped entirely (no opt-in driver). Includes `core.CloudExecDriver` parallel interface.
+- Q6 — cleanup failures propagate (no best-effort logging fallback).
+- Q7 — FaaS pod lifetime hard limit (no extension hacks; FaaS jobs run up to platform max only).
 
-Sub-task layout (P165.0–P165.10) in [DO_NEXT.md](DO_NEXT.md).
+User-pending decisions (6 remaining questions, see DO_NEXT.md):
+- Q1 — tmpfs default size (proposal: 2 GiB)
+- Q2 — tmpfs exhaustion behaviour (proposal: fail loud)
+- Q3 — reverse-agent registration timeout (proposal: 90s configurable)
+- Q5 — pd-ephemeral disposition (proposal: stays registered as opt-in)
+- Q8 — tmpfs default scope (cloudrun + cloudrun-functions + ACA only, per codex correction)
+- Q9 — tmpfs size validation (proposal: startup fail-loud, no clamping)
 
-Acceptance:
-- 7 BUGs (1033–1039) closed in this PR.
-- `go test ./...` green in every touched Go module.
-- `TestTerraformApplyDestroy` green for all three cloud terraform-tests modules after expansion.
-- Continuity docs ≤ ~50% current line count.
+BUGs to file at P168.0: 1046–1054 (9 BUGs; +1 for cloudrun Path B which was missed in Phase 167 analysis). Sub-task layout in DO_NEXT.md once Phase 168 starts.
+
+Headline result target: 12-step CI job <60s wall-clock on Lambda / GCF / AZF / cloudrun (down from ~12 min today).
+
+Driver model (KEPT, expanded in DO_NEXT.md):
+- `core.ExecDriver` typed interface — the load-bearing abstraction. Each backend registers ONE driver. Handler is generic.
+- Per-backend exec driver post-Phase-168:
+  - docker → DockerExec (native)
+  - ecs → SSMExec (Session Manager)
+  - lambda / cloudrun / cloudrun-functions / aca / azf → ReverseAgentExec (WS to bootstrap)
+- The other 13 typed drivers (Stream, Attach, FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Logs, Signal, Registry) all unchanged.
+
+Files DELETED:
+- `backends/lambda/exec_invoke.go` (Path B + `lambdaInvokeExecDriver`)
+- `backends/cloudrun-functions/exec_invoke.go`
+- `backends/cloudrun/exec_invoke.go` (missed in Phase 167 analysis — added)
+- `backends/core/exec_driver.go` (`CloudExecDriver` parallel interface; no callers post-deletion)
+- `backends/core/exec_driver_test.go`
+
+Files MODIFIED (~28 files): lambda + cloudrun + cloudrun-functions + ACA + AZF backends; agent bootstraps (`agent/cmd/sockerless-{lambda,gcf,azf}-bootstrap/main.go`); `backends/core/storage_driver.go`; per-backend README files; `docs/POD_MATERIALIZATION.md`; `specs/CLOUD_RESOURCE_MAPPING.md`; new e2e tests under `tests/runners/`.
+
+Acceptance bar:
+- All 9 BUGs (1046–1054) closed in this PR.
+- `go test ./...` green in every touched module.
+- E2E: 12-step CI job <60s wall-clock on Lambda/GCF/AZF/cloudrun (headline result).
+- Code search: no `if hasAgent` / `execStartViaInvoke` / `lambdaInvokeExecDriver` / `CloudExecDriver` / `_ = .*Disconnect` / `_, _ = .*Delete` left in lambda + cloudrun-functions + cloudrun backends. `exec_invoke.go` + `core/exec_driver.go` files removed.
+- Operator env-vars documented in per-backend READMEs.
 - 11 standard CI checks green per push.
-- User merges PR #165.
 
-Out of scope (carry forward):
-- TypeScript / UI vibe-slop (Phase 161 backlog).
-- Live-cloud validation track.
-- P1 terraform-test deepening (CloudFront full-distribution, CloudWatch Metrics, Cloud Build, Application Insights, Operations).
+Out of scope:
+- Long-lived non-FaaS backends (docker, ecs) — pod model already correct.
+- Storage *implementations* — all existing drivers (efs-ephemeral / gcs-sync / azure-files-ephemeral / pd-ephemeral) stay. Only defaults change.
+- AZF supervisor-in-overlay pattern (unrelated to exec dispatch).
+- Pod materialization (deferred-network-pod) unchanged.
+- The 13 other typed-driver dimensions (FSRead/Write/Diff/etc.) — they're already on the ReverseAgent shape for FaaS and unchanged.
+
+### Phase 166 — Real fixes for the 3 Phase-165 follow-up Open BUGs (merged at `49050c2d`)
+
+5 commits closed 4 BUGs (1040 Azure azurerm wiring + 12 new tf resources, 1041 GCP `google_service_account` via `iam_beta_custom_endpoint` setting, 1042 AWS 5 sim handler gaps closed real per "no stubs" directive, 1045 codex-found state-persistence gaps in DDB PITR/TTL/tags + KMS custom key policy). Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+
+### Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression + codex review (merged at `288b76d3`)
+
+10 granular commits closed 9 BUGs across four tracks (vibe-slop / test-pyramid expansion / codex review findings / continuity-doc compression). 3 Open BUGs staged forward. Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
 ### Phase 164 — Second vibe-slop sweep + terraform-provider test expansion (merged at `616dcd98`)
 
-13 granular commits closed 19 BUGs (1014–1032) across five layered passes. GCP terraform-tests expanded 4 → 11 resources covering 6 sim slices (surfaced 2 real sim defects in the process); Azure terraform-tests expanded 1 → 5 resources. Narrative + per-pass breakdown in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-BUG fix detail in [BUGS.md](BUGS.md); per-commit detail in `git log 616dcd98^..616dcd98`.
-
-### Phase 161 — First comprehensive vibe-slop sweep + bleephub GraphQL completion (merged at `841f2456`)
-
-User directive: no legacy support, no fallbacks, no error-swallowing — silent degradation is itself a bug. 13 fixes + mid-PR bleephub GraphQL completion (PR.comments, reviewThreads, ProjectV2 with fields, edit history, minimization, issue/PR locking, PR.milestone) with real `gh` CLI smoke tests + ProjectManager instance-based lifecycle rewrite. BUG-1006/1007/1009/1011 staged forward + closed across the rest of the 16x sub-task table. Per-fix detail in `git log 841f2456`; narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
-
-### Phase 163 — Makefile legacy alias rip-out + docs sweep (merged at `d5b9d22a`)
-
-Single commit. Dropped pure-alias targets (sim-test-*, test-{unit,e2e,agent,core,bleephub}, bleephub-test, bleephub-gh-test) — every alias just delegated to `$(MAKE) -C <dir>` which the `%/<target>` pattern rule already covers. Side-fix: `FORCE` dep so the pattern rule isn't short-circuited by a name-vs-dir collision (e.g. `bleephub/test/`).
+13 granular commits closed 19 BUGs across five layered passes. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
 ## Future phases
 
