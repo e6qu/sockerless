@@ -53,6 +53,9 @@ type Server struct {
 
 // NewServer creates a new Cloud Run backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("Cloud Run backend requires SOCKERLESS_CALLBACK_URL — the in-Service bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback). Set the env var to a URL the Service can reach (typically a public LB or VPC-internal address reachable via Serverless VPC Connector).")
+	}
 	// Hash the bootstrap binary at startup so OverlayContentTag changes
 	// whenever the binary changes. Mirror of gcf's path; without this,
 	// the AR overlay cache hits forever and updates to the bootstrap

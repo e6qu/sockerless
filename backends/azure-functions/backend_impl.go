@@ -211,11 +211,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	appSettings = append(appSettings, &armappservice.NameValuePair{
 		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
 	})
-	if s.config.CallbackURL != "" {
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
-		})
-	}
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+	})
 
 	// Build the Function App Site resource
 	siteConfig := &armappservice.SiteConfig{
@@ -390,6 +388,28 @@ func (s *Server) ContainerStart(ref string) error {
 			close(ch.(chan struct{}))
 		}
 	}()
+
+	// Wait for the in-function bootstrap to register a reverse-agent
+	// before ContainerStart returns. Skip in the OpenStdin one-shot
+	// path. For exec-driven callers the first ExecStart MUST find an
+	// agent (no fallback).
+	if !c.Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("azf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC). The Function App was deployed and "+
+					"invoked but the in-function bootstrap never dialled back to "+
+					"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet / NSG.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
 
 	return nil
 }

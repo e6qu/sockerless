@@ -506,7 +506,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(id, executionName, exitCh)
 
-	return nil
+	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 
 // startMultiContainerJobTyped creates and runs a Cloud Run Job with all pod containers.

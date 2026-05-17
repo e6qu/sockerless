@@ -226,9 +226,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// subprocess on each invocation.
 	var imageURI string
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
-	if s.config.CallbackURL != "" {
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-	}
+	// CallbackURL is required at NewServer time so it's guaranteed
+	// non-empty here — no fallback for missing-agent.
+	envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 	// Encode argv as base64(JSON) so every byte round-trips cleanly
 	// through the env var without Dockerfile / shell quoting.
 	if len(config.Entrypoint) > 0 {
@@ -747,6 +747,32 @@ func (s *Server) ContainerStart(ref string) error {
 			close(ch.(chan struct{}))
 		}
 	}()
+
+	// Wait for the in-Lambda bootstrap to dial back and register a
+	// reverse-agent before ContainerStart returns. Skipped in the
+	// OpenStdin one-shot path (gitlab-runner): the function runs the
+	// stdin-piped script and exits without any docker exec follow-up,
+	// so there's nothing to race. For exec-driven callers (gh-runner,
+	// docker-runner, arbitrary client) the first ExecStart MUST find
+	// an agent — no Path B fallback exists after BUG-1046.
+	if !lambdaState.OpenStdin {
+		timeout, err := core.BootstrapTimeoutFromEnv("lambda")
+		if err != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", err)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC). The function became Active and "+
+					"the wake invoke fired, but the in-Lambda bootstrap never dialled back to "+
+					"SOCKERLESS_CALLBACK_URL=%s. Check VPC egress / NACL / security-group rules "+
+					"for the callback endpoint.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
 
 	return nil
 }

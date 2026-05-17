@@ -42,11 +42,11 @@ func (s *Server) buildContainerSpec(ci containerInput) (*armappcontainers.Contai
 		}
 	}
 
-	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// Inject reverse-agent callback URL + container ID so the bootstrap
 	// baked into the container image can dial back for `docker exec` /
-	// `docker attach`. Empty CallbackURL ⇒ reverse-agent disabled
-	// (exec returns 126 for this container).
-	if ci.IsMain && s.config.CallbackURL != "" {
+	// `docker attach`. CallbackURL is required at NewServer time so
+	// it's guaranteed non-empty here — no fallback for missing-agent.
+	if ci.IsMain {
 		envVars = append(envVars,
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL)},
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},

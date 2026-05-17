@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
-| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** Phase 167 = docs (this branch's commits to date): cross-backend pod-model comparison, root-cause of the "12-step CI job = 12+ min" symptom (silent Path B fallback in lambda + cloudrun + cloudrun-functions), Phase 168 plan in PLAN.md § Active phase. Codex review caught 3 material corrections (AZF is Path A only; tmpfs default scope must exclude Lambda + AZF because their volume translators reject `BackingMemory`; tmpfs size clamping was itself a silent fallback — fixed to startup fail-loud). Self-caught: cloudrun also has Path B (missed in initial Phase 167 analysis). **9 BUGs (1046–1054) to file at P168.0**; 6 user product decisions documented with my recommended defaults (DO_NEXT.md) — user approved "begin work" so defaults apply. Phase 168 implementation now in progress on the same branch. |
+| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** Phase 168 P168.1+.2+.3+.4 landed: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (commit `5f745039`); ContainerStart now blocks for in-container reverse-agent dial-back on all 5 FaaS-style backends with per-backend `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` (default 90s); `CallbackURL` required at NewServer for lambda/gcf/cloudrun/aca/azf (fail-loud, not silent-disable); ACA `cloudExecStart` management-API fallback ripped (BUG-1056); GCF was never injecting `SOCKERLESS_CALLBACK_URL` into the function env (BUG-1055 surfaced during P168.3 ContainerStart survey — fixed). Still ahead on this branch: P168.5 (tmpfs default for cloudrun/gcf/aca), P168.6 (ENOSPC bootstrap envelope), P168.7 (strict cleanup-path errors), P168.8 (FaaS lifetime-exceeded signal), P168.9 (E2E + docs + codex + PR). |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1044 fixed · 0 open · 2 false positives (9 more drafted for P168.0). |
+| Bugs | 1052 fixed · 4 open · 2 false positives. Open this phase: BUG-1049, 1051, 1052, 1053 (all P168.5+ scope). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

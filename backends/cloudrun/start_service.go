@@ -111,7 +111,7 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	// re-reads the live Service object with Uri populated. Trusting
 	// svc.Uri=="" here would silently skip the invoke.
 	go s.invokeServiceDefaultCmd(id, exitCh, false /* skipIfNoStdin: single-container `docker run` should default-invoke */)
-	return nil
+	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 
 // invokeServiceDefaultCmd POSTs an empty body to the Service URL,
@@ -463,7 +463,7 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 	// GH actions/runner pattern doesn't attach → no stdin → skip POST
 	// and let the bootstrap serve docker-exec requests directly.
 	go s.invokeServiceDefaultCmd(mainID, exitCh, true /* skipIfNoStdin */)
-	return nil
+	return s.waitForReverseAgentAfterStart(mainID, podContainers[0].Config.OpenStdin)
 }
 
 // waitForServiceURL polls the Service via GetService until Uri is

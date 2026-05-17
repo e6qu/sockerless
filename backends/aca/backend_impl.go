@@ -239,7 +239,10 @@ func (s *Server) ContainerStart(ref string) error {
 	// below can be deleted when Jobs support is sunset.
 	if s.config.UseApp {
 		acaState, _ := s.resolveAppACAState(s.ctx(), id)
-		return s.startSingleContainerApp(id, c, acaState, exitCh)
+		if err := s.startSingleContainerApp(id, c, acaState, exitCh); err != nil {
+			return err
+		}
+		return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 	}
 
 	// Build ACA Job spec
@@ -317,7 +320,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(id, jobName, executionName, exitCh)
 
-	return nil
+	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 
 // startMultiContainerJobTyped creates and runs an ACA Job with all pod containers.

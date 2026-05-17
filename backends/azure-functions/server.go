@@ -29,6 +29,9 @@ type Server struct {
 
 // NewServer creates a new Azure Functions backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("AZF backend requires SOCKERLESS_CALLBACK_URL — the function bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback). Set the env var to a URL the function can reach from inside the Function App.")
+	}
 	s := &Server{
 		config:         config,
 		azure:          azureClients,

@@ -4,59 +4,24 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 166 merged 2026-05-17 (PR #167, `49050c2d` on `origin/main`). All Open BUGs closed at that point.
+Phase 166 merged 2026-05-17 (PR #167, `49050c2d` on `origin/main`).
 
-**Phase 167 in flight on `phase-167-pod-model-analysis`** — doc-only analysis + Phase 168 plan. Branch contains the comparison of pod abstraction across 7 backends, root-cause of the "12-step CI job = 12+ min" symptom (Path B silent fallback in lambda + cloudrun + cloudrun-functions), and the Phase 168 design (see PLAN.md § Active phase for the full plan).
+**Phases 167 + 168 in flight on `phase-167-pod-model-analysis`** — single PR for both at the end. User directive: begin work with stated defaults; surface new findings.
 
-**Phase 168 plan ready for user review** before implementation starts. 3 product decisions confirmed by user; 6 sizing / disposition questions still pending.
+## Phase 168 sub-task status
 
-## Phase 167 sub-task status
-
-| Sub | Status | What |
+| Sub | Status | Headline |
 |---|---|---|
-| **P167.0** | ✅ | Branch off main; scope pod-model analysis. |
-| **P167.1** | ✅ | Pod model survey per backend (parallel Explore agents). |
-| **P167.2** | ✅ | Runner ↔ backend call sequence trace (GH Actions + GitLab). |
-| **P167.3** | ✅ | Driver matrix (network / dns / access / storage). |
-| **P167.4** | ✅ | "12 steps = 12 min" root cause → Lambda Path B silent fallback (smoking gun: `backends/lambda/backend_delegates.go:210-213`). |
-| **P167.5** | ✅ | FaaS simplification options drafted (Models A / B / C); user picked A. |
-| **P167.6** | ✅ | Codex review caught 3 corrections (AZF Path-A-only, tmpfs scope, no clamping); applied. |
-| **P167.7** | ✅ | Phase 168 plan drafted + codex-reviewed + corrections applied. |
-| **P167.8** | ✅ | Consolidate to canonical docs (PLAN.md gets Phase 168 plan; temp `docs/POD_MODEL_*.md` files deleted). Self-caught: cloudrun also has Path B (filed as BUG-1054 added to scope). |
-| **P167.9** | ◻ | User reviews plan + answers 6 pending decisions. |
-| **P167.10** | ◻ | Open PR for Phase 167 (doc-only) once user is happy; user merges. |
-
-## Phase 168 pending decisions (user, please answer)
-
-3 confirmed in PLAN.md § Active phase (Q4 execStartViaInvoke ripped; Q6 cleanup failures propagate; Q7 FaaS pod lifetime hard limit). 6 remaining:
-
-| # | Question | My proposal |
-|---|---|---|
-| Q1 | tmpfs default size | 2 GiB |
-| Q2 | tmpfs exhaustion behaviour | fail loud + operator guidance ("raise SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB or switch SOCKERLESS_<BACKEND>_STORAGE_BACKING to a persistent driver") |
-| Q3 | reverse-agent registration timeout in ContainerStart | 90 sec; env-var `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` |
-| Q5 | `pd-ephemeral` disposition | stays registered as opt-in (no namespace move); operator can `SOCKERLESS_<BACKEND>_STORAGE_BACKING=pd-ephemeral` |
-| Q8 | tmpfs default scope (codex correction) | 3 backends only: cloudrun + cloudrun-functions + ACA (lambda + azf cloud platforms reject `BackingMemory`) |
-| Q9 | tmpfs size validation (codex correction) | startup fail-loud if `TMPFS_SIZE_MIB > function_memory - reserved`; no silent clamping |
-
-## Phase 168 ready-to-start checklist
-
-Once user approves the plan:
-
-1. Branch off `origin/main` (after Phase 167 merges).
-2. File 9 BUGs at P168.0 (1046–1054):
-   - 1046: Lambda Path B silent fallback
-   - 1047: GCF Path B preferred default
-   - 1048: ContainerStart doesn't wait for reverse-agent dial-back
-   - 1049: tmpfs default + size config (scope = cloudrun + cloudrun-functions + ACA)
-   - 1050: delete execStartViaInvoke files + CloudExecDriver parallel interface
-   - 1051: tmpfs exhaustion guidance + startup size validation
-   - 1052: cleanup-path strict error propagation
-   - 1053: FaaS pod lifetime > platform max → fail loud at next exec
-   - 1054 (added by self-check): cloudrun Path B (missed in initial Phase 167 analysis)
-3. Implement P168.1..P168.10 per the plan in PLAN.md.
-4. E2E test acceptance: 12-step CI job <60s wall-clock on lambda / gcf / azf / cloudrun.
-5. Codex review pass before merge.
+| **P168.0** | ✅ | Filed 9 BUGs (1046–1054); 2 more (1055, 1056) surfaced + filed during P168.3 survey. |
+| **P168.1** | ✅ | Lambda Path B ripped; `CallbackURL` required at NewServer; reverse-agent-only ExecStart (BUG-1046). Commit `5f745039`. |
+| **P168.2** | ✅ | GCF + cloudrun Path B ripped (BUG-1047 + 1054). Commit `5f745039`. |
+| **P168.3** | ✅ | `core.ReverseAgentRegistry.WaitForAgent` + per-backend `BootstrapTimeoutFromEnv` (default 90s, `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC`). Wired into ContainerStart for lambda / gcf / cloudrun / aca / azf. ACA `cloudExecStart` management-API fallback ripped (BUG-1056). GCF `SOCKERLESS_CALLBACK_URL` env injection added — was missing entirely (BUG-1055). |
+| **P168.4** | ✅ | `exec_invoke.go` (lambda + GCF + cloudrun) + `core/exec_driver.go` CloudExecDriver interface DELETED. Commit `5f745039`. |
+| **P168.5** | ◻ | tmpfs default for cloudrun + gcf + ACA (`MemoryDriver` default 2 GiB; `SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB` override). Lambda + AZF unchanged (their volume translators reject `BackingMemory`). |
+| **P168.6** | ◻ | Bootstraps (`agent/cmd/sockerless-{lambda,gcf,azf}-bootstrap/main.go`) detect ENOSPC writes → exec envelope `exit_code=28` + operator-guidance message. |
+| **P168.7** | ◻ | Strict cleanup-path errors: replace `_ = s.Drivers.Network.Disconnect(...)` / `_, _ = s.aws.Lambda.DeleteFunction(...)` with error-propagating forms (BUG-1052). |
+| **P168.8** | ◻ | FaaS bootstrap monitors invocation deadline; sends `lifetime_expired` WS message at T-5s; sockerless handler returns `FaaSPodLifetimeExceeded` reason on next exec. No re-invoke / warm-pool / checkpoint hacks. |
+| **P168.9** | ◻ | E2E (12-step CI job <60s on lambda / gcf / azf / cloudrun); update per-backend READMEs + `docs/POD_MATERIALIZATION.md` + `specs/CLOUD_RESOURCE_MAPPING.md`; final state save; codex review; open single PR. |
 
 ## Invariants snapshot (full list in STATUS.md)
 
@@ -79,9 +44,8 @@ Once user approves the plan:
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout phase-167-pod-model-analysis && git pull` (or `git checkout main && git pull --ff-only` if 167 merged).
+1. `git fetch origin && git checkout phase-167-pod-model-analysis && git pull`.
 2. `git log --oneline -10`.
-3. Read STATUS.md + this file + PLAN.md § Active phase (Phase 168 plan) + BUGS.md § Open.
+3. Read STATUS.md + this file + PLAN.md § Active phase + BUGS.md § Open.
 4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
-5. If user hasn't yet answered the 6 pending questions → wait or surface them again.
-6. Once approved, start P168.0.
+5. Pick the next ◻ sub-task; mark it `in_progress` in tasks; commit when verified.

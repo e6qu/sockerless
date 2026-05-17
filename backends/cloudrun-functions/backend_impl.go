@@ -544,6 +544,29 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}()
 
+	// Wait for the in-function bootstrap to register a reverse-agent
+	// before ContainerStart returns. Skip in the OpenStdin one-shot
+	// path (gitlab-runner stdin-piped script) — the function runs and
+	// exits without docker exec calls. For exec-driven callers
+	// the first ExecStart MUST find an agent (no Path B fallback).
+	if !c.Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("gcf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC). Service URL invoke fired but the "+
+					"in-function bootstrap never dialled back to SOCKERLESS_CALLBACK_URL=%s. "+
+					"Check egress / VPC connector / firewall for the callback endpoint.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
+
 	return nil
 }
 

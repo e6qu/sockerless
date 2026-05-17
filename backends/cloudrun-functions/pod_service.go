@@ -530,6 +530,18 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 			Values: &runpb.EnvVar_Value{Value: parts[1]},
 		})
 	}
+	// SOCKERLESS_CALLBACK_URL — bootstrap dials back here to register
+	// the reverse-agent WebSocket. Without it, Path A exec is
+	// unreachable (no fallback). NewServer fails loud when CallbackURL
+	// is unset, so by this point it is guaranteed non-empty.
+	envVars = append(envVars, &runpb.EnvVar{
+		Name:   "SOCKERLESS_CALLBACK_URL",
+		Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL},
+	})
+	envVars = append(envVars, &runpb.EnvVar{
+		Name:   "SOCKERLESS_CONTAINER_ID",
+		Values: &runpb.EnvVar_Value{Value: c.ID},
+	})
 
 	defName := "main"
 	if !isMain {

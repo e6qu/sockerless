@@ -64,11 +64,11 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		})
 	}
 
-	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// Inject reverse-agent callback URL + container ID so the bootstrap
 	// baked into the container image can dial back for `docker exec` /
-	// `docker attach`. Empty CallbackURL ⇒ reverse-agent disabled
-	// (exec returns 126 for this container).
-	if ci.IsMain && s.config.CallbackURL != "" {
+	// `docker attach`. CallbackURL is required at NewServer time so by
+	// here it is guaranteed non-empty (no fallback for missing-agent).
+	if ci.IsMain {
 		envVars = append(envVars,
 			&runpb.EnvVar{Name: "SOCKERLESS_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL}},
 			&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},

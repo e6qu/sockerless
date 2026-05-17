@@ -131,9 +131,9 @@ func (s *Server) PodRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecCreate creates an exec instance. Now supports both agent-based exec
-// and cloud-based exec via the ACA management API, so the agent check is
-// no longer a hard requirement.
+// ExecCreate creates an exec instance. ExecStart requires the
+// in-container reverse-agent (no fallback to ACA management-API
+// WebSocket exec — that path silently swaps execution semantics).
 func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*api.ExecCreateResponse, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), containerID)
 	if !ok {
@@ -144,15 +144,14 @@ func (s *Server) ExecCreate(containerID string, req *api.ExecCreateRequest) (*ap
 		return nil, &api.ConflictError{Message: "Container " + containerID + " is not running"}
 	}
 
-	// Delegate to BaseServer for the actual exec creation.
-	// ExecStart will route to agent or cloud exec as appropriate.
 	return s.BaseServer.ExecCreate(containerID, req)
 }
 
-// ExecStart starts an exec instance. If a reverse-agent session is
-// registered for the container, route through BaseServer so the
-// ReverseAgentExecDriver fires. Otherwise fall back to cloudExecStart
-// which uses the ACA management API WebSocket exec endpoint.
+// ExecStart starts an exec instance. Requires a registered
+// reverse-agent for the container; fails loud if missing. No
+// fallback to the ACA management-API WebSocket exec — that path
+// runs in a separate ad-hoc shell session with different env /
+// stream encoding and would hide reverse-agent setup bugs.
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -166,36 +165,36 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		}
 	}
 
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
-		return s.BaseServer.ExecStart(id, opts)
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"reverse-agent WebSocket not registered for container %s. "+
+				"ACA exec requires SOCKERLESS_CALLBACK_URL reachable from inside the App / Job "+
+				"so the bootstrap can dial back. See backends/aca/README.md § reverse-agent prerequisites. "+
+				"(Was the bootstrap able to start and reach the callback URL?)",
+			c.ID[:12],
+		)}
 	}
-
-	return s.cloudExecStart(&exec, &c)
+	return s.BaseServer.ExecStart(id, opts)
 }
 
-// ContainerAttach attaches to a container's streams. If a reverse-agent
-// session is registered for the container, route through BaseServer so
-// the ReverseAgentStreamDriver fires. Otherwise fall back to cloud
-// exec via the ACA management API, creating a shell session that
-// serves as an attach-like experience.
+// ContainerAttach attaches to a container's streams. Requires a
+// registered reverse-agent (same reason as ExecStart — no
+// management-API fallback).
 func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io.ReadWriteCloser, error) {
 	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
-		return s.BaseServer.ContainerAttach(id, opts)
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"reverse-agent WebSocket not registered for container %s. "+
+				"ACA attach requires SOCKERLESS_CALLBACK_URL reachable from inside the App / Job "+
+				"so the bootstrap can dial back. See backends/aca/README.md § reverse-agent prerequisites.",
+			c.ID[:12],
+		)}
 	}
-
-	exec := &api.ExecInstance{
-		ContainerID: c.ID,
-		ProcessConfig: api.ExecProcessConfig{
-			Entrypoint: "/bin/sh",
-			Tty:        opts.Stream,
-		},
-	}
-	return s.cloudExecStart(exec, &c)
+	return s.BaseServer.ContainerAttach(id, opts)
 }
 
 // ContainerExport streams the container's rootfs as tar via the

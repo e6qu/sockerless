@@ -29,6 +29,9 @@ type Server struct {
 
 // NewServer creates a new ACA backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("ACA backend requires SOCKERLESS_CALLBACK_URL — the in-App/Job bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback to management-API exec). Set the env var to a URL the App / Job can reach.")
+	}
 	s := &Server{
 		config:           config,
 		azure:            azureClients,

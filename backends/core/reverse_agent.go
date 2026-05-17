@@ -3,9 +3,14 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
@@ -20,16 +25,24 @@ import (
 type ReverseAgentRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*agent.ReverseAgentConn
+	// waiters maps container ID -> channel closed by Register once
+	// the session for that ID lands. ContainerStart uses
+	// WaitForAgent to block on this so the first ExecStart can't
+	// race the bootstrap dial-back.
+	waiters map[string]chan struct{}
 }
 
 // NewReverseAgentRegistry creates an empty registry.
 func NewReverseAgentRegistry() *ReverseAgentRegistry {
-	return &ReverseAgentRegistry{sessions: map[string]*agent.ReverseAgentConn{}}
+	return &ReverseAgentRegistry{
+		sessions: map[string]*agent.ReverseAgentConn{},
+		waiters:  map[string]chan struct{}{},
+	}
 }
 
 // Register saves a session keyed by container ID, closing any prior
 // session under the same ID (the new dial wins — matches a reconnect
-// resume model).
+// resume model). Wakes any WaitForAgent callers for this id.
 func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -37,6 +50,46 @@ func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn)
 		_ = old.Close()
 	}
 	r.sessions[id] = conn
+	if ch, ok := r.waiters[id]; ok {
+		close(ch)
+		delete(r.waiters, id)
+	}
+}
+
+// WaitForAgent blocks until a session for `id` is registered or `ctx`
+// is cancelled (context.WithTimeout is the typical caller pattern).
+// Returns nil on registration, ctx.Err() on timeout / cancellation.
+// Fast-paths when the session is already registered.
+//
+// Designed for cloud-backend ContainerStart paths: after the
+// function/revision is "Active" the bootstrap still needs to start
+// inside the container and dial back; the first ExecStart cannot
+// proceed until the WebSocket is up. Per the no-fallback rule there
+// is no exec path that doesn't require the agent.
+func (r *ReverseAgentRegistry) WaitForAgent(ctx context.Context, id string) error {
+	r.mu.Lock()
+	if _, ok := r.sessions[id]; ok {
+		r.mu.Unlock()
+		return nil
+	}
+	ch, ok := r.waiters[id]
+	if !ok {
+		ch = make(chan struct{})
+		r.waiters[id] = ch
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		if cur, ok := r.waiters[id]; ok && cur == ch {
+			delete(r.waiters, id)
+		}
+		r.mu.Unlock()
+		return ctx.Err()
+	}
 }
 
 // Resolve returns the live reverse-agent connection for a container,
@@ -87,6 +140,29 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 		reg.Drop(sessionID)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session dropped")
 	}
+}
+
+// BootstrapTimeoutFromEnv returns the per-backend reverse-agent
+// bootstrap-dial-back timeout. `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC`
+// overrides; default 90 seconds. Invalid / non-positive values fail loud
+// at the call site rather than silently clamping (no-fallback rule).
+//
+// Used by every FaaS-style backend's ContainerStart to bound the wait
+// for the in-container bootstrap to register a reverse-agent.
+func BootstrapTimeoutFromEnv(backend string) (time.Duration, error) {
+	name := "SOCKERLESS_" + strings.ToUpper(backend) + "_BOOTSTRAP_TIMEOUT_SEC"
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 90 * time.Second, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: %w (expected integer seconds)", name, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid %s=%d: must be positive seconds (no zero / negative timeout — fail loud)", name, n)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 // ErrNoReverseAgent surfaces when a container has no live reverse-agent
