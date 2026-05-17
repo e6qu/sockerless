@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-17 — Phase 168.9: Cloud Run + GCF overlay exec e2e green on the simulator
+
+Continuation of the Phase 168 "Model A only" work: validate that a plain workload image gets overlay-wrapped with the real bootstrap, starts as a Cloud Run/GCF-hosted service, dials back to the backend reverse-agent endpoint, and runs `docker exec` through the WebSocket path instead of any per-step invoke fallback.
+
+Two backend integration tests now cover that real path against the GCP simulator:
+- Cloud Run: `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestCloudRunContainerExec` in `backends/cloudrun`.
+- GCF: `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestGCFContainerExec` in `backends/cloudrun-functions`.
+
+The validation surfaced three simulator fidelity issues that would have hidden the real backend behavior if papered over. Cloud Run v2 Services now accept SDK numeric `VpcAccess.egress` enum values and round-trip canonical strings; the shared overlay invocation path starts `linux/amd64` containers because the GCP backends build overlays as `linux/amd64`; and Cloud Run Services invocation now injects the persisted revision env into the overlay container, including `SOCKERLESS_CALLBACK_URL` and `SOCKERLESS_CONTAINER_ID`.
+
+Result: Cloud Run and GCF start the overlay bootstrap, register the reverse agent, run `docker exec`, and inspect exit code 0 in the simulator. ACA/AZF remain blocked by the already-filed missing bootstrap/App execution bugs 1067–1069.
+
 ## 2026-05-17 — Phase 167: pod-model analysis + Phase 168 plan (doc-only, in flight on `phase-167-pod-model-analysis`)
 
 User directive: *"review the pod model of the backends and how it works with github runner and with gitlab runner; let's compare side by side how the drivers work and how the 'pod' abstraction is maintained for all backends; for FaaS backends in particular it can get complicated; is there some way to simplify? we want to also avoid using exotic storage options by default (do keep old drivers though) and stick to a common denominator if we can; note that hacks like separate VMs / instances are not allowed, but do ask me questions about it; for example I noticed that a 12 step job took 12+ minutes where we had a 1 min of initialization for each step; I think by accident the execution of the job was split across multiple functions when a single function would have done the job; let's check, first just analyze."*

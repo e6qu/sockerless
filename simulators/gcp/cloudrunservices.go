@@ -47,6 +47,41 @@ func (e enumString) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(e))
 }
 
+type vpcEgressString string
+
+func (e *vpcEgressString) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*e = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*e = vpcEgressString(s)
+		return nil
+	}
+	switch strings.TrimSpace(string(data)) {
+	case "1":
+		*e = "ALL_TRAFFIC"
+	case "2":
+		*e = "PRIVATE_RANGES_ONLY"
+	case "0":
+		*e = ""
+	default:
+		return fmt.Errorf("unknown VpcAccess egress enum %s", data)
+	}
+	return nil
+}
+
+func (e vpcEgressString) MarshalJSON() ([]byte, error) {
+	if e == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(string(e))
+}
+
 // Cloud Run v2 services slice. The cloudrun backend uses
 // cloud.google.com/go/run/apiv2 (REST client) which talks to the v2
 // REST surface — `/v2/projects/{project}/locations/{location}/services`
@@ -108,8 +143,8 @@ type RevisionScaling struct {
 // internal-ingress IP. The backend sets this when Config.VPCConnector
 // is non-empty.
 type VpcAccess struct {
-	Connector string `json:"connector,omitempty"`
-	Egress    string `json:"egress,omitempty"`
+	Connector string          `json:"connector,omitempty"`
+	Egress    vpcEgressString `json:"egress,omitempty"`
 }
 
 // TrafficTarget is one entry in the Service's traffic-split list.
@@ -118,6 +153,17 @@ type TrafficTarget struct {
 	Revision string `json:"revision,omitempty"`
 	Percent  int32  `json:"percent,omitempty"`
 	Tag      string `json:"tag,omitempty"`
+}
+
+func containerEnvMap(envVars []EnvVar) map[string]string {
+	if len(envVars) == 0 {
+		return nil
+	}
+	env := make(map[string]string, len(envVars))
+	for _, ev := range envVars {
+		env[ev.Name] = ev.Value
+	}
+	return env
 }
 
 // crv2Services is the package-scope handle the cloudfunctions slice
@@ -329,7 +375,8 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "service %q has no container image", name)
 			return
 		}
-		image := svc.Template.Containers[0].Image
+		container := svc.Template.Containers[0]
+		image := container.Image
 		bodyBytes, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ct := r.Header.Get("Content-Type")
@@ -338,7 +385,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			body = bytes.NewReader(bodyBytes)
 		}
 		sink := &cfLogSink{project: project, functionName: serviceID}
-		respBody, exitCode, err := invokeOverlayContainerHTTPWithBody(image, serviceID, 5*time.Minute, sink, body, ct)
+		respBody, exitCode, err := invokeOverlayContainerHTTPWithBody(image, serviceID, 5*time.Minute, sink, containerEnvMap(container.Env), body, ct)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return

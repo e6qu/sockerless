@@ -6,7 +6,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 Phase 166 merged 2026-05-17 (PR #167, `49050c2d` on `origin/main`).
 
-**Phases 167 + 168 in flight on `phase-167-pod-model-analysis`** — single PR for both at the end. User directive: begin work with stated defaults; surface new findings.
+**Phases 167 + 168 in flight on `phase-167-pod-model-analysis`** — PR #168 is open; keep using the same branch and PR. User directive: begin work with stated defaults; surface new findings; update continuity docs and check CI after each significant chunk.
 
 ## Phase 168 sub-task status
 
@@ -21,7 +21,7 @@ Phase 166 merged 2026-05-17 (PR #167, `49050c2d` on `origin/main`).
 | **P168.6** | ✅ | Bootstraps detect ENOSPC writes → exec envelope `exit_code=28` + operator-guidance message. Shared helper in `agent/enospc.go` (`DetectENOSPC` + `AnnotateENOSPC` + `ENOSPCExitCode=28`); wired into lambda + GCF + cloudrun bootstrap exec-result construction. AZF bootstrap doesn't exist yet (AZF uses the universal sockerless-agent path); skipped. |
 | **P168.7** | ✅ | Strict cleanup-path errors: `ContainerRemove` on all 5 FaaS-style backends now accumulates errors via `errors.Join` and returns them. Split `deleteJob` / `deleteService` / `deleteApp` into two flavours: lenient (rollback paths, error logged) + `*Strict` (ContainerRemove, error propagates). Already-not-found is idempotent (returns nil). `docker rm` only succeeds when the cloud is actually clean. |
 | **P168.8** | ✅ | Protocol type `agent.TypeLifetimeExpired` + `agent.SendLifetimeExpired(ws, mu)` helper + `ReverseAgentConn.OnSystemMessage` hook. Sockerless side: `ReverseAgentRegistry.MarkLifetimeExpired` / `IsLifetimeExpired`; wired into `HandleReverseAgentWS` so inbound `lifetime_expired` marks the container, and into ExecStart on lambda/gcf/cloudrun/aca/azf to return a `FaaSPodLifetimeExceeded` operator-guidance error. Lambda bootstrap wires the timer goroutine in `handleOneInvocation` (fires at deadline-5s of each invocation via `Lambda-Runtime-Deadline-Ms`). Cloud Run + GCF bootstraps now catch SIGTERM, send `lifetime_expired`, and exit cleanly; ACA + AZF remain tied to the missing real bootstrap paths tracked in BUG-1067 / BUG-1069. |
-| **P168.9** | ◻ | E2E (12-step CI job <60s on lambda / gcf / azf / cloudrun); update per-backend READMEs + `docs/POD_MATERIALIZATION.md` + `specs/CLOUD_RESOURCE_MAPPING.md`; final state save; codex review; open single PR. |
+| **P168.9** | ◐ | E2E/readiness track. Cloud Run + GCF overlay-baked bootstrap exec now pass real simulator backend tests (`ContainerStart` reverse-agent registration + `docker exec` over WebSocket). During validation, fixed GCP simulator Cloud Run Services numeric VPC egress enum handling, overlay image architecture, and revision env propagation (BUG-1070 / 1078 / 1079 / 1080). Remaining: ACA/AZF are blocked by missing real bootstrap/App execution bugs 1067–1069; update per-backend READMEs + `docs/POD_MATERIALIZATION.md` + `specs/CLOUD_RESOURCE_MAPPING.md`; final state save; codex review; keep PR #168 updated. |
 
 ## Invariants snapshot (full list in STATUS.md)
 

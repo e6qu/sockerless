@@ -30,6 +30,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
@@ -287,7 +288,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		defer buildCancel3()
 		bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 		bootstrapBuild.Dir = repoRoot + "/agent"
-		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
 		bootstrapBuild.Stdout = os.Stderr
 		bootstrapBuild.Stderr = os.Stderr
 		if err := bootstrapBuild.Run(); err != nil {
@@ -564,10 +565,8 @@ func TestGCFContainerExec(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:     "alpine:latest",
-			Cmd:       []string{"tail", "-f", "/dev/null"},
-			Tty:       true,
-			OpenStdin: true,
+			Image: "alpine:latest",
+			Cmd:   []string{"tail", "-f", "/dev/null"},
 		},
 		nil, nil, nil, "gcf_exec_"+testID,
 	)
@@ -580,10 +579,10 @@ func TestGCFContainerExec(t *testing.T) {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	// Exec create should succeed (synthetic exec from core)
 	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
-		Cmd:          []string{"echo", "hello"},
+		Cmd:          []string{"sh", "-c", "printf gcf-exec-ok"},
 		AttachStdout: true,
+		AttachStderr: true,
 	})
 	if err != nil {
 		t.Fatalf("exec create failed: %v", err)
@@ -591,6 +590,28 @@ func TestGCFContainerExec(t *testing.T) {
 
 	if execResp.ID == "" {
 		t.Error("expected non-empty exec ID")
+	}
+
+	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		t.Fatalf("exec attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader); err != nil {
+		t.Fatalf("exec stream copy failed: %v", err)
+	}
+	if got := stdout.String(); got != "gcf-exec-ok" {
+		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
+	}
+
+	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.ExitCode != 0 {
+		t.Fatalf("exec exit code = %d", inspect.ExitCode)
 	}
 }
 

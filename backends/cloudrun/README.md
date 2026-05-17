@@ -1,6 +1,6 @@
 # Cloud Run Backend
 
-Runs Docker containers as Google Cloud Run Jobs and Executions, with Cloud Logging for log streaming. Frontend speaks Docker REST API v1.44; backend speaks the Cloud Run / Cloud Logging / Artifact Registry / IAM APIs.
+Runs Docker containers as Google Cloud Run Jobs/Executions or long-running Cloud Run Services, with Cloud Logging for log streaming. Frontend speaks Docker REST API v1.44; backend speaks the Cloud Run / Cloud Logging / Artifact Registry / IAM APIs.
 
 ## Reference adaptors
 
@@ -21,7 +21,8 @@ Local development replaces the backend-side upstream with [`simulators/gcp`](../
 | `tests/` (Docker SDK against running backend, Cloud Run profile) | Container lifecycle round-trip via Cloud Run Job. | 2026-05-13 |
 | `simulators/gcp/sdk-tests/` Cloud Run package | The Admin v2 calls this backend issues, validated against the sim. | 2026-05-13 |
 | `simulators/gcp/terraform-tests/` | `google_cloud_run_v2_job` apply / destroy round-trip. | 2026-05-13 |
-| `make backends/cloudrun/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
+| `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestCloudRunContainerExec` in `backends/cloudrun` | Builds the real bootstrap, overlay-wraps a stock image, starts the Cloud Run Service path, waits for reverse-agent registration, and runs `docker exec` over WebSocket. | 2026-05-17 |
+| `make backends/cloudrun/test` | Leaf-Makefile unit + integration suite. | 2026-05-17 |
 
 ## Wiring the adaptor
 
@@ -92,12 +93,10 @@ hello from cloudrun
 
 ## Known issues
 
-None open. Cloud Run lacks a protobuf field for real pd-ephemeral volumes (Phase 91d bookmarked indefinitely) — see [`PLAN.md § Phase 91d`](../../PLAN.md). `BackingPDEphemeral` is rejected; volume requests for pd-ephemeral fail loudly per the no-fallbacks rule.
+None open for the Cloud Run Service reverse-agent path. Cloud Run lacks a protobuf field for real pd-ephemeral volumes (Phase 91d bookmarked indefinitely) — see [`PLAN.md § Phase 91d`](../../PLAN.md). `BackingPDEphemeral` is rejected; volume requests for pd-ephemeral fail loudly per the no-fallbacks rule.
 
 ## What's out of scope
 
-- Cloud Run Services (long-running HTTP endpoints) — this backend uses Jobs only.
-- Cloud Build orchestration.
 - Native source-based deployments (`gcloud run deploy --source=.`) — operator-side concern.
 
 ## Cloud Notes

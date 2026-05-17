@@ -67,12 +67,9 @@ The Lambda **15-minute invocation limit** is the dominant constraint. The runner
 
 **Workspace data plane.** EFS access points (same machinery as ECS, shared via `aws-common/volumes.go`). The runner-Lambda's `/home/runner/_work` is symlinked to `/mnt/runner-workspace` (BUG-862 fix — Lambda's filesystem is read-only outside `/tmp`, so the workspace gets relocated). `SOCKERLESS_LAMBDA_SHARED_VOLUMES` carries multiple `name=path=<apid>` entries pointing at the **same** access-point root so sockerless's per-volume access-point lookup short-circuits onto the shared mount (BUG-861 fix — Lambda allows only a single `FileSystemConfig` per function).
 
-**Exec dispatch.** Two paths, both live:
+**Exec dispatch.** Reverse-agent WebSocket only. The bootstrap dials `SOCKERLESS_CALLBACK_URL`, registers with `SOCKERLESS_CONTAINER_ID`, and sockerless tunnels exec requests over that WebSocket. The old Invoke-envelope Path B was removed in Phase 168 because it silently converted each `docker exec` step into a fresh cloud invocation when the agent was missing.
 
-- **Reverse-agent over WebSocket** (interactive / TTY). The bootstrap spawns a co-process (`sockerless-agent -callback $CALLBACK_URL`) that opens a WebSocket back to the sockerless backend. Exec requests are tunneled over the WebSocket; the agent runs the command in the function's process namespace and pipes stdout/stderr back.
-- **Exec-via-Invoke envelope** (non-interactive per-step scripts). Sockerless POSTs an `ExecEnvelope` JSON as the `lambda.Invoke` Payload. The bootstrap reads the Payload, runs the subprocess, returns stdout/stderr in the Invoke response body. See `docs/LAMBDA_EXEC_DESIGN.md` for the full design.
-
-GitLab's hijacked-stdin pattern uses the `stdinPipes` map: `ContainerStart` drains the pipe and bakes stdin bytes into the `lambda.Invoke` Payload (`backends/lambda/exec_invoke.go`); the bootstrap pipes the Payload to the user entrypoint as stdin.
+GitLab's hijacked-stdin pattern must ride the same registered reverse-agent/session path. If the bootstrap does not register before `SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC`, `ContainerStart` fails loudly.
 
 ---
 
@@ -89,18 +86,16 @@ Service revisions scale to zero between execs (`MinInstanceCount: 0, MaxInstance
 **Workspace data plane.** GCS buckets via the **`gcs-sync` storage backing driver** (`backends/gcp-common/storage_gcssync.go`). Phase 92 deregistered `gcs-fuse` on Cloud Run because Cloud Run rejects the cache-TTL gcsfuse mount flags needed for cross-task safety (BUG-944 → BUG-987). The gcs-sync flow:
 
 1. **PreExec** — runner-task tars its local volume mount, uploads to a GCS object keyed by exec ID, returns an env hint `SOCKERLESS_WORKSPACE_OBJECT=gs://bucket/exec-<id>.tar.gz`.
-2. **Bootstrap receives the exec envelope**, sees the hint, downloads + untars to the local mount before running the subprocess.
+2. **Bootstrap receives the exec request** over the reverse-agent path, sees the hint, downloads + untars to the local mount before running the subprocess.
 3. **Subprocess runs**, mutates the workspace.
 4. **Bootstrap tars + uploads** the post-run workspace back to the same object.
 5. **PostExec** — runner-task downloads + untars to pick up mutations, deletes the object.
 
 This is per-step granularity. Cross-step persistence rests on GCS object durability, not on a live shared filesystem.
 
-**Exec dispatch.** **Envelope POST** to the Service's `https://skls-<id>-run.a.run.app/` URL (`backends/cloudrun/exec_invoke.go`). The envelope carries command, env, working dir, and GCS workspace hint. The bootstrap returns mux-framed stdout/stderr in the HTTP response. ID-token auth (Cloud Run requires authenticated invokes by default).
+**Exec dispatch.** Reverse-agent WebSocket only. The Cloud Run Service URL is still invoked once to start the overlay bootstrap and keep the instance warm, but per-step `docker exec` goes through the registered WebSocket session. Simulator validation added in Phase 168.9 proves a stock image is overlay-wrapped, `ContainerStart` waits for `/v1/cloudrun/reverse`, and `docker exec` returns over Docker's stdcopy-framed response.
 
-A reverse-agent WebSocket path also exists for interactive TTY+stdin execs (`core.ReverseAgentRegistry`); the envelope POST handles non-interactive per-step scripts.
-
-GitLab's hijacked-stdin lands in the envelope's `Stdin` field; the bootstrap pipes it to the subprocess.
+GitLab's hijacked-stdin lands on the same reverse-agent stream; there is no Service-URL exec fallback.
 
 ---
 
@@ -116,7 +111,7 @@ GitLab's hijacked-stdin lands in the envelope's `Stdin` field; the bootstrap pip
 
 **Workspace data plane.** GCS buckets via `gcs-sync` (same as Cloud Run). Volumes attach via `attachVolumesToFunctionService` (`backends/cloudrun-functions/volumes.go`) — the function itself has no native Volumes primitive, but the underlying Service does. Idempotent attach: compare existing `volumes[].name + bucket + mountOptions` vs requested; replace stale entries.
 
-**Exec dispatch.** Envelope POST to the function URL (read from `functions.GetFunction().ServiceConfig.Uri`), same shape as Cloud Run. ID-token auth. `backends/cloudrun-functions/exec_invoke.go`.
+**Exec dispatch.** Reverse-agent WebSocket only. The Function/underlying Service URL is invoked to start the overlay bootstrap, and the bootstrap registers back to `/v1/gcf/reverse` before `ContainerStart` returns. Per-step `docker exec` then runs through the WebSocket session. Simulator validation added in Phase 168.9 covers `ContainerStart` registration plus `docker exec` exit-code inspection.
 
 ---
 
@@ -151,7 +146,7 @@ This is a real limitation, not a workaround — it's the cloud-native answer for
 
 **Workspace data plane.** Azure Files shares (same `azure-common` machinery as ACA). `SOCKERLESS_AZF_STORAGE_ACCOUNT` configures the storage account. Persistent across invocations.
 
-**Exec dispatch.** Reverse-agent over WebSocket (primary). The bootstrap registers a reverse-agent WS during startup; sockerless tunnels exec requests over it. An envelope-POST fallback exists for stateless per-step scripts but reverse-agent is the dominant path.
+**Exec dispatch.** Reverse-agent over WebSocket. The bootstrap registers a reverse-agent WS during startup; sockerless tunnels exec requests over it. There is no envelope-POST fallback.
 
 ---
 
@@ -166,7 +161,7 @@ The runner pattern: `actions/runner` polls GitHub, then for each `container:` st
 | Runner container created | `docker create` | `ecs.RunTask` with `tail -f /dev/null` | `lambda.CreateFunction` (image mode, overlay) | `run.Services.CreateService` (multi-container revision) | `functions.CreateFunction` + `UpdateService` swap | `ContainerAppsClient.CreateOrUpdate` | `WebAppsClient.CreateOrUpdate` |
 | Step container created | `docker create` | `ecs.RunTask` (sub-task) | `lambda.CreateFunction` (sub-task) | New revision of same Service | New function + `UpdateService` (pool-reusable) | New App revision | New Function App (or supervisor-in-overlay) |
 | `_work` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` (per-exec tar) | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
-| `docker exec` for step | native | SSM ExecuteCommand (waits for agent) | Reverse-agent WS or Invoke envelope | Envelope POST to Service URL | Envelope POST to function URL | ACA console exec WS | Reverse-agent WS |
+| `docker exec` for step | native | SSM ExecuteCommand (waits for agent) | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | ACA console exec WS | Reverse-agent WS |
 | Cross-step persistence | Native (same host) | EFS mount stays attached | EFS persists across invokes | GCS object tar/untar per step | GCS object tar/untar per step | Azure Files share persists | Azure Files share persists |
 
 ### GitLab Runner — per-backend
@@ -176,7 +171,7 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | Step | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|
 | Build container created | `docker create` | `ecs.RunTask` | `lambda.CreateFunction` | `CreateService` (build + helper + service sidecars) | `CreateFunction` + `UpdateService` (build + helper + sidecars) | `CreateOrUpdate` (multi-container App) | `CreateOrUpdate` (supervisor overlay) |
-| Stdin script delivery | native attach | `stdinPipes` map → bake into task def `Cmd` (BUG-859) | `stdinPipes` map → bake into Invoke Payload (BUG-860) | Envelope POST's `Stdin` field | Envelope POST's `Stdin` field | WebSocket stream | WebSocket stream |
+| Stdin script delivery | native attach | `stdinPipes` map → bake into task def `Cmd` (BUG-859) | Reverse-agent stream | Reverse-agent stream | Reverse-agent stream | WebSocket stream | WebSocket stream |
 | `/builds` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
 | `/cache` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
 | Per-stage re-`start` | native | `ContainerStart` re-resolves task ARN, opens new stdin pipe | Re-invoke same function with new stdin pipe | New revision of same Service | New invoke of same function | New App revision | Re-invoke same Function App |
@@ -191,7 +186,7 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | **Long-lived shell** | `tail -f /dev/null` | task stays running | bootstrap + Runtime API loop | revision stays warm | function stays warm (pool) | revision stays active | Function App HTTP handler |
 | **Sub-task primitive** | new `docker create` | new `ecs.RunTask` | new `lambda.CreateFunction` | new revision of same Service | new Function (pool-reusable) + `UpdateService` | new App revision | new Function App (or supervisor overlay) |
 | **Workspace storage** | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
-| **Exec dispatch** | native `docker exec` | SSM ExecuteCommand | reverse-agent WS / Invoke envelope | envelope POST to bootstrap | envelope POST to bootstrap | ACA console exec WS / reverse-agent | reverse-agent WS |
+| **Exec dispatch** | native `docker exec` | SSM ExecuteCommand | reverse-agent WS | reverse-agent WS | reverse-agent WS | ACA console exec WS / reverse-agent | reverse-agent WS |
 | **Cross-step persistence** | host fs | EFS mount stays | EFS mount stays | GCS object tar/untar | GCS object tar/untar | Azure Files share | Azure Files share |
 | **Hard limit** | (none) | (none — Fargate is long-lived) | 15-min invocation cap | (none — Services are long-lived) | (none — same as cloudrun) | (none — Apps are long-lived) | (none — but supervisor-overlay limits CAP_SYS_ADMIN-dependent workloads) |
 

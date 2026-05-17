@@ -1597,10 +1597,10 @@ The github-actions-runner runs as the workspace itself. When a workflow specifie
 | 1 | Initialize | `POST /networks/create` (per-job network), `POST /images/<job-image>/create`, `POST /images/<service>/create` | n/a | `ImagePull` + `NetworkCreate` |
 | 2 | Job container | `POST /containers/create` with `--workdir /__w/<repo>/<repo> --network <job-net> -v /tmp/runner-work:/__w -v /opt/runner/externals:/__e:ro --entrypoint tail <image> -f /dev/null` | **Long-lived** (entire job) | Long-lived primitive (Cloud Run Service / ACA App / Fargate task with `tail -f` cmd) |
 | 3 | Service container(s) | `POST /containers/create -v /var/run/docker.sock:/var/run/docker.sock --network <job-net> <image>` | **Long-lived** | Same long-lived primitive |
-| 4 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for each step's `bash -c` | Each exec is a process inside; container stays | `ExecCreate` + `ExecStart` (Path B HTTP envelope works — see Lesson 8) |
+| 4 | Step exec (×N) | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` for each step's `bash -c` | Each exec is a process inside; container stays | `ExecCreate` + `ExecStart` through the backend's native exec path; FaaS-style backends require reverse-agent registration. |
 | 5 | Cleanup | `POST /containers/<id>/stop` + `DELETE /containers/<id>`, `DELETE /networks/<job-net>` | n/a | Standard removal |
 
-**Source verification (2026-05-03)**: `actions/runner` v2.334.0 `src/Runner.Worker/Container/DockerCommandManager.cs` exposes `DockerCreate`, `DockerStart`, `DockerExec`, `DockerInspect`, `DockerStop`, `DockerRemove` as the runner's primitives. Steps run via `DockerExec` (one `docker exec` per step) — **fundamentally different from gitlab-runner's hijacked attach pattern**. Sockerless's `Path B HTTP envelope POST` (Lesson 8) maps directly to `DockerExec`: each `docker exec` call becomes one POST to the Service URL with `execEnvelope{argv,stdin,env,workdir}`.
+**Source verification (2026-05-03)**: `actions/runner` v2.334.0 `src/Runner.Worker/Container/DockerCommandManager.cs` exposes `DockerCreate`, `DockerStart`, `DockerExec`, `DockerInspect`, `DockerStop`, `DockerRemove` as the runner's primitives. Steps run via `DockerExec` (one `docker exec` per step) — **fundamentally different from gitlab-runner's hijacked attach pattern**. After Phase 168, FaaS-style sockerless backends map `DockerExec` to the in-container reverse-agent WebSocket; a missing session is a startup failure, not an invoke fallback.
 
 **OpenStdin=false + long-lived JOB pattern — distinct architectural shape from gitlab-runner** (BUG-959/960/961, surfaced 2026-05-06 cells 5+6):
 
@@ -1609,9 +1609,9 @@ The github-runner JOB container is `OpenStdin=false` (no attach-stdin) with a lo
 | Assumption | Was tuned for | Surfaces as |
 |---|---|---|
 | Pod-Service materialize triggers on first OpenStdin=true sibling | gitlab-runner's script-runner is OpenStdin=true | Both job + postgres deferred forever; pod-Service never materialized → BUG-959. **Fix**: when current OpenStdin=false has deferred siblings, materialize with `siblings[0]` (FIRST-arrived = JOB container) as main + current as sidecar. |
-| `Typed.Exec` driver = reverse-agent | bootstrap dials back via WS to register | Cloud Run JOB runner-task has no public URL → reverse-agent never registers → exec exit 126 → BUG-960. **Fix**: `Typed.Exec = WrapLegacyExecStart(s.ExecStart, ...)` — routes through the override that has the `execStartViaInvoke` envelope-POST fallback. |
+| `Typed.Exec` driver = reverse-agent | bootstrap dials back via WS to register | Cloud Run JOB runner-task has no public URL → reverse-agent never registers → exec exit 126 → BUG-960. **Current fix**: route long-lived runner containers through overlay-backed Service/underlying-Service paths and fail `ContainerStart` loudly if the reverse-agent does not register. |
 | `invokeServiceDefaultCmd` POSTs empty body to bootstrap → run env-baked CMD | gitlab-runner's helper image has a quick init CMD; for OpenStdin=true main, the path captures stdin and POSTs envelope with stdin | GH JOB CMD is `tail -f /dev/null` — runs forever as the default-invoke subprocess → blocks `invokeMu` → subsequent /exec sits in queue 10 min → BUG-961. **Fix**: `skipIfNoStdin` param on `invokeServiceDefaultCmd`. Multi-container pod-Service mode passes `true` (skip default-invoke when no stdin captured); single-container `docker run` path passes `false` (default-invoke runs CMD as before). |
-| `execStartViaInvoke` returns plain bytes | gitlab-runner attach response uses raw stream (no docker stdcopy framing) | github-runner's `docker exec` non-TTY response demands 8-byte stdcopy stream-frame headers → "Unrecognized input header: 115" → BUG-962. **Fix**: wrap stdout in `0x01` frame + stderr in `0x02` frame via existing `writeMuxFrame` helper. |
+| Exec response framing | gitlab-runner attach response uses raw stream (no docker stdcopy framing) | github-runner's `docker exec` non-TTY response demands 8-byte stdcopy stream-frame headers → "Unrecognized input header: 115" → BUG-962. **Fix**: reverse-agent exec responses are returned as Docker stdcopy-framed stdout/stderr. |
 
 **Critical invariant — workspace state propagation across the runner-task and the JOB pod-Service** (BUG-963 → BUG-965 → Phase 123):
 
@@ -1634,15 +1634,15 @@ Why this beat the alternatives we tried (in order):
 | Pattern | gitlab-runner v17 | github-runner v2.334 | Sockerless cloudrun support | Sockerless gcf support |
 |---|---|---|---|---|
 | Container creation | `OpenStdin=true`, cmd=`/bin/bash` (with feature flag, else helperImage.Cmd) | `OpenStdin=false`, cmd=`tail -f /dev/null` (or image's CMD) | ✅ Both | ✅ Both |
-| Stage / step execution | **HIJACKED** `ContainerAttach`+stdin-pipe per stage; container START→STOP→START cycle | `DockerExec` per step (Path B HTTP envelope); container stays running | ✅ via BUG-958+955 multi-stage runner-pattern + envelope POST | ✅ via BUG-955 `invokeRunningRunnerStage` |
+| Stage / step execution | **HIJACKED** `ContainerAttach`+stdin-pipe per stage; container START→STOP→START cycle | `DockerExec` per step over reverse-agent; container stays running | ✅ via reverse-agent Service path | ✅ via reverse-agent underlying-Service path |
 | Multi-image-per-stage (helper for prep, user image for step_script) | yes | n/a (single image) | ✅ via BUG-956 `pendingMembersOfNetwork` filter (sidecars stay) | ✅ same |
 | pod-Service materialize trigger | OpenStdin=true sibling arrives | first OpenStdin=false JOB container + service container both arrive | ✅ via BUG-959 (siblings[0] = JOB = main) | ✅ same |
-| `Typed.Exec` routing | n/a (no exec; uses attach) | needs envelope-POST fallback | ✅ via BUG-960 `WrapLegacyExecStart(s.ExecStart)` | ✅ same |
+| `Typed.Exec` routing | n/a (no exec; uses attach) | needs registered reverse-agent session | ✅ `ContainerStart` waits for `/v1/cloudrun/reverse` | ✅ `ContainerStart` waits for `/v1/gcf/reverse` |
 | Default-invoke gating | always invoke (script comes via stdin) | NEVER default-invoke (long-lived `tail -f` would block forever) | ✅ via BUG-961 `skipIfNoStdin=true` for multi-container pod-Service | 🟡 BUG-964 OPEN (mirror BUG-961 to gcf invokePodServiceMain) |
 | Per-step process supervision | bash reads stdin until EOF | dedicated process per exec | ✅ Both representable | ✅ Both representable |
 | Workspace persistence (cross-stage) | `/builds` per-stage tar-pack persist via GCS object (BUG-947 cloudrun, BUG-957 gcf) — sequential, no concurrent rewrites | `/__w` per-step sync via `gcs-sync` storage backing driver (Phase 123) — sockerless-backend tars on exec, bootstrap untars + runs + tars, sockerless-backend untars response. No FUSE; user-directive zero-scaling. | ✅ Cell 7 GREEN | ✅ Cell 8 GREEN |
 | Service containers (postgres etc.) | `--network <job-net>` peer-reachable on `localhost:<port>` | same | ✅ multi-container Cloud Run Service revision (loopback per-revision) | ✅ same |
-| Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response (also stdcopy-framed) | ✅ via `writeMuxFrame` helper in `attach_stream.go` | ✅ via BUG-962 same helper applied to `execStartViaInvoke` |
+| Stdout/stderr capture | hijacked stdcopy.StdCopy framing | DockerExec response (also stdcopy-framed) | ✅ reverse-agent exec response is stdcopy-framed | ✅ same |
 | GCSFuse stale-handle on per-step rewrites | n/a (single bucket, sequential) | event.json rewrite each step → stale-handle | n/a | 🟡 BUG-965 OPEN (mount options or Filestore) |
 
 ### Comparison table — what each backend can offer
@@ -1814,15 +1814,15 @@ ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the exis
 
 **Gcf adjustment**: Already implemented (`backends/cloudrun-functions/image_inject.go`). Verify: same overlay applied for runner-pattern containers; `OverlayContentTag` keying matches Lambda's so per-cloud caches stay coherent.
 
-### Lesson 8 — Lambda: `execStartViaInvoke` (Path B) for invocation-based exec
+### Lesson 8 — Lambda: `execStartViaInvoke` (Path B) for invocation-based exec, now retired
 
-**Lambda pattern**: `backends/lambda/exec_invoke.go::execStartViaInvoke` — each `docker exec` builds a JSON `execEnvelope{argv, tty, workdir, env, stdin}`, fires `lambda.Invoke(payload=envelope)`, and parses the response `{exitCode, stdout, stderr}` (base64-encoded). The in-image `sockerless-lambda-bootstrap` recognises the envelope shape, runs the cmd, returns the result. NO long-running process needed; pure invoke-per-exec.
+**Historical Lambda pattern**: `backends/lambda/exec_invoke.go::execStartViaInvoke` built a JSON `execEnvelope{argv, tty, workdir, env, stdin}`, fired `lambda.Invoke(payload=envelope)`, and parsed the response `{exitCode, stdout, stderr}` (base64-encoded). This Path B model is no longer an allowed exec path after Phase 168 because a missing reverse-agent silently became one fresh cloud invocation per `docker exec`, which caused the 12-step CI job to pay cold-start per step.
 
-**Why it works**: Lambda has no native exec API but has a synchronous Invoke API with arbitrary JSON payload. The bootstrap-as-shell-runner pattern bridges the gap deterministically.
+**Why it was removed**: The invoke-envelope mechanism can run a command, but it creates a second execution model beside the reverse-agent. Two exec models hid bootstrap/network failures and made per-step latency unpredictable. Current FaaS-style backends require the bootstrap to dial back over `SOCKERLESS_CALLBACK_URL`; if no session registers before the backend timeout, `ContainerStart` fails loudly.
 
-**Gcf adjustment (PRIMARY PATH)**: Cloud Run Function Gen2 = HTTP-invoke-on-demand → identical pattern. ContainerExec → POST to `Function.ServiceConfig.Uri` with `execEnvelope` body → bootstrap parses + runs + returns. NO reverse-agent WebSocket needed; the HTTP request/response IS the bridge. Already partly in place (Phase 118d HTTP invoke for the main cmd); extend to recognise envelope shape for exec.
+**Gcf current path**: Cloud Run Function Gen2 is started via its HTTP/underlying Service URL so the overlay bootstrap process exists, then the bootstrap registers `/v1/gcf/reverse`. `ContainerExec` multiplexes over that WebSocket. Phase 168.9 simulator e2e covers this with a stock image overlay and real `docker exec`.
 
-**Cloudrun adjustment**: Cloud Run Service URL is also HTTP-invokable. Same shape: ContainerExec → POST to Service URL with envelope. The reverse-agent WebSocket pattern (currently in cloudrun for streaming attach) becomes secondary — use it only for interactive exec (TTY+stdin) where HTTP request/response is too coarse.
+**Cloudrun current path**: Cloud Run Service URL is invoked once to start the overlay bootstrap, then `ContainerExec` multiplexes over `/v1/cloudrun/reverse`. Phase 168.9 simulator e2e covers service creation, revision env propagation into the overlay container, reverse-agent registration, and stdcopy-framed exec output.
 
 ### Lesson 7 — ECS + Lambda: tag-based state recovery (no on-disk dispatcher state)
 
@@ -1838,12 +1838,12 @@ ECS (cells 1+3 GREEN against live AWS) and Lambda (cells 2+4 GREEN) are the exis
 
 Combining the lessons, the proper fix path for cells 5-8 is:
 
-1. **Lift `image_inject.go` to `gcp-common`**: shared overlay renderer + Cloud Build trigger for cloudrun + gcf. New binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`), recognising the same `execEnvelope` shape.
-2. **Cloudrun**: ALL containers route to Cloud Run **Service** (drop `isRunnerPattern` gating — gitlab-runner's stock images need long-lived host + exec endpoint regardless of ExposedPorts). Service is overlay-imaged (Lesson 6 revised). `docker exec` = Path B HTTP POST to Service URL with `execEnvelope` (Lesson 8). Pre-deploy one Service per runner-image shape via terraform-managed shape pool; per-container deploy is content-hash claim from pool (Lesson 1 + Lesson 2 combined).
-3. **Gcf**: Identical to cloudrun — overlay-imaged Function (`OverlayContentTag` cache); `docker exec` = Path B HTTP POST to `Function.ServiceConfig.Uri` with `execEnvelope`. Pool-reuse already implemented; verify hot path < 10s for second invocation of same content-hash.
+1. **Lift `image_inject.go` to `gcp-common`**: shared overlay renderer + Cloud Build trigger for cloudrun + gcf. New binary: `sockerless-cloudrun-bootstrap` (parallel to `sockerless-lambda-bootstrap`), with the bootstrap registering a reverse-agent session before exec is accepted.
+2. **Cloudrun**: ALL long-lived runner containers route to Cloud Run **Service**. Service is overlay-imaged (Lesson 6 revised). `docker exec` = reverse-agent WebSocket through `/v1/cloudrun/reverse`; the Service URL is only the startup/invoke surface that gets the bootstrap process running.
+3. **Gcf**: Identical to cloudrun at exec time: overlay-imaged Function / underlying Service (`OverlayContentTag` cache); `docker exec` = reverse-agent WebSocket through `/v1/gcf/reverse`. Pool-reuse already implemented; verify hot path < 10s for second invocation of same content-hash.
 4. **Both**: ContainerStart → claim free pool entry OR overlay-build + deploy. ContainerStop → release back to pool (clear `sockerless_allocation` label) up to pool cap. ContainerRemove → delete from pool above cap.
 
-This dissolves BUG-921/922/923/925/927 entirely — the docker-exec lifecycle no longer tries to make Cloud Run Jobs do exec semantics. Cells 5-8 then compile + use eval-arithmetic + probe environment with REAL workload streaming back via the HTTP response body (logged to Cloud Logging by Cloud Run for `docker logs --follow` parity).
+This dissolves BUG-921/922/923/925/927 entirely — the docker-exec lifecycle no longer tries to make Cloud Run Jobs do exec semantics, and after Phase 168 it no longer uses invoke-envelope fallback for missing agents. Cells 5-8 then compile + use eval-arithmetic + probe environment with REAL workload streaming back through the registered exec session.
 
 ## Backend ↔ primitive purity (no cross-contamination rule)
 
@@ -1856,24 +1856,24 @@ User directive 2026-05-03: each backend MUST use ITS OWN cloud's primitives. Whe
 | **ECS** | Fargate task | RUNNING task with `tail -f /dev/null`-style cmd | Multi-container task definition |
 | **Lambda** | Lambda Function (image-mode) | Single Invoke held open via in-image supervisor; chain Invokes for sequential commands | Phase 118d pod-overlay supervisor: ONE Function with chrooted sidecars |
 | **cloudrun** | Cloud Run Job + Cloud Run Service (both ARE Cloud Run) | Service (`min_instance_count=1` + always-on CPU) for long-lived; Job for one-shot user `docker run` | Multi-container Service or Job |
-| **cloudrun-functions (gcf)** | Cloud Function Gen2 (Function resource; backed by Cloud Run Service per GCP architecture, but the resource we create/manage IS the Function) | Chain Function invocations: each `docker exec` = HTTP POST to function URL; in-image overlay-bootstrap HTTP server holds invocation state between commands | Pod-overlay supervisor (Phase 118d) — ONE Function with chrooted sidecars (sequential), OR parallel Function invocations (one Function per pod member) for true parallelism |
+| **cloudrun-functions (gcf)** | Cloud Function Gen2 (Function resource; backed by Cloud Run Service per GCP architecture, but the resource we create/manage IS the Function) | Underlying Cloud Run Service starts the overlay bootstrap; `docker exec` is reverse-agent WebSocket. | Pod-overlay supervisor (Phase 118d) — ONE Function/underlying Service with chrooted sidecars (sequential), OR parallel Function invocations (one Function per pod member) for true parallelism |
 | **ACA** | Container Apps App | App with `min_replicas=1`, native long-lived | Multi-container app template |
 | **AZF** | Azure Function | Same as gcf — chain Function invocations via HTTP triggers | Pod-overlay supervisor (mirror gcf) |
 | **docker** | Local docker daemon | Native | Native |
 
 ### Chaining + parallel patterns (FaaS backends specifically)
 
-For backends whose primitive is invocation-based (Lambda, gcf, AZF), sockerless builds long-lived semantics by CHAINING invocations:
+For backends whose primitive is invocation-based (Lambda, gcf, AZF), sockerless builds long-lived semantics by deploying an overlay bootstrap that registers a reverse-agent session. Cloud invocation or HTTP trigger starts the bootstrap; `docker exec` itself does not use an invoke fallback.
 
-1. **Single long-lived container** = ONE Function deployed once + N HTTP invocations over its lifetime. Each invocation runs a single command. State (workspace, environment) survives in the function's filesystem (or shared GCS/EFS for cross-invocation persistence).
+1. **Single long-lived container** = ONE Function / Function-backed Service deployed once, with the bootstrap process kept warm long enough to accept reverse-agent exec requests. State (workspace, environment) survives in the function's filesystem (or shared GCS/EFS for cross-invocation persistence).
 
-2. **`docker exec` against long-lived container** = HTTP POST to the function URL with exec payload `{"cmd": "<argv>", "stdin": "<base64>", "env": {...}}`. Function's overlay-bootstrap parses payload, runs `bash -c "$cmd"`, returns stdout/stderr/exit-code.
+2. **`docker exec` against long-lived container** = reverse-agent request over the registered WebSocket. The overlay bootstrap runs the argv inside the container and returns stdout/stderr/exit-code through the backend's Docker exec stream.
 
 3. **Multi-container pod (sequential)** = ONE Function with overlay-bootstrap supervisor that fork+chroot+exec's per non-main pod member as background sidecars. Main member runs in foreground per HTTP invoke. (Phase 118d pattern.)
 
 4. **Multi-container pod (parallel)** = N Functions invoked in parallel via fan-out from the backend, with cross-invocation state via shared GCS bucket OR pubsub message bus. Useful when pod members must scale independently.
 
-5. **Long-running CI pipeline** = many `docker exec` calls = many sequential HTTP invocations against the same Function. Function instance kept warm via `min_instance_count=1` on the underlying Cloud Run Service (Gen2 only).
+5. **Long-running CI pipeline** = many `docker exec` calls over one registered session. Function instance kept warm via `min_instance_count=1` on the underlying Cloud Run Service where the cloud supports it (Gen2 only).
 
 ### What this means for the runner cells
 
@@ -1905,7 +1905,7 @@ For backends whose primitive is invocation-based (Lambda, gcf, AZF), sockerless 
 - ContainerCreate with runner-pattern detect → CreateFunction with overlay-bootstrap image (Phase 118d). Set `min_instance_count=1` on the underlying Cloud Run Service via UpdateService (this is gcf's primitive — the Cloud Run Service IS the Function's runtime; we manage it via the Functions API + the documented escape hatch).
 - ContainerCreate without runner-pattern → existing one-shot Function path.
 - ContainerStart → ensure Function has been deployed (CreateFunction succeeded) + initial HTTP invocation to "warm" the instance.
-- ContainerExec → HTTP POST to function URL with exec payload. Bootstrap inside parses + runs + returns. State (workspace files) survives in the function's local FS for the warm instance lifetime; cross-invocation persistence rides shared GCS (already implemented via SharedVolumes).
+- ContainerExec → reverse-agent WebSocket. The Function/Service URL starts the overlay bootstrap; the bootstrap registers back to the backend before exec is accepted. State (workspace files) survives in the function's local FS for the warm instance lifetime; cross-invocation persistence rides shared GCS (already implemented via SharedVolumes).
 - ContainerStop → UpdateService to set `min_instance_count=0`.
 - ContainerRemove → DeleteFunction.
 
@@ -1941,8 +1941,8 @@ Sockerless backend's "engine" (the in-image sockerless-backend-* binary) orchest
 | docker call | gcf engine action | cloudrun engine action |
 |---|---|---|
 | `docker create -v vol:/path postgres:16` (service container, isRunnerPattern by ExposedPorts) | CreateFunction with min_instance_count=1 + multi-container Cloud Run Service (UpdateService adds postgres as second container in the Function's Service template, shared netns) | Same shape, but on Cloud Run Service directly (no Function API in the way) |
-| `docker create --entrypoint=tail alpine:latest -f /dev/null` (build container, hold-open) | CreateFunction with min_instance_count=1; user-overlay-bootstrap holds one HTTP invocation for the lifetime, exec calls chain via HTTP POST | Cloud Run Service if image declares ExposedPorts; else Cloud Run Job (which stays alive while cmd runs) |
-| `docker exec <id> bash -c "..."` (per-stage step) | HTTP POST to the Function URL with exec payload; bootstrap parses + runs + returns stdout/stderr/exit-code | Reverse-agent WebSocket multiplex (port from ACA) |
+| `docker create --entrypoint=tail alpine:latest -f /dev/null` (build container, hold-open) | CreateFunction with min_instance_count=1; user-overlay-bootstrap starts via the Function/underlying Service URL and registers a reverse-agent session | Cloud Run Service if long-lived; Cloud Run Job remains valid for one-shot work |
+| `docker exec <id> bash -c "..."` (per-stage step) | Reverse-agent WebSocket multiplex through `/v1/gcf/reverse` | Reverse-agent WebSocket multiplex through `/v1/cloudrun/reverse` |
 | `docker create gitlab-runner-helper chown ...` (one-shot init) | CreateFunction with min_instance_count=0; one HTTP invocation runs the chown; Function exits | Cloud Run Job, one-shot |
 | `docker stop <id>` | UpdateService to set min_instance_count=0 (suspend) — keeps state for restart | Cloud Run Service min_instance_count=0; or Cloud Run Job's pollExecutionExit terminates |
 | `docker rm <id>` | DeleteFunction | DeleteService / DeleteJob |

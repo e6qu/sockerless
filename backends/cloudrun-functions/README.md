@@ -21,7 +21,8 @@ Local development replaces the backend-side upstream with [`simulators/gcp`](../
 | `tests/` (Docker SDK against running backend, GCF profile) | Container lifecycle round-trip via Cloud Function invoke. | 2026-05-13 |
 | `simulators/gcp/sdk-tests/` Cloud Functions package | The v2 calls this backend issues, validated against the sim. | 2026-05-13 |
 | `simulators/gcp/terraform-tests/` | `google_cloudfunctions2_function` apply / destroy round-trip. | 2026-05-13 |
-| `make backends/cloudrun-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
+| `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestGCFContainerExec` in `backends/cloudrun-functions` | Builds the real bootstrap, overlay-wraps a stock image, starts the underlying Cloud Run Service path, waits for reverse-agent registration, and runs `docker exec` over WebSocket. | 2026-05-17 |
+| `make backends/cloudrun-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-17 |
 
 ## Wiring the adaptor
 
@@ -93,7 +94,7 @@ hello from gcf
 
 ## Known issues
 
-None open. Same volume-rejection rule as the Cloud Run backend — `BackingPDEphemeral` is rejected loudly; no fallback.
+None open for the GCF reverse-agent exec path. Same volume-rejection rule as the Cloud Run backend — `BackingPDEphemeral` is rejected loudly; no fallback.
 
 ## What's out of scope
 

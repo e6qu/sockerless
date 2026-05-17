@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
-| In-flight | **Phases 167 + 168 on the same branch.** PR #168 open. P168.1–.9 landed plus codex-review fix-up (8 additional findings BUG-1057..1064: Drop wipes lifetimeExpired, multi-container WaitForAgent gap, ACA tmpfs default not wired through translator, Lambda timer fires for short invocations, OnSystemMessage race, ENOSPC overrides exit 0, brittle NotFound substrings, WaitForAgent shared-channel race). All 19 BUGs (1046–1064) closed. Remaining: e2e tests against simulators (per user directive), final state save. |
+| Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9 is in progress. Latest chunk: Cloud Run + GCF overlay-baked bootstrap exec is green against the GCP simulator, including reverse-agent registration and `docker exec` over WebSocket. BUG-1070 / 1078 / 1079 / 1080 closed. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; docs/state save, PR title/body refresh, codex review, and CI checks continue on PR #168. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1064 fixed · 0 open · 2 false positives. All BUGs in Phase 168 scope (1046–1064) closed; the 8 codex-review-surfaced ones are addressed on the same branch as the user directed. |
+| Bugs | 1080 filed · 1071 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

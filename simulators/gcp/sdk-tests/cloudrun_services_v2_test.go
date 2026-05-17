@@ -50,6 +50,10 @@ func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {
 					MinInstanceCount: 1,
 					MaxInstanceCount: 1,
 				},
+				VpcAccess: &runpb.VpcAccess{
+					Connector: "projects/test-project/locations/us-central1/connectors/test-connector",
+					Egress:    runpb.VpcAccess_ALL_TRAFFIC,
+				},
 			},
 		},
 	})
@@ -66,6 +70,10 @@ func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {
 	require.NotNil(t, svc.TerminalCondition)
 	assert.Equal(t, runpb.Condition_CONDITION_SUCCEEDED, svc.TerminalCondition.State)
 	assert.NotEmpty(t, svc.LatestReadyRevision, "LatestReadyRevision must be set so backend's serviceContainerState reads 'running'")
+	require.NotNil(t, svc.Template)
+	require.NotNil(t, svc.Template.VpcAccess)
+	assert.Equal(t, "projects/test-project/locations/us-central1/connectors/test-connector", svc.Template.VpcAccess.Connector)
+	assert.Equal(t, runpb.VpcAccess_ALL_TRAFFIC, svc.Template.VpcAccess.Egress)
 
 	got, err := client.GetService(ctx, &runpb.GetServiceRequest{Name: svc.Name})
 	require.NoError(t, err)

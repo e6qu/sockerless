@@ -280,10 +280,13 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	// `Run.Services.UpdateService`. Read it back from there; the sim
 	// has no other source of truth for what to execute.
 	var image string
+	var serviceEnv map[string]string
 	if fn.ServiceConfig != nil && fn.ServiceConfig.Service != "" {
 		if svc, ok := crv2Services.Get(fn.ServiceConfig.Service); ok {
 			if svc.Template != nil && len(svc.Template.Containers) > 0 {
-				image = svc.Template.Containers[0].Image
+				container := svc.Template.Containers[0]
+				image = container.Image
+				serviceEnv = containerEnvMap(container.Env)
 			}
 		}
 	}
@@ -297,7 +300,11 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 
 	if image != "" {
 		// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
-		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink)
+		env := serviceEnv
+		if fn.ServiceConfig != nil {
+			env = mergeEnv(fn.ServiceConfig.EnvironmentVariables, serviceEnv)
+		}
+		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink, env)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[sim-gcf] invocation error fn=%s img=%s: %v\n", functionID, image, err)
 			injectCloudFunctionLog(project, functionID,
@@ -547,8 +554,8 @@ func injectCloudFunctionLog(project, functionName, text string) {
 // Errors are returned only for infrastructure failures (image pull,
 // container start, networking). Subprocess non-zero exit is NOT an
 // error — it surfaces via the `exitCode` return value.
-func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink) (responseBody []byte, exitCode int, err error) {
-	return invokeOverlayContainerHTTPWithBody(image, functionID, timeout, sink, nil, "application/json")
+func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink, env map[string]string) (responseBody []byte, exitCode int, err error) {
+	return invokeOverlayContainerHTTPWithBody(image, functionID, timeout, sink, env, nil, "application/json")
 }
 
 // invokeOverlayContainerHTTPWithBody is the body-aware variant. The
@@ -556,7 +563,7 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 // envelope-style POST body the gcf backend sends to the overlay
 // bootstrap. Cloud Functions Gen2 invocations have no useful body so
 // invokeOverlayContainerHTTP delegates here with `body=nil`.
-func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.Duration, sink sim.LogSink, body io.Reader, contentType string) (responseBody []byte, exitCode int, err error) {
+func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.Duration, sink sim.LogSink, env map[string]string, body io.Reader, contentType string) (responseBody []byte, exitCode int, err error) {
 	cli := sim.DockerClient()
 	if cli == nil {
 		return nil, -1, fmt.Errorf("docker client not initialized")
@@ -576,14 +583,14 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Architecture: sim's primary capacity is linux/arm64.
+	// Overlay images are built by the GCP backends as linux/amd64.
 	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
 		Image:        localImage,
-		Architecture: "linux/arm64",
+		Architecture: "linux/amd64",
 		HostPort:     hostPort,
-		Env: mergeEnv(map[string]string{
+		Env: mergeEnv(mergeEnv(map[string]string{
 			"PORT": "8080",
-		}, hostMetadataEnv()),
+		}, env), hostMetadataEnv()),
 		Name: containerName,
 		Labels: map[string]string{
 			"sockerless-sim-function": functionID,
