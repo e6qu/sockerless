@@ -1133,12 +1133,11 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart runs the exec inside the container. Path B (see
-// specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8) is preferred when the
-// container is on the Cloud Run Service path with the bootstrap overlay
-// baked in: HTTP POST envelope → bootstrap parses + runs + returns
-// response envelope → backend exposes stdout via the docker exec
-// attach. Reverse-agent WS is the fallback for interactive TTY+stdin.
+// ExecStart routes `docker exec` to the running Cloud Run container via
+// the reverse-agent WebSocket dispatch. Bootstrap inside the Service
+// must dial back via SOCKERLESS_CALLBACK_URL before any exec arrives;
+// missing session → fail loud (no Path B / fresh-Service-URL-POST
+// fallback per the no-fallback rule).
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -1148,26 +1147,13 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-
-	// Path B HTTP POST when the container has a Service URL with the
-	// sockerless-cloudrun-bootstrap baked in. Skipped for interactive
-	// (TTY+stdin) execs — those need the WS bridge for streaming.
-	// OpenStdin lives on the stored ExecInstance from ExecCreate
-	// (ExecStartRequest's only fields are Detach + Tty + ConsoleSize).
-	interactive := opts.Tty && exec.OpenStdin
-	if !interactive {
-		if rwc, err := s.execStartViaInvoke(id, exec, opts); err == nil {
-			return rwc, nil
-		} else if _, isNotImpl := err.(*api.NotImplementedError); !isNotImpl {
-			// Real error from the invoke path (network, auth, bootstrap
-			// crash) — surface it loudly instead of silently falling
-			// through to the WS path which would just say "no session".
-			return nil, err
-		}
-	}
-
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Service overlay (set SOCKERLESS_CLOUDRUN_BOOTSTRAP) OR a reverse-agent bootstrap (SOCKERLESS_CALLBACK_URL); neither is configured for this container"}
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"reverse-agent WebSocket not registered for container %s. "+
+				"Cloud Run exec requires SOCKERLESS_CALLBACK_URL reachable from inside the Service "+
+				"so the bootstrap can dial back. See backends/cloudrun/README.md § reverse-agent prerequisites.",
+			c.ID[:12],
+		)}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }

@@ -14,9 +14,7 @@
 package gcf
 
 import (
-	"context"
 	"fmt"
-	"strings"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	core "github.com/sockerless/backend-core"
@@ -108,58 +106,4 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 			name, spec.Kind)
 	}
 	return nil, fmt.Errorf("volume %q: unsupported backing kind %q", name, spec.Kind)
-}
-
-// preExecHintsForVolumes runs PreExec on each SharedVolume's driver
-// and merges per-key list-valued hints. The GCS drivers emit just
-// `name=gs://bucket/object` pairs under SOCKERLESS_SYNC_VOLUMES; the
-// bind target is NOT included here because the runner-task can't
-// reliably know it (api.HostConfig.Binds is empty after the stateless
-// cloud_state round-trip). Instead, the bind-target map is
-// recorded at materialize time on the JOB container as
-// SOCKERLESS_SYNC_MOUNTS, and the bootstrap joins by volume name.
-//
-// `binds` is accepted for forward-compatibility with drivers that
-// want bind-target context (e.g. in-process backends that bypass
-// cloud_state); GCS drivers ignore it. Returns one comma-joined env
-// entry per key, ready to append to the envelope's Env.
-//
-// No-fallbacks: a volume with an unresolvable Backing fails loudly.
-func (s *Server) preExecHintsForVolumes(ctx context.Context, vols []SharedVolume, binds []string, execID string) (map[string]string, error) {
-	_ = binds // see comment above
-	merged := map[string][]string{}
-	for _, v := range vols {
-		driver, err := s.resolveBackingDriver(v)
-		if err != nil {
-			return nil, fmt.Errorf("volume %q: %w", v.Name, err)
-		}
-		hints, err := driver.PreExec(ctx, v.AsRef(), execID, v.ContainerPath, "")
-		if err != nil {
-			return nil, fmt.Errorf("PreExec %s (backing=%q): %w", v.Name, driver.Backing(), err)
-		}
-		for k, vals := range hints {
-			merged[k] = append(merged[k], vals...)
-		}
-	}
-	out := make(map[string]string, len(merged))
-	for k, vals := range merged {
-		out[k] = strings.Join(vals, ",")
-	}
-	return out, nil
-}
-
-// postExecForVolumes runs PostExec on each SharedVolume's driver. The
-// data plane has already returned to the caller; PostExec cleanup
-// errors are wrapped and surfaced rather than swallowed.
-func (s *Server) postExecForVolumes(ctx context.Context, vols []SharedVolume, execID string) error {
-	for _, v := range vols {
-		driver, err := s.resolveBackingDriver(v)
-		if err != nil {
-			return fmt.Errorf("volume %q: %w", v.Name, err)
-		}
-		if err := driver.PostExec(ctx, v.AsRef(), execID, v.ContainerPath); err != nil {
-			return fmt.Errorf("PostExec %s (backing=%q): %w", v.Name, driver.Backing(), err)
-		}
-	}
-	return nil
 }
