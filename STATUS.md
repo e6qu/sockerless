@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-167-pod-model-analysis` — no PR (doc-only; awaiting user approval of Phase 168 plan). |
-| In-flight | **Phase 167 — pod-model analysis + Phase 168 plan (doc-only).** Compared pod abstraction across 7 backends; root-caused the "12-step CI job = 12 min" symptom to Lambda's silent Path B fallback on missing reverse-agent. Codex review caught 2 material errors (AZF is Path A only, not A/B; tmpfs default scope must exclude Lambda + AZF because their volume translators reject `BackingMemory`). Corrections applied. Phase 168 plan (FaaS exec unification on Model A + tmpfs default + no-fallback hardening) lives in PLAN.md § Active phase. **8 BUGs (1046–1053) drafted for filing at P168.0**; 5 product-decision questions still pending user confirmation (DO_NEXT.md). |
+| Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
+| In-flight | **Phases 167 (analysis) + 168 (implementation) on the same branch.** Phase 167 = docs (this branch's commits to date): cross-backend pod-model comparison, root-cause of the "12-step CI job = 12+ min" symptom (silent Path B fallback in lambda + cloudrun + cloudrun-functions), Phase 168 plan in PLAN.md § Active phase. Codex review caught 3 material corrections (AZF is Path A only; tmpfs default scope must exclude Lambda + AZF because their volume translators reject `BackingMemory`; tmpfs size clamping was itself a silent fallback — fixed to startup fail-loud). Self-caught: cloudrun also has Path B (missed in initial Phase 167 analysis). **9 BUGs (1046–1054) to file at P168.0**; 6 user product decisions documented with my recommended defaults (DO_NEXT.md) — user approved "begin work" so defaults apply. Phase 168 implementation now in progress on the same branch. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1044 fixed · 0 open · 2 false positives (8 more drafted for P168.0). |
+| Bugs | 1044 fixed · 0 open · 2 false positives (9 more drafted for P168.0). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
