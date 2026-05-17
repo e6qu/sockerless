@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-165-vibe-slop-sweep-3-test-pyramid` — PR TBD. |
-| In-flight | **Phase 165 — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression.** 9 BUGs closed in this PR (1033–1036 vibe-slop + 1038/1039 GCP + Azure terraform expansions + 1043/1044 codex review findings) — also surfaced + closed a GCS-object selfLink sub-defect during the BUG-1038 expansion. 3 BUGs filed as Open for Phase 166 follow-up: 1040 (azurerm research for ACA/AZF/ACR), 1041 (GCP IAM SA + Cloud Functions Gen2), 1042 (AWS S3/DynamoDB/KMS/SM/SSM — 5 sim handler gaps surfaced). |
-| Last merged | PR #164 — Phase 164 second vibe-slop sweep + terraform-provider test expansion (2026-05-17, `616dcd98`). |
+| Active branch | none — Phase 165 merged. Next phase starts on a fresh branch off `origin/main@288b76d3`. |
+| In-flight | none — Phase 165 closed. 3 Open BUGs (1040/1041/1042) scoped for Phase 166. |
+| Last merged | PR #165 — Phase 165 third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression + codex review (2026-05-17, `288b76d3`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 1041 fixed · 3 open (1040/1041/1042) · 2 false positives. |
@@ -46,28 +46,22 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` accept both typed and string-coerced JSON (what `gh api -f` sends).
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000.
 
-## Phase 165 — Third vibe-slop sweep + test-pyramid expansion + continuity-doc compression (in flight)
+## Phase 166 — Test-pyramid follow-ups (filed, not started)
 
-User directive (2026-05-17): re-run vibe-slop on a fresh main; plan test-pyramid expansion against real adaptors (SDK + terraform-provider + CLI); single PR with sub-phases; verify after every significant chunk; prune obsolete continuity-doc info for cross-compaction durability; codex CLI review at end.
+Three Open BUGs from Phase 165 to schedule:
+- **1040** — Azure terraform-tests azurerm-research for ACA + AZF + ACR + Application Insights + identity + private DNS + Key Vault data-plane. Sim implements the ARM endpoints; gap is provider wiring (azurerm needs custom-cloud metadata + OAuth endpoint overrides vs the simple `arm_endpoint=...` that azurestack accepts).
+- **1041** — GCP terraform-tests follow-up: `google_service_account` + IAM binding/member (terraform-provider-google's IAM resources hit real iam.googleapis.com), `google_cloudfunctions2_function` (build_config needs real source archive in GCS), Compute instance/instance_template, Cloud Build trigger, Logging sink/metric, Pub/Sub (sim probably doesn't model it yet).
+- **1042** — AWS terraform-tests: 5 sim handler gaps surfaced + reverted during Phase 165 — S3 path-style mismatch (sim at `/s3/{bucket}` vs provider's `/{bucket}` via virtual-hosted-style), DynamoDB DescribeTable response shape (provider polls 21 times waiting for "ACTIVE"), KMS GetKeyPolicy + SecretsManager GetResourcePolicy + SSM ListTagsForResource not registered. Each ~20 lines of stub handler; cumulative volume + verification exceeds a single-PR scope.
 
-Closed in this PR (9 BUGs):
-- **Vibe-slop sweep #3** — silent `io.Copy` swallows in image-stream + build response paths (1033); dead `fmt.Sprintf` silencer + lying comment in lambda e2e test (1034); `w.Write` style inconsistency at 3 outlier sites (1035); ~50 test-file docstrings carrying Phase / sub-phase metadata (1036).
-- **Test-pyramid expansion** — Azure terraform-tests + storage_account + key_vault (1039); GCP terraform-tests + subnet + firewall + GCS object + a surfaced sim-defect-fix on GCS object selfLink/id/mediaLink (1038).
-- **Codex CLI review findings** — `account_kind="StorageV2"` rejected by azurestack provider at plan time (1043); GCS object URL not percent-encoded for names containing `/`/space/`?` (1044).
-
-Staged forward as Open BUGs for Phase 166:
-- **1040** — Azure terraform-tests azurerm-research for ACA + AZF + ACR + Application Insights + identity + private DNS + Key Vault data-plane.
-- **1041** — GCP terraform-tests follow-up: IAM SA, Cloud Functions Gen2, Compute instance/instance_template, Cloud Build trigger, Logging sink/metric, Pub/Sub.
-- **1042** — AWS terraform-tests: first attempt surfaced 5 distinct sim handler gaps (S3 path-style mismatch, DynamoDB DescribeTable shape, KMS GetKeyPolicy, SecretsManager GetResourcePolicy, SSM ListTagsForResource); each needs its own commit with sim handler additions.
+Branch + commit layout to be decided when the phase starts.
 
 ## Recently closed phases (last 5)
 
 | PR | Phase | Headline |
 |---|---|---|
+| #165 | 165 | Third vibe-slop sweep (4 BUGs: 1033–1036) + sim test-pyramid expansion (2 BUGs: 1038/1039 + GCS object selfLink sub-defect) + codex CLI review (2 BUGs: 1043/1044) + continuity-doc compression (~1700 → ~870 lines, 46%). 3 Open BUGs staged for Phase 166. Merged 2026-05-17 at `288b76d3`. |
 | #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP 4 → 11 resources; Azure 1 → 5. Merged 2026-05-17 at `616dcd98`. |
 | #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
 | #162 | 162 | Vibe-coding catalogue refresh — `docs/VIBE_CODING.md` 23 → 35 patterns; `avoid-vibe-slop` skill 17 → 26 items. Doc-only. Merged 2026-05-16 at `4f602988`. |
 | #161 | 161 | First comprehensive vibe-slop sweep — 18 BUGs closed + bleephub GraphQL completion + ProjectManager instance-based lifecycle rewrite. Merged 2026-05-16 at `841f2456`. |
-| #160 | 160 | Project-local Claude skills (`sim-handler-checklist`, `cross-resource-stack-test`) + component-README adaptor-led sweep. Merged 2026-05-16 at `aeb0ac6e`. |
-
-Older phases (#112–#159): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+Older phases (#112–#160): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

@@ -6,7 +6,7 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
+## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression + codex review (merged at `288b76d3` as PR #165)
 
 User directive: *"switch to main, sync, run one more vibe slop sweep with our local skills, log all issues found in `BUGS.md` as soon as we find them; plan to increase test coverage and have the adequate test pyramid for the simulators, in light of the implemented slices of functionality, and that our verification can be validated externally by the fact that all components of this project have their corresponding external tools, checks, SDKs, CLIs, schemas; single PR open in which to put all the changes, even if they can be scheduled and split across several phases and sub-phases, verify after each significant chunk of work; continuity docs must be reviewed, with old obsolete information pruned or compressed so that they are actionable across session compactions, fresh sessions."*
 

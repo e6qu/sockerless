@@ -49,35 +49,15 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #162 | 162 | Vibe-coding catalogue refresh — 12 new patterns (24–35) + `avoid-vibe-slop` skill expanded 17 → 26 checklist items. Doc-only. Merged 2026-05-16 at `4f602988`. |
 | #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
 | #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP terraform-tests 4 → 11 resources; Azure terraform-tests 1 → 5; surfaced + fixed 2 real sim defects (BUG-1029 GCP secret-version state handlers, BUG-1030 port-allocator race in terraform-tests). Merged 2026-05-17 at `616dcd98`. |
+| #165 | 165 | Third vibe-slop sweep (4 BUGs: 1033–1036) + sim test-pyramid expansion (2 BUGs: 1038/1039 + a GCS object selfLink sub-defect surfaced + fixed) + codex CLI review (2 BUGs: 1043/1044) + continuity-doc compression (~1700 → ~870 lines, 46%). 3 Open BUGs (1040/1041/1042) staged forward for Phase 166. Merged 2026-05-17 at `288b76d3`. |
 
 ## Active phase
 
-### Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
+None — Phase 165 merged. Phase 166 candidates (Open BUGs 1040/1041/1042) in [DO_NEXT.md](DO_NEXT.md).
 
-User directive (2026-05-17): re-run vibe-slop on a fresh main; plan test-pyramid expansion against real adaptors (SDK + terraform-provider + CLI) for implemented slices; single PR with sub-phases; verify after every significant chunk; prune obsolete continuity-doc info for cross-compaction durability.
+### Phase 165 — Third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression + codex review (merged at `288b76d3`)
 
-Three layered tracks on one PR:
-
-1. **Vibe-slop sweep #3 (4 BUGs: 1033–1036).** Fresh-eyes pass after Phase 161 (18) + Phase 164 (19). 5 silent `io.Copy(w, rc)` swallows in image-stream + build response paths (1033); dead `fmt.Sprintf` silencer with misleading "used by demuxer" comment (1034); `w.Write` style inconsistency at 3 outlier sites (1035); ~50 test-file docstrings still anchored on Phase / sub-phase metadata — the BUG-994 / 1014 / 1026 sweep stopped at production-code (1036).
-
-2. **Sim test-pyramid expansion (3 P0 BUGs: 1037–1039).** External-validation principle (PLAN.md §1). Audit surfaced terraform-provider gaps: AWS missing 11 load-bearing resources (Lambda, S3, DynamoDB, KMS, SecretsManager, EFS, SSM, EC2); GCP missing 8 (Cloud Functions Gen2 — runner-workload primitive! — IAM, GCS object, Compute, Build, Logging, PubSub); Azure widest — only 5 networking primitives covered, both runner backends (ACA + AZF) entirely terraform-uncovered.
-
-3. **Continuity-doc compression.** STATUS / DO_NEXT / PLAN / WHAT_WE_DID grew to ~1700 lines across 5 files. Prune to actionable-across-compaction shape: keep invariants + active-phase scope + last-3-phase headlines + forward tracks; drop closed-phase sub-task tables + per-BUG narratives (covered by BUGS.md). Target ≤ ~50% current line count.
-
-Sub-task layout (P165.0–P165.10) in [DO_NEXT.md](DO_NEXT.md).
-
-Acceptance:
-- 7 BUGs (1033–1039) closed in this PR.
-- `go test ./...` green in every touched Go module.
-- `TestTerraformApplyDestroy` green for all three cloud terraform-tests modules after expansion.
-- Continuity docs ≤ ~50% current line count.
-- 11 standard CI checks green per push.
-- User merges PR #165.
-
-Out of scope (carry forward):
-- TypeScript / UI vibe-slop (Phase 161 backlog).
-- Live-cloud validation track.
-- P1 terraform-test deepening (CloudFront full-distribution, CloudWatch Metrics, Cloud Build, Application Insights, Operations).
+10 granular commits closed 9 BUGs across four tracks: vibe-slop sweep #3 (silent `io.Copy` swallows + dead fmt silencer + `w.Write` style + ~50 test-file Phase docstrings), sim test-pyramid expansion (GCP `+google_compute_subnetwork/firewall + storage_bucket_object` with a sim-defect-fix on GCS object selfLink/id/mediaLink/kind/generation; Azure `+azurestack_storage_account + key_vault`), codex CLI review findings (azurestack rejects `account_kind="StorageV2"` at plan time; GCS object selfLink missed `url.PathEscape`), continuity-doc compression. 3 Open BUGs staged forward for Phase 166: 1040 (Azure azurerm research), 1041 (GCP IAM SA + Cloud Functions Gen2), 1042 (AWS 5 sim handler gaps surfaced + reverted). Narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md); per-commit detail in `git log 288b76d3`.
 
 ### Phase 164 — Second vibe-slop sweep + terraform-provider test expansion (merged at `616dcd98`)
 

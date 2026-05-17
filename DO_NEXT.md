@@ -4,75 +4,60 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 164 merged 2026-05-17 (PR #164, `616dcd98` on `origin/main`) — second vibe-slop sweep + terraform-provider test expansion (19 BUGs).
+Phase 165 merged 2026-05-17 (PR #165, `288b76d3` on `origin/main`) — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression + codex review. **9 BUGs closed**; **3 Open BUGs (1040/1041/1042)** staged for Phase 166.
 
-**Phase 165 in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`** — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression. 7 BUGs filed up front (1033–1039); sub-task table below. Single PR. Verify after every significant chunk.
+No phase in flight. The next session starts by picking one of the three Phase 166 candidates (or a new direction the user surfaces).
 
 Default "never auto-merge / user merges every PR" remains in force.
 
-## Phase 165 sub-task table (severity-ordered)
+## Phase 166 candidates (file before fix, then pick)
 
-| Sub | Status | BUG(s) | What |
+| BUG | Sev | Area | What |
 |---|---|---|---|
-| **P165.0** | ✅ | — | Branch from `origin/main@616dcd98` + survey + 7 BUGs (1033–1039) filed in `BUGS.md` + continuity-doc opening. |
-| **P165.1** | ✅ | 1033 | `backends/core/{build.go:515,handle_images.go:80/115/472/493}` — 5 silent `io.Copy(w, rc)` swallows on image-stream + build response paths. Now `s.Logger.Debug().Err(err).Msg("<op> stream copy failed — client likely disconnected")`. |
-| **P165.2** | ✅ | 1034 | Dropped `var _ = fmt.Sprintf` silencer + `fmt` import in `backends/lambda/agent_e2e_integration_test.go`; the claimed-consumer demuxer never called fmt. |
-| **P165.3** | ✅ | 1035 | Standardised on `_, _ = w.Write(...)` at `bleephub/gh_oauth.go:171`, `bleephub/artifacts.go:321`, `simulators/azure/functions.go:290`. |
-| **P165.4** | ✅ | 1036 | Rewrote ~50 test-file docstrings to describe the contract under test, not the phase. Preserved the runner-lifecycle phase labels in `tests/gitlab_runner_e2e_test.go` (docker-compose lifecycle phases, not project phases). |
-| **P165.5** | ✅ | 1039 | Azure terraform-tests expanded with `azurestack_storage_account` + `azurestack_key_vault` (7 resources total). The wider ACA/AZF/ACR/AppInsights surface needs `azurerm` provider research → filed as BUG-1040 for Phase 166. |
-| **P165.6** | ✅ | 1038 | GCP terraform-tests expanded with `google_compute_subnetwork` + `google_compute_firewall` + `google_storage_bucket_object` (15 resources total). Surfaced + fixed a sim defect (GCS object selfLink/id/mediaLink missing). IAM SA + Cloud Functions Gen2 follow-up → BUG-1041. |
-| **P165.7** | ✅ | 1037 → 1042 | AWS terraform-test expansion attempt surfaced 5 distinct sim handler gaps (S3 path-style, DynamoDB DescribeTable shape, KMS GetKeyPolicy, SecretsManager GetResourcePolicy, SSM ListTagsForResource). Reverted the main.tf additions; filed BUG-1042 for Phase 166. |
-| **P165.6.5** | ✅ | 1043 + 1044 | Ran `codex review --base main`. Two validated findings: azurestack provider rejects `account_kind="StorageV2"` at plan time (fixed → `"Storage"`); GCS sim selfLink/mediaLink missing `url.PathEscape` on object name (fixed). |
-| **P165.8** | ✅ | — | Continuity-doc compression: STATUS / DO_NEXT / PLAN / WHAT_WE_DID compressed from ~1700 → ~870 lines (46% reduction); closed-phase per-sub-task tables + duplicate narrative pruned; invariants + active-phase scope + last-3-phase headlines + forward tracks kept. |
-| **P165.9** | ◻ | — | Final state save: STATUS / DO_NEXT / WHAT_WE_DID / PLAN / MEMORY updated for any post-compression edits. |
-| **P165.10** | ◻ | — | Push branch, open PR #165, wait for 11 standard CI checks green per push, ping user for merge. |
+| **1040** | P1 | Azure terraform-tests | Research how to point `azurerm` provider at the sim (azurerm needs custom-cloud metadata + OAuth endpoint overrides; `azurestack`'s simple `arm_endpoint=...` doesn't work). Then add: ACR + Container App Environment + Container App + Container App Job + Function App + Service Plan + Application Insights + user_assigned_identity + private_dns_zone + Key Vault data-plane (keys/secrets). Sim implements all the ARM endpoints; the gap is provider wiring. |
+| **1041** | P2 | GCP terraform-tests | Add `google_service_account` (needs sim-side IAM-Admin endpoint OR provider workaround — terraform-provider-google's IAM resources don't honour `iam_custom_endpoint`), `google_cloudfunctions2_function` (build_config needs real GCS source archive — multi-resource orchestration), Compute instance + instance_template, Cloud Build trigger, Logging sink + metric, Pub/Sub topic + subscription (sim probably doesn't model Pub/Sub yet — separate prereq). |
+| **1042** | P0 | AWS terraform-tests | Add 5 sim handler stubs surfaced + reverted during Phase 165: S3 path-style routing fix, DynamoDB DescribeTable response shape (sim sets `TableStatus=ACTIVE` but provider polls 21 times waiting), KMS `TrentService.GetKeyPolicy` action (stub returning empty policy), SecretsManager `secretsmanager.GetResourcePolicy` (stub), SSM `AmazonSSM.ListTagsForResource` (stub returning empty tag list). Then add the resources to terraform-tests/main.tf. |
 
-## Verification discipline
+Recommended order: **1042 first** (highest sev P0; most-load-bearing for the runner pod lifecycle), then **1040** (widest Azure gap), then **1041** (GCP follow-ups).
 
-- `go test ./...` in every touched Go module before staging the commit.
-- For terraform-test expansions: `cd simulators/<cloud>/terraform-tests && SOCKERLESS_TEST_TARGET=sim go test -run TestTerraformApplyDestroy` must PASS locally before the commit.
-- For each new terraform resource: `curl -v` the sim handler with the canonical body the provider will send (capture via `TF_LOG=DEBUG` once) — verifies the wire shape independent of the provider's call sequence.
-- `git log --oneline -1` after every commit to confirm SHA advanced (pattern 31).
-- Re-verification pass against the diff after every sub-task closes (pattern 26 / 32).
+## Session-resume checklist for a fresh session
 
-## Resumable tracks after Phase 165 merges
+1. `git fetch origin && git checkout main && git pull --ff-only`.
+2. `git log --oneline -10` to see the last merged phases.
+3. Read STATUS.md (73 lines, includes invariants) + this file + BUGS.md § Open (3 entries).
+4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before writing any code.
+5. Pick a Phase 166 candidate (or accept a new direction from the user).
+6. Branch off `origin/main`. File any new BUGs **before** the first fix commit.
+7. `go test ./...` in every touched module per commit. `git log --oneline -1` after each commit to confirm SHA advanced (pre-commit hooks can roll back silently).
+8. State save per commit: STATUS.md bug counts + DO_NEXT.md sub-task status + WHAT_WE_DID.md narrative + MEMORY.md.
+9. Push per commit; verify CI green per push.
 
-### Track A — Live-cloud validation (carried from Phase 164)
+## Resumable tracks (longer-horizon)
 
-Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. One branch per cell; teardown self-sufficient per `feedback_teardown_aggressive.md`.
+### Track A — Live-cloud validation (one branch per cell)
+
+Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
 
 ### Track B — UI / TypeScript vibe-slop sweep (carried from Phase 161)
 
-Sibling pattern check on `ui/packages/*/src/`. Open as Phase 166 if Phase 165 surfaces a parallel finding.
+Sibling pattern check on `ui/packages/*/src/`. Open if a Go-side sweep surfaces a parallel finding worth investigating.
 
-### Track C — Test-pyramid deepening (P1 follow-up to Phase 165)
-
-After P165.5–7 close the P0 gaps, the remaining P1 surfaces (CloudFront full-distribution lifecycle, CloudWatch Metrics terraform, GCP Cloud Build terraform, Azure Application Insights terraform, GCP Operations terraform) can stage into a Phase 166 follow-up if leverage materialises.
-
-### Track D — Phase 91d (bookmarked indefinitely)
+### Track C — Phase 91d (bookmarked indefinitely)
 
 Real `pd-ephemeral` on cloudrun + gcf. Cloud Run's `runpb.Volume` lacks a PD field. Don't reopen until cloud capability changes.
 
 ## Invariants snapshot (full list in STATUS.md + VIBE_CODING.md)
 
 - Never auto-merge; user merges every PR.
+- Single-branch rule: all in-flight work for one phase lands on one branch; many granular commits, one PR.
+- File BUGs *before* fixing.
+- Verify each significant chunk; don't batch fixes.
 - Components decoupled from admin / UI.
 - No fakes / no fallbacks / no silent shims.
 - Persistence opt-in + fail-loud on both open AND write.
 - HTTP handlers dispatch through `s.self.<Method>`; never read `s.Store` directly.
-- No phase / BUG-ID references in code comments (BUG-994 — extends to test docstrings per BUG-1036).
+- No phase / BUG-ID references in code comments or test docstrings (BUG-994 / 1014 / 1026 / 1036).
 - `gh` CLI is the reference adaptor for bleephub.
 - `aws --debug` + SDK serializer source are the reference for sim handler wire shapes.
-- Terraform provider call sequences are materially different from raw SDK — both layers must be exercised (BUG-1029 lineage; ground for the P165.5–7 expansion).
+- Terraform provider call sequences differ materially from raw SDK — both test layers required.
 - `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for cloud-mapping.
-
-## Session-resume checklist
-
-1. `git fetch origin && git checkout phase-165-vibe-slop-sweep-3-test-pyramid && git pull` (or `git checkout main && git pull --ff-only` if 165 merged).
-2. `git log --oneline -15` to see what's already on the branch.
-3. Read STATUS.md + this file + the last 2 commits + BUGS.md § Open.
-4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before writing any fix.
-5. Pick the next `◻` row from the sub-task table above (severity-ordered).
-6. Fix it. `go test ./...` in the touched module. Move the BUG from Open → Resolved history in BUGS.md with a one-line summary.
-7. State save: update this file's sub-task status, STATUS.md bug counts, WHAT_WE_DID.md narrative.
-8. Commit and push. CI green per push.
