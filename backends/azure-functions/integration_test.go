@@ -332,6 +332,9 @@ func TestAZFContainerStopNoOp(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
+
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
 	// Stop should succeed as no-op
@@ -531,6 +534,9 @@ func TestAZFContainerLifecycle(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)

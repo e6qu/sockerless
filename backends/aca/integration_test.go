@@ -351,6 +351,8 @@ func TestACAContainerLogs(t *testing.T) {
 
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}

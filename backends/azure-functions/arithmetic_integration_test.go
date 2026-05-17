@@ -64,6 +64,9 @@ func TestAZFArithmeticSuccess(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
+
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
@@ -98,6 +101,9 @@ func TestAZFArithmeticInvalid(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
+
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
@@ -129,6 +135,9 @@ func TestAZFArithmeticParentheses(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
+
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
@@ -159,6 +168,9 @@ func TestAZFArithmeticDivision(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
@@ -192,6 +204,9 @@ func TestAZFArithmeticWithLabels(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
+
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
@@ -223,6 +238,9 @@ func TestAZFArithmeticEnvVar(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	closeWS := dialFakeReverseAgent(t, resp.ID)
+	defer closeWS()
 
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("start failed: %v", err)
