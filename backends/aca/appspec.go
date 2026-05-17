@@ -29,7 +29,6 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 	var specs []*armappcontainers.Container
 	volSeen := make(map[string]struct{})
 	var volumes []*armappcontainers.Volume
-	storageType := armappcontainers.StorageTypeAzureFile
 	for _, ci := range containers {
 		cs, mounts := s.buildContainerSpec(ci)
 		specs = append(specs, cs)
@@ -41,15 +40,15 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[volName]; done {
 				continue
 			}
-			share, err := s.shareForVolume(ctx, volName)
+			// Route through the storage-backing registry default
+			// (BUG-1059). After P168.5 ACA defaults to memory →
+			// EmptyDir; operators wanting Azure Files override at
+			// NewServer or set a per-SharedVolume Backing.
+			vol, err := s.resolveVolumeForName(ctx, volName)
 			if err != nil {
-				return armappcontainers.ContainerApp{}, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+				return armappcontainers.ContainerApp{}, err
 			}
-			volumes = append(volumes, &armappcontainers.Volume{
-				Name:        ptr(volName),
-				StorageType: &storageType,
-				StorageName: ptr(share),
-			})
+			volumes = append(volumes, vol)
 			volSeen[volName] = struct{}{}
 		}
 	}

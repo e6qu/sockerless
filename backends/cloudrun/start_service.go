@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -511,7 +510,7 @@ func (s *Server) deleteServiceStrict(serviceName string) error {
 		Name: serviceName,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "does not exist") {
+		if gcpcommon.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("delete cloud run service %q: %w", serviceName, err)

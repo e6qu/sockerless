@@ -194,24 +194,31 @@ func handleOneInvocation(base string, raConn *websocket.Conn, raMu *sync.Mutex) 
 	ctx, cancel := contextWithDeadlineMs(deadlineMs)
 	defer cancel()
 
-	// Lifetime-expired signal: if the WS is connected and we have a
-	// deadline, fire TypeLifetimeExpired at deadline-5s. The done
-	// channel cancels the timer if the invocation returns normally.
+	// Lifetime-expired signal: if the WS is connected and the
+	// deadline is at least 5s away, fire TypeLifetimeExpired at
+	// deadline-5s. The done channel cancels the timer if the
+	// invocation returns normally. Short invocations (deadline < 5s
+	// remaining) skip entirely so we don't falsely mark the
+	// container as lifetime-expired on legitimate fast paths (BUG-1060).
 	done := make(chan struct{})
 	defer close(done)
 	if raConn != nil && raMu != nil && deadlineMs != "" {
 		if dl, ok := ctx.Deadline(); ok {
-			go func() {
-				select {
-				case <-time.After(time.Until(dl) - 5*time.Second):
-					if err := agent.SendLifetimeExpired(raConn, raMu); err != nil {
-						fmt.Fprintf(os.Stderr, "bootstrap: send lifetime_expired failed: %v\n", err)
-					} else {
-						fmt.Fprintf(os.Stderr, "bootstrap: sent lifetime_expired at T-5s (Lambda invocation about to hit cap)\n")
+			if fireIn := time.Until(dl) - 5*time.Second; fireIn > 0 {
+				timer := time.NewTimer(fireIn)
+				go func() {
+					defer timer.Stop()
+					select {
+					case <-timer.C:
+						if err := agent.SendLifetimeExpired(raConn, raMu); err != nil {
+							fmt.Fprintf(os.Stderr, "bootstrap: send lifetime_expired failed: %v\n", err)
+						} else {
+							fmt.Fprintf(os.Stderr, "bootstrap: sent lifetime_expired at T-5s (Lambda invocation about to hit cap)\n")
+						}
+					case <-done:
 					}
-				case <-done:
-				}
-			}()
+				}()
+			}
 		}
 	}
 
@@ -387,7 +394,10 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 	}
 
 	stderrBytes := errBuf.Bytes()
-	if agent.DetectENOSPC(stderrBytes) {
+	// ENOSPC override only when the subprocess actually failed.
+	// `echo "no space left on device" >&2; exit 0` legitimately
+	// returns success and must not be force-coerced to 28 (BUG-1062).
+	if code != 0 && agent.DetectENOSPC(stderrBytes) {
 		code = agent.ENOSPCExitCode
 		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "lambda")
 	}

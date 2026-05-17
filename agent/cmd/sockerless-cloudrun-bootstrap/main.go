@@ -392,7 +392,10 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 	}
 
 	stderrBytes := stderr.Bytes()
-	if agent.DetectENOSPC(stderrBytes) {
+	// ENOSPC override only when the subprocess actually failed
+	// (BUG-1062). Otherwise a successful command that mentions
+	// the marker on stderr gets force-coerced to 28.
+	if exitCode != 0 && agent.DetectENOSPC(stderrBytes) {
 		exitCode = agent.ENOSPCExitCode
 		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "cloudrun")
 	}

@@ -2,10 +2,10 @@ package aca
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // pollExecutionExit monitors an ACA Job execution and updates container state when it completes.
@@ -70,11 +70,12 @@ func (s *Server) deleteJob(jobName string) {
 }
 
 // deleteJobStrict deletes an ACA Job and returns nil on success or
-// when the job is already gone. Errors propagate.
+// when the job is already gone. Errors propagate. Typed not-found
+// detection via azurecommon.IsNotFound (BUG-1063).
 func (s *Server) deleteJobStrict(jobName string) error {
 	poller, err := s.azure.Jobs.BeginDelete(s.ctx(), s.config.ResourceGroup, jobName, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "ResourceNotFound") {
+		if azurecommon.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("delete ACA job %q: %w", jobName, err)

@@ -246,6 +246,26 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	//    The bootstrap stays on its HTTP listener for the runner's
 	//    subsequent /exec POSTs instead.
 	go s.invokePodServiceMain(ctx, result, containers, exitCh, true)
+
+	// 6. Block until the bootstrap dials back (BUG-1058 — multi-container
+	//    pods can't skip the wait either, or the first ExecStart races
+	//    the dial-back).
+	if !containers[0].Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("gcf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, mainContainerID); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for pod %s within %s "+
+					"(SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC). Pod-Service was deployed "+
+					"and invoked but the in-function bootstrap never dialled back to %s.",
+				mainContainerID[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
 	return nil
 }
 

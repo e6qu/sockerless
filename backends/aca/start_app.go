@@ -3,7 +3,6 @@ package aca
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -124,7 +123,7 @@ func (s *Server) startMultiContainerAppTyped(_ string, podContainers []api.Conta
 			state.AppName = appName
 		})
 	}
-	return nil
+	return s.waitForReverseAgentAfterStart(podContainers[0].ID, podContainers[0].Config.OpenStdin)
 }
 
 // deleteApp deletes an ACA ContainerApp (best-effort, error logged).
@@ -144,7 +143,7 @@ func (s *Server) deleteAppStrict(appName string) error {
 	}
 	poller, err := s.azure.ContainerApps.BeginDelete(context.Background(), s.config.ResourceGroup, appName, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "ResourceNotFound") {
+		if azurecommon.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("delete ACA app %q: %w", appName, err)

@@ -15,22 +15,27 @@ import (
 	core "github.com/sockerless/backend-core"
 )
 
-// resolveVolumeForName provisions the underlying Azure Files share (or
-// other backing) and returns the cloud-native Volume entry to attach to
-// the JobTemplate. Empty Backing on the SharedVolume defaults to
-// `azure-files-ephemeral` since that's the only backing ACA wires today.
+// resolveVolumeForName returns the cloud-native Volume entry to attach
+// to the JobTemplate. Honors the storage-backing registry's default
+// (after P168.5 that's BackingMemory for ACA, materialising as
+// StorageTypeEmptyDir / tmpfs). Operators wanting persistence pick
+// it up by overriding the registry default at NewServer.
+//
+// Azure Files share provisioning only happens when the resolved
+// backing actually needs it (BackingAzureFilesEphemeral). Memory-
+// backed volumes don't need a share.
 func (s *Server) resolveVolumeForName(ctx context.Context, volName string) (*armappcontainers.Volume, error) {
-	share, err := s.shareForVolume(ctx, volName)
+	driver, err := s.storageBackings.Resolve("")
 	if err != nil {
-		return nil, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+		return nil, fmt.Errorf("resolve default storage backing for volume %q: %w", volName, err)
 	}
-	// ACA config doesn't carry a per-volume Backing today (single
-	// backing supported); the registry path lets operators override
-	// once the config grows that field.
-	backing := core.BackingAzureFilesEphemeral
-	driver, err := s.storageBackings.Resolve(backing)
-	if err != nil {
-		return nil, fmt.Errorf("resolve storage backing for volume %q: %w", volName, err)
+	backing := driver.Backing()
+	share := ""
+	if backing == core.BackingAzureFilesEphemeral {
+		share, err = s.shareForVolume(ctx, volName)
+		if err != nil {
+			return nil, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
+		}
 	}
 	spec, err := driver.CloudSpec(core.SharedVolumeRef{
 		Name:                volName,

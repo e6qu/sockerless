@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1056 filed · 1056 fixed · 0 open · 2 false positives.**
+**1064 filed · 1064 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 

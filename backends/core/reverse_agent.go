@@ -25,11 +25,12 @@ import (
 type ReverseAgentRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*agent.ReverseAgentConn
-	// waiters maps container ID -> channel closed by Register once
-	// the session for that ID lands. ContainerStart uses
-	// WaitForAgent to block on this so the first ExecStart can't
-	// race the bootstrap dial-back.
-	waiters map[string]chan struct{}
+	// waiters maps container ID -> slice of per-waiter channels
+	// (each closed by Register when the session lands). Per-waiter
+	// channels (vs the previous shared-channel design) close
+	// BUG-1064 where a timed-out waiter would delete the shared
+	// channel and leave remaining waiters hanging.
+	waiters map[string][]chan struct{}
 	// lifetimeExpired tracks containers whose in-FaaS bootstrap
 	// signalled it's about to hit the platform's max invocation
 	// deadline. Set by MarkLifetimeExpired; checked by ExecStart so
@@ -42,7 +43,7 @@ type ReverseAgentRegistry struct {
 func NewReverseAgentRegistry() *ReverseAgentRegistry {
 	return &ReverseAgentRegistry{
 		sessions:        map[string]*agent.ReverseAgentConn{},
-		waiters:         map[string]chan struct{}{},
+		waiters:         map[string][]chan struct{}{},
 		lifetimeExpired: map[string]struct{}{},
 	}
 }
@@ -70,7 +71,8 @@ func (r *ReverseAgentRegistry) IsLifetimeExpired(id string) bool {
 
 // Register saves a session keyed by container ID, closing any prior
 // session under the same ID (the new dial wins — matches a reconnect
-// resume model). Wakes any WaitForAgent callers for this id.
+// resume model). Wakes ALL WaitForAgent callers for this id (each
+// owns a private channel, so a timed-out waiter can't strand others).
 func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -78,10 +80,10 @@ func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn)
 		_ = old.Close()
 	}
 	r.sessions[id] = conn
-	if ch, ok := r.waiters[id]; ok {
+	for _, ch := range r.waiters[id] {
 		close(ch)
-		delete(r.waiters, id)
 	}
+	delete(r.waiters, id)
 }
 
 // WaitForAgent blocks until a session for `id` is registered or `ctx`
@@ -100,19 +102,26 @@ func (r *ReverseAgentRegistry) WaitForAgent(ctx context.Context, id string) erro
 		r.mu.Unlock()
 		return nil
 	}
-	ch, ok := r.waiters[id]
-	if !ok {
-		ch = make(chan struct{})
-		r.waiters[id] = ch
-	}
+	ch := make(chan struct{})
+	r.waiters[id] = append(r.waiters[id], ch)
 	r.mu.Unlock()
 
 	select {
 	case <-ch:
 		return nil
 	case <-ctx.Done():
+		// Remove this specific waiter channel; other waiters for the
+		// same id stay subscribed (BUG-1064 — previous shared-channel
+		// design stranded sibling waiters on the first timeout).
 		r.mu.Lock()
-		if cur, ok := r.waiters[id]; ok && cur == ch {
+		bucket := r.waiters[id]
+		for i, c := range bucket {
+			if c == ch {
+				r.waiters[id] = append(bucket[:i], bucket[i+1:]...)
+				break
+			}
+		}
+		if len(r.waiters[id]) == 0 {
 			delete(r.waiters, id)
 		}
 		r.mu.Unlock()
@@ -129,10 +138,11 @@ func (r *ReverseAgentRegistry) Resolve(id string) (*agent.ReverseAgentConn, bool
 	return c, ok
 }
 
-// Drop closes + removes a session (used by ContainerStop/Remove).
-// Also clears the lifetime-expired marker so subsequent Register
-// (e.g. a new container reusing the same ID after restart) starts
-// fresh.
+// Drop closes + removes a session and clears all per-container state
+// (lifetimeExpired). Used by container-lifecycle callers
+// (ContainerRemove / fresh-container allocation) where the operator
+// has signalled the container is GONE — any subsequent Register for
+// the same ID is a new container that should start clean.
 func (r *ReverseAgentRegistry) Drop(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -141,6 +151,24 @@ func (r *ReverseAgentRegistry) Drop(id string) {
 		delete(r.sessions, id)
 	}
 	delete(r.lifetimeExpired, id)
+}
+
+// DropSession removes the WebSocket session for `id` WITHOUT clearing
+// lifetime-expired or other lifecycle state. Used by
+// HandleReverseAgentWS when the WS closes — typically because the
+// FaaS platform tore down the pod after the bootstrap signalled
+// `lifetime_expired`. Clearing lifetimeExpired here would erase the
+// only signal the next ExecStart needs to return
+// FaaSPodLifetimeExceeded. The full Drop runs later when
+// ContainerRemove fires (or never — and a new container gets a fresh
+// ID anyway).
+func (r *ReverseAgentRegistry) DropSession(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.sessions[id]; ok {
+		_ = c.Close()
+		delete(r.sessions, id)
+	}
 }
 
 // wsUpgrader used by every reverse-agent WebSocket endpoint. Origin
@@ -164,18 +192,17 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 		if err != nil {
 			return
 		}
-		rc := agent.NewReverseAgentConn(ws)
-		rc.OnSystemMessage = func(m agent.Message) {
+		rc := agent.NewReverseAgentConnWithSystemHandler(ws, func(m agent.Message) {
 			if m.Type == agent.TypeLifetimeExpired {
 				reg.MarkLifetimeExpired(sessionID)
 				logger.Warn().Str("container", sessionID).Msg("reverse-agent reported FaaS pod lifetime expiring; future exec will return operator-guidance error")
 			}
-		}
+		})
 		reg.Register(sessionID, rc)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session registered")
 
 		<-rc.Done()
-		reg.Drop(sessionID)
+		reg.DropSession(sessionID)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session dropped")
 	}
 }

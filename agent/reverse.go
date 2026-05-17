@@ -31,10 +31,29 @@ type ReverseAgentConn struct {
 
 // NewReverseAgentConn wraps an existing WebSocket connection and starts the
 // read loop that dispatches incoming messages to registered sessions.
+// Callers that need to observe connection-level (no-ID) system messages
+// like TypeLifetimeExpired MUST use NewReverseAgentConnWithSystemHandler
+// instead — assigning OnSystemMessage after this constructor returns
+// races with messages arriving in the first scheduler quantum (BUG-1061).
 func NewReverseAgentConn(ws *websocket.Conn) *ReverseAgentConn {
 	rc := &ReverseAgentConn{
 		ws:   ws,
 		done: make(chan struct{}),
+	}
+	go rc.readLoop()
+	return rc
+}
+
+// NewReverseAgentConnWithSystemHandler wraps an existing WebSocket
+// connection, registers the connection-level system-message handler,
+// and only then starts the read loop. Closes the race window where a
+// TypeLifetimeExpired arriving immediately after the WS handshake
+// would be dropped because OnSystemMessage hadn't been assigned yet.
+func NewReverseAgentConnWithSystemHandler(ws *websocket.Conn, handler func(Message)) *ReverseAgentConn {
+	rc := &ReverseAgentConn{
+		ws:              ws,
+		done:            make(chan struct{}),
+		OnSystemMessage: handler,
 	}
 	go rc.readLoop()
 	return rc

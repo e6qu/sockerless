@@ -27,6 +27,25 @@ func TestDetectENOSPC(t *testing.T) {
 	}
 }
 
+func TestENOSPC_HelperPure(t *testing.T) {
+	// Sanity check: DetectENOSPC + AnnotateENOSPC are pure functions.
+	// The exit-code override is the BOOTSTRAP's responsibility (after
+	// BUG-1062 — only override on non-zero exit). Verify that
+	// DetectENOSPC alone doesn't imply exit-code change.
+	stderr := []byte("write failed: no space left on device\n")
+	if !DetectENOSPC(stderr) {
+		t.Fatal("DetectENOSPC missed marker")
+	}
+	annotated := AnnotateENOSPC(stderr, "lambda")
+	if len(annotated) <= len(stderr) {
+		t.Fatalf("AnnotateENOSPC didn't grow stderr; got len=%d, original=%d", len(annotated), len(stderr))
+	}
+	// Caller decides whether to use ENOSPCExitCode; helper is pure.
+	if ENOSPCExitCode != 28 {
+		t.Errorf("ENOSPCExitCode = %d, want 28", ENOSPCExitCode)
+	}
+}
+
 func TestAnnotateENOSPC(t *testing.T) {
 	in := []byte("write failed: No space left on device\n")
 	out := AnnotateENOSPC(in, "lambda")

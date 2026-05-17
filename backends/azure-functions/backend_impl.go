@@ -507,7 +507,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	azfState, _ := s.AZF.Get(id)
 	if azfState.FunctionAppName != "" {
 		_, err := s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, azfState.FunctionAppName, nil)
-		if err != nil && !strings.Contains(err.Error(), "ResourceNotFound") && !strings.Contains(err.Error(), "NotFound") {
+		if err != nil && !azurecommon.IsNotFound(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete function app %q: %w", azfState.FunctionAppName, err))
 		}
 	}

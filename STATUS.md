@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — single PR for phases 167 + 168 will open once the work lands. |
-| In-flight | **Phases 167 + 168 on the same branch.** P168.1+.2+.3+.4+.5+.6+.7+.8 landed; all 11 in-scope BUGs (1046–1056) closed. Headline: Path B silently-falling-back exec dispatch ripped from lambda + GCF + cloudrun (`5f745039`); ContainerStart blocks for reverse-agent on all 5 FaaS-style backends with per-backend timeout env (`9a9b6319`); tmpfs in-memory EmptyDir is the default storage backing for cloudrun + GCF + ACA (`0bef7b57`); bootstrap-side ENOSPC detection returns `exit_code=28` + operator-guidance message (`e855df42`); ContainerRemove propagates cloud cleanup errors (`75a8a6ef`); FaaS pod lifetime-exceeded protocol message + sockerless-side `IsLifetimeExpired` check on all 5 backends + Lambda bootstrap timer wiring (this commit). Remaining: P168.9 (E2E + docs + codex + open single PR). |
+| In-flight | **Phases 167 + 168 on the same branch.** PR #168 open. P168.1–.9 landed plus codex-review fix-up (8 additional findings BUG-1057..1064: Drop wipes lifetimeExpired, multi-container WaitForAgent gap, ACA tmpfs default not wired through translator, Lambda timer fires for short invocations, OnSystemMessage race, ENOSPC overrides exit 0, brittle NotFound substrings, WaitForAgent shared-channel race). All 19 BUGs (1046–1064) closed. Remaining: e2e tests against simulators (per user directive), final state save. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1056 fixed · 0 open · 2 false positives. All BUGs in Phase 168 scope (1046–1056) closed. |
+| Bugs | 1064 fixed · 0 open · 2 false positives. All BUGs in Phase 168 scope (1046–1064) closed; the 8 codex-review-surfaced ones are addressed on the same branch as the user directed. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

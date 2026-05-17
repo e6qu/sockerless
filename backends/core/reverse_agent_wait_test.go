@@ -17,10 +17,10 @@ func registerNil(t *testing.T, r *ReverseAgentRegistry, id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sessions[id] = nil
-	if ch, ok := r.waiters[id]; ok {
+	for _, ch := range r.waiters[id] {
 		close(ch)
-		delete(r.waiters, id)
 	}
+	delete(r.waiters, id)
 }
 
 func TestWaitForAgent_FastPathAlreadyRegistered(t *testing.T) {
@@ -88,10 +88,63 @@ func TestLifetimeExpired_MarkAndCheck(t *testing.T) {
 	if r.IsLifetimeExpired("c2") {
 		t.Fatal("lifetime-expired leaked across IDs")
 	}
-	// Drop clears the marker so a fresh container reusing the same ID starts clean.
+	// Drop (lifecycle) clears the marker so a fresh container reusing the
+	// same ID starts clean.
 	r.Drop("c1")
 	if r.IsLifetimeExpired("c1") {
 		t.Fatal("Drop didn't clear lifetime-expired")
+	}
+}
+
+func TestLifetimeExpired_DropSessionPreservesMarker(t *testing.T) {
+	// Regression for BUG-1057: DropSession (the WS-close path called
+	// when Lambda/GCF/cloudrun kills the pod after sending
+	// lifetime_expired) must NOT wipe the marker. Otherwise the next
+	// ExecStart falls through to the generic "no agent" error instead
+	// of FaaSPodLifetimeExceeded.
+	r := NewReverseAgentRegistry()
+	r.MarkLifetimeExpired("c1")
+	r.DropSession("c1")
+	if !r.IsLifetimeExpired("c1") {
+		t.Fatal("DropSession wiped lifetime-expired (BUG-1057 regression)")
+	}
+}
+
+func TestWaitForAgent_TimeoutDoesNotStrandSiblingWaiter(t *testing.T) {
+	// Regression for BUG-1064. With the previous shared-channel
+	// design, waiter A timing out would delete the bucket and waiter
+	// B never woke when Register fired.
+	r := NewReverseAgentRegistry()
+
+	shortCtx, shortCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer shortCancel()
+	longCtx, longCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer longCancel()
+
+	doneShort := make(chan error, 1)
+	doneLong := make(chan error, 1)
+	go func() { doneShort <- r.WaitForAgent(shortCtx, "shared") }()
+	go func() { doneLong <- r.WaitForAgent(longCtx, "shared") }()
+
+	// Let the short waiter time out first.
+	select {
+	case err := <-doneShort:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("short waiter want DeadlineExceeded, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("short waiter never timed out")
+	}
+
+	// Then register; the long waiter must still wake.
+	registerNil(t, r, "shared")
+	select {
+	case err := <-doneLong:
+		if err != nil {
+			t.Fatalf("long waiter: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("long waiter never woke after Register (BUG-1064 regression)")
 	}
 }
 

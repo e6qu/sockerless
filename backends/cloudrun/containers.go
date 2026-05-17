@@ -2,10 +2,10 @@ package cloudrun
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	gcpcommon "github.com/sockerless/gcp-common"
 )
 
 // pollExecutionExit monitors a Cloud Run execution and updates container state when it completes.
@@ -78,13 +78,14 @@ func (s *Server) deleteJob(jobName string) {
 
 // deleteJobStrict deletes a Cloud Run Job and returns nil on success
 // or when the job is already gone. Errors propagate. Used by
-// ContainerRemove for the no-fallback cleanup contract.
+// ContainerRemove for the no-fallback cleanup contract. Typed
+// not-found detection via gcpcommon.IsNotFound (BUG-1063).
 func (s *Server) deleteJobStrict(jobName string) error {
 	op, err := s.gcp.Jobs.DeleteJob(s.ctx(), &runpb.DeleteJobRequest{
 		Name: jobName,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "does not exist") {
+		if gcpcommon.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("delete cloud run job %q: %w", jobName, err)
