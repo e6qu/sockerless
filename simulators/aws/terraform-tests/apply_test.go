@@ -21,7 +21,7 @@ import (
 //     DescribeContinuousBackups, UpdateContinuousBackups,
 //     DescribeTimeToLive, UpdateTimeToLive,
 //     ListTagsOfResource, TagResource, UntagResource
-//   - KMS: GetKeyPolicy, ListResourceTags, GetKeyRotationStatus
+//   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
 //   - Secrets Manager: GetResourcePolicy
 //   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
 //

@@ -22,19 +22,23 @@ import (
 // — opaque to SDK callers (treated as bytes), reversible by the sim,
 // and round-tripped exactly through the wire shape callers expect.
 type KMSKey struct {
-	KeyId        string           `json:"KeyId"`
-	Arn          string           `json:"Arn"`
-	Description  string           `json:"Description,omitempty"`
-	KeyState     string           `json:"KeyState"`
-	KeyUsage     string           `json:"KeyUsage,omitempty"`
-	KeyManager   string           `json:"KeyManager,omitempty"`
-	Origin       string           `json:"Origin,omitempty"`
-	CreationDate float64          `json:"CreationDate,omitempty"`
-	Aliases      []string         `json:"Aliases,omitempty"`
-	Tags         []SMTag          `json:"Tags,omitempty"`
-	Policy       map[string]any   `json:"Policy,omitempty"`
-	Grants       []map[string]any `json:"Grants,omitempty"`
-	Spec         string           `json:"KeySpec,omitempty"`
+	KeyId        string   `json:"KeyId"`
+	Arn          string   `json:"Arn"`
+	Description  string   `json:"Description,omitempty"`
+	KeyState     string   `json:"KeyState"`
+	KeyUsage     string   `json:"KeyUsage,omitempty"`
+	KeyManager   string   `json:"KeyManager,omitempty"`
+	Origin       string   `json:"Origin,omitempty"`
+	CreationDate float64  `json:"CreationDate,omitempty"`
+	Aliases      []string `json:"Aliases,omitempty"`
+	Tags         []SMTag  `json:"Tags,omitempty"`
+	// PolicyJSON holds the JSON-encoded key policy document. Real KMS
+	// stores + returns this as a string (not a parsed object); the sim
+	// follows so GetKeyPolicy round-trips byte-identical to what
+	// CreateKey + PutKeyPolicy received.
+	PolicyJSON string           `json:"-"`
+	Grants     []map[string]any `json:"Grants,omitempty"`
+	Spec       string           `json:"KeySpec,omitempty"`
 }
 
 var (
@@ -62,6 +66,7 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.DeleteAlias", handleKMSDeleteAlias)
 	r.Register("TrentService.ListAliases", handleKMSListAliases)
 	r.Register("TrentService.GetKeyPolicy", handleKMSGetKeyPolicy)
+	r.Register("TrentService.PutKeyPolicy", handleKMSPutKeyPolicy)
 	r.Register("TrentService.ListResourceTags", handleKMSListResourceTags)
 	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
 }
@@ -77,8 +82,8 @@ func kmsDefaultKeyPolicyJSON() string {
 
 // handleKMSGetKeyPolicy returns the key policy for a KeyId. Real KMS
 // supports only one policy name ("default"); the sim follows suit.
-// terraform-provider-aws calls this after CreateKey to populate the
-// resource's `policy` attribute.
+// Returns the custom policy stored on CreateKey / PutKeyPolicy if set,
+// otherwise the canonical AWS default key policy.
 func handleKMSGetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyId      string `json:"KeyId"`
@@ -103,11 +108,53 @@ func handleKMSGetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 			"No such policy: %s", policyName)
 		return
 	}
-	_ = keyId // sim doesn't store per-key policy yet; returns canonical default
+	key, _ := kmsKeys.Get(keyId)
+	policy := key.PolicyJSON
+	if policy == "" {
+		policy = kmsDefaultKeyPolicyJSON()
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Policy":     kmsDefaultKeyPolicyJSON(),
+		"Policy":     policy,
 		"PolicyName": "default",
 	})
+}
+
+// handleKMSPutKeyPolicy persists the supplied policy doc on the key.
+// Real KMS accepts only one policy name ("default") + the JSON-encoded
+// policy string. terraform-provider-aws calls this when the user
+// supplies `aws_kms_key.policy` and on every subsequent change.
+func handleKMSPutKeyPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId      string `json:"KeyId"`
+		PolicyName string `json:"PolicyName"`
+		Policy     string `json:"Policy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	if req.PolicyName == "" {
+		req.PolicyName = "default"
+	}
+	if req.PolicyName != "default" {
+		sim.AWSErrorf(w, "MalformedPolicyDocumentException", http.StatusBadRequest,
+			"Unsupported policy name: %s", req.PolicyName)
+		return
+	}
+	if req.Policy == "" {
+		sim.AWSError(w, "MalformedPolicyDocumentException", "Policy is required", http.StatusBadRequest)
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	key.PolicyJSON = req.Policy
+	kmsKeys.Put(keyId, key)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 // handleKMSListResourceTags returns the tag set attached to a KMS key.
@@ -167,6 +214,7 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		KeyUsage    string  `json:"KeyUsage"`
 		Origin      string  `json:"Origin"`
 		KeySpec     string  `json:"KeySpec"`
+		Policy      string  `json:"Policy"`
 		Tags        []SMTag `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -195,6 +243,7 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		Spec:         req.KeySpec,
 		CreationDate: float64(time.Now().Unix()),
 		Tags:         req.Tags,
+		PolicyJSON:   req.Policy,
 	}
 	kmsKeys.Put(keyId, key)
 

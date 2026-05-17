@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +57,14 @@ type DDBTable struct {
 	DeletionProtectionEnabled bool                      `json:"DeletionProtectionEnabled"`
 	TableClassSummary         *DDBTableClassSummary     `json:"TableClassSummary,omitempty"`
 	WarmThroughput            *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
+
+	// PITR + TTL state — Update* persists here so Describe* reads back
+	// the actual state (real AWS round-trips these; terraform polls
+	// Describe after Update for convergence).
+	PITRStatus       string  `json:"-"` // ENABLED / DISABLED
+	TTLStatus        string  `json:"-"` // ENABLED / DISABLED
+	TTLAttributeName string  `json:"-"`
+	Tags             []SMTag `json:"-"`
 }
 
 // DDBProvisionedThroughput mirrors the SDK shape. For PAY_PER_REQUEST
@@ -134,6 +143,24 @@ func ddbTableArn(name string) string {
 	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", awsRegion(), awsAccountID(), name)
 }
 
+// ddbTableByArn locates a stored table by its full ARN. Tag CRUD takes
+// ResourceArn (not TableName) and real DynamoDB accepts both forms; the
+// sim's name-keyed store has to be scanned for an ARN match.
+func ddbTableByArn(arn string) (string, DDBTable, bool) {
+	if arn == "" {
+		return "", DDBTable{}, false
+	}
+	// ARN shape: arn:aws:dynamodb:<region>:<account>:table/<name>
+	const sep = ":table/"
+	idx := strings.Index(arn, sep)
+	if idx < 0 {
+		return "", DDBTable{}, false
+	}
+	name := arn[idx+len(sep):]
+	t, ok := ddbTables.Get(name)
+	return name, t, ok
+}
+
 func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	ddbTables = sim.MakeStore[DDBTable](srv.DB(), "ddb_tables")
 	ddbItems = sim.MakeStore[map[string]any](srv.DB(), "ddb_items")
@@ -158,9 +185,11 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
 }
 
-// handleDDBUpdateContinuousBackups enables/disables PITR. Real DynamoDB
-// returns the new ContinuousBackupsDescription; terraform-provider-aws
-// polls DescribeContinuousBackups after this to confirm convergence.
+// handleDDBUpdateContinuousBackups enables/disables PITR. Persists to
+// DDBTable.PITRStatus so DescribeContinuousBackups reads back the
+// updated state. Real DynamoDB returns the new ContinuousBackupsDescription;
+// terraform-provider-aws polls DescribeContinuousBackups after this to
+// confirm convergence.
 func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                        string `json:"TableName"`
@@ -172,7 +201,8 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
 			"Table not found: %s", req.TableName)
 		return
@@ -181,6 +211,8 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	if req.PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled {
 		status = "ENABLED"
 	}
+	t.PITRStatus = status
+	ddbTables.Put(req.TableName, t)
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
 			"ContinuousBackupsStatus": "ENABLED",
@@ -192,8 +224,8 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDDBUpdateTimeToLive enables/disables TTL on a table attribute.
-// Real DynamoDB returns the TimeToLiveSpecification echo; terraform polls
-// DescribeTimeToLive after this until status matches.
+// Persists to DDBTable.TTLStatus + AttributeName so DescribeTimeToLive
+// reads back the updated state.
 func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName               string `json:"TableName"`
@@ -206,11 +238,19 @@ func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
+	status := "DISABLED"
+	if req.TimeToLiveSpecification.Enabled {
+		status = "ENABLED"
+	}
+	t.TTLStatus = status
+	t.TTLAttributeName = req.TimeToLiveSpecification.AttributeName
+	ddbTables.Put(req.TableName, t)
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"TimeToLiveSpecification": map[string]any{
 			"Enabled":       req.TimeToLiveSpecification.Enabled,
@@ -219,7 +259,10 @@ func handleDDBUpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDDBTagResource attaches tags. Real DynamoDB returns empty body.
+// handleDDBTagResource attaches tags + persists upsert. Real DynamoDB
+// returns empty body but stores the tags so ListTagsOfResource reads
+// them back (same upsert semantics as real AWS: re-tag with same Key
+// replaces Value).
 func handleDDBTagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string  `json:"ResourceArn"`
@@ -233,10 +276,30 @@ func handleDDBTagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
+	name, t, ok := ddbTableByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: %s", req.ResourceArn)
+		return
+	}
+	override := map[string]string{}
+	for _, tag := range req.Tags {
+		override[tag.Key] = tag.Value
+	}
+	merged := make([]SMTag, 0, len(t.Tags)+len(req.Tags))
+	for _, tag := range t.Tags {
+		if _, replaced := override[tag.Key]; !replaced {
+			merged = append(merged, tag)
+		}
+	}
+	merged = append(merged, req.Tags...)
+	t.Tags = merged
+	ddbTables.Put(name, t)
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleDDBUntagResource removes tag keys. Real DynamoDB returns empty body.
+// handleDDBUntagResource removes tag keys from the persisted set.
+// Real DynamoDB returns empty body + silently ignores missing keys.
 func handleDDBUntagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string   `json:"ResourceArn"`
@@ -250,12 +313,31 @@ func handleDDBUntagResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
+	name, t, ok := ddbTableByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: %s", req.ResourceArn)
+		return
+	}
+	remove := map[string]bool{}
+	for _, k := range req.TagKeys {
+		remove[k] = true
+	}
+	filtered := make([]SMTag, 0, len(t.Tags))
+	for _, tag := range t.Tags {
+		if !remove[tag.Key] {
+			filtered = append(filtered, tag)
+		}
+	}
+	t.Tags = filtered
+	ddbTables.Put(name, t)
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleDDBDescribeContinuousBackups returns the PITR status for a table.
-// Real DynamoDB enables PITR on demand; new tables default to DISABLED.
-// terraform-provider-aws calls this after CreateTable.
+// handleDDBDescribeContinuousBackups returns the PITR status for a
+// table from the persisted DDBTable.PITRStatus. New tables default to
+// DISABLED. terraform-provider-aws polls this after UpdateContinuousBackups
+// for convergence.
 func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
@@ -264,24 +346,29 @@ func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) 
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
 			"Table not found: %s", req.TableName)
 		return
+	}
+	pitr := t.PITRStatus
+	if pitr == "" {
+		pitr = "DISABLED"
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
 			"ContinuousBackupsStatus": "ENABLED",
 			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": "DISABLED",
+				"PointInTimeRecoveryStatus": pitr,
 			},
 		},
 	})
 }
 
-// handleDDBDescribeTimeToLive returns TTL config for a table. Real
-// DynamoDB defaults to DISABLED. terraform-provider-aws calls this
-// after CreateTable.
+// handleDDBDescribeTimeToLive returns TTL config for a table from the
+// persisted DDBTable.TTLStatus + AttributeName. terraform-provider-aws
+// polls this after UpdateTimeToLive until status matches.
 func handleDDBDescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string `json:"TableName"`
@@ -290,21 +377,28 @@ func handleDDBDescribeTimeToLive(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
+	status := t.TTLStatus
+	if status == "" {
+		status = "DISABLED"
+	}
+	desc := map[string]any{"TimeToLiveStatus": status}
+	if t.TTLAttributeName != "" {
+		desc["AttributeName"] = t.TTLAttributeName
+	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{
-		"TimeToLiveDescription": map[string]any{
-			"TimeToLiveStatus": "DISABLED",
-		},
+		"TimeToLiveDescription": desc,
 	})
 }
 
-// handleDDBListTagsOfResource returns tag list for a table ARN. Real
-// DynamoDB tracks tags out-of-band; the sim returns an empty list
-// since CreateTable doesn't currently persist tags.
+// handleDDBListTagsOfResource returns tag list for a table ARN from
+// the persisted DDBTable.Tags. Real DynamoDB tracks tags out-of-band but
+// the sim keeps them on the table row for the same lookup latency.
 func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"ResourceArn"`
@@ -317,8 +411,18 @@ func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "ResourceArn is required", http.StatusBadRequest)
 		return
 	}
+	_, t, ok := ddbTableByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: %s", req.ResourceArn)
+		return
+	}
+	tags := make([]map[string]any, 0, len(t.Tags))
+	for _, tag := range t.Tags {
+		tags = append(tags, map[string]any{"Key": tag.Key, "Value": tag.Value})
+	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{
-		"Tags": []map[string]any{},
+		"Tags": tags,
 	})
 }
 

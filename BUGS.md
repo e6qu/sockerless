@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1044 filed · 1044 fixed · 0 open · 2 false positives.**
+**1045 filed · 1045 fixed · 0 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -32,6 +32,13 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 ## Resolved history (compressed)
 
 1033 bugs filed and fixed across phases 86–165.
+
+- **1045** (Phase 166, codex review finding x4) — Codex review of Phase 166.1's new sim handlers found 4 state-persistence gaps where the handler acknowledged a state-changing request but didn't persist the change, so the follow-up Describe / Get / List returned stale state. All four violate the user's "faithful API compliance (identical to real cloud)" directive. Fixed:
+  - **DynamoDB PITR** (`simulators/aws/dynamodb.go`): `UpdateContinuousBackups` echoed the new status but `DescribeContinuousBackups` always returned `DISABLED`. Added `PITRStatus` to `DDBTable`; Update persists, Describe reads back.
+  - **DynamoDB TTL**: same pattern. Added `TTLStatus` + `TTLAttributeName` to `DDBTable`; Update persists, Describe reads back. terraform's `ttl` block polls Describe after Update for convergence.
+  - **DynamoDB tags**: `TagResource` accepted the request but dropped the tags; `ListTagsOfResource` returned empty. Added `Tags` to `DDBTable` + helper `ddbTableByArn` (Tag CRUD takes ResourceArn, not TableName). Upsert semantics match real AWS (re-tag with same Key replaces Value). `UntagResource` now drops keys from the persisted set.
+  - **KMS custom key policy** (`simulators/aws/kms.go`): `GetKeyPolicy` always returned the default policy even after `CreateKey` with a custom `Policy` field. Added `PolicyJSON string` field to `KMSKey` (matches real KMS which stores+returns the JSON-encoded string, not a parsed map — old `Policy map[string]any` field was wrong shape). `CreateKey` reads `Policy` from request + persists. New `TrentService.PutKeyPolicy` action also persists. `GetKeyPolicy` returns persisted-or-default.
+  Verified: `cd simulators/aws/terraform-tests && GOWORK=off go test -count=1 -run TestStackProductionShape` — PASS locally (no regression). Each fix mirrors real-AWS state-persistence behaviour.
 
 - **1041** (Phase 166) — Phase 165 deferred `google_service_account` because terraform-provider-google's IAM resources appeared to ignore `iam_custom_endpoint` and hit real `iam.googleapis.com`. Root-caused via `gh api` reading the provider source: `google_service_account` actually routes through `iambeta.NewClient` (`google/services/iambeta/client.go`) which uses `iam_beta_custom_endpoint` — a DIFFERENT setting from `iam_custom_endpoint`. Added `iam_beta_custom_endpoint = "${var.endpoint}/v1/"` to the provider config + the `google_service_account` resource to terraform-tests/main.tf. Verified PASS locally. (The remaining `google_cloudfunctions2_function` + Compute instance + Cloud Build + Logging + Pub/Sub follow-ups need their own sub-phase due to multi-resource orchestration / missing sim Pub/Sub.)
 
