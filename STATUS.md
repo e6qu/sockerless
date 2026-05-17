@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-165-vibe-slop-sweep-3-test-pyramid` — PR TBD. |
-| In-flight | **Phase 165 — third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression.** 9 BUGs closed in this PR (1033–1036 vibe-slop + 1038/1039 GCP + Azure terraform expansions + 1043/1044 codex review findings) — also surfaced + closed a GCS-object selfLink sub-defect during the BUG-1038 expansion. 3 BUGs filed as Open for Phase 166 follow-up: 1040 (azurerm research for ACA/AZF/ACR), 1041 (GCP IAM SA + Cloud Functions Gen2), 1042 (AWS S3/DynamoDB/KMS/SM/SSM — 5 sim handler gaps surfaced). |
-| Last merged | PR #164 — Phase 164 second vibe-slop sweep + terraform-provider test expansion (2026-05-17, `616dcd98`). |
+| Active branch | `phase-166-test-pyramid-realfixes` — PR #167 open. |
+| In-flight | **Phase 166 — real fixes for Phase 165's 3 Open BUGs (1040 Azure azurerm, 1041 GCP IAM SA, 1042 AWS 5 sim handler gaps).** All 3 closed real per user directive *"no fallbacks, no workarounds, real actual solutions and faithful API compliance"*. PR #167 contains 3 commits. AWS (1042): real impls of KMS GetKeyPolicy/ListResourceTags/GetKeyRotationStatus + SM GetResourcePolicy + SSM AddTagsToResource/RemoveTagsFromResource/ListTagsForResource + DynamoDB Content-Type:application/x-amz-json-1.0 + WarmThroughput + DescribeContinuousBackups/TimeToLive/ListTagsOfResource/Update*/Tag/Untag + TableId/ProvisionedThroughput/etc + S3 14 sub-resource query handlers. Azure (1040): wired azurerm provider via sim's existing /metadata/endpoints + /<tenant>/oauth2/v2.0/token + 12 new resources (ACR + ACA env + Container App + Container App Job + AZF Function App + Service Plan + Storage + UAI + Private DNS + Log Analytics + App Insights + resource_group). GCP (1041): root-caused via gh-api-reading-provider-source — `google_service_account` routes through `iambeta.NewClient` which uses `iam_beta_custom_endpoint` (NOT `iam_custom_endpoint`); added the right setting + the resource. |
+| Last merged | PR #165 — Phase 165 (2026-05-17, `288b76d3`). State-save PR #166 awaits user merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1041 fixed · 3 open (1040/1041/1042) · 2 false positives. |
+| Bugs | 1044 fixed · 0 open · 2 false positives. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

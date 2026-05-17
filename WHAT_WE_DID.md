@@ -22,9 +22,13 @@ Three tracks, each with real implementations:
    - **S3**: `s3_use_path_style = true` in provider config + endpoint suffix `/s3` so the sim's `/s3/{bucket}` routes match (the alternative — adding subdomain handling to sim — is out of this commit's scope).
    - Added `aws_s3_bucket` + `aws_dynamodb_table` + `aws_kms_key` + `aws_kms_alias` + `aws_secretsmanager_secret` + `aws_secretsmanager_secret_version` + `aws_ssm_parameter` to terraform-tests/main.tf with canonical-ARN assertions.
 
-2. **BUG-1040 (Azure — azurerm provider against sim).** *In progress.*
+2. **BUG-1040 (Azure — azurerm provider against sim). ✅** The sim already shipped `/metadata/endpoints?api-version=2022-09-01` (AzureCloud config) + `/<tenant>/oauth2/v2.0/token` (real-shape Azure AD JWT) + `/.well-known/openid-configuration` + JWKS. Wired azurerm via `metadata_host = trimprefix(var.endpoint, "https://")` + fake client_id/secret. Added 12 azurerm-driven resources: resource_group + container_registry + user_assigned_identity + private_dns_zone + log_analytics_workspace + application_insights + container_app_environment + container_app + container_app_job (ACA runner-job primitive!) + service_plan + storage_account + linux_function_app (AZF runner-workload primitive!). apply_test.go asserts canonical ARM paths. Test darwin-blocked locally (Go cgo Security framework ignores SSL_CERT_FILE; GODEBUG=x509usefallbackroots=1 only kicks in when platform pool is empty, doesn't supplement); CI runs in Docker. Pre-validated via `terraform validate` + curl-probed metadata + token endpoints.
 
-3. **BUG-1041 (GCP — IAM SA + Cloud Functions Gen2 + Pub/Sub).** *In progress.*
+3. **BUG-1041 (GCP — google_service_account via correct custom-endpoint setting). ✅** Root-caused via `gh api` reading terraform-provider-google v7.32.0 source: `google_service_account` routes through `iambeta.NewClient` (`google/services/iambeta/client.go`) which uses `iam_beta_custom_endpoint` — a DIFFERENT setting from `iam_custom_endpoint`. Phase 165's first attempt used the wrong one. Added `iam_beta_custom_endpoint = "${var.endpoint}/v1/"` + the `google_service_account` resource. Test PASS locally. Cloud Functions Gen2 + Pub/Sub + Compute instance + Cloud Build + Logging follow-ups deferred (multi-resource orchestration / sim Pub/Sub missing).
+
+Process notes:
+- TF_LOG=TRACE → gh-api-reading-provider-source was the unlock for both BUG-1041 (custom-endpoint setting) and BUG-1042-DDB (WarmThroughput field needed by `waitTableWarmThroughputActive`). When the SDK direct test works but terraform doesn't, the provider has its own logic that the SDK doesn't expose.
+- The Azure azurerm wiring was much easier than expected — the sim's existing endpoints were already correct; only the provider config needed updating.
 
 ## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
 
