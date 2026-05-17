@@ -32,9 +32,8 @@ import (
 
 var dockerClient *client.Client
 
-// backendPort exposes the sockerless backend port so dialFakeReverseAgent
-// (BUG-1066) can dial the WebSocket endpoint from a test as if it
-// were the in-Service bootstrap.
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/cloudrun/reverse`).
 var backendPort int
 var evalImageName string
 
@@ -261,7 +260,9 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
 		// Required at NewServer per Phase 168 (no Path B fallback).
-		"SOCKERLESS_CALLBACK_URL="+endpointURL,
+		// Bootstrap dials back over WebSocket from inside the workload
+		// container — host.docker.internal resolves the test host.
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/cloudrun/reverse", backendPort),
 		// STORAGE_EMULATOR_HOST routes the backend's GCS client to the
 		// sim's storage endpoint instead of storage.googleapis.com.
 		"STORAGE_EMULATOR_HOST="+storageHost,
@@ -343,9 +344,6 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	// Start (may take longer for Cloud Run — 5 min timeout)
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
@@ -405,9 +403,6 @@ func TestCloudRunContainerLogs(t *testing.T) {
 
 	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}

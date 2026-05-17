@@ -119,6 +119,11 @@ const (
 	// exec-envelope call. Default: 3600 (1 h). At timeout: SIGTERM →
 	// 30s grace → SIGKILL; bootstrap reports exit code 124.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+	// SOCKERLESS_CALLBACK_URL — reverse-agent WebSocket URL (required
+	// per Phase 168; backend's ExecStart fails loud without an agent).
+	envCallbackURL = "SOCKERLESS_CALLBACK_URL"
+	// SOCKERLESS_CONTAINER_ID — session_id for the reverse-agent WS.
+	envContainerID = "SOCKERLESS_CONTAINER_ID"
 )
 
 const (
@@ -214,6 +219,24 @@ func main() {
 	port := os.Getenv(envPort)
 	if port == "" {
 		port = "8080"
+	}
+
+	// Reverse-agent dial-back (Phase 168). Required for `docker exec`
+	// from the backend.
+	callbackURL := os.Getenv(envCallbackURL)
+	containerID := os.Getenv(envContainerID)
+	if callbackURL != "" && containerID != "" {
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: reverse-agent dial failed: %v\n", err)
+			os.Exit(1)
+		}
+		connMu := &sync.Mutex{}
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
+	} else {
+		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled")
 	}
 
 	// Pod mode: pre-warm the supervisor so background members start

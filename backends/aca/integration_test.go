@@ -21,9 +21,8 @@ import (
 
 var dockerClient *client.Client
 
-// backendPort exposes the sockerless backend port so
-// dialFakeReverseAgent (BUG-1066) can dial the WS endpoint from a test
-// as if it were the in-App/Job bootstrap.
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/aca/reverse`).
 var backendPort int
 var evalImageName string
 
@@ -220,7 +219,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
 		// Required at NewServer per Phase 168 (no fallback).
-		"SOCKERLESS_CALLBACK_URL="+endpointURL,
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/aca/reverse", backendPort),
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -289,9 +288,6 @@ func TestACAContainerLifecycle(t *testing.T) {
 	// Start (ACA may take longer — 10 min timeout)
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}
@@ -351,8 +347,6 @@ func TestACAContainerLogs(t *testing.T) {
 
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)
 	}

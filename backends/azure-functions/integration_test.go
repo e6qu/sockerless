@@ -21,9 +21,8 @@ import (
 
 var dockerClient *client.Client
 
-// backendPort exposes the sockerless backend port so
-// dialFakeReverseAgent (BUG-1066) can dial the WS endpoint from a test
-// as if it were the in-function bootstrap.
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/azf/reverse`).
 var backendPort int
 var evalImageName string
 
@@ -194,7 +193,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_AZF_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_AZF_STORAGE_ACCOUNT="+storageAccount,
 		// Required at NewServer per Phase 168 (no fallback).
-		"SOCKERLESS_CALLBACK_URL="+endpointURL,
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/azf/reverse", backendPort),
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
@@ -245,11 +244,6 @@ func TestAZFContainerLogs(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	// BUG-1066 — fake bootstrap dial-back so P168.3 WaitForAgent satisfies.
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
-
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
 	// Wait for exit
@@ -331,9 +325,6 @@ func TestAZFContainerStopNoOp(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
@@ -534,9 +525,6 @@ func TestAZFContainerLifecycle(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)

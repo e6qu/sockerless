@@ -35,9 +35,8 @@ import (
 var dockerClient *client.Client
 var evalImageName string
 
-// backendPort is set in TestMain after the backend listener is
-// allocated. Used by dialFakeReverseAgent so tests can fake the
-// in-function bootstrap dial-back required by P168.3.
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/gcf/reverse`).
 var backendPort int
 
 // requireEnv reads a required env var or dies loud.
@@ -342,11 +341,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
 		// SOCKERLESS_CALLBACK_URL is required at NewServer time per
-		// Phase 168 (no Path B fallback). Sim tests don't actually
-		// run the bootstrap dial-back so any non-empty value
-		// satisfies the startup gate; the value is injected into
-		// the function env where it's read by the bootstrap stub.
-		"SOCKERLESS_CALLBACK_URL=http://"+strings.TrimPrefix(strings.TrimPrefix(endpointURL, "http://"), "https://"),
+		// Phase 168 (no Path B fallback). Bootstrap dials back over
+		// WebSocket from inside the workload container —
+		// host.docker.internal resolves the test host.
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/gcf/reverse", backendPort),
 		// STORAGE_EMULATOR_HOST is Google's SDK-side name for "where
 		// to route storage API requests". Set so the backend's GCS
 		// client targets the test endpoint instead of the default
@@ -462,9 +460,6 @@ func TestGCFContainerLogs(t *testing.T) {
 	// BUG-1066 / P168.3 — fake the in-function bootstrap dial-back so
 	// ContainerStart's WaitForAgent satisfies. Sim doesn't run the
 	// workload image.
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
-
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
 	// Wait for exit
@@ -546,9 +541,6 @@ func TestGCFContainerStopNoOp(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
@@ -759,9 +751,6 @@ func TestGCFContainerLifecycle(t *testing.T) {
 		t.Fatalf("container create failed: %v", err)
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-
-	closeWS := dialFakeReverseAgent(t, resp.ID)
-	defer closeWS()
 
 	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		t.Fatalf("container start failed: %v", err)

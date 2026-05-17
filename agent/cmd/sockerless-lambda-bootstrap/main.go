@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +38,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog"
 
 	"github.com/sockerless/agent"
 )
@@ -92,7 +90,6 @@ type PodMember struct {
 const (
 	runtimeAPIPath   = "/2018-06-01/runtime/invocation"
 	runtimeInitError = "/2018-06-01/runtime/init/error"
-	heartbeatPeriod  = 20 * time.Second
 )
 
 func main() {
@@ -138,7 +135,7 @@ func main() {
 	var raConn *websocket.Conn
 	var raMu *sync.Mutex
 	if callbackURL != "" && containerID != "" {
-		conn, err := dialReverseAgent(callbackURL, containerID)
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bootstrap: reverse-agent dial failed: %v\n", err)
 			postInitError(base, err.Error())
@@ -147,8 +144,8 @@ func main() {
 		// Every goroutine that writes to conn must hold connMu —
 		// gorilla/websocket requires serialised writes.
 		connMu := &sync.Mutex{}
-		go serveReverseAgent(conn, connMu)
-		go sendHeartbeats(conn, connMu)
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
 		defer func() { _ = conn.Close() }()
 		raConn = conn
 		raMu = connMu
@@ -477,66 +474,6 @@ func postInitError(base, msg string) {
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
-}
-
-// dialReverseAgent opens the long-lived WebSocket to the sockerless
-// Lambda backend. Returns a raw *websocket.Conn — the caller feeds it
-// into the agent.Router via serveReverseAgent.
-func dialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) {
-	u, err := url.Parse(callbackURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse callback URL: %w", err)
-	}
-	q := u.Query()
-	q.Set("session_id", containerID)
-	u.RawQuery = q.Encode()
-	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", u.String(), err)
-	}
-	return ws, nil
-}
-
-// serveReverseAgent reads messages from the WebSocket and dispatches
-// them to an agent.Router. This is the "server side" of the
-// reverse-agent protocol — inbound TypeExec / TypeAttach messages
-// spawn subprocesses in this container and stream stdout back over
-// the WS.
-func serveReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
-	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
-	registry := agent.NewSessionRegistry()
-	router := agent.NewRouter(registry, nil, logger)
-	defer registry.CleanupConn(conn)
-
-	for {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		var msg agent.Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		router.Handle(&msg, conn, connMu)
-	}
-}
-
-// sendHeartbeats writes a ping frame every heartbeatPeriod so the
-// backend knows the container is alive between invocations. Exits
-// when the WS is closed. connMu is shared with serveReverseAgent so
-// pings can't interleave with response frames — gorilla/websocket
-// requires serialised writes on a single conn.
-func sendHeartbeats(conn *websocket.Conn, connMu *sync.Mutex) {
-	t := time.NewTicker(heartbeatPeriod)
-	defer t.Stop()
-	for range t.C {
-		connMu.Lock()
-		err := conn.WriteMessage(websocket.PingMessage, nil)
-		connMu.Unlock()
-		if err != nil {
-			return
-		}
-	}
 }
 
 // contextWithDeadlineMs returns a context that expires at the given

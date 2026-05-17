@@ -78,6 +78,16 @@ const (
 	// → 30 s grace → SIGKILL; bootstrap reports exit code 124 to match
 	// GNU `timeout(1)`. Set to 0 or empty to disable.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+	// SOCKERLESS_CALLBACK_URL — WebSocket URL the bootstrap dials back
+	// to as the reverse-agent endpoint. Required per Phase 168
+	// (no-fallback). Cloud Run Services + GCF Gen2 inject this via
+	// jobspec.go / pod_service.go. Without it the backend's ExecStart
+	// fails with operator guidance.
+	envCallbackURL = "SOCKERLESS_CALLBACK_URL"
+	// SOCKERLESS_CONTAINER_ID — the sockerless container ID, used as
+	// the session_id in the reverse-agent WS handshake. The backend's
+	// HandleReverseAgentWS reads it from the URL query.
+	envContainerID = "SOCKERLESS_CONTAINER_ID"
 )
 
 const (
@@ -186,6 +196,27 @@ func main() {
 	syncMounts = mounts
 	if len(syncMounts) > 0 {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: parsed %d sync mounts: %v\n", len(syncMounts), syncMounts)
+	}
+
+	// Start the reverse-agent dial-back so the backend's ExecStart
+	// has somewhere to route exec messages. Required per Phase 168.
+	// The HTTP server below stays — it handles the default-invoke
+	// path (initial workload start + the gitlab-runner stdin-piped
+	// envelope), but per-step `docker exec` flows through the WS.
+	callbackURL := os.Getenv(envCallbackURL)
+	containerID := os.Getenv(envContainerID)
+	if callbackURL != "" && containerID != "" {
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent dial failed: %v\n", err)
+			os.Exit(1)
+		}
+		connMu := &sync.Mutex{}
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
+	} else {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled (backend ExecStart will return operator-guidance)")
 	}
 
 	port := os.Getenv(envPort)

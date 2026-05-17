@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1066 filed · 1065 fixed · 1 open · 2 false positives.**
+**1067 filed · 1066 fixed · 1 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1066 | P2 | `backends/{cloudrun-functions,cloudrun,aca,azure-functions}/integration_test.go` | 7 (test-harness gap) | After P168.3 added ContainerStart wait-for-reverse-agent, integration tests for GCF/cloudrun/ACA/AZF time out at 90s on every ContainerStart because the sims don't run the actual workload image — no real bootstrap dial-back ever happens. (Lambda's sim does spin up the function image via local Docker so its tests work.) Fix: integration tests should dial `/v1/<backend>/reverse?session_id=<container_id>` as a fake bootstrap immediately after ContainerCreate, OR sims grow a workload-runner that mirrors AWS Lambda sim's pattern. Until then GCF/cloudrun/ACA/AZF integration tests are red on this branch. Discovered running e2e for Phase 168 PR. |
+| 1067 | P1 | `agent/cmd/sockerless-azf-bootstrap/` does not exist; ACA Apps lack in-App bootstrap | 7 (followup) | BUG-1066 wires real reverse-agent dial-back for lambda + cloudrun + GCF bootstraps. AZF has no bootstrap binary; ACA's Apps path materialises images that don't yet bake a sockerless bootstrap that dials back. Operators get clear fail-loud at `NewServer` (missing `SOCKERLESS_CALLBACK_URL`) but real e2e exec on those backends still needs the bootstrap. Tracked as Phase 168 follow-up. |
 
 ## False positives
 
