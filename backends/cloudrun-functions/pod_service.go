@@ -247,7 +247,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	//    subsequent /exec POSTs instead.
 	go s.invokePodServiceMain(ctx, result, containers, exitCh, true)
 
-	// 6. Block until the bootstrap dials back (BUG-1058 — multi-container
+	// 6. Block until the bootstrap dials back (multi-container
 	//    pods can't skip the wait either, or the first ExecStart races
 	//    the dial-back).
 	if !containers[0].Config.OpenStdin {

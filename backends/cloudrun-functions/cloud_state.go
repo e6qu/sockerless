@@ -305,7 +305,9 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 			}
 			seen[mid] = true
 			c := serviceToPodMemberContainer(svc, mid)
-			if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
+			if _, hasAgent := p.server.reverseAgents.Resolve(mid); hasAgent {
+				c.State = api.ContainerState{Status: "running", Running: true}
+			} else if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
 				c.State = api.ContainerState{
 					Status:     "exited",
 					Running:    false,

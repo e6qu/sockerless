@@ -399,7 +399,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		Timeout:      timeout,
 		Labels:       map[string]string{"sockerless-sim-function": functionID},
 		ExtraHosts:   hostMetadataExtraHosts(),
-		Sandbox:      sim.SandboxGCFGen2, // BUG-1077: Cloud Run Functions Gen2 sandbox parity.
+		Sandbox:      sim.SandboxGCFGen2,
 	}, collectSink)
 	if err != nil {
 		injectCloudFunctionLog(project, functionID,
@@ -584,10 +584,13 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Overlay images are built by the GCP backends as linux/amd64.
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, -1, err
+	}
 	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
 		Image:        localImage,
-		Architecture: "linux/amd64",
+		Architecture: platform,
 		HostPort:     hostPort,
 		Env: mergeEnv(mergeEnv(map[string]string{
 			"PORT": "8080",
@@ -659,6 +662,21 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	}
 
 	return respBytes, exitCode, nil
+}
+
+func localImagePlatform(ctx context.Context, image string) (string, error) {
+	cli := sim.DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, image)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %q platform: %w", image, err)
+	}
+	if inspect.Os == "" || inspect.Architecture == "" {
+		return "", fmt.Errorf("inspect image %q platform: missing os/architecture", image)
+	}
+	return inspect.Os + "/" + inspect.Architecture, nil
 }
 
 // pickFreeTCPPort opens a transient TCP listener to discover a

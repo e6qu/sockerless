@@ -12,14 +12,15 @@ import (
 
 // Config holds Cloud Run backend configuration.
 type Config struct {
-	Project      string
-	Region       string
-	VPCConnector string
-	LogID        string
-	BuildBucket  string        // GCS bucket for Cloud Build context upload
-	EndpointURL  string        // Custom endpoint URL
-	PollInterval time.Duration // Cloud API poll interval (default 2s)
-	LogTimeout   time.Duration // Cloud Logging query timeout (default 30s)
+	Project       string
+	Region        string
+	VPCConnector  string
+	LogID         string
+	BuildBucket   string        // GCS bucket for Cloud Build context upload
+	BuildPlatform string        // Docker build platform for overlay images
+	EndpointURL   string        // Custom endpoint URL
+	PollInterval  time.Duration // Cloud API poll interval (default 2s)
+	LogTimeout    time.Duration // Cloud Logging query timeout (default 30s)
 
 	// UseService switches container execution from Cloud Run Jobs to
 	// Cloud Run Services with internal ingress. Required for:
@@ -131,6 +132,7 @@ func ConfigFromEnv() Config {
 		VPCConnector:        os.Getenv("SOCKERLESS_GCR_VPC_CONNECTOR"),
 		LogID:               envOrDefault("SOCKERLESS_GCR_LOG_ID", "sockerless"),
 		BuildBucket:         os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
+		BuildPlatform:       envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:          parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
@@ -229,14 +231,18 @@ func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
 // ConfigFromEnvironment creates Config from a unified config environment.
 func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
 	c := Config{
-		Region:       "us-central1",
-		LogID:        "sockerless",
-		PollInterval: 2 * time.Second,
-		LogTimeout:   30 * time.Second,
+		Region:        "us-central1",
+		LogID:         "sockerless",
+		BuildPlatform: "linux/amd64",
+		PollInterval:  2 * time.Second,
+		LogTimeout:    30 * time.Second,
 	}
 	if env.GCP != nil {
 		c.Project = env.GCP.Project
 		c.BuildBucket = env.GCP.BuildBucket
+		if env.GCP.BuildPlatform != "" {
+			c.BuildPlatform = env.GCP.BuildPlatform
+		}
 		if cr := env.GCP.CloudRun; cr != nil {
 			if cr.Region != "" {
 				c.Region = cr.Region

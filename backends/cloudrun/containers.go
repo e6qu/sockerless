@@ -79,7 +79,7 @@ func (s *Server) deleteJob(jobName string) {
 // deleteJobStrict deletes a Cloud Run Job and returns nil on success
 // or when the job is already gone. Errors propagate. Used by
 // ContainerRemove for the no-fallback cleanup contract. Typed
-// not-found detection via gcpcommon.IsNotFound (BUG-1063).
+// not-found detection via gcpcommon.IsNotFound.
 func (s *Server) deleteJobStrict(jobName string) error {
 	op, err := s.gcp.Jobs.DeleteJob(s.ctx(), &runpb.DeleteJobRequest{
 		Name: jobName,

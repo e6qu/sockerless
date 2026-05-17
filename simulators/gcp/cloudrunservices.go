@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -166,6 +169,147 @@ func containerEnvMap(envVars []EnvVar) map[string]string {
 	return env
 }
 
+type cloudRunServiceInstance struct {
+	containerID  string
+	hostPort     int
+	image        string
+	envSignature string
+	cancelLogs   context.CancelFunc
+}
+
+var cloudRunServiceInstances = struct {
+	sync.Mutex
+	byName map[string]*cloudRunServiceInstance
+}{byName: map[string]*cloudRunServiceInstance{}}
+
+func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image string, env map[string]string, sink sim.LogSink) (*cloudRunServiceInstance, error) {
+	localImage := sim.ResolveLocalImage(image)
+	envSig := envSignature(env)
+
+	cloudRunServiceInstances.Lock()
+	if inst := cloudRunServiceInstances.byName[name]; inst != nil && inst.image == localImage && inst.envSignature == envSig {
+		cloudRunServiceInstances.Unlock()
+		return inst, nil
+	}
+	old := cloudRunServiceInstances.byName[name]
+	delete(cloudRunServiceInstances.byName, name)
+	cloudRunServiceInstances.Unlock()
+	stopCloudRunServiceInstance(old)
+
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, err
+	}
+	hostPort, err := pickFreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("pick free port: %w", err)
+	}
+	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
+		Image:        localImage,
+		Architecture: platform,
+		HostPort:     hostPort,
+		Env: mergeEnv(mergeEnv(map[string]string{
+			"PORT": "8080",
+		}, env), hostMetadataEnv()),
+		Name:       fmt.Sprintf("sockerless-sim-cloudrun-svc-%s-%d", serviceID, hostPort),
+		Labels:     map[string]string{"sockerless-sim-service": serviceID},
+		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxCloudRun,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start service container: %w", err)
+	}
+
+	logCtx, cancelLogs := context.WithCancel(context.Background())
+	go sim.StreamContainerLogs(logCtx, containerID, sink)
+
+	inst := &cloudRunServiceInstance{
+		containerID:  containerID,
+		hostPort:     hostPort,
+		image:        localImage,
+		envSignature: envSig,
+		cancelLogs:   cancelLogs,
+	}
+	cloudRunServiceInstances.Lock()
+	if old := cloudRunServiceInstances.byName[name]; old != nil {
+		cloudRunServiceInstances.Unlock()
+		stopCloudRunServiceInstance(inst)
+		return nil, fmt.Errorf("service %q instance replaced while starting", name)
+	}
+	cloudRunServiceInstances.byName[name] = inst
+	cloudRunServiceInstances.Unlock()
+	return inst, nil
+}
+
+func deleteCloudRunServiceInstance(name string) {
+	cloudRunServiceInstances.Lock()
+	inst := cloudRunServiceInstances.byName[name]
+	delete(cloudRunServiceInstances.byName, name)
+	cloudRunServiceInstances.Unlock()
+	stopCloudRunServiceInstance(inst)
+}
+
+func stopCloudRunServiceInstance(inst *cloudRunServiceInstance) {
+	if inst == nil {
+		return
+	}
+	if inst.cancelLogs != nil {
+		inst.cancelLogs()
+	}
+	sim.StopAndRemoveContainer(inst.containerID)
+}
+
+func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInstance, body io.Reader, contentType string) ([]byte, int, error) {
+	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/", inst.hostPort)
+	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Minute}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bootstrapURL, body)
+	if err != nil {
+		return nil, -1, fmt.Errorf("build request: %w", err)
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	exitCode := 0
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
+			exitCode = n
+		}
+	} else if resp.StatusCode >= 400 {
+		exitCode = 1
+	}
+	return respBytes, exitCode, nil
+}
+
+func envSignature(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(env[k])
+		b.WriteByte('\x00')
+	}
+	return b.String()
+}
+
 // crv2Services is the package-scope handle the cloudfunctions slice
 // uses to auto-create the backing Cloud Run service when a Cloud
 // Functions Gen2 function is created. Real GCP wires the two services
@@ -292,6 +436,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 		services.Delete(name)
+		deleteCloudRunServiceInstance(name)
 		lro := newLRO(project, location, svc, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
@@ -384,18 +529,22 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		if len(bodyBytes) > 0 {
 			body = bytes.NewReader(bodyBytes)
 		}
+		env := containerEnvMap(container.Env)
 		sink := &cfLogSink{project: project, functionName: serviceID}
-		respBody, exitCode, err := invokeOverlayContainerHTTPWithBody(image, serviceID, 5*time.Minute, sink, containerEnvMap(container.Env), body, ct)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		inst, err := ensureCloudRunServiceInstance(ctx, name, serviceID, image, env, sink)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return
 		}
-		if exitCode != 0 {
-			w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			w.WriteHeader(http.StatusOK)
+		respBody, exitCode, err := postCloudRunServiceInstance(ctx, inst, body, ct)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
+			return
 		}
+		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(respBody)
 	})
 }

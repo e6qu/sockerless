@@ -52,10 +52,11 @@ type AWSConfig struct {
 
 // GCPConfig holds GCP-specific configuration.
 type GCPConfig struct {
-	Project     string             `yaml:"project,omitempty"`
-	BuildBucket string             `yaml:"build_bucket,omitempty"`
-	CloudRun    *CloudRunEnvConfig `yaml:"cloudrun,omitempty"`
-	GCF         *GCFEnvConfig      `yaml:"gcf,omitempty"`
+	Project       string             `yaml:"project,omitempty"`
+	BuildBucket   string             `yaml:"build_bucket,omitempty"`
+	BuildPlatform string             `yaml:"build_platform,omitempty"`
+	CloudRun      *CloudRunEnvConfig `yaml:"cloudrun,omitempty"`
+	GCF           *GCFEnvConfig      `yaml:"gcf,omitempty"`
 }
 
 // AzureConfig holds Azure-specific configuration.

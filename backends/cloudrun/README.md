@@ -65,6 +65,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_GCR_REGION` | `us-central1` | no | Cloud Run region |
 | `SOCKERLESS_GCR_VPC_CONNECTOR` | | no | Serverless VPC Access connector |
 | `SOCKERLESS_GCR_LOG_ID` | `sockerless` | no | Cloud Logging log ID |
+| `SOCKERLESS_GCP_BUILD_PLATFORM` | `linux/amd64` | no | Docker build platform for overlay images. Simulator integration tests set this to the host platform so local Docker executes the real image architecture. |
 | `SOCKERLESS_GCR_AGENT_IMAGE` | `sockerless/agent:latest` | no | Sidecar agent container image |
 | `SOCKERLESS_GCR_AGENT_TOKEN` | | no | Agent authentication token |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-Service bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |

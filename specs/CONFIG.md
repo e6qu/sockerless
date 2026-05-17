@@ -49,6 +49,8 @@ environments:
         securityGroupIDs: []
     gcp:
       project: my-project
+      build_bucket: sockerless-build
+      build_platform: linux/amd64
       cloudrun:
         region: us-central1
         vpcConnector: ""
@@ -152,6 +154,8 @@ Config file is tried first. If unavailable, falls back to environment variables.
 | `SOCKERLESS_GCR_REGION` | `us-central1` | | GCP region |
 | `SOCKERLESS_GCR_VPC_CONNECTOR` | | | VPC connector name |
 | `SOCKERLESS_GCR_LOG_ID` | `sockerless` | | Cloud Logging log ID |
+| `SOCKERLESS_GCP_BUILD_BUCKET` | | | GCS bucket for Cloud Build context upload |
+| `SOCKERLESS_GCP_BUILD_PLATFORM` | `linux/amd64` | | Docker build platform for overlay images |
 | `SOCKERLESS_GCR_AGENT_IMAGE` | `sockerless/agent:latest` | | Agent image |
 | `SOCKERLESS_GCR_AGENT_TOKEN` | | | Agent auth token |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | | Log fetch timeout |
@@ -166,6 +170,8 @@ Config file is tried first. If unavailable, falls back to environment variables.
 | `SOCKERLESS_GCF_TIMEOUT` | `3600` | | Function timeout (seconds) |
 | `SOCKERLESS_GCF_MEMORY` | `1Gi` | | Function memory |
 | `SOCKERLESS_GCF_CPU` | `1` | | Function CPU |
+| `SOCKERLESS_GCP_BUILD_BUCKET` | | **yes** | GCS bucket for Cloud Build source archive and overlay context upload |
+| `SOCKERLESS_GCP_BUILD_PLATFORM` | `linux/amd64` | | Docker build platform for overlay images |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | | Log fetch timeout |
 
 ### Azure Container Apps

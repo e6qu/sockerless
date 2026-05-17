@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,7 +103,9 @@ func TestMain(m *testing.M) {
 
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
+	overlayPlatform := testOverlayPlatformCloudRun()
+	overlayArch := runtime.GOARCH
+	fmt.Printf("[setup] Building %s (%s)...\n", evalImageName, overlayPlatform)
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively (toomanyrequests/429); ECR Public Gallery
@@ -116,7 +119,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", overlayPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
@@ -223,7 +226,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 			defer buildCancel()
 			bootstrapBuild := exec.CommandContext(buildCtx, "go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
 			bootstrapBuild.Dir = repoRoot + "/agent"
-			bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=amd64")
+			bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH="+overlayArch)
 			bootstrapBuild.Stdout = os.Stderr
 			bootstrapBuild.Stderr = os.Stderr
 			if err := bootstrapBuild.Run(); err != nil {
@@ -270,6 +273,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_GCR_PROJECT="+project,
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
+		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
 		// Required at NewServer per Phase 168 (no Path B fallback).
 		// Bootstrap dials back over WebSocket from inside the workload
 		// container — host.docker.internal resolves the test host.
@@ -322,6 +326,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+func testOverlayPlatformCloudRun() string {
+	return "linux/" + runtime.GOARCH
 }
 
 func TestCloudRunContainerLifecycle(t *testing.T) {

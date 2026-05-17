@@ -511,6 +511,19 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
 		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
+			if !c.Config.OpenStdin {
+				if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
+					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned after reverse-agent registration; preserving running container state")
+					return
+				}
+				agentCtx, agentCancel := context.WithTimeout(s.ctx(), 2*time.Second)
+				agentErr := s.reverseAgents.WaitForAgent(agentCtx, id)
+				agentCancel()
+				if agentErr == nil {
+					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned while reverse-agent was registering; preserving running container state")
+					return
+				}
+			}
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
@@ -528,6 +541,19 @@ func (s *Server) ContainerStart(ref string) error {
 				// transport — fail loudly rather than guess.
 				execResult, perr := gcpcommon.ParseExecResult(body)
 				if perr != nil {
+					if !c.Config.OpenStdin {
+						if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
+							s.Logger.Warn().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Str("container", id).Msg("non-envelope invoke response after reverse-agent registration; preserving running container state")
+							return
+						}
+						agentCtx, agentCancel := context.WithTimeout(s.ctx(), 2*time.Second)
+						agentErr := s.reverseAgents.WaitForAgent(agentCtx, id)
+						agentCancel()
+						if agentErr == nil {
+							s.Logger.Warn().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Str("container", id).Msg("non-envelope invoke response while reverse-agent was registering; preserving running container state")
+							return
+						}
+					}
 					s.Logger.Error().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("bootstrap response is not an exec envelope")
 					inv.ExitCode = 1
 					inv.Error = fmt.Sprintf("non-envelope response: %v", perr)
@@ -575,9 +601,19 @@ func (s *Server) ContainerStart(ref string) error {
 				id[:12], timeout, s.config.CallbackURL,
 			)}
 		}
+		if inv, ok := s.Store.GetInvocationResult(id); ok && isReverseAgentInvokeTransportError(inv.Error) {
+			s.Logger.Warn().Str("container", id).Str("error", inv.Error).Msg("clearing transport-only invoke error after reverse-agent registration")
+			s.Store.DeleteInvocationResult(id)
+		}
 	}
 
 	return nil
+}
+
+func isReverseAgentInvokeTransportError(errText string) bool {
+	return strings.Contains(errText, "post exec envelope") ||
+		strings.Contains(errText, "invoke bootstrap") ||
+		strings.Contains(errText, "exec invoke returned status")
 }
 
 // ContainerStop stops a running Cloud Run Function container.

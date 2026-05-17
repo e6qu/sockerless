@@ -43,7 +43,7 @@ func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, 
 		Dockerfile: "Dockerfile",
 		ContextTar: bytes.NewReader(contextTar),
 		Tags:       []string{imageURI},
-		Platform:   "linux/amd64",
+		Platform:   s.config.BuildPlatform,
 	})
 	if err != nil {
 		return "", fmt.Errorf("cloud build %s: %w", imageURI, err)
