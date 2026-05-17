@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1056 filed · 1053 fixed · 3 open · 2 false positives.**
+**1056 filed · 1054 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1051 | P2 | tmpfs exhaustion (bootstrap side) | 1 / 9 | When tmpfs fills (writes exceed `TMPFS_SIZE_MIB`), the write fails ENOSPC. Bootstrap surfaces this as generic "exec failed exit 1." Fix: bootstrap detects ENOSPC, returns envelope with `exit_code=28` + explicit "tmpfs exhausted at NN MiB; raise SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB or switch SOCKERLESS_<BACKEND>_STORAGE_BACKING to a persistent driver." (The startup-validation half of this BUG closed under P168.5 — `core.ParseMemoryMiB` + GCF NewServer fatal when `TMPFS_SIZE_MIB + 256 > GCF_MEMORY`; cloudrun + ACA bumped per-container memory default to 4 GiB to fit the 2 GiB tmpfs.) |
 | 1052 | P1 | Cleanup-path silent errors | 1 (silent error swallow) | `_ = s.Drivers.Network.Disconnect(...)` + `_, _ = s.aws.Lambda.DeleteFunction(...)` in `backends/lambda/backend_impl.go:912,929`, `backends/cloudrun-functions/backend_impl.go:681,850`, `backends/cloudrun/backend_impl.go:798`. Per no-fallback directive: cleanup failures propagate. `docker rm` succeeds only when cloud cleanup succeeds. If cleanup fails, `ContainerRemove` returns the cloud error. Stricter than typical Docker; matches the rule. |
 | 1053 | P2 | FaaS pod lifetime > platform max | 9 (no-extension-hack) | When a pod exceeds platform max invocation duration (Lambda 15min, GCF Gen2 / AZF 60min), the bootstrap's WS closes near the deadline. Currently the next `docker exec` returns a generic 500. Fix: bootstrap monitors deadline (Lambda `context.RemainingTime`; GCF/AZF equivalent), sends `lifetime_expired` WS message at T-5s, closes WS. Sockerless's reverse-agent handler marks container Stopped with reason `FaaSPodLifetimeExceeded`; next ExecStart returns operator-guidance error ("use ECS / ACA / Cloud Run Services for longer pods"). No transparent re-invoke / warm-pool / checkpoint-restart. User confirmed FaaS max is a hard limit (2026-05-17). |
 

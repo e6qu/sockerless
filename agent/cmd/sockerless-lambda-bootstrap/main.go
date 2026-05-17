@@ -357,12 +357,18 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 		}
 	}
 
+	stderrBytes := errBuf.Bytes()
+	if agent.DetectENOSPC(stderrBytes) {
+		code = agent.ENOSPCExitCode
+		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "lambda")
+	}
+
 	// Encode the result as JSON so the lambda backend's exec-attach
 	// adapter can recover it from the `lambda.Invoke` response.
 	res := execResult{}
 	res.SockerlessExecResult.ExitCode = code
 	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(outBuf.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(errBuf.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
 	body, _ := json.Marshal(res)
 	// Lambda's invocation contract returns one body — we put the JSON
 	// response in stdout (the /response payload), leave stderr empty,

@@ -35,6 +35,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/sockerless/agent"
 )
 
 // execEnvelopeRequest is the Path B exec request shape (see
@@ -512,10 +514,16 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: exec argv=%v exit=0 stdout=%dB stderr=%dB\n", env.Argv, stdout.Len(), stderr.Len())
 	}
 
+	stderrBytes := stderr.Bytes()
+	if agent.DetectENOSPC(stderrBytes) {
+		exitCode = agent.ENOSPCExitCode
+		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "gcf")
+	}
+
 	var res execEnvelopeResponse
 	res.SockerlessExecResult.ExitCode = exitCode
 	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderr.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
