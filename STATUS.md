@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-166-test-pyramid-realfixes` — PR #167 open. |
-| In-flight | **Phase 166 — real fixes for Phase 165's 3 Open BUGs (1040 Azure azurerm, 1041 GCP IAM SA, 1042 AWS 5 sim handler gaps).** All 3 closed real per user directive *"no fallbacks, no workarounds, real actual solutions and faithful API compliance"*. PR #167 contains 3 commits. AWS (1042): real impls of KMS GetKeyPolicy/ListResourceTags/GetKeyRotationStatus + SM GetResourcePolicy + SSM AddTagsToResource/RemoveTagsFromResource/ListTagsForResource + DynamoDB Content-Type:application/x-amz-json-1.0 + WarmThroughput + DescribeContinuousBackups/TimeToLive/ListTagsOfResource/Update*/Tag/Untag + TableId/ProvisionedThroughput/etc + S3 14 sub-resource query handlers. Azure (1040): wired azurerm provider via sim's existing /metadata/endpoints + /<tenant>/oauth2/v2.0/token + 12 new resources (ACR + ACA env + Container App + Container App Job + AZF Function App + Service Plan + Storage + UAI + Private DNS + Log Analytics + App Insights + resource_group). GCP (1041): root-caused via gh-api-reading-provider-source — `google_service_account` routes through `iambeta.NewClient` which uses `iam_beta_custom_endpoint` (NOT `iam_custom_endpoint`); added the right setting + the resource. |
-| Last merged | PR #165 — Phase 165 (2026-05-17, `288b76d3`). State-save PR #166 awaits user merge. |
+| Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: BUG-1067 and BUG-1071 are fixed and PR CI run `26015778687` is green. CI run `26014253175` exposed AZF still lacking a real bootstrap; AZF now has `agent/cmd/sockerless-azf-bootstrap`, backend ACR overlay materialization via `SOCKERLESS_AZF_BOOTSTRAP`, runtime `SOCKERLESS_USER_*` argv preservation, bootstrap exit-code header handling, and Azure simulator HTTP invocation of overlay Function containers with reverse-agent dial-back. Previous chunk fixed BUG-1069/1091/1092/1093 for ACA Apps and Cloud Run/GCF alpine harnesses. Remaining: continue with runner/live/test-pyramid follow-ups 1072–1076. External `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
+| Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1044 fixed · 0 open · 2 false positives. |
+| Bugs | 1093 filed · 1088 fixed · 5 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -46,28 +46,35 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` accept both typed and string-coerced JSON (what `gh api -f` sends).
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000.
 
-## Phase 165 — Third vibe-slop sweep + test-pyramid expansion + continuity-doc compression (in flight)
+## Phase 167 — Pod-model analysis + Phase 168 plan (doc-only; in flight)
 
-User directive (2026-05-17): re-run vibe-slop on a fresh main; plan test-pyramid expansion against real adaptors (SDK + terraform-provider + CLI); single PR with sub-phases; verify after every significant chunk; prune obsolete continuity-doc info for cross-compaction durability; codex CLI review at end.
+User directive (2026-05-17): compare pod abstraction across 7 backends; trace runner ↔ backend call sequences; root-cause the "12-step CI job = 12+ min" symptom; design simplifications. Analysis only — no code edits.
 
-Closed in this PR (9 BUGs):
-- **Vibe-slop sweep #3** — silent `io.Copy` swallows in image-stream + build response paths (1033); dead `fmt.Sprintf` silencer + lying comment in lambda e2e test (1034); `w.Write` style inconsistency at 3 outlier sites (1035); ~50 test-file docstrings carrying Phase / sub-phase metadata (1036).
-- **Test-pyramid expansion** — Azure terraform-tests + storage_account + key_vault (1039); GCP terraform-tests + subnet + firewall + GCS object + a surfaced sim-defect-fix on GCS object selfLink/id/mediaLink (1038).
-- **Codex CLI review findings** — `account_kind="StorageV2"` rejected by azurestack provider at plan time (1043); GCS object URL not percent-encoded for names containing `/`/space/`?` (1044).
+Phase 167 deliverables (this branch):
+- Cross-backend pod-model comparison: long-lived backends (docker/ecs/cloudrun/aca) hold one container/task/revision for the entire job; FaaS backends (lambda/gcf/azf) are invoke-on-demand. Per-backend exec dispatch differs in ways that the audit caught + codex review re-checked.
+- Root cause of "12 steps = 12+ min": **Path B silent fallback in lambda + cloudrun + cloudrun-functions** dispatch. When the in-container reverse-agent doesn't dial back, every `docker exec` becomes a fresh function invocation cold-starting in 30-90s. 12 invocations × cold-start = the wall-clock symptom.
+- Phase 168 plan (in this file's Active phase section): unify exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); rip all Path B code; rip the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime hard-capped at platform max.
+- Driver model preserved: typed `core.ExecDriver` stays as the load-bearing abstraction. Each backend registers ONE driver matching its platform's primitive. Operator pluggability remains.
 
-Staged forward as Open BUGs for Phase 166:
-- **1040** — Azure terraform-tests azurerm-research for ACA + AZF + ACR + Application Insights + identity + private DNS + Key Vault data-plane.
-- **1041** — GCP terraform-tests follow-up: IAM SA, Cloud Functions Gen2, Compute instance/instance_template, Cloud Build trigger, Logging sink/metric, Pub/Sub.
-- **1042** — AWS terraform-tests: first attempt surfaced 5 distinct sim handler gaps (S3 path-style mismatch, DynamoDB DescribeTable shape, KMS GetKeyPolicy, SecretsManager GetResourcePolicy, SSM ListTagsForResource); each needs its own commit with sim handler additions.
+Codex review caught 3 corrections during Phase 167:
+- AZF is Path A only (no Path B) — opposite of my initial claim.
+- Tmpfs default scope must exclude lambda + azf (their volume translators reject `BackingMemory`).
+- Tmpfs size clamping is itself a silent fallback (must fail-loud startup instead).
+
+Self-caught during the "does the exec driver still make sense" check: **cloudrun ALSO has the Path A/B pattern**, missed in the initial Phase 167 analysis. Added to Phase 168 scope as BUG-1054.
+
+User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration is hard limit (no extension hacks); `execStartViaInvoke` ripped entirely; cleanup failures propagate.
+
+User-pending for Phase 168: 6 sizing / disposition questions in DO_NEXT.md.
 
 ## Recently closed phases (last 5)
 
 | PR | Phase | Headline |
 |---|---|---|
-| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP 4 → 11 resources; Azure 1 → 5. Merged 2026-05-17 at `616dcd98`. |
+| #167 | 166 | Real fixes for Phase 165 follow-ups (4 BUGs: 1040 Azure azurerm + 1041 GCP IAM SA + 1042 AWS 5 sim handler gaps + 1045 codex state-persistence). Merged 2026-05-17 at `49050c2d`. |
+| #165 | 165 | Third vibe-slop sweep + sim test-pyramid expansion + codex review + continuity-doc compression. 9 BUGs closed. Merged 2026-05-17 at `288b76d3`. |
+| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs). Merged 2026-05-17 at `616dcd98`. |
 | #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
-| #162 | 162 | Vibe-coding catalogue refresh — `docs/VIBE_CODING.md` 23 → 35 patterns; `avoid-vibe-slop` skill 17 → 26 items. Doc-only. Merged 2026-05-16 at `4f602988`. |
-| #161 | 161 | First comprehensive vibe-slop sweep — 18 BUGs closed + bleephub GraphQL completion + ProjectManager instance-based lifecycle rewrite. Merged 2026-05-16 at `841f2456`. |
-| #160 | 160 | Project-local Claude skills (`sim-handler-checklist`, `cross-resource-stack-test`) + component-README adaptor-led sweep. Merged 2026-05-16 at `aeb0ac6e`. |
+| #162 | 162 | Vibe-coding catalogue refresh (12 new patterns 24–35). Doc-only. Merged 2026-05-16 at `4f602988`. |
 
-Older phases (#112–#159): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

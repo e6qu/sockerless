@@ -2,6 +2,7 @@ package aca
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -68,6 +69,30 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		s.Logger.Warn().Err(err).Str("image", config.Image).Msg("ACR cache-rule lookup failed; using ref as-is")
 	} else {
 		config.Image = resolved
+	}
+
+	if s.useACAOverlayPath(config.Image) {
+		if s.config.BootstrapBinaryPath == "" {
+			return nil, &api.ServerError{Message: "SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_BOOTSTRAP so ACA Apps run an image with the reverse-agent bootstrap baked in"}
+		}
+		originalImage := config.Image
+		spec := acaOverlaySpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
+		}
+		contentTag := acaOverlayContentTag("aca-", spec)
+		overlayURI, err := s.ensureACAOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure aca overlay image: %w", err)
+		}
+		config.Env = append(config.Env, acaOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Image = overlayURI
+		config.Entrypoint = nil
+		config.Cmd = nil
 	}
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
@@ -239,7 +264,10 @@ func (s *Server) ContainerStart(ref string) error {
 	// below can be deleted when Jobs support is sunset.
 	if s.config.UseApp {
 		acaState, _ := s.resolveAppACAState(s.ctx(), id)
-		return s.startSingleContainerApp(id, c, acaState, exitCh)
+		if err := s.startSingleContainerApp(id, c, acaState, exitCh); err != nil {
+			return err
+		}
+		return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 	}
 
 	// Build ACA Job spec
@@ -532,16 +560,22 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// — delete the backing cloud resource. Jobs and Apps are
 	// distinct ARM resource types so cached state is unambiguous.
+	// Errors propagate per the no-fallback rule.
+	var cleanupErrs []error
 	if s.config.UseApp {
 		appState, _ := s.resolveAppACAState(s.ctx(), id)
 		if appState.AppName != "" {
-			s.deleteApp(appState.AppName)
+			if err := s.deleteAppStrict(appState.AppName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(appState.AppName)
 		}
 	} else {
 		acaState, _ := s.resolveACAState(s.ctx(), id)
 		if acaState.JobName != "" {
-			s.deleteJob(acaState.JobName)
+			if err := s.deleteJobStrict(acaState.JobName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(acaState.JobName)
 		}
 	}
@@ -572,7 +606,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -594,6 +630,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

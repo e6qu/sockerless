@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -41,6 +44,41 @@ func (e *enumString) UnmarshalJSON(data []byte) error {
 }
 
 func (e enumString) MarshalJSON() ([]byte, error) {
+	if e == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(string(e))
+}
+
+type vpcEgressString string
+
+func (e *vpcEgressString) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*e = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*e = vpcEgressString(s)
+		return nil
+	}
+	switch strings.TrimSpace(string(data)) {
+	case "1":
+		*e = "ALL_TRAFFIC"
+	case "2":
+		*e = "PRIVATE_RANGES_ONLY"
+	case "0":
+		*e = ""
+	default:
+		return fmt.Errorf("unknown VpcAccess egress enum %s", data)
+	}
+	return nil
+}
+
+func (e vpcEgressString) MarshalJSON() ([]byte, error) {
 	if e == "" {
 		return []byte("null"), nil
 	}
@@ -108,8 +146,8 @@ type RevisionScaling struct {
 // internal-ingress IP. The backend sets this when Config.VPCConnector
 // is non-empty.
 type VpcAccess struct {
-	Connector string `json:"connector,omitempty"`
-	Egress    string `json:"egress,omitempty"`
+	Connector string          `json:"connector,omitempty"`
+	Egress    vpcEgressString `json:"egress,omitempty"`
 }
 
 // TrafficTarget is one entry in the Service's traffic-split list.
@@ -118,6 +156,134 @@ type TrafficTarget struct {
 	Revision string `json:"revision,omitempty"`
 	Percent  int32  `json:"percent,omitempty"`
 	Tag      string `json:"tag,omitempty"`
+}
+
+func containerEnvMap(envVars []EnvVar) map[string]string {
+	if len(envVars) == 0 {
+		return nil
+	}
+	env := make(map[string]string, len(envVars))
+	for _, ev := range envVars {
+		env[ev.Name] = ev.Value
+	}
+	return env
+}
+
+type cloudRunServiceInstance struct {
+	containerID  string
+	hostPort     int
+	image        string
+	envSignature string
+	cancelLogs   context.CancelFunc
+}
+
+var cloudRunServiceInstances = struct {
+	sync.Mutex
+	byName map[string]*cloudRunServiceInstance
+}{byName: map[string]*cloudRunServiceInstance{}}
+
+func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image string, env map[string]string, sink sim.LogSink) (*cloudRunServiceInstance, error) {
+	localImage := sim.ResolveLocalImage(image)
+	envSig := envSignature(env)
+
+	cloudRunServiceInstances.Lock()
+	if inst := cloudRunServiceInstances.byName[name]; inst != nil && inst.image == localImage && inst.envSignature == envSig {
+		cloudRunServiceInstances.Unlock()
+		return inst, nil
+	}
+	old := cloudRunServiceInstances.byName[name]
+	delete(cloudRunServiceInstances.byName, name)
+	cloudRunServiceInstances.Unlock()
+	stopCloudRunServiceInstance(old)
+
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, err
+	}
+	hostPort, err := pickFreeTCPPort()
+	if err != nil {
+		return nil, fmt.Errorf("pick free port: %w", err)
+	}
+	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
+		Image:        localImage,
+		Architecture: platform,
+		HostPort:     hostPort,
+		Env: mergeEnv(mergeEnv(map[string]string{
+			"PORT": "8080",
+		}, env), hostMetadataEnv()),
+		Name:       fmt.Sprintf("sockerless-sim-cloudrun-svc-%s-%d", serviceID, hostPort),
+		Labels:     map[string]string{"sockerless-sim-service": serviceID},
+		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxCloudRun,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start service container: %w", err)
+	}
+
+	logCtx, cancelLogs := context.WithCancel(context.Background())
+	go sim.StreamContainerLogs(logCtx, containerID, sink)
+
+	inst := &cloudRunServiceInstance{
+		containerID:  containerID,
+		hostPort:     hostPort,
+		image:        localImage,
+		envSignature: envSig,
+		cancelLogs:   cancelLogs,
+	}
+	cloudRunServiceInstances.Lock()
+	if old := cloudRunServiceInstances.byName[name]; old != nil {
+		cloudRunServiceInstances.Unlock()
+		stopCloudRunServiceInstance(inst)
+		return nil, fmt.Errorf("service %q instance replaced while starting", name)
+	}
+	cloudRunServiceInstances.byName[name] = inst
+	cloudRunServiceInstances.Unlock()
+	return inst, nil
+}
+
+func deleteCloudRunServiceInstance(name string) {
+	cloudRunServiceInstances.Lock()
+	inst := cloudRunServiceInstances.byName[name]
+	delete(cloudRunServiceInstances.byName, name)
+	cloudRunServiceInstances.Unlock()
+	stopCloudRunServiceInstance(inst)
+}
+
+func stopCloudRunServiceInstance(inst *cloudRunServiceInstance) {
+	if inst == nil {
+		return
+	}
+	if inst.cancelLogs != nil {
+		inst.cancelLogs()
+	}
+	sim.StopAndRemoveContainer(inst.containerID)
+}
+
+func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInstance, body io.Reader, contentType string) ([]byte, int, error) {
+	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/", inst.hostPort)
+	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	}
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 5*time.Minute)
+}
+
+func envSignature(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(env[k])
+		b.WriteByte('\x00')
+	}
+	return b.String()
 }
 
 // crv2Services is the package-scope handle the cloudfunctions slice
@@ -246,6 +412,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 		services.Delete(name)
+		deleteCloudRunServiceInstance(name)
 		lro := newLRO(project, location, svc, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
@@ -329,7 +496,8 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "service %q has no container image", name)
 			return
 		}
-		image := svc.Template.Containers[0].Image
+		container := svc.Template.Containers[0]
+		image := container.Image
 		bodyBytes, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ct := r.Header.Get("Content-Type")
@@ -337,18 +505,22 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		if len(bodyBytes) > 0 {
 			body = bytes.NewReader(bodyBytes)
 		}
+		env := containerEnvMap(container.Env)
 		sink := &cfLogSink{project: project, functionName: serviceID}
-		respBody, exitCode, err := invokeOverlayContainerHTTPWithBody(image, serviceID, 5*time.Minute, sink, body, ct)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		inst, err := ensureCloudRunServiceInstance(ctx, name, serviceID, image, env, sink)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return
 		}
-		if exitCode != 0 {
-			w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			w.WriteHeader(http.StatusOK)
+		respBody, exitCode, err := postCloudRunServiceInstance(ctx, inst, body, ct)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
+			return
 		}
+		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(respBody)
 	})
 }

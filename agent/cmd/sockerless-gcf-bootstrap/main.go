@@ -30,11 +30,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/sockerless/agent"
 )
 
 // execEnvelopeRequest is the Path B exec request shape (see
@@ -117,6 +122,11 @@ const (
 	// exec-envelope call. Default: 3600 (1 h). At timeout: SIGTERM →
 	// 30s grace → SIGKILL; bootstrap reports exit code 124.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+	// SOCKERLESS_CALLBACK_URL — reverse-agent WebSocket URL (required
+	// per Phase 168; backend's ExecStart fails loud without an agent).
+	envCallbackURL = "SOCKERLESS_CALLBACK_URL"
+	// SOCKERLESS_CONTAINER_ID — session_id for the reverse-agent WS.
+	envContainerID = "SOCKERLESS_CONTAINER_ID"
 )
 
 const (
@@ -214,6 +224,25 @@ func main() {
 		port = "8080"
 	}
 
+	// Reverse-agent dial-back (Phase 168). Required for `docker exec`
+	// from the backend.
+	callbackURL := os.Getenv(envCallbackURL)
+	containerID := os.Getenv(envContainerID)
+	if callbackURL != "" && containerID != "" {
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: reverse-agent dial failed: %v\n", err)
+			os.Exit(1)
+		}
+		connMu := &sync.Mutex{}
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
+		go sendLifetimeExpiredOnSIGTERM(conn, connMu)
+		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
+	} else {
+		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled")
+	}
+
 	// Pod mode: pre-warm the supervisor so background members start
 	// once per function instance, not once per invocation. The HTTP
 	// handler then runs the main member's entrypoint as a foreground
@@ -236,6 +265,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	<-sigCh
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.SendLifetimeExpired(conn, connMu)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: send lifetime_expired on SIGTERM failed: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: sent lifetime_expired on SIGTERM")
+		}
+	case <-time.After(2 * time.Second):
+		fmt.Fprintln(os.Stderr, "sockerless-gcf-bootstrap: timed out sending lifetime_expired on SIGTERM")
+	}
+	os.Exit(0)
 }
 
 // handleInvoke runs the user's entrypoint+cmd as a subprocess and writes
@@ -512,10 +563,19 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: exec argv=%v exit=0 stdout=%dB stderr=%dB\n", env.Argv, stdout.Len(), stderr.Len())
 	}
 
+	stderrBytes := stderr.Bytes()
+	// ENOSPC override only when the subprocess actually failed
+	// (BUG-1062). Otherwise a successful command that mentions
+	// the marker on stderr gets force-coerced to 28.
+	if exitCode != 0 && agent.DetectENOSPC(stderrBytes) {
+		exitCode = agent.ENOSPCExitCode
+		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "gcf")
+	}
+
 	var res execEnvelopeResponse
 	res.SockerlessExecResult.ExitCode = exitCode
 	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderr.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))

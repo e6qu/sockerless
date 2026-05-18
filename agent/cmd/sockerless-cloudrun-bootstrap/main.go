@@ -35,11 +35,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/sockerless/agent"
 )
 
 const (
@@ -76,6 +81,16 @@ const (
 	// → 30 s grace → SIGKILL; bootstrap reports exit code 124 to match
 	// GNU `timeout(1)`. Set to 0 or empty to disable.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
+	// SOCKERLESS_CALLBACK_URL — WebSocket URL the bootstrap dials back
+	// to as the reverse-agent endpoint. Required per Phase 168
+	// (no-fallback). Cloud Run Services + GCF Gen2 inject this via
+	// jobspec.go / pod_service.go. Without it the backend's ExecStart
+	// fails with operator guidance.
+	envCallbackURL = "SOCKERLESS_CALLBACK_URL"
+	// SOCKERLESS_CONTAINER_ID — the sockerless container ID, used as
+	// the session_id in the reverse-agent WS handshake. The backend's
+	// HandleReverseAgentWS reads it from the URL query.
+	envContainerID = "SOCKERLESS_CONTAINER_ID"
 )
 
 const (
@@ -186,6 +201,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: parsed %d sync mounts: %v\n", len(syncMounts), syncMounts)
 	}
 
+	// Start the reverse-agent dial-back so the backend's ExecStart
+	// has somewhere to route exec messages. Required per Phase 168.
+	// The HTTP server below stays — it handles the default-invoke
+	// path (initial workload start + the gitlab-runner stdin-piped
+	// envelope), but per-step `docker exec` flows through the WS.
+	callbackURL := os.Getenv(envCallbackURL)
+	containerID := os.Getenv(envContainerID)
+	if callbackURL != "" && containerID != "" {
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent dial failed: %v\n", err)
+			os.Exit(1)
+		}
+		connMu := &sync.Mutex{}
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
+		go sendLifetimeExpiredOnSIGTERM(conn, connMu)
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
+	} else {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled (backend ExecStart will return operator-guidance)")
+	}
+
 	port := os.Getenv(envPort)
 	if port == "" {
 		port = "8080"
@@ -204,6 +241,28 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	<-sigCh
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.SendLifetimeExpired(conn, connMu)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: send lifetime_expired on SIGTERM failed: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: sent lifetime_expired on SIGTERM")
+		}
+	case <-time.After(2 * time.Second):
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: timed out sending lifetime_expired on SIGTERM")
+	}
+	os.Exit(0)
 }
 
 // handleInvoke dispatches: if the request body parses as an
@@ -389,10 +448,19 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: exec argv=%v exit=0 stdout=%dB stderr=%dB\n", env.Argv, stdout.Len(), stderr.Len())
 	}
 
+	stderrBytes := stderr.Bytes()
+	// ENOSPC override only when the subprocess actually failed
+	// (BUG-1062). Otherwise a successful command that mentions
+	// the marker on stderr gets force-coerced to 28.
+	if exitCode != 0 && agent.DetectENOSPC(stderrBytes) {
+		exitCode = agent.ENOSPCExitCode
+		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "cloudrun")
+	}
+
 	var res execEnvelopeResponse
 	res.SockerlessExecResult.ExitCode = exitCode
 	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderr.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))

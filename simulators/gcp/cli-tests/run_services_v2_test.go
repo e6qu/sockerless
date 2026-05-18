@@ -26,7 +26,11 @@ func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
 		"labels": {"sockerless_managed": "true"},
 		"template": {
 			"containers": [{"image": "gcr.io/test-project/hello"}],
-			"scaling": {"minInstanceCount": 1, "maxInstanceCount": 1}
+			"scaling": {"minInstanceCount": 1, "maxInstanceCount": 1},
+			"vpcAccess": {
+				"connector": "projects/test-project/locations/us-central1/connectors/test-connector",
+				"egress": 1
+			}
 		}
 	}`
 	createOut := httpDoJSON(t, "POST", servicesBaseURL()+"?serviceId=cli-svc-roundtrip", createBody)
@@ -42,6 +46,12 @@ func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
 			TerminalCondition   struct {
 				State string `json:"state"`
 			} `json:"terminalCondition"`
+			Template struct {
+				VpcAccess struct {
+					Connector string `json:"connector"`
+					Egress    string `json:"egress"`
+				} `json:"vpcAccess"`
+			} `json:"template"`
 		} `json:"response"`
 	}
 	parseJSON(t, createOut, &lro)
@@ -52,6 +62,8 @@ func TestCloudRunV2Services_CLI_CreateGetDelete(t *testing.T) {
 	assert.Equal(t, "true", lro.Response.Labels["sockerless_managed"])
 	assert.NotEmpty(t, lro.Response.LatestReadyRevision)
 	assert.Equal(t, "CONDITION_SUCCEEDED", lro.Response.TerminalCondition.State)
+	assert.Equal(t, "projects/test-project/locations/us-central1/connectors/test-connector", lro.Response.Template.VpcAccess.Connector)
+	assert.Equal(t, "ALL_TRAFFIC", lro.Response.Template.VpcAccess.Egress)
 
 	getOut := httpDoJSON(t, "GET", runServiceURL("cli-svc-roundtrip"), "")
 	var got struct {

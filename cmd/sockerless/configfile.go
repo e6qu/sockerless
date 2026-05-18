@@ -48,9 +48,11 @@ type awsConfig struct {
 }
 
 type gcpConfig struct {
-	Project  string             `yaml:"project,omitempty"`
-	CloudRun *cloudRunEnvConfig `yaml:"cloudrun,omitempty"`
-	GCF      *gcfEnvConfig      `yaml:"gcf,omitempty"`
+	Project       string             `yaml:"project,omitempty"`
+	BuildBucket   string             `yaml:"build_bucket,omitempty"`
+	BuildPlatform string             `yaml:"build_platform,omitempty"`
+	CloudRun      *cloudRunEnvConfig `yaml:"cloudrun,omitempty"`
+	GCF           *gcfEnvConfig      `yaml:"gcf,omitempty"`
 }
 
 type azureConfig struct {

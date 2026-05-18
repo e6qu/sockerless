@@ -85,7 +85,7 @@ func TestContainerApps_CrossJobDNS(t *testing.T) {
 	startJob("beta")
 
 	// 5. Wait for containers to exist. Azure exec container name
-	// convention: sockerless-sim-azure-execution-<shortExecID[:12]>.
+	// convention: sockerless-sim-azure-execution-<executionName>.
 	// Easier path: filter docker ps by label sockerless-sim-type=
 	// aca-job-execution and the sockerless-sim-job label (we added
 	// none, but the jobs are distinguishable by their entry in the

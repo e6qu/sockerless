@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +65,34 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Resolve Docker Hub images to ACR or normalize for Azure Functions
 	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
+
+	originalImage := config.Image
+	if s.useAZFOverlayPath(originalImage) {
+		spec := azfOverlaySpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
+		}
+		contentTag := azfOverlayContentTag("azf-", spec)
+		overlayURI, err := s.ensureAZFOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure azf overlay image: %w", err)
+		}
+		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Image = overlayURI
+		config.Entrypoint = nil
+		config.Cmd = nil
+	} else if hasAZFOverlayRepo(originalImage) {
+		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Entrypoint = nil
+		config.Cmd = nil
+	}
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -211,11 +241,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	appSettings = append(appSettings, &armappservice.NameValuePair{
 		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
 	})
-	if s.config.CallbackURL != "" {
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
-		})
-	}
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+	})
 
 	// Build the Function App Site resource
 	siteConfig := &armappservice.SiteConfig{
@@ -376,7 +404,7 @@ func (s *Server) ContainerStart(ref string) error {
 				if len(body) > 0 && string(body) != "{}" {
 					s.Store.LogBuffers.Store(id, body)
 				}
-				inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+				inv.ExitCode = azfBootstrapExitCode(resp)
 				if inv.ExitCode != 0 {
 					inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 					s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
@@ -391,7 +419,38 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}()
 
+	// Wait for the in-function bootstrap to register a reverse-agent
+	// before ContainerStart returns. Skip in the OpenStdin one-shot
+	// path. For exec-driven callers the first ExecStart MUST find an
+	// agent (no fallback).
+	if !c.Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("azf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_AZF_BOOTSTRAP_TIMEOUT_SEC). The Function App was deployed and "+
+					"invoked but the in-function bootstrap never dialled back to "+
+					"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet / NSG.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
+
 	return nil
+}
+
+func azfBootstrapExitCode(resp *http.Response) int {
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, err := strconv.Atoi(hdr); err == nil {
+			return n
+		}
+	}
+	return core.HTTPStatusToExitCode(resp.StatusCode)
 }
 
 // ContainerStop stops a running Azure Functions container.
@@ -481,12 +540,13 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.StopHealthCheck(id)
 
-	// Delete Function App (best-effort)
+	// Delete Function App. Errors propagate per the no-fallback rule.
+	var cleanupErrs []error
 	azfState, _ := s.AZF.Get(id)
 	if azfState.FunctionAppName != "" {
 		_, err := s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, azfState.FunctionAppName, nil)
-		if err != nil {
-			s.Logger.Debug().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("failed to delete Function App")
+		if err != nil && !azurecommon.IsNotFound(err) {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete function app %q: %w", azfState.FunctionAppName, err))
 		}
 	}
 
@@ -501,7 +561,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -524,6 +586,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

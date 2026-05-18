@@ -111,7 +111,7 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	// re-reads the live Service object with Uri populated. Trusting
 	// svc.Uri=="" here would silently skip the invoke.
 	go s.invokeServiceDefaultCmd(id, exitCh, false /* skipIfNoStdin: single-container `docker run` should default-invoke */)
-	return nil
+	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 
 // invokeServiceDefaultCmd POSTs an empty body to the Service URL,
@@ -463,7 +463,7 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 	// GH actions/runner pattern doesn't attach → no stdin → skip POST
 	// and let the bootstrap serve docker-exec requests directly.
 	go s.invokeServiceDefaultCmd(mainID, exitCh, true /* skipIfNoStdin */)
-	return nil
+	return s.waitForReverseAgentAfterStart(mainID, podContainers[0].Config.OpenStdin)
 }
 
 // waitForServiceURL polls the Service via GetService until Uri is
@@ -488,21 +488,35 @@ func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) st
 	return ""
 }
 
-// deleteService deletes a Cloud Run Service and waits for the LRO to
-// complete. Best-effort: errors are logged, not propagated, so caller
-// cleanup paths stay simple.
+// deleteService deletes a Cloud Run Service (best-effort, error logged).
+// Used by rollback paths inside ContainerStart where the primary
+// error already carries operator-visible context. ContainerRemove
+// uses deleteServiceStrict — that one propagates errors so
+// `docker rm` only succeeds when the cloud is clean.
 func (s *Server) deleteService(serviceName string) {
+	if err := s.deleteServiceStrict(serviceName); err != nil {
+		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("deleteService: cloud delete failed (rollback path)")
+	}
+}
+
+// deleteServiceStrict deletes a Cloud Run Service and returns nil on
+// success or when the service is already gone. Errors propagate.
+// Used by ContainerRemove for the no-fallback cleanup contract.
+func (s *Server) deleteServiceStrict(serviceName string) error {
 	if serviceName == "" || s.gcp == nil || s.gcp.Services == nil {
-		return
+		return nil
 	}
 	op, err := s.gcp.Services.DeleteService(context.Background(), &runpb.DeleteServiceRequest{
 		Name: serviceName,
 	})
 	if err != nil {
-		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("failed to initiate service delete")
-		return
+		if gcpcommon.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("delete cloud run service %q: %w", serviceName, err)
 	}
-	if _, err := op.Wait(context.Background()); err != nil {
-		s.Logger.Warn().Err(err).Str("service", serviceName).Msg("service delete wait failed")
+	if _, werr := op.Wait(context.Background()); werr != nil {
+		return fmt.Errorf("await delete cloud run service %q: %w", serviceName, werr)
 	}
+	return nil
 }

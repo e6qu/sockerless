@@ -53,6 +53,9 @@ type Server struct {
 
 // NewServer creates a new Cloud Run backend server.
 func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Server {
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("Cloud Run backend requires SOCKERLESS_CALLBACK_URL — the in-Service bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback). Set the env var to a URL the Service can reach (typically a public LB or VPC-internal address reachable via Serverless VPC Connector).")
+	}
 	// Hash the bootstrap binary at startup so OverlayContentTag changes
 	// whenever the binary changes. Mirror of gcf's path; without this,
 	// the AR overlay cache hits forever and updates to the bootstrap
@@ -152,7 +155,17 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		logger.Warn().Err(err).Msg("gcs-sync driver init failed — operators using `gcs-sync` Backing will see resolve errors")
 	}
 	s.storageBackings.Register(gcpcommon.NewPDEphemeralDriver(config.Region+"-a", 10))
-	s.storageBackings.Register(core.NewMemoryDriver(64))
+	tmpfsMiB, terr := core.TmpfsSizeFromEnv("cloudrun")
+	if terr != nil {
+		logger.Fatal().Err(terr).Msg("invalid SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB")
+	}
+	s.storageBackings.Register(core.NewMemoryDriver(tmpfsMiB))
+	// Default storage backing for SharedVolumes that don't set Backing
+	// explicitly: memory (tmpfs). Cloud Run Services / Jobs accept
+	// EmptyDir{Medium: MEMORY} natively, so memory is the cheapest
+	// safe default. Operators wanting durability across exec / restart
+	// must set Backing: gcs-sync or pd-ephemeral explicitly.
+	s.storageBackings.SetDefault(core.BackingMemory)
 
 	mode := "cloud"
 	if config.EndpointURL != "" {

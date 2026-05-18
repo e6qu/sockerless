@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 	"testing"
@@ -30,10 +31,17 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
 var evalImageName string
+
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/gcf/reverse`).
+var backendPort int
+
+const gcfExecE2EEnv = "SOCKERLESS_GCF_EXEC_E2E"
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -125,12 +133,15 @@ func TestMain(m *testing.M) {
 	step := func(label string) { fmt.Fprintf(os.Stderr, "[testmain] %s\n", label) }
 	step("entered TestMain (target=" + target + ")")
 
-	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract.
+	overlayPlatform := testOverlayPlatformGCF()
+	overlayArch := runtime.GOARCH
+
+	// Multi-stage Docker build uses the same platform the backend's
+	// overlay Cloud Build path uses for this test run.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	step("docker build " + evalImageName + " (linux/arm64)")
-	fmt.Printf("[sim] Building %s (linux/arm64)...\n", evalImageName)
+	step("docker build " + evalImageName + " (" + overlayPlatform + ")")
+	fmt.Printf("[sim] Building %s (%s)...\n", evalImageName, overlayPlatform)
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively; ECR Public Gallery mirrors the Docker
@@ -144,7 +155,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", overlayPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
@@ -164,28 +175,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		os.Exit(1)
 	}
 
-	// Tests that don't use eval-arithmetic still pass plain "alpine:latest"
-	// as the container image. The backend rewrites that to the AR URL via
-	// gcpcommon.ResolveGCPImageURI; Cloud Build's FROM then needs the
-	// rewritten URL to resolve locally. Pre-pull alpine and tag it to the
-	// AR URL so `docker build` (run by the sim's executor) finds it in
-	// the local cache instead of attempting an anonymous AR token fetch
-	// (which 403s on CI for nonexistent AR projects).
-	step("docker pull alpine:latest + AR-tag")
-	fmt.Println("[sim] Pre-pulling alpine:latest from ECR Public Gallery...")
-	// Pull from public.ecr.aws (no anonymous-pull rate limit), then
-	// re-tag to the Docker Hub form the backend expects.
-	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to pull alpine:latest: %v\n%s", err, out)
-		os.Exit(1)
-	}
-	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to retag alpine:latest: %v\n%s", err, out)
-		os.Exit(1)
-	}
+	// Tests that don't use eval-arithmetic still pass plain
+	// "alpine:latest" as the container image. BuildKit can consume a
+	// FROM image without leaving the source ref tagged locally, so build
+	// the Docker Hub and AR tags explicitly from the same real ECR Public
+	// base instead of assuming the source tag exists.
+	step("tag cached alpine:latest + AR-tag")
 	alpineARTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/alpine:latest"
-	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to AR-tag alpine:latest: %v\n%s", err, out)
+	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
+	alpineBuild := exec.Command("docker", "build",
+		"--platform", overlayPlatform,
+		"-t", "alpine:latest",
+		"-t", alpineARTag,
+		"-f", "-", repoRoot)
+	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+	if out, err := alpineBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build alpine local tags: %v\n%s", err, out)
 		os.Exit(1)
 	}
 
@@ -272,8 +277,9 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
-		// Build the sockerless-gcf-bootstrap binary.
-		gcfBootstrapPath = repoRoot + "/agent/sockerless-gcf-bootstrap-test"
+		// Build the sockerless-gcf-bootstrap binary for the same platform
+		// used by the backend's overlay Cloud Build path.
+		gcfBootstrapPath = filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-gcf-bootstrap-test-%s-%d", overlayArch, os.Getpid()))
 		if abs, absErr := filepath.Abs(gcfBootstrapPath); absErr == nil {
 			gcfBootstrapPath = abs
 		}
@@ -283,7 +289,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		defer buildCancel3()
 		bootstrapBuild := exec.CommandContext(buildCtx3, "go", "build", "-o", gcfBootstrapPath, "./cmd/sockerless-gcf-bootstrap")
 		bootstrapBuild.Dir = repoRoot + "/agent"
-		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH="+overlayArch)
 		bootstrapBuild.Stdout = os.Stderr
 		bootstrapBuild.Stderr = os.Stderr
 		if err := bootstrapBuild.Run(); err != nil {
@@ -320,7 +326,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
 	// Start backend
-	backendPort := findFreePort()
+	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	step("starting sockerless-backend-gcf")
 	fmt.Printf("[backend] Starting sockerless-backend-gcf on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
@@ -334,8 +340,14 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT="+project,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
+		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
+		// SOCKERLESS_CALLBACK_URL is required at NewServer time per
+		// Phase 168 (no Path B fallback). Bootstrap dials back over
+		// WebSocket from inside the workload container —
+		// host.docker.internal resolves the test host.
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/gcf/reverse", backendPort),
 		// STORAGE_EMULATOR_HOST is Google's SDK-side name for "where
 		// to route storage API requests". Set so the backend's GCS
 		// client targets the test endpoint instead of the default
@@ -425,6 +437,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	os.Exit(code)
 }
 
+func testOverlayPlatformGCF() string {
+	return "linux/" + runtime.GOARCH
+}
+
 func TestGCFContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
@@ -448,6 +464,9 @@ func TestGCFContainerLogs(t *testing.T) {
 	}
 	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 
+	// Register the in-function bootstrap callback so ContainerStart's
+	// WaitForAgent observes the same reverse-agent readiness signal the
+	// overlay path emits.
 	dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
 	// Wait for exit
@@ -540,6 +559,16 @@ func TestGCFContainerStopNoOp(t *testing.T) {
 }
 
 func TestGCFContainerExec(t *testing.T) {
+	if os.Getenv(gcfExecE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestGCFContainerExec$", "-test.v")
+		cmd.Env = append(os.Environ(), gcfExecE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("overlay exec subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
 	ctx := context.Background()
 
 	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
@@ -552,10 +581,8 @@ func TestGCFContainerExec(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:     "alpine:latest",
-			Cmd:       []string{"tail", "-f", "/dev/null"},
-			Tty:       true,
-			OpenStdin: true,
+			Image: "alpine:latest",
+			Cmd:   []string{"tail", "-f", "/dev/null"},
 		},
 		nil, nil, nil, "gcf_exec_"+testID,
 	)
@@ -568,10 +595,10 @@ func TestGCFContainerExec(t *testing.T) {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	// Exec create should succeed (synthetic exec from core)
 	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
-		Cmd:          []string{"echo", "hello"},
+		Cmd:          []string{"sh", "-c", "printf gcf-exec-ok"},
 		AttachStdout: true,
+		AttachStderr: true,
 	})
 	if err != nil {
 		t.Fatalf("exec create failed: %v", err)
@@ -579,6 +606,28 @@ func TestGCFContainerExec(t *testing.T) {
 
 	if execResp.ID == "" {
 		t.Error("expected non-empty exec ID")
+	}
+
+	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		t.Fatalf("exec attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader); err != nil {
+		t.Fatalf("exec stream copy failed: %v", err)
+	}
+	if got := stdout.String(); got != "gcf-exec-ok" {
+		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
+	}
+
+	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.ExitCode != 0 {
+		t.Fatalf("exec exit code = %d", inspect.ExitCode)
 	}
 }
 

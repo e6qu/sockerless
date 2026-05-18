@@ -64,11 +64,11 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		})
 	}
 
-	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// Inject reverse-agent callback URL + container ID so the bootstrap
 	// baked into the container image can dial back for `docker exec` /
-	// `docker attach`. Empty CallbackURL ⇒ reverse-agent disabled
-	// (exec returns 126 for this container).
-	if ci.IsMain && s.config.CallbackURL != "" {
+	// `docker attach`. CallbackURL is required at NewServer time so by
+	// here it is guaranteed non-empty (no fallback for missing-agent).
+	if ci.IsMain {
 		envVars = append(envVars,
 			&runpb.EnvVar{Name: "SOCKERLESS_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL}},
 			&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
@@ -273,14 +273,13 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 }
 
 // mapCPUMemory returns the default Cloud Run resource limits.
-// Cloud Run valid CPU: 1, 2, 4, 8. 1Gi/container matches the gcf
-// backend default; 512Mi was insufficient for multi-container revisions
-// running a postgres service container alongside the JOB main (postgres
-// initdb OOM'd in 512Mi and Cloud Run reports the whole revision as
-// failed even though it's the sidecar that crashed, manifesting as a
-// port-8080-not-bound timeout on the main container).
+// Cloud Run valid CPU: 1, 2, 4, 8. 4Gi/container leaves headroom for
+// the in-Service bootstrap (~256 MiB), the 2 GiB tmpfs default
+// (`SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB`), and a postgres-style sidecar
+// (the historical OOM that forced 1Gi over 512Mi was a postgres initdb
+// in a multi-container revision).
 func mapCPUMemory() (string, string) {
-	return "1", "1Gi"
+	return "1", "4Gi"
 }
 
 // memoryLimitForContainer doubles the per-container memory for the main

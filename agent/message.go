@@ -16,6 +16,16 @@ const (
 	TypeExit   = "exit"
 	TypeError  = "error"
 	TypeHealth = "health"
+
+	// TypeLifetimeExpired is sent by a FaaS bootstrap (lambda / gcf /
+	// cloudrun) shortly before the platform's max invocation deadline
+	// would force-kill the function. The sockerless backend marks the
+	// container as Stopped with reason FaaSPodLifetimeExceeded so
+	// the next ExecStart returns operator-guidance ("use ECS / ACA /
+	// Cloud Run Services for longer pods") rather than a generic 500
+	// or hanging exec. No transparent re-invoke / warm-pool /
+	// checkpoint-restart — FaaS max is a hard limit per Phase 168.
+	TypeLifetimeExpired = "lifetime_expired"
 )
 
 // Message is the unified WebSocket message type.

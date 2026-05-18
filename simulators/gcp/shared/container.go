@@ -62,6 +62,11 @@ type ContainerConfig struct {
 	OpenStdin    bool              // keep stdin open
 	Binds        []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts   []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
+
+	// Sandbox enforces per-platform capability + permission parity
+	// with the real cloud (BUG-1077). Zero value = no enforcement;
+	// every production sim caller must set this.
+	Sandbox SandboxProfile
 }
 
 // ContainerHandle manages a running container.
@@ -228,6 +233,9 @@ type HTTPContainerConfig struct {
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
 	ExtraHosts   []string          // --add-host entries (e.g., "metadata.google.internal:host-gateway")
+
+	// Sandbox: per-platform capability + permission parity (BUG-1077).
+	Sandbox SandboxProfile
 }
 
 // StartHTTPContainer starts a container detached, with its container-
@@ -272,6 +280,10 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
 		ExtraHosts: cfg.ExtraHosts,
+	}
+	// BUG-1077 sandbox parity.
+	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
+		return "", fmt.Errorf("sandbox enforce: %w", err)
 	}
 
 	platform, err := parsePlatform(cfg.Architecture)
@@ -422,6 +434,10 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	hostCfg := &container.HostConfig{
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
+	}
+	// BUG-1077 sandbox parity.
+	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
+		return "", fmt.Errorf("sandbox enforce: %w", err)
 	}
 
 	var networkCfg *network.NetworkingConfig

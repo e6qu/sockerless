@@ -193,11 +193,11 @@ func (s *Server) ExecResize(id string, h int, w int) error {
 	return s.BaseServer.ExecResize(id, h, w)
 }
 
-// ExecStart runs the exec inside the function container.
-// Path B HTTP POST is preferred (envelope POSTed to the Function URL;
-// bootstrap parses + runs + returns response envelope). Reverse-agent
-// WS is the fallback for interactive (TTY+stdin) execs where streaming
-// is required.
+// ExecStart routes `docker exec` to the running container via the
+// reverse-agent WebSocket dispatch. Bootstrap inside the Cloud Function
+// must dial back via SOCKERLESS_CALLBACK_URL before any exec arrives;
+// missing session → fail loud (no Path B / fresh-function-URL-POST
+// fallback per the no-fallback rule).
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	s.Logger.Info().Str("execID", id).Bool("tty", opts.Tty).Bool("detach", opts.Detach).Msg("ExecStart: ENTRY")
 	exec, ok := s.Store.Execs.Get(id)
@@ -210,18 +210,21 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		s.Logger.Warn().Str("execID", id).Str("container", exec.ContainerID).Msg("ExecStart: container has been removed")
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-
-	interactive := opts.Tty && exec.OpenStdin
-	if !interactive {
-		if rwc, err := s.execStartViaInvoke(id, exec); err == nil {
-			return rwc, nil
-		} else if _, isNotImpl := err.(*api.NotImplementedError); !isNotImpl {
-			return nil, err
-		}
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded Cloud Functions Gen2's max invocation lifetime (60 min hard cap). "+
+				"FaaS pods are not extended transparently — use the Cloud Run Services backend for longer-running pods, "+
+				"or split the workload. (FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
 	}
-
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Function URL with sockerless-gcf-bootstrap OR a reverse-agent (SOCKERLESS_CALLBACK_URL); neither is available for this container"}
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"reverse-agent WebSocket not registered for container %s. "+
+				"Cloud Functions exec requires SOCKERLESS_CALLBACK_URL reachable from inside the function "+
+				"so the bootstrap can dial back. See backends/cloudrun-functions/README.md § reverse-agent prerequisites.",
+			c.ID[:12],
+		)}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }

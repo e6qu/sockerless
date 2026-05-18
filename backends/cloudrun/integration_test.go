@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,10 +30,17 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
+
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/cloudrun/reverse`).
+var backendPort int
 var evalImageName string
+
+const cloudRunExecE2EEnv = "SOCKERLESS_CLOUDRUN_EXEC_E2E"
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -94,7 +103,9 @@ func TestMain(m *testing.M) {
 
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
+	overlayPlatform := testOverlayPlatformCloudRun()
+	overlayArch := runtime.GOARCH
+	fmt.Printf("[setup] Building %s (%s)...\n", evalImageName, overlayPlatform)
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively (toomanyrequests/429); ECR Public Gallery
@@ -108,7 +119,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", overlayPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
@@ -124,19 +135,20 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
 		failClean("ERROR: docker tag eval-arithmetic AR-form: %v\n%s", err, out)
 	}
-	// Same for alpine — tests that don't use eval-arithmetic still
-	// pass plain "alpine:latest" which the backend rewrites to AR.
-	// Pull from ECR Public Gallery to dodge Docker Hub rate limits;
-	// re-tag as the Docker-Hub-shaped name the backend expects.
-	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
-		failClean("ERROR: docker pull alpine: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
-		failClean("ERROR: docker tag alpine docker-hub-form: %v\n%s", err, out)
-	}
+	// Materialize alpine under the Docker Hub and AR names the backend
+	// and simulator reference. BuildKit can consume a FROM image without
+	// leaving the source ref tagged locally, so build the tag explicitly
+	// from the same real ECR Public base instead of assuming a tag exists.
 	alpineARTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
-	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
-		failClean("ERROR: docker tag alpine AR-form: %v\n%s", err, out)
+	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
+	alpineBuild := exec.Command("docker", "build",
+		"--platform", overlayPlatform,
+		"-t", "alpine:latest",
+		"-t", alpineARTag,
+		"-f", "-", repoRoot)
+	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+	if out, err := alpineBuild.CombinedOutput(); err != nil {
+		failClean("ERROR: docker build alpine local tags: %v\n%s", err, out)
 	}
 
 	var endpointURL, project, bootstrapPath, buildBucket, saJSONPath string
@@ -205,22 +217,29 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { _ = os.Remove(saJSONPath) })
 
-		// Bootstrap binary intentionally NOT built/wired here. Setting
-		// SOCKERLESS_CLOUDRUN_BOOTSTRAP would activate the overlay path
-		// for every container — every arithmetic test would then go
-		// through Cloud Build → overlay image → bootstrap-as-PID1,
-		// which defaults to long-lived HTTP-server (Path B) mode. The
-		// container would never exit on its own, hanging
-		// ContainerWait. With bootstrapPath empty, the overlay path
-		// is disabled and containers run the user image's ENTRYPOINT
-		// directly, exiting when the workload finishes.
-		//
-		// TestCloudRunJobTimeout (which DOES need the bootstrap timer
-		// to validate exit code 124) is consequently SOCKERLESS_TEST_TARGET=cloud
-		// only — it requires the bootstrap deployed in the runner image
-		// in production. Sim coverage for the timer itself lives in
-		// the bootstrap's unit tests under agent/cmd/sockerless-cloudrun-bootstrap.
-		bootstrapPath = ""
+		if os.Getenv(cloudRunExecE2EEnv) == "1" {
+			bootstrapPath = filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-test-%d", os.Getpid()))
+			if abs, absErr := filepath.Abs(bootstrapPath); absErr == nil {
+				bootstrapPath = abs
+			}
+			fmt.Println("[sim] Building sockerless-cloudrun-bootstrap...")
+			buildCtx, buildCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer buildCancel()
+			bootstrapBuild := exec.CommandContext(buildCtx, "go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
+			bootstrapBuild.Dir = repoRoot + "/agent"
+			bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH="+overlayArch)
+			bootstrapBuild.Stdout = os.Stderr
+			bootstrapBuild.Stderr = os.Stderr
+			if err := bootstrapBuild.Run(); err != nil {
+				failClean("ERROR: build sockerless-cloudrun-bootstrap: %v\n", err)
+			}
+			cleanups = append(cleanups, func() { _ = os.Remove(bootstrapPath) })
+		} else {
+			// Keep the existing simulator package tests on the direct
+			// user-image path. The overlay/bootstrap Service-path e2e
+			// runs in a dedicated subprocess via TestCloudRunContainerExec.
+			bootstrapPath = ""
+		}
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
@@ -242,25 +261,37 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
-	backendPort := findFreePort()
+	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-cloudrun on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	storageHost := strings.TrimPrefix(endpointURL, "http://")
 	storageHost = strings.TrimPrefix(storageHost, "https://")
-	backendCmd.Env = append(os.Environ(),
+	backendEnv := append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT="+project,
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
+		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
+		// Required at NewServer per Phase 168 (no Path B fallback).
+		// Bootstrap dials back over WebSocket from inside the workload
+		// container — host.docker.internal resolves the test host.
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/cloudrun/reverse", backendPort),
 		// STORAGE_EMULATOR_HOST routes the backend's GCS client to the
 		// sim's storage endpoint instead of storage.googleapis.com.
 		"STORAGE_EMULATOR_HOST="+storageHost,
 		// ADC source for storage.NewClient + cloudbuild.NewRESTClient.
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 	)
+	if target == "sim" && os.Getenv(cloudRunExecE2EEnv) == "1" {
+		backendEnv = append(backendEnv,
+			"SOCKERLESS_GCR_USE_SERVICE=1",
+			"SOCKERLESS_GCR_VPC_CONNECTOR=projects/sim-project/locations/us-central1/connectors/sim-connector",
+		)
+	}
+	backendCmd.Env = backendEnv
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
@@ -298,6 +329,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	os.Exit(code)
 }
 
+func testOverlayPlatformCloudRun() string {
+	return "linux/" + runtime.GOARCH
+}
+
 func TestCloudRunContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
@@ -314,8 +349,9 @@ func TestCloudRunContainerLifecycle(t *testing.T) {
 	// Create
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
-			Cmd:   []string{"tail", "-f", "/dev/null"},
+			Image:     "alpine:latest",
+			Cmd:       []string{"tail", "-f", "/dev/null"},
+			OpenStdin: true,
 		},
 		nil, nil, nil, "cloudrun_"+testID,
 	)
@@ -385,6 +421,7 @@ func TestCloudRunContainerLogs(t *testing.T) {
 		&container.Config{
 			Image:      "alpine:latest",
 			Entrypoint: []string{"sh", "-c", "echo hello-cloudrun && sleep 5"},
+			OpenStdin:  true,
 		},
 		nil, nil, nil, "cloudrun_logs_"+testID,
 	)
@@ -449,6 +486,77 @@ func TestCloudRunContainerList(t *testing.T) {
 	}
 	if !found {
 		t.Error("created container not found in list")
+	}
+}
+
+func TestCloudRunContainerExec(t *testing.T) {
+	if os.Getenv(cloudRunExecE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestCloudRunContainerExec$", "-test.v")
+		cmd.Env = append(os.Environ(), cloudRunExecE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("overlay exec subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "alpine:latest",
+			Cmd:   []string{"tail", "-f", "/dev/null"},
+		},
+		nil, nil, nil, "cloudrun_exec_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	startCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+		Cmd:          []string{"sh", "-c", "printf cloudrun-exec-ok"},
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		t.Fatalf("exec create failed: %v", err)
+	}
+
+	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		t.Fatalf("exec attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader); err != nil {
+		t.Fatalf("exec stream copy failed: %v", err)
+	}
+	if got := stdout.String(); got != "cloudrun-exec-ok" {
+		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
+	}
+
+	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.ExitCode != 0 {
+		t.Fatalf("exec exit code = %d", inspect.ExitCode)
 	}
 }
 

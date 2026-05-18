@@ -6,6 +6,7 @@ set -euo pipefail
 
 BACKEND_TYPE="${BACKEND:-ecs}"
 BACKEND_ADDR="127.0.0.1:3375"
+BACKEND_LISTEN_ADDR="${BACKEND_LISTEN_ADDR:-0.0.0.0:3375}"
 # DOCKER_HOST is set per-command for CLI calls to the backend.
 # The simulator's Docker SDK must use the default socket (/var/run/docker.sock)
 # so it must NOT see DOCKER_HOST pointing at the backend.
@@ -37,6 +38,14 @@ fail() {
     exit 1
 }
 
+callback_host() {
+    if [ -n "${SOCKERLESS_SMOKE_CALLBACK_HOST:-}" ]; then
+        printf '%s\n' "$SOCKERLESS_SMOKE_CALLBACK_HOST"
+        return
+    fi
+    hostname -I | awk '{print $1}'
+}
+
 # --- Start simulator ---
 case "$BACKEND_TYPE" in
     ecs)
@@ -63,6 +72,7 @@ case "$BACKEND_TYPE" in
         wait_for_url "http://127.0.0.1:4567/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4567"
         export SOCKERLESS_GCR_PROJECT="sim-project"
+        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/cloudrun/reverse"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-cloudrun"
         ;;
     aca)
@@ -74,6 +84,7 @@ case "$BACKEND_TYPE" in
         export SOCKERLESS_ACA_SUBSCRIPTION_ID="00000000-0000-0000-0000-000000000001"
         export SOCKERLESS_ACA_RESOURCE_GROUP="sim-rg"
         export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="default"
+        export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/aca/reverse"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-aca"
         ;;
     *)
@@ -84,7 +95,7 @@ esac
 # --- Start backend ---
 export SOCKERLESS_POLL_INTERVAL="500ms"
 echo "=== Starting $BACKEND_TYPE backend ==="
-"$BACKEND_BIN" --addr "$BACKEND_ADDR" --log-level debug 2>/tmp/backend.log &
+"$BACKEND_BIN" --addr "$BACKEND_LISTEN_ADDR" --log-level debug 2>/tmp/backend.log &
 BACKEND_PID=$!
 wait_for_url "http://$BACKEND_ADDR/_ping"
 echo "$BACKEND_TYPE backend ready"
@@ -123,12 +134,22 @@ run_test_output() {
 }
 
 D="env DOCKER_HOST=$BACKEND_DOCKER_HOST docker"
+HOST_DOCKER="env -u DOCKER_HOST docker"
+CREATE_STDIN_ARGS=()
+if [ "$BACKEND_TYPE" = "cloudrun" ] || [ "$BACKEND_TYPE" = "aca" ]; then
+    CREATE_STDIN_ARGS=(-i)
+fi
+
+# The simulators execute workload containers on the mounted host
+# Docker daemon, so the runtime image must exist there as well as in
+# the backend's Docker-compatible image store.
+run_test "host docker pull alpine" $HOST_DOCKER pull alpine:latest
 
 # Pull
 run_test "docker pull alpine" $D pull alpine:latest
 
 # Create + start short-lived container
-CID=$($D create --name smoke-short alpine:latest echo "hello from smoke test" 2>&1)
+CID=$($D create "${CREATE_STDIN_ARGS[@]}" --name smoke-short alpine:latest echo "hello from smoke test" 2>&1)
 run_test "docker create (short)" test -n "$CID"
 run_test "docker start (short)" $D start smoke-short
 
@@ -149,7 +170,7 @@ run_test_output "docker inspect (status)" "exited" \
 run_test "docker rm (short)" $D rm smoke-short
 
 # Create + start long-running container
-CID2=$($D create --name smoke-long alpine:latest tail -f /dev/null 2>&1)
+CID2=$($D create "${CREATE_STDIN_ARGS[@]}" --name smoke-long alpine:latest tail -f /dev/null 2>&1)
 run_test "docker create (long)" test -n "$CID2"
 run_test "docker start (long)" $D start smoke-long
 

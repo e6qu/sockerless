@@ -29,6 +29,17 @@ type Server struct {
 
 // NewServer creates a new ACA backend server.
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("ACA backend requires SOCKERLESS_CALLBACK_URL — the in-App/Job bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback to management-API exec). Set the env var to a URL the App / Job can reach.")
+	}
+	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
+		if hash, err := hashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+			config.BootstrapBinaryHash = hash
+			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed aca bootstrap binary for overlay-tag invalidation")
+		} else {
+			logger.Warn().Err(err).Str("path", config.BootstrapBinaryPath).Msg("failed to hash aca bootstrap binary; overlay images will not invalidate on bootstrap update")
+		}
+	}
 	s := &Server{
 		config:           config,
 		azure:            azureClients,
@@ -56,7 +67,16 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	}
 	s.storageBackings = core.NewStorageBackingRegistry()
 	s.storageBackings.Register(azurecommon.NewAzureFilesEphemeralDriver(config.StorageAccount))
-	s.storageBackings.Register(core.NewMemoryDriver(64))
+	tmpfsMiB, terr := core.TmpfsSizeFromEnv("aca")
+	if terr != nil {
+		logger.Fatal().Err(terr).Msg("invalid SOCKERLESS_ACA_TMPFS_SIZE_MIB")
+	}
+	s.storageBackings.Register(core.NewMemoryDriver(tmpfsMiB))
+	// Default backing for SharedVolumes without explicit Backing:
+	// memory (tmpfs). ACA Apps + Jobs accept EmptyDir{Medium: MEMORY}
+	// natively. Operators wanting durability must set Backing:
+	// azure-files-ephemeral explicitly.
+	s.storageBackings.SetDefault(core.BackingMemory)
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
 		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,

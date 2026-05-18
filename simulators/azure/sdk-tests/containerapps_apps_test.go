@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,75 @@ func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 	// GET after delete should 404.
 	_, err = client.Get(ctx, rg, "sdk-test-app", nil)
 	assert.Error(t, err, "Get after delete must fail")
+}
+
+func TestSDK_ContainerAppsApps_StartsRealReplicaAndLogs(t *testing.T) {
+	rg := "sdk-aca-app-exec-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, "sdk-exec-app", armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{
+					{
+						Name:  to.Ptr("main"),
+						Image: to.Ptr(evalImageName),
+						Args:  []*string{to.Ptr("8 * 7")},
+					},
+				},
+				Scale: &armappcontainers.Scale{
+					MinReplicas: to.Ptr[int32](1),
+					MaxReplicas: to.Ptr[int32](1),
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	defer func() {
+		delPoller, derr := client.BeginDelete(ctx, rg, "sdk-exec-app", nil)
+		if derr == nil {
+			_, _ = delPoller.PollUntilDone(ctx, nil)
+		}
+	}()
+
+	found := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		kql := `ContainerAppConsoleLogs_CL | where ContainerAppName_s == "sdk-exec-app"`
+		result := queryWorkspace(t, "default", kql)
+		require.Len(t, result.Tables, 1)
+		table := result.Tables[0]
+		logIdx := -1
+		for i, col := range table.Columns {
+			if col.Name == "Log_s" {
+				logIdx = i
+				break
+			}
+		}
+		require.GreaterOrEqual(t, logIdx, 0)
+		var logs []string
+		for _, row := range table.Rows {
+			if msg, ok := row[logIdx].(string); ok {
+				logs = append(logs, msg)
+			}
+		}
+		if strings.Contains(strings.Join(logs, "\n"), "56") {
+			found = true
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	require.True(t, found, "expected ACA App replica to execute the real container and emit arithmetic output")
 }
 
 // TestSDK_ContainerAppsApps_SystemDataPreservedAcrossUpdates pins ARM

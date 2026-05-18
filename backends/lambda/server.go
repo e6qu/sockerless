@@ -150,26 +150,26 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	registerUI(s.BaseServer)
 	s.registerReverseAgentRoutes(logger)
 
-	// Route `docker exec` against Lambda. Two implementations exist
-	// (per `specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda exec semantics");
-	// the deployment-time decision picks ONE — no runtime fallback:
+	// Route `docker exec` against Lambda via the reverse-agent WebSocket
+	// (`specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda exec semantics"). The
+	// bootstrap dials back during init using SOCKERLESS_CALLBACK_URL;
+	// sockerless pushes TypeExec messages over the resulting WS.
+	// Preserves Docker fidelity — multiple execs share /tmp, env, process
+	// tree, just like a real container.
 	//
-	//   - Path A (CallbackURL set): reverse-agent WebSocket. Bootstrap
-	//     dials back during init, sockerless pushes TypeExec messages.
-	//     Preserves Docker fidelity (multiple execs share /tmp).
-	//     Requires inbound network for the dial-back.
-	//   - Path B (CallbackURL empty): exec-via-Invoke. Each docker
-	//     exec triggers a fresh `lambda.Invoke` whose payload is a
-	//     JSON envelope; bootstrap parses, runs, returns. Native to
-	//     Lambda's primitive — no inbound network needed.
-	if config.CallbackURL != "" {
-		s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
-		s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
-	} else {
-		invokeDriver := &lambdaInvokeExecDriver{server: s, logger: logger}
-		s.Drivers.Exec = invokeDriver
-		s.Typed.Exec = core.WrapLegacyExec(invokeDriver, "lambda", "InvokeExec")
+	// CallbackURL is REQUIRED at startup. There is no Path B fallback
+	// (exec-via-Invoke). If your Lambda can't reach the sockerless
+	// control plane to dial back, fix the network topology
+	// (NAT / VPC peering / public callback URL) — see
+	// `backends/lambda/README.md` § reverse-agent prerequisites.
+	if config.CallbackURL == "" {
+		logger.Fatal().Msg("Lambda backend requires SOCKERLESS_CALLBACK_URL " +
+			"(no Path B fallback). The bootstrap inside the function dials back over " +
+			"WebSocket to register its exec session. " +
+			"See backends/lambda/README.md § reverse-agent prerequisites.")
 	}
+	s.Drivers.Exec = &lambdaExecDriver{Registry: s.reverseAgents, Logger: logger}
+	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "lambda", "ReverseAgentExec")
 	s.Drivers.Stream = &lambdaStreamDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "lambda")
 	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "lambda")

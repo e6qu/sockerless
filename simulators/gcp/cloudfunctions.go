@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -280,10 +281,13 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	// `Run.Services.UpdateService`. Read it back from there; the sim
 	// has no other source of truth for what to execute.
 	var image string
+	var serviceEnv map[string]string
 	if fn.ServiceConfig != nil && fn.ServiceConfig.Service != "" {
 		if svc, ok := crv2Services.Get(fn.ServiceConfig.Service); ok {
 			if svc.Template != nil && len(svc.Template.Containers) > 0 {
-				image = svc.Template.Containers[0].Image
+				container := svc.Template.Containers[0]
+				image = container.Image
+				serviceEnv = containerEnvMap(container.Env)
 			}
 		}
 	}
@@ -297,7 +301,11 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 
 	if image != "" {
 		// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
-		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink)
+		env := serviceEnv
+		if fn.ServiceConfig != nil {
+			env = mergeEnv(fn.ServiceConfig.EnvironmentVariables, serviceEnv)
+		}
+		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink, env)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[sim-gcf] invocation error fn=%s img=%s: %v\n", functionID, image, err)
 			injectCloudFunctionLog(project, functionID,
@@ -391,6 +399,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		Timeout:      timeout,
 		Labels:       map[string]string{"sockerless-sim-function": functionID},
 		ExtraHosts:   hostMetadataExtraHosts(),
+		Sandbox:      sim.SandboxGCFGen2,
 	}, collectSink)
 	if err != nil {
 		injectCloudFunctionLog(project, functionID,
@@ -546,8 +555,8 @@ func injectCloudFunctionLog(project, functionName, text string) {
 // Errors are returned only for infrastructure failures (image pull,
 // container start, networking). Subprocess non-zero exit is NOT an
 // error — it surfaces via the `exitCode` return value.
-func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink) (responseBody []byte, exitCode int, err error) {
-	return invokeOverlayContainerHTTPWithBody(image, functionID, timeout, sink, nil, "application/json")
+func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration, sink sim.LogSink, env map[string]string) (responseBody []byte, exitCode int, err error) {
+	return invokeOverlayContainerHTTPWithBody(image, functionID, timeout, sink, env, nil, "application/json")
 }
 
 // invokeOverlayContainerHTTPWithBody is the body-aware variant. The
@@ -555,7 +564,7 @@ func invokeOverlayContainerHTTP(image, functionID string, timeout time.Duration,
 // envelope-style POST body the gcf backend sends to the overlay
 // bootstrap. Cloud Functions Gen2 invocations have no useful body so
 // invokeOverlayContainerHTTP delegates here with `body=nil`.
-func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.Duration, sink sim.LogSink, body io.Reader, contentType string) (responseBody []byte, exitCode int, err error) {
+func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.Duration, sink sim.LogSink, env map[string]string, body io.Reader, contentType string) (responseBody []byte, exitCode int, err error) {
 	cli := sim.DockerClient()
 	if cli == nil {
 		return nil, -1, fmt.Errorf("docker client not initialized")
@@ -575,19 +584,23 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Architecture: sim's primary capacity is linux/arm64.
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, -1, err
+	}
 	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
 		Image:        localImage,
-		Architecture: "linux/arm64",
+		Architecture: platform,
 		HostPort:     hostPort,
-		Env: mergeEnv(map[string]string{
+		Env: mergeEnv(mergeEnv(map[string]string{
 			"PORT": "8080",
-		}, hostMetadataEnv()),
+		}, env), hostMetadataEnv()),
 		Name: containerName,
 		Labels: map[string]string{
 			"sockerless-sim-function": functionID,
 		},
 		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxGCFGen2,
 	})
 	if err != nil {
 		return nil, -1, fmt.Errorf("start overlay container: %w", err)
@@ -615,40 +628,74 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	// POST the invocation. Body is forwarded from the caller (the gcf
 	// backend's exec envelope) when present. Cloud Functions Gen2
 	// invocations pass nil here.
-	httpClient := &http.Client{Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, "POST", bootstrapURL, body)
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, timeout)
+}
+
+func localImagePlatform(ctx context.Context, image string) (string, error) {
+	cli := sim.DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, image)
 	if err != nil {
-		return nil, -1, fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("inspect image %q platform: %w", image, err)
+	}
+	if inspect.Os == "" || inspect.Architecture == "" {
+		return "", fmt.Errorf("inspect image %q platform: missing os/architecture", image)
+	}
+	return inspect.Os + "/" + inspect.Architecture, nil
+}
+
+func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Reader, contentType string, timeout time.Duration) ([]byte, int, error) {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, -1, fmt.Errorf("read invoke body: %w", err)
+		}
 	}
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	req.Header.Set("Content-Type", contentType)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
+
+	httpClient := &http.Client{Timeout: timeout}
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, bootstrapURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, -1, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			respBytes, _ := io.ReadAll(resp.Body)
+			return respBytes, bootstrapExitCode(resp), nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, -1, fmt.Errorf("invoke bootstrap: %w", lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, -1, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	defer resp.Body.Close()
+}
 
-	respBytes, _ := io.ReadAll(resp.Body)
-
-	// Exit code propagation: bootstrap sets X-Sockerless-Exit-Code on
-	// non-zero exit so the calling docker-shell perceives the
-	// underlying subprocess's true status. Successful invocations
-	// (HTTP 200) imply exit 0 even without the header.
-	exitCode = 0
+func bootstrapExitCode(resp *http.Response) int {
 	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
 		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
-			exitCode = n
+			return n
 		}
-	} else if resp.StatusCode >= 400 {
-		// Bootstrap omitted the header but returned an error status —
-		// surface a non-zero exit so the caller treats this as a
-		// failed invocation rather than a silent success.
-		exitCode = 1
 	}
-
-	return respBytes, exitCode, nil
+	if resp.StatusCode >= 400 {
+		return 1
+	}
+	return 0
 }
 
 // pickFreeTCPPort opens a transient TCP listener to discover a
@@ -665,26 +712,51 @@ func pickFreeTCPPort() (int, error) {
 	return port, nil
 }
 
-// waitForHTTP polls `url` until any response is received (2xx, 4xx,
-// 5xx — all OK) or the deadline elapses. Used to detect that the
-// container's HTTP server has bound to its port and is accepting
-// connections; the response status doesn't matter, only that the
-// server answered.
+// waitForHTTP polls the TCP address in `url` until the container's
+// HTTP listener accepts connections or the deadline elapses. It does
+// not issue an HTTP request because the Cloud Run / GCF bootstrap's
+// root route is the real invocation endpoint; a readiness probe must
+// not run the user's command.
 func waitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
+	parsed, err := urlpkgParse(url)
+	if err != nil {
+		return err
+	}
+	addr := parsed.Host
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		switch parsed.Scheme {
+		case "http":
+			addr = net.JoinHostPort(addr, "80")
+		case "https":
+			addr = net.JoinHostPort(addr, "443")
+		default:
+			return fmt.Errorf("url %q has no explicit port", url)
+		}
+	}
 	deadline := time.Now().Add(timeout)
-	client := &http.Client{Timeout: 1 * time.Second}
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		resp, err := client.Get(url)
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 		if err == nil {
-			resp.Body.Close()
+			_ = conn.Close()
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout after %s", timeout)
+}
+
+func urlpkgParse(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse url %q: %w", raw, err)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("url %q has no host", raw)
+	}
+	return parsed, nil
 }

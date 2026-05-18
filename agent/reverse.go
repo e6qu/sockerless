@@ -22,14 +22,38 @@ type ReverseAgentConn struct {
 	sessions  sync.Map   // map[string]chan Message
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// OnSystemMessage fires for connection-level messages that don't
+	// belong to any session (msg.ID == ""). Currently the only such
+	// type is TypeLifetimeExpired (Phase 168.8). May be nil.
+	OnSystemMessage func(Message)
 }
 
 // NewReverseAgentConn wraps an existing WebSocket connection and starts the
 // read loop that dispatches incoming messages to registered sessions.
+// Callers that need to observe connection-level (no-ID) system messages
+// like TypeLifetimeExpired MUST use NewReverseAgentConnWithSystemHandler
+// instead — assigning OnSystemMessage after this constructor returns
+// races with messages arriving in the first scheduler quantum (BUG-1061).
 func NewReverseAgentConn(ws *websocket.Conn) *ReverseAgentConn {
 	rc := &ReverseAgentConn{
 		ws:   ws,
 		done: make(chan struct{}),
+	}
+	go rc.readLoop()
+	return rc
+}
+
+// NewReverseAgentConnWithSystemHandler wraps an existing WebSocket
+// connection, registers the connection-level system-message handler,
+// and only then starts the read loop. Closes the race window where a
+// TypeLifetimeExpired arriving immediately after the WS handshake
+// would be dropped because OnSystemMessage hadn't been assigned yet.
+func NewReverseAgentConnWithSystemHandler(ws *websocket.Conn, handler func(Message)) *ReverseAgentConn {
+	rc := &ReverseAgentConn{
+		ws:              ws,
+		done:            make(chan struct{}),
+		OnSystemMessage: handler,
 	}
 	go rc.readLoop()
 	return rc
@@ -51,6 +75,9 @@ func (rc *ReverseAgentConn) readLoop() {
 		}
 
 		if msg.ID == "" {
+			if rc.OnSystemMessage != nil {
+				rc.OnSystemMessage(msg)
+			}
 			continue
 		}
 
@@ -69,6 +96,23 @@ func (rc *ReverseAgentConn) SendJSON(msg Message) error {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	return rc.ws.WriteJSON(msg)
+}
+
+// SendLifetimeExpired writes a TypeLifetimeExpired system message
+// (msg.ID == "") to a raw websocket connection. Used by FaaS
+// bootstraps just before the platform's max invocation deadline
+// would force-kill the function, so sockerless can mark the
+// container Stopped with reason FaaSPodLifetimeExceeded and surface
+// operator-guidance on the next ExecStart instead of a generic
+// 500 / hung exec.
+//
+// `mu` serialises writes per gorilla/websocket's single-writer
+// contract; bootstraps already maintain such a mutex shared with
+// serveReverseAgent + sendHeartbeats. Pass the same mutex.
+func SendLifetimeExpired(ws *websocket.Conn, mu *sync.Mutex) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return ws.WriteJSON(Message{Type: TypeLifetimeExpired})
 }
 
 // BridgeExec sends an exec command and bridges the session bidirectionally

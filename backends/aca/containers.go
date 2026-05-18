@@ -1,9 +1,11 @@
 package aca
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
+	azurecommon "github.com/sockerless/azure-common"
 )
 
 // pollExecutionExit monitors an ACA Job execution and updates container state when it completes.
@@ -57,12 +59,29 @@ func (s *Server) stopExecution(jobName, executionName string) {
 	_, _ = poller.PollUntilDone(s.ctx(), nil)
 }
 
-// deleteJob deletes an ACA Job (best-effort), waiting for completion.
+// deleteJob deletes an ACA Job (best-effort, error logged).
+// Used by rollback paths inside ContainerStart. ContainerRemove
+// uses deleteJobStrict which propagates errors per the no-fallback
+// contract.
 func (s *Server) deleteJob(jobName string) {
+	if err := s.deleteJobStrict(jobName); err != nil {
+		s.Logger.Warn().Err(err).Str("job", jobName).Msg("deleteJob: cloud delete failed (rollback path)")
+	}
+}
+
+// deleteJobStrict deletes an ACA Job and returns nil on success or
+// when the job is already gone. Errors propagate. Typed not-found
+// detection goes through azurecommon.IsNotFound.
+func (s *Server) deleteJobStrict(jobName string) error {
 	poller, err := s.azure.Jobs.BeginDelete(s.ctx(), s.config.ResourceGroup, jobName, nil)
 	if err != nil {
-		s.Logger.Debug().Err(err).Str("job", jobName).Msg("failed to delete job")
-		return
+		if azurecommon.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("delete ACA job %q: %w", jobName, err)
 	}
-	_, _ = poller.PollUntilDone(s.ctx(), nil)
+	if _, werr := poller.PollUntilDone(s.ctx(), nil); werr != nil {
+		return fmt.Errorf("await delete ACA job %q: %w", jobName, werr)
+	}
+	return nil
 }

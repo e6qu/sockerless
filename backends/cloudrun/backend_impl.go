@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,15 @@ import (
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
+
+func isImplicitDockerNetwork(networkID string) bool {
+	switch strings.TrimSpace(networkID) {
+	case "", "default", "bridge", "host", "none":
+		return true
+	default:
+		return false
+	}
+}
 
 // ContainerCreate creates a container backed by a Cloud Run Job.
 func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.ContainerCreateResponse, error) {
@@ -506,7 +516,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(id, executionName, exitCh)
 
-	return nil
+	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 
 // startMultiContainerJobTyped creates and runs a Cloud Run Job with all pod containers.
@@ -610,7 +620,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(mainID, executionName, exitCh)
 
-	return nil
+	return s.waitForReverseAgentAfterStart(podContainers[0].ID, podContainers[0].Config.OpenStdin)
 }
 
 // ContainerStop stops a running Cloud Run container.
@@ -751,17 +761,23 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// — delete the backing cloud resource. Jobs and Services
 	// live in distinct GCP resource namespaces so cached state is
-	// unambiguous.
+	// unambiguous. Errors propagate per the no-fallback rule —
+	// `docker rm` succeeds only when the cloud is actually clean.
+	var cleanupErrs []error
 	if s.config.UseService {
 		svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
 		if svcState.ServiceName != "" {
-			s.deleteService(svcState.ServiceName)
+			if err := s.deleteServiceStrict(svcState.ServiceName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(svcState.ServiceName)
 		}
 	} else {
 		crState, _ := s.resolveCloudRunState(s.ctx(), id)
 		if crState.JobName != "" {
-			s.deleteJob(crState.JobName)
+			if err := s.deleteJobStrict(crState.JobName); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
 	}
@@ -794,8 +810,10 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+		if ep != nil && !isImplicitDockerNetwork(ep.NetworkID) {
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -816,6 +834,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 
@@ -1133,12 +1154,11 @@ func (s *Server) VolumeRemove(name string, force bool) error {
 	return nil
 }
 
-// ExecStart runs the exec inside the container. Path B (see
-// specs/CLOUD_RESOURCE_MAPPING.md § Lesson 8) is preferred when the
-// container is on the Cloud Run Service path with the bootstrap overlay
-// baked in: HTTP POST envelope → bootstrap parses + runs + returns
-// response envelope → backend exposes stdout via the docker exec
-// attach. Reverse-agent WS is the fallback for interactive TTY+stdin.
+// ExecStart routes `docker exec` to the running Cloud Run container via
+// the reverse-agent WebSocket dispatch. Bootstrap inside the Service
+// must dial back via SOCKERLESS_CALLBACK_URL before any exec arrives;
+// missing session → fail loud (no Path B / fresh-Service-URL-POST
+// fallback per the no-fallback rule).
 func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
 	exec, ok := s.Store.Execs.Get(id)
 	if !ok {
@@ -1148,26 +1168,22 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
-
-	// Path B HTTP POST when the container has a Service URL with the
-	// sockerless-cloudrun-bootstrap baked in. Skipped for interactive
-	// (TTY+stdin) execs — those need the WS bridge for streaming.
-	// OpenStdin lives on the stored ExecInstance from ExecCreate
-	// (ExecStartRequest's only fields are Detach + Tty + ConsoleSize).
-	interactive := opts.Tty && exec.OpenStdin
-	if !interactive {
-		if rwc, err := s.execStartViaInvoke(id, exec, opts); err == nil {
-			return rwc, nil
-		} else if _, isNotImpl := err.(*api.NotImplementedError); !isNotImpl {
-			// Real error from the invoke path (network, auth, bootstrap
-			// crash) — surface it loudly instead of silently falling
-			// through to the WS path which would just say "no session".
-			return nil, err
-		}
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded Cloud Run's max request lifetime. "+
+				"FaaS pods are not extended transparently — for sustained workloads use the always-on path "+
+				"(min-instances=1 + CPU-always-allocated) on Cloud Run Services, or switch to a longer-lived backend. "+
+				"(FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
 	}
-
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		return nil, &api.NotImplementedError{Message: "docker exec requires a Cloud Run Service overlay (set SOCKERLESS_CLOUDRUN_BOOTSTRAP) OR a reverse-agent bootstrap (SOCKERLESS_CALLBACK_URL); neither is configured for this container"}
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"reverse-agent WebSocket not registered for container %s. "+
+				"Cloud Run exec requires SOCKERLESS_CALLBACK_URL reachable from inside the Service "+
+				"so the bootstrap can dial back. See backends/cloudrun/README.md § reverse-agent prerequisites.",
+			c.ID[:12],
+		)}
 	}
 	return s.BaseServer.ExecStart(id, opts)
 }

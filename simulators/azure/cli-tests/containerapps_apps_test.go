@@ -1,8 +1,11 @@
 package azure_cli_test
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +68,41 @@ func TestContainerAppsApps_CLI_CreateGetDelete(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, 404, resp.StatusCode, "GET after delete must be 404")
+}
+
+func TestContainerAppsApps_CLI_StartsRealReplicaAndLogs(t *testing.T) {
+	appName := "cli-exec-app"
+	appURL := acaURL("containerApps/" + appName)
+	body := fmt.Sprintf(`{
+		"location": "eastus",
+		"properties": {
+			"environmentId": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/managedEnvironments/sim-env",
+			"template": {
+				"containers": [{
+					"name": "main",
+					"image": %q,
+					"args": ["9 * 6"]
+				}],
+				"scale": { "minReplicas": 1, "maxReplicas": 1 }
+			}
+		}
+	}`, evalImageName)
+	runCLI(t, azRest("PUT", appURL, body))
+	defer runCLI(t, azRest("DELETE", appURL, ""))
+
+	queryURL := baseURL + "/v1/workspaces/default/query"
+	kqlBody := `{"query": "ContainerAppConsoleLogs_CL | where ContainerAppName_s == \"` + appName + `\""}`
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out := runCLI(t, azRest("POST", queryURL, kqlBody))
+		if strings.Contains(out, "54") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for ACA App replica log output")
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // WebApps.UpdateAzureStorageAccounts is what the azure-functions

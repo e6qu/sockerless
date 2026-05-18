@@ -200,6 +200,14 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 	if !ok {
 		return nil, &api.ConflictError{Message: fmt.Sprintf("Container %s has been removed", exec.ContainerID)}
 	}
+	if s.reverseAgents.IsLifetimeExpired(c.ID) {
+		return nil, &api.ServerError{Message: fmt.Sprintf(
+			"container %s exceeded Azure Functions' max invocation lifetime. "+
+				"FaaS pods are not extended transparently — use ACA Apps for longer-running pods. "+
+				"(FaaSPodLifetimeExceeded)",
+			c.ID[:12],
+		)}
+	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.NotImplementedError{Message: "docker exec requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
 	}

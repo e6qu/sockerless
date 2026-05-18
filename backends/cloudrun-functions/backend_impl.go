@@ -2,6 +2,7 @@ package gcf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,15 @@ import (
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
+
+func isImplicitDockerNetwork(networkID string) bool {
+	switch strings.TrimSpace(networkID) {
+	case "", "default", "bridge", "host", "none":
+		return true
+	default:
+		return false
+	}
+}
 
 // ContainerCreate creates a container backed by a Cloud Run Function.
 func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.ContainerCreateResponse, error) {
@@ -501,6 +511,19 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
 		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
+			if !c.Config.OpenStdin {
+				if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
+					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned after reverse-agent registration; preserving running container state")
+					return
+				}
+				agentCtx, agentCancel := context.WithTimeout(s.ctx(), 2*time.Second)
+				agentErr := s.reverseAgents.WaitForAgent(agentCtx, id)
+				agentCancel()
+				if agentErr == nil {
+					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned while reverse-agent was registering; preserving running container state")
+					return
+				}
+			}
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
@@ -518,6 +541,19 @@ func (s *Server) ContainerStart(ref string) error {
 				// transport — fail loudly rather than guess.
 				execResult, perr := gcpcommon.ParseExecResult(body)
 				if perr != nil {
+					if !c.Config.OpenStdin {
+						if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
+							s.Logger.Warn().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Str("container", id).Msg("non-envelope invoke response after reverse-agent registration; preserving running container state")
+							return
+						}
+						agentCtx, agentCancel := context.WithTimeout(s.ctx(), 2*time.Second)
+						agentErr := s.reverseAgents.WaitForAgent(agentCtx, id)
+						agentCancel()
+						if agentErr == nil {
+							s.Logger.Warn().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Str("container", id).Msg("non-envelope invoke response while reverse-agent was registering; preserving running container state")
+							return
+						}
+					}
 					s.Logger.Error().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("bootstrap response is not an exec envelope")
 					inv.ExitCode = 1
 					inv.Error = fmt.Sprintf("non-envelope response: %v", perr)
@@ -544,7 +580,40 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}()
 
+	// Wait for the in-function bootstrap to register a reverse-agent
+	// before ContainerStart returns. Skip in the OpenStdin one-shot
+	// path (gitlab-runner stdin-piped script) — the function runs and
+	// exits without docker exec calls. For exec-driven callers
+	// the first ExecStart MUST find an agent (no Path B fallback).
+	if !c.Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("gcf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC). Service URL invoke fired but the "+
+					"in-function bootstrap never dialled back to SOCKERLESS_CALLBACK_URL=%s. "+
+					"Check egress / VPC connector / firewall for the callback endpoint.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+		if inv, ok := s.Store.GetInvocationResult(id); ok && isReverseAgentInvokeTransportError(inv.Error) {
+			s.Logger.Warn().Str("container", id).Str("error", inv.Error).Msg("clearing transport-only invoke error after reverse-agent registration")
+			s.Store.DeleteInvocationResult(id)
+		}
+	}
+
 	return nil
+}
+
+func isReverseAgentInvokeTransportError(errText string) bool {
+	return strings.Contains(errText, "post exec envelope") ||
+		strings.Contains(errText, "invoke bootstrap") ||
+		strings.Contains(errText, "exec invoke returned status")
 }
 
 // ContainerStop stops a running Cloud Run Function container.
@@ -659,6 +728,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			fullName = fn.GetName()
 		}
 	}
+	var cleanupErrs []error
 	if fullName != "" {
 		fn, gerr := s.gcp.Functions.GetFunction(s.ctx(), &functionspb.GetFunctionRequest{Name: fullName})
 		contentTag := ""
@@ -666,7 +736,7 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			contentTag = fn.GetLabels()["sockerless_overlay_hash"]
 		}
 		if err := s.releaseOrDeleteFunction(s.ctx(), fullName, contentTag); err != nil {
-			s.Logger.Warn().Err(err).Str("function", fullName).Msg("pool release failed")
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("pool release function %q: %w", fullName, err))
 		}
 		s.Registry.MarkCleanedUp(fullName)
 	}
@@ -677,8 +747,10 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
-		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+		if ep != nil && !isImplicitDockerNetwork(ep.NetworkID) {
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -699,6 +771,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

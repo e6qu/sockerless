@@ -193,6 +193,28 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 	// 5. Invoke the pod Function. Result fan-out: every pod member
 	//    receives the same exit code + stdout buffer.
 	go s.invokePodFunction(ctx, funcName, functionARN, containers, exitCh)
+
+	// 6. Block until the bootstrap dials back. The main is at index 0
+	//    of `containers` by convention (set by ContainerStart's
+	//    PodDeferredStart resolution before calling this). Skipped in
+	//    the OpenStdin one-shot path same as single-container.
+	if !containers[0].Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("lambda")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, mainContainerID); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for pod %s within %s "+
+					"(SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC). Function became Active "+
+					"and the pod invoke fired but the in-Lambda bootstrap never dialled back "+
+					"to SOCKERLESS_CALLBACK_URL=%s.",
+				mainContainerID[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
 	return nil
 }
 

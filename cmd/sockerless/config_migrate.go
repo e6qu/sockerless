@@ -177,7 +177,9 @@ func migrateAWSLambda(envVars map[string]string) *awsConfig {
 
 func migrateGCPCloudRun(envVars map[string]string) *gcpConfig {
 	return &gcpConfig{
-		Project: envVars["SOCKERLESS_GCR_PROJECT"],
+		Project:       envVars["SOCKERLESS_GCR_PROJECT"],
+		BuildBucket:   envVars["SOCKERLESS_GCP_BUILD_BUCKET"],
+		BuildPlatform: envVars["SOCKERLESS_GCP_BUILD_PLATFORM"],
 		CloudRun: &cloudRunEnvConfig{
 			Region:       envVars["SOCKERLESS_GCR_REGION"],
 			VPCConnector: envVars["SOCKERLESS_GCR_VPC_CONNECTOR"],
@@ -189,7 +191,9 @@ func migrateGCPCloudRun(envVars map[string]string) *gcpConfig {
 
 func migrateGCPGCF(envVars map[string]string) *gcpConfig {
 	return &gcpConfig{
-		Project: envVars["SOCKERLESS_GCF_PROJECT"],
+		Project:       envVars["SOCKERLESS_GCF_PROJECT"],
+		BuildBucket:   envVars["SOCKERLESS_GCP_BUILD_BUCKET"],
+		BuildPlatform: envVars["SOCKERLESS_GCP_BUILD_PLATFORM"],
 		GCF: &gcfEnvConfig{
 			Region:         envVars["SOCKERLESS_GCF_REGION"],
 			ServiceAccount: envVars["SOCKERLESS_GCF_SERVICE_ACCOUNT"],

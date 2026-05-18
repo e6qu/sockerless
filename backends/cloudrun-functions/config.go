@@ -20,6 +20,7 @@ type Config struct {
 	Memory         string
 	CPU            string
 	BuildBucket    string        // GCS bucket for Cloud Build context upload
+	BuildPlatform  string        // Docker build platform for overlay images
 	EndpointURL    string        // Custom endpoint URL
 	PollInterval   time.Duration // Cloud API poll interval (default 2s)
 	LogTimeout     time.Duration // Cloud Logging query timeout (default 30s)
@@ -149,9 +150,10 @@ func ConfigFromEnv() Config {
 		Region:         envOrDefault("SOCKERLESS_GCF_REGION", "us-central1"),
 		ServiceAccount: os.Getenv("SOCKERLESS_GCF_SERVICE_ACCOUNT"),
 		Timeout:        envOrDefaultInt("SOCKERLESS_GCF_TIMEOUT", 3600),
-		Memory:         envOrDefault("SOCKERLESS_GCF_MEMORY", "1Gi"),
+		Memory:         envOrDefault("SOCKERLESS_GCF_MEMORY", "4Gi"),
 		CPU:            envOrDefault("SOCKERLESS_GCF_CPU", "1"),
 		BuildBucket:    os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
+		BuildPlatform:  envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:    os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:   parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:     parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
@@ -301,16 +303,20 @@ func isSubPathOfSharedVolume(path string, vols []SharedVolume) bool {
 // ConfigFromEnvironment creates Config from a unified config environment.
 func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
 	c := Config{
-		Region:       "us-central1",
-		Timeout:      3600,
-		Memory:       "1Gi",
-		CPU:          "1",
-		PollInterval: 2 * time.Second,
-		LogTimeout:   30 * time.Second,
+		Region:        "us-central1",
+		Timeout:       3600,
+		Memory:        "4Gi",
+		CPU:           "1",
+		BuildPlatform: "linux/amd64",
+		PollInterval:  2 * time.Second,
+		LogTimeout:    30 * time.Second,
 	}
 	if env.GCP != nil {
 		c.Project = env.GCP.Project
 		c.BuildBucket = env.GCP.BuildBucket
+		if env.GCP.BuildPlatform != "" {
+			c.BuildPlatform = env.GCP.BuildPlatform
+		}
 		if gcf := env.GCP.GCF; gcf != nil {
 			if gcf.Region != "" {
 				c.Region = gcf.Region

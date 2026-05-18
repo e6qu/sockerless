@@ -21,7 +21,8 @@ Local development replaces the backend-side upstream with [`simulators/gcp`](../
 | `tests/` (Docker SDK against running backend, GCF profile) | Container lifecycle round-trip via Cloud Function invoke. | 2026-05-13 |
 | `simulators/gcp/sdk-tests/` Cloud Functions package | The v2 calls this backend issues, validated against the sim. | 2026-05-13 |
 | `simulators/gcp/terraform-tests/` | `google_cloudfunctions2_function` apply / destroy round-trip. | 2026-05-13 |
-| `make backends/cloudrun-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-13 |
+| `SOCKERLESS_TEST_TARGET=sim go test -count=1 -run TestGCFContainerExec` in `backends/cloudrun-functions` | Builds the real bootstrap, overlay-wraps a stock image, starts the underlying Cloud Run Service path, waits for reverse-agent registration, and runs `docker exec` over WebSocket. | 2026-05-17 |
+| `make backends/cloudrun-functions/test` | Leaf-Makefile unit + integration suite. | 2026-05-17 |
 
 ## Wiring the adaptor
 
@@ -64,9 +65,12 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_GCF_REGION` | `us-central1` | no | Functions region |
 | `SOCKERLESS_GCF_SERVICE_ACCOUNT` | | no | Service account email for functions |
 | `SOCKERLESS_GCF_TIMEOUT` | `3600` | no | Function timeout in seconds (max 3600) |
-| `SOCKERLESS_GCF_MEMORY` | `1Gi` | no | Function memory allocation |
+| `SOCKERLESS_GCF_MEMORY` | `4Gi` | no | Function memory allocation. Raised in Phase 168 to fit the 2 GiB tmpfs default plus 256 MiB headroom. |
 | `SOCKERLESS_GCF_CPU` | `1` | no | Function CPU allocation |
-| `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent callbacks |
+| `SOCKERLESS_GCP_BUILD_PLATFORM` | `linux/amd64` | no | Docker build platform for overlay images. Simulator integration tests set this to the host platform so local Docker executes the real image architecture. |
+| `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
+| `SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
+| `SOCKERLESS_GCF_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB). Memory is the default `Backing`; mismatched against `SOCKERLESS_GCF_MEMORY` → fail loud at startup. |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/gcp`](../../simulators/gcp/README.md)) |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
@@ -91,7 +95,7 @@ hello from gcf
 
 ## Known issues
 
-None open. Same volume-rejection rule as the Cloud Run backend — `BackingPDEphemeral` is rejected loudly; no fallback.
+None open for the GCF reverse-agent exec path. Same volume-rejection rule as the Cloud Run backend — `BackingPDEphemeral` is rejected loudly; no fallback.
 
 ## What's out of scope
 

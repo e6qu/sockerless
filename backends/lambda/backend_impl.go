@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -226,9 +227,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// subprocess on each invocation.
 	var imageURI string
 	envVars["SOCKERLESS_CONTAINER_ID"] = id
-	if s.config.CallbackURL != "" {
-		envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
-	}
+	// CallbackURL is required at NewServer time so it's guaranteed
+	// non-empty here — no fallback for missing-agent.
+	envVars["SOCKERLESS_CALLBACK_URL"] = s.config.CallbackURL
 	// Encode argv as base64(JSON) so every byte round-trips cleanly
 	// through the env var without Dockerfile / shell quoting.
 	if len(config.Entrypoint) > 0 {
@@ -748,6 +749,32 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}()
 
+	// Wait for the in-Lambda bootstrap to dial back and register a
+	// reverse-agent before ContainerStart returns. Skipped in the
+	// OpenStdin one-shot path (gitlab-runner): the function runs the
+	// stdin-piped script and exits without any docker exec follow-up,
+	// so there's nothing to race. For exec-driven callers (gh-runner,
+	// docker-runner, arbitrary client) the first ExecStart MUST find
+	// an agent — no Path B fallback exists after BUG-1046.
+	if !lambdaState.OpenStdin {
+		timeout, err := core.BootstrapTimeoutFromEnv("lambda")
+		if err != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", err)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for container %s within %s "+
+					"(SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC). The function became Active and "+
+					"the wake invoke fired, but the in-Lambda bootstrap never dialled back to "+
+					"SOCKERLESS_CALLBACK_URL=%s. Check VPC egress / NACL / security-group rules "+
+					"for the callback endpoint.",
+				id[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
+
 	return nil
 }
 
@@ -895,7 +922,10 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Pool-aware function release. Look up the function's overlay-hash
 	// tag so releaseOrDeleteFunction can decide between returning to the
 	// pool (clear allocation tag) or deleting (pool over POOL_MAX). On
-	// PoolMax=0 we always delete (pre-pool behavior).
+	// PoolMax=0 we always delete (pre-pool behavior). Cleanup errors
+	// propagate so `docker rm` only succeeds when the cloud is actually
+	// clean (no leaked Function in the operator's account).
+	var cleanupErrs []error
 	lambdaState, _ := s.resolveLambdaState(s.ctx(), id)
 	if lambdaState.FunctionName != "" {
 		if s.config.PoolMax > 0 {
@@ -906,12 +936,14 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 				}
 			}
 			if err := s.releaseOrDeleteFunction(s.ctx(), lambdaState.FunctionName, contentTag); err != nil {
-				s.Logger.Warn().Err(err).Str("function", lambdaState.FunctionName).Msg("pool release failed; container remove continues")
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("pool release function %q: %w", lambdaState.FunctionName, err))
 			}
 		} else {
-			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
+			if _, derr := s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 				FunctionName: aws.String(lambdaState.FunctionName),
-			})
+			}); derr != nil && !strings.Contains(derr.Error(), "ResourceNotFoundException") {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete function %q: %w", lambdaState.FunctionName, derr))
+			}
 		}
 	}
 
@@ -926,7 +958,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Clean up network associations
 	for _, ep := range c.NetworkSettings.Networks {
 		if ep != nil && ep.NetworkID != "" {
-			_ = s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id)
+			if derr := s.Drivers.Network.Disconnect(context.Background(), ep.NetworkID, id); derr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("network %q disconnect: %w", ep.NetworkID, derr))
+			}
 		}
 	}
 
@@ -953,6 +987,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.EmitEvent("container", "destroy", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+	if len(cleanupErrs) > 0 {
+		return &api.ServerError{Message: fmt.Sprintf("container %s removed locally but cloud cleanup had errors: %v", id[:12], errors.Join(cleanupErrs...))}
+	}
 	return nil
 }
 

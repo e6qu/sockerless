@@ -42,14 +42,18 @@ func (s *Server) buildContainerSpec(ci containerInput) (*armappcontainers.Contai
 		}
 	}
 
-	// Inject reverse-agent callback URL + container ID so a bootstrap
+	// Inject reverse-agent callback URL + container ID so the bootstrap
 	// baked into the container image can dial back for `docker exec` /
-	// `docker attach`. Empty CallbackURL ⇒ reverse-agent disabled
-	// (exec returns 126 for this container).
-	if ci.IsMain && s.config.CallbackURL != "" {
+	// `docker attach`. CallbackURL is required at NewServer time so
+	// it's guaranteed non-empty here — no fallback for missing-agent.
+	if ci.IsMain {
 		envVars = append(envVars,
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL)},
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},
+		)
+	} else {
+		envVars = append(envVars,
+			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_SIDECAR"), Value: ptr("1")},
 		)
 	}
 
@@ -185,9 +189,12 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 
 // mapCPUTier returns the default ACA CPU/memory tier.
 // Valid ACA CPU tiers: 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 4.0.
-// Default: 1.0 CPU, 2Gi.
+// Default: 2.0 CPU, 4Gi — leaves headroom for the in-container
+// bootstrap (~256 MiB) plus the 2 GiB tmpfs default
+// (`SOCKERLESS_ACA_TMPFS_SIZE_MIB`). ACA's CPU/memory pairing rule
+// (memory:cpu must be 2:1) forces CPU up when memory rises.
 func mapCPUTier() (float64, string) {
-	return 1.0, "2Gi"
+	return 2.0, "4Gi"
 }
 
 func ptr[T any](v T) *T {

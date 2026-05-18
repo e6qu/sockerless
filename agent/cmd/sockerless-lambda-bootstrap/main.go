@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +38,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog"
 
 	"github.com/sockerless/agent"
 )
@@ -92,7 +90,6 @@ type PodMember struct {
 const (
 	runtimeAPIPath   = "/2018-06-01/runtime/invocation"
 	runtimeInitError = "/2018-06-01/runtime/init/error"
-	heartbeatPeriod  = 20 * time.Second
 )
 
 func main() {
@@ -135,8 +132,10 @@ func main() {
 	// standalone sockerless-agent, so TypeExec messages from the
 	// Lambda backend spawn subprocesses inside this container and
 	// stream stdout/stderr/exit back over the WebSocket.
+	var raConn *websocket.Conn
+	var raMu *sync.Mutex
 	if callbackURL != "" && containerID != "" {
-		conn, err := dialReverseAgent(callbackURL, containerID)
+		conn, err := agent.DialReverseAgent(callbackURL, containerID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bootstrap: reverse-agent dial failed: %v\n", err)
 			postInitError(base, err.Error())
@@ -145,14 +144,16 @@ func main() {
 		// Every goroutine that writes to conn must hold connMu —
 		// gorilla/websocket requires serialised writes.
 		connMu := &sync.Mutex{}
-		go serveReverseAgent(conn, connMu)
-		go sendHeartbeats(conn, connMu)
+		go agent.ServeReverseAgent(conn, connMu)
+		go agent.StartHeartbeats(conn, connMu)
 		defer func() { _ = conn.Close() }()
+		raConn = conn
+		raMu = connMu
 	}
 
 	// Runtime-API polling loop.
 	for {
-		if err := handleOneInvocation(base); err != nil {
+		if err := handleOneInvocation(base, raConn, raMu); err != nil {
 			fmt.Fprintf(os.Stderr, "bootstrap: invocation error: %v\n", err)
 			// Runtime API errors on /next usually mean Lambda is
 			// shutting us down; exit cleanly.
@@ -164,8 +165,12 @@ func main() {
 // handleOneInvocation blocks on /next, spawns the user entrypoint with
 // the invocation payload as stdin, and posts the result to /response or
 // error. The deadline header is enforced as a subprocess-level
-// context timeout.
-func handleOneInvocation(base string) error {
+// context timeout. When a reverse-agent connection is supplied, a
+// timer fires at deadline-5s to signal TypeLifetimeExpired so
+// sockerless can surface operator-guidance on the next ExecStart
+// rather than a generic 500 / hung exec when Lambda kills the
+// invocation at its hard cap.
+func handleOneInvocation(base string, raConn *websocket.Conn, raMu *sync.Mutex) error {
 	resp, err := http.Get(base + runtimeAPIPath + "/next")
 	if err != nil {
 		return fmt.Errorf("GET /next: %w", err)
@@ -185,6 +190,34 @@ func handleOneInvocation(base string) error {
 
 	ctx, cancel := contextWithDeadlineMs(deadlineMs)
 	defer cancel()
+
+	// Lifetime-expired signal: if the WS is connected and the
+	// deadline is at least 5s away, fire TypeLifetimeExpired at
+	// deadline-5s. The done channel cancels the timer if the
+	// invocation returns normally. Short invocations (deadline < 5s
+	// remaining) skip entirely so we don't falsely mark the
+	// container as lifetime-expired on legitimate fast paths (BUG-1060).
+	done := make(chan struct{})
+	defer close(done)
+	if raConn != nil && raMu != nil && deadlineMs != "" {
+		if dl, ok := ctx.Deadline(); ok {
+			if fireIn := time.Until(dl) - 5*time.Second; fireIn > 0 {
+				timer := time.NewTimer(fireIn)
+				go func() {
+					defer timer.Stop()
+					select {
+					case <-timer.C:
+						if err := agent.SendLifetimeExpired(raConn, raMu); err != nil {
+							fmt.Fprintf(os.Stderr, "bootstrap: send lifetime_expired failed: %v\n", err)
+						} else {
+							fmt.Fprintf(os.Stderr, "bootstrap: sent lifetime_expired at T-5s (Lambda invocation about to hit cap)\n")
+						}
+					case <-done:
+					}
+				}()
+			}
+		}
+	}
 
 	stdout, stderr, exitCode := runUserInvocation(ctx, payload)
 
@@ -357,12 +390,21 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 		}
 	}
 
+	stderrBytes := errBuf.Bytes()
+	// ENOSPC override only when the subprocess actually failed.
+	// `echo "no space left on device" >&2; exit 0` legitimately
+	// returns success and must not be force-coerced to 28 (BUG-1062).
+	if code != 0 && agent.DetectENOSPC(stderrBytes) {
+		code = agent.ENOSPCExitCode
+		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "lambda")
+	}
+
 	// Encode the result as JSON so the lambda backend's exec-attach
 	// adapter can recover it from the `lambda.Invoke` response.
 	res := execResult{}
 	res.SockerlessExecResult.ExitCode = code
 	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(outBuf.Bytes())
-	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(errBuf.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderrBytes)
 	body, _ := json.Marshal(res)
 	// Lambda's invocation contract returns one body — we put the JSON
 	// response in stdout (the /response payload), leave stderr empty,
@@ -432,66 +474,6 @@ func postInitError(base, msg string) {
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
-}
-
-// dialReverseAgent opens the long-lived WebSocket to the sockerless
-// Lambda backend. Returns a raw *websocket.Conn — the caller feeds it
-// into the agent.Router via serveReverseAgent.
-func dialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) {
-	u, err := url.Parse(callbackURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse callback URL: %w", err)
-	}
-	q := u.Query()
-	q.Set("session_id", containerID)
-	u.RawQuery = q.Encode()
-	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", u.String(), err)
-	}
-	return ws, nil
-}
-
-// serveReverseAgent reads messages from the WebSocket and dispatches
-// them to an agent.Router. This is the "server side" of the
-// reverse-agent protocol — inbound TypeExec / TypeAttach messages
-// spawn subprocesses in this container and stream stdout back over
-// the WS.
-func serveReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
-	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
-	registry := agent.NewSessionRegistry()
-	router := agent.NewRouter(registry, nil, logger)
-	defer registry.CleanupConn(conn)
-
-	for {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		var msg agent.Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		router.Handle(&msg, conn, connMu)
-	}
-}
-
-// sendHeartbeats writes a ping frame every heartbeatPeriod so the
-// backend knows the container is alive between invocations. Exits
-// when the WS is closed. connMu is shared with serveReverseAgent so
-// pings can't interleave with response frames — gorilla/websocket
-// requires serialised writes on a single conn.
-func sendHeartbeats(conn *websocket.Conn, connMu *sync.Mutex) {
-	t := time.NewTicker(heartbeatPeriod)
-	defer t.Stop()
-	for range t.C {
-		connMu.Lock()
-		err := conn.WriteMessage(websocket.PingMessage, nil)
-		connMu.Unlock()
-		if err != nil {
-			return
-		}
-	}
 }
 
 // contextWithDeadlineMs returns a context that expires at the given

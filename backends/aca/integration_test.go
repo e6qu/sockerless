@@ -20,6 +20,10 @@ import (
 )
 
 var dockerClient *client.Client
+
+// backendPort is set in TestMain; used by callers that construct the
+// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/aca/reverse`).
+var backendPort int
 var evalImageName string
 
 // requireEnv reads a required env var or dies loud.
@@ -203,7 +207,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
 	// Start backend pointed at the resolved endpoint.
-	backendPort := findFreePort()
+	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-aca on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
@@ -214,6 +218,8 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_ACA_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
+		// Required at NewServer per Phase 168 (no fallback).
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/aca/reverse", backendPort),
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr

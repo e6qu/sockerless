@@ -246,6 +246,26 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	//    The bootstrap stays on its HTTP listener for the runner's
 	//    subsequent /exec POSTs instead.
 	go s.invokePodServiceMain(ctx, result, containers, exitCh, true)
+
+	// 6. Block until the bootstrap dials back (multi-container
+	//    pods can't skip the wait either, or the first ExecStart races
+	//    the dial-back).
+	if !containers[0].Config.OpenStdin {
+		timeout, terr := core.BootstrapTimeoutFromEnv("gcf")
+		if terr != nil {
+			return &api.ServerError{Message: fmt.Sprintf("invalid bootstrap-timeout env: %v", terr)}
+		}
+		waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
+		defer cancel()
+		if werr := s.reverseAgents.WaitForAgent(waitCtx, mainContainerID); werr != nil {
+			return &api.ServerError{Message: fmt.Sprintf(
+				"reverse-agent did not register for pod %s within %s "+
+					"(SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC). Pod-Service was deployed "+
+					"and invoked but the in-function bootstrap never dialled back to %s.",
+				mainContainerID[:12], timeout, s.config.CallbackURL,
+			)}
+		}
+	}
 	return nil
 }
 
@@ -530,6 +550,18 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 			Values: &runpb.EnvVar_Value{Value: parts[1]},
 		})
 	}
+	// SOCKERLESS_CALLBACK_URL — bootstrap dials back here to register
+	// the reverse-agent WebSocket. Without it, Path A exec is
+	// unreachable (no fallback). NewServer fails loud when CallbackURL
+	// is unset, so by this point it is guaranteed non-empty.
+	envVars = append(envVars, &runpb.EnvVar{
+		Name:   "SOCKERLESS_CALLBACK_URL",
+		Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL},
+	})
+	envVars = append(envVars, &runpb.EnvVar{
+		Name:   "SOCKERLESS_CONTAINER_ID",
+		Values: &runpb.EnvVar_Value{Value: c.ID},
+	})
 
 	defName := "main"
 	if !isMain {

@@ -76,6 +76,25 @@ type EnvVar struct {
 	Value string `json:"value"`
 }
 
+func (e *EnvVar) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Values *struct {
+			Value string `json:"value"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	e.Name = raw.Name
+	e.Value = raw.Value
+	if e.Value == "" && raw.Values != nil {
+		e.Value = raw.Values.Value
+	}
+	return nil
+}
+
 // ResourceRequirements describes compute resource requirements.
 type ResourceRequirements struct {
 	Limits map[string]string `json:"limits,omitempty"`
@@ -505,6 +524,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 					Labels:       map[string]string{"sockerless-sim-execution": id},
 					Binds:        binds,
 					ExtraHosts:   hostMetadataExtraHosts(),
+					Sandbox:      sim.SandboxCloudRun, // BUG-1077.
 				}, sink)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)

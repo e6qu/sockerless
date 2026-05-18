@@ -3,9 +3,14 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
@@ -20,16 +25,54 @@ import (
 type ReverseAgentRegistry struct {
 	mu       sync.RWMutex
 	sessions map[string]*agent.ReverseAgentConn
+	// waiters maps container ID -> slice of per-waiter channels
+	// (each closed by Register when the session lands). Per-waiter
+	// channels (vs the previous shared-channel design) close
+	// BUG-1064 where a timed-out waiter would delete the shared
+	// channel and leave remaining waiters hanging.
+	waiters map[string][]chan struct{}
+	// lifetimeExpired tracks containers whose in-FaaS bootstrap
+	// signalled it's about to hit the platform's max invocation
+	// deadline. Set by MarkLifetimeExpired; checked by ExecStart so
+	// the operator sees an actionable error instead of a generic
+	// timeout or 500 (BUG-1053).
+	lifetimeExpired map[string]struct{}
 }
 
 // NewReverseAgentRegistry creates an empty registry.
 func NewReverseAgentRegistry() *ReverseAgentRegistry {
-	return &ReverseAgentRegistry{sessions: map[string]*agent.ReverseAgentConn{}}
+	return &ReverseAgentRegistry{
+		sessions:        map[string]*agent.ReverseAgentConn{},
+		waiters:         map[string][]chan struct{}{},
+		lifetimeExpired: map[string]struct{}{},
+	}
+}
+
+// MarkLifetimeExpired records that the in-container bootstrap for
+// `id` is about to be torn down by its FaaS platform (Lambda 15min,
+// GCF Gen2 60min, etc.). Called by HandleReverseAgentWS when the
+// bootstrap sends agent.TypeLifetimeExpired. Inspected by ExecStart
+// so the operator gets a clear "use long-lived backend instead"
+// error rather than a generic 500 / hung exec.
+func (r *ReverseAgentRegistry) MarkLifetimeExpired(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lifetimeExpired[id] = struct{}{}
+}
+
+// IsLifetimeExpired reports whether the container has been marked
+// past its FaaS pod lifetime cap.
+func (r *ReverseAgentRegistry) IsLifetimeExpired(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.lifetimeExpired[id]
+	return ok
 }
 
 // Register saves a session keyed by container ID, closing any prior
 // session under the same ID (the new dial wins — matches a reconnect
-// resume model).
+// resume model). Wakes ALL WaitForAgent callers for this id (each
+// owns a private channel, so a timed-out waiter can't strand others).
 func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -37,6 +80,53 @@ func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn)
 		_ = old.Close()
 	}
 	r.sessions[id] = conn
+	for _, ch := range r.waiters[id] {
+		close(ch)
+	}
+	delete(r.waiters, id)
+}
+
+// WaitForAgent blocks until a session for `id` is registered or `ctx`
+// is cancelled (context.WithTimeout is the typical caller pattern).
+// Returns nil on registration, ctx.Err() on timeout / cancellation.
+// Fast-paths when the session is already registered.
+//
+// Designed for cloud-backend ContainerStart paths: after the
+// function/revision is "Active" the bootstrap still needs to start
+// inside the container and dial back; the first ExecStart cannot
+// proceed until the WebSocket is up. Per the no-fallback rule there
+// is no exec path that doesn't require the agent.
+func (r *ReverseAgentRegistry) WaitForAgent(ctx context.Context, id string) error {
+	r.mu.Lock()
+	if _, ok := r.sessions[id]; ok {
+		r.mu.Unlock()
+		return nil
+	}
+	ch := make(chan struct{})
+	r.waiters[id] = append(r.waiters[id], ch)
+	r.mu.Unlock()
+
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		// Remove this specific waiter channel; other waiters for the
+		// same id stay subscribed (BUG-1064 — previous shared-channel
+		// design stranded sibling waiters on the first timeout).
+		r.mu.Lock()
+		bucket := r.waiters[id]
+		for i, c := range bucket {
+			if c == ch {
+				r.waiters[id] = append(bucket[:i], bucket[i+1:]...)
+				break
+			}
+		}
+		if len(r.waiters[id]) == 0 {
+			delete(r.waiters, id)
+		}
+		r.mu.Unlock()
+		return ctx.Err()
+	}
 }
 
 // Resolve returns the live reverse-agent connection for a container,
@@ -48,8 +138,31 @@ func (r *ReverseAgentRegistry) Resolve(id string) (*agent.ReverseAgentConn, bool
 	return c, ok
 }
 
-// Drop closes + removes a session (used by ContainerStop/Remove).
+// Drop closes + removes a session and clears all per-container state
+// (lifetimeExpired). Used by container-lifecycle callers
+// (ContainerRemove / fresh-container allocation) where the operator
+// has signalled the container is GONE — any subsequent Register for
+// the same ID is a new container that should start clean.
 func (r *ReverseAgentRegistry) Drop(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if c, ok := r.sessions[id]; ok {
+		_ = c.Close()
+		delete(r.sessions, id)
+	}
+	delete(r.lifetimeExpired, id)
+}
+
+// DropSession removes the WebSocket session for `id` WITHOUT clearing
+// lifetime-expired or other lifecycle state. Used by
+// HandleReverseAgentWS when the WS closes — typically because the
+// FaaS platform tore down the pod after the bootstrap signalled
+// `lifetime_expired`. Clearing lifetimeExpired here would erase the
+// only signal the next ExecStart needs to return
+// FaaSPodLifetimeExceeded. The full Drop runs later when
+// ContainerRemove fires (or never — and a new container gets a fresh
+// ID anyway).
+func (r *ReverseAgentRegistry) DropSession(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if c, ok := r.sessions[id]; ok {
@@ -79,14 +192,63 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 		if err != nil {
 			return
 		}
-		rc := agent.NewReverseAgentConn(ws)
+		rc := agent.NewReverseAgentConnWithSystemHandler(ws, func(m agent.Message) {
+			if m.Type == agent.TypeLifetimeExpired {
+				reg.MarkLifetimeExpired(sessionID)
+				logger.Warn().Str("container", sessionID).Msg("reverse-agent reported FaaS pod lifetime expiring; future exec will return operator-guidance error")
+			}
+		})
 		reg.Register(sessionID, rc)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session registered")
 
 		<-rc.Done()
-		reg.Drop(sessionID)
+		reg.DropSession(sessionID)
 		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session dropped")
 	}
+}
+
+// TmpfsSizeFromEnv returns the per-backend tmpfs default size in MiB
+// from `SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB` (default 2048 MiB).
+// Invalid / non-positive values fail loud (no clamping). Consumed by
+// backends that register `MemoryDriver` as a default storage backing
+// (cloudrun + cloudrun-functions + ACA after Phase 168).
+func TmpfsSizeFromEnv(backend string) (int, error) {
+	name := "SOCKERLESS_" + strings.ToUpper(backend) + "_TMPFS_SIZE_MIB"
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 2048, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: %w (expected integer MiB)", name, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid %s=%d: must be positive MiB (no zero / negative — fail loud)", name, n)
+	}
+	return n, nil
+}
+
+// BootstrapTimeoutFromEnv returns the per-backend reverse-agent
+// bootstrap-dial-back timeout. `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC`
+// overrides; default 90 seconds. Invalid / non-positive values fail loud
+// at the call site rather than silently clamping (no-fallback rule).
+//
+// Used by every FaaS-style backend's ContainerStart to bound the wait
+// for the in-container bootstrap to register a reverse-agent.
+func BootstrapTimeoutFromEnv(backend string) (time.Duration, error) {
+	name := "SOCKERLESS_" + strings.ToUpper(backend) + "_BOOTSTRAP_TIMEOUT_SEC"
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 90 * time.Second, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s=%q: %w (expected integer seconds)", name, raw, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid %s=%d: must be positive seconds (no zero / negative timeout — fail loud)", name, n)
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 // ErrNoReverseAgent surfaces when a container has no live reverse-agent
