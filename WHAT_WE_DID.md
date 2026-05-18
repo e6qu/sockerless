@@ -93,6 +93,12 @@ Codex review caught 3 corrections during Phase 167:
 
 Phase 168 later landed across PRs #168-#170. The old invoke-per-exec path was removed, reverse-agent exec became mandatory for FaaS-style backends, and the remaining simulator-backed smoke/endpoint-fidelity work closed in PR #170.
 
+## 2026-05-19 — PR #172 AWS CI follow-up
+
+CI run `26063005479` failed the AWS simulator SDK job on `TestECS_CrossTaskDNS`. Root cause was a real compatibility regression from the multi-container ECS materialization work: the first task container was renamed from the canonical `sockerless-sim-aws-task-<task>` name to a suffixed container name, so Cloud Map's Docker-network alias wiring could no longer connect the task container to the namespace network. Fixed by keeping the canonical name for the first/main task container and suffixing only sidecars. The same pass removed Docker-incompatible `ExtraHosts` from sidecars that join the main container's network namespace; the main container still gets metadata host mappings.
+
+Verified locally with the AWS multi-container localhost SDK test, the Cloud Map cross-task DNS SDK test, and the full AWS simulator SDK target.
+
 ## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (merged)
 
 User directive after Phase 165 merge: *"BTW as already iterated: we don't want fallbacks, we don't want workarounds, we want real actual solutions and faithful API compliance (identical) for each component. […] If there's a missing feature, let's add it, let's do it right."*

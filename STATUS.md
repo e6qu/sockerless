@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `pod-model-simulator-fidelity` — pod materialization + simulator fidelity follow-up. |
-| In-flight | BUG-1096 fixed in-tree: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps simulators now start every declared pod/task container as a real local workload and use shared network namespaces for localhost sidecar semantics. Added SDK regression coverage across AWS/GCP/Azure, corrected AZF pod docs to match the actual single-container Function App implementation, and wired real GitHub/GitLab runner arithmetic harness targets against a caller-started simulator-backed sockerless daemon. Push hook also required dependency freshness cleanup: `bleephub` now uses `github.com/go-git/go-git/v5 v5.19.1` and README line-count badges were refreshed. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
+| In-flight | BUG-1096 fixed in-tree: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps simulators now start every declared pod/task container as a real local workload and use shared network namespaces for localhost sidecar semantics. Added SDK regression coverage across AWS/GCP/Azure, corrected AZF pod docs to match the actual single-container Function App implementation, and wired real GitHub/GitLab runner arithmetic harness targets against a caller-started simulator-backed sockerless daemon. PR #172 CI run `26063005479` surfaced BUG-1097 in AWS ECS task-container naming / sidecar host config; fixed and locally verified with the focused failing tests plus the full AWS SDK target. Push hook also required dependency freshness cleanup: `bleephub` now uses `github.com/go-git/go-git/v5 v5.19.1` and README line-count badges were refreshed. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
 | Last merged | PR #170 — Phase 168 follow-up runner smokes and simulator fidelity (2026-05-18, `a5639811`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1096 filed · 1094 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
+| Bugs | 1097 filed · 1095 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

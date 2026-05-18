@@ -885,24 +885,30 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			}
 		}
 
+		containerName := fmt.Sprintf("sockerless-sim-aws-task-%s", taskID[:12])
+		if i > 0 {
+			containerName = fmt.Sprintf("%s-%s", containerName, cd.Name)
+		}
+
 		cfg := sim.ContainerConfig{
 			Image:        sim.ResolveLocalImage(cd.Image),
 			Architecture: "linux/arm64",
 			Command:      cd.EntryPoint,
 			Args:         cd.Command,
 			Env:          mergeEnv(cmdEnv, hostMetadataEnv(taskID)),
-			Name:         fmt.Sprintf("sockerless-sim-aws-task-%s-%s", taskID[:12], cd.Name),
+			Name:         containerName,
 			Labels: map[string]string{
 				"sockerless-sim-task":           taskID,
 				"sockerless-sim-task-container": cd.Name,
 			},
-			Tty:        wantTTY || cd.PseudoTerminal,
-			OpenStdin:  wantTTY || cd.Interactive,
-			Binds:      binds,
-			ExtraHosts: hostMetadataExtraHosts(),
-			Sandbox:    sim.SandboxFargate,
+			Tty:       wantTTY || cd.PseudoTerminal,
+			OpenStdin: wantTTY || cd.Interactive,
+			Binds:     binds,
+			Sandbox:   sim.SandboxFargate,
 		}
-		if i > 0 && mainDockerID != "" {
+		if i == 0 {
+			cfg.ExtraHosts = hostMetadataExtraHosts()
+		} else if mainDockerID != "" {
 			cfg.NetworkMode = "container:" + mainDockerID
 		}
 

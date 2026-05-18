@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1096 filed · 1094 fixed · 1 open · 2 false positives.**
+**1097 filed · 1095 fixed · 1 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -32,7 +32,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Resolved history (compressed)
 
-1038 bugs filed and fixed across phases 86–168 follow-up plus pod-model follow-up.
+1039 bugs filed and fixed across phases 86–168 follow-up plus pod-model follow-up.
+
+- **1097** (pod-model simulator fidelity CI follow-up) — PR #172 CI run `26063005479` caught an AWS simulator regression in `TestECS_CrossTaskDNS`: the multi-container ECS materialization change renamed even the first/main task container from the canonical `sockerless-sim-aws-task-<task>` name to a suffixed `...-app` name, so Cloud Map's real Docker-network alias wiring could no longer find the task container to connect it to the namespace network. The fix preserves the existing canonical task container name for the first container and only suffixes sidecars, which keeps Cloud Map and existing single-container task behavior stable while still giving each sidecar a distinct real workload container. The same CI triage also fixed the sidecar Docker host config: ECS sidecars no longer receive `ExtraHosts` while joining the main container's network namespace, because Docker rejects that combination and sidecars inherit the main container's network stack. Verified with the focused AWS SDK multi-container localhost test, the focused Cloud Map cross-task DNS test, and the full AWS simulator SDK target.
 
 - **1096** (pod-model simulator fidelity follow-up) — The simulators accepted multi-container pod/task specs but several execution paths did not materialize all containers as real workload containers sharing `localhost`: AWS ECS tasks and GCP Cloud Run Jobs/Services started only the first container, while Azure ACA Apps started sidecars on the same Docker bridge network rather than the main container's network namespace. The fix starts every task/revision/job/app container with per-container image/env/command/args/volume config and uses Docker/Podman `container:<mainID>` network mode for sidecars, matching the cloud shared-localhost contract while keeping the simulator cloud-facing APIs unchanged. GCP Cloud Run Services also now honor command/args and GCS volume binds in the HTTP launcher. Regression coverage uses official SDK clients: ECS multi-container task, Cloud Run Service multi-container invoke, Cloud Run Job multi-container execution, ACA Job multi-container execution, and ACA App multi-container logs. The same pass corrected stale AZF pod docs: AZF currently supports single-container Function Apps only and rejects multi-container pods; Azure sidecar workloads belong on ACA Apps until AZF has a real implementation. Real-runner pre-work added `make e2e-github-sim-arithmetic`, `make e2e-gitlab-sim-arithmetic`, and `make e2e-real-runner-sim-arithmetic`, which run official GitHub/GitLab runner flows against a caller-started simulator-backed daemon and compile/test the Go arithmetic module.
 
