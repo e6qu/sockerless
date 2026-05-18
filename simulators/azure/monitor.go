@@ -75,6 +75,7 @@ type Column struct {
 type LogEntry struct {
 	TimeGenerated      string `json:"TimeGenerated"`
 	ContainerGroupName string `json:"ContainerGroupName_s,omitempty"`
+	ContainerAppName   string `json:"ContainerAppName_s,omitempty"`
 	Log                string `json:"Log_s,omitempty"`
 	Stream             string `json:"Stream_s,omitempty"`
 	// AppTraces fields
@@ -103,6 +104,18 @@ func injectContainerAppLog(jobName, message string) {
 		"ContainerGroupName_s": jobName,
 		"Log_s":                message,
 		"Stream_s":             "stdout",
+	}
+	appendLogRow("default:ContainerAppConsoleLogs_CL", row)
+}
+
+// injectContainerAppReplicaLog writes an ACA Apps log entry. Real ACA
+// app logs use ContainerAppName_s, while jobs use ContainerGroupName_s.
+func injectContainerAppReplicaLog(appName, message string) {
+	row := monitorLogRow{
+		"TimeGenerated":      time.Now().UTC().Format(time.RFC3339),
+		"ContainerAppName_s": appName,
+		"Log_s":              message,
+		"Stream_s":           "stdout",
 	}
 	appendLogRow("default:ContainerAppConsoleLogs_CL", row)
 }
@@ -367,6 +380,9 @@ func registerAzureMonitor(srv *sim.Server) {
 			tableName := "ContainerAppConsoleLogs_CL"
 			if e.ContainerGroupName != "" {
 				row["ContainerGroupName_s"] = e.ContainerGroupName
+			}
+			if e.ContainerAppName != "" {
+				row["ContainerAppName_s"] = e.ContainerAppName
 			}
 			if e.Log != "" {
 				row["Log_s"] = e.Log

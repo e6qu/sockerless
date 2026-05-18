@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -109,6 +110,8 @@ type AsyncOperationStatus struct {
 // acaOps stores async-operation status keyed by opId. Initialized lazily
 // in registerContainerAppsApps + reused by registerContainerApps (Jobs).
 var acaOps sim.Store[AsyncOperationStatus]
+
+var acaAppReplicaHandles sync.Map // map[resourceID][]*sim.ContainerHandle
 
 // acaIssueAsyncOp records a new operation in the Creating→Succeeded
 // state machine. Returns the opId; the caller writes the
@@ -244,6 +247,11 @@ func registerContainerAppsApps(srv *sim.Server) {
 			app.Properties.Configuration.Ingress.Fqdn = fqdn
 		}
 
+		if err := startACAAppReplicas(resourceID, app); err != nil {
+			sim.AzureErrorf(w, "ContainerAppRevisionFailed", http.StatusInternalServerError,
+				"failed to start container app replica for %s: %v", name, err)
+			return
+		}
 		apps.Put(resourceID, app)
 
 		// Set Azure-AsyncOperation so SDK pollers exercise the real flow.
@@ -294,6 +302,139 @@ func registerContainerAppsApps(srv *sim.Server) {
 				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
+		stopACAAppReplicas(resourceID)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func startACAAppReplicas(resourceID string, app ContainerApp) error {
+	if app.Properties.Template == nil || len(app.Properties.Template.Containers) == 0 {
+		stopACAAppReplicas(resourceID)
+		return nil
+	}
+
+	minReplicas := int32(1)
+	if app.Properties.Template.Scale != nil && app.Properties.Template.Scale.MinReplicas != nil {
+		minReplicas = *app.Properties.Template.Scale.MinReplicas
+	}
+	if minReplicas <= 0 {
+		stopACAAppReplicas(resourceID)
+		return nil
+	}
+
+	envID := app.Properties.EnvironmentID
+	if envID == "" {
+		envID = app.Properties.ManagedEnvironmentID
+	}
+	var netName string
+	var netAliases []string
+	if envID != "" {
+		if env, ok := acaEnvironments.Get(envID); ok && env.DockerNetworkName != "" {
+			netName = env.DockerNetworkName
+			netAliases = []string{app.Name}
+			if app.Properties.LatestRevisionFqdn != "" {
+				netAliases = append(netAliases, app.Properties.LatestRevisionFqdn)
+			}
+		}
+	}
+
+	handles := make([]*sim.ContainerHandle, 0, int(minReplicas)*len(app.Properties.Template.Containers))
+	for replica := int32(0); replica < minReplicas; replica++ {
+		for _, c := range app.Properties.Template.Containers {
+			handle, err := startACAAppContainer(resourceID, app, c, replica, envID, netName, netAliases)
+			if err != nil {
+				for _, h := range handles {
+					h.Cancel()
+				}
+				return err
+			}
+			handles = append(handles, handle)
+		}
+	}
+	if len(handles) > 0 {
+		replaceACAAppReplicas(resourceID, handles)
+		injectContainerAppReplicaLog(app.Name, "Container app replica started")
+	}
+	return nil
+}
+
+func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, replica int32, envID, netName string, netAliases []string) (*sim.ContainerHandle, error) {
+	cmdEnv := make(map[string]string, len(c.Env)+1)
+	for _, ev := range c.Env {
+		cmdEnv[ev.Name] = ev.Value
+	}
+	if _, ok := cmdEnv["PORT"]; !ok {
+		cmdEnv["PORT"] = "8080"
+	}
+
+	var binds []string
+	if app.Properties.Template != nil && len(app.Properties.Template.Volumes) > 0 && len(c.VolumeMounts) > 0 {
+		volByName := make(map[string]JobVolume, len(app.Properties.Template.Volumes))
+		for _, v := range app.Properties.Template.Volumes {
+			volByName[v.Name] = v
+		}
+		for _, mp := range c.VolumeMounts {
+			v, ok := volByName[mp.VolumeName]
+			if !ok {
+				continue
+			}
+			if !strings.EqualFold(v.StorageType, "AzureFile") || v.StorageName == "" {
+				continue
+			}
+			acct, share, found := LookupEnvStorageBinding(envID, v.StorageName)
+			if !found {
+				continue
+			}
+			binds = append(binds, FileShareHostDir(acct, share)+":"+mp.MountPath)
+		}
+	}
+
+	shortName := app.Name
+	if len(shortName) > 24 {
+		shortName = shortName[:24]
+	}
+	containerName := fmt.Sprintf("sockerless-sim-azure-app-%s-%d-%s-%s", shortName, replica, c.Name, randomSuffix(6))
+	sink := &acaAppLogSink{appName: app.Name}
+	return sim.StartContainerSync(sim.ContainerConfig{
+		Image:        sim.ResolveLocalImage(c.Image),
+		Architecture: "linux/arm64",
+		Command:      c.Command,
+		Args:         c.Args,
+		Env:          mergeEnv(cmdEnv, hostMetadataEnv()),
+		Name:         containerName,
+		Labels: map[string]string{
+			"sockerless-sim-type": "aca-app-replica",
+			"sockerless-app-id":   resourceID,
+			"sockerless-app-name": app.Name,
+		},
+		Network:        netName,
+		NetworkAliases: netAliases,
+		Binds:          binds,
+		ExtraHosts:     hostMetadataExtraHosts(),
+		Sandbox:        sim.SandboxACA,
+	}, sink)
+}
+
+func stopACAAppReplicas(resourceID string) {
+	if v, ok := acaAppReplicaHandles.LoadAndDelete(resourceID); ok {
+		for _, handle := range v.([]*sim.ContainerHandle) {
+			handle.Cancel()
+		}
+	}
+}
+
+func replaceACAAppReplicas(resourceID string, handles []*sim.ContainerHandle) {
+	if v, ok := acaAppReplicaHandles.Swap(resourceID, handles); ok {
+		for _, handle := range v.([]*sim.ContainerHandle) {
+			handle.Cancel()
+		}
+	}
+}
+
+type acaAppLogSink struct {
+	appName string
+}
+
+func (s *acaAppLogSink) WriteLog(line sim.LogLine) {
+	injectContainerAppReplicaLog(s.appName, line.Text)
 }

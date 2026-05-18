@@ -97,6 +97,7 @@ var kqlTableSchemas = map[string][]Column{
 	"ContainerAppConsoleLogs_CL": {
 		{Name: "TimeGenerated", Type: "datetime"},
 		{Name: "ContainerGroupName_s", Type: "string"},
+		{Name: "ContainerAppName_s", Type: "string"},
 		{Name: "Log_s", Type: "string"},
 		{Name: "Stream_s", Type: "string"},
 	},

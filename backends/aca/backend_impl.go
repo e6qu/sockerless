@@ -321,7 +321,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(id, jobName, executionName, exitCh)
 
-	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
+	return nil
 }
 
 // startMultiContainerJobTyped creates and runs an ACA Job with all pod containers.
@@ -409,7 +409,7 @@ func (s *Server) startMultiContainerJobTyped(triggerID string, podContainers []a
 	// Start background poller to detect execution exit
 	go s.pollExecutionExit(mainID, jobName, executionName, exitCh)
 
-	return s.waitForReverseAgentAfterStart(podContainers[0].ID, podContainers[0].Config.OpenStdin)
+	return nil
 }
 
 // ContainerStop stops a running ACA container.
