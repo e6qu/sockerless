@@ -38,7 +38,7 @@
 |---|---|---|---|---|---|---|---|---|---|---|
 | `POST /images/create` (pull) | `docker pull nginx:latest` | Downloads layers from registry to local store; `X-Registry-Auth` header for private registries | `POST /internal/v1/images/pull` | Docker API `POST /images/create` (real pull) | Records ref in state; **ECS pulls at `RunTask` time** from ECR/Docker Hub | Records ref; **Lambda** pulls from **ECR** at `CreateFunction` time | Records ref; **Cloud Run** pulls at `CreateJob` time from **Artifact Registry**/GCR/Docker Hub | Records ref; **Cloud Run Functions** pulls at `CreateFunction` time from **Artifact Registry** | Records ref; **ACA** pulls at job creation time from **ACR**/Docker Hub | Records ref; **Azure Functions** pulls from **ACR** at Function App deploy |
 | `GET /images/{name}/json` | `docker inspect nginx:latest` | Returns image metadata from local store (config, layers, size) | `GET /internal/v1/images/{name}` | Docker API `GET /images/{name}/json` | Returns stored metadata from local state (no cloud API call) | Returns stored metadata from local state | Returns stored metadata from local state | Same | Returns stored metadata from local state | Same |
-| `POST /images/load` | `docker load -i image.tar` | Imports image from tar archive into local store | `POST /internal/v1/images/load` | Docker API `POST /images/load` | Extracts metadata; stores in local state (creates synthetic image entry) | Same as ECS | Same | Same | Same | Same |
+| `POST /images/load` | `docker load -i image.tar` | Imports image from tar archive into local store | `POST /internal/v1/images/load` | Docker API `POST /images/load` | Pushes the loaded image to a configured cloud registry path or returns an explicit unsupported-operation error | Same as ECS | Same | Same | Same | Same |
 | `POST /images/{name}/tag` | `docker tag nginx:latest myapp:v1` | Creates new tag reference in local store | `POST /internal/v1/images/{name}/tag` | Docker API `POST /images/{name}/tag` | Updates tag in local state (no cloud API call) | Same | Same | Same | Same | Same |
 | `POST /build` | `docker build .` | Parses Dockerfile, executes RUN steps, creates image layers | `POST /internal/v1/images/build` | Docker API `POST /build` (real build) | Same as core (Dockerfile parser) | Same | Same | Same | Same | Same |
 | `GET /images/json` | `docker images` | Lists all images from local store | `GET /internal/v1/images` | Docker API `GET /images/json` | Returns from local state | Same | Same | Same | Same | Same |
@@ -181,16 +181,16 @@ These are not Docker REST API calls but show how the agent is used internally by
 
 | Capability | Docker | ECS | Lambda | Cloud Run | CR Functions | ACA | Azure Functions |
 |---|---|---|---|---|---|---|---|
-| `POST /containers/create` | `dockerd` | `RegisterTaskDefinition` | `CreateFunction` | In-memory (deferred) | `CreateFunction` | In-memory (deferred) | Create App + Plan |
+| `POST /containers/create` | `dockerd` | Pending create until `RunTask` | Pending create until `CreateFunction` | Pending create until Job/Service materialization | Pending create until Function/Service materialization | Pending create until Job/App materialization | Pending create until Function App materialization |
 | `POST /containers/{id}/start` | `dockerd` | `RunTask` | `Invoke` (async) | `CreateJob` + `RunJob` | HTTP POST invoke | `BeginCreateOrUpdate` + `BeginStart` | Start Function App |
-| `GET /containers/{id}/json` | `dockerd` | Local state | Local state | Local state | Local state | Local state | Local state |
+| `GET /containers/{id}/json` | `dockerd` | ECS cloud state | Lambda cloud state | Cloud Run cloud state | Cloud Functions / underlying Service state | ACA cloud state | Azure Functions cloud state |
 | `GET /containers/{id}/logs` | Log driver | **CloudWatch** | **CloudWatch** | **Cloud Logging** | **Cloud Logging** | **Azure Monitor** | **Azure Monitor** |
-| `POST /containers/{id}/attach` | Hijack | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
-| `POST /exec/{id}/start` | Hijack | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** | **Forward agent** | **Reverse agent** |
+| `POST /containers/{id}/attach` | Hijack | **SSM / agent path** | **Reverse agent** | **Reverse agent** | **Reverse agent** | **Reverse agent** | **Reverse agent** |
+| `POST /exec/{id}/start` | Hijack | **SSM ExecuteCommand** | **Reverse agent** | **Reverse agent** | **Reverse agent** | **Reverse agent** | **Reverse agent** |
 | `POST /containers/{id}/stop` | `dockerd` | `StopTask` | Disconnect agent | Cancel Execution | Disconnect agent | `BeginStopExecution` | Stop Function App |
 | `DELETE /containers/{id}` | `dockerd` | `DeregisterTaskDef` | `DeleteFunction` | `DeleteJob` | `DeleteFunction` | `BeginDelete` (Job) | Delete App + Plan |
-| `POST /networks/create` | `libnetwork` | **VPC Security Groups** | In-memory | **Cloud DNS zone** | In-memory | **NSG rules** | In-memory |
-| `POST /volumes/create` | Local FS | In-memory | In-memory | In-memory | In-memory | In-memory | In-memory |
+| `POST /networks/create` | `libnetwork` | **VPC security groups + Cloud Map** | Not supported as native peer DNS | **Cloud DNS / Service materialization** | Service materialization | **ACA managed environment / private DNS** | Not supported as native peer DNS |
+| `POST /volumes/create` | Local FS | **EFS** | **EFS** | **GCS-backed storage** | **GCS-backed storage** | **Azure Files** | **Azure Files** |
 | `POST /build` | BuildKit | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser | Dockerfile parser |
 | Archive (docker cp) | FS access | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS | Agent FS |
 

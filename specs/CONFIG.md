@@ -114,7 +114,7 @@ Config file is tried first. If unavailable, falls back to environment variables.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom endpoint URL (simulator mode) |
+| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud API endpoint URL, commonly a local simulator/cloud-slice endpoint. This changes routing only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | Agent health check timeout |
 

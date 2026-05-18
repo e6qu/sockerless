@@ -6,15 +6,15 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-18 — PR #170: Phase 168 follow-up branch
+## 2026-05-18 — PR #170: Phase 168 follow-up merged
 
-PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and live-validation closure branch. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
+PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and merged on 2026-05-18 at `a5639811`. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
 
 The new smoke tests caught a real service/app lifecycle bug before CI: Cloud Run Services could finish but still look running to `docker rm`, and ACA Apps could be stopped/deleted before `wait`/`rm` had a stable Docker lifecycle view. The branch fixes those state transitions and records stop/invocation results for wait/remove. It also expands AZF bootstrap unit coverage around exec envelopes, stdin/env/workdir, default invoke, timeout parsing, and argv decoding.
 
 The simulator endpoint-fidelity pass removed the GCP backend image-resolution shortcut that treated `SOCKERLESS_ENDPOINT_URL` as "do simulator behavior." That exposed BUG-1095: the simulator had Cloud Run/GCF endpoints but its Artifact Registry remote-repository path did not serve the same AR image refs the live backend uses. Registry HTTP now routes through the configured endpoint without changing image semantics, and the GCP simulator hydrates `docker-hub` AR cache misses from the real local Docker image save stream. The follow-up coverage uses the same client surfaces operators use: Google Artifact Registry SDK, `gcloud artifacts` with the Artifact Registry endpoint override, Terraform's `google_artifact_registry_repository` remote-repo resource, and the standard OCI Distribution API. `make faas-smoke-test-gcp` passes with the same AR refs.
 
-BUG-1075 live-cloud validation is now part of the PR scope, not excluded. `manual-tests/05-live-validation-preflight.md` captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining cloud cells.
+BUG-1075 live-cloud validation remains open because it requires real authenticated cloud projects/subscriptions. `manual-tests/05-live-validation-preflight.md` captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining cloud cells.
 
 ## 2026-05-17 — Phase 168.9: Cloud Run + GCF overlay exec e2e green on the simulator
 
@@ -58,9 +58,9 @@ The same GitLab attach-before-start test then exposed a GCF single-container gap
 
 ACA had the last GitLab attach-before-start gap. Its HTTP attach route was wired to read-only Azure Monitor logs, so pre-start stdin never reached the backend attach delegate, and `OpenStdin` Apps skipped the reverse-agent wait without a way to run the piped script. ACA now routes typed attach through `ContainerAttach`, captures pre-start stdin for Apps, waits for the real reverse-agent bootstrap, runs `/bin/sh` through `RunAndCaptureWithStdin`, mux-publishes stdout/stderr back to Docker attach, and records the real exit code for wait. The simulator test builds a real arm64 overlay image with `sockerless-cloudrun-bootstrap`, starts an ACA App, and verifies the GitLab `/attach` → stdin script → `/start` → `/wait` cycle. `TestACAGitLabRunnerAttachStdin` and the full ACA backend simulator package pass locally.
 
-PR #169 merged on 2026-05-18 at `0bd75902` with final CI run `26029489706` green. Local `main` was fast-forwarded to `origin/main`. The remaining open work is tracked as BUG-1072, BUG-1074, BUG-1075, and BUG-1076; BUG-1075 still requires real live-cloud credentials/setup.
+PR #169 merged on 2026-05-18 at `0bd75902` with final CI run `26029489706` green. PR #170 later closed the remaining simulator-backed FaaS smoke, attach, AZF bootstrap, and endpoint-fidelity follow-ups. BUG-1075 still requires real live-cloud credentials/setup.
 
-## 2026-05-17 — Phase 167: pod-model analysis + Phase 168 plan (doc-only, in flight on `phase-167-pod-model-analysis`)
+## 2026-05-17 — Phase 167: pod-model analysis + Phase 168 plan (merged)
 
 User directive: *"review the pod model of the backends and how it works with github runner and with gitlab runner; let's compare side by side how the drivers work and how the 'pod' abstraction is maintained for all backends; for FaaS backends in particular it can get complicated; is there some way to simplify? we want to also avoid using exotic storage options by default (do keep old drivers though) and stick to a common denominator if we can; note that hacks like separate VMs / instances are not allowed, but do ask me questions about it; for example I noticed that a 12 step job took 12+ minutes where we had a 1 min of initialization for each step; I think by accident the execution of the job was split across multiple functions when a single function would have done the job; let's check, first just analyze."*
 
@@ -79,9 +79,9 @@ Codex review caught 3 corrections during Phase 167:
 
 **Same failure mode repeated from earlier in the session**: I built a narrative ("FaaS backends are all the same") and treated agent summaries as authoritative without re-expanding to per-file evidence. Codex's diff-anchored review caught both rounds. Documented this meta-observation; should be added to `docs/VIBE_CODING.md` as "agent summary tables flatten cross-item differences; re-expand to per-item evidence before lifting into your own claims."
 
-Phase 168 plan output lives in PLAN.md § Active phase. 9 BUGs (1046–1054) drafted for filing at P168.0. 3 user decisions confirmed (no fallbacks; FaaS max lifetime is hard limit; ripping `execStartViaInvoke` entirely); 6 sizing / disposition questions still pending user confirmation (DO_NEXT.md).
+Phase 168 later landed across PRs #168-#170. The old invoke-per-exec path was removed, reverse-agent exec became mandatory for FaaS-style backends, and the remaining simulator-backed smoke/endpoint-fidelity work closed in PR #170.
 
-## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (in flight on `phase-166-test-pyramid-realfixes`)
+## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (merged)
 
 User directive after Phase 165 merge: *"BTW as already iterated: we don't want fallbacks, we don't want workarounds, we want real actual solutions and faithful API compliance (identical) for each component. […] If there's a missing feature, let's add it, let's do it right."*
 
@@ -105,7 +105,7 @@ Process notes:
 - TF_LOG=TRACE → gh-api-reading-provider-source was the unlock for both BUG-1041 (custom-endpoint setting) and BUG-1042-DDB (WarmThroughput field needed by `waitTableWarmThroughputActive`). When the SDK direct test works but terraform doesn't, the provider has its own logic that the SDK doesn't expose.
 - The Azure azurerm wiring was much easier than expected — the sim's existing endpoints were already correct; only the provider config needed updating.
 
-## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (in flight on `phase-165-vibe-slop-sweep-3-test-pyramid`)
+## 2026-05-17 — Phase 165: third vibe-slop sweep + sim test-pyramid expansion + continuity-doc compression (merged)
 
 User directive: *"switch to main, sync, run one more vibe slop sweep with our local skills, log all issues found in `BUGS.md` as soon as we find them; plan to increase test coverage and have the adequate test pyramid for the simulators, in light of the implemented slices of functionality, and that our verification can be validated externally by the fact that all components of this project have their corresponding external tools, checks, SDKs, CLIs, schemas; single PR open in which to put all the changes, even if they can be scheduled and split across several phases and sub-phases, verify after each significant chunk of work; continuity docs must be reviewed, with old obsolete information pruned or compressed so that they are actionable across session compactions, fresh sessions."*
 

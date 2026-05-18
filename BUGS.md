@@ -10,7 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. This PR now carries the live-validation attempt; do not mark the cells green without a real run against authenticated cloud projects/subscriptions. |
+| 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. The preflight/runbook work is documented, but the cells must not be marked green without a real run against authenticated cloud projects/subscriptions. |
 
 ## False positives
 

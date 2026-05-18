@@ -113,14 +113,14 @@ Creates `ExecInstance` with command, env, working directory. Container must be r
 
 | Aspect | Vanilla Docker | Core Default |
 |--------|---------------|--------------|
-| Download | Real image layers | Synthetic (hash of reference as ID) |
-| Config | From registry manifest | Optional real config via `SOCKERLESS_FETCH_IMAGE_CONFIG=true` |
+| Download | Real image layers | Backend-specific registry/cloud resolution |
+| Config | From registry manifest | Real config when the backend implements image metadata resolution; otherwise explicit unsupported-operation errors |
 | Pull guard | N/A | Skips if image already exists (prevents overwriting built images) |
 | Aliases | By reference | Stored under: imageID, full ref, short name, docker.io/library/ variants |
 
 ### `POST /images/load` — Load Image (Overridable)
 
-Discards tar body, creates synthetic image tagged `loaded:latest`.
+Cloud backends override this when they can push the loaded tar into a configured cloud registry path. A backend that cannot preserve the image in a real registry must return an explicit unsupported-operation error.
 
 ### `POST /images/build` — Build Image
 
@@ -207,11 +207,11 @@ Returns `BackendDescriptor` with backend-specific fields (name, driver, OS, CPU,
 | `docker pull` | Synthetic image creation |
 | `docker build` | Dockerfile parser (RUN no-op) |
 | `docker load` | Synthetic image tagged `loaded:latest` |
-| `docker network *` | In-memory with synthetic IPAM |
+| `docker network *` | Core bookkeeping; cloud backends override with cloud network drivers |
 | `docker volume *` | In-memory with temp dirs |
 | `docker wait` | Block on WaitChs channel |
-| `docker top` | Synthetic process list (Path + Args) |
-| `docker stats` | Zero-value stats |
+| `docker top` | Requires backend process/agent implementation |
+| `docker stats` | Requires backend metrics implementation |
 | `docker pause` | State flag only |
 | `docker system df` | Calculate from root paths |
 
@@ -219,9 +219,9 @@ Returns `BackendDescriptor` with backend-specific fields (name, driver, OS, CPU,
 
 | Feature | Reason |
 |---------|--------|
-| Real image pulling | Synthetic (backends that need real pulls override ImagePull) |
+| Real image pulling | Backend-specific registry/cloud implementation required |
 | Dockerfile RUN | Shell commands not executed during build |
-| Real networking | All networks are in-memory with fake IPs |
-| Network disconnect | No-op (state not updated) |
-| Real events | Empty event stream |
+| Real networking | Backend-specific cloud network driver required |
+| Network disconnect | Backend-specific cloud network driver required |
+| Real events | Backend event implementation required |
 | Signal delivery | Cloud backends handle via cloud APIs |

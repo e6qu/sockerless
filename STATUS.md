@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `docs/pr169-merge-continuity` — PR #170 repurposed for Phase 168 follow-ups and live-validation closure work. |
-| In-flight | PR #170 carries FaaS runner smokes, Make/CI wiring, AZF bootstrap test-pyramid expansion, simulator endpoint-fidelity fixes, and live-validation docs. The GCP Artifact Registry endpoint-fidelity fix is now covered through official SDK, gcloud CLI, Terraform provider, and OCI Distribution paths. Remaining tracked follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
-| Last merged | PR #169 — Phase 168 follow-up runner attach hardening (2026-05-18, `0bd75902`). |
+| Active branch | `docs/post-pr170-doc-sweep` — post-PR #170 documentation alignment sweep. |
+| In-flight | Documentation-only sweep after PR #170 merged. Bring continuity, runner, simulator, and backend docs in line with the implemented reverse-agent FaaS runner path and simulator endpoint-fidelity work. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
+| Last merged | PR #170 — Phase 168 follow-up runner smokes and simulator fidelity (2026-05-18, `a5639811`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 1095 filed · 1093 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
@@ -53,7 +53,7 @@ User directive (2026-05-17): compare pod abstraction across 7 backends; trace ru
 Phase 167/168 deliverables:
 - Cross-backend pod-model comparison: long-lived backends (docker/ecs/cloudrun/aca) hold one container/task/revision for the entire job; FaaS backends (lambda/gcf/azf) are invoke-on-demand. Per-backend exec dispatch differs in ways that the audit caught + codex review re-checked.
 - Root cause of "12 steps = 12+ min": **Path B silent fallback in lambda + cloudrun + cloudrun-functions** dispatch. When the in-container reverse-agent doesn't dial back, every `docker exec` becomes a fresh function invocation cold-starting in 30-90s. 12 invocations × cold-start = the wall-clock symptom.
-- Phase 168 plan (in this file's Active phase section): unify exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); rip all Path B code; rip the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime hard-capped at platform max.
+- Phase 168 implementation: unified exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); ripped all Path B code; ripped the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime is hard-capped at platform max.
 - Driver model preserved: typed `core.ExecDriver` stays as the load-bearing abstraction. Each backend registers ONE driver matching its platform's primitive. Operator pluggability remains.
 
 Codex review caught 3 corrections during Phase 167:
@@ -69,10 +69,10 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
+| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
+| #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
+| #168 | 167–168 | FaaS exec unification, reverse-agent-only path, and AZF bootstrap hardening. Merged 2026-05-18 at `3565e413`. |
 | #167 | 166 | Real fixes for Phase 165 follow-ups (4 BUGs: 1040 Azure azurerm + 1041 GCP IAM SA + 1042 AWS 5 sim handler gaps + 1045 codex state-persistence). Merged 2026-05-17 at `49050c2d`. |
 | #165 | 165 | Third vibe-slop sweep + sim test-pyramid expansion + codex review + continuity-doc compression. 9 BUGs closed. Merged 2026-05-17 at `288b76d3`. |
-| #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs). Merged 2026-05-17 at `616dcd98`. |
-| #163 | 163 | Makefile legacy alias rip-out + docs sweep. Merged 2026-05-16 at `d5b9d22a`. |
-| #162 | 162 | Vibe-coding catalogue refresh (12 new patterns 24–35). Doc-only. Merged 2026-05-16 at `4f602988`. |
 
 Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

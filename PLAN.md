@@ -51,74 +51,21 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #164 | 164 | Second vibe-slop sweep + terraform-provider test expansion (19 BUGs: 1014–1032). GCP terraform-tests 4 → 11 resources; Azure terraform-tests 1 → 5. Merged 2026-05-17 at `616dcd98`. |
 | #165 | 165 | Third vibe-slop sweep (4 BUGs: 1033–1036) + sim test-pyramid expansion (2 BUGs: 1038/1039 + a GCS object selfLink sub-defect) + codex CLI review (2 BUGs: 1043/1044) + continuity-doc compression (~1700 → ~870 lines). 3 Open BUGs staged forward to Phase 166. Merged 2026-05-17 at `288b76d3`. |
 | #167 | 166 | Real fixes for the 3 Phase-165 follow-up Open BUGs (1040 Azure azurerm + 1041 GCP IAM SA via correct `iam_beta_custom_endpoint` setting + 1042 AWS 5 sim handler gaps closed real) + codex review finding state-persistence gaps (BUG-1045). 1044 fixed / 0 open at merge. Merged 2026-05-17 at `49050c2d`. |
+| #168 | 167–168 | FaaS exec unification on mandatory reverse-agent WebSocket, Path B invoke dispatch removed, AZF bootstrap hardening, cleanup/lifetime semantics tightened. Merged 2026-05-18 at `3565e413`. |
+| #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
+| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 
 ## Active phase
 
-### Phase 167 + 168 — Pod-model unification + no-fallback hardening (in flight on `phase-167-pod-model-analysis`)
+No implementation phase is active. The current work is a documentation-only sweep on `docs/post-pr170-doc-sweep` after PR #170 merged.
 
-User directive (2026-05-17): unify FaaS-style exec on Model A (mandatory reverse-agent WebSocket), no fallbacks anywhere, FaaS max duration is a hard limit, default in-memory tmpfs where the cloud supports it, preserve driver pluggability.
-
-**Landed so far on this branch:**
-- `5f745039` — P168.1 + .2 + .4: ripped Path B (`execStartViaInvoke`) from lambda + GCF + cloudrun; deleted `core.CloudExecDriver` parallel interface; ACA `cloudExecStart` management-API fallback also ripped (was tracked as BUG-1056 once spotted).
-- *(this commit)* — P168.3 + BUG-1055 + 1056: `core.ReverseAgentRegistry.WaitForAgent(ctx, id)` + per-backend `BootstrapTimeoutFromEnv` knob; ContainerStart on all 5 FaaS-style backends now blocks until the in-container bootstrap dials back (90s default, `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` overrides); `CallbackURL` required at NewServer for lambda/gcf/cloudrun/aca/azf (fail-loud); GCF was never injecting `SOCKERLESS_CALLBACK_URL` into the function env — fixed.
-
-### Phase 168 — Remaining sub-tasks
-
-Builds directly on Phase 167's analysis. User direction:
-- **Model A for exec wherever the platform supports per-pod long-lived invocation** — lambda + cloudrun-functions + cloudrun + aca + azf converge on reverse-agent WebSocket as the sole exec dispatch. (ecs keeps SSM; docker keeps native exec — each is the right primitive for its platform.)
-- **In-memory tmpfs default** for backends whose cloud platform exposes a real EmptyDir / memory primitive (cloudrun + cloudrun-functions + ACA). Lambda + AZF keep their existing defaults — their volume translators explicitly reject `BackingMemory` because the platforms lack the primitive (codex review confirmed).
-- **Hard no-fallbacks rule** — no silent substitution anywhere. `execStartViaInvoke` (Path B) deleted entirely from lambda + cloudrun-functions + **cloudrun** (the last one was missed in initial Phase 167 analysis), not preserved as opt-in. The parallel `core.CloudExecDriver` interface (`backends/core/exec_driver.go`) ripped — it existed specifically to enable the "agent missing fallback" path which no longer exists. Cleanup failures propagate (docker rm fails if cloud cleanup fails). WS drop = container dead (no reconnect). Tmpfs size > function memory = startup error (no clamping). Lambda backend startup fails loud if `SOCKERLESS_CALLBACK_URL` is empty (currently silently registers Path B driver).
-- **FaaS max invocation duration is a hard limit** — no transparent re-invoke / warm-pool / checkpoint-restart hack. When the bootstrap approaches the deadline, the next `docker exec` returns `&api.ServerError{Message: "container N exceeded FaaS pod lifetime (N min); use ECS / ACA / Cloud Run Services for longer pods"}`.
-- **Driver pluggability preserved** — the typed `core.ExecDriver` abstraction (in `drivers_typed.go`) STAYS. Each backend registers ONE driver of the right kind for its platform (DockerExec / SSMExec / ReverseAgentExec). The handler call site stays generic. Future operators / maintainers can swap drivers at the registration site. The "no fallback" rule means: only one driver is registered per backend, never a primary-with-backup pair.
-
-User-confirmed decisions (2026-05-17):
-- Q4 — `execStartViaInvoke` ripped entirely (no opt-in driver). Includes `core.CloudExecDriver` parallel interface.
-- Q6 — cleanup failures propagate (no best-effort logging fallback).
-- Q7 — FaaS pod lifetime hard limit (no extension hacks; FaaS jobs run up to platform max only).
-
-User-approved defaults (from 2026-05-17 "begin work" directive):
-- Q1 tmpfs default size = 2 GiB
-- Q2 tmpfs exhaustion = fail loud (no clamping)
-- Q3 reverse-agent registration timeout = 90s, `SOCKERLESS_<BACKEND>_BOOTSTRAP_TIMEOUT_SEC` overrides (landed in P168.3)
-- Q5 pd-ephemeral disposition = stays registered as opt-in
-- Q8 tmpfs default scope = cloudrun + cloudrun-functions + ACA only
-- Q9 tmpfs size validation = startup fail-loud
-
-BUGs in scope: 1046–1056 (11 BUGs; 1055 + 1056 surfaced during P168.3 ContainerStart survey). Status — 7 closed (1046, 1047, 1048, 1050, 1054, 1055, 1056); 4 remaining (1049, 1051, 1052, 1053).
-
-Headline result target: 12-step CI job <60s wall-clock on Lambda / GCF / AZF / cloudrun (down from ~12 min today).
-
-Driver model (KEPT, expanded in DO_NEXT.md):
-- `core.ExecDriver` typed interface — the load-bearing abstraction. Each backend registers ONE driver. Handler is generic.
-- Per-backend exec driver post-Phase-168:
-  - docker → DockerExec (native)
-  - ecs → SSMExec (Session Manager)
-  - lambda / cloudrun / cloudrun-functions / aca / azf → ReverseAgentExec (WS to bootstrap)
-- The other 13 typed drivers (Stream, Attach, FSRead/Write/Diff/Export, Commit, Build, Stats, ProcList, Logs, Signal, Registry) all unchanged.
-
-Files DELETED:
-- `backends/lambda/exec_invoke.go` (Path B + `lambdaInvokeExecDriver`)
-- `backends/cloudrun-functions/exec_invoke.go`
-- `backends/cloudrun/exec_invoke.go` (missed in Phase 167 analysis — added)
-- `backends/core/exec_driver.go` (`CloudExecDriver` parallel interface; no callers post-deletion)
-- `backends/core/exec_driver_test.go`
-
-Files MODIFIED (~28 files): lambda + cloudrun + cloudrun-functions + ACA + AZF backends; agent bootstraps (`agent/cmd/sockerless-{lambda,gcf,azf}-bootstrap/main.go`); `backends/core/storage_driver.go`; per-backend README files; `docs/POD_MATERIALIZATION.md`; `specs/CLOUD_RESOURCE_MAPPING.md`; new e2e tests under `tests/runners/`.
-
-Acceptance bar:
-- All 11 BUGs (1046–1056) closed in this PR.
-- `go test ./...` green in every touched module.
-- E2E: 12-step CI job <60s wall-clock on Lambda/GCF/AZF/cloudrun (headline result).
-- Code search: no `execStartViaInvoke` / `lambdaInvokeExecDriver` / `CloudExecDriver` / `cloudExecStart` / `_ = .*Disconnect` / `_, _ = .*Delete` left in lambda + cloudrun-functions + cloudrun + aca backends. `exec_invoke.go` + `core/exec_driver.go` + `aca/exec_cloud.go` files removed.
-- Operator env-vars documented in per-backend READMEs.
-- 11 standard CI checks green per push.
-
-Out of scope:
-- Long-lived non-FaaS backends (docker, ecs) — pod model already correct.
-- Storage *implementations* — all existing drivers (efs-ephemeral / gcs-sync / azure-files-ephemeral / pd-ephemeral) stay. Only defaults change.
-- AZF supervisor-in-overlay pattern (unrelated to exec dispatch).
-- Pod materialization (deferred-network-pod) unchanged.
-- The 13 other typed-driver dimensions (FSRead/Write/Diff/etc.) — they're already on the ReverseAgent shape for FaaS and unchanged.
+The Phase 167/168 implementation is closed:
+- FaaS-style exec for lambda, cloudrun, cloudrun-functions, ACA Apps, and AZF uses mandatory reverse-agent WebSocket dispatch.
+- The old invoke/HTTP "Path B" exec path and the parallel `core.CloudExecDriver` interface were removed.
+- Cloud Run, GCF, and ACA default to the real in-memory tmpfs primitive where the cloud exposes it; Lambda and AZF keep non-memory defaults because their platforms do not expose that primitive.
+- Cleanup failures propagate, FaaS pod lifetime is a hard platform limit, and bootstrap registration has explicit per-backend timeouts.
+- Simulator-backed FaaS smoke tests are wired through `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate.
+- BUG-1075 live-cloud validation remains open and must be closed only after real authenticated cloud runs.
 
 ### Phase 166 — Real fixes for the 3 Phase-165 follow-up Open BUGs (merged at `49050c2d`)
 

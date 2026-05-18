@@ -16,7 +16,7 @@ For every backend, "pod materialization" boils down to four questions:
 | 1 | **Pod primitive** — what is the long-lived container running on? | Fargate task, image-mode Lambda, Cloud Run Service revision, ACA App, AZF Function App, … |
 | 2 | **Sub-task spawn** — how does an inner `docker create` materialize? | Same cloud primitive (multi-container Service / App) OR a fresh deploy of the primitive (Fargate task / Lambda function / Function App) |
 | 3 | **Workspace data plane** — how do runner + sub-task share `_work` / `/builds`? | EFS access point, GCS bucket (via `gcs-sync`), Azure Files share, host bind-mount |
-| 4 | **Exec dispatch** — how do `docker exec` calls reach the sub-task process? | SSM ExecuteCommand, reverse-agent WebSocket, envelope POST to bootstrap HTTP server, ACA console exec WS, native Docker exec |
+| 4 | **Exec dispatch** — how do `docker exec` calls reach the sub-task process? | native Docker exec, SSM ExecuteCommand, or reverse-agent WebSocket |
 
 All seven backends answer all four. The summary table at the end shows the answers side-by-side; the per-backend sections below walk the mechanics in detail.
 
@@ -125,12 +125,9 @@ GitLab's hijacked-stdin lands on the same reverse-agent stream; there is no Serv
 
 **Workspace data plane.** Azure Files shares (`backends/azure-common/volumes.go`). Named volumes map to Azure Files shares in a sockerless-managed storage account (`SOCKERLESS_ACA_STORAGE_ACCOUNT`). `ShareVolumeConfiguration` injects into the App template. Persistent across revisions — the share is remounted, not recreated, so workspace mutations survive between job steps.
 
-**Exec dispatch.** Two paths:
+**Exec dispatch.** ACA Apps, which are the runner path when `SOCKERLESS_ACA_USE_APP=1`, use the reverse-agent WebSocket registered by the bootstrap. ACA Job execution is a separate execution-scoped primitive and is not the runner fallback path.
 
-- **ACA console exec WebSocket** (`backends/aca/exec_cloud.go`). Sockerless connects to `wss://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.App/jobs/{job}/executions/{exec}/exec` with the command as a query parameter. The WebSocket is bridged as `io.ReadWriteCloser` and returned to the exec attach handler.
-- **Reverse-agent WebSocket** (fallback). The bootstrap opens a WebSocket to the sockerless backend; sockerless routes exec requests over it.
-
-GitLab's hijacked-stdin lands in the WebSocket stream (console exec) or in the reverse-agent multiplexed channel.
+GitLab's hijacked-stdin lands in the reverse-agent multiplexed channel for Apps.
 
 ---
 
@@ -146,7 +143,7 @@ This is a real limitation, not a workaround — it's the cloud-native answer for
 
 **Workspace data plane.** Azure Files shares (same `azure-common` machinery as ACA). `SOCKERLESS_AZF_STORAGE_ACCOUNT` configures the storage account. Persistent across invocations.
 
-**Exec dispatch.** Reverse-agent over WebSocket. The bootstrap registers a reverse-agent WS during startup; sockerless tunnels exec requests over it. There is no envelope-POST fallback.
+**Exec dispatch.** Reverse-agent over WebSocket. The bootstrap registers a reverse-agent WS during startup; sockerless tunnels exec requests over it. There is no alternate envelope-POST exec path.
 
 ---
 
@@ -161,7 +158,7 @@ The runner pattern: `actions/runner` polls GitHub, then for each `container:` st
 | Runner container created | `docker create` | `ecs.RunTask` with `tail -f /dev/null` | `lambda.CreateFunction` (image mode, overlay) | `run.Services.CreateService` (multi-container revision) | `functions.CreateFunction` + `UpdateService` swap | `ContainerAppsClient.CreateOrUpdate` | `WebAppsClient.CreateOrUpdate` |
 | Step container created | `docker create` | `ecs.RunTask` (sub-task) | `lambda.CreateFunction` (sub-task) | New revision of same Service | New function + `UpdateService` (pool-reusable) | New App revision | New Function App (or supervisor-in-overlay) |
 | `_work` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` (per-exec tar) | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
-| `docker exec` for step | native | SSM ExecuteCommand (waits for agent) | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | ACA console exec WS | Reverse-agent WS |
+| `docker exec` for step | native | SSM ExecuteCommand (waits for agent) | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS |
 | Cross-step persistence | Native (same host) | EFS mount stays attached | EFS persists across invokes | GCS object tar/untar per step | GCS object tar/untar per step | Azure Files share persists | Azure Files share persists |
 
 ### GitLab Runner — per-backend
@@ -186,7 +183,7 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | **Long-lived shell** | `tail -f /dev/null` | task stays running | bootstrap + Runtime API loop | revision stays warm | function stays warm (pool) | revision stays active | Function App HTTP handler |
 | **Sub-task primitive** | new `docker create` | new `ecs.RunTask` | new `lambda.CreateFunction` | new revision of same Service | new Function (pool-reusable) + `UpdateService` | new App revision | new Function App (or supervisor overlay) |
 | **Workspace storage** | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
-| **Exec dispatch** | native `docker exec` | SSM ExecuteCommand | reverse-agent WS | reverse-agent WS | reverse-agent WS | ACA console exec WS / reverse-agent | reverse-agent WS |
+| **Exec dispatch** | native `docker exec` | SSM ExecuteCommand | reverse-agent WS | reverse-agent WS | reverse-agent WS | reverse-agent WS | reverse-agent WS |
 | **Cross-step persistence** | host fs | EFS mount stays | EFS mount stays | GCS object tar/untar | GCS object tar/untar | Azure Files share | Azure Files share |
 | **Hard limit** | (none) | (none — Fargate is long-lived) | 15-min invocation cap | (none — Services are long-lived) | (none — same as cloudrun) | (none — Apps are long-lived) | (none — but supervisor-overlay limits CAP_SYS_ADMIN-dependent workloads) |
 
@@ -199,7 +196,7 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | Pod provisioning + activation | `backends/<cloud>/backend_impl.go::ContainerCreate` / `ContainerStart` |
 | Multi-container materialization (cloudrun/gcf) | `backends/cloudrun/network_pod.go::shouldDeferOrMaterializeNetworkPod`; `backends/cloudrun-functions/pod_service.go::materializePodService` |
 | Storage drivers | `backends/aws-common/volumes.go::EFSManager`; `backends/gcp-common/storage_gcssync.go`; `backends/azure-common/volumes.go::AzureFilesEphemeralDriver` |
-| Exec dispatch | `backends/ecs/exec_cloud.go`; `backends/lambda/exec_invoke.go` + reverse-agent registry; `backends/cloudrun/exec_invoke.go`; `backends/cloudrun-functions/exec_invoke.go`; `backends/aca/exec_cloud.go`; `backends/azure-functions/exec_*.go` |
+| Exec dispatch | `backends/ecs/exec_cloud.go`; `backends/core/reverse_agent.go`; `backends/lambda/exec_driver.go`; `backends/<faas>/server.go` reverse-agent driver wiring; `backends/<faas>/backend_impl*.go` / `backend_delegates.go` `ExecStart` paths |
 | Stdin pipe machinery | `backends/<cloud>/stdin_pipes.go` (ECS, Lambda) |
 | Bootstrap binaries | `agent/cmd/sockerless-{cloudrun,gcf,lambda,aca,azf}-bootstrap/` |
 | Authoritative cloud-side mapping | `specs/CLOUD_RESOURCE_MAPPING.md` |

@@ -69,7 +69,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_LAMBDA_SECURITY_GROUPS` | | no | Comma-separated security group IDs |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL injected into every function as `SOCKERLESS_CALLBACK_URL`. The bootstrap dials back here so `docker exec` can route through the WebSocket. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
 | `SOCKERLESS_LAMBDA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud (Phase 168 — no race-with-first-exec). |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS endpoint (for [`simulators/aws`](../../simulators/aws/README.md)) |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulators/aws`](../../simulators/aws/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 

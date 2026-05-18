@@ -250,20 +250,24 @@ az rest --method PUT \
   --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.Web/serverfarms/my-plan?api-version=2022-09-01" \
   --body '{"location":"eastus","sku":{"name":"Y1","tier":"Dynamic"}}'
 
-# Create Function App with simCommand (simulator-only field for real execution)
+# Create Function App with normal container configuration
 az rest --method PUT \
   --url "http://localhost:4568/subscriptions/.../resourceGroups/my-rg/providers/Microsoft.Web/sites/my-func-app?api-version=2022-09-01" \
   --body '{
     "location": "eastus", "kind": "functionapp",
     "properties": {
       "serverFarmId": ".../serverfarms/my-plan",
-      "siteConfig": {"simCommand": ["echo","hello-from-functions"]}
+      "siteConfig": {
+        "linuxFxVersion": "DOCKER|myregistry.azurecr.io/my-function:latest",
+        "appSettings": [
+          {"name": "FUNCTIONS_WORKER_RUNTIME", "value": "custom"}
+        ]
+      }
     }
   }'
 
-# Invoke (returns process stdout)
+# Invoke the configured container/function endpoint
 az rest --method POST --url "http://localhost:4568/api/function" --body '{}'
-# => hello-from-functions
 
 # Query AppTraces
 az rest --method POST --url "http://localhost:4568/v1/workspaces/default/query" \

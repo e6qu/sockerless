@@ -71,7 +71,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-function bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no Path B fallback). |
 | `SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_GCF_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB). Memory is the default `Backing`; mismatched against `SOCKERLESS_GCF_MEMORY` → fail loud at startup. |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/gcp`](../../simulators/gcp/README.md)) |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulators/gcp`](../../simulators/gcp/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent callback timeout |

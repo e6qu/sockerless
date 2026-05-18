@@ -20,8 +20,8 @@ The simulator is the **upstream** for the [Cloud Run](../../backends/cloudrun/RE
 
 | Test path | What runs | Last green |
 |---|---|---|
-| `sdk-tests/` (36 tests) | Real `cloud.google.com/go/*` clients against the sim. Per-op assertions on response shape + error codes. | 2026-05-13 |
-| `cli-tests/` (19 tests) | Real `gcloud` CLI invoked via `os/exec`, parses CLI JSON output. | 2026-05-13 |
+| `sdk-tests/` | Real `cloud.google.com/go/*` clients against the sim. Per-op assertions on response shape + error codes, including Artifact Registry remote-repository and OCI paths. | 2026-05-18 |
+| `cli-tests/` | Real `gcloud` CLI invoked via `os/exec`, parses CLI JSON output, including Artifact Registry endpoint overrides. | 2026-05-18 |
 | `terraform-tests/` | Real Terraform `google` provider against the sim. `terraform apply` → assert resource state → `destroy`. | 2026-05-13 |
 | `make simulators/gcp/test` | Leaf-Makefile unit + integration suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-13 |
 
@@ -40,6 +40,7 @@ SIM_LISTEN_ADDR=:4567 ./simulator-gcp
 # 2. Point any GCP client at it.
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_RUN=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
 export STORAGE_EMULATOR_HOST=localhost:4567
 gcloud auth application-default login --no-launch-browser  # or use ADC
 
@@ -118,20 +119,20 @@ More inline examples (Cloud Run Jobs / Cloud Functions / Cloud Logging / Artifac
 ```
 gcp/
 ├── main.go                 Entry point, service registration
-├── cloudrunjobs.go         Cloud Run Jobs + Executions (505 lines)
-├── cloudfunctions.go       Cloud Functions v2 (226 lines)
-├── dns.go                  Cloud DNS zones + record sets (211 lines)
-├── gcs.go                  GCS buckets + objects, multipart upload (380 lines)
-├── artifactregistry.go     Artifact Registry + OCI Distribution (445 lines)
-├── logging.go              Cloud Logging entries (173 lines)
-├── compute.go              Networks + subnetworks (247 lines)
-├── iam.go                  Service accounts + IAM policies (257 lines)
-├── vpcaccess.go            VPC Access connectors (108 lines)
-├── serviceusage.go         Service enable/disable (116 lines)
-├── operations.go           LRO status (49 lines)
+├── cloudrunjobs.go         Cloud Run Jobs + Executions
+├── cloudfunctions.go       Cloud Functions v2
+├── dns.go                  Cloud DNS zones + record sets
+├── gcs.go                  GCS buckets + objects, multipart upload
+├── artifactregistry.go     Artifact Registry + OCI Distribution
+├── logging.go              Cloud Logging entries
+├── compute.go              Networks + subnetworks
+├── iam.go                  Service accounts + IAM policies
+├── vpcaccess.go            VPC Access connectors
+├── serviceusage.go         Service enable/disable
+├── operations.go           LRO status
 ├── shared/                 Shared simulator framework
-├── sdk-tests/              SDK integration tests (36 tests)
-├── cli-tests/              CLI integration tests (19 tests)
+├── sdk-tests/              SDK integration tests
+├── cli-tests/              CLI integration tests
 └── terraform-tests/        Terraform apply/destroy tests
 ```
 

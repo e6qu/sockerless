@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 168 follow-up merged 2026-05-18 (PR #169, `0bd75902` on `origin/main`). PR #170 is open on `docs/pr169-merge-continuity` and has been repurposed from continuity-only docs into the Phase 168 follow-up and live-validation closure branch.
+Phase 168 follow-up merged 2026-05-18 (PR #170, `a5639811` on `origin/main`). Current branch is `docs/post-pr170-doc-sweep`, a documentation-only sweep to align continuity, runner, simulator, and backend docs with the implementation that landed in PR #170.
 
-Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring for those smokes, AZF bootstrap test-pyramid coverage, simulator endpoint-fidelity fixes, live-validation runbook/docs, and BUG-1075 live-cloud validation. The GCP Artifact Registry simulator-fidelity fix is covered by official SDK, gcloud CLI, Terraform provider, and OCI Distribution tests. BUG-1075 needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
+Merged PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring for those smokes, AZF bootstrap test-pyramid coverage, simulator endpoint-fidelity fixes, and live-validation runbook/docs. The GCP Artifact Registry simulator-fidelity fix is covered by official SDK, gcloud CLI, Terraform provider, and OCI Distribution tests. BUG-1075 needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
 
 ## Phase 168 sub-task status
 
@@ -44,8 +44,8 @@ Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF,
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout docs/pr169-merge-continuity && git pull`.
+1. `git fetch origin && git checkout main && git pull origin main`.
 2. `git log --oneline -10`.
-3. Read STATUS.md + this file + PLAN.md § Active phase + BUGS.md § Open.
+3. Create or check out the active work branch, then read STATUS.md + this file + PLAN.md + BUGS.md § Open.
 4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
 5. Pick the next ◻ sub-task; mark it `in_progress` in tasks; commit when verified.

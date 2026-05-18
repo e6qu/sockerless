@@ -24,6 +24,7 @@ export CLOUDSDK_API_ENDPOINT_OVERRIDES_LOGGING=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
 ```
 
 Note the trailing `/` — gcloud appends API paths directly to the override URL.
@@ -79,6 +80,25 @@ gcloud compute networks vpc-access connectors create my-connector \
 # List connectors
 gcloud compute networks vpc-access connectors list \
   --region=us-central1 \
+  --format=json
+```
+
+### Artifact Registry
+
+```sh
+# Create a Docker Hub remote repository
+gcloud artifacts repositories create docker-hub \
+  --location=us-central1 \
+  --repository-format=docker \
+  --mode=remote-repository \
+  --remote-docker-repo=docker-hub \
+  --disable-remote-validation \
+  --format=json
+
+# List cached Docker images through the Artifact Registry API surface
+gcloud artifacts docker images list \
+  us-central1-docker.pkg.dev/my-project/docker-hub \
+  --include-tags \
   --format=json
 ```
 
@@ -148,7 +168,7 @@ curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/network
 | Cloud Functions | `gcloud functions` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS` | Deploy may require direct HTTP |
 | Cloud Run Jobs | — | — | Use direct HTTP |
 | GCS | — | — | Use direct HTTP or `STORAGE_EMULATOR_HOST` |
-| Artifact Registry | — | — | Use direct HTTP or Docker CLI |
+| Artifact Registry | `gcloud artifacts` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY` | Repository CRUD and Docker image listing |
 | Compute | — | — | Use direct HTTP |
 | IAM | — | — | Use direct HTTP |
 

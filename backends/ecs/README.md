@@ -84,7 +84,7 @@ Full YAML schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AGENT_EFS_ID` | | no | EFS filesystem ID for agent binary |
 | `SOCKERLESS_AGENT_TOKEN` | | no | Agent authentication token |
 | `SOCKERLESS_CALLBACK_URL` | | no | Backend URL for reverse agent mode |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS endpoint (for [`simulators/aws`](../../simulators/aws/README.md)) |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom AWS API endpoint, commonly the local [`simulators/aws`](../../simulators/aws/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 

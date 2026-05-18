@@ -1106,7 +1106,7 @@ The backend uses a **driver set** for dispatching exec, filesystem, streaming, a
 - **Cloud backends**: Agent drivers route to forward or reverse agent connections
 - **Docker backend**: Does not use drivers (direct Docker SDK passthrough)
 
-When no agent is connected, operations return errors. In simulator mode with `SOCKERLESS_AUTO_AGENT_BIN`, the backend auto-spawns a local agent subprocess that enables real command execution.
+When no agent is connected, cloud backend operations that require an agent return errors. Cloud backends never auto-spawn local agents; the only accepted execution path is the cloud-deployed forward or reverse agent for that backend. The Docker passthrough backend remains the only backend allowed to use local auto-agent helpers.
 
 ### 6.7 Dependency Flow
 
@@ -2013,7 +2013,7 @@ For containers with real entrypoints (non-tail), the agent wraps the original co
 
 **Solution (recommended):** Configure `helper_image` in GitLab Runner's `config.toml` to point to a registry-hosted copy of the helper image. This bypasses tar loading entirely. The runner will use `ImagePullBlocking` instead.
 
-**Solution (fallback):** Implement `POST /images/load` to accept the tar stream, extract the image manifest and layers, and push them to a configured staging registry (e.g., ECR, Artifact Registry, ACR). Then store the image reference for later use. `POST /images/{name}/tag` records the new tag in the backend's image table.
+**Image-load implementation path:** `POST /images/load` accepts the tar stream, extracts the image manifest and layers, and pushes them to a configured staging registry (ECR, Artifact Registry, or ACR). `POST /images/{name}/tag` records the cloud registry reference for later use. Backends that do not implement this path must fail explicitly rather than pretending to have a local image store.
 
 #### Gap 6: Volume Sharing Between Containers (GitLab Runner)
 
@@ -2241,7 +2241,7 @@ Each backend binary reads its own environment variables. All backends share comm
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud endpoint (simulator mode) |
+| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud API endpoint, commonly a local simulator/cloud-slice endpoint. This changes routing only; cloud image refs and API semantics remain the same. |
 | `SOCKERLESS_FETCH_IMAGE_CONFIG` | `false` | Fetch image config from registry on pull |
 
 Backend-specific variables use prefixes: `SOCKERLESS_ECS_*`, `SOCKERLESS_LAMBDA_*`, `SOCKERLESS_GCR_*`, `SOCKERLESS_GCF_*`, `SOCKERLESS_ACA_*`, `SOCKERLESS_AZF_*`, `AWS_REGION`.

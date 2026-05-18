@@ -66,7 +66,7 @@ Backends support two configuration methods:
 | Variable | Description |
 |----------|-------------|
 | `SOCKERLESS_CALLBACK_URL` | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | Custom cloud API endpoint (simulator mode) |
+| `SOCKERLESS_ENDPOINT_URL` | Custom cloud API endpoint, commonly a local simulator/cloud-slice endpoint. This changes routing only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_FETCH_IMAGE_CONFIG` | Set to `true` to fetch real image configs from Docker registries |
 
 ## Testing
