@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
-| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: BUG-1068 and BUG-1089 are fixed locally. Azure simulator ACA Apps now materialize real App-replica containers and expose real App logs through `ContainerAppName_s`; ACA Jobs no longer block stock one-shot job starts on a missing reverse-agent bootstrap while exec/archive still fail loud without an agent. Full `backends/aca` simulator package and Azure Apps SDK coverage pass locally. Remaining: commit/push this chunk, re-check CI, then continue with ACA/AZF e2e readiness bugs 1067 / 1069 / 1071. External `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: BUG-1090 is fixed locally after CI run `26012702755` exposed brittle Azure SDK monitor tests reading `ContainerAppConsoleLogs_CL.Log_s` by ordinal after the real `ContainerAppName_s` column landed. The monitor tests now resolve `Log_s` by column name. Remaining: commit/push this chunk, re-check CI, then continue with ACA/AZF e2e readiness bugs 1067 / 1069 / 1071. External `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1089 filed · 1081 fixed · 8 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
+| Bugs | 1090 filed · 1082 fixed · 8 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

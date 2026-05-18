@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1089 filed · 1081 fixed · 8 open · 2 false positives.**
+**1090 filed · 1082 fixed · 8 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -40,6 +40,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 ## Resolved history (compressed)
 
 1033 bugs filed and fixed across phases 86–165.
+
+- **1090** (Phase 168.12) — CI run `26012702755` caught that the Azure SDK monitor tests still read `ContainerAppConsoleLogs_CL.Log_s` by fixed column ordinal after BUG-1068 added the real `ContainerAppName_s` column for ACA Apps. The simulator schema was correct; the test was too brittle. The tests now resolve `Log_s` by returned column name, preserving coverage for both ACA Job rows keyed by `ContainerGroupName_s` and ACA App rows keyed by `ContainerAppName_s`. Verified locally with the focused Azure SDK monitor tests.
 
 - **1068 / 1089** (Phase 168.11) — ACA Apps in the Azure simulator now start real App-replica containers from the `Microsoft.App/containerApps` template instead of only storing ARM state. PUT materializes `minReplicas` containers with real images/commands/env/volume binds, host metadata routing, ACA sandboxing, managed-environment Docker networking when present, and replica handles tracked by App resource ID; update/delete stops the prior handles. `ContainerAppConsoleLogs_CL` now includes real ACA App rows keyed by `ContainerAppName_s`, while ACA Jobs keep `ContainerGroupName_s`. SDK and CLI tests assert a real arithmetic image executes under the App surface and its output is queryable through Log Analytics. The same chunk fixed CI run `26011828766`: ACA Jobs were blocking `docker start` for stock one-shot job images by waiting for a reverse-agent bootstrap that those images do not contain. Jobs now launch real ACA Job executions and return; exec/archive APIs still require a registered reverse-agent and fail loud when absent. Verified locally with focused ACA CI-failure tests, full `backends/aca` simulator package coverage, and Azure Apps SDK coverage.
 

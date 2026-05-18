@@ -56,6 +56,24 @@ type queryResponse struct {
 	} `json:"tables"`
 }
 
+func requireColumnIndex(t *testing.T, table struct {
+	Name    string `json:"name"`
+	Columns []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"columns"`
+	Rows [][]any `json:"rows"`
+}, name string) int {
+	t.Helper()
+	for i, col := range table.Columns {
+		if col.Name == name {
+			return i
+		}
+	}
+	require.Failf(t, "missing query result column", "column %q not found in %v", name, table.Columns)
+	return -1
+}
+
 func TestMonitor_KQLContainerAppLogs(t *testing.T) {
 	now := time.Now().UTC()
 	ts1 := now.Add(-2 * time.Minute).Format(time.RFC3339)
@@ -80,12 +98,12 @@ func TestMonitor_KQLContainerAppLogs(t *testing.T) {
 	require.GreaterOrEqual(t, len(table.Columns), 4)
 	assert.Equal(t, "TimeGenerated", table.Columns[0].Name)
 	assert.Equal(t, "ContainerGroupName_s", table.Columns[1].Name)
-	assert.Equal(t, "Log_s", table.Columns[2].Name)
+	logColumn := requireColumnIndex(t, table, "Log_s")
 
 	// Should only have the 2 "myjob" entries
 	require.Len(t, table.Rows, 2)
-	assert.Equal(t, "starting", table.Rows[0][2])
-	assert.Equal(t, "running", table.Rows[1][2])
+	assert.Equal(t, "starting", table.Rows[0][logColumn])
+	assert.Equal(t, "running", table.Rows[1][logColumn])
 }
 
 func TestMonitor_KQLWithDatetimeFilter(t *testing.T) {
@@ -104,8 +122,9 @@ func TestMonitor_KQLWithDatetimeFilter(t *testing.T) {
 	result := queryWorkspace(t, "default", kql)
 
 	require.Len(t, result.Tables, 1)
-	require.Len(t, result.Tables[0].Rows, 1)
-	assert.Equal(t, "new entry", result.Tables[0].Rows[0][2])
+	table := result.Tables[0]
+	require.Len(t, table.Rows, 1)
+	assert.Equal(t, "new entry", table.Rows[0][requireColumnIndex(t, table, "Log_s")])
 }
 
 func TestMonitor_KQLAppTraces(t *testing.T) {
