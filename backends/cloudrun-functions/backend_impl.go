@@ -506,11 +506,13 @@ func (s *Server) ContainerStart(ref string) error {
 	envSlice := append([]string{}, c.Config.Env...)
 	go func() {
 		inv := core.InvocationResult{}
+		capturedStdin, hasCapturedStdin := s.captureGCFStdin(id)
 		if gcfState.FunctionURL == "" {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
-		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice); err != nil {
+			s.publishGCFAttachResponse(id, nil, []byte(inv.Error))
+		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice, capturedStdin); err != nil {
 			if !c.Config.OpenStdin {
 				if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
 					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned after reverse-agent registration; preserving running container state")
@@ -527,6 +529,7 @@ func (s *Server) ContainerStart(ref string) error {
 			s.Logger.Error().Err(err).Str("function", gcfState.FunctionName).Msg("function invocation failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()
+			s.publishGCFAttachResponse(id, nil, []byte(err.Error()))
 		} else {
 			body, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -534,6 +537,7 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Logger.Error().Err(readErr).Str("function", gcfState.FunctionName).Msg("read invoke response body")
 				inv.ExitCode = 1
 				inv.Error = readErr.Error()
+				s.publishGCFAttachResponse(id, nil, []byte(readErr.Error()))
 			} else {
 				// Bootstrap MUST return the exec envelope shape
 				// `{"sockerlessExecResult":{"exitCode":N,"stdout":"<b64>","stderr":"<b64>"}}`.
@@ -557,6 +561,7 @@ func (s *Server) ContainerStart(ref string) error {
 					s.Logger.Error().Err(perr).Int("status", resp.StatusCode).Str("function", gcfState.FunctionName).Msg("bootstrap response is not an exec envelope")
 					inv.ExitCode = 1
 					inv.Error = fmt.Sprintf("non-envelope response: %v", perr)
+					s.publishGCFAttachResponse(id, nil, []byte(inv.Error))
 				} else {
 					var combined []byte
 					combined = append(combined, execResult.Stdout...)
@@ -568,6 +573,9 @@ func (s *Server) ContainerStart(ref string) error {
 					if inv.ExitCode != 0 {
 						inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
 						s.Logger.Warn().Int("status", resp.StatusCode).Int("exit", inv.ExitCode).Str("function", gcfState.FunctionName).Msg("function returned non-zero subprocess exit")
+					}
+					if hasCapturedStdin {
+						s.publishGCFAttachResponse(id, execResult.Stdout, execResult.Stderr)
 					}
 				}
 			}
@@ -608,6 +616,28 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	return nil
+}
+
+func (s *Server) captureGCFStdin(id string) ([]byte, bool) {
+	v, ok := s.stdinPipes.LoadAndDelete(id)
+	if !ok {
+		return nil, false
+	}
+	pipe := v.(*stdinPipe)
+	select {
+	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Warn().Str("container", id).Msg("GCF stdin pipe Done timeout; proceeding with captured bytes")
+	case <-s.ctx().Done():
+		return nil, true
+	}
+	return pipe.Bytes(), true
+}
+
+func (s *Server) publishGCFAttachResponse(id string, stdout, stderr []byte) {
+	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+		v.(*attachStream).publishAttachResponse(stdout, stderr)
+	}
 }
 
 func isReverseAgentInvokeTransportError(errText string) bool {

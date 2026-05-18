@@ -631,6 +631,97 @@ func TestGCFContainerExec(t *testing.T) {
 	}
 }
 
+func TestGCFGitLabRunnerAttachStdin(t *testing.T) {
+	if os.Getenv(gcfExecE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestGCFGitLabRunnerAttachStdin$", "-test.v")
+		cmd.Env = append(os.Environ(), gcfExecE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("overlay gitlab attach subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
+	ctx := context.Background()
+
+	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	io.Copy(io.Discard, rc)
+	rc.Close()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image:        "alpine:latest",
+			Cmd:          []string{"sh"},
+			OpenStdin:    true,
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+		},
+		nil, nil, nil, "gcf_gitlab_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		t.Fatalf("container attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	if _, err := hijacked.Conn.Write([]byte("echo gcf-gitlab-stdin-ok\n")); err != nil {
+		t.Fatalf("write attach stdin: %v", err)
+	}
+	if err := hijacked.CloseWrite(); err != nil {
+		t.Fatalf("close attach stdin: %v", err)
+	}
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader)
+		copyDone <- err
+	}()
+
+	select {
+	case err := <-copyDone:
+		if err != nil {
+			t.Fatalf("attach stream copy failed: %v", err)
+		}
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for attach output")
+	}
+	if !strings.Contains(stdout.String(), "gcf-gitlab-stdin-ok") {
+		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Fatalf("wait status = %d, want 0", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
+	}
+}
+
 func TestGCFNetworkOperations(t *testing.T) {
 	ctx := context.Background()
 
