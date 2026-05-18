@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1094 filed · 1092 fixed · 1 open · 2 false positives.**
+**1095 filed · 1093 fixed · 1 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -10,7 +10,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. Out of scope for this PR (requires live cloud credentials + ephemeral project setup); tracked here so it doesn't get lost. Owner picks up per `MEMORY.md::project_gcp_live_setup` + the live-cloud track in PLAN.md. |
+| 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. This PR now carries the live-validation attempt; do not mark the cells green without a real run against authenticated cloud projects/subscriptions. |
 
 ## False positives
 
@@ -33,6 +33,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 ## Resolved history (compressed)
 
 1037 bugs filed and fixed across phases 86–168 follow-up.
+
+- **1095** (PR #170 follow-up) — GCP backends used to treat `SOCKERLESS_ENDPOINT_URL` as "simulator mode" inside image resolution, leaving Docker Hub refs unrewritten when pointed at the simulator. Removing that special case exposed the real missing simulator behavior: Artifact Registry remote-repository refs such as `us-central1-docker.pkg.dev/<project>/docker-hub/library/alpine:latest` still tried to fetch metadata from real GAR instead of the configured endpoint. Fixed by routing cloud-registry HTTP through the same endpoint override while preserving the cloud image ref, and by teaching the GCP simulator's Artifact Registry OCI surface to hydrate docker-hub remote-repo cache misses from the real local Docker image save stream. Verified with `go test -run TestResolveGCPImageURI` in `backends/gcp-common`, `go test -run TestFetchImageMetadata` in `backends/core`, `GOWORK=off go test -run TestDoesNotExist ./...` in `simulators/gcp`, `GOWORK=off go test -run TestArtifactRegistryDockerHubRemoteOCIManifest ./...` in `simulators/gcp/sdk-tests`, and `make faas-smoke-test-all`.
 
 - **1072 / 1074 / 1076 / 1094** (PR #170 follow-up) — Added simulator-backed FaaS runner smoke coverage for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. Each backend now has a `Test*FaaSE2ESmoke` that creates a container, starts the real simulator-backed bootstrap/agent path, runs multiple real `docker exec` steps, waits, and removes the container. The tests are wired through standardized Make targets (`make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`) and CI runs the aggregate target after normal backend package tests. The new guards surfaced BUG-1094: service/app-backed containers could finish or stop, but `ContainerRemove` still saw Cloud Run Services as running or ACA Apps as already gone. Cloud Run and ACA remove/stop/wait paths now honor recorded invocation/stop results so `wait` and `rm` preserve Docker lifecycle semantics across service/app-backed resources. BUG-1076's remaining AZF bootstrap gap is closed with focused tests for exec envelope stdin/env/workdir, default invoke, workdir, timeout parsing, and argv decode errors. Live-cloud validation remains open as BUG-1075 only.
 

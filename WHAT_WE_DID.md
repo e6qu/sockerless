@@ -6,13 +6,15 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
-## 2026-05-18 — PR #170: non-live Phase 168 follow-up branch
+## 2026-05-18 — PR #170: Phase 168 follow-up branch
 
-PR #170 was repurposed from continuity-only docs into the remaining non-live follow-up branch. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
+PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and live-validation closure branch. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
 
 The new smoke tests caught a real service/app lifecycle bug before CI: Cloud Run Services could finish but still look running to `docker rm`, and ACA Apps could be stopped/deleted before `wait`/`rm` had a stable Docker lifecycle view. The branch fixes those state transitions and records stop/invocation results for wait/remove. It also expands AZF bootstrap unit coverage around exec envelopes, stdin/env/workdir, default invoke, timeout parsing, and argv decoding.
 
-Live setup itself remains excluded. `manual-tests/05-live-validation-preflight.md` now captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining BUG-1075 cloud cells.
+The simulator endpoint-fidelity pass removed the GCP backend image-resolution shortcut that treated `SOCKERLESS_ENDPOINT_URL` as "do simulator behavior." That exposed BUG-1095: the simulator had Cloud Run/GCF endpoints but its Artifact Registry remote-repository path did not serve the same AR image refs the live backend uses. Registry HTTP now routes through the configured endpoint without changing image semantics, and the GCP simulator hydrates `docker-hub` AR cache misses from the real local Docker image save stream. `make faas-smoke-test-gcp` passes with the same AR refs.
+
+BUG-1075 live-cloud validation is now part of the PR scope, not excluded. `manual-tests/05-live-validation-preflight.md` captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining cloud cells.
 
 ## 2026-05-17 — Phase 168.9: Cloud Run + GCF overlay exec e2e green on the simulator
 

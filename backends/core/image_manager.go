@@ -39,6 +39,13 @@ type AuthProvider interface {
 	OnRemove(registry, repo string, tags []string) error
 }
 
+// RegistryEndpointProvider is optionally implemented by AuthProvider values
+// when the registry's network endpoint is operator-configured separately from
+// the registry hostname in the image reference.
+type RegistryEndpointProvider interface {
+	RegistryEndpoint(registry string) string
+}
+
 // CloudBuildService builds Docker images on cloud infrastructure.
 // Implemented per-cloud in shared modules (aws-common, gcp-common, azure-common).
 type CloudBuildService interface {
@@ -160,7 +167,12 @@ func (m *ImageManager) Pull(ref string, auth string) (io.ReadCloser, error) {
 	// breaks Docker Hub's token endpoint. Registry failures propagate
 	// as errors so the pull fails cleanly rather than producing a
 	// synthetic image record.
-	meta, err := FetchImageMetadata(ref, ecrBasicCredential(cloudAuthToken))
+	registryEndpoint := ""
+	if endpointProvider, ok := m.Auth.(RegistryEndpointProvider); ok {
+		registry, _, _ := splitImageRefRegistry(ref)
+		registryEndpoint = endpointProvider.RegistryEndpoint(registry)
+	}
+	meta, err := FetchImageMetadataWithEndpoint(ref, registryEndpoint, ecrBasicCredential(cloudAuthToken))
 	if err != nil {
 		return nil, err
 	}

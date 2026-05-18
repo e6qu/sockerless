@@ -45,11 +45,10 @@ func TestResolveGCPImageURI_NoTag(t *testing.T) {
 	}
 }
 
-func TestResolveGCPImageURI_SimulatorPassthrough(t *testing.T) {
-	// When endpointURL is set the backend is talking to the simulator,
-	// which has no AR remote-proxy provisioned — leave the ref alone.
+func TestResolveGCPImageURI_CustomEndpointKeepsCloudSemantics(t *testing.T) {
 	got := ResolveGCPImageURI("alpine:latest", "sim-project", "us-central1", "http://127.0.0.1:4567")
-	if got != "alpine:latest" {
-		t.Errorf("simulator mode should pass ref through, got %q", got)
+	want := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

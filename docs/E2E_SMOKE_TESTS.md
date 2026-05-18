@@ -2,7 +2,10 @@
 
 This repo has three simulator-backed E2E smoke surfaces. All of them do real
 work against local simulators or local Docker-in-Docker harnesses; none use
-mocks or synthetic cloud state.
+mocks or synthetic cloud state. Simulators should behave like the cloud API
+surface with only endpoint routing changed; SDKs, CLIs, Terraform providers,
+and backend registry clients should keep cloud-shaped resource names and image
+refs.
 
 ## FaaS backend Go smokes
 
@@ -124,5 +127,6 @@ The PR CI currently exercises:
 - Docker smoke images for ECS, Cloud Run, and ACA in the `smoke` job.
 - Simulator SDK/CLI suites in the `sim` matrix.
 
-Live-cloud validation remains separate from these simulator-backed smokes and
-requires operator-provisioned cloud projects/subscriptions.
+Live-cloud validation uses the same Make entry points where possible and
+requires operator-provisioned cloud projects/subscriptions plus authenticated
+cloud CLIs.
