@@ -267,6 +267,12 @@ func (s *Server) ContainerStart(ref string) error {
 		if err := s.startSingleContainerApp(id, c, acaState, exitCh); err != nil {
 			return err
 		}
+		if c.Config.OpenStdin {
+			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+				go s.runACAInitialStdinStage(id, c)
+				return nil
+			}
+		}
 		return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 	}
 
@@ -620,6 +626,8 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
+	s.stdinPipes.Delete(id)
+	s.attachStreams.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
 		for _, d := range dirs.([]string) {
 			os.RemoveAll(d)

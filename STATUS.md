@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
-| In-flight | **Phases 167 + 168 on the same branch.** PR #168 was merged at `3565e413`; follow-up PR #169 is open on the same branch name for the next chunk. P168.9/CI hardening is in progress. Latest PR #169 CI run `26025985194` is green. Current local chunk: GCF single-container `OpenStdin` starts now drain attach stdin into the exec envelope and publish attach output; `TestGCFGitLabRunnerAttachStdin` plus the full GCF backend simulator package pass locally. Previous chunk: AZF bootstrap exec envelopes + backend-specific attach wiring made the same runner pattern real in AZF. Remaining: continue with runner/live/test-pyramid follow-ups 1072–1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
+| Active branch | `phase-167-pod-model-analysis` — PR #169 open; PR #168 was merged externally at `3565e413`. |
+| In-flight | **Phases 167 + 168 follow-up on the same branch.** PR #169 is open on the same branch name because #168 cannot be reused after merge. P168.9/CI hardening is in progress. Latest checked PR #169 CI run `26027497573` is green. Current local chunk: ACA Apps now support the GitLab attach-before-start stdin pattern through a real reverse-agent `/bin/sh` execution, and `TestACAGitLabRunnerAttachStdin` plus the full ACA backend simulator package pass locally. Previous chunks made the same runner pattern real in AZF and GCF. Remaining: continue with runner/live/test-pyramid follow-ups 1072, 1074, 1075, 1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1093 filed · 1088 fixed · 5 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072–1076. |
+| Bugs | 1093 filed · 1088 fixed · 4 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072, 1074, 1075, 1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

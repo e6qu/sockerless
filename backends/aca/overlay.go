@@ -157,6 +157,9 @@ func (s *Server) useACAOverlayPath(image string) bool {
 }
 
 func hasACAOverlayRepo(image string) bool {
+	if strings.HasPrefix(image, "sockerless-overlay/") {
+		return true
+	}
 	return strings.Contains(image, ".azurecr.io/sockerless-overlay/") ||
 		strings.Contains(image, "/sockerless-overlay/")
 }

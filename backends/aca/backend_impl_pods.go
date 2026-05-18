@@ -195,6 +195,13 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		if opts.Stdin && s.config.UseApp {
+			p := newStdinPipe()
+			actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+			pipe := actual.(*stdinPipe)
+			pipe.Open()
+			return s.newAttachStream(c.ID, pipe), nil
+		}
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+
 				"ACA attach requires SOCKERLESS_CALLBACK_URL reachable from inside the App / Job "+
