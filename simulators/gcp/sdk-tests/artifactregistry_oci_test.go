@@ -7,9 +7,39 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	artifactregistry "google.golang.org/api/artifactregistry/v1"
+	"google.golang.org/api/option"
 )
 
-func TestArtifactRegistryDockerHubRemoteOCIManifest(t *testing.T) {
+func TestArtifactRegistryDockerHubRemoteRepositorySDKAndOCI(t *testing.T) {
+	service, err := artifactregistry.NewService(ctx,
+		option.WithEndpoint(baseURL+"/"),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	parent := "projects/test-project/locations/us-central1"
+	repo := &artifactregistry.Repository{
+		Format: "DOCKER",
+		Mode:   "REMOTE_REPOSITORY",
+		RemoteRepositoryConfig: &artifactregistry.RemoteRepositoryConfig{
+			Description: "Proxies docker.io / Docker Hub",
+			DockerRepository: &artifactregistry.DockerRepository{
+				PublicRepository: "DOCKER_HUB",
+			},
+		},
+	}
+	op, err := service.Projects.Locations.Repositories.Create(parent, repo).RepositoryId("docker-hub").Do()
+	require.NoError(t, err)
+	require.True(t, op.Done)
+
+	var created artifactregistry.Repository
+	require.NoError(t, json.Unmarshal(op.Response, &created))
+	require.Equal(t, "REMOTE_REPOSITORY", created.Mode)
+	require.NotNil(t, created.RemoteRepositoryConfig)
+	require.NotNil(t, created.RemoteRepositoryConfig.DockerRepository)
+	require.Equal(t, "DOCKER_HUB", created.RemoteRepositoryConfig.DockerRepository.PublicRepository)
+
 	imageName := "test-project/docker-hub/sockerless-eval-arithmetic"
 	manifestURL := baseURL + "/v2/" + imageName + "/manifests/test"
 
@@ -48,4 +78,10 @@ func TestArtifactRegistryDockerHubRemoteOCIManifest(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(blobResp.Body).Decode(&cfg))
 	require.Equal(t, []string{"/usr/local/bin/eval-arithmetic"}, cfg.Config.Entrypoint)
+
+	images, err := service.Projects.Locations.Repositories.DockerImages.List(parent + "/repositories/docker-hub").Do()
+	require.NoError(t, err)
+	require.Len(t, images.DockerImages, 1)
+	require.Contains(t, images.DockerImages[0].Name, "projects/test-project/locations/us-central1/repositories/docker-hub/dockerImages/sockerless-eval-arithmetic@sha256:")
+	require.Equal(t, []string{"test"}, images.DockerImages[0].Tags)
 }

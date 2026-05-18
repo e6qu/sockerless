@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `docs/pr169-merge-continuity` — PR #170 repurposed for Phase 168 follow-ups and live-validation closure work. |
-| In-flight | PR #170 carries FaaS runner smokes, Make/CI wiring, AZF bootstrap test-pyramid expansion, simulator endpoint-fidelity fixes, and live-validation docs. Remaining tracked follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
+| In-flight | PR #170 carries FaaS runner smokes, Make/CI wiring, AZF bootstrap test-pyramid expansion, simulator endpoint-fidelity fixes, and live-validation docs. The GCP Artifact Registry endpoint-fidelity fix is now covered through official SDK, gcloud CLI, Terraform provider, and OCI Distribution paths. Remaining tracked follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
 | Last merged | PR #169 — Phase 168 follow-up runner attach hardening (2026-05-18, `0bd75902`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
@@ -35,7 +35,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **HTTP handlers in `backends/core/handle_*.go` must dispatch through `s.self.<Method>`** — never read `s.Store.*` directly (BUG-991/992/995).
 - **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`; never implicit skip.
 - **No phase or bug IDs in code comments or test docstrings** (BUG-994/1014/1026/1036). Metadata lives in commits / PRs / BUGS.md; comments document the *why*.
-- **Terraform provider call sequences differ materially from raw SDK** (BUG-1029/1030/1038-sub-fix). Both test layers required; one missing canonical field surfaces only live.
+- **SDK/CLI/Terraform provider call sequences differ materially from each other** (BUG-1029/1030/1038-sub-fix/1095). Simulator endpoint-fidelity fixes need the real external clients, not internal shortcuts; one missing canonical field can surface only in gcloud or Terraform.
 - **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y."
 
 ### bleephub-specific

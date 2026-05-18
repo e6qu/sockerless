@@ -107,6 +107,23 @@ resource "google_artifact_registry_repository" "tf_ar_docker" {
   format        = "DOCKER"
 }
 
+# Remote Docker Hub repository — same Artifact Registry shape the
+# production Cloud Run/GCF modules use for Docker Hub image resolution.
+resource "google_artifact_registry_repository" "tf_ar_docker_hub" {
+  location      = "us-central1"
+  repository_id = "docker-hub"
+  description   = "tf-test Docker Hub remote repository"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+
+  remote_repository_config {
+    description = "Proxies docker.io / Docker Hub"
+    docker_repository {
+      public_repository = "DOCKER_HUB"
+    }
+  }
+}
+
 # ---------- Cloud Run v2 (Service + Job) ----------
 
 resource "google_cloud_run_v2_service" "tf_crv2_svc" {
@@ -213,6 +230,10 @@ output "dns_zone_name_servers" {
 
 output "ar_repo_id" {
   value = google_artifact_registry_repository.tf_ar_docker.id
+}
+
+output "ar_remote_repo_id" {
+  value = google_artifact_registry_repository.tf_ar_docker_hub.id
 }
 
 output "cloud_run_v2_service_uri" {

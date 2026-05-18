@@ -20,11 +20,14 @@ import (
 
 // Repository represents an Artifact Registry repository.
 type Repository struct {
-	Name        string `json:"name"`
-	Format      string `json:"format"`
-	Description string `json:"description,omitempty"`
-	CreateTime  string `json:"createTime"`
-	UpdateTime  string `json:"updateTime"`
+	Name                   string         `json:"name"`
+	Format                 string         `json:"format"`
+	Mode                   string         `json:"mode,omitempty"`
+	Description            string         `json:"description,omitempty"`
+	RemoteRepositoryConfig map[string]any `json:"remoteRepositoryConfig,omitempty"`
+	RegistryURI            string         `json:"registryUri,omitempty"`
+	CreateTime             string         `json:"createTime"`
+	UpdateTime             string         `json:"updateTime"`
 }
 
 // DockerImage represents a Docker image in Artifact Registry.
@@ -101,6 +104,10 @@ func registerArtifactRegistry(srv *sim.Server) {
 		if repo.Format == "" {
 			repo.Format = "DOCKER"
 		}
+		if repo.Mode == "" {
+			repo.Mode = "STANDARD_REPOSITORY"
+		}
+		repo.RegistryURI = fmt.Sprintf("%s-docker.pkg.dev/%s/%s", location, project, repoID)
 		repo.CreateTime = now
 		repo.UpdateTime = now
 
@@ -579,8 +586,14 @@ func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageN
 		manifest.MediaType = contentType
 	}
 
+	project, location, repoID, imagePath, ok := artifactRegistryImageParts(imageName)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "[sim-gcp-ar] docker image registration skipped for malformed Artifact Registry image name %q\n", imageName)
+		return
+	}
+	manifestDigest := digestBytes(data)
 	now := nowTimestamp()
-	imgName := imageName + "/dockerImages/" + reference
+	imgName := fmt.Sprintf("projects/%s/locations/%s/repositories/%s/dockerImages/%s@%s", project, location, repoID, imagePath, manifestDigest)
 	tags := []string{}
 	if !strings.HasPrefix(reference, "sha256:") {
 		tags = append(tags, reference)
@@ -588,10 +601,33 @@ func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageN
 
 	img := DockerImage{
 		Name:       imgName,
-		URI:        imageName + ":" + reference,
+		URI:        fmt.Sprintf("%s-docker.pkg.dev/%s/%s/%s@%s", location, project, repoID, imagePath, manifestDigest),
 		Tags:       tags,
 		UploadTime: now,
 		MediaType:  contentType,
 	}
 	dockerImages.Put(imgName, img)
+}
+
+func artifactRegistryImageParts(imageName string) (project, location, repoID, imagePath string, ok bool) {
+	location = "us-central1"
+	parts := strings.SplitN(imageName, "/", 3)
+	if len(parts) < 3 {
+		return "", "", "", "", false
+	}
+	project, repoID, imagePath = parts[0], parts[1], parts[2]
+	if arRepos != nil {
+		prefix := fmt.Sprintf("projects/%s/locations/", project)
+		suffix := fmt.Sprintf("/repositories/%s", repoID)
+		matches := arRepos.Filter(func(repo Repository) bool {
+			return strings.HasPrefix(repo.Name, prefix) && strings.HasSuffix(repo.Name, suffix)
+		})
+		if len(matches) > 0 {
+			segments := strings.Split(matches[0].Name, "/")
+			if len(segments) >= 4 {
+				location = segments[3]
+			}
+		}
+	}
+	return project, location, repoID, imagePath, true
 }

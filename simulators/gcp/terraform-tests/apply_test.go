@@ -45,6 +45,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, arRepoID, "projects/test-project/locations/us-central1/repositories/tf-ar-docker",
 		"AR repo id must be the canonical projects/{p}/locations/{l}/repositories/{id} path; got %s", arRepoID)
 
+	arRemoteRepoID := outputs.must(t, "ar_remote_repo_id")
+	require.Contains(t, arRemoteRepoID, "projects/test-project/locations/us-central1/repositories/docker-hub",
+		"AR remote repo id must be the canonical projects/{p}/locations/{l}/repositories/{id} path; got %s", arRemoteRepoID)
+
 	crServiceURI := outputs.must(t, "cloud_run_v2_service_uri")
 	// Real Cloud Run returns https://<service>-<hash>.<region>.run.app; the
 	// sim returns its local invocation URL (http://host:port/v2-services-invoke/...).

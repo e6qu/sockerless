@@ -6,7 +6,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 Phase 168 follow-up merged 2026-05-18 (PR #169, `0bd75902` on `origin/main`). PR #170 is open on `docs/pr169-merge-continuity` and has been repurposed from continuity-only docs into the Phase 168 follow-up and live-validation closure branch.
 
-Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring for those smokes, AZF bootstrap test-pyramid coverage, simulator endpoint-fidelity fixes, live-validation runbook/docs, and BUG-1075 live-cloud validation. BUG-1075 needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
+Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring for those smokes, AZF bootstrap test-pyramid coverage, simulator endpoint-fidelity fixes, live-validation runbook/docs, and BUG-1075 live-cloud validation. The GCP Artifact Registry simulator-fidelity fix is covered by official SDK, gcloud CLI, Terraform provider, and OCI Distribution tests. BUG-1075 needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
 
 ## Phase 168 sub-task status
 
@@ -21,7 +21,7 @@ Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF,
 | **P168.6** | ✅ | Bootstraps detect ENOSPC writes → exec envelope `exit_code=28` + operator-guidance message. Shared helper in `agent/enospc.go` (`DetectENOSPC` + `AnnotateENOSPC` + `ENOSPCExitCode=28`); wired into lambda + GCF + cloudrun bootstrap exec-result construction. AZF bootstrap was added later and PR #170 adds focused AZF bootstrap tests for exec-envelope stdin/env/workdir, default invoke/workdir, timeout parsing, and argv decode errors. |
 | **P168.7** | ✅ | Strict cleanup-path errors: `ContainerRemove` on all 5 FaaS-style backends now accumulates errors via `errors.Join` and returns them. Split `deleteJob` / `deleteService` / `deleteApp` into two flavours: lenient (rollback paths, error logged) + `*Strict` (ContainerRemove, error propagates). Already-not-found is idempotent (returns nil). `docker rm` only succeeds when the cloud is actually clean. |
 | **P168.8** | ✅ | Protocol type `agent.TypeLifetimeExpired` + `agent.SendLifetimeExpired(ws, mu)` helper + `ReverseAgentConn.OnSystemMessage` hook. Sockerless side: `ReverseAgentRegistry.MarkLifetimeExpired` / `IsLifetimeExpired`; wired into `HandleReverseAgentWS` so inbound `lifetime_expired` marks the container, and into ExecStart on lambda/gcf/cloudrun/aca/azf to return a `FaaSPodLifetimeExceeded` operator-guidance error. Lambda bootstrap wires the timer goroutine in `handleOneInvocation` (fires at deadline-5s of each invocation via `Lambda-Runtime-Deadline-Ms`). Cloud Run + GCF bootstraps catch SIGTERM, send `lifetime_expired`, and exit cleanly; ACA Apps and AZF now use reverse-agent bootstrap overlay paths. |
-| **P168.9** | ✅ | E2E/readiness track merged across PR #168 (`3565e413`) and PR #169 (`0bd75902`). PR #170 adds `Test*FaaSE2ESmoke` for Lambda, Cloud Run, GCF, ACA, and AZF, plus `make faas-smoke-test-*`/`make faas-smoke-test-all` and CI wiring. The smoke guard surfaced BUG-1094 in Cloud Run/ACA service/app wait/remove semantics; fixed in the same branch. A simulator endpoint-fidelity sweep then surfaced and fixed BUG-1095 in GCP Artifact Registry remote-repo behavior. Remaining follow-up: BUG-1075 live-cloud validation only. |
+| **P168.9** | ✅ | E2E/readiness track merged across PR #168 (`3565e413`) and PR #169 (`0bd75902`). PR #170 adds `Test*FaaSE2ESmoke` for Lambda, Cloud Run, GCF, ACA, and AZF, plus `make faas-smoke-test-*`/`make faas-smoke-test-all` and CI wiring. The smoke guard surfaced BUG-1094 in Cloud Run/ACA service/app wait/remove semantics; fixed in the same branch. A simulator endpoint-fidelity sweep then surfaced and fixed BUG-1095 in GCP Artifact Registry remote-repo behavior, with SDK/CLI/Terraform/OCI regression coverage. Remaining follow-up: BUG-1075 live-cloud validation only. |
 
 ## Invariants snapshot (full list in STATUS.md)
 
@@ -32,7 +32,7 @@ Current PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF,
 - **No fallbacks anywhere**: no silent substitution, no "best-effort with logging," no transparent re-invoke. If a primary path fails, surface it loudly to the operator.
 - Driver pluggability preserved: each backend registers ONE driver per dimension; operator can swap; no primary-with-backup pairs.
 - `gh` CLI is the reference adaptor for bleephub.
-- Terraform provider call sequences differ from raw SDK — both test layers required.
+- SDK, CLI, and Terraform provider call sequences differ — endpoint-fidelity fixes need all three external-client layers when the service exposes them.
 - `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative.
 
 ## Resumable tracks (longer-horizon)
