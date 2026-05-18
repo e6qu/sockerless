@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	cloud.google.com/go/cloudbuild v1.30.0
 	cloud.google.com/go/run v1.21.0
-	cloud.google.com/go/storage v1.62.1
+	cloud.google.com/go/storage v1.62.2
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0
 	github.com/sockerless/backend-core v0.0.0

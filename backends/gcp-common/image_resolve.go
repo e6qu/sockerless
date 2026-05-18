@@ -10,11 +10,9 @@ import "strings"
 // repository that proxies Docker Hub. The remote repository ("docker-hub") must
 // be pre-configured at the project level.
 //
-// `endpointURL` carries `Server.config.EndpointURL`. When non-empty the backend
-// is talking to the GCP simulator, which does not provision an AR remote-proxy
-// — rewriting would point sockerless at the real public AR which 403s without
-// GCP creds. In that case return the ref unchanged so the local docker daemon
-// (smoke tests) or the simulator's `ResolveLocalImage` can pull it directly.
+// `endpointURL` is accepted by older call sites but does not alter image
+// resolution. A custom cloud endpoint only changes where SDK requests go; it
+// must not change backend semantics.
 //
 // Examples:
 //
@@ -24,12 +22,8 @@ import "strings"
 //	"{region}-docker.pkg.dev/{project}/my-repo/img:tag" → used as-is
 //	"gcr.io/{project}/img:tag"                          → used as-is
 func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
-	// Simulator mode: no AR proxy provisioned, leave the ref alone so
-	// the pull falls through to the underlying registry / local docker
-	// daemon.
-	if endpointURL != "" {
-		return ref
-	}
+	_ = endpointURL
+
 	// Already an Artifact Registry URI — use as-is
 	if strings.Contains(ref, "-docker.pkg.dev/") {
 		return ref

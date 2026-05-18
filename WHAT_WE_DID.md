@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-18 — PR #170: Phase 168 follow-up branch
+
+PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and live-validation closure branch. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
+
+The new smoke tests caught a real service/app lifecycle bug before CI: Cloud Run Services could finish but still look running to `docker rm`, and ACA Apps could be stopped/deleted before `wait`/`rm` had a stable Docker lifecycle view. The branch fixes those state transitions and records stop/invocation results for wait/remove. It also expands AZF bootstrap unit coverage around exec envelopes, stdin/env/workdir, default invoke, timeout parsing, and argv decoding.
+
+The simulator endpoint-fidelity pass removed the GCP backend image-resolution shortcut that treated `SOCKERLESS_ENDPOINT_URL` as "do simulator behavior." That exposed BUG-1095: the simulator had Cloud Run/GCF endpoints but its Artifact Registry remote-repository path did not serve the same AR image refs the live backend uses. Registry HTTP now routes through the configured endpoint without changing image semantics, and the GCP simulator hydrates `docker-hub` AR cache misses from the real local Docker image save stream. The follow-up coverage uses the same client surfaces operators use: Google Artifact Registry SDK, `gcloud artifacts` with the Artifact Registry endpoint override, Terraform's `google_artifact_registry_repository` remote-repo resource, and the standard OCI Distribution API. `make faas-smoke-test-gcp` passes with the same AR refs.
+
+BUG-1075 live-cloud validation is now part of the PR scope, not excluded. `manual-tests/05-live-validation-preflight.md` captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining cloud cells.
+
 ## 2026-05-17 — Phase 168.9: Cloud Run + GCF overlay exec e2e green on the simulator
 
 Continuation of the Phase 168 "Model A only" work: validate that a plain workload image gets overlay-wrapped with the real bootstrap, starts as a Cloud Run/GCF-hosted service, dials back to the backend reverse-agent endpoint, and runs `docker exec` through the WebSocket path instead of any per-step invoke fallback.
@@ -47,6 +57,8 @@ The next AZF runner check found the exec test was still too weak: it created an 
 The same GitLab attach-before-start test then exposed a GCF single-container gap. GCF had the attach pipe machinery for pod-service mode, but ordinary single-container `OpenStdin` starts still posted the function invoke without draining the pipe, so Docker attach blocked forever waiting for output. The single-container invoke path now drains the registered stdin pipe, sends it as the bootstrap exec-envelope stdin, parses the real envelope response, and publishes stdout/stderr back through the Docker attach stream. `TestGCFGitLabRunnerAttachStdin` covers the `/attach` → stdin script → `/start` → `/wait` cycle, and the full GCF backend simulator package passes locally.
 
 ACA had the last GitLab attach-before-start gap. Its HTTP attach route was wired to read-only Azure Monitor logs, so pre-start stdin never reached the backend attach delegate, and `OpenStdin` Apps skipped the reverse-agent wait without a way to run the piped script. ACA now routes typed attach through `ContainerAttach`, captures pre-start stdin for Apps, waits for the real reverse-agent bootstrap, runs `/bin/sh` through `RunAndCaptureWithStdin`, mux-publishes stdout/stderr back to Docker attach, and records the real exit code for wait. The simulator test builds a real arm64 overlay image with `sockerless-cloudrun-bootstrap`, starts an ACA App, and verifies the GitLab `/attach` → stdin script → `/start` → `/wait` cycle. `TestACAGitLabRunnerAttachStdin` and the full ACA backend simulator package pass locally.
+
+PR #169 merged on 2026-05-18 at `0bd75902` with final CI run `26029489706` green. Local `main` was fast-forwarded to `origin/main`. The remaining open work is tracked as BUG-1072, BUG-1074, BUG-1075, and BUG-1076; BUG-1075 still requires real live-cloud credentials/setup.
 
 ## 2026-05-17 — Phase 167: pod-model analysis + Phase 168 plan (doc-only, in flight on `phase-167-pod-model-analysis`)
 

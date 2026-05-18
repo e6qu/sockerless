@@ -16,8 +16,9 @@
 #                  RUN_ENV := SOCKERLESS_ENDPOINT_URL=http://localhost:4566)
 #
 # Optional — for non-workspace builds:
-#   GO_BUILD_FLAGS : extra `go build` flags
-#   GO_ENV         : env prepended to every go invocation (e.g. GOWORK=off)
+#   GO_BUILD_FLAGS   : extra `go build` flags
+#   GO_ENV           : env prepended to every go invocation (e.g. GOWORK=off)
+#   FAAS_SMOKE_TESTS : regexp for the backend's sim-backed FaaS smoke tests
 #
 # Convention: this file lives at <repo>/make/go-app.mk. Leaf Makefiles
 # discover the repo root by counting up from $(CURDIR) — but to keep
@@ -35,7 +36,7 @@ include $(REPO_ROOT)/make/colors.mk
 
 # ── Standardized targets ────────────────────────────────────────────
 
-.PHONY: install build build-noui embed run dev test test-integration lint clean
+.PHONY: install build build-noui embed run dev test test-integration test-faas-smoke lint clean
 
 install: ## install Go module deps
 	$(GO_ENV) go mod download
@@ -104,6 +105,13 @@ test: ## run unit tests
 
 test-integration: ## run integration tests against the local simulator
 	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags noui -v -timeout 15m ./...
+
+test-faas-smoke: ## run this backend's sim-backed FaaS runner smoke test
+ifndef FAAS_SMOKE_TESTS
+	@printf "$(COLOR_DIM)$(APP_NAME): no FaaS smoke test configured.$(COLOR_RESET)\n"
+else
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags noui -v -count=1 -run '$(FAAS_SMOKE_TESTS)' -timeout 15m ./...
+endif
 
 test-integration-cloud: ## run integration tests against the operator-supplied real cloud (requires SOCKERLESS_ENDPOINT_URL + per-backend ARM env vars)
 	$(GO_ENV) SOCKERLESS_TEST_TARGET=cloud go test -tags noui -v -timeout 30m ./...

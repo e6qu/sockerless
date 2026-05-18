@@ -110,6 +110,9 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	defer ticker.Stop()
 
 	for {
+		if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+			return inv.ExitCode, nil
+		}
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()

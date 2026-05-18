@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	dockerclient "github.com/docker/docker/client"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -15,11 +20,14 @@ import (
 
 // Repository represents an Artifact Registry repository.
 type Repository struct {
-	Name        string `json:"name"`
-	Format      string `json:"format"`
-	Description string `json:"description,omitempty"`
-	CreateTime  string `json:"createTime"`
-	UpdateTime  string `json:"updateTime"`
+	Name                   string         `json:"name"`
+	Format                 string         `json:"format"`
+	Mode                   string         `json:"mode,omitempty"`
+	Description            string         `json:"description,omitempty"`
+	RemoteRepositoryConfig map[string]any `json:"remoteRepositoryConfig,omitempty"`
+	RegistryURI            string         `json:"registryUri,omitempty"`
+	CreateTime             string         `json:"createTime"`
+	UpdateTime             string         `json:"updateTime"`
 }
 
 // DockerImage represents a Docker image in Artifact Registry.
@@ -96,6 +104,10 @@ func registerArtifactRegistry(srv *sim.Server) {
 		if repo.Format == "" {
 			repo.Format = "DOCKER"
 		}
+		if repo.Mode == "" {
+			repo.Mode = "STANDARD_REPOSITORY"
+		}
+		repo.RegistryURI = fmt.Sprintf("%s-docker.pkg.dev/%s/%s", location, project, repoID)
 		repo.CreateTime = now
 		repo.UpdateTime = now
 
@@ -252,7 +264,7 @@ func registerArtifactRegistry(srv *sim.Server) {
 		if idx := strings.Index(rest, "/manifests/"); idx >= 0 {
 			imageName := rest[:idx]
 			reference := rest[idx+len("/manifests/"):]
-			handleOCIManifest(w, r, manifests, dockerImages, imageName, reference)
+			handleOCIManifest(w, r, manifests, blobs, dockerImages, imageName, reference)
 			return
 		}
 
@@ -274,12 +286,19 @@ func registerArtifactRegistry(srv *sim.Server) {
 	}))
 }
 
-func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Store[OCIManifest], dockerImages sim.Store[DockerImage], imageName, reference string) {
+func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], dockerImages sim.Store[DockerImage], imageName, reference string) {
 	key := imageName + "/manifests/" + reference
 
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		manifest, ok := manifests.Get(key)
+		if !ok {
+			if err := hydrateOCIImageFromLocalDocker(manifests, blobs, dockerImages, imageName, reference); err == nil {
+				manifest, ok = manifests.Get(key)
+			} else {
+				fmt.Fprintf(os.Stderr, "[sim-gcp-ar] local docker cache miss for %s:%s: %v\n", imageName, reference, err)
+			}
+		}
 		if !ok {
 			sim.WriteJSON(w, http.StatusNotFound, map[string]any{
 				"errors": []map[string]any{
@@ -292,7 +311,9 @@ func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Sto
 		w.Header().Set("Content-Type", manifest.ContentType)
 		w.Header().Set("Docker-Content-Digest", reference)
 		w.WriteHeader(http.StatusOK)
-		w.Write(manifest.Data)
+		if r.Method == http.MethodGet {
+			w.Write(manifest.Data)
+		}
 
 	case http.MethodPut:
 		data, err := io.ReadAll(r.Body)
@@ -318,9 +339,140 @@ func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Sto
 		w.WriteHeader(http.StatusCreated)
 
 	default:
-		w.Header().Set("Allow", "GET, PUT")
+		w.Header().Set("Allow", "GET, HEAD, PUT")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func hydrateOCIImageFromLocalDocker(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], dockerImages sim.Store[DockerImage], imageName, reference string) error {
+	if !strings.Contains(imageName, "/docker-hub/") {
+		return fmt.Errorf("repository is not a docker-hub remote repository")
+	}
+
+	localRef := imageName + ":" + reference
+	if idx := strings.Index(imageName, "/docker-hub/"); idx >= 0 {
+		localRef = strings.TrimPrefix(imageName[idx+len("/docker-hub/"):], "library/") + ":" + reference
+	}
+	ctx := context.Background()
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer func() { _ = cli.Close() }()
+
+	rc, err := cli.ImageSave(ctx, []string{localRef})
+	if err != nil {
+		return fmt.Errorf("docker image save %q: %w", localRef, err)
+	}
+	defer rc.Close()
+
+	manifestData, files, err := readDockerImageSave(rc)
+	if err != nil {
+		return err
+	}
+	var saved []struct {
+		Config   string   `json:"Config"`
+		RepoTags []string `json:"RepoTags"`
+		Layers   []string `json:"Layers"`
+	}
+	if err := json.Unmarshal(manifestData, &saved); err != nil {
+		return fmt.Errorf("decode docker save manifest: %w", err)
+	}
+	if len(saved) == 0 {
+		return fmt.Errorf("docker save manifest is empty")
+	}
+	image := saved[0]
+	configData, ok := files[image.Config]
+	if !ok {
+		return fmt.Errorf("docker save config %q missing", image.Config)
+	}
+
+	configDigest := digestBytes(configData)
+	blobs.Put(imageName+"/blobs/"+configDigest, OCIBlob{
+		Data:        configData,
+		ContentType: "application/vnd.docker.container.image.v1+json",
+	})
+
+	type descriptor struct {
+		MediaType string `json:"mediaType"`
+		Size      int64  `json:"size"`
+		Digest    string `json:"digest"`
+	}
+	layerDescriptors := make([]descriptor, 0, len(image.Layers))
+	for _, layerPath := range image.Layers {
+		layerData, ok := files[layerPath]
+		if !ok {
+			return fmt.Errorf("docker save layer %q missing", layerPath)
+		}
+		layerDigest := digestBytes(layerData)
+		blobs.Put(imageName+"/blobs/"+layerDigest, OCIBlob{
+			Data:        layerData,
+			ContentType: "application/vnd.oci.image.layer.v1.tar",
+		})
+		layerDescriptors = append(layerDescriptors, descriptor{
+			MediaType: "application/vnd.oci.image.layer.v1.tar",
+			Size:      int64(len(layerData)),
+			Digest:    layerDigest,
+		})
+	}
+
+	manifest := map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config": descriptor{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Size:      int64(len(configData)),
+			Digest:    configDigest,
+		},
+		"layers": layerDescriptors,
+	}
+	ociManifest, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("encode OCI manifest: %w", err)
+	}
+	manifestKey := imageName + "/manifests/" + reference
+	manifests.Put(manifestKey, OCIManifest{
+		ContentType: "application/vnd.oci.image.manifest.v1+json",
+		Data:        ociManifest,
+	})
+	registerDockerImageFromManifest(dockerImages, imageName, reference, "application/vnd.oci.image.manifest.v1+json", ociManifest)
+	return nil
+}
+
+func readDockerImageSave(r io.Reader) ([]byte, map[string][]byte, error) {
+	tr := tar.NewReader(r)
+	files := make(map[string][]byte)
+	var manifest []byte
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read docker save tar: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, tr); err != nil {
+			return nil, nil, fmt.Errorf("read docker save entry %q: %w", hdr.Name, err)
+		}
+		data := buf.Bytes()
+		if hdr.Name == "manifest.json" {
+			manifest = data
+		}
+		files[hdr.Name] = data
+	}
+	if len(manifest) == 0 {
+		return nil, nil, fmt.Errorf("docker save manifest.json missing")
+	}
+	return manifest, files, nil
+}
+
+func digestBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 func handleOCIBlob(w http.ResponseWriter, r *http.Request, blobs sim.Store[OCIBlob], imageName, digest string) {
@@ -434,8 +586,14 @@ func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageN
 		manifest.MediaType = contentType
 	}
 
+	project, location, repoID, imagePath, ok := artifactRegistryImageParts(imageName)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "[sim-gcp-ar] docker image registration skipped for malformed Artifact Registry image name %q\n", imageName)
+		return
+	}
+	manifestDigest := digestBytes(data)
 	now := nowTimestamp()
-	imgName := imageName + "/dockerImages/" + reference
+	imgName := fmt.Sprintf("projects/%s/locations/%s/repositories/%s/dockerImages/%s@%s", project, location, repoID, imagePath, manifestDigest)
 	tags := []string{}
 	if !strings.HasPrefix(reference, "sha256:") {
 		tags = append(tags, reference)
@@ -443,10 +601,33 @@ func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageN
 
 	img := DockerImage{
 		Name:       imgName,
-		URI:        imageName + ":" + reference,
+		URI:        fmt.Sprintf("%s-docker.pkg.dev/%s/%s/%s@%s", location, project, repoID, imagePath, manifestDigest),
 		Tags:       tags,
 		UploadTime: now,
 		MediaType:  contentType,
 	}
 	dockerImages.Put(imgName, img)
+}
+
+func artifactRegistryImageParts(imageName string) (project, location, repoID, imagePath string, ok bool) {
+	location = "us-central1"
+	parts := strings.SplitN(imageName, "/", 3)
+	if len(parts) < 3 {
+		return "", "", "", "", false
+	}
+	project, repoID, imagePath = parts[0], parts[1], parts[2]
+	if arRepos != nil {
+		prefix := fmt.Sprintf("projects/%s/locations/", project)
+		suffix := fmt.Sprintf("/repositories/%s", repoID)
+		matches := arRepos.Filter(func(repo Repository) bool {
+			return strings.HasPrefix(repo.Name, prefix) && strings.HasSuffix(repo.Name, suffix)
+		})
+		if len(matches) > 0 {
+			segments := strings.Split(matches[0].Name, "/")
+			if len(segments) >= 4 {
+				location = segments[3]
+			}
+		}
+	}
+	return project, location, repoID, imagePath, true
 }

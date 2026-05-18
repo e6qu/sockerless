@@ -19,6 +19,7 @@ type registryConfig struct {
 	Registry   string // e.g. "registry-1.docker.io"
 	Repository string // e.g. "library/alpine"
 	Tag        string // e.g. "latest"
+	Endpoint   string // optional endpoint override for this registry
 }
 
 // ImageMetadataResult holds all metadata fetched from a Docker v2 / OCI registry.
@@ -65,20 +66,32 @@ var imageMetadataCache = struct {
 // FetchImageMetadata fetches rich image metadata from a Docker v2 registry.
 // Any registry error is returned to the caller — no placeholder fallback.
 func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, error) {
+	return FetchImageMetadataWithEndpoint(ref, "", basicAuth...)
+}
+
+// FetchImageMetadataWithEndpoint fetches image metadata from ref, optionally
+// routing registry HTTP requests through endpoint. The image ref remains the
+// cloud registry ref; endpoint only changes the network destination.
+func FetchImageMetadataWithEndpoint(ref string, endpoint string, basicAuth ...string) (*ImageMetadataResult, error) {
 	// Guard against empty reference (causes 401 from registry)
 	if ref == "" {
 		return nil, nil
 	}
 
 	// Check cache
+	cacheKey := ref
+	if endpoint != "" {
+		cacheKey = endpoint + "|" + ref
+	}
 	imageMetadataCache.RLock()
-	if meta, ok := imageMetadataCache.m[ref]; ok {
+	if meta, ok := imageMetadataCache.m[cacheKey]; ok {
 		imageMetadataCache.RUnlock()
 		return meta, nil
 	}
 	imageMetadataCache.RUnlock()
 
 	rc := parseImageRef(ref)
+	rc.Endpoint = endpoint
 
 	auth := ""
 	if len(basicAuth) > 0 {
@@ -92,7 +105,7 @@ func FetchImageMetadata(ref string, basicAuth ...string) (*ImageMetadataResult, 
 
 	// Cache the result
 	imageMetadataCache.Lock()
-	imageMetadataCache.m[ref] = meta
+	imageMetadataCache.m[cacheKey] = meta
 	imageMetadataCache.Unlock()
 
 	return meta, nil
@@ -264,8 +277,7 @@ func getRegistryToken(rc registryConfig, basicAuth string) (string, error) {
 	}
 
 	// Try to access the manifests endpoint first to discover auth
-	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
-		rc.Registry, rc.Repository, rc.Tag)
+	manifestURL := registryURL(rc, "manifests", rc.Tag)
 	resp, err := registryClient.Get(manifestURL)
 	if err != nil {
 		return "", err
@@ -496,8 +508,7 @@ type manifestInfo struct {
 // getManifestInfo resolves the image manifest to get config digest, layer info,
 // and manifest digest.
 func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
-	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
-		rc.Registry, rc.Repository, rc.Tag)
+	manifestURL := registryURL(rc, "manifests", rc.Tag)
 
 	// Try manifest list first (for multi-arch images)
 	body, mediaType, err := registryGet(manifestURL, token, []string{
@@ -541,8 +552,7 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 		}
 
 		// Fetch the platform-specific manifest
-		platformURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s",
-			rc.Registry, rc.Repository, digest)
+		platformURL := registryURL(rc, "manifests", digest)
 		body, _, err = registryGet(platformURL, token, []string{
 			"application/vnd.oci.image.manifest.v1+json",
 			"application/vnd.docker.distribution.manifest.v2+json",
@@ -592,7 +602,7 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 // registry-pulled image to a different registry without requiring the
 // blob to be cached locally first.
 func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
-	url := fmt.Sprintf("https://%s/v2/%s/blobs/%s", rc.Registry, rc.Repository, digest)
+	url := registryURL(rc, "blobs", digest)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create blob request: %w", err)
@@ -623,8 +633,7 @@ func FetchLayerBlob(rc registryConfig, token, digest string) ([]byte, error) {
 
 // getFullConfigBlob fetches and parses the full OCI image config blob.
 func getFullConfigBlob(rc registryConfig, token, digest string) (*ociImageConfig, error) {
-	blobURL := fmt.Sprintf("https://%s/v2/%s/blobs/%s",
-		rc.Registry, rc.Repository, digest)
+	blobURL := registryURL(rc, "blobs", digest)
 
 	body, _, err := registryGet(blobURL, token, nil)
 	if err != nil {
@@ -637,6 +646,14 @@ func getFullConfigBlob(rc registryConfig, token, digest string) (*ociImageConfig
 	}
 
 	return &ociCfg, nil
+}
+
+func registryURL(rc registryConfig, kind, reference string) string {
+	base := strings.TrimRight(rc.Endpoint, "/")
+	if base == "" {
+		base = "https://" + rc.Registry
+	}
+	return fmt.Sprintf("%s/v2/%s/%s/%s", base, rc.Repository, kind, reference)
 }
 
 // registryGet performs an authenticated GET request to a registry endpoint.

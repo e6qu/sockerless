@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-167-pod-model-analysis` — PR #169 open; PR #168 was merged externally at `3565e413`. |
-| In-flight | **Phases 167 + 168 follow-up on the same branch.** PR #169 is open on the same branch name because #168 cannot be reused after merge. P168.9/CI hardening is in progress. Latest checked PR #169 CI run `26028982114` is green after the ACA runner attach chunk. ACA Apps now support the GitLab attach-before-start stdin pattern through a real reverse-agent `/bin/sh` execution, and `TestACAGitLabRunnerAttachStdin` plus the full ACA backend simulator package pass locally. Previous chunks made the same runner pattern real in AZF and GCF. Remaining: continue with runner/live/test-pyramid follow-ups 1072, 1074, 1075, 1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
-| Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
+| Active branch | `docs/pr169-merge-continuity` — PR #170 repurposed for Phase 168 follow-ups and live-validation closure work. |
+| In-flight | PR #170 carries FaaS runner smokes, Make/CI wiring, AZF bootstrap test-pyramid expansion, simulator endpoint-fidelity fixes, and live-validation docs. The GCP Artifact Registry endpoint-fidelity fix is now covered through official SDK, gcloud CLI, Terraform provider, and OCI Distribution paths. Remaining tracked follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
+| Last merged | PR #169 — Phase 168 follow-up runner attach hardening (2026-05-18, `0bd75902`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1093 filed · 1088 fixed · 4 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072, 1074, 1075, 1076. |
+| Bugs | 1095 filed · 1093 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -35,7 +35,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **HTTP handlers in `backends/core/handle_*.go` must dispatch through `s.self.<Method>`** — never read `s.Store.*` directly (BUG-991/992/995).
 - **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`; never implicit skip.
 - **No phase or bug IDs in code comments or test docstrings** (BUG-994/1014/1026/1036). Metadata lives in commits / PRs / BUGS.md; comments document the *why*.
-- **Terraform provider call sequences differ materially from raw SDK** (BUG-1029/1030/1038-sub-fix). Both test layers required; one missing canonical field surfaces only live.
+- **SDK/CLI/Terraform provider call sequences differ materially from each other** (BUG-1029/1030/1038-sub-fix/1095). Simulator endpoint-fidelity fixes need the real external clients, not internal shortcuts; one missing canonical field can surface only in gcloud or Terraform.
 - **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y."
 
 ### bleephub-specific
@@ -46,11 +46,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` accept both typed and string-coerced JSON (what `gh api -f` sends).
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000.
 
-## Phase 167 — Pod-model analysis + Phase 168 plan (doc-only; in flight)
+## Phase 167 — Pod-model analysis + Phase 168 execution (merged)
 
 User directive (2026-05-17): compare pod abstraction across 7 backends; trace runner ↔ backend call sequences; root-cause the "12-step CI job = 12+ min" symptom; design simplifications. Analysis only — no code edits.
 
-Phase 167 deliverables (this branch):
+Phase 167/168 deliverables:
 - Cross-backend pod-model comparison: long-lived backends (docker/ecs/cloudrun/aca) hold one container/task/revision for the entire job; FaaS backends (lambda/gcf/azf) are invoke-on-demand. Per-backend exec dispatch differs in ways that the audit caught + codex review re-checked.
 - Root cause of "12 steps = 12+ min": **Path B silent fallback in lambda + cloudrun + cloudrun-functions** dispatch. When the in-container reverse-agent doesn't dial back, every `docker exec` becomes a fresh function invocation cold-starting in 30-90s. 12 invocations × cold-start = the wall-clock symptom.
 - Phase 168 plan (in this file's Active phase section): unify exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); rip all Path B code; rip the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime hard-capped at platform max.
@@ -64,8 +64,6 @@ Codex review caught 3 corrections during Phase 167:
 Self-caught during the "does the exec driver still make sense" check: **cloudrun ALSO has the Path A/B pattern**, missed in the initial Phase 167 analysis. Added to Phase 168 scope as BUG-1054.
 
 User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration is hard limit (no extension hacks); `execStartViaInvoke` ripped entirely; cleanup failures propagate.
-
-User-pending for Phase 168: 6 sizing / disposition questions in DO_NEXT.md.
 
 ## Recently closed phases (last 5)
 

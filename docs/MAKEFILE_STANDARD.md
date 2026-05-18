@@ -74,6 +74,7 @@ Optional targets, when meaningful:
 | `build-noui` | Go-with-UI apps | Build the binary with `-tags noui`, no embedded UI. |
 | `embed` | Go-with-UI apps | Build the UI + copy `ui/packages/<x>/dist` → local `dist/`. Implicit dep of `build`. |
 | `test-integration` | apps with `_integration_test.go` | Run the build-tag-gated integration tests. |
+| `test-faas-smoke` | FaaS backends | Run the backend's runner-shaped simulator smoke (`create -> start -> exec×N -> wait -> remove`). No-op with a clear message when `FAAS_SMOKE_TESTS` is unset. |
 | `dev` | Go-with-UI apps | Run Go server (`-tags noui`) + Vite dev server in parallel. |
 | `preview` | UI packages | `vite preview` — serve the built bundle locally. |
 | `start` / `stop` | Go binaries | Background daemonization with PID file. (Optional — see "stack" below.) |
@@ -319,7 +320,7 @@ Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
 
 1. Land `make/` directory with `colors.mk`, `go-app.mk`, `go-lib.mk`, `ui-app.mk`, `stack.mk` first.
 2. Add the 19 leaf Makefiles in one commit (each is 5–10 lines).
-3. Rewrite top-level `Makefile` to delegate. Cross-cutting Docker-driven suites (`e2e-*`, `tf-int-test-*`, `smoke-test-*`, `upstream-test-*`, `bleephub-gh-docker-test`) stay as top-level targets. Per-app aliases (`sim-test-*`, `bleephub-test`, `test-{unit,e2e,agent,core,bleephub}`) were removed once the path-delegation rule covered the same surface — sockerless has no legacy compatibility surface; use the `<dir>/<target>` path-delegation form.
+3. Rewrite top-level `Makefile` to delegate. Cross-cutting Docker-driven suites (`e2e-*`, `tf-int-test-*`, `smoke-test-*`, `faas-smoke-test-*`, `upstream-test-*`, `bleephub-gh-docker-test`) stay as top-level targets. Per-app aliases (`sim-test-*`, `bleephub-test`, `test-{unit,e2e,agent,core,bleephub}`) were removed once the path-delegation rule covered the same surface — sockerless has no legacy compatibility surface; use the `<dir>/<target>` path-delegation form.
 4. Add CI smoke-test that runs `make help` (validates that every leaf Makefile is wired correctly) + `make build` (validates the whole rebuild path).
 
 ## Discussion points before I start
@@ -330,7 +331,7 @@ Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
 
 3. **Stack target naming**. `stack-aws-ecs` vs `stack-up CLOUD=aws BE=ecs` vs `aws-ecs.up`. Pick one.
 
-4. **Orthogonal test categories**. The Docker-driven cross-cutting suites — `tf-int-test-*` (terraform), `smoke-test-*` (Docker-in-Docker smoke), `upstream-test-*` (act + gitlab-ci-local), `e2e-*` (real-runner), `bleephub-gh-docker-test` — kept as top-level Makefile recipes. Per-app sim-vs-backend integration is reached through `make backends/<x>/test-integration` and the top-level `make test-integration` fan-out (the pure-alias `sim-test-*` shim has been removed — every callsite now uses path delegation).
+4. **Orthogonal test categories**. The Docker-driven cross-cutting suites — `tf-int-test-*` (terraform), `smoke-test-*` (Docker-in-Docker smoke), `upstream-test-*` (act + gitlab-ci-local), `e2e-*` (real-runner), `bleephub-gh-docker-test` — kept as top-level Makefile recipes. Per-app sim-vs-backend integration is reached through `make backends/<x>/test-integration`; runner-shaped FaaS backend smokes are reached through `make backends/<x>/test-faas-smoke` or the aggregate `make faas-smoke-test-all`. The pure-alias `sim-test-*` shim has been removed — every callsite now uses path delegation.
 
 5. **Auto-discovery vs explicit listing for `GO_APPS`**. Globbing (`backends/*/`, `simulators/*/`) is more robust as new apps land but obscures what's wired up. Explicit listing in `Makefile` is verbose but greppable. Currently I'm proposing explicit. Override?
 

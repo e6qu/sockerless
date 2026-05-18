@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-142.2k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-142.4k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-16.7k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-69k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-69.8k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -110,11 +110,11 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **Go**
 
-![core](https://img.shields.io/badge/core-19.1k-00ADD8)
+![core](https://img.shields.io/badge/core-19.2k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-24.3k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-18.8k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-9.9k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-9.3k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-9.5k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-5.9k-5BC0DE)
@@ -371,6 +371,7 @@ app, plus the api.Backend coverage gate:
 ```bash
 make smoke-test-{act,act-ecs,act-cloudrun,act-aca,act-all}
 make smoke-test-{gitlab,gitlab-ecs,gitlab-cloudrun,gitlab-aca,gitlab-all}
+make faas-smoke-test-{lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
 make tf-int-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
 make e2e-github-{ecs,lambda,cloudrun,gcf,aca,azf,all}
 make e2e-gitlab-{ecs,lambda,cloudrun,gcf,aca,azf,all}
@@ -454,11 +455,15 @@ make test-all                     # all four (sdk + cli + terraform + shared)
 
 # Cross-backend e2e:
 make tests/test                   # delegates to tests/Makefile
+make tests/test-integration       # Go e2e harness with simulator env
 
 # Smoke (Docker-in-Docker):
+make faas-smoke-test-all          # Go-package FaaS runner lifecycle smokes
 make smoke-test-act-ecs           # GitHub Actions (act) → ECS via sim
 make smoke-test-gitlab-ecs        # GitLab Runner → ECS via sim
 ```
+
+Detailed smoke/e2e command matrix: [docs/E2E_SMOKE_TESTS.md](docs/E2E_SMOKE_TESTS.md).
 
 ### Lint
 

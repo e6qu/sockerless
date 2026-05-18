@@ -77,9 +77,6 @@ get_backend_env() {
     local backend="$1"
     local sim_port
 
-    # Skip real registry config fetch in E2E tests (uses synthetic configs)
-    export SOCKERLESS_SKIP_IMAGE_CONFIG="${SOCKERLESS_SKIP_IMAGE_CONFIG:-true}"
-
     case "$backend" in
         ecs)
             sim_port=4566

@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/functions v1.24.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0
-	cloud.google.com/go/storage v1.62.1
+	cloud.google.com/go/storage v1.62.2
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.279.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260504160031-60b97b32f348
