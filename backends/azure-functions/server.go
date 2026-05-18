@@ -3,6 +3,7 @@ package azf
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -26,6 +27,8 @@ type Server struct {
 	// Reverse-agent registry for docker top / cp / stat via a
 	// bootstrap running inside the function app container.
 	reverseAgents *core.ReverseAgentRegistry
+	stdinPipes    sync.Map
+	attachStreams sync.Map
 }
 
 // NewServer creates a new Azure Functions backend server.
@@ -169,8 +172,8 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{CheckLogBuffers: true},
 		"azf", "AzureMonitor")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"azf", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
+		"azf", "ContainerAttach")
 
 	return s
 }
