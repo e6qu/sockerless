@@ -46,7 +46,7 @@ export SSL_CERT_FILE=$(pwd)/ca.pem
 
 ## Provider configuration
 
-Use the `hashicorp/azurestack` provider, which supports a custom `arm_endpoint`:
+Use the `hashicorp/azurerm` provider through the simulator's custom Azure cloud metadata and OAuth2 endpoints for the cloud resources sockerless exercises. The test suite also retains `azurestack` coverage for Azure Stack-compatible ARM resources.
 
 ```hcl
 terraform {
@@ -71,11 +71,7 @@ provider "azurestack" {
 }
 ```
 
-`skip_provider_registration = true` prevents the provider from trying to register Azure resource providers (which would require a full Azure API).
-
-### Why azurestack instead of azurerm?
-
-The `azurerm` provider does not support a custom ARM endpoint. The `azurestack` provider is designed for Azure Stack Hub (on-premises Azure) and accepts a configurable `arm_endpoint`, making it suitable for pointing at the simulator. Most resource types are compatible.
+`skip_provider_registration = true` prevents provider-registration calls that are outside the simulator slice.
 
 ## Environment variables
 
@@ -148,12 +144,12 @@ The simulator supports the Azure API operations that these Terraform resources u
 | DNS | `azurestack_dns_zone` |
 | Storage | `azurestack_storage_account` |
 
-Additional resources work via the ARM API but may not have direct `azurestack` Terraform resource types. Use `azurerm` with the `azapi` provider for broader coverage, or interact directly via CLI/SDK.
+The automated terraform tests cover both Azure Stack-compatible ARM resources and AzureRM resources that sockerless depends on: ACA managed environments, ACA Jobs/Apps, ACR, managed identity, Private DNS, Log Analytics, Application Insights, App Service plans, Linux Function Apps, and Storage Accounts.
 
 ## Notes
 
-- TLS is required. The azurestack provider hardcodes `https://` for metadata endpoint calls.
+- TLS is required. Azure Terraform providers use HTTPS for metadata and ARM endpoint calls.
 - All state is in-memory and resets when the simulator restarts.
-- Authentication is simulated — the OAuth2 endpoint returns unsigned JWTs. Any client ID/secret will be accepted.
+- The OAuth2 endpoint accepts local-test credentials and returns Azure-shaped token responses.
 - `skip_provider_registration = true` is required to prevent provider registration API calls.
 - Docker-only on macOS due to TLS trust limitations (see TLS requirement section above).

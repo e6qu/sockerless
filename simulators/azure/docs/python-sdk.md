@@ -23,7 +23,7 @@ SUBSCRIPTION_ID = "00000000-0000-0000-0000-000000000001"
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
 RESOURCE_GROUP = "my-resource-group"
 
-# The simulator accepts any credentials via its OAuth2 endpoint.
+# The simulator accepts local-test credentials via its OAuth2 endpoint.
 # Point the credential at the simulator's authority host.
 credential = ClientSecretCredential(
     tenant_id=TENANT_ID,
@@ -277,7 +277,7 @@ print(resp.json()["name"])
 
 ## Notes
 
-- Authentication is simulated. The OAuth2 token endpoint returns unsigned JWTs. Any client ID/secret will be accepted.
+- The simulator's OAuth2 endpoint accepts local-test credentials and returns token responses shaped for Azure SDK clients.
 - All state is in-memory and resets when the simulator restarts.
 - The `api-version` query parameter is required on all ARM requests.
 - Management clients that use `base_url` should work. Clients that hardcode `management.azure.com` may require patching or direct HTTP.

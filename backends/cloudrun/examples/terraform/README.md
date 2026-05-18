@@ -1,6 +1,6 @@
 # Cloud Run Backend — Terraform Example
 
-This example provisions the GCP infrastructure needed to run Sockerless with the Cloud Run Jobs backend. Once applied, you can use standard `docker` CLI commands and they will execute as Cloud Run Job executions.
+This example provisions the GCP infrastructure needed to run Sockerless with the Cloud Run backend. One-shot containers run as Cloud Run Jobs; runner and repeated-exec workloads run as Cloud Run Services with the reverse-agent bootstrap.
 
 ## What Gets Created
 
@@ -66,7 +66,7 @@ export SOCKERLESS_GCR_VPC_CONNECTOR=$(terraform output -raw vpc_connector_name)
 export SOCKERLESS_GCR_LOG_ID=sockerless
 ```
 
-For reverse agent mode (optional):
+Configure the reverse-agent callback. The backend fails at startup when this is empty, because Service-backed exec requires the bootstrap to dial back:
 
 ```bash
 export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
@@ -103,10 +103,10 @@ docker run --rm ${AR_URL}/alpine:latest echo "Hello from Cloud Run!"
 ```
 
 Behind the scenes:
-1. `docker create` → Stores container metadata locally
-2. `docker start` → `Jobs.CreateJob` + `Jobs.RunJob`
-3. Agent connects (forward polling or reverse callback)
-4. `docker rm` → `Jobs.DeleteJob`
+1. `docker create` → Records a pending create until the Cloud Run resource exists
+2. `docker start` → `Jobs.CreateJob` + `Jobs.RunJob` for one-shot Jobs, or Cloud Run Service create/update for runner workloads
+3. Service-backed workloads wait for the reverse-agent bootstrap to register
+4. `docker rm` → deletes the Cloud Run Job or Service
 
 ### Create, exec, logs
 
@@ -157,7 +157,7 @@ docker restart myjob
 
 ```bash
 docker ps -a
-docker container prune   # removes exited containers + deletes their Cloud Run Jobs
+docker container prune   # removes exited containers + deletes their Cloud Run Jobs/Services
 ```
 
 ## Step 7: Destroy the Infrastructure
@@ -167,7 +167,7 @@ cd backends/cloudrun/examples/terraform
 terraform destroy -var="project_id=YOUR_GCP_PROJECT_ID"
 ```
 
-**Important:** Clean up any Cloud Run Jobs first:
+**Important:** Clean up any Sockerless-managed Cloud Run Jobs and Services first:
 
 ```bash
 # List jobs created by Sockerless
@@ -175,31 +175,30 @@ gcloud run jobs list --region=$(terraform output -raw region) --filter="metadata
 
 # Delete them
 gcloud run jobs delete sockerless-<id> --region=$(terraform output -raw region) --quiet
+
+# List and delete Services created by Sockerless
+gcloud run services list --region=$(terraform output -raw region) --filter="metadata.labels.managed-by=sockerless"
+gcloud run services delete sockerless-<id> --region=$(terraform output -raw region) --quiet
 ```
 
 ## Architecture Diagram
 
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────────────┐
-│  docker CLI  │────▶│ Sockerless       │────▶│ Google Cloud Run Jobs   │
+│  docker CLI  │────▶│ Sockerless       │────▶│ Google Cloud Run        │
 │              │     │ Backend           │     │                         │
 │ pull, create,│     │ (localhost:3375)  │     │ Jobs.CreateJob          │
 │ start, exec, │     │                  │     │ Jobs.RunJob             │
 │ logs, stop   │     │                  │     │ Executions.GetExecution │
 └──────────────┘     └──────────────────┘     │ Executions.Cancel       │
+                                               │ Services.Create/Update  │
                                                │ LogAdmin.Entries        │
                                                └─────────────────────────┘
 ```
 
-## Agent Modes
+## Reverse Agent
 
-### Forward Agent (default)
-
-After `RunJob` creates an execution, the backend polls `GetExecution` until the execution is RUNNING. The agent address is derived from the execution name on port 9111. The backend connects to the agent for exec/attach operations.
-
-### Reverse Agent
-
-Set `SOCKERLESS_CALLBACK_URL` to enable. The agent inside the job execution calls back to the Sockerless backend. Useful when the backend cannot reach the Cloud Run execution directly.
+Set `SOCKERLESS_CALLBACK_URL` to a URL reachable from Cloud Run. The bootstrap inside the Service dials back to Sockerless and registers the reverse-agent WebSocket used by `docker exec`, `docker attach`, and `docker cp`. There is no per-exec invoke fallback.
 
 ## Key Differences from Vanilla Docker
 
@@ -210,14 +209,14 @@ Set `SOCKERLESS_CALLBACK_URL` to enable. The agent inside the job execution call
 | Stop | SIGTERM → SIGKILL | CancelExecution |
 | Logs follow | Real-time | Polls Cloud Logging every 5s |
 | Pause/unpause | Freeze cgroups | Not supported |
-| Networks | Real Docker networks | In-memory only (VPC connector for egress) |
-| Volumes | Real volumes | In-memory only |
-| Resources | Configurable | Fixed: 1 CPU / 512 Mi |
+| Networks | Real Docker networks | Cloud DNS/service materialization where configured; VPC connector controls cloud egress |
+| Volumes | Real volumes | Cloud Storage backed volumes or memory tmpfs depending on backing |
+| Resources | Configurable | Configured through Cloud Run resource settings |
 
 ## Estimated Costs
 
 - **VPC Connector**: ~$0.01/hr per instance (~$15/month for 2 instances)
-- **Cloud Run Jobs**: Per-execution pricing (CPU + memory per second)
+- **Cloud Run Jobs/Services**: Per-execution or Service instance pricing depending on the selected path
 - **Cloud Logging**: First 50 GB/month free, then $0.50/GB
 - **Artifact Registry**: $0.10/GB/month
 - **Cloud Storage**: $0.020/GB/month
@@ -232,4 +231,4 @@ The VPC connector has a fixed cost. For development, destroy when not in use.
 
 **Logs are empty:** Cloud Logging filter uses `resource.type="cloud_run_job"`. Entries may take a few seconds to appear.
 
-**Agent health check fails (forward mode):** The VPC connector must be properly configured for the backend to reach the execution's agent port.
+**Agent callback timeout:** `SOCKERLESS_CALLBACK_URL` must be reachable from the Cloud Run Service through the configured ingress/VPC path.

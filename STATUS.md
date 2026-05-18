@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `docs/post-pr170-doc-sweep` — post-PR #170 documentation alignment sweep. |
-| In-flight | Documentation-only sweep after PR #170 merged. Bring continuity, runner, simulator, and backend docs in line with the implemented reverse-agent FaaS runner path and simulator endpoint-fidelity work. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
+| In-flight | Documentation-only sweep after PR #170 merged. Third pass is aligning previously untouched docs too: root README, examples, simulator how-tos, comparison/spec docs, and ECS/Cloud Run/ACA transport wording. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
 | Last merged | PR #170 — Phase 168 follow-up runner smokes and simulator fidelity (2026-05-18, `a5639811`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |

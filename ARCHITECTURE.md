@@ -159,11 +159,11 @@ stateDiagram-v2
 
 #### ECS (AWS Fargate)
 
-Task definition registration is **deferred** from Create to Start for pod association. Cloud-native exec via ECS ExecuteCommand (SSM Session Manager) when no agent is connected.
+Task definition registration is **deferred** from Create to Start for pod association. Exec uses the ECS ExecuteCommand / SSM path.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: local state (deferred)
+    [*] --> Created: PendingCreates (pre-cloud)
     Created --> Running: RegisterTaskDef, RunTask
     Running --> Exited: StopTask
     Exited --> [*]: DeregisterTaskDef
@@ -171,9 +171,9 @@ stateDiagram-v2
 
 | Operation | Cloud API Calls |
 |-----------|----------------|
-| Create | Local store (deferred) |
+| Create | `PendingCreates` only until Start materializes the ECS task definition |
 | Start | `ECS.RegisterTaskDefinition`, `ECS.RunTask`, `CloudMap.RegisterInstance` |
-| Exec | Agent WebSocket or `ECS.ExecuteCommand` (SSM) |
+| Exec | `ECS.ExecuteCommand` (SSM) |
 | Stop/Kill | `ECS.StopTask` |
 | Remove | `ECS.DeregisterTaskDefinition`, `CloudMap.DeregisterInstance` |
 | Logs | `CloudWatch.GetLogEvents` |
@@ -201,25 +201,25 @@ stateDiagram-v2
 | Remove | `Lambda.DeleteFunction` |
 | Logs | `CloudWatch.GetLogEvents` (`/aws/lambda/{functionName}`) |
 
-#### Cloud Run Jobs (GCP)
+#### Cloud Run Jobs/Services (GCP)
 
-Job creation is **deferred** from Create to Start. Cloud DNS handles service discovery.
+Cloud resource creation is **deferred** from Create to Start. One-shot containers use Jobs; runner and repeated-exec workloads use Services with the reverse-agent bootstrap. Cloud DNS and Service materialization handle service discovery.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: local state (deferred)
-    Created --> Running: CreateJob, RunJob
+    [*] --> Created: PendingCreates (pre-cloud)
+    Created --> Running: CreateJob/RunJob or Service Create/Update
     Running --> Exited: CancelExecution
     Exited --> [*]: DeleteJob
 ```
 
 | Operation | Cloud API Calls |
 |-----------|----------------|
-| Create | Local store (deferred) |
-| Start | `Jobs.CreateJob`, `Jobs.RunJob`, `CloudDNS.CreateResourceRecord` |
-| Exec | Agent WebSocket |
+| Create | `PendingCreates` only until Start materializes the Job or Service |
+| Start | `Jobs.CreateJob`, `Jobs.RunJob`, `Services.CreateService` / `Services.UpdateService`, `CloudDNS.CreateResourceRecord` |
+| Exec | Reverse agent WebSocket for Service-backed workloads |
 | Stop/Kill | `Jobs.CancelExecution` |
-| Remove | `Jobs.DeleteJob`, `CloudDNS.DeleteResourceRecord` |
+| Remove | `Jobs.DeleteJob` or `Services.DeleteService`, `CloudDNS.DeleteResourceRecord` |
 | Logs | `Cloud Logging` (resource.type=cloud_run_job) |
 | Network | Cloud DNS managed zones (create/delete/record cleanup) |
 | Service Discovery | Cloud DNS A records (register/deregister/resolve by FQDN) |
@@ -245,23 +245,23 @@ stateDiagram-v2
 | Remove | `Functions.DeleteFunction` |
 | Logs | `Cloud Logging` (resource.type=cloud_run_revision) |
 
-#### ACA Jobs (Azure Container Apps)
+#### ACA Jobs/Apps (Azure Container Apps)
 
-Job creation is **deferred** from Create to Start. Cloud-native exec via the Container Apps exec WebSocket API when no agent is connected.
+Cloud resource creation is **deferred** from Create to Start. One-shot containers use Jobs; runner and repeated-exec workloads use Apps with the reverse-agent bootstrap. There is no Container Apps management-API exec fallback.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: local state (deferred)
-    Created --> Running: BeginCreateOrUpdate, BeginStart
+    [*] --> Created: PendingCreates (pre-cloud)
+    Created --> Running: Job Start or App Create/Update
     Running --> Exited: BeginStop
     Exited --> [*]: Delete
 ```
 
 | Operation | Cloud API Calls |
 |-----------|----------------|
-| Create | Local store (deferred) |
-| Start | `Jobs.BeginCreateOrUpdate`, `Jobs.BeginStart` |
-| Exec | Agent WebSocket or ACA exec API (WebSocket) |
+| Create | `PendingCreates` only until Start materializes the Job or App |
+| Start | `Jobs.BeginCreateOrUpdate` + `Jobs.BeginStart`, or `ContainerApps.BeginCreateOrUpdate` |
+| Exec | Reverse agent WebSocket for App-backed workloads |
 | Stop/Kill | `Jobs.BeginStop` |
 | Remove | `Jobs.Delete` |
 | Logs | Azure Monitor / Log Analytics (AppTraces) |
@@ -291,27 +291,24 @@ stateDiagram-v2
 
 ### Key Patterns
 
-- **Deferred creation**: Container backends (ECS, CloudRun, ACA) defer cloud resource creation from `docker create` to `docker start` for pod scheduling. FaaS backends (Lambda, GCF, AZF) create eagerly.
-- **Cloud-native exec**: ECS uses `ExecuteCommand` (SSM Session Manager WebSocket), ACA uses its exec API (WebSocket). Both fall back to agent exec when an agent is connected.
-- **Cloud-native networking**: ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, ACA uses NSG + in-process DNS. FaaS and Docker backends use in-memory networking.
+- **Deferred creation**: ECS, Cloud Run, and ACA keep only `PendingCreates` between `docker create` and `docker start`; after Start, cloud APIs are the source of truth. FaaS backends (Lambda, GCF, AZF) create eagerly.
+- **Exec transport**: ECS uses `ExecuteCommand` (SSM Session Manager WebSocket). Cloud Run Services, ACA Apps, Lambda, GCF, and AZF use mandatory reverse-agent WebSockets.
+- **Cloud-native networking**: ECS uses VPC Security Groups + Cloud Map, Cloud Run uses Cloud DNS / Service materialization, and ACA uses managed-environment networking + Private DNS.
 
 ### Exec Routing
 
 ```mermaid
 flowchart TD
-    START["ExecStart request"] --> CHK1{"AgentAddress<br/>== 'reverse'?"}
+    START["ExecStart request"] --> CHK1{"Reverse-agent<br/>registered?"}
     CHK1 -->|Yes| REV["Bridge exec over<br/>reverse WebSocket"]
-    CHK1 -->|No| CHK2{"AgentAddress<br/>set (IP:port)?"}
-    CHK2 -->|Yes| FWD["Dial forward agent<br/>at IP:9111"]
-    CHK2 -->|No| CHK3{"Cloud exec<br/>supported?"}
-    CHK3 -->|Yes| CLOUD["ECS ExecuteCommand (SSM)\nor ACA exec API (WebSocket)"]
-    CHK3 -->|No| ERR["Error: no agent<br/>connected"]
+    CHK1 -->|No| CHK2{"Backend is ECS?"}
+    CHK2 -->|Yes| CLOUD["ECS ExecuteCommand (SSM)"]
+    CHK2 -->|No| ERR["Error: reverse-agent<br/>not registered"]
 ```
 
 1. **Reverse agent** — Agent has an active WebSocket to the backend. Exec is bridged over that connection.
-2. **Forward agent** — Backend dials the agent inside the container at `<IP>:9111`.
-3. **Cloud-native exec** — ECS uses SSM Session Manager, ACA uses its exec WebSocket API.
-4. **No agent** — Error. An agent connection is required for exec.
+2. **ECS SSM** — ECS uses Session Manager for cloud-native exec.
+3. **No reverse-agent** — FaaS/Service/App backends fail loudly; there is no invoke-per-exec or ACA management-API fallback.
 
 ---
 

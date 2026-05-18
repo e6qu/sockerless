@@ -171,7 +171,7 @@ What it needs:
 3. **stdcopy-framed exec response.** `DockerExec` non-TTY response demands 8-byte stream-frame headers (`0x01` stdout / `0x02` stderr). Bare HTTP body breaks the runner with `Unrecognized input header: 115`. Backend wraps response via `writeMuxFrame` helper.
 4. **Per-step workspace state propagation between runner-task and JOB pod-Service.** GH actions/runner writes step scripts to `$RUNNER_WORK/_temp/<uuid>.sh` on the runner-task and `docker exec sh /__w/_temp/<uuid>.sh`. Both sides must see the same files. Today's path: GCS object sync via the `gcs-sync` storage backing driver — sockerless-backend tars on exec, bootstrap untars + runs + tars, sockerless-backend untars response. No FUSE in the data path.
 5. **Service containers** on the same per-job network (same long-lived multi-container primitive).
-6. **`/var/run/docker.sock` mount on the JOB container** — github-runner unconditionally mounts this so user steps can do nested `docker run`. On Cloud Run / GCF / ACA / AZF there's no docker socket; sockerless drops the mount silently AND the user step that needs nested docker fails at runtime. Documented limitation.
+6. **`/var/run/docker.sock` mount on the JOB container** — github-runner unconditionally mounts this so user steps can do nested `docker run`. On Cloud Run / GCF / ACA / AZF there is no native Docker socket; sockerless must either provide a real socket/dispatch contract or reject the mount clearly.
 
 ### GitHub runner: default model is NOT ephemeral — we need it ephemeral
 
@@ -975,7 +975,7 @@ Sockerless's `backends/lambda/volumes.go::fileSystemConfigsForBinds` translates 
 - **Single AP per function.** All EFS-backed volumes a Lambda function references must share one access point. When multiple `SharedVolume` entries (declared via `SOCKERLESS_LAMBDA_SHARED_VOLUMES`) name the same `AccessPointID`, they collapse to one `FileSystemConfig`. Multiple distinct APs in the same `CreateFunction` call are rejected at sockerless's boundary with a clear error pointing at this constraint.
 - **Single mount path; bind targets are symlinks.** The collapsed `FileSystemConfig` mounts at `/mnt/sockerless-shared`. Each Docker bind's `dst` is exposed via a **symlink** created by sockerless's bootstrap before the user entrypoint runs. The symlink target is `/mnt/sockerless-shared/<EFSSubpath>`, where `EFSSubpath` is declared on the `SharedVolume` (the directory under the AP root where that volume's data lives — e.g. `_work` for the runner workspace, `externals` for actions/runner externals).
 - **`SOCKERLESS_LAMBDA_BIND_LINKS` env var** carries `<dst>=/mnt/sockerless-shared/<EFSSubpath>` mappings into the sub-task function. The bootstrap parses this on startup, `mkdir -p`s the parent of each `dst`, and `ln -sfn`s the link.
-- **`/var/run/docker.sock` binds drop silently** — Lambda has no docker socket; the runner-side process should be using sockerless on `localhost:3375` instead.
+- **`/var/run/docker.sock` binds** — Lambda has no docker socket; the backend must reject socket binds unless a real socket/dispatch contract is explicitly configured.
 
 `SOCKERLESS_LAMBDA_SHARED_VOLUMES` syntax accommodates the AP-subpath:
 
@@ -1627,7 +1627,7 @@ Why this beat the alternatives we tried (in order):
 
 `gcs-sync` is the only candidate that satisfies zero-scaling + no-cost-when-not-in-use + cross-Service-state.
 
-**`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there's no docker socket — sockerless drops the mount silently AND the user step cannot do `docker run`. Documented limitation; user code that actually requires nested docker fails at runtime with `cannot connect`.
+**`/var/run/docker.sock` mount**: github-runner unconditionally mounts the docker socket on the JOB container so user steps can do nested `docker run`. On Cloud Run there is no native Docker socket; sockerless must either provide a real socket/dispatch contract or reject the mount clearly.
 
 ### gitlab-runner vs github-runner — runner-pattern compatibility matrix (2026-05-06)
 
@@ -1705,7 +1705,7 @@ The runner job lifecycle above demands a set of container-level concerns (mounti
 |---|---|---|---|---|---|---|---|
 | **Long-lived container** | `docker run -d <image> tail -f /dev/null` | ECS Service or RUNNING Task | Single Invoke held open via reverse-agent supervisor | Cloud Run Service (`min_instance_count=1`, `cpu_always_on`) | ServiceV2 backing the Function (Gen2 IS Cloud Run); same as cloudrun Service | Container App with `min_replicas=1` | Premium plan Function with `alwaysOn` |
 | **Bind mount workspace shared across containers** | `-v /h:/c` | EFS access point on each task; same FSAP across runner-task + sub-task | EFS single-FSC + sub-paths (Lambda only allows 1 FSC; collapse via SOCKERLESS_LAMBDA_SHARED_VOLUMES) | Cloud Run Service `Volume.Gcs` + `VolumeMount` | Same — gcf's UpdateService injects into ServiceV2.Template.Volumes | Azure Files `volume_mount` on Container App | Azure Files mount on Premium plan |
-| **Drop docker.sock bind** | n/a (silently dropped) | ✅ Drop in `backend_impl.go` translator | ✅ Drop in `volumes.go` | ✅ Drop in `backend_impl.go` translator | ✅ Drop | ✅ Drop | ✅ Drop |
+| **Docker socket bind** | host Docker socket bind | Must be explicitly wired to a real socket/dispatch contract or rejected loudly; no silent drop | Same | Same | Same | Same | Same |
 | **Capabilities (CAP_NET_ADMIN, CAP_SYS_ADMIN, etc.)** | `--cap-add=...` | ECS task-def `linuxParameters.capabilities.add` | NOT supported on Lambda — fail loudly if user requests anything beyond default | Cloud Run does not support per-container caps — fail loudly | Same — fail loudly | ACA Container property `capabilities` in container template — supports add/drop | NOT supported — fail loudly |
 | **Privileged mode** | `--privileged` | ECS Fargate does NOT support privileged — fail loudly. EC2-launchtype ECS does, but not in our scope | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly |
 | **Run as user (UID:GID)** | `-u 1000:1000` | ECS task-def container `user` field | Lambda Function `ImageConfig.User` | Cloud Run does not support per-container user override — bake USER in image (BUG-924 workaround) | Same | ACA Container property `runAsUser`/`runAsGroup` not exposed; bake in image | Bake USER in image |

@@ -105,7 +105,7 @@ None open for the Cloud Run Service reverse-agent path. Cloud Run lacks a protob
 - Requires Cloud Run API and Cloud Logging API enabled in the GCP project.
 - Application Default Credentials or a service account key must be available.
 - Container images must be in Artifact Registry or GCR within the same project.
-- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- Service-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - VPC connector is only needed if services must reach private VPC resources.
 
 See also: [`backends/gcp-common`](../gcp-common/), [`simulators/gcp/README.md`](../../simulators/gcp/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run`](../../specs/CLOUD_RESOURCE_MAPPING.md).

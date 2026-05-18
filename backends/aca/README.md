@@ -112,7 +112,7 @@ None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route co
 - Requires a Container Apps environment and resource group to be pre-created.
 - Authentication uses Azure Default Credentials (`az login`, managed identity, or env vars).
 - Container images must be accessible from ACR or a public registry.
-- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- App-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - Log Analytics workspace is needed for `docker logs` support.
 
 See also: [`backends/azure-common`](../azure-common/), [`simulators/azure/README.md`](../../simulators/azure/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Azure Container Apps`](../../specs/CLOUD_RESOURCE_MAPPING.md).

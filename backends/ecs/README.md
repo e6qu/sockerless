@@ -128,6 +128,6 @@ None open. Backend-API quirks are catalogued in [`docs/RUNNERS.md § Runner hurd
 - Requires an ECS cluster, at least one VPC subnet, and an execution role with ECR pull + CloudWatch Logs permissions.
 - The task role needs permissions for any AWS services your containers access.
 - Set `assign_public_ip: true` if tasks run in public subnets without a NAT gateway.
-- Supports forward agent (polls ENI for IP) and reverse agent (`callback_url`).
+- Exec and attach use the configured ECS cloud access path, primarily ECS ExecuteCommand / SSM. Required IAM and SSM network access must be present.
 
 See also: [`backends/aws-common`](../aws-common/) (shared `AuthProvider`), [`simulators/aws/API_SPEC.md`](../../simulators/aws/API_SPEC.md) for the AWS-side wire shapes.

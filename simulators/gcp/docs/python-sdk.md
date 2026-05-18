@@ -84,7 +84,7 @@ dns = discovery.build(
 # Since discovery may not work with the simulator, use requests directly:
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Create a managed zone
 resp = requests.post(
@@ -151,7 +151,7 @@ For direct HTTP (recommended for simulators):
 ```python
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Create a network
 resp = requests.post(
@@ -190,7 +190,7 @@ requests.delete(f"{ENDPOINT}/compute/v1/projects/{PROJECT}/global/networks/my-ne
 ```python
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Create a service account
 resp = requests.post(
@@ -228,7 +228,7 @@ requests.delete(
 ```python
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Create a job
 resp = requests.post(
@@ -270,7 +270,7 @@ requests.delete(
 ```python
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Create a function
 resp = requests.post(
@@ -303,7 +303,7 @@ requests.delete(
 ```python
 import requests
 
-headers = {"Authorization": "Bearer fake-token", "Content-Type": "application/json"}
+headers = {"Authorization": "Bearer local-test-token", "Content-Type": "application/json"}
 
 # Write log entries
 requests.post(
