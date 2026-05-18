@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-167-pod-model-analysis` — PR #169 open; PR #168 was merged externally at `3565e413`. |
-| In-flight | **Phases 167 + 168 follow-up on the same branch.** PR #169 is open on the same branch name because #168 cannot be reused after merge. P168.9/CI hardening is in progress. Latest checked PR #169 CI run `26028982114` is green after the ACA runner attach chunk. ACA Apps now support the GitLab attach-before-start stdin pattern through a real reverse-agent `/bin/sh` execution, and `TestACAGitLabRunnerAttachStdin` plus the full ACA backend simulator package pass locally. Previous chunks made the same runner pattern real in AZF and GCF. Remaining: continue with runner/live/test-pyramid follow-ups 1072, 1074, 1075, 1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
-| Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
+| Active branch | `main` — synced to `origin/main` at PR #169 merge commit `0bd75902`. |
+| In-flight | No active PR branch. PR #168 merged at `3565e413`; follow-up PR #169 merged at `0bd75902` on 2026-05-18. Phase 168 runner-attach hardening is merged: AZF, GCF, and ACA Apps now support real attach-before-start stdin delivery with simulator coverage. Remaining tracked follow-ups: 1072, 1074, 1075, 1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
+| Last merged | PR #169 — Phase 168 follow-up runner attach hardening (2026-05-18, `0bd75902`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 1093 filed · 1088 fixed · 4 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072, 1074, 1075, 1076. |
@@ -46,11 +46,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 - **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` accept both typed and string-coerced JSON (what `gh api -f` sends).
 - **No `alg:none` JWTs in OAuth issuance** — BUG-1000.
 
-## Phase 167 — Pod-model analysis + Phase 168 plan (doc-only; in flight)
+## Phase 167 — Pod-model analysis + Phase 168 execution (merged)
 
 User directive (2026-05-17): compare pod abstraction across 7 backends; trace runner ↔ backend call sequences; root-cause the "12-step CI job = 12+ min" symptom; design simplifications. Analysis only — no code edits.
 
-Phase 167 deliverables (this branch):
+Phase 167/168 deliverables:
 - Cross-backend pod-model comparison: long-lived backends (docker/ecs/cloudrun/aca) hold one container/task/revision for the entire job; FaaS backends (lambda/gcf/azf) are invoke-on-demand. Per-backend exec dispatch differs in ways that the audit caught + codex review re-checked.
 - Root cause of "12 steps = 12+ min": **Path B silent fallback in lambda + cloudrun + cloudrun-functions** dispatch. When the in-container reverse-agent doesn't dial back, every `docker exec` becomes a fresh function invocation cold-starting in 30-90s. 12 invocations × cold-start = the wall-clock symptom.
 - Phase 168 plan (in this file's Active phase section): unify exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); rip all Path B code; rip the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime hard-capped at platform max.
@@ -64,8 +64,6 @@ Codex review caught 3 corrections during Phase 167:
 Self-caught during the "does the exec driver still make sense" check: **cloudrun ALSO has the Path A/B pattern**, missed in the initial Phase 167 analysis. Added to Phase 168 scope as BUG-1054.
 
 User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration is hard limit (no extension hacks); `execStartViaInvoke` ripped entirely; cleanup failures propagate.
-
-User-pending for Phase 168: 6 sizing / disposition questions in DO_NEXT.md.
 
 ## Recently closed phases (last 5)
 
