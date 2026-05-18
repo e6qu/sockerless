@@ -23,6 +23,7 @@ type Config struct {
 	LogAnalyticsWorkspace string
 	BuildStorageAccount   string        // Storage account for ACR build context
 	BuildContainer        string        // Blob container for ACR build context
+	BuildPlatform         string        // Docker build platform for overlay images
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
 
@@ -30,6 +31,18 @@ type Config struct {
 	// function app container env so a bootstrap inside can dial back
 	// to the backend's /v1/azf/reverse endpoint.
 	CallbackURL string
+
+	// BootstrapBinaryPath is the on-disk path of the AZF-compatible
+	// reverse-agent bootstrap binary. When set, stock images are wrapped
+	// through ACR Tasks so the Function App container serves HTTP and
+	// dials the reverse-agent endpoint.
+	// Set via SOCKERLESS_AZF_BOOTSTRAP.
+	BootstrapBinaryPath string
+
+	// BootstrapBinaryHash is a SHA-256-prefix hash of BootstrapBinaryPath,
+	// computed once at startup so overlay tags invalidate when the
+	// bootstrap binary changes.
+	BootstrapBinaryHash string
 
 	// EnableCommit opts into the agent-driven `docker commit` path.
 	// See backends/core.CommitContainerViaAgent. Set via
@@ -75,9 +88,11 @@ func ConfigFromEnv() Config {
 		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
+		BuildPlatform:         envOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		BootstrapBinaryPath:   os.Getenv("SOCKERLESS_AZF_BOOTSTRAP"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
 		Access:                accessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal),
@@ -110,14 +125,18 @@ func accessFromEnv(envVar string, def api.AccessMechanism) api.AccessMechanism {
 // ConfigFromEnvironment creates Config from a unified config environment.
 func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
 	c := Config{
-		Location:     "eastus",
-		Timeout:      600,
-		PollInterval: 2 * time.Second,
+		Location:      "eastus",
+		Timeout:       600,
+		BuildPlatform: "linux/amd64",
+		PollInterval:  2 * time.Second,
 	}
 	if env.Azure != nil {
 		c.SubscriptionID = env.Azure.SubscriptionID
 		c.BuildStorageAccount = env.Azure.BuildStorageAccount
 		c.BuildContainer = env.Azure.BuildContainer
+		if env.Azure.BuildPlatform != "" {
+			c.BuildPlatform = env.Azure.BuildPlatform
+		}
 		if azf := env.Azure.AZF; azf != nil {
 			c.ResourceGroup = azf.ResourceGroup
 			if azf.Location != "" {
@@ -142,6 +161,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_AZF_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
 	c.Access = accessFromEnv("SOCKERLESS_AZF_ACCESS", api.AccessMechanismNoneInternal)
 	c.AccessPrincipal = os.Getenv("SOCKERLESS_AZF_ACCESS_PRINCIPAL")
+	c.BootstrapBinaryPath = os.Getenv("SOCKERLESS_AZF_BOOTSTRAP")
 	return c
 }
 

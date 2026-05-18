@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +65,34 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 
 	// Resolve Docker Hub images to ACR or normalize for Azure Functions
 	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
+
+	originalImage := config.Image
+	if s.useAZFOverlayPath(originalImage) {
+		spec := azfOverlaySpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
+		}
+		contentTag := azfOverlayContentTag("azf-", spec)
+		overlayURI, err := s.ensureAZFOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure azf overlay image: %w", err)
+		}
+		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Image = overlayURI
+		config.Entrypoint = nil
+		config.Cmd = nil
+	} else if hasAZFOverlayRepo(originalImage) {
+		config.Env = append(config.Env, azfOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Entrypoint = nil
+		config.Cmd = nil
+	}
 
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
@@ -375,7 +404,7 @@ func (s *Server) ContainerStart(ref string) error {
 				if len(body) > 0 && string(body) != "{}" {
 					s.Store.LogBuffers.Store(id, body)
 				}
-				inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+				inv.ExitCode = azfBootstrapExitCode(resp)
 				if inv.ExitCode != 0 {
 					inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 					s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
@@ -413,6 +442,15 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	return nil
+}
+
+func azfBootstrapExitCode(resp *http.Response) int {
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, err := strconv.Atoi(hdr); err == nil {
+			return n
+		}
+	}
+	return core.HTTPStatusToExitCode(resp.StatusCode)
 }
 
 // ContainerStop stops a running Azure Functions container.

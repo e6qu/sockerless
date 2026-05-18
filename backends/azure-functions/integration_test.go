@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -25,6 +25,7 @@ var dockerClient *client.Client
 // reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/azf/reverse`).
 var backendPort int
 var evalImageName string
+var alpineImageName string
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -78,7 +79,6 @@ func TestMain(m *testing.M) {
 	requireExe("docker")
 	requireExe("go")
 
-	repoRoot := findModuleDir(".")
 	var cleanups []func()
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -90,21 +90,54 @@ func TestMain(m *testing.M) {
 		cleanup()
 		os.Exit(1)
 	}
+	repoRoot, absErr := filepath.Abs(findModuleDir("."))
+	if absErr != nil {
+		failClean("ERROR: resolve repo root: %v\n", absErr)
+	}
 
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
-	evalImageName = "sockerless-eval-arithmetic:test"
+	bootstrapPath := repoRoot + "/agent/sockerless-azf-bootstrap-test"
+	fmt.Printf("[setup] Building sockerless-azf-bootstrap (linux/arm64)...\n")
+	bootstrapBuild := exec.Command("go", "build", "-o", bootstrapPath, "./cmd/sockerless-azf-bootstrap")
+	bootstrapBuild.Dir = repoRoot + "/agent"
+	bootstrapBuild.Env = filterBuildEnv(os.Environ(), "CGO_ENABLED=0", "GOWORK=off", "GOOS=linux", "GOARCH=arm64")
+	bootstrapBuild.Stdout = os.Stderr
+	bootstrapBuild.Stderr = os.Stderr
+	if err := bootstrapBuild.Run(); err != nil {
+		failClean("ERROR: build sockerless-azf-bootstrap: %v\n", err)
+	}
+	cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+
+	alpineImageName = "sockerless-overlay/azf-alpine:test"
+	fmt.Printf("[setup] Building %s (linux/arm64)...\n", alpineImageName)
+	alpineDockerfile := `FROM public.ecr.aws/docker/library/alpine:latest
+COPY sockerless-azf-bootstrap-test /opt/sockerless/sockerless-azf-bootstrap
+RUN chmod +x /opt/sockerless/sockerless-azf-bootstrap
+ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
+`
+	alpineBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", alpineImageName, "-f", "-", repoRoot+"/agent")
+	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+	if out, err := alpineBuild.CombinedOutput(); err != nil {
+		failClean("ERROR: docker build azf alpine overlay image: %v\n%s", err, out)
+	}
+
+	evalImageName = "sockerless-overlay/azf-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
 	evalDockerfile := `FROM golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
+WORKDIR /src/simulators/testdata/eval-arithmetic
+COPY simulators/testdata/eval-arithmetic .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
-ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
+COPY agent/sockerless-azf-bootstrap-test /opt/sockerless/sockerless-azf-bootstrap
+RUN chmod +x /opt/sockerless/sockerless-azf-bootstrap
+ENV SOCKERLESS_USER_ENTRYPOINT=WyIvdXNyL2xvY2FsL2Jpbi9ldmFsLWFyaXRobWV0aWMiXQ==
+ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 `
 	evalImageBuild := exec.Command("docker", "build",
 		"--platform", "linux/arm64",
-		"-t", evalImageName, "-f", "-", evalDir)
+		"-t", evalImageName, "-f", "-", repoRoot)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
 		failClean("ERROR: docker build eval-arithmetic image: %v\n%s", err, out)
@@ -225,17 +258,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 func TestAZFContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: alpineImageName,
 			Cmd:   []string{"echo", "hello-azf-logs"},
 		},
 		nil, nil, nil, "azf_logs_"+testID,
@@ -277,7 +303,7 @@ func TestAZFContainerList(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: alpineImageName,
 		},
 		nil, nil, nil, "azf_list_"+testID,
 	)
@@ -306,17 +332,10 @@ func TestAZFContainerList(t *testing.T) {
 func TestAZFContainerStopNoOp(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: alpineImageName,
 			Cmd:   []string{"sleep", "30"},
 		},
 		nil, nil, nil, "azf_stop_"+testID,
@@ -338,17 +357,10 @@ func TestAZFContainerStopNoOp(t *testing.T) {
 func TestAZFContainerExec(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:     "alpine:latest",
+			Image:     alpineImageName,
 			Cmd:       []string{"tail", "-f", "/dev/null"},
 			Tty:       true,
 			OpenStdin: true,
@@ -506,17 +518,10 @@ func generateTestID(parts ...string) string {
 func TestAZFContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: alpineImageName,
 			Cmd:   []string{"echo", "hello from azf"},
 		},
 		nil, nil, nil, "azf_lc_"+testID,

@@ -2,6 +2,7 @@ package azf
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -31,6 +32,14 @@ type Server struct {
 func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger) *Server {
 	if config.CallbackURL == "" {
 		logger.Fatal().Msg("AZF backend requires SOCKERLESS_CALLBACK_URL — the function bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback). Set the env var to a URL the function can reach from inside the Function App.")
+	}
+	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
+		if hash, err := hashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+			config.BootstrapBinaryHash = hash
+			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed azf bootstrap binary for overlay-tag invalidation")
+		} else {
+			logger.Warn().Err(err).Str("path", config.BootstrapBinaryPath).Msg("failed to hash azf bootstrap binary; overlay images will not invalidate on bootstrap update")
+		}
 	}
 	s := &Server{
 		config:         config,
@@ -62,7 +71,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.storageBackings.Register(core.NewMemoryDriver(64))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
-		config.Registry, config.BuildStorageAccount, config.BuildContainer, logger,
+		azfACRName(config.Registry), config.BuildStorageAccount, config.BuildContainer, logger,
 	); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}
@@ -169,4 +178,10 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
+}
+
+func azfACRName(registry string) string {
+	registry = strings.TrimPrefix(registry, "https://")
+	registry = strings.TrimPrefix(registry, "http://")
+	return strings.TrimSuffix(registry, ".azurecr.io")
 }

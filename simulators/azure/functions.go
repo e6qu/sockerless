@@ -2,11 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -187,6 +193,7 @@ func registerAzureFunctions(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
 
 		if sites.Delete(resourceID) {
+			stopAzureFunctionInstance(name)
 			// Clean up associated functions
 			funcs := functionConfigs.Filter(func(f FunctionEnvelope) bool {
 				return strings.HasPrefix(f.ID, resourceID+"/functions/")
@@ -270,6 +277,20 @@ func registerAzureFunctions(srv *sim.Server) {
 		responseBody := []byte("{}")
 		hasCmd := false
 		if matchedSite.Properties.SiteConfig != nil {
+			if hasAzureFunctionHTTPBootstrap(matchedSite) {
+				body, exitCode, err := invokeAzureFunctionHTTP(matchedSite, r.Body, r.Header.Get("Content-Type"))
+				if err != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = fmt.Fprintf(w, `{"error":"%s"}`, err.Error())
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(body)
+				return
+			}
 			for _, setting := range matchedSite.Properties.SiteConfig.AppSettings {
 				if setting.Name == "SOCKERLESS_CMD" || setting.Name == "SOCKERLESS_ENTRYPOINT" {
 					hasCmd = true
@@ -381,6 +402,246 @@ type AzureStorageInfoValue struct {
 	MountPath   string `json:"mountPath,omitempty"`
 }
 
+type azureFunctionInstance struct {
+	containerID string
+	cancelLogs  context.CancelFunc
+}
+
+var azureFunctionInstances = struct {
+	sync.Mutex
+	bySite map[string]*azureFunctionInstance
+}{bySite: map[string]*azureFunctionInstance{}}
+
+func hasAzureFunctionHTTPBootstrap(site *Site) bool {
+	if site == nil || site.Properties.SiteConfig == nil {
+		return false
+	}
+	imageRef := site.Properties.SiteConfig.LinuxFxVersion
+	if strings.Contains(imageRef, "/sockerless-overlay/") || strings.Contains(imageRef, "|sockerless-overlay/") {
+		return true
+	}
+	for _, setting := range site.Properties.SiteConfig.AppSettings {
+		switch setting.Name {
+		case "SOCKERLESS_USER_ENTRYPOINT", "SOCKERLESS_USER_CMD":
+			return true
+		}
+	}
+	return false
+}
+
+func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]byte, int, error) {
+	if site == nil || site.Properties.SiteConfig == nil {
+		return nil, -1, fmt.Errorf("site config is required")
+	}
+	containerImage := siteContainerImage(site)
+	if containerImage == "" {
+		return nil, -1, fmt.Errorf("site %q has no container image", site.Name)
+	}
+
+	localImage := sim.ResolveLocalImage(containerImage)
+	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
+	defer cancel()
+
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, -1, err
+	}
+	hostPort, err := pickFreeTCPPort()
+	if err != nil {
+		return nil, -1, fmt.Errorf("pick free port: %w", err)
+	}
+
+	env := mergeEnv(map[string]string{
+		"PORT":          "8080",
+		"WEBSITES_PORT": "8080",
+	}, siteAppSettings(site))
+	env = mergeEnv(env, hostMetadataEnv())
+	sink := &funcLogSink{appName: site.Name}
+
+	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
+		Image:        localImage,
+		Architecture: platform,
+		HostPort:     hostPort,
+		Env:          env,
+		Name:         fmt.Sprintf("sockerless-sim-azure-func-http-%s-%d", site.Name, hostPort),
+		Labels: map[string]string{
+			"sockerless-sim-type": "azure-function-http",
+			"sockerless-site":     site.Name,
+		},
+		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxAZF,
+	})
+	if err != nil {
+		return nil, -1, fmt.Errorf("start function http container: %w", err)
+	}
+	logCtx, cancelLogs := context.WithCancel(context.Background())
+	inst := &azureFunctionInstance{containerID: containerID, cancelLogs: cancelLogs}
+	azureFunctionInstances.Lock()
+	azureFunctionInstances.bySite[site.Name] = inst
+	azureFunctionInstances.Unlock()
+	defer func() {
+		azureFunctionInstances.Lock()
+		if azureFunctionInstances.bySite[site.Name] == inst {
+			delete(azureFunctionInstances.bySite, site.Name)
+		}
+		azureFunctionInstances.Unlock()
+		cancelLogs()
+		sim.StopAndRemoveContainer(containerID)
+	}()
+	go sim.StreamContainerLogs(logCtx, containerID, sink)
+
+	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort)
+	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	}
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+}
+
+func stopAzureFunctionInstance(siteName string) {
+	azureFunctionInstances.Lock()
+	inst := azureFunctionInstances.bySite[siteName]
+	delete(azureFunctionInstances.bySite, siteName)
+	azureFunctionInstances.Unlock()
+	if inst == nil {
+		return
+	}
+	if inst.cancelLogs != nil {
+		inst.cancelLogs()
+	}
+	sim.StopAndRemoveContainer(inst.containerID)
+}
+
+func siteContainerImage(site *Site) string {
+	if site == nil || site.Properties.SiteConfig == nil {
+		return ""
+	}
+	parts := strings.SplitN(site.Properties.SiteConfig.LinuxFxVersion, "|", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+func siteAppSettings(site *Site) map[string]string {
+	out := map[string]string{}
+	if site == nil || site.Properties.SiteConfig == nil {
+		return out
+	}
+	for _, s := range site.Properties.SiteConfig.AppSettings {
+		out[s.Name] = s.Value
+	}
+	return out
+}
+
+func localImagePlatform(ctx context.Context, imageRef string) (string, error) {
+	cli := sim.DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %q platform: %w", imageRef, err)
+	}
+	if inspect.Os == "" || inspect.Architecture == "" {
+		return "", fmt.Errorf("inspect image %q platform: missing os/architecture", imageRef)
+	}
+	return inspect.Os + "/" + inspect.Architecture, nil
+}
+
+func pickFreeTCPPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
+}
+
+func waitForHTTP(ctx context.Context, rawURL string, timeout time.Duration) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse url %q: %w", rawURL, err)
+	}
+	addr := parsed.Host
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		switch parsed.Scheme {
+		case "http":
+			addr = net.JoinHostPort(addr, "80")
+		case "https":
+			addr = net.JoinHostPort(addr, "443")
+		default:
+			return fmt.Errorf("url %q has no explicit port", rawURL)
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout after %s", timeout)
+}
+
+func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Reader, contentType string, timeout time.Duration) ([]byte, int, error) {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, -1, fmt.Errorf("read invoke body: %w", err)
+		}
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	httpClient := &http.Client{Timeout: timeout}
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, bootstrapURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, -1, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			respBytes, _ := io.ReadAll(resp.Body)
+			return respBytes, bootstrapExitCode(resp), nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, -1, fmt.Errorf("invoke bootstrap: %w", lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, -1, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func bootstrapExitCode(resp *http.Response) int {
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, err := strconv.Atoi(hdr); err == nil {
+			return n
+		}
+	}
+	if resp.StatusCode >= 400 {
+		return 1
+	}
+	return 0
+}
+
 // invokeAzureFunctionProcess executes a function app's container via sim.StartContainerSync
 // and returns the stdout output as the response body plus the process exit code.
 func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
@@ -459,7 +720,7 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 			"sockerless-site":     site.Name,
 		},
 		ExtraHosts: hostMetadataExtraHosts(),
-		Sandbox:    sim.SandboxAZF, // BUG-1077.
+		Sandbox:    sim.SandboxAZF,
 	}, collectSink)
 	if err != nil {
 		injectAppTrace(site.Name,

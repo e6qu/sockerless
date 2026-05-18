@@ -63,7 +63,7 @@ type ContainerConfig struct {
 	OpenStdin      bool              // keep stdin open
 	Binds          []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts     []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
-	Sandbox        SandboxProfile    // BUG-1077: per-platform sandbox parity.
+	Sandbox        SandboxProfile    // per-platform sandbox parity.
 }
 
 // ContainerHandle manages a running container.
@@ -230,7 +230,8 @@ type HTTPContainerConfig struct {
 	Env          map[string]string // env vars (must include PORT to match the published port-target)
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
-	Sandbox      SandboxProfile    // BUG-1077.
+	ExtraHosts   []string          // --add-host entries (e.g. "host.docker.internal:host-gateway")
+	Sandbox      SandboxProfile
 }
 
 // StartHTTPContainer starts a container detached, with its container-
@@ -272,6 +273,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		PortBindings: nat.PortMap{
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
+		ExtraHosts: cfg.ExtraHosts,
 	}
 	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
 		return "", fmt.Errorf("sandbox enforce: %w", err)
