@@ -305,9 +305,12 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 			}
 			seen[mid] = true
 			c := serviceToPodMemberContainer(svc, mid)
-			if _, hasAgent := p.server.reverseAgents.Resolve(mid); hasAgent {
-				c.State = api.ContainerState{Status: "running", Running: true}
-			} else if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
+			if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
+				if _, hasAgent := p.server.reverseAgents.Resolve(mid); hasAgent && isReverseAgentInvokeTransportError(inv.Error) {
+					c.State = api.ContainerState{Status: "running", Running: true}
+					out = append(out, c)
+					continue
+				}
 				c.State = api.ContainerState{
 					Status:     "exited",
 					Running:    false,
@@ -315,6 +318,8 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 					FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
 					Error:      inv.Error,
 				}
+			} else if _, hasAgent := p.server.reverseAgents.Resolve(mid); hasAgent {
+				c.State = api.ContainerState{Status: "running", Running: true}
 			}
 			out = append(out, c)
 		}

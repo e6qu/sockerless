@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `phase-167-pod-model-analysis` — PR #168 open; keep the same branch and PR. |
-| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: fixed PR #168 run `26003955164`'s remaining arm64 Cloud Run exec failure by making GCP overlay build platform explicit for env and unified config, setting simulator integration tests to the host platform, inspecting local overlay image OS/arch at simulator invoke time, and making Cloud Run Service simulation keep a real per-Service container alive until delete. Cloud Run and GCF focused exec tests now pass locally again. Next is push and CI re-check on the same PR. Remaining: ACA/AZF e2e readiness is blocked by BUG-1067 / 1068 / 1069; external `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
+| In-flight | **Phases 167 + 168 on the same branch.** P168.1–.8 landed; P168.9/CI hardening is in progress. Latest chunk: BUG-1087 and BUG-1088 are fixed locally. GCF lifecycle state now reports real one-shot invocation results as exited, and the GCP simulator retries only pre-response bootstrap transport errors during Cloud Run/GCF cold start. Focused GCF arithmetic/lifecycle/exec tests and the full GCF backend simulator package pass locally. Remaining: commit/push this chunk, re-check CI, then continue with ACA/AZF e2e readiness bugs 1067–1069. External `codex review` remains blocked unless the user explicitly approves exporting repo diff/context. |
 | Last merged | PR #167 — Phase 166 (2026-05-17, `49050c2d`). All Open BUGs closed at merge. |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1086 filed · 1077 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
+| Bugs | 1088 filed · 1079 fixed · 9 open · 2 false positives. Open Phase 168 blockers are BUG-1067 / 1068 / 1069 / 1071 plus runner/live/test-pyramid follow-ups 1072–1076. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

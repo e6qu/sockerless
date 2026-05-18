@@ -628,40 +628,7 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	// POST the invocation. Body is forwarded from the caller (the gcf
 	// backend's exec envelope) when present. Cloud Functions Gen2
 	// invocations pass nil here.
-	httpClient := &http.Client{Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, "POST", bootstrapURL, body)
-	if err != nil {
-		return nil, -1, fmt.Errorf("build request: %w", err)
-	}
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	req.Header.Set("Content-Type", contentType)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(resp.Body)
-
-	// Exit code propagation: bootstrap sets X-Sockerless-Exit-Code on
-	// non-zero exit so the calling docker-shell perceives the
-	// underlying subprocess's true status. Successful invocations
-	// (HTTP 200) imply exit 0 even without the header.
-	exitCode = 0
-	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
-		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
-			exitCode = n
-		}
-	} else if resp.StatusCode >= 400 {
-		// Bootstrap omitted the header but returned an error status —
-		// surface a non-zero exit so the caller treats this as a
-		// failed invocation rather than a silent success.
-		exitCode = 1
-	}
-
-	return respBytes, exitCode, nil
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, timeout)
 }
 
 func localImagePlatform(ctx context.Context, image string) (string, error) {
@@ -677,6 +644,58 @@ func localImagePlatform(ctx context.Context, image string) (string, error) {
 		return "", fmt.Errorf("inspect image %q platform: missing os/architecture", image)
 	}
 	return inspect.Os + "/" + inspect.Architecture, nil
+}
+
+func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Reader, contentType string, timeout time.Duration) ([]byte, int, error) {
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return nil, -1, fmt.Errorf("read invoke body: %w", err)
+		}
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
+	httpClient := &http.Client{Timeout: timeout}
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, bootstrapURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, -1, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			respBytes, _ := io.ReadAll(resp.Body)
+			return respBytes, bootstrapExitCode(resp), nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, -1, fmt.Errorf("invoke bootstrap: %w", lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, -1, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func bootstrapExitCode(resp *http.Response) int {
+	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
+		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
+			return n
+		}
+	}
+	if resp.StatusCode >= 400 {
+		return 1
+	}
+	return 0
 }
 
 // pickFreeTCPPort opens a transient TCP listener to discover a

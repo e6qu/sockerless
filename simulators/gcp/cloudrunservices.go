@@ -264,31 +264,7 @@ func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInsta
 	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
 		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
 	}
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bootstrapURL, body)
-	if err != nil {
-		return nil, -1, fmt.Errorf("build request: %w", err)
-	}
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	req.Header.Set("Content-Type", contentType)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, -1, fmt.Errorf("invoke bootstrap: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, _ := io.ReadAll(resp.Body)
-	exitCode := 0
-	if hdr := resp.Header.Get("X-Sockerless-Exit-Code"); hdr != "" {
-		if n, parseErr := strconv.Atoi(hdr); parseErr == nil {
-			exitCode = n
-		}
-	} else if resp.StatusCode >= 400 {
-		exitCode = 1
-	}
-	return respBytes, exitCode, nil
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 5*time.Minute)
 }
 
 func envSignature(env map[string]string) string {
