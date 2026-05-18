@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-19 — BUG-1096: simulator pod materialization fidelity
+
+The pod-model review found that several simulators accepted cloud-native multi-container specs but did not actually execute all containers with the cloud's shared-localhost contract. AWS ECS tasks and GCP Cloud Run Services/Jobs reported multi-container resources while only starting the first local workload container. Azure ACA Apps started sidecars on the same Docker bridge network, which gives DNS but not pod-style `127.0.0.1` loopback.
+
+The fix keeps the simulator public APIs cloud-shaped and changes only the local implementation mechanism: start every declared container as a real Docker/Podman container, start sidecars in `container:<mainID>` network mode, preserve per-container command/args/env/volume binds, and stop sidecars with the main execution. GCP Cloud Run Services also now pass command/args through the HTTP launcher and mount GCS-backed volumes like Jobs already did.
+
+Coverage uses official SDK clients against the simulators: ECS multi-container task reaches a sidecar over localhost; Cloud Run Service and Cloud Run Job both reach sidecars over localhost; ACA Job and ACA App both write logs proving localhost sidecar reachability. The same pass corrected stale pod docs that claimed AZF had a supervisor-in-overlay multi-container path. The current AZF backend is single-container Function App only and must reject multi-container pods.
+
+Real-runner pre-work now exists for the requested realistic arithmetic workload: the Go arithmetic module has unit tests, and `make e2e-github-sim-arithmetic` / `make e2e-gitlab-sim-arithmetic` run real GitHub Actions Runner / GitLab Runner flows against a caller-started simulator-backed sockerless daemon, compiling and testing that module inside `golang:1.25-alpine`.
+
 ## 2026-05-18 — PR #170: Phase 168 follow-up merged
 
 PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and merged on 2026-05-18 at `a5639811`. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.

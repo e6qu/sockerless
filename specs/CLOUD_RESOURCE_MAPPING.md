@@ -359,7 +359,7 @@ Tekton + Argo are k8s-native — they talk to the k8s API directly, never Docker
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
 | Container | Cloud Run **Job** + execution (default) or Cloud Run **Service** with internal ingress + VPC connector when `SOCKERLESS_GCR_USE_SERVICE=1`. | job name `sockerless-<containerID[:12]>` + execution id | label `sockerless_managed=true`, `sockerless_container_id=<id>`, `sockerless_name=<name>` (GCP underscore convention). |
-| Pod | Service path: multi-container revision (sidecars). Jobs path: not supported (1 Job = 1 container). | revision ref + sidecar container names | + label `sockerless_pod=<name>` |
+| Pod | Service path: multi-container revision (runner/sidecar path). Jobs path: multi-container Job template for execution-scoped pods. | revision or execution ref + sidecar container names | + label `sockerless_pod=<name>` |
 | Image | Artifact Registry / GCR | `<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>` | (registry-managed) |
 | Network | **Two-tier mapping**: (a) docker user-defined network with multi-member alias resolution → **Cloud Run multi-container Service revision** (sidecars share loopback `127.0.0.1`), triggered by `Container.Config.OpenStdin` on a script-runner that joins a network with deferred service members (per `network_pod.go::shouldDeferOrMaterializeNetworkPod`). Standard-Docker signal only — no runner-specific labels. (b) Cross-Service DNS via Cloud DNS private managed zone (1 zone per docker network) when containers are deployed as separate Services. Service path requires VPC connector (`SOCKERLESS_GCR_VPC_CONNECTOR`). | managed-zone name OR multi-container revision ref | label `sockerless_network=<name>` on the container; the zone itself is discoverable by name `skls-<sanitized>.local` |
 | Volume | Cloud Storage (GCS) bucket per volume; injected into Cloud Run Service revision template as `Volume{Gcs{Bucket, MountOptions}}` + `Container.VolumeMounts`. **Required `MountOptions`** (per BUG-944): `[implicit-dirs, metadata-cache:ttl-secs=0, metadata-cache:negative-ttl-secs=0]` — without these, the GCS-Fuse default 5s negative-cache hides freshly-written files from sibling containers (cross-execution metadata staleness). See `backends/gcp-common/gcsfuse_mount.go::RunnerWorkspaceMountOptions` + `backends/cloudrun/{jobspec,servicespec}.go`. | bucket name `sockerless-volume-<id>` | label `sockerless_managed=true`, `sockerless_volume_name=<name>` |
@@ -409,7 +409,7 @@ Tekton + Argo are k8s-native — they talk to the k8s API directly, never Docker
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
 | Container | Cloud Function (gen 2) — backed by `cloudfunctions.v2.FunctionService`. Sockerless overlay image runs as the function's actual workload (see "Deploy sequence" below). One Function maps to *at most one* live container at a time via the `sockerless_allocation` label; when the container is removed the Function may go back into the reuse pool (see "Stateless image cache + Function reuse pool"). | function name `sockerless-<overlayHash>-<n>`, full resource path `projects/<project>/locations/<region>/functions/<name>`. The `<n>` suffix lets multiple Functions coexist for the same overlay (pool capacity) — sockerless never reuses a name within a pool. | label `sockerless_managed=true`, `sockerless_overlay_hash=<contentTag>`, `sockerless_allocation=<containerID>` (empty/absent ⇒ in pool, free), `sockerless_name=<name>` (GCP underscore convention; full container ID stored as annotation since GCP label values are 63-char limited). |
-| Pod | **Supported via supervisor-in-overlay** (degraded namespace isolation — see "Podman pods on FaaS backends" below). Cloud Functions Gen2 backs each Function with a single Cloud Run container; sockerless's overlay bakes all pod containers' rootfs and a supervisor bootstrap into one image. Pod containers share net/IPC/UTS namespaces (matches podman pod default — `localhost:PORT`, `/dev/shm` work) but mount + PID namespaces are also shared because the Cloud Run sandbox blocks `unshare(CLONE_NEWNS|CLONE_NEWPID)` (no CAP_SYS_ADMIN). Compatible with CI workloads (gitlab/github runner `services:` sidecars). Per-container restart is NotImpl. | function name `sockerless-pod-<podName>-...` (overlay tagged with combined content hash) | + label `sockerless_pod=<name>`, env `SOCKERLESS_POD_CONTAINERS=<base64-JSON of [{name,image,entrypoint,cmd}]>` for round-trip |
+| Pod | **Supported through the function-owned Cloud Run Service template.** Cloud Functions Gen2 is backed by Cloud Run; sockerless updates that Service to include all pod containers as real Cloud Run containers in one revision, so pod members share localhost through the Cloud Run multi-container contract. | function-owned service revision + sidecar container names | + label `sockerless_pod=<name>` |
 | Image | Artifact Registry — overlay built once per content hash by Cloud Build, pushed to a sockerless-owned AR repo. | `<region>-docker.pkg.dev/<project>/sockerless-overlay/gcf:<contentTag>` where `<contentTag> = sha256(user-image, bootstrap-binary, user-cmd, user-entrypoint, user-workdir)[:16]` | (content-addressed; repo lifecycle managed by terraform). The Docker Hub remote-repo at `<region>-docker.pkg.dev/<project>/docker-hub/library/<name>` proxies user images for the overlay's `FROM`. |
 | Network | **Two-tier mapping** (mirrors cloudrun): (a) docker user-defined network with multi-member alias resolution → **multi-container Cloud Run Service revision** on the underlying Service (Cloud Functions Gen2 = Cloud Run Service). Triggered by `Container.Config.OpenStdin` on a script-runner that joins a network with deferred service members (per `network_pod.go::shouldDeferOrMaterializeNetworkPod`). Standard-Docker signal only — no runner-specific labels. (b) Cross-Service DNS not natively addressable inbound from peer functions; sockerless treats `docker network create`/`connect` as bookkeeping until the multi-container materialization fires. | multi-container revision on the function's underlying Service | label `sockerless_network=<name>` on the container |
 | Volume | GCS bucket per volume; attached via the **escape hatch** `Run.Services.GetService` + `UpdateService` on the function's underlying Cloud Run Service (Cloud Functions Gen2's `ServiceConfig` has no first-class Volumes primitive — only SecretVolumes). See `backends/cloudrun-functions/volumes.go::attachVolumesToFunctionService`. **Required `MountOptions`** (per BUG-944): `[implicit-dirs, metadata-cache:ttl-secs=0, metadata-cache:negative-ttl-secs=0]` — without these the runner-task → spawned-container script handoff fails with `docker exec` exit 126 because each Cloud Run execution has its own gcsfuse instance with default 5s negative-cache. **Idempotent attach** required because pool reuse: compare existing `volumes[].name + bucket + mountOptions` vs requested; replace stale entries (matching name + stale opts must NOT short-circuit the UpdateService rollout). `/tmp` (read/write, ephemeral) is always present per-invocation as a tmpfs from Cloud Run. | bucket name `sockerless-volume-<id>` | label `sockerless_managed=true`, `sockerless_volume_name=<name>` |
@@ -462,7 +462,7 @@ Quick-fix options like "delay deploy by N seconds" or "ContainerStart polls in-f
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|
 | Container | Function App (Linux container deployment) — `armappservice.WebAppsClient` | function app name `sockerless-<containerID[:12]>` | tag `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` |
-| Pod | **Supported via supervisor-in-overlay** (degraded namespace isolation — see "Podman pods on FaaS backends" below). Azure Functions on Linux container plans (Premium / Flex Consumption / App Service) back each Function App with a single Linux container; the overlay bakes all pod containers' rootfs and `sockerless-azf-bootstrap` (supervisor) into one image. Pod containers share net/IPC/UTS namespaces (matches podman default — `localhost:PORT` works) but mount + PID namespaces are also shared because Function App containers don't get `CAP_SYS_ADMIN` by default. Per-container restart is NotImpl. | function app name `sockerless-pod-<podName>-...` | + tag `sockerless-pod=<name>`, app setting `SOCKERLESS_POD_CONTAINERS=<base64-JSON>` for round-trip |
+| Pod | **Not supported for multi-container pod materialization today.** Azure Functions on Linux container plans back each Function App with one custom container in this backend. The backend must reject multi-container pods rather than claiming shared-localhost semantics it cannot provide. Azure sidecar workloads should use ACA Apps. | — | — |
 | Image | ACR | `<acrName>.azurecr.io/<repo>:<tag>` | (registry-managed) |
 | Network | **Not supported natively.** Function Apps support VNet integration for outbound traffic but not addressable inbound IPs for peer apps. `docker network create` / `connect` is bookkeeping-only. | — | — |
 | Volume | Azure Files share in a sockerless-owned storage account, attached to the Function App via `sites/<fn>/config/azurestorageaccounts`. See `backends/azure-functions/backend_delegates.go::VolumeCreate`. | storage account + share name | tag `sockerless-managed=true`, `sockerless-volume-name=<name>` |
@@ -1230,7 +1230,7 @@ See "Volume provisioning per backend" section above for the per-backend mechanic
 
 Notes:
 
-- **Lambda / GCF / AZF ✗** — function-as-a-service platforms have no multi-container-per-invocation primitive. Pods would need an external coordinator (Step Functions / Cloud Workflows / Durable Functions) which is out of scope.
+- **Lambda / AZF ✗** — these function-as-a-service platforms expose no native multi-container-per-invocation primitive to the current backend implementation. Lambda has a separate overlay/reverse-agent path for supported runner workloads; AZF currently rejects multi-container pods. **GCF ✗ in this libpod table** means the Function API itself does not expose pod endpoints; GCF runner pod materialization is implemented by updating the function-owned Cloud Run Service, not by exposing generic libpod pod CRUD.
 
 ### System + misc
 
@@ -1317,9 +1317,15 @@ Forbidden:
 
 ---
 
-## Podman pods on FaaS backends — supervisor-in-overlay
+## Podman pods on FaaS backends
 
-FaaS backends (`lambda`, `gcf`, `azf`) all back a Function with a single Linux container. There is no first-class "multiple containers per function" primitive on any of the three clouds. To support podman pods sockerless layers all pod containers' rootfs into one image and runs each as a child process of a small supervisor (the overlay bootstrap as PID 1 of the function's Linux container).
+FaaS backends must not report pod support unless they can provide real shared-localhost behavior. The current mappings differ by cloud:
+
+- `lambda`: no native multi-container function primitive; supported runner paths use the implemented image overlay/reverse-agent contract.
+- `gcf`: Cloud Functions Gen2 is backed by Cloud Run; pod materialization updates the function-owned Cloud Run Service to use a real multi-container revision.
+- `azf`: no implemented multi-container Function App path; multi-container pods are rejected.
+
+The namespace table below applies only to overlay/supervisor-style implementations. It does not describe the GCF multi-container Cloud Run Service path, and it is not an AZF support claim.
 
 **Podman pod namespace defaults — what's actually shared.**
 
@@ -1338,10 +1344,10 @@ FaaS backends (`lambda`, `gcf`, `azf`) all back a Function with a single Linux c
 | Backend | `CAP_SYS_ADMIN` available? | mount/pid isolation per pod container? |
 |---|---|---|
 | `lambda` (image-mode) | No (Lambda execution environment drops most capabilities; `unshare` returns EPERM) | ❌ — pod containers share mount + PID ns of the function's Linux container |
-| `gcf` (Cloud Run Functions Gen2 = Cloud Run Service backing) | No (default Cloud Run sandbox is non-privileged; `unshare(CLONE_NEWNS)` fails with EPERM unless the operator opts into Cloud Run's `executionEnvironment=gen2` + a custom run-time security policy that explicitly grants the cap, which Google does not currently expose via the Functions API) | ❌ same as lambda |
-| `azf` (Premium / Flex Consumption / App Service Linux container plans) | Same constraint as Cloud Run — Azure doesn't grant CAP_SYS_ADMIN to Function App containers by default | ❌ same as lambda |
+| `gcf` (if an overlay path is used instead of the current multi-container Service path) | No (default Cloud Run sandbox is non-privileged; `unshare(CLONE_NEWNS)` fails with EPERM unless the operator opts into Cloud Run's `executionEnvironment=gen2` + a custom run-time security policy that explicitly grants the cap, which Google does not currently expose via the Functions API) | ❌ same as lambda |
+| `azf` | No implemented overlay pod path today | Not applicable; multi-container pods are rejected |
 
-**Honest mapping.** For pods on FaaS, sockerless delivers:
+**Honest mapping for overlay/supervisor pods.** Where the backend uses this shape, sockerless delivers:
 
 - ✅ **Pod-level networking** (`localhost:PORT` between pod containers) — matches podman default.
 - ✅ **Shared IPC** (`/dev/shm`, SysV IPC) — matches podman default.
@@ -1361,7 +1367,7 @@ sockerless-<backend>-bootstrap: WARNING — pod uses degraded namespace isolatio
   uts-ns:   shared per podman default ✓
 ```
 
-**Workloads this works for.** GitLab/GitHub runner jobs that use `services:` (e.g. a postgres sidecar): the runner's main container reaches the postgres container via `localhost:5432` (shared net), and rarely cares about mount-ns isolation across the pair. CI workloads are the primary target.
+**Workloads this works for.** GitLab/GitHub runner jobs that use `services:` (e.g. a postgres sidecar): the runner's main container reaches the postgres container via `localhost:5432` (shared net), and rarely cares about mount-ns isolation across the pair. CI workloads are the primary target. On GCF this should use the Cloud Run Service multi-container path; on AZF this workload belongs on ACA Apps until AZF has a real implementation.
 
 **Workloads this doesn't work for.** Pods where one container does `mount`/`pivot_root`/`unshare` for its own private filesystem layout (e.g. running a containerized container runtime inside a pod). The chroot approximation isn't enough; operators get a `NotImpl` from the bootstrap when the user image's ENTRYPOINT actually fails on `mount`.
 
@@ -1547,7 +1553,7 @@ Per-cell pipeline body (`probe-cloud-urls` + `probe-host` + `probe-capabilities`
 Summary of how each backend honours the stateless contract pinned down by the [Recovery contract](#recovery-contract):
 
 - **`Store.Images` is purely an in-process cache.** All 6 cloud backends implement `CloudImageLister.ListImages`: ECS + Lambda via ECR `DescribeRepositories`+`DescribeImages`; Cloud Run + GCF via shared `core.OCIListImages` against `<region>-docker.pkg.dev` with `ARAuthProvider` token; ACA + AZF via `core.OCIListImages` against the configured ACR with `ACRAuthProvider` token. `BaseServer.ImageList` merges cache + cloud, deduped by ID.
-- **Pod state derives from cloud tags.** `core.CloudPodLister` interface + `BaseServer.PodList` merging cache + cloud. ECS groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing works on the Service/App paths. GCF + AZF don't support pods.
+- **Pod state derives from cloud tags.** `core.CloudPodLister` interface + `BaseServer.PodList` merging cache + cloud. ECS groups tasks by `sockerless-pod` tag. Cloud Run + ACA pod listing works on the Service/App paths. GCF runner pod materialization uses the function-owned Cloud Run Service path; AZF does not support multi-container pods.
 - **`resolve*State` cache-or-cloud recovery helpers** landed across 4 backends (ECS, Lambda, Cloud Run, ACA). Every cloud-state-dependent callsite (Stop, Kill, Remove, Restart, Wait, Logs, ExecCreate, etc.) goes through them.
 - **`resolveNetworkState` cache-or-cloud recovery helpers** in ECS, Cloud Run, ACA. Cloud Map namespaces tagged with `sockerless:network-id` at create time. Lambda + GCF + AZF don't have user-defined cloud networks.
 
@@ -1710,8 +1716,8 @@ The runner job lifecycle above demands a set of container-level concerns (mounti
 | **Privileged mode** | `--privileged` | ECS Fargate does NOT support privileged — fail loudly. EC2-launchtype ECS does, but not in our scope | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly | NOT supported — fail loudly |
 | **Run as user (UID:GID)** | `-u 1000:1000` | ECS task-def container `user` field | Lambda Function `ImageConfig.User` | Cloud Run does not support per-container user override — bake USER in image (BUG-924 workaround) | Same | ACA Container property `runAsUser`/`runAsGroup` not exposed; bake in image | Bake USER in image |
 | **Multi-container pod (shared net+IPC namespace)** | `docker network` + `--network container:<id>` | ECS task with multiple containers, automatic shared netns | NOT supported (Lambda is single-container) — Phase 118d pod-overlay supervisor pattern | Cloud Run Service multi-container (sidecar) | Same as cloudrun Service path | ACA multi-container template | NOT supported |
-| **Supervisor for multi-container pods** | docker compose / podman pod | Native (multi-container task) | Phase 118d: bootstrap supervisor forks chroot'd processes per non-main pod member | Native (Cloud Run multi-container) | Phase 118d on the underlying Cloud Run Service | Native (ACA multi-container) | Phase 118d (mirror gcf shape) |
-| **`docker exec` into running container** | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` | SSM Session Manager `ExecuteCommand` against the task | Invoke-as-handler: in-Lambda bootstrap reads exec request, runs cmd, returns output | Reverse-agent: in-image supervisor establishes WebSocket back to backend's `/v1/cloudrun/reverse`; exec multiplexed | Same as Cloud Run Service | ACA Container Apps `exec` API (`az containerapp exec`) — natively supported | Reverse-agent (mirror gcf) |
+| **Supervisor for multi-container pods** | docker compose / podman pod | Native (multi-container task) | Overlay/reverse-agent path for supported runner workloads | Native (Cloud Run multi-container) | Function-owned Cloud Run Service multi-container revision | Native (ACA multi-container) | Not implemented; reject multi-container pods |
+| **`docker exec` into running container** | `POST /containers/<id>/exec/create` + `POST /exec/<id>/start` | SSM Session Manager `ExecuteCommand` against the task | Reverse-agent WebSocket through the Lambda bootstrap | Reverse-agent: in-image supervisor establishes WebSocket back to backend's `/v1/cloudrun/reverse`; exec multiplexed | Same as Cloud Run Service | ACA Container Apps `exec` API (`az containerapp exec`) — natively supported | Reverse-agent through the AZF bootstrap |
 | **Network isolation per job** | `docker network create` | ECS task gets its own ENI in the task subnet | Lambda Functions in same VPC see each other; no per-Function netns | Cloud Run revision = its own netns; private VPC connector for cross-revision DNS | Same as Cloud Run | ACA App = own netns; Container Apps Environment provides private DNS | Same as cloudrun |
 | **Container lifecycle: create → start → exec → stop → remove** | Standard docker calls | ECS Task lifecycle (PENDING → RUNNING → STOPPED) maps cleanly | Lambda Function deploy-once-invoke-many; container ID = function name + invocation marker | Cloud Run Service revision lifecycle (READY → SERVING → REVISED-OUT) maps to long-lived; cleanup on ContainerRemove deletes the Service | Same as Service path | ACA App revision lifecycle | Function lifecycle |
 | **Auto-remove (`--rm`)** | `HostConfig.AutoRemove=true` | Drop ECS task on exit (Phase 110b) | Delete Lambda Function on exit | Delete Cloud Run Service / Job on exit (BUG-883 implements; BUG-922 is the same shape but for Service) | Same | Delete ACA App on exit | Delete Function on exit |
@@ -1731,10 +1737,10 @@ The runner job lifecycle above demands a set of container-level concerns (mounti
 For cells 5-8 (gitlab + github runner via docker executor) to GREEN end-to-end, each backend MUST implement (or fail loudly):
 
 1. **cloudrun**: Service path (UseService=1) for runner-pattern containers (long-lived). Cloud Run Job path stays valid for one-shot CI sub-tasks. Reverse-agent for `docker exec`.
-2. **gcf**: UpdateService image swap on the underlying Cloud Run Service for any container the runner expects long-lived. Pod-overlay supervisor for multi-container needs.
+2. **gcf**: UpdateService image swap on the underlying Cloud Run Service for any container the runner expects long-lived. Multi-container needs use the function-owned Cloud Run Service template.
 3. **ecs**: Already done in Phase 110b — cells 1+2 GREEN. Reference impl.
 4. **lambda**: Phase 118d pod-overlay supervisor for runner workspace; Phase 117 stdin-piped script delivery.
-5. **aca + azf**: Mirror cloudrun + gcf patterns for Phase 122e.
+5. **aca**: Mirror cloudrun with Azure Container Apps. **azf**: single-container Function App path only; multi-container pod workloads belong on ACA until AZF has a real implementation.
 
 ### "Capabilities" + "users" concerns specifically
 
@@ -1856,9 +1862,9 @@ User directive 2026-05-03: each backend MUST use ITS OWN cloud's primitives. Whe
 | **ECS** | Fargate task | RUNNING task with `tail -f /dev/null`-style cmd | Multi-container task definition |
 | **Lambda** | Lambda Function (image-mode) | Single Invoke held open via in-image supervisor; chain Invokes for sequential commands | Phase 118d pod-overlay supervisor: ONE Function with chrooted sidecars |
 | **cloudrun** | Cloud Run Job + Cloud Run Service (both ARE Cloud Run) | Service (`min_instance_count=1` + always-on CPU) for long-lived; Job for one-shot user `docker run` | Multi-container Service or Job |
-| **cloudrun-functions (gcf)** | Cloud Function Gen2 (Function resource; backed by Cloud Run Service per GCP architecture, but the resource we create/manage IS the Function) | Underlying Cloud Run Service starts the overlay bootstrap; `docker exec` is reverse-agent WebSocket. | Pod-overlay supervisor (Phase 118d) — ONE Function/underlying Service with chrooted sidecars (sequential), OR parallel Function invocations (one Function per pod member) for true parallelism |
+| **cloudrun-functions (gcf)** | Cloud Function Gen2 (Function resource; backed by Cloud Run Service per GCP architecture, but the resource we create/manage IS the Function) | Underlying Cloud Run Service starts the overlay bootstrap; `docker exec` is reverse-agent WebSocket. | Function-owned Cloud Run Service multi-container revision |
 | **ACA** | Container Apps App | App with `min_replicas=1`, native long-lived | Multi-container app template |
-| **AZF** | Azure Function | Same as gcf — chain Function invocations via HTTP triggers | Pod-overlay supervisor (mirror gcf) |
+| **AZF** | Azure Function | Function App HTTP trigger starts the overlay bootstrap; `docker exec` is reverse-agent WebSocket. | Not implemented for multi-container pods; use ACA Apps |
 | **docker** | Local docker daemon | Native | Native |
 
 ### Chaining + parallel patterns (FaaS backends specifically)
@@ -1926,7 +1932,7 @@ The docker pod model says "all containers in a pod share a network namespace" �
 | Cloud Run **Functions Gen2** (gcf) | UpdateService to populate multi-container template on the Function's underlying Cloud Run Service | The Function API only creates a single-container Function; sockerless extends via the UpdateService escape hatch |
 | Lambda | NOT supported natively (one container per Lambda Function); use Phase 118d overlay-supervisor pattern that fork-execs sidecars in shared netns within ONE Lambda invocation | Approximation only (no per-container resource limits, no per-container env separation) |
 | ACA | Multi-container app template | Already supported |
-| Azure Functions | Mirror Lambda — overlay-supervisor pattern | Approximation only |
+| Azure Functions | No implemented shared-localhost pod primitive in the AZF backend | Use ACA Apps for Azure workloads that require sidecars |
 
 ### Backend "engine" orchestrates the helper chain
 
@@ -1951,13 +1957,14 @@ Sockerless backend's "engine" (the in-image sockerless-backend-* binary) orchest
 
 Shared PID across pod members requires kernel-level coordination (process namespaces). Cloud Run / Cloud Functions multi-container Services share netns + IPC + UTS by default, but NOT PID — each container has its own PID 1. If PID sharing is genuinely required by the workload (rare), sockerless backend MUST fail loudly with "shared PID not supported on <backend>; use docker backend or ECS-EC2-launchtype which support `shareProcessNamespace`".
 
-Phase 118d's overlay-supervisor pattern (Lambda + AZF approximation) DOES give shared PID — all sidecars run as forked children of the supervisor, so they share PID namespace by definition. But it's a degraded mode (no per-container resource limits etc.); flagged via `Container.HostConfig.PidMode = "shared-degraded"` annotation.
+The Lambda overlay/supervisor path can run sidecar-like processes inside one function execution, but it is not equivalent to a native per-container PID namespace. AZF has no implemented multi-container overlay path today.
 
 ### Implementation status (Phase 122f / 122g)
 
 - **cloudrun**: multi-container Service template ALREADY supported via `startMultiContainerServiceTyped` (`backends/cloudrun/start_service.go`). Phase 122g action: ensure isRunnerPattern routes pod members to Service path correctly.
-- **gcf**: pod-overlay supervisor (Phase 118d) is the existing approximation. Phase 122g action: extend `attachVolumesToFunctionService` to also add multi-container template (multiple `runpb.Container` entries in `svc.Template.Containers`) when the pod has multiple members.
-- **lambda + azf**: Phase 118d already implements overlay-supervisor for shared netns/IPC/PID-degraded.
+- **gcf**: multi-container pod materialization uses the function-owned Cloud Run Service template (`runpb.Container` entries in `svc.Template.Containers`) rather than an in-image supervisor.
+- **lambda**: overlay/reverse-agent path handles supported runner workloads without a native multi-container Lambda primitive.
+- **azf**: multi-container pods are not implemented; use ACA Apps for Azure sidecar workloads.
 
 ### What "the backend engine" means
 
@@ -1977,7 +1984,7 @@ User directive 2026-05-03 (clarification): **shared network namespace** (so pod 
 
 So the pod-on-FaaS rules become:
 
-1. ALWAYS provide shared netns. On gcf this means multi-container Cloud Run Service template (UpdateService escape). On Lambda + AZF this means Phase 118d overlay-supervisor (single Function, fork-execed sidecars in shared netns).
+1. ALWAYS provide shared netns. On gcf this means multi-container Cloud Run Service template (UpdateService escape). On Lambda this means the implemented overlay/reverse-agent path for supported workloads. On AZF there is no implemented shared-netns pod path, so multi-container pods must be rejected.
 2. PID-shared ONLY if `Container.HostConfig.PidMode == "container:<id>"` is explicitly requested AND the backend can deliver — otherwise stick with cloud-default isolated PID. Don't flag, don't degrade, don't inject "shared-degraded" annotations.
 
 ### Agents + supervisors = LAST RESORT; cached builds for speed

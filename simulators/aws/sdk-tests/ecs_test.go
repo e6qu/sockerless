@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,93 @@ func TestECS_RegisterTaskDefinition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test-task", *out.TaskDefinition.Family)
 	assert.Equal(t, int32(1), out.TaskDefinition.Revision)
+}
+
+func TestECS_MultiContainerTaskSharesLocalhost(t *testing.T) {
+	client := ecsClient()
+
+	clusterName := "pod-localhost"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{
+		ClusterName: aws.String(clusterName),
+	})
+	require.NoError(t, err)
+
+	logGroupName := "/ecs/pod-localhost"
+	cw := cwLogsClient()
+	_, _ = cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(logGroupName)})
+	t.Cleanup(func() {
+		_, _ = cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
+	})
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("pod-localhost"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{
+			{
+				Name:       aws.String("main"),
+				Image:      aws.String(evalImageName),
+				EntryPoint: []string{"sh", "-c"},
+				Command: []string{`for i in $(seq 1 50); do
+if nc -z 127.0.0.1 9090; then echo sidecar-ok; exit 0; fi
+sleep 0.1
+done
+echo sidecar-missing
+exit 1`},
+				LogConfiguration: &ecstypes.LogConfiguration{
+					LogDriver: ecstypes.LogDriverAwslogs,
+					Options: map[string]string{
+						"awslogs-group":         logGroupName,
+						"awslogs-stream-prefix": "ecs",
+					},
+				},
+			},
+			{
+				Name:       aws.String("sidecar"),
+				Image:      aws.String(evalImageName),
+				EntryPoint: []string{"sh", "-c"},
+				Command:    []string{`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: tdOut.TaskDefinition.TaskDefinitionArn,
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets: []string{"subnet-0123456789abcdef0"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	taskArn := *runOut.Tasks[0].TaskArn
+
+	require.Eventually(t, func() bool {
+		desc, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(clusterName),
+			Tasks:   []string{taskArn},
+		})
+		if err != nil || len(desc.Tasks) != 1 {
+			return false
+		}
+		return desc.Tasks[0].LastStatus != nil && *desc.Tasks[0].LastStatus == "STOPPED"
+	}, 20*time.Second, 500*time.Millisecond)
+
+	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	require.NoError(t, err)
+	var messages []string
+	for _, e := range events.Events {
+		messages = append(messages, aws.ToString(e.Message))
+	}
+	assert.Contains(t, strings.Join(messages, "\n"), "sidecar-ok")
 }
 
 func TestECS_ExitCodeNilWhileRunning(t *testing.T) {

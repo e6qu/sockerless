@@ -69,6 +69,27 @@ func TestGitLab_Lambda_Hello(t *testing.T) {
 	})
 }
 
+// TestGitLab_Simulator_Arithmetic runs the real gitlab-runner docker executor
+// against a caller-provided simulator-backed sockerless daemon. Start the
+// target backend first and set SOCKERLESS_DOCKER_HOST, for example
+// tcp://localhost:3375.
+func TestGitLab_Simulator_Arithmetic(t *testing.T) {
+	runCell(t, cellConfig{
+		Tag:          envOr("SOCKERLESS_GL_SIM_TAG", "sockerless-sim"),
+		BranchPrefix: "sockerless-sim-arithmetic",
+		PipelineYAML: fmt.Sprintf(`arithmetic:
+  image: golang:1.25-alpine
+  tags:
+    - %s
+  script:
+    - go version
+    - go test -count=1 ./simulators/testdata/eval-arithmetic
+    - test "$(go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
+`, envOr("SOCKERLESS_GL_SIM_TAG", "sockerless-sim")),
+		DefaultDockerHost: "tcp://localhost:3375",
+	})
+}
+
 type cellConfig struct {
 	Tag               string
 	BranchPrefix      string

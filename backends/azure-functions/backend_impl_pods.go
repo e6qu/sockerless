@@ -29,7 +29,9 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 		}
 	}
 
-	s.Store.Pods.SetStatus(pod.ID, "running")
+	if len(errs) == 0 {
+		s.Store.Pods.SetStatus(pod.ID, "running")
+	}
 	if errs == nil {
 		errs = []string{}
 	}

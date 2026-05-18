@@ -55,6 +55,7 @@ type ContainerConfig struct {
 	Timeout      time.Duration     // max execution time (0 = no limit)
 	Labels       map[string]string // container labels for tracking
 	Network      string            // Docker network to join (optional)
+	NetworkMode  string            // Docker network mode (e.g. "container:<id>" for shared netns)
 	Name         string            // container name (optional, auto-generated if empty)
 	Tty          bool              // allocate a pseudo-TTY
 	OpenStdin    bool              // keep stdin open
@@ -315,6 +316,9 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
 	}
+	if cfg.NetworkMode != "" {
+		hostCfg.NetworkMode = container.NetworkMode(cfg.NetworkMode)
+	}
 
 	// BUG-1077: enforce sandbox parity with the real cloud platform.
 	// Empty profile = no enforcement (transitional; warned once at
@@ -325,7 +329,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	var networkCfg *network.NetworkingConfig
-	if cfg.Network != "" {
+	if cfg.Network != "" && cfg.NetworkMode == "" {
 		networkCfg = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				cfg.Network: {},

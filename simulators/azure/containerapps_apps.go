@@ -340,13 +340,25 @@ func startACAAppReplicas(resourceID string, app ContainerApp) error {
 
 	handles := make([]*sim.ContainerHandle, 0, int(minReplicas)*len(app.Properties.Template.Containers))
 	for replica := int32(0); replica < minReplicas; replica++ {
-		for _, c := range app.Properties.Template.Containers {
-			handle, err := startACAAppContainer(resourceID, app, c, replica, envID, netName, netAliases)
+		var mainContainerID string
+		for i, c := range app.Properties.Template.Containers {
+			networkMode := ""
+			containerNetName := netName
+			containerAliases := netAliases
+			if i > 0 && mainContainerID != "" {
+				networkMode = "container:" + mainContainerID
+				containerNetName = ""
+				containerAliases = nil
+			}
+			handle, err := startACAAppContainer(resourceID, app, c, replica, envID, containerNetName, containerAliases, networkMode)
 			if err != nil {
 				for _, h := range handles {
 					h.Cancel()
 				}
 				return err
+			}
+			if i == 0 {
+				mainContainerID = handle.ContainerID
 			}
 			handles = append(handles, handle)
 		}
@@ -358,7 +370,7 @@ func startACAAppReplicas(resourceID string, app ContainerApp) error {
 	return nil
 }
 
-func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, replica int32, envID, netName string, netAliases []string) (*sim.ContainerHandle, error) {
+func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, replica int32, envID, netName string, netAliases []string, networkMode string) (*sim.ContainerHandle, error) {
 	cmdEnv := make(map[string]string, len(c.Env)+1)
 	for _, ev := range c.Env {
 		cmdEnv[ev.Name] = ev.Value
@@ -395,6 +407,10 @@ func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, r
 	}
 	containerName := fmt.Sprintf("sockerless-sim-azure-app-%s-%d-%s-%s", shortName, replica, c.Name, randomSuffix(6))
 	sink := &acaAppLogSink{appName: app.Name}
+	extraHosts := hostMetadataExtraHosts()
+	if networkMode != "" {
+		extraHosts = nil
+	}
 	return sim.StartContainerSync(sim.ContainerConfig{
 		Image:        sim.ResolveLocalImage(c.Image),
 		Architecture: "linux/arm64",
@@ -409,8 +425,9 @@ func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, r
 		},
 		Network:        netName,
 		NetworkAliases: netAliases,
+		NetworkMode:    networkMode,
 		Binds:          binds,
-		ExtraHosts:     hostMetadataExtraHosts(),
+		ExtraHosts:     extraHosts,
 		Sandbox:        sim.SandboxACA,
 	}, sink)
 }

@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 168 follow-up merged 2026-05-18 (PR #170, `a5639811` on `origin/main`). Current branch is `docs/post-pr170-doc-sweep`, originally a documentation-only sweep to align continuity, runner, simulator, and backend docs with the implementation that landed in PR #170. The latest pass explicitly reviewed docs not touched by the first two PR #171 commits and updated root/example/simulator/spec docs that still described forward-agent Cloud Run/ACA, local cloud backend state, silent docker-socket drops, or old Azure Terraform provider guidance. Push validation also required dependency freshness updates: AWS SDK EC2/ECS versions were bumped in `backends/ecs`, `backends/lambda`, and `simulators/aws/sdk-tests`.
+Phase 168 follow-up merged 2026-05-18 (PR #170, `a5639811` on `origin/main`). Current branch is `pod-model-simulator-fidelity`. The active work is BUG-1096: make simulator pod materialization behave like the real cloud contract for shared localhost, align pod docs with the actual AZF implementation, and add real-runner simulator arithmetic targets.
 
-Merged PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring for those smokes, AZF bootstrap test-pyramid coverage, simulator endpoint-fidelity fixes, and live-validation runbook/docs. The GCP Artifact Registry simulator-fidelity fix is covered by official SDK, gcloud CLI, Terraform provider, and OCI Distribution tests. BUG-1075 needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
+This branch has already fixed the major simulator contract gap: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps now start every declared container and sidecars share the main container network namespace so `localhost:<port>` works. Official SDK tests cover each cloud path. Docs now state that AZF does not support multi-container pods today. The real-runner pre-work is wired through `make e2e-github-sim-arithmetic`, `make e2e-gitlab-sim-arithmetic`, and `make e2e-real-runner-sim-arithmetic`; these require a caller-started simulator-backed sockerless daemon and real GitHub/GitLab tokens. Push-hook dependency freshness also bumped `bleephub`'s `go-git` dependency to v5.19.1. BUG-1075 still needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
 
 ## Phase 168 sub-task status
 
@@ -41,6 +41,7 @@ Merged PR #170 scope: FaaS runner smoke tests for Lambda/Cloud Run/GCF/ACA/AZF, 
 - **Track B** — UI / TypeScript vibe-slop sweep (carried from Phase 161).
 - **Track C** — Phase 91d (bookmarked; needs cloud capability change).
 - **Track D** — Phase 166 follow-up gaps: GCP Cloud Functions Gen2 + Pub/Sub + Compute instance/template terraform coverage; Azure Key Vault data-plane terraform coverage. Filed informally; can become a Phase 169 if leverage materialises.
+- **Track E** — Run the new real-runner simulator arithmetic checks once a simulator-backed backend is intentionally started on `SOCKERLESS_DOCKER_HOST`; collect GitHub run URL / GitLab pipeline URL as evidence.
 
 ## Session-resume checklist
 

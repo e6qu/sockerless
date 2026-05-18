@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `docs/post-pr170-doc-sweep` — post-PR #170 documentation alignment sweep. |
-| In-flight | Post-PR #170 docs sweep plus required dependency-freshness cleanup. Third docs pass aligned previously untouched docs too: root README, examples, simulator how-tos, comparison/spec docs, and ECS/Cloud Run/ACA transport wording. Push hook found AWS SDK drift; `backends/ecs`, `backends/lambda`, and `simulators/aws/sdk-tests` now carry the required EC2/ECS bumps. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
+| Active branch | `pod-model-simulator-fidelity` — pod materialization + simulator fidelity follow-up. |
+| In-flight | BUG-1096 fixed in-tree: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps simulators now start every declared pod/task container as a real local workload and use shared network namespaces for localhost sidecar semantics. Added SDK regression coverage across AWS/GCP/Azure, corrected AZF pod docs to match the actual single-container Function App implementation, and wired real GitHub/GitLab runner arithmetic harness targets against a caller-started simulator-backed sockerless daemon. Push hook also required dependency freshness cleanup: `bleephub` now uses `github.com/go-git/go-git/v5 v5.19.1` and README line-count badges were refreshed. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
 | Last merged | PR #170 — Phase 168 follow-up runner smokes and simulator fidelity (2026-05-18, `a5639811`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1095 filed · 1093 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
+| Bugs | 1096 filed · 1094 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -69,6 +69,7 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
+| open | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported; real-runner simulator arithmetic targets added. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #168 | 167–168 | FaaS exec unification, reverse-agent-only path, and AZF bootstrap hardening. Merged 2026-05-18 at `3565e413`. |

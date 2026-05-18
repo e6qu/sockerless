@@ -58,6 +58,7 @@ type ContainerConfig struct {
 	Labels         map[string]string // container labels for tracking
 	Network        string            // Docker network to join (optional)
 	NetworkAliases []string          // DNS aliases on Network (resolved by Docker embedded DNS)
+	NetworkMode    string            // Docker network mode (e.g. "container:<id>" for shared netns)
 	Name           string            // container name (optional, auto-generated if empty)
 	Tty            bool              // allocate a pseudo-TTY
 	OpenStdin      bool              // keep stdin open
@@ -430,12 +431,15 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
 	}
+	if cfg.NetworkMode != "" {
+		hostCfg.NetworkMode = container.NetworkMode(cfg.NetworkMode)
+	}
 	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
 		return "", fmt.Errorf("sandbox enforce: %w", err)
 	}
 
 	var networkCfg *network.NetworkingConfig
-	if cfg.Network != "" {
+	if cfg.Network != "" && cfg.NetworkMode == "" {
 		networkCfg = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				cfg.Network: {Aliases: cfg.NetworkAliases},

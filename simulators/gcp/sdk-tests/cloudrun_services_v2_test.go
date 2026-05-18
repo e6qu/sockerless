@@ -1,7 +1,11 @@
 package gcp_sdk_test
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/run/apiv2/runpb"
@@ -120,6 +124,52 @@ func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {
 
 	_, err = client.GetService(ctx, &runpb.GetServiceRequest{Name: svc.Name})
 	assert.Error(t, err, "GetService after delete must 404")
+}
+
+func TestSDK_CloudRunV2Services_MultiContainerSharesLocalhost(t *testing.T) {
+	client := newServicesClient(t)
+
+	createOp, err := client.CreateService(ctx, &runpb.CreateServiceRequest{
+		Parent:    "projects/test-project/locations/us-central1",
+		ServiceId: "v2-svc-pod-localhost",
+		Service: &runpb.Service{
+			Template: &runpb.RevisionTemplate{
+				Containers: []*runpb.Container{
+					{
+						Name:  "main",
+						Image: httpProbeImageName,
+						Args:  []string{"probe"},
+					},
+					{
+						Name:  "sidecar",
+						Image: httpProbeImageName,
+						Args:  []string{"server"},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	svc, err := createOp.Wait(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, svc.Uri)
+	t.Cleanup(func() {
+		deleteOp, err := client.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: svc.Name})
+		if err == nil {
+			_, _ = deleteOp.Wait(ctx)
+		}
+	})
+
+	var body []byte
+	require.Eventually(t, func() bool {
+		resp, err := http.Post(svc.Uri, "application/json", strings.NewReader("{}"))
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ = io.ReadAll(resp.Body)
+		return strings.Contains(string(body), "cloudrun-sidecar-ok")
+	}, 20*time.Second, 500*time.Millisecond, "Cloud Run Service main must reach sidecar on localhost; last body=%q", string(body))
 }
 
 func TestSDK_CloudRunV2Services_UpdateBumpsGeneration(t *testing.T) {
