@@ -28,4 +28,4 @@ The test harness (`helpers_test.go`) handles binary build, port allocation, serv
 
 ## SDK configuration
 
-Tests configure Azure SDK clients to use the local simulator by overriding the endpoint URL and using a stub credential provider.
+Tests configure Azure SDK clients to use the local simulator by overriding the endpoint URL and using local-test credentials accepted by the simulator's OAuth2 slice.

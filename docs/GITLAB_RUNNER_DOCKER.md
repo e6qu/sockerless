@@ -23,7 +23,7 @@ Sockerless Frontend (Docker API)
 Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
   │
   ▼
-Cloud Simulator (aws / gcp / azure)  ← simulator mode only
+Cloud simulator endpoint (aws / gcp / azure)
 ```
 
 All services run as Docker Compose containers. The backend container runs the simulator + backend + frontend in a single process using `start-backend.sh`.

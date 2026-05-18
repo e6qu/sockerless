@@ -4,7 +4,7 @@ Source of truth for which cloud-API calls each simulator implements at the fidel
 
 Legend:
 - ✓ — sim implements the call at sockerless's required fidelity (used by integration tests; passes against the sim).
-- ⚠ — sim implements the call but with reduced fidelity (e.g. always returns the same fake field; missing pagination; ignores filters). Filed as a bug.
+- ⚠ — sim implements the call but with reduced fidelity (e.g. incomplete field coverage, missing pagination, or ignored filters). Filed as a bug.
 - ✗ — sim does not implement the call. Filed as a bug.
 - — — call is not made by any backend pointed at this cloud (not applicable).
 

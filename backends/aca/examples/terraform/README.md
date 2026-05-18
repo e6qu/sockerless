@@ -1,6 +1,6 @@
 # ACA Backend — Terraform Example
 
-This example provisions the Azure infrastructure needed to run Sockerless with the Azure Container Apps (ACA) backend. Once applied, you can use standard `docker` CLI commands and they will execute as Container Apps Job executions.
+This example provisions the Azure infrastructure needed to run Sockerless with the Azure Container Apps (ACA) backend. One-shot containers run as Container Apps Jobs; runner and repeated-exec workloads run as Container Apps with the reverse-agent bootstrap.
 
 ## What Gets Created
 
@@ -70,7 +70,7 @@ export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=$(terraform output -raw log_analyt
 export SOCKERLESS_ACA_STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
 ```
 
-For reverse agent mode (optional):
+Configure the reverse-agent callback. The backend fails at startup when this is empty, because exec/archive/attach operations require the in-App or in-Job bootstrap to dial back:
 
 ```bash
 export SOCKERLESS_CALLBACK_URL=http://<YOUR_BACKEND_HOST>:3375
@@ -104,9 +104,9 @@ docker run --rm ${ACR_SERVER}/alpine:latest echo "Hello from Azure Container App
 ```
 
 Behind the scenes:
-1. `docker create` → Stores container metadata locally
-2. `docker start` → `Jobs.BeginCreateOrUpdate` + `Jobs.BeginStart`
-3. Agent connects (forward polling or reverse callback)
+1. `docker create` → Records a pending create until the ACA resource exists
+2. `docker start` → ACA Job create/start for one-shot Jobs, or ACA App create/update for runner workloads
+3. App-backed workloads wait for the reverse-agent bootstrap to register
 4. `docker stop` → `Jobs.BeginStopExecution`
 5. `docker rm` → `Jobs.BeginDelete`
 
@@ -165,7 +165,7 @@ cd backends/aca/examples/terraform
 terraform destroy
 ```
 
-**Important:** Clean up any Container Apps Jobs first:
+**Important:** Clean up any Sockerless-managed Container Apps Jobs and Apps first:
 
 ```bash
 RG=$(terraform output -raw resource_group_name)
@@ -175,6 +175,10 @@ az containerapp job list -g $RG --query "[?tags.\"managed-by\"=='sockerless'].na
 
 # Delete them
 az containerapp job delete -g $RG -n sockerless-<id> --yes
+
+# List and delete Apps created by Sockerless
+az containerapp list -g $RG --query "[?tags.\"managed-by\"=='sockerless'].name" -o tsv
+az containerapp delete -g $RG -n sockerless-<id> --yes
 ```
 
 Then destroy the infrastructure:
@@ -195,19 +199,14 @@ This takes approximately 5-10 minutes.
 │ start, exec, │     │                  │     │ Jobs.BeginStart          │
 │ logs, stop   │     │                  │     │ Jobs.BeginStopExecution  │
 └──────────────┘     └──────────────────┘     │ Jobs.BeginDelete         │
+                                               │ Apps.BeginCreateOrUpdate │
                                                │ Logs.QueryWorkspace      │
                                                └──────────────────────────┘
 ```
 
-## Agent Modes
+## Reverse Agent
 
-### Forward Agent (default)
-
-After creating and starting the job, the backend polls the Executions API until the execution reaches RUNNING state. The agent address is `{executionName}:9111`. The backend connects to the agent for exec/attach.
-
-### Reverse Agent
-
-Set `SOCKERLESS_CALLBACK_URL`. The agent inside the execution calls back to the Sockerless backend. Useful when the backend cannot directly reach the Container Apps Environment network.
+Set `SOCKERLESS_CALLBACK_URL` to a URL reachable from ACA. The bootstrap inside the App or Job dials back to Sockerless and registers the reverse-agent WebSocket used by `docker exec`, `docker attach`, and `docker cp`. There is no management-API exec fallback.
 
 ## Key Differences from Vanilla Docker
 
@@ -219,9 +218,9 @@ Set `SOCKERLESS_CALLBACK_URL`. The agent inside the execution calls back to the 
 | Pause/unpause | Freeze cgroups | Not supported |
 | Logs follow | Real-time | Polls Log Analytics every 2s |
 | Logs delay | Immediate | 30s+ ingestion delay |
-| Networks | Real Docker networks | In-memory only |
-| Volumes | Real volumes | In-memory only (Azure Files placeholder) |
-| Resources | Configurable | Fixed: 1.0 CPU / 2Gi |
+| Networks | Real Docker networks | ACA managed environment networking and Private DNS where configured |
+| Volumes | Real volumes | Azure Files-backed volumes where configured |
+| Resources | Configurable | Configured through ACA Job/App resource settings |
 
 ## Estimated Costs
 
@@ -240,6 +239,6 @@ Set `SOCKERLESS_CALLBACK_URL`. The agent inside the execution calls back to the 
 
 **Logs are empty or delayed:** Log Analytics has an ingestion delay of 30 seconds or more. Wait and retry. The KQL query filters by `ContainerGroupName_s`.
 
-**Agent health check fails (forward mode):** Ensure the NSG allows inbound on port 9111 from within the VNet.
+**Agent callback timeout:** `SOCKERLESS_CALLBACK_URL` must be reachable from ACA through the configured egress/VNet path.
 
 **Pause not supported:** Returns `NotImplementedError`. Container Apps has no pause capability.

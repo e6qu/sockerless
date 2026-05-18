@@ -252,4 +252,4 @@ The script builds the simulator, starts it on a random port, runs 61 tests, and 
 
 - Authentication is accepted but not validated. Any access key and secret will work.
 - All state is in-memory and resets when the simulator restarts.
-- The simulator returns mock account ID `123456789012` for STS calls.
+- The simulator returns the local-test account ID `123456789012` for STS calls.

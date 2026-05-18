@@ -6,7 +6,7 @@ Tracks what each backend can actually do when driving real CI runners through th
 
 The runner-integration milestone closed: every cell-pair (GitHub × {ECS, Lambda, cloudrun, gcf} and GitLab × the same four) runs the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. Cell URLs in [STATUS.md](../STATUS.md). The capability summary table below remains the canonical answer for the architectural question; the per-pipeline matrices below it stay TBD until a Docker-in-Docker CI job cycles through the combinations.
 
-## Capability summary (post-PR-#115)
+## Capability summary (post-Phase 168 / PR #170)
 
 `specs/CLOUD_RESOURCE_MAPPING.md` carries the **architectural** runner-compatibility matrix (long-lived containers vs invocation-scoped FaaS; `tail -f /dev/null` keep-alive; `docker exec` transport). That matrix answers "can this backend ever serve as the docker daemon for a runner?" — summarised here:
 
@@ -14,10 +14,10 @@ The runner-integration milestone closed: every cell-pair (GitHub × {ECS, Lambda
 |---|---|---|---|
 | docker | ✅ | native | ✅ |
 | ecs | ✅ Fargate task | SSM ExecuteCommand | ✅ verified live (cells 1+3 GREEN) |
-| lambda | ✅ image-mode container w/ overlay-inject | reverse-agent OR exec-via-Invoke envelope | ✅ verified live (cells 2+4 GREEN) |
-| cloudrun | ✅ multi-container Service revision (pod-Service materialize) | envelope-POST via overlay HTTP server | ✅ verified live (cells 5+7 GREEN, gcs-sync workspace data plane) |
-| gcf | ✅ multi-container Cloud Run Service via Cloud Functions Gen2 escape hatch | envelope-POST via overlay HTTP server | ✅ verified live (cells 6+8 GREEN) |
-| aca (UseApp) | ✅ ACA App | reverse-agent or ACA console exec | ✅ architecturally; live cells not yet exercised |
+| lambda | ✅ image-mode container w/ overlay-inject | reverse-agent WebSocket | ✅ verified live (cells 2+4 GREEN) |
+| cloudrun | ✅ multi-container Service revision (pod-Service materialize) | reverse-agent WebSocket | ✅ verified live (cells 5+7 GREEN, gcs-sync workspace data plane) |
+| gcf | ✅ multi-container Cloud Run Service via Cloud Functions Gen2 escape hatch | reverse-agent WebSocket | ✅ verified live (cells 6+8 GREEN) |
+| aca (UseApp) | ✅ ACA App | reverse-agent WebSocket | ✅ architecturally; live cells not yet exercised |
 | azf | ✅ image-mode container | reverse-agent | ✅ architecturally; live cells not yet exercised |
 | cloudrun Jobs / aca Jobs | ❌ execution-scoped | — | ❌ use Services/Apps for runner workloads |
 
@@ -27,16 +27,16 @@ This file tracks the **empirical** results of running the `make e2e-*` targets (
 
 1. For each row `<backend>`:
    ```bash
-   make e2e-github-<backend>   # GitHub runner (via act) against simulator-mode sockerless
-   make e2e-gitlab-<backend>   # GitLab runner against simulator-mode sockerless
+   make e2e-github-<backend>   # GitHub runner (via act) against a simulator endpoint
+   make e2e-gitlab-<backend>   # GitLab runner against a simulator endpoint
    ```
 2. Copy the PASS/FAIL lines from `tests/e2e-live-tests/logs/summary-<runner>-<backend>-<ts>.txt` into the matrix below.
-3. Cells reflect simulator-mode results unless marked `(live)`.
+3. Cells reflect simulator-endpoint results unless marked `(live)`.
 
 Backends: `memory`, `docker`, `ecs`, `lambda`, `cloudrun`, `gcf`, `aca`, `azf`.
 Pipelines: the sets in `tests/e2e-live-tests/github-runner/run.sh` `ALL_WORKFLOWS` and `tests/e2e-live-tests/gitlab-runner-docker/run.sh` `ALL_PIPELINES`.
 
-## GitLab Runner (simulator mode)
+## GitLab Runner (simulator endpoint)
 
 | Pipeline \ Backend | memory | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|---|
@@ -62,7 +62,7 @@ Pipelines: the sets in `tests/e2e-live-tests/github-runner/run.sh` `ALL_WORKFLOW
 | allow-failure-exit-code | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 | container-action | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 
-## GitHub Actions (simulator mode, via `act`)
+## GitHub Actions (simulator endpoint, via `act`)
 
 | Workflow \ Backend | memory | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|---|

@@ -40,9 +40,9 @@ Architectural and implementation decisions, with the *why*. Referenced from [PLA
 
 ## Cloud backends
 
-**ECS.** Task definition registered at create time (single container) or start time (multi-container pod). `ContainerDefinitions` slice with unique names per container. Forward agent (poll for RUNNING + health) or reverse agent (callback).
+**ECS.** Task definition registered at create time (single container) or start time (multi-container pod). `ContainerDefinitions` slice with unique names per container. Exec routes through ECS ExecuteCommand / SSM cloud access.
 
-**Cloud Run.** Job spec built + created + run all at start time. `Containers` slice in `TaskTemplate`. VPC connector for agent connectivity. Optional `UseService=true` flag dispatches to long-running Cloud Run Services with internal-ingress for peer reachability.
+**Cloud Run.** Job spec built + created + run at start time for one-shot containers. Runner/repeated-exec workloads dispatch to long-running Cloud Run Services with the reverse-agent bootstrap. VPC connector remains cloud egress/private-resource configuration.
 
 **ACA.** Job spec built + created + started all at start time. `Containers` slice in `JobTemplate`. Manual trigger type. Optional `UseApp=true` flag dispatches to long-running Container Apps with internal-ingress for peer reachability.
 
@@ -74,7 +74,7 @@ Architectural and implementation decisions, with the *why*. Referenced from [PLA
 
 **`gh` CLI compatibility.** GHES-style auth. Full URLs via `gh api` to bypass hostname restrictions. TLS via `BPH_TLS_CERT`/`BPH_TLS_KEY`. OpenAPI schema validation. RFC 5988 Link headers.
 
-**Runner enhancements.** Workflow YAML parsing, `uses:` action tarball proxy with cache, multi-job `needs:` dependency engine, matrix expansion, artifact/cache stubs.
+**Runner enhancements.** Workflow YAML parsing, `uses:` action tarball proxy with cache, multi-job `needs:` dependency engine, matrix expansion, and artifact/cache API surfaces.
 
 ---
 

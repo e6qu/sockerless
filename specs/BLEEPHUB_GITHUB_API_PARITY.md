@@ -132,7 +132,7 @@ Phase 153 (PR #153, merged 2026-05-12 as `fadf851f`):
 10. Tests, gh CLI Docker harness end-to-end.
 11. State save.
 12. SQLite persistence (BLEEPHUB_PERSIST + write-through buckets).
-13. Real `gh` CLI compatibility (flex decoders + GraphQL enums + union + Issue.projectItems stub).
+13. Real `gh` CLI compatibility (flex decoders + GraphQL enums + union + Issue.projectItems compatibility connection).
 
 Phase 154 (PR #154, merged 2026-05-12 as `9e03621c`):
 1. Reactions API.
@@ -150,7 +150,7 @@ Phase 154 (PR #154, merged 2026-05-12 as `9e03621c`):
 - SAML / SSO enforcement on installation tokens (Enterprise-only behavior).
 - Codespaces / Copilot / Dependabot endpoints (separate domains, not in scope).
 - Per-installation audit log content (shape-only empty endpoint).
-- Full Projects v2 (only an empty connection stub for `gh issue view` compatibility).
+- Full Projects v2 (only the empty `Issue.projectItems` compatibility connection needed by `gh issue view`).
 - Real GitHub Marketplace billing (sim returns a single Free plan).
 
 ## Future audits

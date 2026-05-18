@@ -68,7 +68,7 @@ type ImageManager struct {
     Store     *Store
     Logger    zerolog.Logger
     BuildFunc func(opts api.ImageBuildOptions, ctx io.Reader) (io.ReadCloser, error)
-    // BuildFunc is set to BaseServer.imageBuild by default (synthetic Dockerfile parser).
+    // BuildFunc is set to BaseServer.imageBuild by default (parse-only Dockerfile path for core tests).
     // Backends that want NotImplementedError for Build override this.
 }
 
@@ -102,7 +102,8 @@ func (m *ImageManager) Search(term string, limit int, filters map[string][]strin
 
 3. **`BuildFunc` for ImageBuild**: `ImageManager` cannot import BaseServer's Dockerfile parser
    (circular dep risk). Instead, `BuildFunc` is injected at creation time. BaseServer sets it
-   to its synthetic build logic. FaaS backends set it to return `NotImplementedError`.
+   to its parse-only build logic. FaaS backends set it to return `NotImplementedError` unless
+   a real cloud builder path is configured.
 
 4. **Separate Go modules**: Each backend is a separate `go.mod`. FaaS backends in the same
    cloud (Lambda, GCF, AZF) CANNOT import from their container counterpart (ECS, CloudRun, ACA).
@@ -203,9 +204,9 @@ both backends in that cloud. All 6 cloud backends delegate image methods to `s.i
 
 ## Design Constraints (preserved for reference)
 
-- **E2E tests**: `TestImageBuild` expects HTTP 200 — `ImageManager.Build()` delegates to BaseServer's synthetic Dockerfile parser.
+- **E2E tests**: `TestImageBuild` expects HTTP 200 for the core parse-only build path — `ImageManager.Build()` delegates to BaseServer's Dockerfile parser in that test context.
 - **Shared cloud modules**: AuthProviders live in `*-common` modules, shared by both backends in each cloud.
 - **core has no cloud SDK deps**: `AuthProvider` is an interface — cloud SDKs only imported in `*-common` and backend packages.
-- **Non-fatal cloud ops**: All `OnPush`/`OnTag`/`OnRemove` failures are logged, never returned as errors.
+- **Cloud op errors**: `OnPush`/`OnTag`/`OnRemove` failures must be returned when they affect the requested Docker operation; cleanup-only best-effort paths must be documented at the call site.
 - **Backward compat**: `BaseServer.ImagePull()` etc. still work for the Docker backend and tests that create `BaseServer` directly.
 - **No simulator changes**: `OnRemove` implementations handle missing DELETE support (405) gracefully.

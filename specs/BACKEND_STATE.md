@@ -220,16 +220,13 @@ For values exceeding GCP's 63-char label limit (Docker labels JSON, long command
 3. On `docker inspect`, read from job spec annotations (not labels)
 4. Labels are used only for **filtering** (`docker ps --filter label=app=web`)
 
-## Migration Path
+## Current State
 
-Current backends use `Store.Containers` (in-memory) + `ResourceRegistry` (JSON file). Migration:
+Cloud backends must treat the cloud API as the source of truth. Container identity, names, labels, network membership, image references, and volume backing metadata live on cloud resources through tags, labels, annotations, app settings, task/function/service specs, or provider-native metadata.
 
-1. **Phase 1**: Add tag writing to all create/start operations (backward compatible)
-2. **Phase 2**: Implement cloud-query versions of ContainerList, ContainerInspect
-3. **Phase 3**: Remove local Store.Containers, remove ResourceRegistry
-4. **Phase 4**: Remove recovery.go (no longer needed — cloud IS the state)
+`PendingCreates` is the only accepted transient local container state: it covers the gap between Docker `create` and cloud resource materialization on `start`. Once a cloud resource exists, list/inspect/stop/wait/remove paths must recover from cloud state rather than `Store.Containers` or an on-disk registry.
 
-During migration, both paths coexist: local store for fast reads, cloud query for correctness verification.
+If a backend still needs a local cache for performance, the cache is invalidatable and repopulated from cloud queries on miss. It is not authoritative.
 
 ## Chinese Wall: Backends ↔ Simulators
 

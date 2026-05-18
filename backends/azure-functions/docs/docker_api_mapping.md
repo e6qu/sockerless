@@ -1,147 +1,40 @@
 # Docker API Mapping: Azure Functions Backend
 
-The Azure Functions backend translates Docker API calls into Azure Function App operations. A Docker "container" becomes a Function App with a custom container image, invoked via HTTP.
+The Azure Functions backend maps Docker containers to Linux Function Apps running custom container images. The sockerless AZF bootstrap starts inside the Function App container and registers a reverse-agent session for Docker exec-style operations.
+
+For the broader cross-cloud mapping, see [`specs/CLOUD_RESOURCE_MAPPING.md`](../../../specs/CLOUD_RESOURCE_MAPPING.md).
 
 ## Container Lifecycle
 
-### `POST /containers/create` — Create Container
+| Docker API | AZF mapping |
+|---|---|
+| `POST /containers/create` | Records the pending Docker create request and prepares Function App configuration, including app settings, image reference, storage, and overlay metadata. |
+| `POST /containers/{id}/start` | Creates/updates the Function App as needed, invokes the HTTP-triggered bootstrap, and waits for reverse-agent registration. |
+| `POST /containers/{id}/stop` / `kill` | Uses the backend's Function App and reverse-agent control path; the platform invocation limit remains authoritative. |
+| `DELETE /containers/{id}` | Deletes sockerless-managed Function App resources and returns cleanup failures to the caller. |
+| `GET /containers/json` / `GET /containers/{id}/json` | Derives state from Azure Web Apps/Function App metadata, tags/app settings, invocation results, Azure Monitor logs, and reverse-agent state. |
 
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Creates a container from an image on the local daemon | Calls `WebApps.BeginCreateOrUpdate` + `PollUntilDone` to create a Function App |
-| Image | Must exist locally or be pullable | Set as `LinuxFxVersion: "DOCKER\|{imageRef}"` on the Function App |
-| Entrypoint/Cmd | Stored as container config | Wrapped as `AppCommandLine` (startup command) if reverse agent enabled |
-| Environment | Stored as container config | Converted to `AppSettings` (NameValuePair array) on the Function App |
-| Kind | N/A | `"functionapp,linux,container"` |
-| App settings | N/A | Auto-injected: `FUNCTIONS_EXTENSION_VERSION`, `WEBSITES_ENABLE_APP_SERVICE_STORAGE`, `AzureWebJobsStorage` |
-| Registry | N/A | Optional `DOCKER_REGISTRY_SERVER_URL` app setting |
-| Name | Container name | Function App name: `skls-{containerID[:12]}` |
-| Return value | Container ID | Container ID (locally generated) |
+## Exec, Attach, Archive, and Process APIs
 
-**AZF-specific details:**
-- Function App creation is synchronous (polls until done)
-- Function URL and Resource ID extracted from response
-- Agent env vars injected as app settings: `SOCKERLESS_AGENT_TOKEN`, `SOCKERLESS_CONTAINER_ID`, `SOCKERLESS_AGENT_CALLBACK_URL`
-
-### `POST /containers/{id}/start` — Start Container
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Starts the container process | HTTP POST to function URL (async invocation) |
-| Blocking | Returns immediately | Returns immediately; invoke runs in background goroutine |
-| Agent mode | N/A | Reverse agent only — waits for callback (60s timeout) |
-| Helper containers | N/A | Non-tail-dev-null commands auto-stop after 500ms |
-| Exit handling | Process exits naturally | Goroutine waits for HTTP response, then 30 min for agent disconnect |
-| Pre-create channel | N/A | `AgentRegistry.Prepare(id)` called BEFORE invoke |
-
-### `POST /containers/{id}/stop` — Stop Container
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Sends SIGTERM, then SIGKILL after timeout | **No-op** — returns 204 without doing anything |
-| Reason | Process can be signalled | Azure Functions run to completion |
-
-### `POST /containers/{id}/kill` — Kill Container
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Sends specified signal to process | Disconnects reverse agent (unblocks invoke goroutine) |
-| Effect | Process receives signal | Agent disconnected, container transitions to exited |
-
-### `DELETE /containers/{id}` — Remove Container
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Removes container and its filesystem | Calls `WebApps.Delete` (best-effort), removes local state |
-| Force | Kills running container first | Disconnects agent, stops container if running |
-
-### `POST /containers/{id}/restart` — Restart Container
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Stops then starts the container | **No-op** — returns 204 (functions run to completion) |
-
-## Exec
-
-Handled by core via the driver chain → Agent → Synthetic.
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| Execution | Runs in container namespace | Routed to reverse agent inside the Function App |
-| Availability | Anytime while running | Only while function is executing and agent is connected |
+`docker exec`, attach, archive, and process/file APIs require the reverse-agent session registered by `sockerless-azf-bootstrap`. If no session exists, the backend returns an explicit error. There is no per-exec HTTP invoke envelope.
 
 ## Images
 
-### `POST /images/create` — Pull Image
-
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| What happens | Downloads image layers from registry | Creates synthetic image (no download) |
-| Image config | Full manifest + layers | Synthetic: hash of reference as ID |
-
-### `POST /images/load` — Load Image
-
-**Not implemented.** Returns `NotImplementedError`.
+The backend uses real registry image references and ACR-backed overlay images. Pull/inspect operations resolve real image metadata through registry/cloud APIs. `POST /images/load` is supported only when the loaded image can be pushed to a configured registry path.
 
 ## Logs
 
-### `GET /containers/{id}/logs` — Container Logs
+`GET /containers/{id}/logs` queries Azure Monitor / Application Insights for Function App traces and emits Docker mux frames.
 
-| Aspect | Vanilla Docker | AZF Backend |
-|--------|---------------|-------------|
-| Source | Container stdout/stderr | Azure Monitor Log Analytics via `Logs.QueryWorkspace` |
-| Query | N/A | KQL: `AppTraces \| where AppRoleName == "{functionAppName}" \| order by TimeGenerated asc` |
-| Workspace | N/A | `SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE` (required for logs) |
-| Follow mode | Real-time streaming | **Not supported** (single snapshot fetch) |
-| Timestamps | From Docker daemon | From `TimeGenerated` column (RFC3339Nano) |
-| Stdout/stderr | Separate streams | All treated as stdout |
-| Format | Docker multiplexed stream | Docker multiplexed stream (8-byte header per line) |
-| Availability | Immediate | Depends on Application Insights ingestion delay |
+## Networks and Volumes
 
-## Networks, Volumes, Archive, System
+Azure Functions does not expose Docker bridge networking. Workspace sharing uses Azure Files through the shared Azure volume driver. Multi-container pod semantics are implemented through the supervisor-in-overlay pattern described in `specs/CLOUD_RESOURCE_MAPPING.md`.
 
-All handled by core with synthetic/in-memory implementations.
-
-| Feature | Vanilla Docker | AZF Backend |
-|---------|---------------|-------------|
-| Networks | Real Docker networks | In-memory tracking only |
-| Volumes | Real Docker volumes | In-memory tracking only |
-| Archive copy | Direct filesystem access | Via reverse agent or synthetic |
-| System info | Real daemon info | Static: Driver=azure-functions, OS=Azure Functions, 2 CPUs, 4GB RAM |
-
-## Pause/Unpause
-
-Not explicitly overridden — falls through to core defaults which set state but have no real effect.
-
-## CLI Command Mapping
-
-| `docker` CLI command | Vanilla Docker | AZF Backend |
-|---------------------|---------------|-------------|
-| `docker create <image>` | Creates container locally | `WebApps.BeginCreateOrUpdate` (Function App) |
-| `docker start <id>` | Starts local process | HTTP POST to function URL |
-| `docker stop <id>` | SIGTERM + SIGKILL | **No-op** |
-| `docker kill <id>` | Send signal | Disconnects reverse agent |
-| `docker rm <id>` | Remove container + fs | `WebApps.Delete` |
-| `docker logs <id>` | Read from daemon | Log Analytics `QueryWorkspace` |
-| `docker logs -f <id>` | Stream from daemon | **Not supported** |
-| `docker exec <id> <cmd>` | nsenter into container | Reverse agent relay |
-| `docker cp <src> <id>:<dst>` | Write to container layer | Reverse agent relay |
-| `docker pull <image>` | Download layers | Synthetic (metadata only) |
-| `docker network create` | Create real network | In-memory only |
-| `docker volume create` | Create real volume | In-memory only |
-| `docker restart <id>` | Stop + start | **No-op** |
-
-## Summary: What's Not Supported
+## Unsupported Docker Features
 
 | Feature | Reason |
-|---------|--------|
-| Container stop | Azure Functions run to completion |
-| Container restart | No meaningful restart for FaaS |
-| Log follow mode | Log Analytics queried as snapshot |
-| Image load from tar | AZF uses container registry images |
-| Real Docker networks | Functions are isolated |
-| Real Docker volumes | No persistent storage |
-| Forward agent | Functions cannot accept inbound connections (reverse only) |
-| Stderr separation | Application Insights traces are single-stream |
-| Port bindings | Functions use HTTP invoke, not TCP ports |
-| Resource customization at runtime | Resources set at Function App creation time |
+|---|---|
+| Pause/unpause | Azure Functions exposes no pause primitive. |
+| Host networking | Function Apps do not expose Docker host networking. |
+| Native Docker bridge L2 semantics | The platform does not expose a local Docker bridge. |
+| Long-running pods beyond the platform timeout | The Function App invocation/runtime limits are hard platform limits. |

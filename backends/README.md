@@ -22,15 +22,15 @@ Cloud backends override specific `api.Backend` methods (create, start, stop, kil
 | [core](core/) | `backend-core` | _(shared library)_ | _(n/a)_ |
 | [ecs](ecs/) | `backend-ecs` | ECS Fargate Tasks | Forward |
 | [lambda](lambda/) | `backend-lambda` | Lambda Functions | Reverse |
-| [cloudrun](cloudrun/) | `backend-cloudrun` | Cloud Run Jobs | Forward |
+| [cloudrun](cloudrun/) | `backend-cloudrun` | Cloud Run Jobs/Services | Reverse for Service-backed exec |
 | [cloudrun-functions](cloudrun-functions/) | `backend-gcf` | Cloud Run Functions | Reverse |
-| [aca](aca/) | `backend-aca` | Container Apps Jobs | Forward |
+| [aca](aca/) | `backend-aca` | Container Apps Jobs/Apps | Reverse for App-backed exec |
 | [azure-functions](azure-functions/) | `backend-azf` | Function Apps | Reverse |
 | [docker](docker/) | `backend-docker` | Docker Containers | _(native)_ |
 
-**Agent modes:**
-- **Forward** — Backend dials into the running container's agent after it starts
-- **Reverse** — Container's agent dials back to the backend via a callback URL (used by FaaS platforms where inbound connections are not possible)
+**Exec transport:**
+- **ECS** — Uses the configured ECS cloud access path, primarily ECS ExecuteCommand / SSM.
+- **Reverse agent** — Workload bootstrap dials back to the backend via `SOCKERLESS_CALLBACK_URL`; required for FaaS/Service/App exec paths.
 
 ## Building
 
@@ -66,7 +66,7 @@ Backends support two configuration methods:
 | Variable | Description |
 |----------|-------------|
 | `SOCKERLESS_CALLBACK_URL` | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | Custom cloud API endpoint (simulator mode) |
+| `SOCKERLESS_ENDPOINT_URL` | Custom cloud API endpoint, commonly a local simulator/cloud-slice endpoint. This changes routing only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_FETCH_IMAGE_CONFIG` | Set to `true` to fetch real image configs from Docker registries |
 
 ## Testing

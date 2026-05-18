@@ -1,6 +1,6 @@
 # simulator-azure-terraform-tests
 
-Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for a Terraform provider (currently the `azurestack` Azure Stack Hub provider; the sibling `azurerm` cloud provider drives the same ARM endpoints but requires more wiring for a non-Azure-public host) to provision and tear down resources.
+Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for real Terraform providers to provision and tear down resources.
 
 Resources covered (azurestack):
 - `azurestack_resource_group`
@@ -20,7 +20,7 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
 - `azurerm_storage_account` (azurerm-managed, used by Function App)
 
-NOT yet covered: Key Vault data-plane (keys/secrets — data-plane requires per-vault subdomain routing, separate sub-phase). Filed in BUGS.md if needed.
+Not yet covered: Key Vault data-plane (keys/secrets). Data-plane requires per-vault subdomain routing and should be filed in BUGS.md before implementation work starts.
 
 ## Running
 
@@ -53,7 +53,7 @@ The AzureRM Terraform provider and `azurestack` provider hardcode `https://` for
 1. `TestMain` generates a self-signed CA and server certificate
 2. Builds the Azure simulator binary and starts it with TLS on a free port
 3. Tests write Terraform configurations to a temp directory
-4. `terraform init` downloads the `azurestack` provider
+4. `terraform init` downloads the Terraform providers used by the test configuration
 5. `terraform apply -auto-approve` provisions resources against the simulator
 6. Test assertions verify the Terraform state
 7. `terraform destroy -auto-approve` tears down resources

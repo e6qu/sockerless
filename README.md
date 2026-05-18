@@ -19,14 +19,14 @@
 > Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (130 k+ lines of Go, 64 k lines of tests, three cloud simulators, eight runner-integration cells green) — and yet:
 >
 > - **Security is unaudited and questionable.** Tokens, auth flows, cert handling, and credential plumbing have not been reviewed by anyone qualified to sign off. Assume any production-style use is unsafe until proven otherwise.
-> - **The implementation is immature.** Edge cases routinely surface; "no-fakes, no-fallbacks" is an aspiration, not a guarantee. The cloud-API surface area is large enough that pockets of half-built behaviour exist.
+> - **The implementation is immature.** Edge cases routinely surface; the repo policy is no stubs, no fakes, and no silent fallbacks, but the cloud-API surface area is large enough that every unvalidated path should be treated cautiously until it has tool-backed evidence.
 > - **This is not prod-safe.** Do not place this in front of real workloads, real users, real customer data, or real money. If you need a hardened Docker-API → cloud bridge, this isn't it yet.
 >
 > **However** — opening issues, contributing fixes, or running it for your own testing/learning is all welcome. The repo is built in the open and reviews / pull requests / bug reports help it mature.
 
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
 
-> **2026-05-07 — 8/8 runner-integration cells GREEN.** GitHub × {ECS, Lambda, Cloud Run, GCF} and GitLab × the same four are all running the full probe + git-clone + go-build + arithmetic suite end-to-end against real cloud infrastructure. See [STATUS.md](STATUS.md) for live URLs. The closing milestone shipped Phase 123, the **storage backing driver abstraction** — `gcs-sync` replaces FUSE-on-object-store for shared workspaces. That driver pattern (cloud-agnostic core interface + per-cloud impls + operator-pluggable selection at config time + no-fallbacks discipline) is the proven precedent for a wider driver-generalization plan covering networking, DNS, and access — see [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) and [PLAN.md](PLAN.md) Phases 124-127.
+> **2026-05-18 — simulator-backed runner smoke coverage expanded.** PR #170 added FaaS runner lifecycle smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and Azure Functions, wired through `make faas-smoke-test-all` and CI. Remaining live-cloud validation is tracked as BUG-1075 and must be closed only with authenticated cloud runs. See [STATUS.md](STATUS.md), [docs/E2E_SMOKE_TESTS.md](docs/E2E_SMOKE_TESTS.md), and [manual-tests/05-live-validation-preflight.md](manual-tests/05-live-validation-preflight.md).
 
 ## Why
 
@@ -66,13 +66,13 @@ Each backend is a single binary that serves the Docker REST API v1.44 and manage
 |---------|-------|------|--------|
 | `ecs` | AWS | Container (Fargate) | `backends/ecs/` |
 | `lambda` | AWS | FaaS | `backends/lambda/` |
-| `cloudrun` | GCP | Container (Cloud Run Jobs) | `backends/cloudrun/` |
+| `cloudrun` | GCP | Container (Cloud Run Jobs/Services) | `backends/cloudrun/` |
 | `gcf` | GCP | FaaS (Cloud Functions 2nd gen) | `backends/cloudrun-functions/` |
-| `aca` | Azure | Container (Container Apps Jobs) | `backends/aca/` |
+| `aca` | Azure | Container (Container Apps Jobs/Apps) | `backends/aca/` |
 | `azf` | Azure | FaaS (Azure Functions) | `backends/azure-functions/` |
 | `docker` | — | Docker passthrough | `backends/docker/` |
 
-Container backends inject the agent as a sidecar. FaaS backends bake the agent into the function image and use reverse WebSocket connections.
+Backends use cloud-deployed agents for exec, attach, and archive operations. ECS uses SSM/agent transport, while Cloud Run Services, GCF, ACA Apps, Lambda, and Azure Functions use a bootstrap that dials back to the backend over a required reverse-agent WebSocket.
 
 ## Project Layout
 
@@ -84,9 +84,9 @@ backends/
   docker/                     Docker daemon passthrough
   ecs/                        AWS ECS Fargate
   lambda/                     AWS Lambda
-  cloudrun/                   GCP Cloud Run Jobs
+  cloudrun/                   GCP Cloud Run Jobs/Services
   cloudrun-functions/         GCP Cloud Functions
-  aca/                        Azure Container Apps Jobs
+  aca/                        Azure Container Apps Jobs/Apps
   azure-functions/            Azure Functions
 bleephub/                     Local GitHub server: runner service API + REST + GraphQL + smart-HTTP git + Apps/OAuth Apps (gh CLI compat)
 cmd/sockerless/               CLI tool (context management, server control)
@@ -497,7 +497,7 @@ The Makefile system was designed so adding a new backend / simulator / dispatche
 For a new backend specifically:
 
 1. Create `backends/<name>/` as a new Go module.
-2. Import `backends/core`, embed `core.BaseServer`, implement the `api.Backend` interface — only override methods that need cloud-specific logic.
+2. Import `backends/core`, embed `core.BaseServer`, implement the complete `api.Backend` interface, and override every operation that needs cloud-source-of-truth behavior. Cloud backends must not rely on core local-state lifecycle methods.
 3. Add an entry point `main.go` that creates and starts the server.
 4. Add the module to `go.work`.
 5. Add a Makefile (using the go-app.mk template) with `APP_NAME`, `GO_PACKAGE`, `UI_PACKAGE`, `DEFAULT_PORT`, `RUN_FLAGS`, `RUN_ENV`, `REPO_ROOT_REL := ../..`.

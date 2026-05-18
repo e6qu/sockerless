@@ -46,7 +46,7 @@ backend package suites.
 ## GitHub runner smokes
 
 These build per-cloud Docker images that run the official GitHub Actions runner
-against simulator-mode sockerless backends.
+against sockerless backends pointed at simulator endpoints.
 
 ```bash
 make e2e-github-ecs
@@ -70,7 +70,7 @@ make smoke-test-act-all
 ## GitLab runner smokes
 
 These run GitLab Runner or gitlab-ci-local style Docker executor flows against
-simulator-mode backends.
+simulator-endpoint backends.
 
 ```bash
 make e2e-gitlab-ecs

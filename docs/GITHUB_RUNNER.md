@@ -18,7 +18,7 @@ Sockerless Frontend (Docker API)
 Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
   │
   ▼
-Cloud Simulator (aws / gcp / azure)  ← simulator mode only
+Cloud simulator endpoint (aws / gcp / azure)
 ```
 
 ## Supported Backends
@@ -106,6 +106,6 @@ All output is captured to `tests/e2e-live-tests/logs/`:
 
 **act hangs on container pull**: Ensure the Docker frontend is reachable at the configured address. Check `DOCKER_HOST` is set correctly.
 
-**Workflow fails with "image not found"**: The backend must be able to pull container images. In simulator mode, image pulls are simulated. In live mode, ensure the cloud environment has internet access.
+**Workflow fails with "image not found"**: The backend must be able to resolve the same cloud-shaped image references it would use in production. With simulators, make sure the simulator registry/cloud slice is reachable through the configured endpoint and the required local images or registry mirrors exist. In live mode, ensure the cloud environment has registry access.
 
 **FaaS backend timeout**: FaaS backends have a callback-based execution model. Ensure `SOCKERLESS_CALLBACK_URL` is reachable from the backend process.

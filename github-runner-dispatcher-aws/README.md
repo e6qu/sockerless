@@ -8,10 +8,10 @@ targets. The dispatcher's only external dependency is
 `github.com/BurntSushi/toml`; everything else is in the standard
 library.
 
-This is the Phase 110a deliverable from
-[`PLAN.md`](../PLAN.md). Phase 113 productionises it (webhook ingress,
-GitHub App install model, warm pool); the laptop-foreground polling
-shape lands first.
+This is the laptop-foreground polling dispatcher. Production webhook
+ingress, GitHub App installation flow, and warm-pool management are
+separate follow-up work; this module intentionally stays a small
+poller/spawner around the Docker API.
 
 ## Usage
 
@@ -89,8 +89,8 @@ go test ./...
 
 ## Status
 
-Phase 110a — skeleton. 110b will:
-- Wire the dispatcher into the live ECR runner image via an updated
-  `config.toml` shipped with the live AWS bring-up doc.
-- Validate end-to-end against cell 1 (GitHub × ECS) + cell 2
-  (GitHub × Lambda) through the existing harness.
+The dispatcher is a functional foreground poller for laptop and harness
+use. It is intentionally stateless on disk: active work is recovered
+from Docker labels and GitHub runner records. Productionizing this into
+a webhook-driven service with a warm pool is out of scope for this
+module.

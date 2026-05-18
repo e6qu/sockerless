@@ -90,7 +90,7 @@ Now every `docker` command goes through Sockerless to ECS Fargate.
 docker pull alpine:latest
 ```
 
-This creates a synthetic image reference in Sockerless. The actual image must be accessible from ECS (e.g., public Docker Hub images or images in the ECR repository).
+This resolves the registry reference Sockerless will pass to ECS. The image must be accessible from ECS (for example, public Docker Hub images or images in the ECR repository).
 
 ### Run a container
 
@@ -158,10 +158,10 @@ docker container prune  # remove stopped containers
 ### Networks and volumes
 
 ```bash
-# Create a network (in-memory only — ECS uses VPC networking)
+# Create a network mapped to ECS/VPC networking primitives where configured
 docker network create mynet
 
-# Create a volume (in-memory — EFS integration placeholder)
+# Create a volume backed by the configured ECS/EFS storage path
 docker volume create myvol
 ```
 
@@ -199,19 +199,9 @@ aws ecs stop-task --cluster sockerless-example --task <task-arn>
                                                └────────────────────────┘
 ```
 
-## Agent Modes
+## Exec Transport
 
-### Forward Agent (default)
-
-The agent runs inside each ECS task. After the task reaches RUNNING state, Sockerless connects to the agent via the task's ENI IP on port 9111. This requires the task security group to allow inbound on port 9111.
-
-### Reverse Agent
-
-Set `SOCKERLESS_CALLBACK_URL` to enable. The agent inside the task connects back to Sockerless. This is useful when the backend is not in the same VPC or when tasks run in private subnets without public IPs.
-
-```bash
-export SOCKERLESS_CALLBACK_URL=http://<backend-host>:3375
-```
+ECS exec/attach uses the configured ECS cloud access path, primarily ECS ExecuteCommand / SSM. The task role, execution role, and network path to SSM endpoints must be in place before `docker exec` can work.
 
 ## Estimated Costs
 

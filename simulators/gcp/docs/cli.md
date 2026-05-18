@@ -7,11 +7,11 @@
 
 ## Setup
 
-The gcloud CLI supports per-service endpoint overrides via `CLOUDSDK_API_ENDPOINT_OVERRIDES_*` environment variables. Set up an isolated gcloud config and a fake auth token:
+The gcloud CLI supports per-service endpoint overrides via `CLOUDSDK_API_ENDPOINT_OVERRIDES_*` environment variables. Set up an isolated gcloud config and a local-test auth token:
 
 ```sh
 export CLOUDSDK_CONFIG=/tmp/gcloud-sim-config
-export CLOUDSDK_AUTH_ACCESS_TOKEN=fake-gcp-token
+export CLOUDSDK_AUTH_ACCESS_TOKEN=local-test-gcp-token
 export CLOUDSDK_CORE_PROJECT=my-project
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 ```
@@ -24,6 +24,7 @@ export CLOUDSDK_API_ENDPOINT_OVERRIDES_LOGGING=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
 ```
 
 Note the trailing `/` — gcloud appends API paths directly to the override URL.
@@ -82,6 +83,25 @@ gcloud compute networks vpc-access connectors list \
   --format=json
 ```
 
+### Artifact Registry
+
+```sh
+# Create a Docker Hub remote repository
+gcloud artifacts repositories create docker-hub \
+  --location=us-central1 \
+  --repository-format=docker \
+  --mode=remote-repository \
+  --remote-docker-repo=docker-hub \
+  --disable-remote-validation \
+  --format=json
+
+# List cached Docker images through the Artifact Registry API surface
+gcloud artifacts docker images list \
+  us-central1-docker.pkg.dev/my-project/docker-hub \
+  --include-tags \
+  --format=json
+```
+
 ### Direct HTTP (for services without CLI endpoint overrides)
 
 Some services work better with direct HTTP calls since gcloud doesn't support endpoint overrides for all APIs:
@@ -89,7 +109,7 @@ Some services work better with direct HTTP calls since gcloud doesn't support en
 ```sh
 # Cloud Run Jobs — Create a job
 curl -X POST http://localhost:4567/v2/projects/my-project/locations/us-central1/jobs?jobId=my-job \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: application/json" \
   -d '{
     "template": {
@@ -101,11 +121,11 @@ curl -X POST http://localhost:4567/v2/projects/my-project/locations/us-central1/
 
 # Cloud Run Jobs — Get a job
 curl http://localhost:4567/v2/projects/my-project/locations/us-central1/jobs/my-job \
-  -H "Authorization: Bearer fake-gcp-token"
+  -H "Authorization: Bearer local-test-gcp-token"
 
 # Cloud Functions — Create a function
 curl -X POST "http://localhost:4567/v2/projects/my-project/locations/us-central1/functions?functionId=my-func" \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: application/json" \
   -d '{
     "buildConfig": {"runtime": "docker"},
@@ -114,25 +134,25 @@ curl -X POST "http://localhost:4567/v2/projects/my-project/locations/us-central1
 
 # GCS — Create a bucket
 curl -X POST http://localhost:4567/storage/v1/b \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-bucket"}'
 
 # GCS — Upload an object
 curl -X POST "http://localhost:4567/upload/storage/v1/b/my-bucket/o?name=hello.txt" \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: text/plain" \
   -d 'hello world'
 
 # IAM — Create a service account
 curl -X POST http://localhost:4567/v1/projects/my-project/serviceAccounts \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: application/json" \
   -d '{"accountId": "my-sa", "serviceAccount": {"displayName": "My SA"}}'
 
 # Compute — Create a network
 curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/networks \
-  -H "Authorization: Bearer fake-gcp-token" \
+  -H "Authorization: Bearer local-test-gcp-token" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-network", "autoCreateSubnetworks": false}'
 ```
@@ -148,7 +168,7 @@ curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/network
 | Cloud Functions | `gcloud functions` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS` | Deploy may require direct HTTP |
 | Cloud Run Jobs | — | — | Use direct HTTP |
 | GCS | — | — | Use direct HTTP or `STORAGE_EMULATOR_HOST` |
-| Artifact Registry | — | — | Use direct HTTP or Docker CLI |
+| Artifact Registry | `gcloud artifacts` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY` | Repository CRUD and Docker image listing |
 | Compute | — | — | Use direct HTTP |
 | IAM | — | — | Use direct HTTP |
 

@@ -1,74 +1,47 @@
-# Lambda exec via agent-as-handler
+# Lambda reverse-agent exec design
 
-## Problem
+Lambda-backed containers support `docker exec` through the same mandatory reverse-agent model used by the other FaaS-style backends. There is no invoke-per-exec path and no local simulator-only agent path for cloud backends.
 
-Lambda-backed containers in sockerless don't support `docker exec` in live mode. `ExecStart` in `backends/lambda/backend_delegates.go` delegates to `BaseServer.ExecStart`, which in simulator mode targets a host-side agent launched by the E2E harness. In live AWS, the Lambda function is the user's image booting up and running its entrypoint inside the Lambda runtime — there is no host-side process to attach to, and AWS provides no equivalent of ECS ExecuteCommand / SSM for Lambda.
+## Runtime shape
 
-For CI runner use (GitHub Actions, GitLab Runner), this is limiting: runners rely on exec to inject per-step scripts into a long-running helper container. Without exec, Lambda can only run single-shot jobs via the container's CMD.
+The Lambda backend overlay-wraps the requested workload image before creating the function. The overlay copies the Lambda bootstrap into `/opt/sockerless`, sets it as the container entrypoint, and preserves the user's original entrypoint, argv, working directory, and environment through `SOCKERLESS_USER_*` variables.
 
-## Design
+`SOCKERLESS_CALLBACK_URL` and `SOCKERLESS_CONTAINER_ID` are required. Backend startup fails if the callback URL is missing because the Lambda backend cannot serve exec without an in-function reverse agent.
 
-Embed a reverse agent as a co-process inside the Lambda invocation, piggybacking on the existing `agent/cmd/sockerless-agent` binary.
+## Bootstrap
 
-### Lambda container image composition
+`agent/cmd/sockerless-lambda-bootstrap` is the function entrypoint. It:
 
-The sockerless Lambda backend produces a layered image on top of the user's requested image:
+- Connects to the Lambda Runtime API through `$AWS_LAMBDA_RUNTIME_API`.
+- Materializes the workload environment from the preserved `SOCKERLESS_USER_*` values.
+- Starts the reverse-agent WebSocket connection back to the backend.
+- Runs invocation payloads through the real workload command path.
+- Reports `lifetime_expired` before the Lambda deadline so later `docker exec` calls fail with the FaaS lifetime guidance error instead of silently reinvoking.
+- Annotates ENOSPC failures with the shared agent helper and returns the real exit code.
 
-```dockerfile
-FROM <user-image>                       # e.g. node:20
-COPY /opt/sockerless/sockerless-agent   /opt/sockerless/
-COPY /opt/sockerless/sockerless-lambda-bootstrap /opt/sockerless/
-ENTRYPOINT ["/opt/sockerless/sockerless-lambda-bootstrap"]
-```
+## Exec flow
 
-The overlay is built by `backends/lambda/image_inject.go` at `ContainerCreate` time and pushed to ECR (reusing `image_resolve.go`'s push path) before the Lambda function is created. The user's original `ENTRYPOINT` / `CMD` are captured in env vars (`SOCKERLESS_USER_ENTRYPOINT`, `SOCKERLESS_USER_CMD`) so the bootstrap can exec them.
+1. A Docker client creates and starts the Lambda-backed container.
+2. The Lambda invocation starts the overlay bootstrap.
+3. The bootstrap dials `SOCKERLESS_CALLBACK_URL` and registers under `SOCKERLESS_CONTAINER_ID`.
+4. `docker exec` reaches the Lambda backend's reverse-agent exec driver.
+5. The backend sends the exec request over the registered WebSocket.
+6. The bootstrap runs the command inside the Lambda workload process environment and returns stdout, stderr, stdin handling, working directory, environment, and exit code through the exec envelope.
 
-### Bootstrap binary
+If the reverse agent is not connected by the configured bootstrap timeout, `ContainerStart` fails loudly. Later exec/archive operations also fail loudly when no agent session exists.
 
-`agent/cmd/sockerless-lambda-bootstrap` is the Lambda function's entrypoint. Each invocation:
+## Stop and lifetime
 
-1. Reads `SOCKERLESS_CALLBACK_URL`, `SOCKERLESS_CONTAINER_ID`, `SOCKERLESS_USER_ENTRYPOINT`, `SOCKERLESS_USER_CMD` from env.
-2. Registers with the Lambda Runtime API (`$AWS_LAMBDA_RUNTIME_API`) — polls `/next`, returns control on `/response` or `/error`.
-3. On `/next`, spawns two co-processes:
-   - The user's entrypoint + cmd as a subprocess. Stdout/stderr captured to CloudWatch via Lambda's built-in plumbing.
-   - `sockerless-agent -callback $CALLBACK_URL -session $CONTAINER_ID -keep-alive` connecting back to the sockerless backend. The agent opens a WebSocket and waits for multiplexed exec requests.
-4. The bootstrap blocks until **either**:
-   - The user's subprocess exits → bootstrap sends `response` to Runtime API with exit code, then exits.
-   - The backend calls `ContainerStop` / `ContainerKill` → backend's disconnect logic closes the WebSocket → agent observes disconnect → agent returns → bootstrap SIGTERMs the subprocess → sends `response` with the stop exit code (137).
-5. After `response` is sent, Lambda freezes the sandbox; on the next invocation everything re-initializes.
+Lambda's maximum invocation duration is a hard platform limit. Sockerless does not checkpoint, reinvoke, or transparently migrate the pod. When the bootstrap reports `lifetime_expired`, the backend marks the container and subsequent exec attempts return the operator-guidance error.
 
-### Exec flow
+`ContainerStop` and `ContainerRemove` clean up the cloud function and any created cloud resources. Cleanup failures propagate to Docker clients.
 
-1. Client calls `docker exec <container> <cmd>`.
-2. HTTP handler reaches `Server.ExecStart` in the Lambda backend.
-3. Backend looks up the reverse-agent connection registered by `SOCKERLESS_CONTAINER_ID` in a new in-process registry on `BaseServer`.
-4. Sends an exec request over the WebSocket.
-5. Agent (inside the Lambda container) runs the exec against the subprocess namespace via `nsenter` / `ptrace`-based attach; multiplexes stdout/stderr/stdin back over the WebSocket.
-6. HTTP response returns the exec result to the Docker client.
+## Validation
 
-### `ContainerStop` termination path
+Current coverage includes:
 
-Builds on P86-004a. `ContainerStop` → `disconnectReverseAgent(containerID)` → registry closes the WebSocket → bootstrap returns → Lambda invocation ends. This is the only path that cuts an in-flight invocation short; `UpdateFunctionConfiguration(Timeout=1)` only protects against lingering retries.
+- Lambda backend simulator integration tests for container lifecycle and exec.
+- Shared FaaS smoke coverage through `make backends/lambda/test-faas-smoke`.
+- Aggregate FaaS smoke coverage through `make faas-smoke-test-all`, which CI runs after backend package tests.
 
-## What this PR delivers
-
-- `docs/LAMBDA_EXEC_DESIGN.md` — this doc.
-- `agent/cmd/sockerless-lambda-bootstrap/main.go` — compile-clean skeleton with the Runtime API stub and subprocess-spawn scaffolding. Full integration with the Lambda Runtime API will land in a follow-up PR during the AWS track, since it requires a real `$AWS_LAMBDA_RUNTIME_API` endpoint to exercise.
-- `backends/lambda/config.go` — `CallbackURL` field + env wiring.
-- `backends/lambda/image_inject.go` — stub for building the layered image, invoked by `image_resolve.go`. Unit-testable signature.
-
-## What stays deferred to AWS track
-
-- End-to-end test against real Lambda: build real bootstrap, publish to ECR, invoke, exec through sockerless.
-- Measurement of cold-start penalty introduced by the overlay layer.
-- Bootstrap support for tty / stdin exec sessions (non-interactive first).
-- Security review of the Runtime API callback path — the agent WebSocket currently has no mutual auth; a token must be configured before exposing the callback URL publicly.
-- IAM policy for the Lambda execution role (needs `logs:*`, optionally VPC).
-
-## Alternatives considered
-
-**External sidecar** — run exec through a separate service outside Lambda. Rejected: Lambda's isolation model means the sidecar can't reach the function's namespace.
-
-**Replace Lambda container entrypoint with agent directly** — the agent would need to know about Lambda Runtime API itself, duplicating bootstrap logic. Keeping agent generic and bootstrap Lambda-specific is cleaner.
-
-**`docker attach` instead of `docker exec`** — attach streams stdio of the original entrypoint. Works for some CI flows but doesn't let runners inject new commands mid-job. Exec is required.
+Live-cloud validation remains tracked separately under BUG-1075 and must be closed only with evidence from real AWS credentials and cloud resources.

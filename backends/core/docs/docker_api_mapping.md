@@ -4,7 +4,7 @@ The core module provides the shared Docker-compatible API surface that all non-D
 
 ## Architecture
 
-Cloud backends embed `core.BaseServer` and override only the handlers that need cloud-specific logic. Everything else is handled by core's default implementations.
+Cloud backends embed `core.BaseServer` for routing, shared types, driver plumbing, and helper behavior, but every cloud-source-of-truth operation must be implemented by the backend. Core defaults are for non-cloud/default behavior and shared handler dispatch; they are not a fallback for cloud lifecycle state.
 
 ### Driver Set
 
@@ -35,7 +35,7 @@ These handlers are used when a backend does not provide an override.
 | What happens | Creates container via Docker daemon | Creates container metadata in `Store.Containers` |
 | Image config | Resolved from local image | Merged from `Store.Images` (Env, Cmd, Entrypoint, WorkingDir) |
 | Build context | From `docker build` cache | Loads `BuildContexts` files into `StagingDirs` for COPY support |
-| Network | Real Docker network | Assigns synthetic IP from bridge IPAM (172.17.0.x) |
+| Network | Real Docker network | Uses the active `NetworkDriver` to assign non-cloud test metadata; cloud backends use their own cloud network drivers |
 | State | `created` | `created` (identical) |
 
 ### `POST /containers/{id}/start` — Start Container
@@ -72,7 +72,7 @@ These are always handled by core, regardless of backend.
 
 ### `GET /containers/{id}` — Inspect Container
 
-Returns full `Container` object from `Store.Containers`.
+Returns the full `Container` object from `Store.Containers` for core default/non-cloud state. Cloud backends must override container queries and derive state from cloud APIs.
 
 ### `GET /containers` — List Containers
 
@@ -113,24 +113,24 @@ Creates `ExecInstance` with command, env, working directory. Container must be r
 
 | Aspect | Vanilla Docker | Core Default |
 |--------|---------------|--------------|
-| Download | Real image layers | Synthetic (hash of reference as ID) |
-| Config | From registry manifest | Optional real config via `SOCKERLESS_FETCH_IMAGE_CONFIG=true` |
+| Download | Real image layers | Backend-specific registry/cloud resolution |
+| Config | From registry manifest | Real config when the backend implements image metadata resolution; otherwise explicit unsupported-operation errors |
 | Pull guard | N/A | Skips if image already exists (prevents overwriting built images) |
 | Aliases | By reference | Stored under: imageID, full ref, short name, docker.io/library/ variants |
 
 ### `POST /images/load` — Load Image (Overridable)
 
-Discards tar body, creates synthetic image tagged `loaded:latest`.
+Cloud backends override this when they can push the loaded tar into a configured cloud registry path. A backend that cannot preserve the image in a real registry must return an explicit unsupported-operation error.
 
 ### `POST /images/build` — Build Image
 
 | Aspect | Vanilla Docker | Core Default |
 |--------|---------------|--------------|
 | Dockerfile | Full support | Parses: FROM, COPY, ADD, ENV, CMD, ENTRYPOINT, WORKDIR, ARG, LABEL, EXPOSE, USER |
-| RUN | Executed | **No-op** (echoed in build output) |
+| RUN | Executed | Not executed by the core parser; backends that require real builds must route to a real builder or return an explicit unsupported-operation error |
 | Multi-stage | Full support | Only final stage kept |
 | COPY files | From build context | Staged via `prepareBuildContext()` → injected into container via `BuildContexts` |
-| Output | Image layers | Synthetic image with config from Dockerfile |
+| Output | Image layers | Image metadata assembled from the Dockerfile parse result |
 
 ### Other Image Operations
 
@@ -168,7 +168,7 @@ Discards tar body, creates synthetic image tagged `loaded:latest`.
 
 | Operation | Vanilla Docker | Core Default |
 |-----------|---------------|--------------|
-| Top | `ps` inside container | Synthetic process list (Path + Args) |
+| Top | `ps` inside container | Requires a backend process/agent implementation |
 | Stats | Real cgroup stats | Zero-value stats in Docker stats JSON format |
 | Rename | Updates container name | Updates `ContainerNames` mapping |
 | Pause (overridable) | Freezes cgroups | Sets `Paused=true` (state flag only) |
@@ -204,14 +204,14 @@ Returns `BackendDescriptor` with backend-specific fields (name, driver, OS, CPU,
 | `docker exec` | `ExecDriver.Exec()` |
 | `docker cp to` | `FilesystemDriver.PutArchive()` |
 | `docker cp from` | `FilesystemDriver.GetArchive()` |
-| `docker pull` | Synthetic image creation |
+| `docker pull` | Backend-specific registry/cloud resolution |
 | `docker build` | Dockerfile parser (RUN no-op) |
-| `docker load` | Synthetic image tagged `loaded:latest` |
-| `docker network *` | In-memory with synthetic IPAM |
+| `docker load` | Backend-specific registry load/push or explicit unsupported-operation error |
+| `docker network *` | Core bookkeeping; cloud backends override with cloud network drivers |
 | `docker volume *` | In-memory with temp dirs |
 | `docker wait` | Block on WaitChs channel |
-| `docker top` | Synthetic process list (Path + Args) |
-| `docker stats` | Zero-value stats |
+| `docker top` | Requires backend process/agent implementation |
+| `docker stats` | Requires backend metrics implementation |
 | `docker pause` | State flag only |
 | `docker system df` | Calculate from root paths |
 
@@ -219,9 +219,9 @@ Returns `BackendDescriptor` with backend-specific fields (name, driver, OS, CPU,
 
 | Feature | Reason |
 |---------|--------|
-| Real image pulling | Synthetic (backends that need real pulls override ImagePull) |
+| Real image pulling | Backend-specific registry/cloud implementation required |
 | Dockerfile RUN | Shell commands not executed during build |
-| Real networking | All networks are in-memory with fake IPs |
-| Network disconnect | No-op (state not updated) |
-| Real events | Empty event stream |
+| Real networking | Backend-specific cloud network driver required |
+| Network disconnect | Backend-specific cloud network driver required |
+| Real events | Backend event implementation required |
 | Signal delivery | Cloud backends handle via cloud APIs |

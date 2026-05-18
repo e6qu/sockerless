@@ -128,17 +128,17 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Actions OIDC.** `GET /token` issues an RS256-signed JWT with the canonical claim set (sub, aud, repository, repository_owner, ref, run_id, run_number, sha, actor, environment, jti, exp). `GET /.well-known/jwks` + `/.well-known/openid-configuration` for cloud-IdP trust verification.
 
-**Users API.** Public users, my-user, keys CRUD, gpg_keys (stub), emails, followers / following (stub), follow / unfollow.
+**Users API.** Public users, my-user, keys CRUD, gpg_keys compatibility surface, emails, followers / following compatibility surface, follow / unfollow.
 
 **Pages.** Site CRUD + builds shape.
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
 
-**Orgs.** Create, list memberships, members, audit log (empty stub), teams, IdP-group sync (stub).
+**Orgs.** Create, list memberships, members, audit log shape-only endpoint, teams, IdP-group sync compatibility surface.
 
-**Marketplace.** Listing plans + accounts (stub).
+**Marketplace.** Listing plans + accounts compatibility surface.
 
-**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + check-run/check-suite types + Issue.projectItems (empty ProjectV2 stub for `gh issue view` compatibility) + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState).
+**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + check-run/check-suite types + Issue.projectItems empty ProjectV2 compatibility connection for `gh issue view` + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState).
 
 ### Persistence
 
@@ -169,7 +169,7 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - V2 broker flow (uses legacy V1 pipelines paths).
 - Reusable workflows (`uses: ./.github/workflows/`).
 - Composite actions.
-- Full Projects v2 (only an empty stub for `gh issue view` compatibility).
+- Full Projects v2 (only the empty `Issue.projectItems` compatibility connection needed by `gh issue view`).
 - SAML SSO + SCIM provisioning.
 - Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.

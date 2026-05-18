@@ -299,7 +299,7 @@ Headers:
 - Records the image reference in the internal state store
 - Does NOT actually pull the image locally — the cloud backend will pull it when a container is created
 - Validates that the image exists in the registry (HEAD request to registry API) if credentials are provided
-- The progress output can be synthetic (immediate "Pull complete") since no actual download occurs locally
+- Progress output reflects registry/cloud resolution work where the backend can observe it; backends must not report fabricated layer metadata as if a local pull occurred
 
 #### `GET /images/{name}/json` — Inspect Image
 
@@ -423,7 +423,7 @@ This is the most complex endpoint. Query parameter: `name` (optional container n
 - `NetworkingConfig.*`
 - `AttachStdin`, `AttachStdout`, `AttachStderr`, `OpenStdin`, `StdinOnce`
 
-**Fields that can be silently ignored** (not relevant to cloud backends):
+**Fields that can be preserved as inspect metadata only** (not relevant to cloud backends unless the backend explicitly supports them):
 - `MacAddress` (v1.44 location: inside `EndpointsConfig`)
 - `CgroupParent`, `DeviceCgroupRules`, `PidMode`, `UTSMode`
 - `SecurityOpt`, `CapAdd`, `CapDrop`, `UsernsMode`
@@ -1067,19 +1067,19 @@ The agent is a **standalone** binary that runs inside cloud containers. It is co
 | Property | Value |
 |----------|-------|
 | Role | WebSocket server/client inside the cloud container |
-| Port | Listens on `:9111` (forward mode) or dials back to backend (reverse mode) |
+| Port | Dials back to backend in reverse mode; ECS uses its cloud access path for exec |
 | Auth | Token-based (`SOCKERLESS_AGENT_TOKEN`) |
 | Lifetime | Runs for the container's lifetime as PID 1 (wrapping the user process) or as a sidecar |
 | Binary size | Static binary, ~5-10 MB |
 
-**Two agent modes:**
+**Exec transport modes:**
 
 | Mode | Direction | Used By |
 |---|---|---|
-| **Forward agent** | Backend connects TO agent at `{container_IP}:9111` | ECS, Cloud Run, ACA |
-| **Reverse agent** | Agent dials back to backend via `SOCKERLESS_CALLBACK_URL` | Lambda, GCF, Azure Functions |
+| **ECS SSM / cloud access path** | Backend bridges Docker exec through ECS cloud APIs | ECS |
+| **Reverse agent** | Agent dials back to backend via `SOCKERLESS_CALLBACK_URL` | Cloud Run Services, ACA Apps, Lambda, GCF, Azure Functions |
 
-Forward agent is used when the backend can reach the container's network (VPC, VNet). Reverse agent is used for FaaS backends where the function cannot accept inbound connections.
+Reverse agent is mandatory for FaaS/Service/App backends because those platforms do not expose a Docker exec endpoint. Missing callback registration is a startup/exec error, not a fallback trigger.
 
 **When the agent is NOT needed:**
 - Docker backend: uses Docker's native exec/attach
@@ -1106,7 +1106,7 @@ The backend uses a **driver set** for dispatching exec, filesystem, streaming, a
 - **Cloud backends**: Agent drivers route to forward or reverse agent connections
 - **Docker backend**: Does not use drivers (direct Docker SDK passthrough)
 
-When no agent is connected, operations return errors. In simulator mode with `SOCKERLESS_AUTO_AGENT_BIN`, the backend auto-spawns a local agent subprocess that enables real command execution.
+When no agent is connected, cloud backend operations that require an agent return errors. Cloud backends never auto-spawn local agents; the only accepted execution path is the cloud-deployed forward or reverse agent for that backend. The Docker passthrough backend remains the only backend allowed to use local auto-agent helpers.
 
 ### 6.7 Dependency Flow
 
@@ -1406,59 +1406,59 @@ These support long-running containers with logging. Best suited for CI runner wo
 
 | Docker Concept | ECS Mapping |
 |---|---|
-| Container create | `RegisterTaskDefinition` (stores config + registers task def) |
-| Container start | `RunTask` (Fargate launch type); polls until RUNNING; extracts agent address from ENI IP |
+| Container create | `PendingCreates` until start; task definition materialized from cloud-backed config |
+| Container start | `RunTask` (Fargate launch type); polls until RUNNING |
 | Container stop | `StopTask` |
 | Container kill | `StopTask` (ECS has no SIGKILL; tasks get 30s SIGTERM then forced stop) |
 | Container remove | `StopTask` (if running) + `DeregisterTaskDefinition` |
-| Container inspect | Local state (not `DescribeTasks` — state stored at create/start time) |
-| Container list | Local state with label/status filtering |
+| Container inspect | ECS task/task-definition/tags via cloud state provider |
+| Container list | ECS `ListTasks` / `DescribeTasks` filtered by tags/labels |
 | Container logs | CloudWatch Logs (`GetLogEvents` / `FilterLogEvents`) |
-| Exec / Attach | Via forward agent (agent address from task's ENI private IP on port 9111) |
+| Exec / Attach | ECS ExecuteCommand / configured cloud access path |
 | Image pull | Records ref in state; ECS pulls from ECR / Docker Hub at `RunTask` time |
-| Network | In-memory virtual IPs; tasks share VPC subnets from infrastructure |
-| Volume | In-memory metadata; EFS mounts configured at infrastructure level |
+| Network | VPC Security Groups + Cloud Map |
+| Volume | EFS-backed volumes where configured |
 | Health check | Agent-executed health checks reported to backend |
 
-**Agent networking:** Fargate tasks get private IPs in the configured VPC. The frontend must be able to reach these IPs (same VPC, VPC peering, or transit gateway). Agent listens on port 9111 — security group must allow inbound from frontend.
+**Exec networking:** Fargate tasks must have ECS ExecuteCommand prerequisites configured (SSM permissions, task platform support, and network egress to SSM endpoints).
 
 **Startup latency:** 10-45 seconds (image pull + Fargate capacity allocation).
 
-#### Google Cloud Run (Jobs)
+#### Google Cloud Run (Jobs/Services)
 
 | Docker Concept | Cloud Run Mapping |
 |---|---|
-| Container create | Registers in local store (deferred job creation) |
-| Container start | `CreateJob` + `RunJob` — job is created at start time to support clean restarts |
+| Container create | `PendingCreates` until start |
+| Container start | `CreateJob` + `RunJob` for one-shot containers, or Cloud Run Service create/update for runner workloads |
 | Container stop/kill | `CancelExecution` |
-| Container remove | `DeleteJob` |
-| Container inspect/list | Local state |
+| Container remove | `DeleteJob` or `DeleteService` |
+| Container inspect/list | Cloud Run Jobs/Services queried by labels |
 | Container logs | Cloud Logging via Log Admin API |
-| Exec / Attach | Via forward agent (polls for RUNNING, extracts agent address) |
+| Exec / Attach | Reverse agent WebSocket for Service-backed workloads |
 | Image pull | Records ref; Cloud Run pulls from Artifact Registry/GCR/Docker Hub at job creation |
-| Network | In-memory virtual IPs; jobs share VPC from infrastructure |
-| Volume | In-memory metadata |
+| Network | Cloud DNS / Service materialization and VPC connector where configured |
+| Volume | GCS-backed storage or memory tmpfs depending on backing |
 
-Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
+Requires `SOCKERLESS_CALLBACK_URL` for the Service-backed reverse-agent path.
 
 **Startup latency:** 5-30 seconds.
 
-#### Azure Container Apps (Jobs)
+#### Azure Container Apps (Jobs/Apps)
 
 | Docker Concept | ACA Mapping |
 |---|---|
-| Container create | Registers in local store |
-| Container start | `BeginCreateOrUpdate` (Job) + `BeginStart` (Execution) |
+| Container create | `PendingCreates` until start |
+| Container start | Job create/start for one-shot containers, or ACA App create/update for runner workloads |
 | Container stop/kill | `BeginStopExecution` |
 | Container remove | `BeginDelete` (Job) |
-| Container inspect/list | Local state |
+| Container inspect/list | ACA Jobs/Apps queried by tags |
 | Container logs | Azure Monitor Log Analytics (`QueryWorkspace`) |
-| Exec / Attach | Via forward agent (polls for RUNNING, extracts agent address from VNet IP) |
+| Exec / Attach | Reverse agent WebSocket for App-backed workloads |
 | Image pull | Records ref; ACA pulls from ACR/Docker Hub at job creation |
-| Network | In-memory virtual IPs; jobs share ACA Environment VNet from infrastructure |
-| Volume | In-memory metadata |
+| Network | ACA managed environment networking + Private DNS |
+| Volume | Azure Files-backed volumes where configured |
 
-Also supports **reverse agent** via `SOCKERLESS_CALLBACK_URL`.
+Requires `SOCKERLESS_CALLBACK_URL` for the App-backed reverse-agent path.
 
 **Startup latency:** 10-60 seconds.
 
@@ -1545,11 +1545,11 @@ The Docker backend is the **reference implementation** for testing. Running the 
 | Health checks | Yes | Yes | Yes | Yes | No | No | No |
 | Docker build | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Archive (docker cp) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Agent mode | N/A | Forward | Forward | Forward | Reverse | Reverse | Reverse |
+| Agent mode | N/A | SSM/cloud access | Reverse | Reverse | Reverse | Reverse | Reverse |
 | Agent needed | No | Yes | Yes | Yes | Yes | Yes | Yes |
 | Startup latency | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
 
-\* Via forward agent (backend connects to agent inside container)
+\* ECS uses ExecuteCommand / cloud access; Cloud Run and ACA use reverse-agent Service/App paths.
 \*\* Via reverse agent (agent inside function dials back to backend)
 
 ---
@@ -1576,7 +1576,7 @@ Both containers mount the same volume for data sharing. This is critical for the
 
 ### 10.3 Implementation per Backend
 
-> **Note:** In the current implementation, volume operations are handled **in-memory** by `backends/core/`. Cloud backends store volume metadata in local state and apply volume mounts when launching cloud tasks. The cloud-native storage provisioning described below is done via Terraform infrastructure modules (`terraform/modules/`), not dynamically by the backend at runtime.
+> **Note:** Cloud backends map Docker volumes to cloud storage primitives through their storage drivers. The cloud resource or configured storage backing is the source of truth; core bookkeeping is not authoritative for cloud state.
 
 #### AWS ECS + EFS
 - Pre-provisioned EFS filesystem referenced in task definitions
@@ -1613,18 +1613,18 @@ CI runners create per-job networks so that:
 
 ### 11.2 Strategy
 
-> **Note:** In the current implementation, network operations are handled **in-memory** by `backends/core/`. Networks are stored as local state with virtual IP assignments. Cloud backends do not dynamically create Security Groups, Cloud Map namespaces, or Cloud DNS zones at runtime. Cloud networking is configured at the infrastructure level via Terraform modules.
+> **Note:** Cloud backends map Docker networks to cloud networking and discovery primitives where the cloud exposes them. `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for the per-backend mapping. Backends that cannot provide a Docker network primitive fail explicitly or expose only the cloud-supported subset.
 
 | Cloud Backend | Network Emulation |
 |---|---|
-| All backends | In-memory virtual IP assignment from 172.18.0.0/16 subnet |
-| AWS ECS | Tasks share VPC subnets configured at infrastructure level |
-| Google Cloud Run | Jobs share VPC configured at infrastructure level |
-| Azure Container Apps | Jobs share ACA Environment VNet configured at infrastructure level |
+| AWS ECS | VPC security groups + Cloud Map/private DNS when configured |
+| Google Cloud Run | Cloud Run Service materialization + Cloud DNS/VPC connector where configured |
+| Azure Container Apps | ACA managed environment + Private DNS/NSG where configured |
+| Lambda / AZF | No native Docker bridge; service-mesh/private-DNS options only where configured |
 
 ### 11.3 IP Address Assignment
 
-Sockerless assigns virtual IPs from a private subnet (e.g., `172.18.0.0/16`) to each container on a network. These IPs are returned in inspect responses. Actual cloud networking may use different IPs, but the sockerless-level IPs provide the correct inspect output for CI runners.
+Sockerless reports network metadata from the backend's cloud mapping. Cloud-assigned addresses, service DNS names, or explicit unsupported fields are preferred over invented Docker-bridge addresses.
 
 For DNS-based service discovery (which is what CI runners actually rely on), the container aliases (e.g., `postgres`, `redis`) are registered in the cloud's DNS service so they resolve to the actual cloud IPs.
 
@@ -1632,10 +1632,10 @@ For DNS-based service discovery (which is what CI runners actually rely on), the
 
 | Docker Operation | Sockerless Action |
 |---|---|
-| `POST /networks/create` | Create network in local state; allocate IPAM subnet |
-| Container create with `NetworkMode`/`EndpointsConfig` | Assign virtual IP from subnet, store aliases |
-| `POST /networks/{id}/disconnect` | Remove container from network state |
-| `DELETE /networks/{id}` | Remove from local state |
+| `POST /networks/create` | Create or record the backend's cloud network/discovery resource |
+| Container create with `NetworkMode`/`EndpointsConfig` | Record aliases and attach to the backend's cloud network/discovery mapping |
+| `POST /networks/{id}/disconnect` | Detach from the cloud network/discovery mapping where supported |
+| `DELETE /networks/{id}` | Remove the cloud network/discovery resource where supported |
 | `POST /networks/prune` | Remove networks with no connected containers |
 
 ### 11.5 ExtraHosts Support
@@ -1936,7 +1936,7 @@ The runner uses `docker exec -i` for ALL step executions. The `-i` flag keeps st
 If `docker exec` fails (container not running, connection lost, etc.), the step fails immediately. There is NO exponential backoff or retry logic for exec. This means the exec facility must be reliable from the first attempt.
 
 **Docker socket mount:**
-The runner ALWAYS adds `-v "/var/run/docker.sock:/var/run/docker.sock"` to the job container. This is hardcoded. The runner does NOT fail if the socket doesn't work inside the container — its own Docker commands execute from the host, not from inside the container. The socket is a best-effort convenience for actions needing Docker-in-Docker.
+The runner ALWAYS adds `-v "/var/run/docker.sock:/var/run/docker.sock"` to the job container. This is hardcoded. Cloud backends must provide a real socket contract or reject the mount clearly; they must not silently expose a non-functional socket.
 
 **Health check polling:**
 Uses `docker inspect --format '{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}'`. If `.Config.Healthcheck` is absent (no HEALTHCHECK instruction), the template outputs empty string and the runner skips health polling — container is considered ready immediately. Polling uses exponential backoff: 2s, 3s, 7s, 13s... with ~5-6 retries (total ~30-60s).
@@ -1955,7 +1955,7 @@ After `docker start`, the runner immediately checks `docker ps --filter id=<id> 
 | `POST /images/create` (pull) with retries | P0 | Record image ref; cloud pulls at container start |
 | `POST /auth` (docker login) | P1 | Store credentials for later pull operations |
 | `POST /containers/create` with `Entrypoint: ["tail"]`, `Cmd: ["-f", "/dev/null"]` | P0 | Accept; agent substitutes as keep-alive mechanism |
-| `POST /containers/create` with `Binds` including `/var/run/docker.sock` | P0 | Accept silently; optionally mount sockerless socket |
+| `POST /containers/create` with `Binds` including `/var/run/docker.sock` | P0 | Provide a real socket/dispatch contract or reject clearly |
 | `POST /containers/{id}/start` → container is "running" immediately | P0 | Block `start` until cloud task is actually running |
 | `GET /containers/json` with filters `id`, `status`, `label` | P0 | Backend supports all filter types |
 | `GET /containers/{id}/json` with `Config.Env` (merged image + user env, including PATH) | P0 | Fetch image config from registry; merge with user env |
@@ -1979,7 +1979,7 @@ This section identifies every gap between what CI runners expect and what cloud 
 
 **Problem:** GitLab Runner calls `ContainerAttach` before `ContainerStart`. Docker returns the hijacked connection instantly because the daemon holds it. Cloud backends don't have a container to attach to yet.
 
-**Solution:** The frontend returns `101 Switching Protocols` immediately and holds the hijacked connection. When `ContainerStart` is called, the backend launches the cloud task. Once the agent is reachable (agent reports ready via backend polling), the frontend opens a WebSocket to the agent and begins bridging the buffered hijacked connection to the agent's stream.
+**Solution:** The frontend returns `101 Switching Protocols` immediately and holds the hijacked connection. When `ContainerStart` is called, the backend launches the cloud resource. Once the reverse-agent session or backend-specific exec transport is ready, the frontend bridges the buffered hijacked connection to that real stream.
 
 **Risk:** If the job timeout is very short and cloud startup takes too long, the attach will sit idle until the job times out. No mitigation needed — this is the correct behavior (the runner's context controls the timeout).
 
@@ -1987,9 +1987,9 @@ This section identifies every gap between what CI runners expect and what cloud 
 
 **Problem:** After `docker start`, the runner immediately runs `docker ps --filter status=running` to verify the container started. Docker containers start in <1s. Cloud backends take 5-60s.
 
-**Solution:** The `POST /containers/{id}/start` endpoint MUST block until the cloud task is actually running (agent is reachable). Only then return `204 No Content`. This way, the subsequent `docker ps` check sees "running" status. The trade-off is that `docker start` takes 5-60s instead of <1s, but the runner doesn't have a timeout on the start call itself — only the overall job timeout applies.
+**Solution:** The `POST /containers/{id}/start` endpoint MUST block until the cloud resource is actually running and the required exec transport is ready. Only then return `204 No Content`. This way, the subsequent `docker ps` check sees "running" status. The trade-off is that `docker start` takes 5-60s instead of <1s, but the runner doesn't have a timeout on the start call itself — only the overall job timeout applies.
 
-**Implementation:** Backend launches cloud task → polls cloud API for task status → returns 204 only when task is in "RUNNING" state. Frontend forwards the 204 to the Docker client.
+**Implementation:** Backend launches cloud task/service/app → polls cloud API and/or waits for reverse-agent registration → returns 204 only when the Docker-facing resource is ready. Frontend forwards the 204 to the Docker client.
 
 #### Gap 3: Image Config for PATH Extraction (GitHub Actions Runner)
 
@@ -2003,9 +2003,9 @@ This section identifies every gap between what CI runners expect and what cloud 
 
 **Problem:** The runner overrides the entrypoint to `tail -f /dev/null`. On cloud backends, the sockerless agent needs to be PID 1 (or sidecar) to serve exec/attach.
 
-**Solution:** The frontend detects the `tail -f /dev/null` entrypoint pattern in `POST /containers/create` and flags it as a "keep-alive container". When the backend launches the cloud task, it injects the agent as the entrypoint: `["/sockerless-agent", "--keep-alive", "--"]`. The agent keeps the container alive (replaces `tail -f /dev/null`) and serves exec/attach requests. The `--keep-alive` flag tells the agent NOT to run a child process — it just stays alive and waits for exec commands.
+**Solution:** The frontend detects the `tail -f /dev/null` entrypoint pattern in `POST /containers/create` and flags it as a keep-alive container. When the backend launches a Service/App/function runner path, it materializes the bootstrap overlay as the entrypoint. The bootstrap keeps the workload alive, registers the reverse-agent session, and serves exec/attach requests.
 
-For containers with real entrypoints (non-tail), the agent wraps the original command: `["/sockerless-agent", "--", <original-entrypoint>, <args>...]`.
+For containers with real entrypoints (non-tail), the bootstrap preserves the original command and runs it through the backend's cloud-specific overlay contract.
 
 #### Gap 5: Helper Image Loading (GitLab Runner)
 
@@ -2013,7 +2013,7 @@ For containers with real entrypoints (non-tail), the agent wraps the original co
 
 **Solution (recommended):** Configure `helper_image` in GitLab Runner's `config.toml` to point to a registry-hosted copy of the helper image. This bypasses tar loading entirely. The runner will use `ImagePullBlocking` instead.
 
-**Solution (fallback):** Implement `POST /images/load` to accept the tar stream, extract the image manifest and layers, and push them to a configured staging registry (e.g., ECR, Artifact Registry, ACR). Then store the image reference for later use. `POST /images/{name}/tag` records the new tag in the backend's image table.
+**Image-load implementation path:** `POST /images/load` accepts the tar stream, extracts the image manifest and layers, and pushes them to a configured staging registry (ECR, Artifact Registry, or ACR). `POST /images/{name}/tag` records the cloud registry reference for later use. Backends that do not implement this path must fail explicitly rather than pretending to have a local image store.
 
 #### Gap 6: Volume Sharing Between Containers (GitLab Runner)
 
@@ -2032,9 +2032,7 @@ Volume creation (`POST /volumes/create`) provisions a directory/access-point in 
 
 **Problem:** The runner always mounts `/var/run/docker.sock:/var/run/docker.sock`. This path doesn't exist on cloud backends.
 
-**Solution:** Accept the bind mount in `POST /containers/create` without error. Two strategies:
-1. **Silently ignore** (default): The mount is recorded in state and returned in inspect, but not applied to the cloud task. Actions that need Docker-in-Docker will fail with a connection error inside the container. This is acceptable — the runner itself doesn't use the socket from inside the container.
-2. **Mount sockerless socket** (optional, configurable): Inject the sockerless frontend's socket endpoint into the container, enabling Docker-in-Docker via sockerless. Requires the agent to expose the endpoint or a tunnel.
+**Solution:** Do not pretend the Docker socket exists. A backend must either wire a real socket/dispatch contract into the workload or reject the mount clearly so nested-Docker requirements surface at create time.
 
 #### Gap 8: Service Readiness TCP Probing (GitLab Runner)
 
@@ -2135,7 +2133,7 @@ For stdin (client → agent), the frontend reads raw bytes from the hijacked con
 | Docker cp (archive) | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | Startup latency | <1s | 10-45s | 5-30s | 10-60s | 1-5s | 1-5s | 1-5s |
 
-\* Via forward agent
+\* ECS uses its cloud access path; Cloud Run and ACA use reverse-agent Service/App paths.
 \*\* Via reverse agent
 ‡ FaaS backends limited by function timeout
 
@@ -2193,9 +2191,9 @@ These were initially excluded from the spec but have been implemented:
 | Network connect | `POST /networks/{id}/connect` | Extended endpoint |
 | System | `GET /events`, `GET /system/df` | Extended endpoints |
 
-### 14.3 Silently Ignored Container Config Fields
+### 14.3 Unsupported Container Config Fields
 
-These fields are accepted in `POST /containers/create` but do not affect cloud backend behavior:
+These fields must either map to a real cloud primitive or fail clearly when they would affect behavior. They may be preserved as inspect metadata only when they are irrelevant to the requested cloud operation:
 
 ```
 MacAddress, CgroupParent, DeviceCgroupRules, PidMode, UTSMode,
@@ -2207,7 +2205,7 @@ BlkioDeviceReadBps, BlkioDeviceWriteBps, KernelMemory,
 IpcMode, GroupAdd, Ulimits, ReadonlyRootfs, StorageOpt
 ```
 
-These are stored in state and returned in inspect responses for client compatibility, but the cloud backend ignores them.
+Cloud backends must not silently drop behavior-bearing fields. If a field cannot be honored by the target cloud, the backend should return an explicit error rather than pretend the setting took effect.
 
 ---
 
@@ -2241,7 +2239,7 @@ Each backend binary reads its own environment variables. All backends share comm
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SOCKERLESS_CALLBACK_URL` | | Backend URL for reverse agent connections |
-| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud endpoint (simulator mode) |
+| `SOCKERLESS_ENDPOINT_URL` | | Custom cloud API endpoint, commonly a local simulator/cloud-slice endpoint. This changes routing only; cloud image refs and API semantics remain the same. |
 | `SOCKERLESS_FETCH_IMAGE_CONFIG` | `false` | Fetch image config from registry on pull |
 
 Backend-specific variables use prefixes: `SOCKERLESS_ECS_*`, `SOCKERLESS_LAMBDA_*`, `SOCKERLESS_GCR_*`, `SOCKERLESS_GCF_*`, `SOCKERLESS_ACA_*`, `SOCKERLESS_AZF_*`, `AWS_REGION`.

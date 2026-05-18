@@ -1,166 +1,50 @@
 # Docker API Mapping: Cloud Run Backend
 
-The Cloud Run backend translates Docker API calls into Google Cloud Run Jobs operations. A Docker "container" becomes a Cloud Run Job + Execution.
+The Cloud Run backend maps Docker API operations to Cloud Run Jobs and Cloud Run Services. Jobs are execution-scoped and fit one-shot containers. Services are the long-lived runner path because they can host the reverse-agent bootstrap for repeated `docker exec` calls.
+
+The cloud APIs and Cloud Logging are the source of truth. The backend must not switch into simulator-specific semantics when `SOCKERLESS_ENDPOINT_URL` points at a local cloud-slice endpoint.
+
+For the broader cross-cloud mapping, see [`specs/CLOUD_RESOURCE_MAPPING.md`](../../../specs/CLOUD_RESOURCE_MAPPING.md).
 
 ## Container Lifecycle
 
-### `POST /containers/create` — Create Container
+| Docker API | Cloud Run mapping |
+|---|---|
+| `POST /containers/create` | Records the pending Docker create request until the backend knows whether the container is a one-shot Job or a runner/keep-alive Service path. |
+| `POST /containers/{id}/start` | Creates and runs a Cloud Run Job for one-shot execution, or creates/updates a Cloud Run Service revision for runner and pod-service workloads. Service starts wait for the reverse-agent bootstrap to register before returning. |
+| `POST /containers/{id}/stop` | Cancels the Job execution or stops the Service-backed container path through the backend's recorded cloud result. |
+| `POST /containers/{id}/kill` | Uses the same cloud stop primitive and records the Docker-visible stop result. |
+| `DELETE /containers/{id}` | Deletes the sockerless-managed Job or Service resources and returns cleanup failures to the caller. |
+| `GET /containers/json` / `GET /containers/{id}/json` | Queries Cloud Run, Cloud Logging, and backend cloud-state metadata rather than relying on local Docker state. |
 
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Creates a container from an image on the local daemon | Stores container metadata locally (no GCP API call at create time) |
-| Image | Must exist locally or be pullable | Stored for later use when job is created at start time |
-| Entrypoint/Cmd | Stored as container config | Stored locally, used in job spec at start time |
-| Environment | Stored as container config | Stored locally, converted to `EnvVar` at start time |
-| Network | Joins specified network | Synthetic IP assigned from virtual bridge (172.17.0.x) |
-| Return value | Container ID | Container ID (locally generated) |
+## Exec, Attach, Archive, and Process APIs
 
-**Why deferred creation:** Cloud Run Jobs are created at start time (not create time) to support clean restarts — the old job is deleted before creating a new one.
+Runner and Service-backed containers use the reverse-agent WebSocket registered by the overlay bootstrap. `docker exec`, archive, attach, process listing, and related filesystem operations go through that real agent session. If no session exists, the backend returns an explicit error.
 
-### `POST /containers/{id}/start` — Start Container
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Starts the container process | `Jobs.CreateJob` → `Jobs.RunJob` (creates Execution) |
-| Job name | N/A | `sockerless-{containerID[:12]}` |
-| Resources | Configurable CPU/memory | Fixed: 1 CPU, 512 Mi memory |
-| Timeout | N/A (runs until stopped) | 4 hours (hardcoded) |
-| Retries | N/A | 0 (no retries) |
-| Agent (forward) | N/A | Polls `Executions.GetExecution` until RUNNING, agent address: `{executionName}:9111` |
-| Agent (reverse) | N/A | Waits for agent callback to `SOCKERLESS_CALLBACK_URL` (60s timeout) |
-| VPC | N/A | Optional via `SOCKERLESS_GCR_VPC_CONNECTOR` with `Egress: ALL_TRAFFIC` |
-| Helper containers | N/A | Non-tail-dev-null commands auto-stop after 500ms |
-| Background | Process runs in daemon | Goroutine polls execution for completion, auto-stops container |
-| Labels | N/A | `sockerless-container-id`, `managed-by: sockerless` |
-
-### `POST /containers/{id}/stop` — Stop Container
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Sends SIGTERM, then SIGKILL after timeout | Calls `Executions.CancelExecution` |
-| State after | `exited` with exit code | `exited` with exit code 0 |
-
-### `POST /containers/{id}/kill` — Kill Container
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Sends specified signal to process | Disconnects reverse agent, calls `Executions.CancelExecution` |
-| Signal support | Full POSIX signals | SIGKILL/9/KILL → exit code 137; others → exit code 0 |
-
-### `DELETE /containers/{id}` — Remove Container
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Removes container and its filesystem | Calls `Jobs.DeleteJob` (best-effort), removes local state |
-| Force | Kills running container first | Cancels execution + disconnects agent if running |
-
-### `POST /containers/{id}/restart` — Restart Container
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Stops then starts the container | Stops execution, then creates a new job + execution |
-
-## Exec
-
-Handled by core via the driver chain → Agent → Synthetic.
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Execution | Runs directly in container namespace | Routed to agent inside Cloud Run execution |
-| Fallback | N/A | Synthetic driver if no agent connected |
+There is no per-exec Service-URL or invoke-envelope path.
 
 ## Images
 
-### `POST /images/create` — Pull Image
+The backend preserves cloud image semantics. Image resolution fetches real registry metadata through the configured registry/cloud endpoints and uses Artifact Registry-compatible references for GCP. Pointing `SOCKERLESS_ENDPOINT_URL` at the simulator changes HTTP routing only; it does not change image names into local-only shortcuts.
 
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| What happens | Downloads image layers from registry | Creates synthetic image (no download) |
-| Image config | Full manifest + layers | Optional real config via `SOCKERLESS_FETCH_IMAGE_CONFIG=true` |
-
-### `POST /images/load` — Load Image
-
-**Not implemented.** Returns `NotImplementedError`.
+`POST /images/load` is supported only when the loaded tar can be pushed into a configured registry path. Otherwise the backend returns an explicit unsupported-operation error.
 
 ## Logs
 
-### `GET /containers/{id}/logs` — Container Logs
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Source | Container stdout/stderr from daemon | Cloud Logging via `LogAdmin.Entries` |
-| Filter | N/A | `resource.type="cloud_run_job" AND resource.labels.job_name="{shortJobName}"` |
-| Follow mode | Real-time streaming | Polls Cloud Logging every 5s (1s in simulator mode) |
-| Timestamps | From Docker daemon | From log entry timestamps (RFC3339Nano) |
-| Stdout/stderr | Separate streams | All treated as stdout (stream type 1) |
-| Format | Docker multiplexed stream | Docker multiplexed stream (8-byte header per line) |
-| Dedup | N/A | Tracks last timestamp to avoid duplicate entries in follow mode |
+`GET /containers/{id}/logs` queries Cloud Logging for the Job, Service, or Function-backed resource and emits Docker mux frames. Follow mode polls Cloud Logging.
 
 ## Networks
 
-Handled entirely by core. Synthetic in-memory tracking only.
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Network creation | Creates real Docker network | In-memory tracking only |
-| IP allocation | IPAM assigns real IPs | Synthetic IPs (172.17.0.x) |
-| Inter-container networking | Via shared Docker network | Not directly available (VPC connector for egress) |
+Cloud Run does not expose Docker bridge networking. Runner pod materialization uses Cloud Run Service composition and the backend's cloud DNS/network drivers where applicable. VPC connector settings remain cloud egress configuration, not Docker L2 networking.
 
 ## Volumes
 
-Handled by core with Cloud Run overrides for remove/prune.
+Workspace sharing uses the configured GCP storage backing, primarily `gcs-sync` for runner flows. In-memory tmpfs is the default for backends where Cloud Run exposes the memory-backed empty-dir primitive. Unsupported backing modes fail during configuration or startup.
 
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Volume creation | Creates real Docker volume | In-memory tracking only |
-| Persistent storage | Volumes persist | No persistent storage (GCS integration placeholder exists but unused) |
-
-## Archive (Copy)
-
-Handled by core via the driver chain → Agent → Synthetic.
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Copy to/from | Direct filesystem access | Via agent inside execution or synthetic fallback |
-
-## System
-
-| Aspect | Vanilla Docker | Cloud Run Backend |
-|--------|---------------|-------------------|
-| Info | Real daemon info | Static: Driver=cloudrun-jobs, OS=Google Cloud Run, 2 CPUs, 4GB RAM |
-
-## Pause/Unpause
-
-**Not supported.** Returns `NotImplementedError`. Cloud Run has no pause concept.
-
-## CLI Command Mapping
-
-| `docker` CLI command | Vanilla Docker | Cloud Run Backend |
-|---------------------|---------------|-------------------|
-| `docker create <image>` | Creates container locally | Stores metadata (no GCP call) |
-| `docker start <id>` | Starts local process | `Jobs.CreateJob` + `Jobs.RunJob` |
-| `docker stop <id>` | SIGTERM + SIGKILL | `Executions.CancelExecution` |
-| `docker kill <id>` | Send signal | `Executions.CancelExecution` |
-| `docker rm <id>` | Remove container + fs | `Jobs.DeleteJob` |
-| `docker logs <id>` | Read from daemon | Cloud Logging query |
-| `docker logs -f <id>` | Stream from daemon | Poll Cloud Logging every 5s |
-| `docker exec <id> <cmd>` | nsenter into container | Agent relay (forward or reverse) |
-| `docker cp <src> <id>:<dst>` | Write to container layer | Agent relay or synthetic |
-| `docker pull <image>` | Download layers | Synthetic (metadata only) |
-| `docker build .` | Build from Dockerfile | Core Dockerfile parser (RUN is no-op) |
-| `docker network create` | Create real network | In-memory only |
-| `docker volume create` | Create real volume | In-memory only |
-| `docker pause <id>` | Freeze cgroups | **Not supported** |
-| `docker restart <id>` | Stop + start | Delete old job + create new job + run |
-
-## Summary: What's Not Supported
+## Unsupported Docker Features
 
 | Feature | Reason |
-|---------|--------|
-| Container pause/unpause | Cloud Run has no pause capability |
-| Image load from tar | Cloud Run uses Artifact Registry / Container Registry images |
-| Real Docker networks | Jobs use VPC connector for egress only |
-| Real Docker volumes | GCS integration not yet implemented |
-| Stderr separation in logs | Cloud Logging entries are single-stream |
-| Resource customization | CPU/memory hardcoded (1 CPU / 512 Mi) |
-| Restart policies | Retries hardcoded to 0 |
+|---|---|
+| Pause/unpause | Cloud Run has no pause primitive. |
+| Host networking | Cloud Run does not expose Docker host networking. |
+| Docker bridge L2 semantics | Cloud Run uses Service networking and VPC egress, not a local Docker bridge. |

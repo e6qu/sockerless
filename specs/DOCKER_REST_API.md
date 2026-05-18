@@ -525,7 +525,7 @@ Both have comprehensive REST APIs over Unix socket / HTTPS but with completely d
 | Endpoint | Docker | Podman | Notes |
 |----------|--------|--------|-------|
 | `GET /containers/json` | Yes | Yes | Filters work; minor differences in output fields |
-| `POST /containers/create` | Yes | Yes | Most `HostConfig` fields work; some obscure Swarm-related options silently ignored |
+| `POST /containers/create` | Yes | Yes | Most `HostConfig` fields work; unsupported behavior-bearing fields should fail clearly |
 | `GET /containers/{id}/json` | Yes | Yes | `NetworkSettings`, `State` have Podman-specific fields; `ConmonPid` present |
 | `GET /containers/{id}/top` | Yes | Yes | |
 | `GET /containers/{id}/logs` | Yes | Yes | Multiplexed stream format supported; historical edge cases in framing |

@@ -144,13 +144,13 @@ Every backend implements all 65 `api.Backend` methods. Methods not explicitly ov
 - Fargate resource tier mapping (`fargateResources`)
 - EFS-backed bind mounts when `AgentEFSID` set
 - CloudWatch Container Insights stats (`ecsStatsProvider`)
-- SSM ExecuteCommand for exec (via `cloudExecStart`)
+- SSM ExecuteCommand for exec
 
 ### Cloud Run
 - Cloud DNS managed zones per Docker network
 - Cloud DNS A records for service discovery
 - Container archive ops via agent
-- Full pod lifecycle (multi-container Cloud Run jobs)
+- Full pod lifecycle (multi-container Cloud Run Services for runner workloads)
 
 ### ACA
 - NSG tracking per Docker network

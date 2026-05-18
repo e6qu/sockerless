@@ -7,7 +7,7 @@
 
 ## Setup
 
-The Azure CLI doesn't natively support pointing ARM operations at a custom endpoint. The recommended approach is to use `az rest` which sends raw HTTP requests to any URL, bypassing cloud registration requirements.
+The Azure CLI doesn't natively support pointing high-level ARM commands at a custom endpoint. The simulator CLI tests use `az rest`, which sends raw HTTP requests to the simulator's ARM endpoint while still using the real Azure CLI request and response handling.
 
 Set up an isolated config directory:
 
@@ -205,7 +205,7 @@ The script builds the simulator, starts it on a random port, runs 42 tests, and 
 
 ## Notes
 
-- Authentication is not validated. The OAuth2 token endpoint returns an unsigned JWT.
+- The simulator accepts local-test credentials through its OAuth2 token endpoint and returns a token shape that Azure clients can consume.
 - All state is in-memory and resets when the simulator restarts.
 - The `api-version` query parameter is required on all ARM requests (the simulator validates its presence).
 - Use `az rest` instead of high-level `az` commands to avoid cloud registration and subscription validation issues with HTTP endpoints.

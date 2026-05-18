@@ -74,7 +74,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_AZURE_BUILD_PLATFORM` | `linux/amd64` | no | Platform passed to ACR Tasks for ACA App overlay images. |
 | `SOCKERLESS_ACA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_ACA_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on ACA; the per-container memory default raised to `4Gi / 2.0 vCPU` to fit (ACA's CPU:memory 2:1 pairing rule). |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/azure`](../../simulators/azure/README.md)) |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom Azure API endpoint, commonly the local [`simulators/azure`](../../simulators/azure/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 
@@ -112,7 +112,7 @@ None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route co
 - Requires a Container Apps environment and resource group to be pre-created.
 - Authentication uses Azure Default Credentials (`az login`, managed identity, or env vars).
 - Container images must be accessible from ACR or a public registry.
-- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- App-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - Log Analytics workspace is needed for `docker logs` support.
 
 See also: [`backends/azure-common`](../azure-common/), [`simulators/azure/README.md`](../../simulators/azure/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Azure Container Apps`](../../specs/CLOUD_RESOURCE_MAPPING.md).

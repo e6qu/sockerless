@@ -150,8 +150,8 @@ docker ps -a --filter "label=sockerless-sim=true" -q | xargs docker rm -f
 With real containers:
 - `act` can exec into the container and run commands
 - `act` can copy files into the container via archive API
-- The smoke test works without auto-agent
-- The `SOCKERLESS_AUTO_AGENT_BIN` env var can be removed from `run.sh`
+- Smoke tests exercise the same bootstrap/reverse-agent or cloud exec path used by the backend
+- Cloud backends do not use `SOCKERLESS_AUTO_AGENT_BIN`; missing cloud agent/bootstrap sessions fail explicitly
 
 ### Impact on Backend CloudState
 

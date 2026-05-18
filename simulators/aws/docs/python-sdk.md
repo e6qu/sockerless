@@ -334,4 +334,4 @@ sd.delete_namespace(Id=ns_id)
 - Authentication is accepted but not validated. Any credentials will work.
 - All state is in-memory and resets when the simulator restarts.
 - S3 requires the `/s3` path prefix in the endpoint URL.
-- The simulator returns mock account ID `123456789012` for STS calls.
+- The simulator returns the local-test account ID `123456789012` for STS calls.

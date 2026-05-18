@@ -71,7 +71,7 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-Service bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no fallback). |
 | `SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on cloudrun — set `Backing: gcs-sync` / `pd-ephemeral` per-volume for persistence. Per-container memory default raised to `4Gi` to fit. |
-| `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/gcp`](../../simulators/gcp/README.md)) |
+| `SOCKERLESS_ENDPOINT_URL` | | no | Custom GCP API endpoint, commonly the local [`simulators/gcp`](../../simulators/gcp/README.md) cloud-slice endpoint. Routing override only; API semantics remain cloud-shaped. |
 | `SOCKERLESS_POLL_INTERVAL` | `2s` | no | Cloud API poll interval |
 | `SOCKERLESS_AGENT_TIMEOUT` | `30s` | no | Agent health-check timeout |
 | `SOCKERLESS_LOG_TIMEOUT` | `30s` | no | Cloud Logging query timeout |
@@ -105,7 +105,7 @@ None open for the Cloud Run Service reverse-agent path. Cloud Run lacks a protob
 - Requires Cloud Run API and Cloud Logging API enabled in the GCP project.
 - Application Default Credentials or a service account key must be available.
 - Container images must be in Artifact Registry or GCR within the same project.
-- Supports forward agent (polls execution for IP) and reverse agent (`callback_url`).
+- Service-backed exec, attach, and archive operations require the reverse-agent callback URL. Jobs remain the one-shot path.
 - VPC connector is only needed if services must reach private VPC resources.
 
 See also: [`backends/gcp-common`](../gcp-common/), [`simulators/gcp/README.md`](../../simulators/gcp/README.md), [`specs/CLOUD_RESOURCE_MAPPING.md § Cloud Run`](../../specs/CLOUD_RESOURCE_MAPPING.md).

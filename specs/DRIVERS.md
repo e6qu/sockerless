@@ -110,7 +110,7 @@ type NetworkDriver interface {
 
 **Implementations:**
 
-- **`SyntheticNetworkDriver`** (`backends/core/drivers_network.go`) — in-memory network management with IP allocation from configurable subnets. Used as the base on every platform.
-- **`LinuxNetworkDriver`** (`backends/core/drivers_network_linux.go`) — wraps `SyntheticNetworkDriver` with real Linux network namespace operations: creates veth pairs, moves interfaces into container netns, assigns IPs inside the namespace. Active only on Linux; other platforms use `SyntheticNetworkDriver` directly.
+- **Core network driver** (`backends/core/drivers_network.go`) — network metadata management for the shared handler path and non-cloud tests.
+- **`LinuxNetworkDriver`** (`backends/core/drivers_network_linux.go`) — wraps the core network driver with real Linux network namespace operations: creates veth pairs, moves interfaces into container netns, assigns IPs inside the namespace. Active only on Linux; other platforms use the core metadata driver directly unless a cloud backend overrides the operation.
 
 Cloud backends layer on top: ECS uses VPC Security Groups + Cloud Map; Cloud Run uses Cloud DNS managed zones; ACA uses NSG + in-process DNS. Those layers are wired through `api.Backend.NetworkCreate / Connect / etc.` rather than the typed driver framework — see [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) § Networking per cloud.
