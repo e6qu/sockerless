@@ -371,6 +371,7 @@ app, plus the api.Backend coverage gate:
 ```bash
 make smoke-test-{act,act-ecs,act-cloudrun,act-aca,act-all}
 make smoke-test-{gitlab,gitlab-ecs,gitlab-cloudrun,gitlab-aca,gitlab-all}
+make faas-smoke-test-{lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
 make tf-int-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
 make e2e-github-{ecs,lambda,cloudrun,gcf,aca,azf,all}
 make e2e-gitlab-{ecs,lambda,cloudrun,gcf,aca,azf,all}
@@ -454,11 +455,15 @@ make test-all                     # all four (sdk + cli + terraform + shared)
 
 # Cross-backend e2e:
 make tests/test                   # delegates to tests/Makefile
+make tests/test-integration       # Go e2e harness with simulator env
 
 # Smoke (Docker-in-Docker):
+make faas-smoke-test-all          # Go-package FaaS runner lifecycle smokes
 make smoke-test-act-ecs           # GitHub Actions (act) → ECS via sim
 make smoke-test-gitlab-ecs        # GitLab Runner → ECS via sim
 ```
+
+Detailed smoke/e2e command matrix: [docs/E2E_SMOKE_TESTS.md](docs/E2E_SMOKE_TESTS.md).
 
 ### Lint
 

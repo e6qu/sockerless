@@ -84,11 +84,16 @@ jobs:
 
           # Cloud backends (with integration tests)
           run backends/ecs
-          run backends/lambda
-          run backends/cloudrun
-          run backends/cloudrun-functions
-          run backends/aca
-          run backends/azure-functions
+          run_backend() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -skip 'FaaSE2ESmoke' -timeout 15m ./...); }
+          run_backend backends/lambda
+          run_backend backends/cloudrun
+          run_backend backends/cloudrun-functions
+          run_backend backends/aca
+          run_backend backends/azure-functions
+
+          # Runner-shaped FaaS lifecycle guards are dedicated Make targets:
+          # create → start → exec×N → wait → remove against local simulators.
+          make faas-smoke-test-all
 
           # Services
           run bleephub

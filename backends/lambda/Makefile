@@ -6,6 +6,7 @@ UI_PACKAGE    := backend-lambda
 DEFAULT_PORT  := 3375
 RUN_FLAGS     := --addr :3375
 RUN_ENV       := SOCKERLESS_ENDPOINT_URL=http://localhost:4566
+FAAS_SMOKE_TESTS := ^TestLambdaFaaSE2ESmoke$
 REPO_ROOT_REL := ../..
 
 include $(REPO_ROOT_REL)/make/go-app.mk

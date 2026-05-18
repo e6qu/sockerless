@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — synced to `origin/main` at PR #169 merge commit `0bd75902`. |
-| In-flight | No active PR branch. PR #168 merged at `3565e413`; follow-up PR #169 merged at `0bd75902` on 2026-05-18. Phase 168 runner-attach hardening is merged: AZF, GCF, and ACA Apps now support real attach-before-start stdin delivery with simulator coverage. Remaining tracked follow-ups: 1072, 1074, 1075, 1076. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
+| Active branch | `docs/pr169-merge-continuity` — PR #170 repurposed for Phase 168 non-live follow-ups. |
+| In-flight | PR #170 now carries simulator-backed FaaS runner smokes, Make/CI wiring, AZF bootstrap test-pyramid expansion, and live-validation preflight docs. Remaining tracked follow-up: BUG-1075 live-cloud validation, which still requires real credentials/setup and is intentionally not marked complete here. External Claude review through the local CLI was denied by the escalation reviewer; user can run it locally and paste results. |
 | Last merged | PR #169 — Phase 168 follow-up runner attach hardening (2026-05-18, `0bd75902`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1093 filed · 1088 fixed · 4 open · 2 false positives. Open Phase 168 follow-ups are runner/live/test-pyramid items 1072, 1074, 1075, 1076. |
+| Bugs | 1094 filed · 1092 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

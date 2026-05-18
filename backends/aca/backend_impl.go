@@ -461,7 +461,6 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
 			s.deleteApp(appState.AppName)
 			s.Registry.MarkCleanedUp(appState.AppName)
-			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
 		}
 	} else {
 		// cloud-fallback lookup so stop works post-restart.
@@ -471,6 +470,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	s.StopHealthCheck(id)
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: core.SignalToExitCode("SIGTERM")})
 
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
@@ -535,10 +535,33 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			ok = true
 		}
 	}
+	if !ok && s.config.UseApp {
+		if appState, appOK := s.resolveAppACAState(s.ctx(), ref); appOK && appState.AppName != "" {
+			if err := s.deleteAppStrict(appState.AppName); err != nil {
+				return err
+			}
+			s.Registry.MarkCleanedUp(appState.AppName)
+			s.PendingCreates.Delete(ref)
+			s.ACA.Delete(ref)
+			if ch, ok := s.Store.WaitChs.LoadAndDelete(ref); ok {
+				close(ch.(chan struct{}))
+			}
+			s.Store.LogBuffers.Delete(ref)
+			s.Store.StagingDirs.Delete(ref)
+			s.stdinPipes.Delete(ref)
+			s.attachStreams.Delete(ref)
+			return nil
+		}
+	}
 	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	if inv, ok := s.Store.GetInvocationResult(id); ok {
+		c.State.Status = "exited"
+		c.State.Running = false
+		c.State.ExitCode = inv.ExitCode
+	}
 
 	if c.State.Running && !force {
 		return &api.ConflictError{

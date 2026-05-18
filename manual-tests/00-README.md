@@ -18,6 +18,7 @@ Sim-only changes don't need a manual test pass — the SDK + CLI + terraform tes
 | [02-aws-runbook.md](02-aws-runbook.md) | ECS Fargate + Lambda — Tracks A–J |
 | [03-gcp-runbook.md](03-gcp-runbook.md) | Cloud Run Jobs/Services + Cloud Run Functions — placeholder, queued |
 | [04-azure-runbook.md](04-azure-runbook.md) | ACA Jobs/Apps + Azure Functions — placeholder, queued |
+| [05-live-validation-preflight.md](05-live-validation-preflight.md) | Cross-cloud preflight, command sequence, evidence, caveats, and teardown for the remaining live cells |
 
 ## Workflow
 

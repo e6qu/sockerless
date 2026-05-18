@@ -156,7 +156,7 @@ _fanout:
 .PHONY: FORCE
 FORCE:
 
-%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/lint %/clean %/preview %/help: FORCE
+%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/test-faas-smoke %/lint %/clean %/preview %/help: FORCE
 	@$(MAKE) -s -C $* $(notdir $@)
 
 # ── Stack orchestration ─────────────────────────────────────────────
@@ -205,6 +205,24 @@ smoke-test-gitlab-cloudrun:
 smoke-test-gitlab-aca:
 	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=aca docker compose up --build --abort-on-container-exit --exit-code-from orchestrator
 smoke-test-gitlab-all: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca
+
+# ── FaaS simulator smoke tests (Go package integration) ─────────────
+#
+# These tests run inside the backend Go integration harnesses, against
+# local simulators, and exercise the runner-shaped lifecycle:
+# create → start → exec×N → wait → remove.
+.PHONY: faas-smoke-test-lambda faas-smoke-test-cloudrun faas-smoke-test-gcf faas-smoke-test-aca faas-smoke-test-azf
+.PHONY: faas-smoke-test-aws faas-smoke-test-gcp faas-smoke-test-azure faas-smoke-test-all
+
+faas-smoke-test-lambda:   ; @$(MAKE) -s -C backends/lambda test-faas-smoke
+faas-smoke-test-cloudrun: ; @$(MAKE) -s -C backends/cloudrun test-faas-smoke
+faas-smoke-test-gcf:      ; @$(MAKE) -s -C backends/cloudrun-functions test-faas-smoke
+faas-smoke-test-aca:      ; @$(MAKE) -s -C backends/aca test-faas-smoke
+faas-smoke-test-azf:      ; @$(MAKE) -s -C backends/azure-functions test-faas-smoke
+faas-smoke-test-aws:      faas-smoke-test-lambda
+faas-smoke-test-gcp:      faas-smoke-test-cloudrun faas-smoke-test-gcf
+faas-smoke-test-azure:    faas-smoke-test-aca faas-smoke-test-azf
+faas-smoke-test-all:      faas-smoke-test-aws faas-smoke-test-gcp faas-smoke-test-azure
 
 # ── Terraform integration tests (Docker-based) ──────────────────────
 .PHONY: tf-int-test-ecs tf-int-test-lambda tf-int-test-cloudrun tf-int-test-gcf tf-int-test-aca tf-int-test-azf

@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-18 — PR #170: non-live Phase 168 follow-up branch
+
+PR #170 was repurposed from continuity-only docs into the remaining non-live follow-up branch. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
+
+The new smoke tests caught a real service/app lifecycle bug before CI: Cloud Run Services could finish but still look running to `docker rm`, and ACA Apps could be stopped/deleted before `wait`/`rm` had a stable Docker lifecycle view. The branch fixes those state transitions and records stop/invocation results for wait/remove. It also expands AZF bootstrap unit coverage around exec envelopes, stdin/env/workdir, default invoke, timeout parsing, and argv decoding.
+
+Live setup itself remains excluded. `manual-tests/05-live-validation-preflight.md` now captures the live validation plan, caveats, evidence requirements, command sequence, and teardown expectations for the remaining BUG-1075 cloud cells.
+
 ## 2026-05-17 — Phase 168.9: Cloud Run + GCF overlay exec e2e green on the simulator
 
 Continuation of the Phase 168 "Model A only" work: validate that a plain workload image gets overlay-wrapped with the real bootstrap, starts as a Cloud Run/GCF-hosted service, dials back to the backend reverse-agent endpoint, and runs `docker exec` through the WebSocket path instead of any per-step invoke fallback.

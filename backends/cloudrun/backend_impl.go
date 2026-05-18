@@ -732,6 +732,11 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	if inv, ok := s.Store.GetInvocationResult(id); ok {
+		c.State.Status = "exited"
+		c.State.Running = false
+		c.State.ExitCode = inv.ExitCode
+	}
 
 	if c.State.Running && !force {
 		return &api.ConflictError{
