@@ -90,7 +90,7 @@ Now every `docker` command goes through Sockerless to ECS Fargate.
 docker pull alpine:latest
 ```
 
-This creates a synthetic image reference in Sockerless. The actual image must be accessible from ECS (e.g., public Docker Hub images or images in the ECR repository).
+This resolves the registry reference Sockerless will pass to ECS. The image must be accessible from ECS (for example, public Docker Hub images or images in the ECR repository).
 
 ### Run a container
 
@@ -158,10 +158,10 @@ docker container prune  # remove stopped containers
 ### Networks and volumes
 
 ```bash
-# Create a network (in-memory only — ECS uses VPC networking)
+# Create a network mapped to ECS/VPC networking primitives where configured
 docker network create mynet
 
-# Create a volume (in-memory — EFS integration placeholder)
+# Create a volume backed by the configured ECS/EFS storage path
 docker volume create myvol
 ```
 

@@ -111,16 +111,16 @@ graph TB
 | **docker** | — | — | Docker daemon passthrough |
 | **ecs** | ECS/Fargate | Forward or Reverse | Real container |
 | **lambda** | Lambda | Reverse | Function invoke |
-| **cloudrun** | Cloud Run Jobs | Forward or Reverse | Job execution |
+| **cloudrun** | Cloud Run Jobs / Services | Reverse for runner/Service path | Job execution or Service revision |
 | **gcf** | Cloud Run Functions | Reverse | Function invoke |
-| **aca** | Container Apps Jobs | Forward or Reverse | Job execution |
+| **aca** | Container Apps Jobs / Apps | Reverse for runner/App path | Job execution or App revision |
 | **azf** | Azure Functions | Reverse | Function invoke |
 
 **Docker backend** proxies to a real Docker daemon — no agent needed.
 
 **Container backends:**
 - **ECS** uses SSM ExecuteCommand for in-container ops (exec / top / stat / cp / find / kill). No agent in the user image required.
-- **Cloud Run + ACA** use the **reverse agent** — sockerless ships a small bootstrap as the container entrypoint; the bootstrap dials `SOCKERLESS_CALLBACK_URL` over WebSocket; the backend uses that connection to drive exec / fs ops. ACA also has the native Container Apps exec API as a fallback.
+- **Cloud Run + ACA Apps** use the **reverse agent** — sockerless ships a small bootstrap as the container entrypoint; the bootstrap dials `SOCKERLESS_CALLBACK_URL` over WebSocket; the backend uses that connection to drive exec / fs ops. ACA Jobs remain execution-scoped and are not the runner exec path.
 
 **FaaS backends** (Lambda, GCF, AZF) always use the **reverse agent** — inbound connections aren't possible, so the bootstrap inside the function dials out via the callback URL.
 
@@ -521,7 +521,7 @@ bleephub also implements enough of the GitHub REST/GraphQL API and Git smart HTT
 
 ## Simulators
 
-Simulators (`simulators/{aws,gcp,azure}/`) are standalone HTTP servers that implement subsets of cloud APIs. They allow backends to run against local fake infrastructure for testing.
+Simulators (`simulators/{aws,gcp,azure}/`) are standalone HTTP servers that implement the local cloud-slice APIs sockerless touches. They allow backends, SDKs, CLIs, and Terraform providers to run against a local endpoint while preserving cloud-shaped request/response semantics.
 
 ```mermaid
 graph LR
@@ -531,18 +531,18 @@ graph LR
 
     subgraph "Simulator"
         SIM2["simulator-aws<br/><i>:4566</i>"]
-        AGENT["sockerless-agent<br/><i>(subprocess)</i>"]
+        HOST["workload host<br/><i>(Docker container shaped like the cloud primitive)</i>"]
     end
 
     BE2 -->|"AWS SDK<br/>(ECS API)"| SIM2
-    SIM2 -->|"spawn on<br/>RunTask"| AGENT
-    AGENT -->|"WebSocket<br/>callback"| BE2
+    SIM2 -->|"materialize on<br/>RunTask / Invoke / CreateService"| HOST
+    HOST -->|"bootstrap reverse-agent<br/>when the cloud path requires it"| BE2
 ```
 
 Key points:
 - Simulators are **decoupled** from backends. They don't import backend code.
 - Backends talk to simulators via standard cloud SDKs pointed at `localhost` via `SOCKERLESS_ENDPOINT_URL`.
-- When a simulator receives a task/function invoke and sees `SOCKERLESS_AGENT_CALLBACK_URL` in the environment, it spawns an agent subprocess that dials back to the backend.
+- When a simulator receives a task/function invoke or service/app create, it materializes a real local workload container shaped like that cloud primitive. If the workload image contains a sockerless bootstrap, that bootstrap dials the backend reverse-agent endpoint just as it would in the cloud.
 - Each cloud has its own simulator on a dedicated port: AWS `:4566`, GCP `:4567`, Azure `:4568`.
 
 ### Simulator Coverage

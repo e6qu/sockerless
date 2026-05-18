@@ -15,7 +15,7 @@ This document is the source of truth for the stateless-backend invariant.
    - GitHub runner: default model is NOT ephemeral; we need it ephemeral
    - GitHub runner: cannot self-spawn jobs (needs separate dispatcher), except k8s-deployed ACA
    - gitlab-runner vs github-runner — runner-pattern compatibility matrix
-   - Per-cloud `github-runner-dispatcher` (Phase 110a / 122 / 122b)
+   - Per-cloud `github-runner-dispatcher`
    - Other CI/CD systems — comparison (Azure DevOps, Jenkins, Drone, Buildkite, CircleCI, Tekton, Argo, Concourse, TeamCity, Bitbucket Pipelines, GoCD, Semaphore, Travis, Bamboo, Earthly, Dagger, Cloud Build, AWS CodeBuild, Harness, Spinnaker)
 5. [Per-cloud detailed mapping](#mapping-per-cloud) (AWS ECS / Lambda · GCP Cloud Run / GCF · Azure ACA / AZF · Local Docker)
 6. [Drivers — generic + per-cloud](#driver-pattern-as-a-generalization-target) (storage backing · network discovery · DNS · access · volume provisioning)
@@ -51,7 +51,7 @@ This document is the source of truth for the stateless-backend invariant.
    | Backend | Primitive for `container:` sub-task | IAM (in addition to base FaaS perms) |
    |---|---|---|
    | `lambda` | `lambda.CreateFunction` (image-mode container) per sub-task → `lambda.Invoke`. Sub-task functions share the runner's workspace EFS access point via `FileSystemConfig`. After invoke + completion, `lambda.DeleteFunction`. | `lambda:CreateFunction/Invoke/Delete/Get/UpdateConfiguration/Tag/ListFunctions`, `iam:PassRole` for sub-task execution role. |
-   | `cloudrun-functions` (gcf) | HTTP invoke (`https://<service-uri>/`) of a sockerless-overlay-imaged Function created via `functions.CreateFunction(stub-buildpacks-source)` + post-create `run.Services.UpdateService(image=overlay)`. See [§ GCP Cloud Run Functions](#gcp-cloud-run-functions-backend-cloudrun-functions--gcf). Function reuse pool keyed on overlay-content-hash so amortized startup matches Cloud Run Functions normal cold-start. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/get/list/update/delete`, `run.services.get/update`, `cloudbuild.builds.create`, `artifactregistry.repositories.uploadArtifacts`, `iam.serviceAccounts.actAs`. |
+   | `cloudrun-functions` (gcf) | HTTP invoke (`https://<service-uri>/`) of a sockerless-overlay-imaged Function created through the Cloud Functions metadata API, then updated via `run.Services.UpdateService(image=overlay)`. See [§ GCP Cloud Run Functions](#gcp-cloud-run-functions-backend-cloudrun-functions--gcf). Function reuse pool keyed on overlay-content-hash so amortized startup matches Cloud Run Functions normal cold-start. Workspace shared via GCS bucket pre-mounted by the bootstrap. | `cloudfunctions.functions.create/get/list/update/delete`, `run.services.get/update`, `cloudbuild.builds.create`, `artifactregistry.repositories.uploadArtifacts`, `iam.serviceAccounts.actAs`. |
    | `azure-functions` (azf) | Function-app deployment + HTTP trigger invoke; sub-task workspace mounted as Azure Files share via the function app's site config. | `Microsoft.Web/sites/{create,invoke,delete}`, managed-identity `actAs`. |
    | `ecs` | `ecs.RunTask` (Fargate) per sub-task; not relevant *inside* an ECS workload because ECS tasks run a long-lived sockerless that handles repeated `RunTask` directly. | (default ECS task role.) |
    | `cloudrun` (services) | `run.Services.CreateRevision` against a per-sub-task Service; long-lived for the duration of the parent workload. | `run.services.create/get/delete`. |
@@ -185,7 +185,7 @@ GitHub Actions self-hosted runner registered in the default mode is **persistent
 **How to enable ephemeral mode:**
 - **Self-hosted runner config:** pass `--ephemeral` to `config.sh` at registration time. The runner exits with code 0 after the first job's `Job completed` message instead of polling for the next.
 - **Per-spawn registration token:** ephemeral runners need a fresh `runners/registration-token` mint per spawn. The dispatcher (see below) handles this — `pkg/scopes` checks the PAT at startup, `pkg/poller` mints per-spawn.
-- **Runner image bootstrap.sh:** `./config.sh --url $RUNNER_REPO --token $RUNNER_REG_TOKEN --name $RUNNER_NAME --ephemeral --unattended --replace` then `./run.sh` then exit. (Phase 110a runner Dockerfiles do this.)
+- **Runner image bootstrap.sh:** `./config.sh --url $RUNNER_REPO --token $RUNNER_REG_TOKEN --name $RUNNER_NAME --ephemeral --unattended --replace` then `./run.sh` then exit.
 - **Dispatcher cleanup:** the dispatcher's cleanup loop also reaps `offline` runners on the GitHub side via `gh api .../actions/runners` — ephemeral runners go offline as they exit and need to be deregistered to avoid zombie entries cluttering the org's runner list.
 
 ### GitHub runner: cannot self-spawn jobs — needs a separate dispatcher
@@ -209,9 +209,9 @@ The contrast with GitLab is sharp:
 
 See [§ gitlab-runner vs github-runner — runner-pattern compatibility matrix](#gitlab-runner-vs-github-runner--runner-pattern-compatibility-matrix-2026-05-06) below for the full per-row matrix. Summary: both runners are supported on cloudrun + gcf via the multi-container Cloud Run Service revision pattern, reverse-agent exec, and the `gcs-sync` workspace driver. ECS uses its platform SSM exec path; Lambda uses the reverse-agent bootstrap.
 
-### Per-cloud `github-runner-dispatcher` (Phase 110a / 122 / 122b)
+### Per-cloud `github-runner-dispatcher`
 
-Three Go modules turn queued GitHub Actions workflow_jobs into per-job ephemeral runner containers, one variant per cloud control plane. See [§ Per-cloud github-runner-dispatcher](#per-cloud-github-runner-dispatcher-phase-110a--122--122b) below for the per-cloud spawn shape, IAM, state recovery, and cleanup details.
+Three Go modules turn queued GitHub Actions workflow_jobs into per-job ephemeral runner containers, one variant per cloud control plane. See [§ Per-cloud github-runner-dispatcher](#per-cloud-github-runner-dispatcher) below for the per-cloud spawn shape, IAM, state recovery, and cleanup details.
 
 ### Other CI/CD systems — comparison
 
@@ -423,11 +423,11 @@ Cloud Run Functions Gen2's `CreateFunction` API requires a Buildpacks-compatible
 2. **Pool query**: `Functions.ListFunctions(filter: sockerless_managed=true AND sockerless_overlay_hash=<contentTag>)`. From the result, pick any with `sockerless_allocation=""`. **Atomic claim** via `Functions.UpdateFunction(labels.add: sockerless_allocation=<containerID>)` with the function's current `etag`. Etag mismatch ⇒ another sockerless instance won; loop. If a free function is claimed, **skip to step 6**.
 3. **Image cache check**: `ArtifactRegistry.GetDockerImage(URI=<region>-docker.pkg.dev/<project>/sockerless-overlay/gcf:<contentTag>)`. 200 ⇒ overlay already exists; skip to 4. 404 ⇒ next step.
 4. **Overlay build via Cloud Build**: tar a `Dockerfile` (`FROM <resolved-user-image>`, `COPY sockerless-gcf-bootstrap /opt/sockerless/...`, `ENV SOCKERLESS_USER_*=...`, `ENTRYPOINT [".../bootstrap"]`) + the bootstrap binary, upload to `gs://<build-bucket>/`, fire `cloudbuild.CreateBuild(steps: [docker build, docker push])` against the AR URI from step 3. Cloud Build deduplicates by source hash so re-fires are no-ops.
-5. **Stub-source CreateFunction**: stage a no-op Go source archive at `gs://<build-bucket>/sockerless-stub-go.zip` (one-time per project; the source is identical for every sockerless deployment), `Functions.CreateFunction(parent, FunctionId=sockerless-<contentTag>-<n>, BuildConfig{Runtime:"go124", Source:storage(stub-zip), EntryPoint:"Stub"}, ServiceConfig{...env vars...}, Labels{sockerless_managed=true, sockerless_overlay_hash=<contentTag>, sockerless_allocation=<containerID>})`. Buildpacks builds a throwaway image; the function moves to ACTIVE in 30-60s.
+5. **Buildpacks bootstrap-source CreateFunction**: stage the minimal Go source archive Cloud Functions requires at `gs://<build-bucket>/sockerless-bootstrap-go.zip` (one-time per project; the source is identical for every sockerless deployment), `Functions.CreateFunction(parent, FunctionId=sockerless-<contentTag>-<n>, BuildConfig{Runtime:"go124", Source:storage(bootstrap-source), EntryPoint:"Bootstrap"}, ServiceConfig{...env vars...}, Labels{sockerless_managed=true, sockerless_overlay_hash=<contentTag>, sockerless_allocation=<containerID>})`. Buildpacks builds the API-required initial image; the function moves to ACTIVE in 30-60s before the Service image is updated to the real overlay.
 6. **Image swap**: `Run.Services.UpdateService(name=<function.ServiceConfig.Service>, Template.Containers[0].Image=<overlay-AR-URI>)` to replace the Buildpacks-built throwaway with our overlay. Cloud Functions does not reconcile this field — the swap holds.
 7. **Invoke**: HTTP POST to `Function.ServiceConfig.Uri`. The `sockerless-gcf-bootstrap` inside the overlay handles the request, exec's `SOCKERLESS_USER_*` as a subprocess, returns stdout in the response body, and copies stdout/stderr to its own (which Cloud Logging captures under `run.googleapis.com%2Fstdout` for the existing `buildCloudLogsFetcher`).
 
-**The stub-Buildpacks-source step is not a hack** — it's the documented escape hatch for non-Buildpacks-compatible deployments and is the same pattern as `attachVolumesToFunctionService`'s post-create UpdateService for volume mounts. Cloud Functions' API surface manages function metadata (URL, IAM, trigger spec); the underlying Cloud Run Service's `Template.Containers[0].Image` is operator-controlled and persists across function updates.
+**The Buildpacks bootstrap-source step is not a workload implementation** — it's the documented Cloud Functions entry point for creating function metadata before swapping the underlying Cloud Run Service to the operator-controlled overlay image. This is the same pattern as `attachVolumesToFunctionService`'s post-create UpdateService for volume mounts. Cloud Functions' API surface manages function metadata (URL, IAM, trigger spec); the underlying Cloud Run Service's `Template.Containers[0].Image` is operator-controlled and persists across function updates.
 
 **Architectural tension — async eager deploy vs deferred multi-container materialization (BUG-923 ↔ BUG-925/network_pod):**
 
@@ -887,7 +887,7 @@ The driver does NOT mint workload-side credentials (the workload picks those up 
    - `ecs` + `lambda` → `iamRoleAccess` (returns `http.DefaultClient`; principal sourced from per-backend config).
    - `aca` + `azure-functions` → `noneInternalAccess`.
 4. `BaseServer.Access` field; defaults to `NoneInternalAccess{}`; backend startup overrides.
-5. Every existing `idtoken.NewClient(ctx, url)` callsite (cloudrun: `exec_invoke.go`, `start_service.go`; cloudrun-functions: `exec_invoke.go`, `pod_service.go`, `containers.go`) migrated to `s.Access.AuthenticatedClient(ctx, url)`.
+5. Every existing `idtoken.NewClient(ctx, url)` callsite in Cloud Run and Cloud Run Functions service/invocation paths migrated to `s.Access.AuthenticatedClient(ctx, url)`.
 
 ## Storage backing — ephemeral managed FS expansion
 
@@ -1040,7 +1040,7 @@ Per-stage / per-container script delivery rules within the multi-container task:
 
 > **Single-shot lifecycle** (no stdin pipe) — the original `Entrypoint`/`Cmd` from /create is preserved in the task definition; the container runs once and exits. /wait surfaces its exit code from the task's `containers[]` array. This is the path for sidecar `services:` containers that just need to start, run their image's entrypoint, and stay reachable on the task's network.
 
-Single-container fallback: if the container at first-/start has no user-defined network OR has no sibling containers in `PendingCreates` on that network, sockerless registers a single-container task definition (current behaviour preserved for `docker run` / GitHub-Actions-runner workloads where there's only one job container).
+Single-container path: if the container at first `/start` has no user-defined network OR has no sibling containers in `PendingCreates` on that network, sockerless registers a single-container task definition (current behaviour preserved for `docker run` / GitHub-Actions-runner workloads where there's only one job container).
 
 The docker-network signal works for any client that follows the "create a network, attach all of the job's containers to it" idiom (gitlab-runner, docker-compose, k8s pods translated through libpod's pod API). No client-specific name parsing required.
 
@@ -1155,14 +1155,14 @@ Both GitLab Runner's `docker` executor and GitHub Actions runner expect a docker
 | docker | ✓ | ✓ | ✓ | ✓ Out of the box. |
 | ecs | ✓ Fargate task | ✓ (task runs whatever entrypoint specified) | ✓ via SSM ExecuteCommand | Each `docker exec` round-trips an SSM session — slower than local Docker but functionally identical. |
 | cloudrun (Services, `UseService=true`) | ✓ Long-lived service revision | ✓ | ✓ via reverse-agent | ✓ Bootstrap must be present; CR Services stay warm. |
-| aca (Apps, `UseApp=true`) | ✓ Long-lived app revision | ✓ | ✓ via reverse-agent or ACA console exec | ✓ Bootstrap or console exec available. |
+| aca (Apps, `UseApp=true`) | ✓ Long-lived app revision | ✓ | ✓ via reverse-agent | ✓ Bootstrap registers a reverse-agent WebSocket. |
 | cloudrun (Jobs) | ✗ Execution scoped to one Run | ✗ entrypoint exits → execution completes | ✗ no surface | ✗ Use the Service path instead. |
 | aca (Jobs) | ✗ Execution scoped to one Start | ✗ | ✗ | ✗ Use the App path instead. |
-| lambda | ✗ Invocation scoped | ✗ Lambda forces termination at handler return | ✗ The bootstrap stays alive only for the duration of one Invoke | ✗ Fundamentally incompatible — Lambda has no long-lived container concept. |
-| gcf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
-| azf | ✗ Same as Lambda | ✗ | ✗ | ✗ |
+| lambda | ⚠ Bounded invocation with overlay bootstrap | n/a | ✓ via reverse-agent while the invocation is alive | ⚠ Suitable for bounded jobs within Lambda's invocation limit. |
+| gcf | ⚠ Bounded invocation / underlying Service bootstrap | n/a | ✓ via reverse-agent while the invocation is alive | ⚠ Suitable for bounded jobs within the platform limit. |
+| azf | ⚠ Bounded Function App invocation with overlay bootstrap | n/a | ✓ via reverse-agent while the invocation is alive | ⚠ Suitable for bounded jobs within the platform limit. |
 
-**Operational note.** A runner targeting an ECS/CR-Services/ACA-Apps sockerless backend will see one cloud "container" (task / revision / app) per CI job. Each step's `docker exec` becomes a SSM Session / reverse-agent exec round-trip. This is a real compatibility — the runner doesn't know it's not talking to local Docker — but performance is bound by the cloud's exec-channel latency. For latency-sensitive workloads, prefer self-hosted runners against the local `docker` backend.
+**Operational note.** A runner targeting a sockerless backend will see one cloud "container" (task / revision / app / bounded invocation) per CI job. Each step's `docker exec` becomes a SSM Session or reverse-agent exec round-trip. This is real compatibility — the runner doesn't know it's not talking to local Docker — but performance is bound by the cloud's exec-channel latency and any FaaS platform lifetime cap. For latency-sensitive workloads, prefer self-hosted runners against the local `docker` backend.
 
 ### Images
 
@@ -1292,7 +1292,7 @@ type Driver interface {
 
 The handler resolves the container once via `ResolveContainerAuto`, builds a `DriverContext`, then invokes `s.Typed.<X>.<method>(dctx, opts)`. Per-dimension typed `<X>Options` / `<X>Result` types layer on top. An unset / `NotImpl` driver auto-emits `NotImplementedError` whose message comes from `Describe()`.
 
-**Adapter layer.** Most dimensions ship with a `WrapLegacyXxx` adapter in `backends/core/driver_adapt_*.go` that converts an existing `BaseServer.ContainerXxx` method into the typed shape. Backends that have a cloud-native typed driver override the slot directly (e.g. `s.Typed.Logs = NewCloudLogsLogsDriver(...)` in Lambda's `NewServer`); backends that don't fall back to the wrapping adapter. The wrapper-removal pass tracked in PLAN.md collapses the indirection once every backend has a typed cloud-native driver per dimension.
+**Adapter layer.** Most dimensions ship with a `WrapLegacyXxx` adapter in `backends/core/driver_adapt_*.go` that converts an existing `BaseServer.ContainerXxx` method into the typed shape. Backends that have a cloud-native typed driver override the slot directly (e.g. `s.Typed.Logs = NewCloudLogsLogsDriver(...)` in Lambda's `NewServer`); backends that still use the shared core implementation wire the wrapping adapter explicitly. The wrapper-removal pass tracked in PLAN.md collapses the indirection once every backend has a typed cloud-native driver per dimension.
 
 **Type tightening.** `core.ImageRef` ([backends/core/image_ref.go](../backends/core/image_ref.go)) is the canonical parsed image reference (`{Domain, Path, Tag, Digest}`) used by the typed `RegistryDriver.Push/Pull` boundary. The handler parses once at the dispatch site; the typed driver receives a structured value. The pattern extends to typed Signal enums + a `ResolveImageReg(ImageRef)` helper for the registry-resolution call sites that still use `splitImageRefRegistry` for docker-hub default rewrites.
 
@@ -1415,7 +1415,7 @@ The cloud Function (gcf) / Function App (azf) / Lambda function (lambda) is the 
 | `sockerless-overlay-hash=<contentTag>` | Groups reusable resources by image content | every list call |
 | `sockerless-allocation=<containerID>` | "In use" marker. Empty/absent ⇒ free, in pool | every list call |
 
-**Claim sequence (`docker run`):** list resources matching `sockerless_managed=true AND sockerless_overlay_hash=<contentTag>`; pick first with empty allocation; atomic CAS via `Update*({allocation: <containerID>}, etag=<currentEtag>)`. Etag mismatch ⇒ another sockerless instance won; loop. If no free resource exists, build overlay (cache check above), create new resource (lambda: `CreateFunction`; gcf: `CreateFunction(stub-source) + UpdateService(image=overlay)`; azf: `WebApps.CreateOrUpdate(linuxFxVersion=DOCKER|<overlay>)`).
+**Claim sequence (`docker run`):** list resources matching `sockerless_managed=true AND sockerless_overlay_hash=<contentTag>`; pick first with empty allocation; atomic CAS via `Update*({allocation: <containerID>}, etag=<currentEtag>)`. Etag mismatch ⇒ another sockerless instance won; loop. If no free resource exists, build overlay (cache check above), create new resource (lambda: `CreateFunction`; gcf: `CreateFunction` through the metadata API + `UpdateService(image=overlay)`; azf: `WebApps.CreateOrUpdate(linuxFxVersion=DOCKER|<overlay>)`).
 
 **Release sequence (`docker rm`):** find the container's claimed resource via `sockerless_allocation=<containerID>`; count free resources for this overlay-hash; if count `>= SOCKERLESS_<BACKEND>_POOL_MAX` (default 10) ⇒ delete; otherwise clear the allocation label so a future `docker run` reuses it.
 
@@ -1500,13 +1500,13 @@ Outputs the dispatcher + bootstrap consume:
 
 The dispatcher (`github-runner-dispatcher-<cloud>`) sets these env vars on the runner Job container at spawn time. The runner image's `bootstrap.sh` validates them with `${VAR:?required}` and exits non-zero if any are missing — fail-loudly, no fallbacks, no auto-discovery.
 
-## Per-cloud github-runner-dispatcher (Phase 110a / 122 / 122b)
+## Per-cloud github-runner-dispatcher
 
 Sockerless ships three top-level Go modules that turn queued GitHub Actions workflow_jobs into per-job runner containers, one variant per cloud control plane:
 
 | Module | Cloud primitive | Spawn shape | State recovery | Cleanup |
 |---|---|---|---|---|
-| `github-runner-dispatcher-aws` (Phase 110a) | docker daemon at `DOCKER_HOST` | `docker run --rm -d --pull never <image>` with `sockerless.dispatcher.{job_id,runner_name,managed_by}` labels | `docker ps --filter label=sockerless.dispatcher.managed_by` | `docker rm` exited containers + `gh api …/actions/runners` reaps offline `dispatcher-*` runners |
+| `github-runner-dispatcher-aws` | docker daemon at `DOCKER_HOST` | `docker run --rm -d --pull never <image>` with `sockerless.dispatcher.{job_id,runner_name,managed_by}` labels | `docker ps --filter label=sockerless.dispatcher.managed_by` | `docker rm` exited containers + `gh api …/actions/runners` reaps offline `dispatcher-*` runners |
 | `github-runner-dispatcher-gcp` (Phase 122) | Cloud Run Jobs (`cloud.google.com/go/run/apiv2`) | `Jobs.CreateJob` (one-shot, `MaxRetries: 0`) + `Jobs.RunJob`; tags via Job `Labels` (`sockerless-dispatcher-managed-by` etc.) | `Jobs.ListJobs` filtered by managed-by label | `Jobs.DeleteJob` for executions in terminal `TerminalCondition.State` (`CONDITION_SUCCEEDED` / `CONDITION_FAILED` / `CONDITION_CANCELLED`) |
 | `github-runner-dispatcher-azure` (Phase 122b) | Container Apps Jobs (`armappcontainers`) | `Jobs.BeginCreateOrUpdate` + `Jobs.BeginStart` (Manual trigger, `Parallelism: 1`, `ReplicaRetryLimit: 0`); tags via ARM `Tags` (`sockerless-dispatcher-managed-by` etc.) | `Jobs.NewListByResourceGroupPager` filtered by managed-by tag | `Jobs.BeginDelete` for jobs in terminal `Properties.ProvisioningState` (`Succeeded` / `Failed` / `Canceled`) |
 
@@ -1523,7 +1523,7 @@ The poller + scopes packages live in `github-runner-dispatcher-aws/pkg/{poller,s
 
 | Scenario | Dispatcher |
 |---|---|
-| Cells / deployments where sockerless is the docker daemon (DOCKER_HOST→sockerless-backend-{ecs,lambda,cloudrun,gcf,aca,azf}) — the standard pattern | `-aws` (works on any cloud — it's the docker shape, not the AWS shape; the name reflects its Phase 110a origin where AWS was the first target) |
+| Cells / deployments where sockerless is the docker daemon (DOCKER_HOST→sockerless-backend-{ecs,lambda,cloudrun,gcf,aca,azf}) — the standard pattern | `-aws` (works on any cloud — it's the docker shape, not the AWS shape; the name reflects that AWS was the first target) |
 | GCP-native deployment that wants to bypass sockerless and dispatch directly via Cloud Run Jobs | `-gcp` |
 | Azure-native deployment that wants to bypass sockerless and dispatch directly via ACA Jobs | `-azure` |
 

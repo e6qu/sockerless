@@ -95,7 +95,7 @@ export DOCKER_HOST=tcp://localhost:3375
 ```bash
 AR_URL=$(cd backends/cloudrun/examples/terraform && terraform output -raw artifact_registry_url)
 
-# Pull (creates synthetic reference)
+# Pull through the configured Artifact Registry reference
 docker pull ${AR_URL}/alpine:latest
 
 # Run a command

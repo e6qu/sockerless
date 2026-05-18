@@ -8,11 +8,11 @@ This document maps Docker/Podman CLI commands to their REST API endpoints and th
 
 | Short Name | Package | Cloud Provider | Container Service |
 |------------|---------|----------------|-------------------|
-| **Core** | `backends/core` | Local | In-memory driver chain (agent/process/synthetic) |
+| **Core** | `backends/core` | Shared | Docker API handlers, typed driver framework, and shared cloud helpers |
 | **Docker** | `backends/docker` | Local | Real Docker Engine passthrough |
 | **ECS** | `backends/ecs` | AWS | ECS Fargate tasks |
-| **CloudRun** | `backends/cloudrun` | GCP | Cloud Run Jobs |
-| **ACA** | `backends/aca` | Azure | Container Apps Jobs |
+| **CloudRun** | `backends/cloudrun` | GCP | Cloud Run Jobs and Services |
+| **ACA** | `backends/aca` | Azure | Container Apps Jobs and Apps |
 | **Lambda** | `backends/lambda` | AWS | Lambda functions (FaaS) |
 | **GCF** | `backends/cloudrun-functions` | GCP | Cloud Run Functions 2nd gen (FaaS) |
 | **AZF** | `backends/azure-functions` | Azure | Azure Functions (FaaS) |
@@ -55,11 +55,11 @@ This document maps Docker/Podman CLI commands to their REST API endpoints and th
 
 | Operation | ECS (AWS) | CloudRun (GCP) | ACA (Azure) | Lambda (AWS) | GCF (GCP) | AZF (Azure) |
 |-----------|-----------|----------------|-------------|--------------|-----------|-------------|
-| create | Register TaskDef | Store config | Store config | Store config | Store config | Store config |
-| start | `ecs:RunTask` | `run.jobs.executions.run` | `containerApps.jobs.start` | `lambda:Invoke` | `functions.callFunction` | `HTTP POST function` |
-| stop | `ecs:StopTask` | `run.jobs.executions.cancel` | `containerApps.jobs.stopExecution` | N/A (stateless) | N/A | N/A |
-| kill | `ecs:StopTask` (force) | `run.jobs.executions.cancel` | `containerApps.jobs.stopExecution` | N/A | N/A | N/A |
-| remove | `ecs:DeregisterTaskDef` | `run.jobs.delete` | `containerApps.jobs.delete` | `lambda:DeleteFunction` | `functions.delete` | `webApps.Delete` |
+| create | Pending create until task registration/start | Pending create until Job/Service materialization | Pending create until Job/App materialization | Pending create until Function materialization | Pending create until Function/Service materialization | Pending create until Function App materialization |
+| start | `ecs:RunTask` | `run.jobs.run` or Service revision start | `containerApps.jobs.start` or App revision start | `lambda:Invoke` + reverse-agent wait | Function URL invoke + reverse-agent wait | HTTP trigger invoke + reverse-agent wait |
+| stop | `ecs:StopTask` | cancel execution or stop Service-backed path | stop execution or App-backed path | reverse-agent/platform result | reverse-agent/platform result | reverse-agent/platform result |
+| kill | `ecs:StopTask` | cancel execution or stop Service-backed path | stop execution or App-backed path | reverse-agent/platform result | reverse-agent/platform result | reverse-agent/platform result |
+| remove | stop + task definition cleanup | delete managed Job/Service resources | delete managed Job/App resources | `lambda:DeleteFunction` | `functions.delete` + Service cleanup | `webApps.Delete` |
 
 ---
 
@@ -99,19 +99,17 @@ All cloud backends use `core.StreamCloudLogs` with a `CloudLogFetchFunc` closure
 | `docker exec` (resize) | `POST /exec/{id}/resize` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker attach` | `POST /containers/{id}/attach` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
 
-Exec/attach has two paths per cloud backend:
-1. **Agent path**: If an agent is connected to the container, exec proxies through the agent driver chain (works for all backends).
-2. **Cloud-native path**: If no agent is connected, uses the cloud provider's native exec API (where available).
+Exec/attach has exactly one implementation path per backend. ECS uses its cloud-native SSM ExecuteCommand path. FaaS-style and runner Service/App paths use the registered reverse-agent WebSocket. If the required session is missing, the backend returns an explicit error.
 
 ### Cloud Service Mapping — Exec/Attach
 
 | Backend | Agent Path | Cloud-Native Path | Cloud API |
 |---------|------------|-------------------|-----------|
-| Core | LocalExecDriver (synthetic process) | N/A | Local process |
+| Core | Shared typed driver slot | N/A | Backend-selected implementation |
 | Docker | N/A | Docker SDK | `ContainerExecCreate` + `ContainerExecAttach` |
 | ECS | N/A (no in-container bootstrap) | ECS ExecuteCommand | `ecs:ExecuteCommand` → SSM WebSocket session |
-| CloudRun | ReverseAgentExecDriver | Not supported | Cloud Run Jobs have no exec API |
-| ACA | ReverseAgentExecDriver | Container Apps exec | REST `POST .../exec` → WebSocket session |
+| CloudRun | ReverseAgentExecDriver | Not supported | Cloud Run Services path; Jobs have no exec API |
+| ACA | ReverseAgentExecDriver | Not supported for runner Apps | Container Apps Apps path |
 | Lambda | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
 | GCF | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
 | AZF | ReverseAgentExecDriver | N/A | FaaS — no persistent process |
@@ -180,15 +178,15 @@ All backends use the `FilesystemDriver` (agent-based staging directories for clo
 
 | Backend | Network Isolation | Service Used | What Happens |
 |---------|-------------------|--------------|--------------|
-| Core | SyntheticNetworkDriver (IPAM) | In-memory IP allocation | Assigns IPs, tracks memberships |
+| Core | Shared network bookkeeping | In-memory metadata for non-cloud tests | Tracks memberships for backends that do not override |
 | Core (Linux) | LinuxNetworkDriver | Network namespaces + veth pairs | Real L2 isolation |
 | Docker | Docker Engine | Docker SDK `NetworkCreate/Connect` | Real Docker networking |
 | ECS | VPC Security Groups | `ec2:CreateSecurityGroup`, `ec2:AuthorizeSecurityGroupIngress` | Per-network SG, self-referencing ingress rule |
 | CloudRun | Cloud DNS private zones | `dns.managedZones.create`, `dns.rrsets.create` | DNS-based name resolution per network |
 | ACA | Environment networking | Container Apps Environment shared VNet | Internal DNS + NSG rule tracking |
-| Lambda | N/A | In-memory only | FaaS — no network isolation |
-| GCF | N/A | In-memory only | FaaS — no network isolation |
-| AZF | N/A | In-memory only | FaaS — no network isolation |
+| Lambda | Limited | VPC config / service mesh when configured | No native Docker peer network |
+| GCF | Limited | Underlying Cloud Run Service materialization | No native Docker bridge |
+| AZF | Limited | Private DNS / Function App networking when configured | No native Docker bridge |
 
 ---
 
@@ -198,14 +196,14 @@ When containers connect to a Docker network, service discovery enables them to r
 
 | Backend | Service | Registration | Resolution |
 |---------|---------|-------------|------------|
-| Core | In-memory | SyntheticNetworkDriver tracks endpoints | Direct IP lookup |
+| Core | In-memory metadata | Shared network driver tracks endpoints | Direct lookup for non-cloud tests |
 | Docker | Docker DNS | Docker Engine internal DNS | Container name resolution |
 | ECS | AWS Cloud Map | `servicediscovery:RegisterInstance` | `servicediscovery:DiscoverInstances` |
 | CloudRun | Cloud DNS | `dns.rrsets.create` (A record) | `dns.rrsets.list` lookup |
 | ACA | Azure Private DNS | Environment internal DNS + registry | Hostname-to-IP mapping |
-| Lambda | N/A | Not applicable | FaaS — no service discovery |
-| GCF | N/A | Not applicable | FaaS — no service discovery |
-| AZF | N/A | Not applicable | FaaS — no service discovery |
+| Lambda | Limited | Service-mesh/cloud DNS only when configured | No native Docker DNS |
+| GCF | Underlying Service materialization | Multi-container Service path | Service-local resolution |
+| AZF | Limited | Private DNS only when configured | No native Docker DNS |
 
 ---
 
@@ -231,9 +229,9 @@ When containers connect to a Docker network, service discovery enables them to r
 | CloudRun | Persistent Disk | Compute Engine PD | Block storage |
 | ACA | Azure Files | `storage.FileShares` | Azure Files mount |
 | ACA | Azure Disk | Managed Disk | Block storage |
-| Lambda | N/A | Ephemeral /tmp only | No persistent volumes |
-| GCF | N/A | Ephemeral /tmp only | No persistent volumes |
-| AZF | N/A | Ephemeral /tmp only | No persistent volumes |
+| Lambda | EFS | `efs:CreateAccessPoint` / configured EFS | EFS mount in function config |
+| GCF | GCS-backed storage | Cloud Run Service volume / `gcs-sync` | GCS-backed workspace |
+| AZF | Azure Files | Storage file shares | Azure Files mount |
 
 ---
 
@@ -245,9 +243,9 @@ When containers connect to a Docker network, service discovery enables them to r
 | `docker builder prune` | `POST /build/prune` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `docker commit` | `POST /commit` | ✅ | ✅ | ❌ | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in | ⚠️ opt-in |
 
-- Core: In-memory Dockerfile processing, creates image record in store
+- Core: shared Dockerfile parsing/build response helpers for tests and explicit development paths
 - Docker: Proxies to Docker Engine build API
-- Cloud/FaaS: Uses inherited core build (in-memory), result stored locally
+- Cloud/FaaS: Uses the configured cloud builder and registry path where implemented; unsupported build modes fail explicitly
 
 ---
 
@@ -325,13 +323,13 @@ The narrow `core.DriverSet` (Exec/Filesystem/Stream/Network) predates the typed 
 | Build | `core.BuildDriver` | `WrapLegacyBuild` (delegates to api.Backend.ImageBuild) | per-cloud build service inside the legacy impl |
 | Stats | `core.StatsDriver` | `WrapLegacyStats` | (handler builds responses inline) |
 | Registry | `core.RegistryDriver` | `WrapLegacyRegistry` (takes typed `core.ImageRef`) | (per-cloud handled inside the legacy impl) |
-| Network | `api.NetworkDriver` | `SyntheticNetworkDriver` | `LinuxNetworkDriver` on Linux; cloud overlays via api.Backend |
+| Network | `api.NetworkDriver` | Core network bookkeeping driver | `LinuxNetworkDriver` on Linux; cloud networking/discovery via api.Backend |
 
 ### Per-Cloud Driver Implementations
 
 | Driver | AWS (ECS) | GCP (CloudRun) | Azure (ACA) |
 |--------|-----------|----------------|-------------|
-| CloudExec | ECS ExecuteCommand + SSM | Not supported (Jobs) | Container Apps exec API |
+| Exec | ECS ExecuteCommand + SSM | Reverse-agent WebSocket for Services | Reverse-agent WebSocket for Apps |
 | CloudNetwork | EC2 Security Groups | Cloud DNS managed zones | Environment networking + NSGs |
 | ServiceDiscovery | Cloud Map | Cloud DNS A records | Private DNS + internal registry |
 | Storage | EFS + EBS | GCS FUSE + Persistent Disk | Azure Files + Azure Disk |

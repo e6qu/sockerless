@@ -5,7 +5,7 @@ End-to-end tests that run a *real* CI runner binary (not a Docker-API replay) ag
 - [`github/`](github/) — `actions/runner` registered with a real GitHub repo or organisation, executing real workflow runs.
 - [`gitlab/`](gitlab/) — `gitlab-runner` with the docker executor, registered against gitlab.com (project-scoped) or the project's `origin-gitlab` mirror.
 
-The synthetic Docker-API replay tests live alongside in [`tests/github_runner_e2e_test.go`](../github_runner_e2e_test.go) and [`tests/gitlab_runner_e2e_test.go`](../gitlab_runner_e2e_test.go); those exercise the call sequence the runners make, not the runner binaries themselves.
+The Docker-API replay tests live alongside in [`tests/github_runner_e2e_test.go`](../github_runner_e2e_test.go) and [`tests/gitlab_runner_e2e_test.go`](../gitlab_runner_e2e_test.go); those exercise the call sequence the runners make, not the runner binaries themselves.
 
 ## When to run
 
@@ -13,7 +13,7 @@ The synthetic Docker-API replay tests live alongside in [`tests/github_runner_e2
 - After landing a backend change that's been tested only against the simulator — to verify the runner's actual call sequence against live cloud infra.
 - Periodically as a regression sweep.
 
-The synthetic tests + sim-parity matrix cover wire-format correctness; these harnesses are the "does the real runner actually work" check.
+The Docker-API replay tests + sim-parity matrix cover wire-format correctness; these harnesses are the "does the real runner actually work" check.
 
 ## Architecture
 

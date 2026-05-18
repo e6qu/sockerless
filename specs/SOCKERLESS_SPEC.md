@@ -299,7 +299,7 @@ Headers:
 - Records the image reference in the internal state store
 - Does NOT actually pull the image locally — the cloud backend will pull it when a container is created
 - Validates that the image exists in the registry (HEAD request to registry API) if credentials are provided
-- The progress output can be synthetic (immediate "Pull complete") since no actual download occurs locally
+- Progress output reflects registry/cloud resolution work where the backend can observe it; backends must not report fabricated layer metadata as if a local pull occurred
 
 #### `GET /images/{name}/json` — Inspect Image
 
@@ -1576,7 +1576,7 @@ Both containers mount the same volume for data sharing. This is critical for the
 
 ### 10.3 Implementation per Backend
 
-> **Note:** In the current implementation, volume operations are handled **in-memory** by `backends/core/`. Cloud backends store volume metadata in local state and apply volume mounts when launching cloud tasks. The cloud-native storage provisioning described below is done via Terraform infrastructure modules (`terraform/modules/`), not dynamically by the backend at runtime.
+> **Note:** Cloud backends map Docker volumes to cloud storage primitives through their storage drivers. The cloud resource or configured storage backing is the source of truth; core bookkeeping is not authoritative for cloud state.
 
 #### AWS ECS + EFS
 - Pre-provisioned EFS filesystem referenced in task definitions
@@ -1613,18 +1613,18 @@ CI runners create per-job networks so that:
 
 ### 11.2 Strategy
 
-> **Note:** In the current implementation, network operations are handled **in-memory** by `backends/core/`. Networks are stored as local state with virtual IP assignments. Cloud backends do not dynamically create Security Groups, Cloud Map namespaces, or Cloud DNS zones at runtime. Cloud networking is configured at the infrastructure level via Terraform modules.
+> **Note:** Cloud backends map Docker networks to cloud networking and discovery primitives where the cloud exposes them. `specs/CLOUD_RESOURCE_MAPPING.md` is authoritative for the per-backend mapping. Backends that cannot provide a Docker network primitive fail explicitly or expose only the cloud-supported subset.
 
 | Cloud Backend | Network Emulation |
 |---|---|
-| All backends | In-memory virtual IP assignment from 172.18.0.0/16 subnet |
-| AWS ECS | Tasks share VPC subnets configured at infrastructure level |
-| Google Cloud Run | Jobs share VPC configured at infrastructure level |
-| Azure Container Apps | Jobs share ACA Environment VNet configured at infrastructure level |
+| AWS ECS | VPC security groups + Cloud Map/private DNS when configured |
+| Google Cloud Run | Cloud Run Service materialization + Cloud DNS/VPC connector where configured |
+| Azure Container Apps | ACA managed environment + Private DNS/NSG where configured |
+| Lambda / AZF | No native Docker bridge; service-mesh/private-DNS options only where configured |
 
 ### 11.3 IP Address Assignment
 
-Sockerless assigns virtual IPs from a private subnet (e.g., `172.18.0.0/16`) to each container on a network. These IPs are returned in inspect responses. Actual cloud networking may use different IPs, but the sockerless-level IPs provide the correct inspect output for CI runners.
+Sockerless reports network metadata from the backend's cloud mapping. Cloud-assigned addresses, service DNS names, or explicit unsupported fields are preferred over invented Docker-bridge addresses.
 
 For DNS-based service discovery (which is what CI runners actually rely on), the container aliases (e.g., `postgres`, `redis`) are registered in the cloud's DNS service so they resolve to the actual cloud IPs.
 
@@ -1632,10 +1632,10 @@ For DNS-based service discovery (which is what CI runners actually rely on), the
 
 | Docker Operation | Sockerless Action |
 |---|---|
-| `POST /networks/create` | Create network in local state; allocate IPAM subnet |
-| Container create with `NetworkMode`/`EndpointsConfig` | Assign virtual IP from subnet, store aliases |
-| `POST /networks/{id}/disconnect` | Remove container from network state |
-| `DELETE /networks/{id}` | Remove from local state |
+| `POST /networks/create` | Create or record the backend's cloud network/discovery resource |
+| Container create with `NetworkMode`/`EndpointsConfig` | Record aliases and attach to the backend's cloud network/discovery mapping |
+| `POST /networks/{id}/disconnect` | Detach from the cloud network/discovery mapping where supported |
+| `DELETE /networks/{id}` | Remove the cloud network/discovery resource where supported |
 | `POST /networks/prune` | Remove networks with no connected containers |
 
 ### 11.5 ExtraHosts Support

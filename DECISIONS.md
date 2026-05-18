@@ -74,7 +74,7 @@ Architectural and implementation decisions, with the *why*. Referenced from [PLA
 
 **`gh` CLI compatibility.** GHES-style auth. Full URLs via `gh api` to bypass hostname restrictions. TLS via `BPH_TLS_CERT`/`BPH_TLS_KEY`. OpenAPI schema validation. RFC 5988 Link headers.
 
-**Runner enhancements.** Workflow YAML parsing, `uses:` action tarball proxy with cache, multi-job `needs:` dependency engine, matrix expansion, artifact/cache stubs.
+**Runner enhancements.** Workflow YAML parsing, `uses:` action tarball proxy with cache, multi-job `needs:` dependency engine, matrix expansion, and artifact/cache API surfaces.
 
 ---
 
