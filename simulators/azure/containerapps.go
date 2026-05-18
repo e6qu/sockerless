@@ -15,7 +15,27 @@ import (
 )
 
 // Container handle tracker for Container Apps Jobs real execution
-var acaProcessHandles sync.Map // map[execID]*sim.ContainerHandle
+var acaProcessHandles sync.Map // map[execID]*acaExecutionProcesses
+
+type acaExecutionProcesses struct {
+	Main     *sim.ContainerHandle
+	Sidecars []*sim.ContainerHandle
+}
+
+func stopACAExecutionProcesses(p *acaExecutionProcesses) {
+	if p == nil {
+		return
+	}
+	if p.Main != nil {
+		sim.StopContainer(p.Main.ContainerID)
+		p.Main.Cancel()
+	}
+	for _, h := range p.Sidecars {
+		if h != nil {
+			h.Cancel()
+		}
+	}
+}
 
 // ContainerAppJob represents an Azure Container Apps Job resource.
 type ContainerAppJob struct {
@@ -428,59 +448,13 @@ func registerContainerApps(srv *sim.Server) {
 				timeout = time.Duration(replicaTimeout) * time.Second
 			}
 
-			// Build container config from first container in template
-			var containerImage string
-			var containerCmd []string
-			var containerArgs []string
-			var cmdEnv map[string]string
-			var binds []string
-			if tmpl != nil && len(tmpl.Containers) > 0 {
-				c := tmpl.Containers[0]
-				containerImage = c.Image
-				containerCmd = c.Command
-				containerArgs = c.Args
-				if len(c.Env) > 0 {
-					cmdEnv = make(map[string]string, len(c.Env))
-					for _, ev := range c.Env {
-						cmdEnv[ev.Name] = ev.Value
-					}
-				}
-				// Translate Volume{StorageType: "AzureFile"} + VolumeMount
-				// into a real host bind mount backed by the
-				// managedEnvironmentStorage → storage-account / share
-				// pairing. Containers in this exec see real files on
-				// the host; siblings in the same env see the same
-				// directory.
-				if len(tmpl.Volumes) > 0 && len(c.VolumeMounts) > 0 {
-					volByName := make(map[string]JobVolume, len(tmpl.Volumes))
-					for _, v := range tmpl.Volumes {
-						volByName[v.Name] = v
-					}
-					for _, mp := range c.VolumeMounts {
-						v, ok := volByName[mp.VolumeName]
-						if !ok {
-							continue
-						}
-						if !strings.EqualFold(v.StorageType, "AzureFile") || v.StorageName == "" {
-							continue
-						}
-						acct, share, found := LookupEnvStorageBinding(envID, v.StorageName)
-						if !found {
-							continue
-						}
-						binds = append(binds, FileShareHostDir(acct, share)+":"+mp.MountPath)
-					}
-				}
-			}
-
 			succeeded := true
-			if containerImage != "" {
+			if tmpl != nil && len(tmpl.Containers) > 0 {
 				// Container execution
 				shortExecID := id
 				if idx := strings.LastIndex(id, "/"); idx >= 0 {
 					shortExecID = id[idx+1:]
 				}
-				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
 
 				// Resolve the env's Docker network and connect the
 				// container with the job short name as DNS alias.
@@ -496,32 +470,16 @@ func registerContainerApps(srv *sim.Server) {
 				}
 
 				sink := &acaLogSink{jobName: jobShortName}
-				// Architecture: sim's primary capacity is linux/arm64.
-				// Host metadata: route IMDS + identity reads via env.
-				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:        sim.ResolveLocalImage(containerImage),
-					Architecture: "linux/arm64",
-					Command:      containerCmd,
-					Args:         containerArgs,
-					Env:          mergeEnv(cmdEnv, hostMetadataEnv()),
-					Timeout:      timeout,
-					Name:         containerName,
-					Labels: map[string]string{
-						"sockerless-sim-type": "aca-job-execution",
-						"sockerless-exec-id":  id,
-					},
-					Network:        netName,
-					NetworkAliases: netAliases,
-					Binds:          binds,
-					ExtraHosts:     hostMetadataExtraHosts(),
-					Sandbox:        sim.SandboxACA,
-				}, sink)
+				handle, sidecars, err := startACAJobContainers(id, shortExecID, tmpl, envID, timeout, netName, netAliases, sink)
 				if err != nil {
 					succeeded = false
 				} else {
-					acaProcessHandles.Store(id, handle)
+					acaProcessHandles.Store(id, &acaExecutionProcesses{Main: handle, Sidecars: sidecars})
 					result := handle.Wait()
 					acaProcessHandles.Delete(id)
+					for _, h := range sidecars {
+						h.Cancel()
+					}
 					succeeded = result.ExitCode == 0
 				}
 			} else {
@@ -629,9 +587,7 @@ func registerContainerApps(srv *sim.Server) {
 
 		// Cancel running container if any
 		if v, ok := acaProcessHandles.LoadAndDelete(execID); ok {
-			handle := v.(*sim.ContainerHandle)
-			sim.StopContainer(handle.ContainerID)
-			handle.Cancel()
+			stopACAExecutionProcesses(v.(*acaExecutionProcesses))
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
@@ -660,6 +616,93 @@ func registerContainerApps(srv *sim.Server) {
 	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/executions/{execName}/exec", handleACAJobExec)
 }
 
+func startACAJobContainers(execID, shortExecID string, tmpl *JobTemplate, envID string, timeout time.Duration, netName string, netAliases []string, sink sim.LogSink) (*sim.ContainerHandle, []*sim.ContainerHandle, error) {
+	if tmpl == nil || len(tmpl.Containers) == 0 {
+		return nil, nil, fmt.Errorf("execution has no containers")
+	}
+
+	volByName := make(map[string]JobVolume, len(tmpl.Volumes))
+	for _, v := range tmpl.Volumes {
+		volByName[v.Name] = v
+	}
+	bindsFor := func(c JobContainer) []string {
+		var binds []string
+		for _, mp := range c.VolumeMounts {
+			v, ok := volByName[mp.VolumeName]
+			if !ok || !strings.EqualFold(v.StorageType, "AzureFile") || v.StorageName == "" {
+				continue
+			}
+			acct, share, found := LookupEnvStorageBinding(envID, v.StorageName)
+			if !found {
+				continue
+			}
+			binds = append(binds, FileShareHostDir(acct, share)+":"+mp.MountPath)
+		}
+		return binds
+	}
+	envFor := func(c JobContainer) map[string]string {
+		cmdEnv := make(map[string]string, len(c.Env))
+		for _, ev := range c.Env {
+			cmdEnv[ev.Name] = ev.Value
+		}
+		return mergeEnv(cmdEnv, hostMetadataEnv())
+	}
+
+	main := tmpl.Containers[0]
+	mainHandle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:        sim.ResolveLocalImage(main.Image),
+		Architecture: "linux/arm64",
+		Command:      main.Command,
+		Args:         main.Args,
+		Env:          envFor(main),
+		Timeout:      timeout,
+		Name:         fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID),
+		Labels: map[string]string{
+			"sockerless-sim-type":                "aca-job-execution",
+			"sockerless-exec-id":                 execID,
+			"sockerless-sim-execution-container": main.Name,
+		},
+		Network:        netName,
+		NetworkAliases: netAliases,
+		Binds:          bindsFor(main),
+		ExtraHosts:     hostMetadataExtraHosts(),
+		Sandbox:        sim.SandboxACA,
+	}, sink)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start main container %q: %w", main.Name, err)
+	}
+
+	var sidecars []*sim.ContainerHandle
+	for i, c := range tmpl.Containers[1:] {
+		handle, err := sim.StartContainerSync(sim.ContainerConfig{
+			Image:        sim.ResolveLocalImage(c.Image),
+			Architecture: "linux/arm64",
+			Command:      c.Command,
+			Args:         c.Args,
+			Env:          envFor(c),
+			Timeout:      timeout,
+			Name:         fmt.Sprintf("sockerless-sim-azure-execution-%s-sidecar-%d", shortExecID, i),
+			Labels: map[string]string{
+				"sockerless-sim-type":                "aca-job-execution",
+				"sockerless-exec-id":                 execID,
+				"sockerless-sim-execution-container": c.Name,
+			},
+			NetworkMode: "container:" + mainHandle.ContainerID,
+			Binds:       bindsFor(c),
+			Sandbox:     sim.SandboxACA,
+		}, sink)
+		if err != nil {
+			mainHandle.Cancel()
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, nil, fmt.Errorf("start sidecar container %q: %w", c.Name, err)
+		}
+		sidecars = append(sidecars, handle)
+	}
+	return mainHandle, sidecars, nil
+}
+
 // handleACAJobExec serves the ACA jobs-exec WebSocket. The user
 // command arrives as `?command=<urlencoded>`; the running execution
 // container is looked up in acaProcessHandles; the WebSocket is then
@@ -683,7 +726,12 @@ func handleACAJobExec(w http.ResponseWriter, r *http.Request) {
 			"No running execution container for '%s/%s'", jobName, execName)
 		return
 	}
-	handle := v.(*sim.ContainerHandle)
+	handle := v.(*acaExecutionProcesses).Main
+	if handle == nil {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"No running execution container for '%s/%s'", jobName, execName)
+		return
+	}
 
 	conn, err := acaWSUpgrader.Upgrade(w, r, nil)
 	if err != nil {

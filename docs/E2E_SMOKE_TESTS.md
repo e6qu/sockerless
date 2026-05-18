@@ -58,6 +58,20 @@ make e2e-github-azf
 make e2e-github-all
 ```
 
+To run the official GitHub Actions runner against an already-started
+simulator-backed sockerless daemon with a realistic Go workload:
+
+```bash
+# In another terminal, start the simulator-backed backend on :3375.
+export SOCKERLESS_DOCKER_HOST=tcp://localhost:3375
+make e2e-github-sim-arithmetic
+```
+
+That target registers a real ephemeral `actions/runner`, dispatches a workflow
+with `container: golang:1.25-alpine`, checks out this repo, runs
+`go test -count=1 ./simulators/testdata/eval-arithmetic`, and verifies
+`go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2'` returns `30`.
+
 The older `smoke-test-act-*` targets run the act-based smoke harness:
 
 ```bash
@@ -81,6 +95,23 @@ make e2e-gitlab-aca
 make e2e-gitlab-azf
 make e2e-gitlab-all
 ```
+
+To run real `gitlab-runner` against the same already-started simulator-backed
+sockerless daemon with the matching arithmetic workload:
+
+```bash
+export SOCKERLESS_DOCKER_HOST=tcp://localhost:3375
+make e2e-gitlab-sim-arithmetic
+```
+
+The aggregate target for both real-runner arithmetic checks is:
+
+```bash
+make e2e-real-runner-sim-arithmetic
+```
+
+These targets require the same GitHub/GitLab tokens documented in
+[`RUNNERS.md`](RUNNERS.md); they do not start or fake the cloud simulator.
 
 Docker Compose smoke targets:
 

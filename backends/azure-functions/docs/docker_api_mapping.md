@@ -28,7 +28,7 @@ The backend uses real registry image references and ACR-backed overlay images. P
 
 ## Networks and Volumes
 
-Azure Functions does not expose Docker bridge networking. Workspace sharing uses Azure Files through the shared Azure volume driver. Multi-container pod semantics are implemented through the supervisor-in-overlay pattern described in `specs/CLOUD_RESOURCE_MAPPING.md`.
+Azure Functions does not expose Docker bridge networking or a native multi-container sidecar primitive through this backend. Workspace sharing uses Azure Files through the shared Azure volume driver. Multi-container pods are rejected clearly; Azure workloads that require sidecars sharing `localhost` should use the ACA backend.
 
 ## Unsupported Docker Features
 
@@ -37,4 +37,5 @@ Azure Functions does not expose Docker bridge networking. Workspace sharing uses
 | Pause/unpause | Azure Functions exposes no pause primitive. |
 | Host networking | Function Apps do not expose Docker host networking. |
 | Native Docker bridge L2 semantics | The platform does not expose a local Docker bridge. |
+| Multi-container pods / sidecars | The AZF backend manages Azure Functions, which expose one custom-container slot here. Use ACA Apps for Azure multi-container pod workloads. |
 | Long-running pods beyond the platform timeout | The Function App invocation/runtime limits are hard platform limits. |

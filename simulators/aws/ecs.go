@@ -165,8 +165,49 @@ var (
 	ecsTasks           sim.Store[ECSTask]
 	ecsRevisionMu      sync.Mutex
 	ecsRevisions       map[string]int // family -> latest revision
-	ecsProcessHandles  sync.Map       // map[taskID]*sim.ContainerHandle
+	ecsProcessHandles  sync.Map       // map[taskID]*ecsTaskProcesses
 )
+
+type ecsTaskProcesses struct {
+	MainContainerName string
+	Handles           map[string]*sim.ContainerHandle
+}
+
+func (p *ecsTaskProcesses) firstHandle() *sim.ContainerHandle {
+	if p == nil {
+		return nil
+	}
+	if p.MainContainerName != "" {
+		if h := p.Handles[p.MainContainerName]; h != nil {
+			return h
+		}
+	}
+	for _, h := range p.Handles {
+		return h
+	}
+	return nil
+}
+
+func (p *ecsTaskProcesses) handleFor(containerName string) *sim.ContainerHandle {
+	if p == nil {
+		return nil
+	}
+	if containerName != "" {
+		return p.Handles[containerName]
+	}
+	return p.firstHandle()
+}
+
+func stopECSTaskProcesses(p *ecsTaskProcesses) {
+	if p == nil {
+		return
+	}
+	for _, h := range p.Handles {
+		if h != nil {
+			sim.StopContainer(h.ContainerID)
+		}
+	}
+}
 
 func generateUUID() string {
 	b := make([]byte, 16)
@@ -219,7 +260,7 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 		var handle *sim.ContainerHandle
 		for i := 0; i < 20; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				handle = v.(*sim.ContainerHandle)
+				handle = v.(*ecsTaskProcesses).firstHandle()
 				break
 			}
 			time.Sleep(250 * time.Millisecond)
@@ -665,23 +706,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			// PENDING → RUNNING
 			time.Sleep(400 * time.Millisecond)
 
-			// Extract image, entrypoint, command, and env from first container definition
-			var imageURI string
-			var entrypoint, args []string
-			var cmdEnv map[string]string
-			if len(td.ContainerDefinitions) > 0 {
-				cd := td.ContainerDefinitions[0]
-				imageURI = cd.Image
-				entrypoint = cd.EntryPoint
-				args = cd.Command
-				if len(cd.Environment) > 0 {
-					cmdEnv = make(map[string]string, len(cd.Environment))
-					for _, ev := range cd.Environment {
-						cmdEnv[ev.Name] = ev.Value
-					}
-				}
-			}
-
 			// Mark task as RUNNING before starting containers
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -733,7 +757,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				})
 
 				// Insert initial log event
-				cmdDesc := strings.Join(append(entrypoint, args...), " ")
+				cmdDesc := strings.Join(append(cd.EntryPoint, cd.Command...), " ")
 				if cmdDesc == "" {
 					cmdDesc = "container started"
 				}
@@ -749,95 +773,29 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			// Always start the real container when an image is specified —
-			// task lifecycle (RUNNING → STOPPED) depends on handle.Wait()
-			// returning, regardless of whether logs are configured.
-			if imageURI != "" {
-				wantTTY := false
-				for _, tag := range taskTags {
-					if tag.Key == "sockerless-tty" && tag.Value == "true" {
-						wantTTY = true
-						break
+			processes, err := startECSTaskContainers(id, td, taskTags, sink)
+			if err != nil {
+				stoppedAt := time.Now().Unix()
+				ecsTasks.Update(id, func(t *ECSTask) {
+					t.LastStatus = "STOPPED"
+					t.DesiredStatus = "STOPPED"
+					t.StoppedAt = &stoppedAt
+					t.StopCode = "EssentialContainerExited"
+					t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
+					exitCode := -1
+					for j := range t.Containers {
+						t.Containers[j].LastStatus = "STOPPED"
+						t.Containers[j].ExitCode = &exitCode
 					}
-				}
-				// Build bind mounts from task definition volumes + container mount points.
-				// For EFS volumes, translate to a real host path backed by the
-				// simulator's EFS slice (file system or access point root
-				// directory); otherwise fall through to a named Docker volume.
-				var binds []string
-				volMap := make(map[string]string) // volume name → docker bind source
-				for _, v := range td.Volumes {
-					if v.EfsVolumeConfiguration != nil {
-						cfg := v.EfsVolumeConfiguration
-						var host string
-						if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
-							host = EFSAccessPointHostDir(cfg.AuthorizationConfig.AccessPointId)
-						}
-						if host == "" && cfg.FileSystemId != "" {
-							host = EFSFileSystemHostDir(cfg.FileSystemId)
-							if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
-								host = fmt.Sprintf("%s/%s", host, strings.TrimPrefix(cfg.RootDirectory, "/"))
-							}
-						}
-						if host != "" {
-							volMap[v.Name] = host
-							continue
-						}
-					}
-					volMap[v.Name] = v.Name // fall back to named Docker volume
-				}
-				if len(td.ContainerDefinitions) > 0 {
-					for _, mp := range td.ContainerDefinitions[0].MountPoints {
-						if src, ok := volMap[mp.SourceVolume]; ok {
-							bind := src + ":" + mp.ContainerPath
-							if mp.ReadOnly {
-								bind += ":ro"
-							}
-							binds = append(binds, bind)
-						}
-					}
-				}
+				})
+			} else if processes != nil {
+				ecsProcessHandles.Store(id, processes)
 
-				// Architecture: sim's primary capacity is linux/arm64.
-				// taskDef.RuntimePlatform.CpuArchitecture is not yet
-				// honoured here — the sim runs a single arch.
-				// Host metadata: AWS SDK respects
-				// AWS_EC2_METADATA_SERVICE_ENDPOINT + ECS_CONTAINER_METADATA_URI_V4.
-				envWithMetadata := mergeEnv(cmdEnv, hostMetadataEnv(id))
-				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:        sim.ResolveLocalImage(imageURI),
-					Architecture: "linux/arm64",
-					Command:      entrypoint,
-					Args:         args,
-					Env:          envWithMetadata,
-					Name:         fmt.Sprintf("sockerless-sim-aws-task-%s", id[:12]),
-					Labels:       map[string]string{"sockerless-sim-task": id},
-					Tty:          wantTTY,
-					OpenStdin:    wantTTY,
-					Binds:        binds,
-					ExtraHosts:   hostMetadataExtraHosts(),
-					Sandbox:      sim.SandboxFargate, // BUG-1077: real Fargate restrictions.
-				}, sink)
-				if err != nil {
-					stoppedAt := time.Now().Unix()
-					ecsTasks.Update(id, func(t *ECSTask) {
-						t.LastStatus = "STOPPED"
-						t.DesiredStatus = "STOPPED"
-						t.StoppedAt = &stoppedAt
-						t.StopCode = "EssentialContainerExited"
-						t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
-						exitCode := -1
-						for j := range t.Containers {
-							t.Containers[j].LastStatus = "STOPPED"
-							t.Containers[j].ExitCode = &exitCode
-						}
-					})
-				} else {
-					ecsProcessHandles.Store(id, handle)
-
-					go func(taskID string, handle *sim.ContainerHandle) {
+				for name, handle := range processes.Handles {
+					go func(taskID, containerName string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
+						stopECSTaskProcesses(processes)
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == "STOPPED" {
@@ -854,7 +812,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 								t.Containers[j].ExitCode = &exitCode
 							}
 						})
-					}(id, handle)
+					}(id, name, handle)
 				}
 			}
 
@@ -865,6 +823,110 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		"tasks":    tasks,
 		"failures": []any{},
 	})
+}
+
+func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, sink sim.LogSink) (*ecsTaskProcesses, error) {
+	if len(td.ContainerDefinitions) == 0 {
+		return nil, nil
+	}
+
+	wantTTY := false
+	for _, tag := range taskTags {
+		if tag.Key == "sockerless-tty" && tag.Value == "true" {
+			wantTTY = true
+			break
+		}
+	}
+
+	volMap := make(map[string]string)
+	for _, v := range td.Volumes {
+		if v.EfsVolumeConfiguration != nil {
+			cfg := v.EfsVolumeConfiguration
+			var host string
+			if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
+				host = EFSAccessPointHostDir(cfg.AuthorizationConfig.AccessPointId)
+			}
+			if host == "" && cfg.FileSystemId != "" {
+				host = EFSFileSystemHostDir(cfg.FileSystemId)
+				if cfg.RootDirectory != "" && cfg.RootDirectory != "/" {
+					host = fmt.Sprintf("%s/%s", host, strings.TrimPrefix(cfg.RootDirectory, "/"))
+				}
+			}
+			if host != "" {
+				volMap[v.Name] = host
+				continue
+			}
+		}
+		volMap[v.Name] = v.Name
+	}
+
+	processes := &ecsTaskProcesses{
+		MainContainerName: td.ContainerDefinitions[0].Name,
+		Handles:           make(map[string]*sim.ContainerHandle, len(td.ContainerDefinitions)),
+	}
+	var mainDockerID string
+
+	for i, cd := range td.ContainerDefinitions {
+		if cd.Image == "" {
+			continue
+		}
+		cmdEnv := make(map[string]string, len(cd.Environment))
+		for _, ev := range cd.Environment {
+			cmdEnv[ev.Name] = ev.Value
+		}
+		var binds []string
+		for _, mp := range cd.MountPoints {
+			if src, ok := volMap[mp.SourceVolume]; ok {
+				bind := src + ":" + mp.ContainerPath
+				if mp.ReadOnly {
+					bind += ":ro"
+				}
+				binds = append(binds, bind)
+			}
+		}
+
+		containerName := fmt.Sprintf("sockerless-sim-aws-task-%s", taskID[:12])
+		if i > 0 {
+			containerName = fmt.Sprintf("%s-%s", containerName, cd.Name)
+		}
+
+		cfg := sim.ContainerConfig{
+			Image:        sim.ResolveLocalImage(cd.Image),
+			Architecture: "linux/arm64",
+			Command:      cd.EntryPoint,
+			Args:         cd.Command,
+			Env:          mergeEnv(cmdEnv, hostMetadataEnv(taskID)),
+			Name:         containerName,
+			Labels: map[string]string{
+				"sockerless-sim-task":           taskID,
+				"sockerless-sim-task-container": cd.Name,
+			},
+			Tty:       wantTTY || cd.PseudoTerminal,
+			OpenStdin: wantTTY || cd.Interactive,
+			Binds:     binds,
+			Sandbox:   sim.SandboxFargate,
+		}
+		if i == 0 {
+			cfg.ExtraHosts = hostMetadataExtraHosts()
+		} else if mainDockerID != "" {
+			cfg.NetworkMode = "container:" + mainDockerID
+		}
+
+		handle, err := sim.StartContainerSync(cfg, sink)
+		if err != nil {
+			stopECSTaskProcesses(processes)
+			return nil, fmt.Errorf("start task container %q: %w", cd.Name, err)
+		}
+		if i == 0 {
+			mainDockerID = handle.ContainerID
+		}
+		processes.Handles[cd.Name] = handle
+	}
+
+	if len(processes.Handles) == 0 {
+		return nil, nil
+	}
+	return processes, nil
 }
 
 func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
@@ -932,8 +994,7 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 
 	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
-		handle := v.(*sim.ContainerHandle)
-		sim.StopContainer(handle.ContainerID)
+		stopECSTaskProcesses(v.(*ecsTaskProcesses))
 	}
 
 	now := time.Now().Unix()
@@ -1282,6 +1343,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		var req struct {
 			Cluster     string `json:"cluster"`
 			Task        string `json:"task"`
+			Container   string `json:"container"`
 			Command     string `json:"command"`
 			Interactive bool   `json:"interactive"`
 		}
@@ -1328,7 +1390,10 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		var dockerContainerID string
 		for i := 0; i < 20; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				handle := v.(*sim.ContainerHandle)
+				handle := v.(*ecsTaskProcesses).handleFor(req.Container)
+				if handle == nil {
+					break
+				}
 				dockerContainerID = handle.ContainerID
 				break
 			}

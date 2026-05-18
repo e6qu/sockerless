@@ -139,6 +139,85 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 	assert.Equal(t, "Execution completed successfully", table.Rows[1][logIdx])
 }
 
+func TestContainerApps_MultiContainerJobSharesLocalhost(t *testing.T) {
+	rg := "aca-pod-rg"
+	rgBody := `{"location":"eastus"}`
+	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"?api-version=2023-07-01",
+		strings.NewReader(rgBody))
+	rgReq.Header.Set("Content-Type", "application/json")
+	rgReq.Header.Set("Authorization", "Bearer fake-token")
+	rgResp, err := http.DefaultClient.Do(rgReq)
+	require.NoError(t, err)
+	rgResp.Body.Close()
+
+	jobName := "aca-pod-localhost"
+	job := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"configuration": map[string]any{
+				"triggerType":    "Manual",
+				"replicaTimeout": 30,
+			},
+			"template": map[string]any{
+				"containers": []map[string]any{
+					{
+						"name":    "main",
+						"image":   evalImageName,
+						"command": []string{"sh", "-c"},
+						"args": []string{`for i in $(seq 1 50); do
+if nc -z 127.0.0.1 9090; then echo aca-sidecar-ok; exit 0; fi
+sleep 0.1
+done
+echo aca-sidecar-missing
+exit 1`},
+					},
+					{
+						"name":    "sidecar",
+						"image":   evalImageName,
+						"command": []string{"sh", "-c"},
+						"args":    []string{`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`},
+					},
+				},
+			},
+		},
+	}
+	body, _ := json.Marshal(job)
+	createReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"?api-version=2024-03-01",
+		strings.NewReader(string(body)))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+
+	startReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.App/jobs/"+jobName+"/start?api-version=2024-03-01",
+		strings.NewReader("{}"))
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("Authorization", "Bearer fake-token")
+	startResp, err := http.DefaultClient.Do(startReq)
+	require.NoError(t, err)
+	startResp.Body.Close()
+	require.Less(t, startResp.StatusCode, 400)
+
+	require.Eventually(t, func() bool {
+		result := queryWorkspace(t, "default", `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "`+jobName+`"`)
+		if len(result.Tables) == 0 {
+			return false
+		}
+		for _, row := range result.Tables[0].Rows {
+			for _, cell := range row {
+				if s, ok := cell.(string); ok && strings.Contains(s, "aca-sidecar-ok") {
+					return true
+				}
+			}
+		}
+		return false
+	}, 20*time.Second, 500*time.Millisecond)
+}
+
 // acaCreateJob creates a Container Apps Job and returns its resource ID.
 func acaCreateJob(t *testing.T, rg, jobName string) {
 	t.Helper()

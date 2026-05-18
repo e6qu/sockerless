@@ -225,6 +225,22 @@ go test -tags gitlab_runner_live -run TestGitLab_Lambda_Hello -timeout 30m \
   ./tests/runners/gitlab
 ```
 
+Simulator-backed real-runner arithmetic checks use the same harnesses but point
+the runner's Docker executor at a local simulator-backed sockerless daemon:
+
+```bash
+# Start the desired simulator-backed backend on :3375 first.
+export SOCKERLESS_DOCKER_HOST=tcp://localhost:3375
+
+make e2e-github-sim-arithmetic
+make e2e-gitlab-sim-arithmetic
+make e2e-real-runner-sim-arithmetic
+```
+
+The GitHub workflow and GitLab pipeline both run in `golang:1.25-alpine`,
+execute `go test -count=1 ./simulators/testdata/eval-arithmetic`, and verify
+the CLI result for `(10 + 5) * 2`.
+
 Each test sub-run handles its own runner lifecycle (mint registration token → register → dispatch → poll → unregister → clean up). Failure modes (network, IAM, image pull) surface as the runner's own log lines + the harness's own assertions, not silent skips.
 
 Cross-references:
