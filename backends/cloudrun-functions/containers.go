@@ -3,6 +3,7 @@ package gcf
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,6 +23,7 @@ type execEnvelope struct {
 			Argv    []string `json:"argv"`
 			Workdir string   `json:"workdir,omitempty"`
 			Env     []string `json:"env,omitempty"`
+			Stdin   string   `json:"stdin,omitempty"`
 		} `json:"exec"`
 	} `json:"sockerless"`
 }
@@ -39,7 +41,7 @@ type execEnvelope struct {
 // their env updated on each claim — the user's entrypoint+cmd+workdir
 // flow through the request body and an immutable pool entry can serve
 // any user command.
-func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string) (*http.Response, error) {
+func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []string, workdir string, env []string, stdin []byte) (*http.Response, error) {
 	client, err := s.Access.AuthenticatedClient(ctx, audienceURL)
 	if err != nil {
 		if isUnsupportedCredsErr(err) {
@@ -58,6 +60,9 @@ func (s *Server) invokeFunction(ctx context.Context, audienceURL string, argv []
 		env_.Sockerless.Exec.Argv = argv
 		env_.Sockerless.Exec.Workdir = workdir
 		env_.Sockerless.Exec.Env = env
+		if stdin != nil {
+			env_.Sockerless.Exec.Stdin = base64.StdEncoding.EncodeToString(stdin)
+		}
 		body, err = json.Marshal(&env_)
 		if err != nil {
 			return nil, fmt.Errorf("marshal exec envelope: %w", err)

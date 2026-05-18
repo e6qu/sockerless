@@ -1,6 +1,7 @@
 package azf
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
@@ -360,10 +362,8 @@ func TestAZFContainerExec(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:     alpineImageName,
-			Cmd:       []string{"tail", "-f", "/dev/null"},
-			Tty:       true,
-			OpenStdin: true,
+			Image: alpineImageName,
+			Cmd:   []string{"tail", "-f", "/dev/null"},
 		},
 		nil, nil, nil, "azf_exec_"+testID,
 	)
@@ -376,10 +376,10 @@ func TestAZFContainerExec(t *testing.T) {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	// Exec create should succeed (synthetic exec from core)
 	execResp, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
-		Cmd:          []string{"echo", "hello"},
+		Cmd:          []string{"sh", "-c", "printf azf-exec-ok"},
 		AttachStdout: true,
+		AttachStderr: true,
 	})
 	if err != nil {
 		t.Fatalf("exec create failed: %v", err)
@@ -387,6 +387,102 @@ func TestAZFContainerExec(t *testing.T) {
 
 	if execResp.ID == "" {
 		t.Error("expected non-empty exec ID")
+	}
+
+	hijacked, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		t.Fatalf("exec attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader); err != nil {
+		t.Fatalf("exec stream copy failed: %v", err)
+	}
+	if got := stdout.String(); got != "azf-exec-ok" {
+		t.Fatalf("exec stdout = %q, stderr = %q", got, stderr.String())
+	}
+
+	inspect, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		t.Fatalf("exec inspect failed: %v", err)
+	}
+	if inspect.ExitCode != 0 {
+		t.Fatalf("exec exit code = %d", inspect.ExitCode)
+	}
+}
+
+func TestAZFGitLabRunnerAttachStdin(t *testing.T) {
+	ctx := context.Background()
+
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image:        alpineImageName,
+			Cmd:          []string{"sh"},
+			OpenStdin:    true,
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+		},
+		nil, nil, nil, "azf_gitlab_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		t.Fatalf("container attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	if _, err := hijacked.Conn.Write([]byte("echo azf-gitlab-stdin-ok\n")); err != nil {
+		t.Fatalf("write attach stdin: %v", err)
+	}
+	if err := hijacked.CloseWrite(); err != nil {
+		t.Fatalf("close attach stdin: %v", err)
+	}
+
+	if err := dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader)
+		copyDone <- err
+	}()
+
+	select {
+	case err := <-copyDone:
+		if err != nil {
+			t.Fatalf("attach stream copy failed: %v", err)
+		}
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for attach output")
+	}
+	if !strings.Contains(stdout.String(), "azf-gitlab-stdin-ok") {
+		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Fatalf("wait status = %d, want 0", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
 	}
 }
 

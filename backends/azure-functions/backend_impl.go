@@ -1,6 +1,7 @@
 package azf
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -18,6 +19,28 @@ import (
 	azurecommon "github.com/sockerless/azure-common"
 	core "github.com/sockerless/backend-core"
 )
+
+type azfExecEnvelopeRequest struct {
+	Sockerless struct {
+		Exec azfExecEnvelopeExec `json:"exec"`
+	} `json:"sockerless"`
+}
+
+type azfExecEnvelopeExec struct {
+	Argv    []string `json:"argv"`
+	Tty     bool     `json:"tty,omitempty"`
+	Workdir string   `json:"workdir,omitempty"`
+	Env     []string `json:"env,omitempty"`
+	Stdin   string   `json:"stdin,omitempty"`
+}
+
+type azfExecEnvelopeResponse struct {
+	SockerlessExecResult struct {
+		ExitCode int    `json:"exitCode"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	} `json:"sockerlessExecResult"`
+}
 
 // Compile-time check that Server implements api.Backend.
 var _ api.Backend = (*Server)(nil)
@@ -383,14 +406,23 @@ func (s *Server) ContainerStart(ref string) error {
 	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
+		capturedStdin, hasCapturedStdin := s.captureAZFStdin(id)
 		if azfState.FunctionURL == "" {
 			s.Logger.Warn().Str("functionApp", azfState.FunctionAppName).Msg("no function URL available, cannot invoke")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
+			s.publishAZFAttachResponse(id, nil, []byte(inv.Error))
 		} else {
 			client := &http.Client{Timeout: time.Duration(s.config.Timeout) * time.Second}
-			invokeReq, _ := http.NewRequest("POST", azfState.FunctionURL, nil)
-			invokeReq.Header.Set("Content-Type", "application/json")
+			var body io.Reader
+			contentType := "application/json"
+			if hasCapturedStdin {
+				body = azfExecEnvelopeBody(capturedStdin)
+			}
+			invokeReq, _ := http.NewRequest("POST", azfState.FunctionURL, body)
+			if contentType != "" {
+				invokeReq.Header.Set("Content-Type", contentType)
+			}
 			if azfState.FunctionHost != "" {
 				invokeReq.Host = azfState.FunctionHost
 			}
@@ -398,16 +430,33 @@ func (s *Server) ContainerStart(ref string) error {
 				s.Logger.Error().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("Function App invocation failed")
 				inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 				inv.Error = err.Error()
+				s.publishAZFAttachResponse(id, nil, []byte(err.Error()))
 			} else {
 				body, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
-				if len(body) > 0 && string(body) != "{}" {
-					s.Store.LogBuffers.Store(id, body)
-				}
-				inv.ExitCode = azfBootstrapExitCode(resp)
-				if inv.ExitCode != 0 {
-					inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-					s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
+				if hasCapturedStdin {
+					if parsed, stdout, stderr, ok := azfParseExecEnvelopeResponse(body); ok {
+						inv = parsed
+						if len(stdout) > 0 || len(stderr) > 0 {
+							s.Store.LogBuffers.Store(id, append(append([]byte{}, stdout...), stderr...))
+						}
+						s.publishAZFAttachResponse(id, stdout, stderr)
+					} else {
+						inv.ExitCode = azfBootstrapExitCode(resp)
+						if len(body) > 0 && string(body) != "{}" {
+							s.Store.LogBuffers.Store(id, body)
+						}
+						s.publishAZFAttachResponse(id, body, nil)
+					}
+				} else {
+					if len(body) > 0 && string(body) != "{}" {
+						s.Store.LogBuffers.Store(id, body)
+					}
+					inv.ExitCode = azfBootstrapExitCode(resp)
+					if inv.ExitCode != 0 {
+						inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+						s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
+					}
 				}
 			}
 		}
@@ -442,6 +491,54 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	return nil
+}
+
+func (s *Server) captureAZFStdin(id string) ([]byte, bool) {
+	v, ok := s.stdinPipes.LoadAndDelete(id)
+	if !ok {
+		return nil, false
+	}
+	pipe := v.(*stdinPipe)
+	select {
+	case <-pipe.Done():
+	case <-time.After(30 * time.Second):
+		s.Logger.Warn().Str("container", id).Msg("AZF stdin pipe Done timeout; proceeding with captured bytes")
+	}
+	return pipe.Bytes(), true
+}
+
+func (s *Server) publishAZFAttachResponse(id string, stdout, stderr []byte) {
+	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
+		v.(*attachStream).publishAttachResponse(stdout, stderr)
+	}
+}
+
+func azfExecEnvelopeBody(stdin []byte) io.Reader {
+	var req azfExecEnvelopeRequest
+	req.Sockerless.Exec.Argv = []string{"/bin/sh"}
+	req.Sockerless.Exec.Stdin = base64.StdEncoding.EncodeToString(stdin)
+	body, _ := json.Marshal(req)
+	return bytes.NewReader(body)
+}
+
+func azfParseExecEnvelopeResponse(body []byte) (core.InvocationResult, []byte, []byte, bool) {
+	var resp azfExecEnvelopeResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return core.InvocationResult{}, nil, nil, false
+	}
+	stdout, err := base64.StdEncoding.DecodeString(resp.SockerlessExecResult.Stdout)
+	if err != nil {
+		return core.InvocationResult{}, nil, nil, false
+	}
+	stderr, err := base64.StdEncoding.DecodeString(resp.SockerlessExecResult.Stderr)
+	if err != nil {
+		return core.InvocationResult{}, nil, nil, false
+	}
+	inv := core.InvocationResult{ExitCode: resp.SockerlessExecResult.ExitCode}
+	if inv.ExitCode != 0 {
+		inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
+	}
+	return inv, stdout, stderr, true
 }
 
 func azfBootstrapExitCode(resp *http.Response) int {
@@ -804,6 +901,13 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
 		return s.BaseServer.ContainerAttach(id, opts)
+	}
+	if opts.Stdin && hasAZFOverlayRepo(c.Config.Image) {
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
 	}
 	if opts.Stdin {
 		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}

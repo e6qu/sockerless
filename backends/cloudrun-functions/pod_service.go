@@ -893,7 +893,7 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		argv = append(argv, mainContainer.Config.Cmd...)
 		envSlice := append([]string{}, mainContainer.Config.Env...)
 		s.Logger.Info().Str("main", mainID).Str("url", url).Strs("argv", argv).Msg("invokePodServiceMain: default-invoke (no captured stdin, not OpenStdin) — posting user entrypoint+cmd")
-		if resp, err := s.invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice); err != nil {
+		if resp, err := s.invokeFunction(ctx, url, argv, mainContainer.Config.WorkingDir, envSlice, nil); err != nil {
 			s.Logger.Error().Err(err).Str("main", mainID).Msg("pod service default-invoke failed")
 			inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 			inv.Error = err.Error()

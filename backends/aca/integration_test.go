@@ -1,6 +1,7 @@
 package aca
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
@@ -25,6 +28,9 @@ var dockerClient *client.Client
 // reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/aca/reverse`).
 var backendPort int
 var evalImageName string
+var acaOverlayImageName string
+
+const acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -94,6 +100,11 @@ func TestMain(m *testing.M) {
 		cleanup()
 		os.Exit(1)
 	}
+	absRepoRoot, absErr := filepath.Abs(repoRoot)
+	if absErr != nil {
+		failClean("ERROR: resolve repo root: %v\n", absErr)
+	}
+	repoRoot = absRepoRoot
 
 	// Multi-stage Docker build forced to linux/arm64 — sim's primary
 	// capacity contract. The eval-arithmetic image is the workload the
@@ -115,6 +126,51 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
 	if out, err := evalImageBuild.CombinedOutput(); err != nil {
 		failClean("ERROR: docker build eval-arithmetic image failed: %v\n%s", err, out)
+	}
+
+	if os.Getenv(acaAppsE2EEnv) == "1" {
+		bootstrapPath := filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-aca-test-arm64-%d", os.Getpid()))
+		buildCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		bootstrapBuild := exec.CommandContext(buildCtx, "go", "build", "-o", bootstrapPath, "./cmd/sockerless-cloudrun-bootstrap")
+		bootstrapBuild.Dir = filepath.Join(repoRoot, "agent")
+		bootstrapBuild.Env = filterBuildEnv(os.Environ(), "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
+		bootstrapBuild.Stdout = os.Stderr
+		bootstrapBuild.Stderr = os.Stderr
+		if err := bootstrapBuild.Run(); err != nil {
+			failClean("ERROR: build ACA app bootstrap: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+
+		overlayCtx, err := os.MkdirTemp("", "sockerless-aca-overlay-")
+		if err != nil {
+			failClean("ERROR: create ACA app overlay context: %v\n", err)
+		}
+		cleanups = append(cleanups, func() { os.RemoveAll(overlayCtx) })
+		bootstrapBytes, err := os.ReadFile(bootstrapPath)
+		if err != nil {
+			failClean("ERROR: read ACA app bootstrap: %v\n", err)
+		}
+		if err := os.WriteFile(filepath.Join(overlayCtx, filepath.Base(bootstrapPath)), bootstrapBytes, 0o755); err != nil {
+			failClean("ERROR: write ACA app overlay bootstrap: %v\n", err)
+		}
+
+		acaOverlayImageName = fmt.Sprintf("sockerless-overlay/aca:test-%d", os.Getpid())
+		overlayDockerfile := fmt.Sprintf(`FROM public.ecr.aws/docker/library/alpine:latest
+COPY %s /opt/sockerless/sockerless-cloudrun-bootstrap
+RUN chmod +x /opt/sockerless/sockerless-cloudrun-bootstrap
+ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
+`, filepath.Base(bootstrapPath))
+		overlayBuild := exec.Command("docker", "build",
+			"--platform", "linux/arm64",
+			"-t", acaOverlayImageName,
+			"-f", "-", overlayCtx)
+		overlayBuild.Stdin = strings.NewReader(overlayDockerfile)
+		overlayBuild.Stdout = os.Stderr
+		overlayBuild.Stderr = os.Stderr
+		if err := overlayBuild.Run(); err != nil {
+			failClean("ERROR: build ACA app overlay image: %v\n", err)
+		}
 	}
 
 	// Resolve target endpoint + ARM identifiers.
@@ -221,6 +277,9 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		// Required at NewServer per Phase 168 (no fallback).
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/aca/reverse", backendPort),
 	)
+	if os.Getenv(acaAppsE2EEnv) == "1" {
+		backendCmd.Env = append(backendCmd.Env, "SOCKERLESS_ACA_USE_APP=1")
+	}
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {
@@ -401,6 +460,95 @@ func TestACAContainerList(t *testing.T) {
 	}
 	if !found {
 		t.Error("created container not found in list")
+	}
+}
+
+func TestACAGitLabRunnerAttachStdin(t *testing.T) {
+	if os.Getenv(acaAppsE2EEnv) != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestACAGitLabRunnerAttachStdin$", "-test.v")
+		cmd.Env = append(os.Environ(), acaAppsE2EEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("ACA Apps gitlab attach subprocess failed: %v\n%s", err, string(out))
+		}
+		return
+	}
+
+	if acaOverlayImageName == "" {
+		t.Fatal("ACA overlay image was not built by TestMain")
+	}
+
+	ctx := context.Background()
+	testID := generateTestID()
+	resp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image:        acaOverlayImageName,
+			Cmd:          []string{"sh"},
+			OpenStdin:    true,
+			AttachStdin:  true,
+			AttachStdout: true,
+			AttachStderr: true,
+		},
+		nil, nil, nil, "aca_gitlab_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("container create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+
+	hijacked, err := dockerClient.ContainerAttach(ctx, resp.ID, container.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		t.Fatalf("container attach failed: %v", err)
+	}
+	defer hijacked.Close()
+
+	if _, err := hijacked.Conn.Write([]byte("echo aca-gitlab-stdin-ok\n")); err != nil {
+		t.Fatalf("write attach stdin: %v", err)
+	}
+	if err := hijacked.CloseWrite(); err != nil {
+		t.Fatalf("close attach stdin: %v", err)
+	}
+
+	startCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if err := dockerClient.ContainerStart(startCtx, resp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("container start failed: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdout, &stderr, hijacked.Reader)
+		copyDone <- err
+	}()
+
+	select {
+	case err := <-copyDone:
+		if err != nil {
+			t.Fatalf("attach stream copy failed: %v", err)
+		}
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for attach output")
+	}
+	if !strings.Contains(stdout.String(), "aca-gitlab-stdin-ok") {
+		t.Fatalf("attach stdout = %q stderr = %q", stdout.String(), stderr.String())
+	}
+
+	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case result := <-waitCh:
+		if result.StatusCode != 0 {
+			t.Fatalf("wait status = %d, want 0", result.StatusCode)
+		}
+	case err := <-errCh:
+		t.Fatalf("container wait error: %v", err)
+	case <-time.After(5 * time.Minute):
+		t.Fatal("timeout waiting for container")
 	}
 }
 

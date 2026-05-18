@@ -24,6 +24,28 @@ import (
 	"github.com/sockerless/agent"
 )
 
+type execEnvelopeRequest struct {
+	Sockerless struct {
+		Exec execEnvelopeExec `json:"exec"`
+	} `json:"sockerless"`
+}
+
+type execEnvelopeExec struct {
+	Argv    []string `json:"argv"`
+	Tty     bool     `json:"tty,omitempty"`
+	Workdir string   `json:"workdir,omitempty"`
+	Env     []string `json:"env,omitempty"`
+	Stdin   string   `json:"stdin,omitempty"`
+}
+
+type execEnvelopeResponse struct {
+	SockerlessExecResult struct {
+		ExitCode int    `json:"exitCode"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	} `json:"sockerlessExecResult"`
+}
+
 const (
 	envPort           = "PORT"
 	envWebsitesPort   = "WEBSITES_PORT"
@@ -110,9 +132,14 @@ func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
 }
 
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
+	var body []byte
 	if r.Body != nil {
-		_, _ = io.Copy(io.Discard, r.Body)
+		body, _ = io.ReadAll(r.Body)
 		_ = r.Body.Close()
+	}
+	if env, ok := parseExecEnvelope(body); ok {
+		runExecEnvelope(w, r.Context(), env)
+		return
 	}
 
 	argv, err := userArgv()
@@ -156,11 +183,86 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body := stdout.Bytes()
-	if len(body) == 0 && len(stderr.Bytes()) > 0 {
-		body = stderr.Bytes()
+	responseBody := stdout.Bytes()
+	if len(responseBody) == 0 && len(stderr.Bytes()) > 0 {
+		responseBody = stderr.Bytes()
 	}
-	writeTextResult(w, exitCode, body)
+	writeTextResult(w, exitCode, responseBody)
+}
+
+func parseExecEnvelope(body []byte) (execEnvelopeExec, bool) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || body[0] != '{' {
+		return execEnvelopeExec{}, false
+	}
+	var req execEnvelopeRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return execEnvelopeExec{}, false
+	}
+	if len(req.Sockerless.Exec.Argv) == 0 {
+		return execEnvelopeExec{}, false
+	}
+	return req.Sockerless.Exec, true
+}
+
+func runExecEnvelope(w http.ResponseWriter, parent context.Context, env execEnvelopeExec) {
+	ctx := parent
+	if timeout := jobTimeout(); timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, env.Argv[0], env.Argv[1:]...)
+	if env.Workdir != "" {
+		cmd.Dir = env.Workdir
+	} else if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
+	if len(env.Env) > 0 {
+		cmd.Env = append(append([]string{}, os.Environ()...), env.Env...)
+	} else {
+		cmd.Env = os.Environ()
+	}
+	if env.Stdin != "" {
+		stdinBytes, err := base64.StdEncoding.DecodeString(env.Stdin)
+		if err != nil {
+			http.Error(w, "stdin base64 decode: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		cmd.Stdin = bytes.NewReader(stdinBytes)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
+	cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
+
+	err := cmd.Run()
+	exitCode := 0
+	if ctx.Err() == context.DeadlineExceeded {
+		exitCode = timeoutExitCode
+	} else if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+			stderr.WriteString(err.Error())
+			stderr.WriteByte('\n')
+		}
+	}
+
+	var res execEnvelopeResponse
+	res.SockerlessExecResult.ExitCode = exitCode
+	res.SockerlessExecResult.Stdout = base64.StdEncoding.EncodeToString(stdout.Bytes())
+	res.SockerlessExecResult.Stderr = base64.StdEncoding.EncodeToString(stderr.Bytes())
+	payload, err := json.Marshal(res)
+	if err != nil {
+		http.Error(w, "marshal exec envelope response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
 }
 
 func userArgv() ([]string, error) {

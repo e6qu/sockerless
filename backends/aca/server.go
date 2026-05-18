@@ -2,6 +2,7 @@ package aca
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog"
@@ -25,6 +26,8 @@ type Server struct {
 	// Reverse-agent registry for docker exec / attach through a
 	// bootstrap running inside the ACA Job/App container.
 	reverseAgents *core.ReverseAgentRegistry
+	stdinPipes    sync.Map
+	attachStreams sync.Map
 }
 
 // NewServer creates a new ACA backend server.
@@ -169,16 +172,15 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.Typed.FSExport = core.NewReverseAgentFSExportDriver(s.reverseAgents, "aca")
 	s.Typed.Commit = core.NewReverseAgentCommitDriver(s.BaseServer, s.reverseAgents, "aca")
 
-	// Cloud-native typed Logs + Attach driving Azure Monitor / Log
-	// Analytics via the per-container fetcher factory.
+	// Cloud-native typed Logs via Azure Monitor / Log Analytics.
 	logFactory := func(containerID string) core.CloudLogFetchFunc {
 		return s.buildCloudLogsFetcher(containerID)
 	}
 	s.Typed.Logs = core.NewCloudLogsLogsDriver(s.BaseServer, logFactory,
 		core.StreamCloudLogsOptions{},
 		"aca", "AzureMonitor")
-	s.Typed.Attach = core.NewCloudLogsAttachDriver(s.BaseServer, logFactory,
-		"aca", "CloudLogsReadOnlyAttach")
+	s.Typed.Attach = core.WrapLegacyContainerAttach(s.ContainerAttach,
+		"aca", "ContainerAttach")
 
 	return s
 }
