@@ -176,21 +176,21 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 
 	// Tests that don't use eval-arithmetic still pass plain
-	// "alpine:latest" as the container image. The eval image build
-	// above already pulled the real public.ecr alpine base into the
-	// local Docker daemon; tag that exact base into the Docker Hub and
-	// AR names the backend and simulator will reference. Do not issue a
-	// second registry pull here: CI already depends on the eval build's
-	// real FROM resolution, and another network pull only adds a
-	// duplicate outage point.
+	// "alpine:latest" as the container image. BuildKit can consume a
+	// FROM image without leaving the source ref tagged locally, so build
+	// the Docker Hub and AR tags explicitly from the same real ECR Public
+	// base instead of assuming the source tag exists.
 	step("tag cached alpine:latest + AR-tag")
-	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to retag alpine:latest: %v\n%s", err, out)
-		os.Exit(1)
-	}
 	alpineARTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/alpine:latest"
-	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to AR-tag alpine:latest: %v\n%s", err, out)
+	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
+	alpineBuild := exec.Command("docker", "build",
+		"--platform", overlayPlatform,
+		"-t", "alpine:latest",
+		"-t", alpineARTag,
+		"-f", "-", repoRoot)
+	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+	if out, err := alpineBuild.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to build alpine local tags: %v\n%s", err, out)
 		os.Exit(1)
 	}
 

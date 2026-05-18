@@ -135,17 +135,20 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
 		failClean("ERROR: docker tag eval-arithmetic AR-form: %v\n%s", err, out)
 	}
-	// Same for alpine: the eval image build above already pulled the
-	// real public.ecr alpine base into the local Docker daemon. Tag
-	// that exact base into the Docker Hub and AR names the backend and
-	// simulator will reference instead of performing a redundant second
-	// registry pull.
-	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
-		failClean("ERROR: docker tag alpine docker-hub-form: %v\n%s", err, out)
-	}
+	// Materialize alpine under the Docker Hub and AR names the backend
+	// and simulator reference. BuildKit can consume a FROM image without
+	// leaving the source ref tagged locally, so build the tag explicitly
+	// from the same real ECR Public base instead of assuming a tag exists.
 	alpineARTag := "us-central1-docker.pkg.dev/sim-project/docker-hub/library/alpine:latest"
-	if out, err := exec.Command("docker", "tag", "alpine:latest", alpineARTag).CombinedOutput(); err != nil {
-		failClean("ERROR: docker tag alpine AR-form: %v\n%s", err, out)
+	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
+	alpineBuild := exec.Command("docker", "build",
+		"--platform", overlayPlatform,
+		"-t", "alpine:latest",
+		"-t", alpineARTag,
+		"-f", "-", repoRoot)
+	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+	if out, err := alpineBuild.CombinedOutput(); err != nil {
+		failClean("ERROR: docker build alpine local tags: %v\n%s", err, out)
 	}
 
 	var endpointURL, project, bootstrapPath, buildBucket, saJSONPath string
