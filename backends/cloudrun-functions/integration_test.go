@@ -175,21 +175,15 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		os.Exit(1)
 	}
 
-	// Tests that don't use eval-arithmetic still pass plain "alpine:latest"
-	// as the container image. The backend rewrites that to the AR URL via
-	// gcpcommon.ResolveGCPImageURI; Cloud Build's FROM then needs the
-	// rewritten URL to resolve locally. Pre-pull alpine and tag it to the
-	// AR URL so `docker build` (run by the sim's executor) finds it in
-	// the local cache instead of attempting an anonymous AR token fetch
-	// (which 403s on CI for nonexistent AR projects).
-	step("docker pull alpine:latest + AR-tag")
-	fmt.Println("[sim] Pre-pulling alpine:latest from ECR Public Gallery...")
-	// Pull from public.ecr.aws (no anonymous-pull rate limit), then
-	// re-tag to the Docker Hub form the backend expects.
-	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to pull alpine:latest: %v\n%s", err, out)
-		os.Exit(1)
-	}
+	// Tests that don't use eval-arithmetic still pass plain
+	// "alpine:latest" as the container image. The eval image build
+	// above already pulled the real public.ecr alpine base into the
+	// local Docker daemon; tag that exact base into the Docker Hub and
+	// AR names the backend and simulator will reference. Do not issue a
+	// second registry pull here: CI already depends on the eval build's
+	// real FROM resolution, and another network pull only adds a
+	// duplicate outage point.
+	step("tag cached alpine:latest + AR-tag")
 	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to retag alpine:latest: %v\n%s", err, out)
 		os.Exit(1)

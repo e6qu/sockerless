@@ -135,13 +135,11 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
 		failClean("ERROR: docker tag eval-arithmetic AR-form: %v\n%s", err, out)
 	}
-	// Same for alpine — tests that don't use eval-arithmetic still
-	// pass plain "alpine:latest" which the backend rewrites to AR.
-	// Pull from ECR Public Gallery to dodge Docker Hub rate limits;
-	// re-tag as the Docker-Hub-shaped name the backend expects.
-	if out, err := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest").CombinedOutput(); err != nil {
-		failClean("ERROR: docker pull alpine: %v\n%s", err, out)
-	}
+	// Same for alpine: the eval image build above already pulled the
+	// real public.ecr alpine base into the local Docker daemon. Tag
+	// that exact base into the Docker Hub and AR names the backend and
+	// simulator will reference instead of performing a redundant second
+	// registry pull.
 	if out, err := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest").CombinedOutput(); err != nil {
 		failClean("ERROR: docker tag alpine docker-hub-form: %v\n%s", err, out)
 	}

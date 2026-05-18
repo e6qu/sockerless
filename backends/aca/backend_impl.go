@@ -71,6 +71,30 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Image = resolved
 	}
 
+	if s.useACAOverlayPath(config.Image) {
+		if s.config.BootstrapBinaryPath == "" {
+			return nil, &api.ServerError{Message: "SOCKERLESS_ACA_USE_APP=1 requires SOCKERLESS_ACA_BOOTSTRAP so ACA Apps run an image with the reverse-agent bootstrap baked in"}
+		}
+		originalImage := config.Image
+		spec := acaOverlaySpec{
+			BaseImageRef:        originalImage,
+			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
+			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
+		}
+		contentTag := acaOverlayContentTag("aca-", spec)
+		overlayURI, err := s.ensureACAOverlayImage(s.ctx(), spec, contentTag)
+		if err != nil {
+			return nil, fmt.Errorf("ensure aca overlay image: %w", err)
+		}
+		config.Env = append(config.Env, acaOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
+			config.Env = append(config.Env, jt)
+		}
+		config.Image = overlayURI
+		config.Entrypoint = nil
+		config.Cmd = nil
+	}
+
 	hostConfig := api.HostConfig{NetworkMode: "default"}
 	if req.HostConfig != nil {
 		hostConfig = *req.HostConfig

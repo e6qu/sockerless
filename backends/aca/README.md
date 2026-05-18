@@ -70,6 +70,8 @@ Full schema: [`specs/CONFIG.md`](../../specs/CONFIG.md).
 | `SOCKERLESS_ACA_AGENT_IMAGE` | `sockerless/agent:latest` | no | Sidecar agent container image |
 | `SOCKERLESS_ACA_AGENT_TOKEN` | | no | Agent authentication token |
 | `SOCKERLESS_CALLBACK_URL` | | **yes** | Reverse-agent WebSocket URL the in-App/Job bootstrap dials back to. Empty → backend fails loud at startup (Phase 168 — no management-API exec fallback). |
+| `SOCKERLESS_ACA_BOOTSTRAP` | | required for Apps overlays | Host path to the ACA-compatible reverse-agent bootstrap binary. With `SOCKERLESS_ACA_USE_APP=1`, non-overlay images are wrapped through ACR Tasks with this binary as ENTRYPOINT. |
+| `SOCKERLESS_AZURE_BUILD_PLATFORM` | `linux/amd64` | no | Platform passed to ACR Tasks for ACA App overlay images. |
 | `SOCKERLESS_ACA_BOOTSTRAP_TIMEOUT_SEC` | `90` | no | Seconds `ContainerStart` waits for the bootstrap to dial back before failing loud. |
 | `SOCKERLESS_ACA_TMPFS_SIZE_MIB` | `2048` | no | Default tmpfs cap (MiB) for `Backing: memory` SharedVolumes. Memory is the default backing on ACA; the per-container memory default raised to `4Gi / 2.0 vCPU` to fit (ACA's CPU:memory 2:1 pairing rule). |
 | `SOCKERLESS_ENDPOINT_URL` | | no | Custom endpoint (for [`simulators/azure`](../../simulators/azure/README.md)) |

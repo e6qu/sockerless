@@ -40,10 +40,10 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 			if _, done := volSeen[volName]; done {
 				continue
 			}
-			// Route through the storage-backing registry default
-			// (BUG-1059). After P168.5 ACA defaults to memory →
-			// EmptyDir; operators wanting Azure Files override at
-			// NewServer or set a per-SharedVolume Backing.
+			// Route through the storage-backing registry default.
+			// ACA defaults to memory-backed EmptyDir; operators wanting
+			// Azure Files override at NewServer or set a
+			// per-SharedVolume Backing.
 			vol, err := s.resolveVolumeForName(ctx, volName)
 			if err != nil {
 				return armappcontainers.ContainerApp{}, err

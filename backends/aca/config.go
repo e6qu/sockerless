@@ -21,6 +21,7 @@ type Config struct {
 	ACRName               string        // Azure Container Registry name for builds
 	BuildStorageAccount   string        // Storage account for ACR build context
 	BuildContainer        string        // Blob container for ACR build context
+	BuildPlatform         string        // Docker build platform for overlay images
 	EndpointURL           string        // Custom endpoint URL
 	PollInterval          time.Duration // Cloud API poll interval (default 2s)
 
@@ -39,6 +40,17 @@ type Config struct {
 	// docker exec / attach once an overlay image with the bootstrap
 	// binary is deployed.
 	CallbackURL string
+
+	// BootstrapBinaryPath is the on-disk path of the ACA-compatible
+	// reverse-agent bootstrap binary. Required for the Apps path unless
+	// the requested image is already a sockerless overlay image.
+	// Set via SOCKERLESS_ACA_BOOTSTRAP.
+	BootstrapBinaryPath string
+
+	// BootstrapBinaryHash is the SHA-256-prefix hash of
+	// BootstrapBinaryPath, computed once at server startup so overlay
+	// tags invalidate when the bootstrap binary changes.
+	BootstrapBinaryHash string
 
 	// EnableCommit opts into the agent-driven `docker commit` path.
 	// See backends/core.CommitContainerViaAgent. Set via
@@ -81,10 +93,12 @@ func ConfigFromEnv() Config {
 		ACRName:               os.Getenv("SOCKERLESS_AZURE_ACR_NAME"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
+		BuildPlatform:         envOrDefault("SOCKERLESS_AZURE_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:           os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		PollInterval:          parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		UseApp:                os.Getenv("SOCKERLESS_ACA_USE_APP") == "1",
 		CallbackURL:           os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		BootstrapBinaryPath:   os.Getenv("SOCKERLESS_ACA_BOOTSTRAP"),
 		EnableCommit:          os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		NetworkDiscovery:      networkDiscoveryFromEnv("SOCKERLESS_ACA_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
 		Access:                accessFromEnv("SOCKERLESS_ACA_ACCESS", api.AccessMechanismNoneInternal),
@@ -117,14 +131,18 @@ func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.Ne
 // ConfigFromEnvironment creates Config from a unified config environment.
 func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Config {
 	c := Config{
-		Environment:  "sockerless",
-		Location:     "eastus",
-		PollInterval: 2 * time.Second,
+		Environment:   "sockerless",
+		Location:      "eastus",
+		BuildPlatform: "linux/amd64",
+		PollInterval:  2 * time.Second,
 	}
 	if env.Azure != nil {
 		c.SubscriptionID = env.Azure.SubscriptionID
 		c.BuildStorageAccount = env.Azure.BuildStorageAccount
 		c.BuildContainer = env.Azure.BuildContainer
+		if env.Azure.BuildPlatform != "" {
+			c.BuildPlatform = env.Azure.BuildPlatform
+		}
 		if aca := env.Azure.ACA; aca != nil {
 			c.ResourceGroup = aca.ResourceGroup
 			if aca.Environment != "" {

@@ -51,6 +51,10 @@ func (s *Server) buildContainerSpec(ci containerInput) (*armappcontainers.Contai
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL)},
 			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(ci.ID)},
 		)
+	} else {
+		envVars = append(envVars,
+			&armappcontainers.EnvironmentVar{Name: ptr("SOCKERLESS_SIDECAR"), Value: ptr("1")},
+		)
 	}
 
 	entrypoint := config.Entrypoint

@@ -64,6 +64,7 @@ type AzureConfig struct {
 	SubscriptionID      string        `yaml:"subscription_id,omitempty"`
 	BuildStorageAccount string        `yaml:"build_storage_account,omitempty"`
 	BuildContainer      string        `yaml:"build_container,omitempty"`
+	BuildPlatform       string        `yaml:"build_platform,omitempty"`
 	ACA                 *ACAEnvConfig `yaml:"aca,omitempty"`
 	AZF                 *AZFEnvConfig `yaml:"azf,omitempty"`
 }

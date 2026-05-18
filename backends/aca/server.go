@@ -32,6 +32,14 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	if config.CallbackURL == "" {
 		logger.Fatal().Msg("ACA backend requires SOCKERLESS_CALLBACK_URL — the in-App/Job bootstrap dials back here to register the reverse-agent WebSocket. Without it every exec fails (no fallback to management-API exec). Set the env var to a URL the App / Job can reach.")
 	}
+	if config.BootstrapBinaryHash == "" && config.BootstrapBinaryPath != "" {
+		if hash, err := hashBootstrapBinary(config.BootstrapBinaryPath); err == nil {
+			config.BootstrapBinaryHash = hash
+			logger.Info().Str("path", config.BootstrapBinaryPath).Str("hash", hash).Msg("hashed aca bootstrap binary for overlay-tag invalidation")
+		} else {
+			logger.Warn().Err(err).Str("path", config.BootstrapBinaryPath).Msg("failed to hash aca bootstrap binary; overlay images will not invalidate on bootstrap update")
+		}
+	}
 	s := &Server{
 		config:           config,
 		azure:            azureClients,

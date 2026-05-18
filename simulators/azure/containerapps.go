@@ -480,9 +480,6 @@ func registerContainerApps(srv *sim.Server) {
 				if idx := strings.LastIndex(id, "/"); idx >= 0 {
 					shortExecID = id[idx+1:]
 				}
-				if len(shortExecID) > 12 {
-					shortExecID = shortExecID[:12]
-				}
 				containerName := fmt.Sprintf("sockerless-sim-azure-execution-%s", shortExecID)
 
 				// Resolve the env's Docker network and connect the
@@ -517,7 +514,7 @@ func registerContainerApps(srv *sim.Server) {
 					NetworkAliases: netAliases,
 					Binds:          binds,
 					ExtraHosts:     hostMetadataExtraHosts(),
-					Sandbox:        sim.SandboxACA, // BUG-1077.
+					Sandbox:        sim.SandboxACA,
 				}, sink)
 				if err != nil {
 					succeeded = false

@@ -71,7 +71,7 @@ func (s *Server) deleteJob(jobName string) {
 
 // deleteJobStrict deletes an ACA Job and returns nil on success or
 // when the job is already gone. Errors propagate. Typed not-found
-// detection via azurecommon.IsNotFound (BUG-1063).
+// detection goes through azurecommon.IsNotFound.
 func (s *Server) deleteJobStrict(jobName string) error {
 	poller, err := s.azure.Jobs.BeginDelete(s.ctx(), s.config.ResourceGroup, jobName, nil)
 	if err != nil {
