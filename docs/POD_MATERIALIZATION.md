@@ -18,7 +18,7 @@ For every backend, "pod materialization" boils down to four questions:
 | 3 | **Workspace data plane** — how do runner + sub-task share `_work` / `/builds`? | EFS access point, GCS bucket (via `gcs-sync`), Azure Files share, host bind-mount |
 | 4 | **Exec dispatch** — how do `docker exec` calls reach the sub-task process? | native Docker exec, SSM ExecuteCommand, or reverse-agent WebSocket |
 
-All seven backends answer all four. The summary table at the end shows the answers side-by-side; the per-backend sections below walk the mechanics in detail.
+Every backend must answer these for single-container workloads. Multi-container pod materialization is currently implemented only where the backend can provide shared localhost with a real cloud primitive or an already-implemented overlay path; Azure Functions currently rejects multi-container pod starts rather than pretending to provide pod semantics.
 
 ---
 
@@ -137,9 +137,9 @@ GitLab's hijacked-stdin lands in the reverse-agent multiplexed channel for Apps.
 
 **Long-lived runner.** `armappservice.WebAppsClient.CreateOrUpdate` deploys a Function App with the user's image + `sockerless-azf-bootstrap` overlay. The Function App is tagged `sockerless-managed=true`, `sockerless-container-id=<id>` for recovery.
 
-**Sub-task spawn — supervisor-in-overlay pattern.** AZF is the most constrained backend: Function Apps run a single container, no native sidecar primitive, and don't expose `CAP_SYS_ADMIN`. Multi-container pods materialize via a **supervisor-in-overlay**: all pod members are baked into one image via an overlay Dockerfile that merges their rootfs layers under distinct directories, and a supervisor bootstrap launches each as a subprocess. Pod containers share net/IPC/UTS namespaces but not mount/PID (no namespacing privileges).
+**Sub-task spawn.** Single-container workloads create or reuse one Function App per Docker container. Multi-container pods are **not currently supported** by the AZF backend: Function Apps expose a single custom-container slot, and the current implementation rejects multi-container pod materialization instead of using an unimplemented supervisor image path. Workloads that require sidecars sharing `localhost` should use ACA Apps on Azure.
 
-This is a real limitation, not a workaround — it's the cloud-native answer for AZF given the platform constraints. See `specs/CLOUD_RESOURCE_MAPPING.md` § Azure Functions for the rationale.
+This is a real platform limitation. If AZF gains pod support later, it must be implemented as real Function App behavior with a tested bootstrap/supervisor contract and documented limitations; until then the backend must fail clearly.
 
 **Workspace data plane.** Azure Files shares (same `azure-common` machinery as ACA). `SOCKERLESS_AZF_STORAGE_ACCOUNT` configures the storage account. Persistent across invocations.
 
@@ -156,7 +156,7 @@ The runner pattern: `actions/runner` polls GitHub, then for each `container:` st
 | Step | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|
 | Runner container created | `docker create` | `ecs.RunTask` with `tail -f /dev/null` | `lambda.CreateFunction` (image mode, overlay) | `run.Services.CreateService` (multi-container revision) | `functions.CreateFunction` + `UpdateService` swap | `ContainerAppsClient.CreateOrUpdate` | `WebAppsClient.CreateOrUpdate` |
-| Step container created | `docker create` | `ecs.RunTask` (sub-task) | `lambda.CreateFunction` (sub-task) | New revision of same Service | New function + `UpdateService` (pool-reusable) | New App revision | New Function App (or supervisor-in-overlay) |
+| Step container created | `docker create` | `ecs.RunTask` (sub-task) | `lambda.CreateFunction` (sub-task) | New revision of same Service | New function + `UpdateService` (pool-reusable) | New App revision | New Function App for single-container workloads; multi-container pods unsupported |
 | `_work` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` (per-exec tar) | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
 | `docker exec` for step | native | SSM ExecuteCommand (waits for agent) | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS | Reverse-agent WS |
 | Cross-step persistence | Native (same host) | EFS mount stays attached | EFS persists across invokes | GCS object tar/untar per step | GCS object tar/untar per step | Azure Files share persists | Azure Files share persists |
@@ -167,7 +167,7 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 
 | Step | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|
-| Build container created | `docker create` | `ecs.RunTask` | `lambda.CreateFunction` | `CreateService` (build + helper + service sidecars) | `CreateFunction` + `UpdateService` (build + helper + sidecars) | `CreateOrUpdate` (multi-container App) | `CreateOrUpdate` (supervisor overlay) |
+| Build container created | `docker create` | `ecs.RunTask` | `lambda.CreateFunction` | `CreateService` (build + helper + service sidecars) | `CreateFunction` + `UpdateService` (build + helper + sidecars) | `CreateOrUpdate` (multi-container App) | `CreateOrUpdate` Function App for single-container jobs; sidecar pods unsupported |
 | Stdin script delivery | native attach | `stdinPipes` map → bake into task def `Cmd` (BUG-859) | Reverse-agent stream | Reverse-agent stream | Reverse-agent stream | WebSocket stream | WebSocket stream |
 | `/builds` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
 | `/cache` mount | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
@@ -179,13 +179,13 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 
 | Dimension | docker | ecs | lambda | cloudrun | gcf | aca | azf |
 |---|---|---|---|---|---|---|---|
-| **Pod primitive** | Local container | Fargate task | Lambda function (image mode) | Multi-container Service revision | Cloud Function Gen2 (underlying Service) | App revision | Function App (single container + supervisor overlay) |
+| **Pod primitive** | Local container | Fargate task | Lambda function (image mode) | Multi-container Service revision | Cloud Function Gen2 (underlying Service) | App revision | Function App single container only |
 | **Long-lived shell** | `tail -f /dev/null` | task stays running | bootstrap + Runtime API loop | revision stays warm | function stays warm (pool) | revision stays active | Function App HTTP handler |
-| **Sub-task primitive** | new `docker create` | new `ecs.RunTask` | new `lambda.CreateFunction` | new revision of same Service | new Function (pool-reusable) + `UpdateService` | new App revision | new Function App (or supervisor overlay) |
+| **Sub-task primitive** | new `docker create` | new `ecs.RunTask` | new `lambda.CreateFunction` | new revision of same Service | new Function (pool-reusable) + `UpdateService` | new App revision | new Function App; multi-container pod unsupported |
 | **Workspace storage** | host bind | EFS access point | EFS access point | GCS bucket via `gcs-sync` | GCS bucket via `gcs-sync` | Azure Files share | Azure Files share |
 | **Exec dispatch** | native `docker exec` | SSM ExecuteCommand | reverse-agent WS | reverse-agent WS | reverse-agent WS | reverse-agent WS | reverse-agent WS |
 | **Cross-step persistence** | host fs | EFS mount stays | EFS mount stays | GCS object tar/untar | GCS object tar/untar | Azure Files share | Azure Files share |
-| **Hard limit** | (none) | (none — Fargate is long-lived) | 15-min invocation cap | (none — Services are long-lived) | (none — same as cloudrun) | (none — Apps are long-lived) | (none — but supervisor-overlay limits CAP_SYS_ADMIN-dependent workloads) |
+| **Hard limit** | (none) | (none — Fargate is long-lived) | 15-min invocation cap | (none — Services are long-lived) | (none — same as cloudrun) | (none — Apps are long-lived) | Function App platform limits; no multi-container pod support |
 
 ---
 

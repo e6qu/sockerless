@@ -251,6 +251,7 @@ tf-int-test-all:   tf-int-test-aws tf-int-test-gcp tf-int-test-azure
 .PHONY: e2e-github-build-aws e2e-github-build-gcp e2e-github-build-azure
 .PHONY: e2e-github-ecs e2e-github-lambda e2e-github-cloudrun e2e-github-gcf e2e-github-aca e2e-github-azf
 .PHONY: e2e-github-all e2e-gitlab-all e2e-all
+.PHONY: e2e-github-sim-arithmetic e2e-gitlab-sim-arithmetic e2e-real-runner-sim-arithmetic
 
 E2E_GITHUB_IMAGE := sockerless-e2e-github
 
@@ -279,6 +280,14 @@ e2e-gitlab-all:
 	  printf "$(COLOR_CYAN)=== E2E GitLab: %s ===$(COLOR_RESET)\n" "$$b" && \
 	  $(MAKE) -s e2e-gitlab-$$b || exit 1; \
 	done
+
+e2e-github-sim-arithmetic:
+	go test -v -tags github_runner_live -run TestGitHub_Simulator_Arithmetic -timeout 30m ./tests/runners/github
+
+e2e-gitlab-sim-arithmetic:
+	go test -v -tags gitlab_runner_live -run TestGitLab_Simulator_Arithmetic -timeout 30m ./tests/runners/gitlab
+
+e2e-real-runner-sim-arithmetic: e2e-github-sim-arithmetic e2e-gitlab-sim-arithmetic
 
 e2e-all: e2e-github-all e2e-gitlab-all
 

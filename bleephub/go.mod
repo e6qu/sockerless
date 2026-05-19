@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/go-git/go-billy/v5 v5.9.0
-	github.com/go-git/go-git/v5 v5.19.0
+	github.com/go-git/go-git/v5 v5.19.1
 	github.com/graphql-go/graphql v0.8.1
 	github.com/rs/zerolog v1.35.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0

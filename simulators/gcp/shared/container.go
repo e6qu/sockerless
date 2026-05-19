@@ -57,6 +57,7 @@ type ContainerConfig struct {
 	Timeout      time.Duration     // max execution time (0 = no limit)
 	Labels       map[string]string // container labels for tracking
 	Network      string            // Docker network to join (optional)
+	NetworkMode  string            // Docker network mode (e.g. "container:<id>" for shared netns)
 	Name         string            // container name (optional, auto-generated if empty)
 	Tty          bool              // allocate a pseudo-TTY
 	OpenStdin    bool              // keep stdin open
@@ -229,9 +230,12 @@ type HTTPContainerConfig struct {
 	Image        string            // overlay image (must be locally available)
 	Architecture string            // OS/arch (e.g. "linux/arm64"); workload's spec — never derived from host
 	HostPort     int               // host port to publish container's :8080 to
+	Command      []string          // entrypoint override (empty = use image default)
+	Args         []string          // command/args (empty = use image default)
 	Env          map[string]string // env vars (must include PORT to match the published port-target)
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
+	Binds        []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts   []string          // --add-host entries (e.g., "metadata.google.internal:host-gateway")
 
 	// Sandbox: per-platform capability + permission parity (BUG-1077).
@@ -275,10 +279,17 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		Labels:       labels,
 		ExposedPorts: nat.PortSet{exposedPort: struct{}{}},
 	}
+	if len(cfg.Command) > 0 {
+		containerCfg.Entrypoint = cfg.Command
+	}
+	if len(cfg.Args) > 0 {
+		containerCfg.Cmd = cfg.Args
+	}
 	hostCfg := &container.HostConfig{
 		PortBindings: nat.PortMap{
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
+		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
 	}
 	// BUG-1077 sandbox parity.
@@ -435,13 +446,16 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
 	}
+	if cfg.NetworkMode != "" {
+		hostCfg.NetworkMode = container.NetworkMode(cfg.NetworkMode)
+	}
 	// BUG-1077 sandbox parity.
 	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
 		return "", fmt.Errorf("sandbox enforce: %w", err)
 	}
 
 	var networkCfg *network.NetworkingConfig
-	if cfg.Network != "" {
+	if cfg.Network != "" && cfg.NetworkMode == "" {
 		networkCfg = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				cfg.Network: {},

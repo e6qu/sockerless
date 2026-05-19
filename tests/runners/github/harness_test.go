@@ -122,6 +122,32 @@ jobs:
 	})
 }
 
+// TestGitHub_Simulator_Arithmetic runs the official actions/runner binary
+// against a caller-provided simulator-backed sockerless daemon. Start the
+// target backend first and set SOCKERLESS_DOCKER_HOST, for example
+// tcp://localhost:3375.
+func TestGitHub_Simulator_Arithmetic(t *testing.T) {
+	runCell(t, cellConfig{
+		Label:             "sockerless-sim",
+		WorkflowFile:      "live-tests-ecs.yml",
+		DefaultDockerHost: "tcp://localhost:3375",
+		WorkflowYAML: `name: simulator-arithmetic
+on:
+  workflow_dispatch:
+jobs:
+  arithmetic:
+    runs-on: [self-hosted, sockerless-sim]
+    container:
+      image: golang:1.25-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go test -count=1 ./simulators/testdata/eval-arithmetic
+      - run: test "$(go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2')" = "30"
+`,
+	})
+}
+
 type cellConfig struct {
 	Label string
 	// Name of a workflow file already present on `main`. Dispatched

@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-19 — BUG-1096: simulator pod materialization fidelity
+
+The pod-model review found that several simulators accepted cloud-native multi-container specs but did not actually execute all containers with the cloud's shared-localhost contract. AWS ECS tasks and GCP Cloud Run Services/Jobs reported multi-container resources while only starting the first local workload container. Azure ACA Apps started sidecars on the same Docker bridge network, which gives DNS but not pod-style `127.0.0.1` loopback.
+
+The fix keeps the simulator public APIs cloud-shaped and changes only the local implementation mechanism: start every declared container as a real Docker/Podman container, start sidecars in `container:<mainID>` network mode, preserve per-container command/args/env/volume binds, and stop sidecars with the main execution. GCP Cloud Run Services also now pass command/args through the HTTP launcher and mount GCS-backed volumes like Jobs already did.
+
+Coverage uses official SDK clients against the simulators: ECS multi-container task reaches a sidecar over localhost; Cloud Run Service and Cloud Run Job both reach sidecars over localhost; ACA Job and ACA App both write logs proving localhost sidecar reachability. The same pass corrected stale pod docs that claimed AZF had a supervisor-in-overlay multi-container path. The current AZF backend is single-container Function App only and must reject multi-container pods.
+
+Real-runner pre-work now exists for the requested realistic arithmetic workload: the Go arithmetic module has unit tests, and `make e2e-github-sim-arithmetic` / `make e2e-gitlab-sim-arithmetic` run real GitHub Actions Runner / GitLab Runner flows against a caller-started simulator-backed sockerless daemon, compiling and testing that module inside `golang:1.25-alpine`.
+
 ## 2026-05-18 — PR #170: Phase 168 follow-up merged
 
 PR #170 was repurposed from continuity-only docs into the remaining Phase 168 follow-up and merged on 2026-05-18 at `a5639811`. It adds simulator-backed FaaS runner smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and AZF. The new standardized targets are `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate after normal backend package tests. Documentation now separates Go FaaS smokes, GitHub runner smokes, GitLab runner smokes, and the `tests/` Go e2e harness in `docs/E2E_SMOKE_TESTS.md`.
@@ -82,6 +92,12 @@ Codex review caught 3 corrections during Phase 167:
 **Same failure mode repeated from earlier in the session**: I built a narrative ("FaaS backends are all the same") and treated agent summaries as authoritative without re-expanding to per-file evidence. Codex's diff-anchored review caught both rounds. Documented this meta-observation; should be added to `docs/VIBE_CODING.md` as "agent summary tables flatten cross-item differences; re-expand to per-item evidence before lifting into your own claims."
 
 Phase 168 later landed across PRs #168-#170. The old invoke-per-exec path was removed, reverse-agent exec became mandatory for FaaS-style backends, and the remaining simulator-backed smoke/endpoint-fidelity work closed in PR #170.
+
+## 2026-05-19 — PR #172 AWS CI follow-up
+
+CI run `26063005479` failed the AWS simulator SDK job on `TestECS_CrossTaskDNS`. Root cause was a real compatibility regression from the multi-container ECS materialization work: the first task container was renamed from the canonical `sockerless-sim-aws-task-<task>` name to a suffixed container name, so Cloud Map's Docker-network alias wiring could no longer connect the task container to the namespace network. Fixed by keeping the canonical name for the first/main task container and suffixing only sidecars. The same pass removed Docker-incompatible `ExtraHosts` from sidecars that join the main container's network namespace; the main container still gets metadata host mappings.
+
+Verified locally with the AWS multi-container localhost SDK test, the Cloud Map cross-task DNS SDK test, and the full AWS simulator SDK target.
 
 ## 2026-05-17 — Phase 166: real fixes for the 3 Phase-165 follow-up Open BUGs (merged)
 

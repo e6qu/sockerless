@@ -163,6 +163,75 @@ func TestSDK_ContainerAppsApps_StartsRealReplicaAndLogs(t *testing.T) {
 	require.True(t, found, "expected ACA App replica to execute the real container and emit arithmetic output")
 }
 
+func TestSDK_ContainerAppsApps_MultiContainerSharesLocalhost(t *testing.T) {
+	rg := "sdk-aca-app-pod-rg"
+	appName := "sdk-app-pod-localhost"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+
+	poller, err := client.BeginCreateOrUpdate(ctx, rg, appName, armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{
+					{
+						Name:    to.Ptr("main"),
+						Image:   to.Ptr(evalImageName),
+						Command: []*string{to.Ptr("sh"), to.Ptr("-c")},
+						Args: []*string{to.Ptr(`for i in $(seq 1 50); do
+if nc -z 127.0.0.1 9090; then echo aca-app-sidecar-ok; exit 0; fi
+sleep 0.1
+done
+echo aca-app-sidecar-missing
+exit 1`)},
+					},
+					{
+						Name:    to.Ptr("sidecar"),
+						Image:   to.Ptr(evalImageName),
+						Command: []*string{to.Ptr("sh"), to.Ptr("-c")},
+						Args:    []*string{to.Ptr(`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`)},
+					},
+				},
+				Scale: &armappcontainers.Scale{
+					MinReplicas: to.Ptr[int32](1),
+					MaxReplicas: to.Ptr[int32](1),
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	defer func() {
+		delPoller, derr := client.BeginDelete(ctx, rg, appName, nil)
+		if derr == nil {
+			_, _ = delPoller.PollUntilDone(ctx, nil)
+		}
+	}()
+
+	require.Eventually(t, func() bool {
+		result := queryWorkspace(t, "default", `ContainerAppConsoleLogs_CL | where ContainerAppName_s == "`+appName+`"`)
+		if len(result.Tables) == 0 {
+			return false
+		}
+		for _, row := range result.Tables[0].Rows {
+			for _, cell := range row {
+				if s, ok := cell.(string); ok && strings.Contains(s, "aca-app-sidecar-ok") {
+					return true
+				}
+			}
+		}
+		return false
+	}, 20*time.Second, 500*time.Millisecond)
+}
+
 // TestSDK_ContainerAppsApps_SystemDataPreservedAcrossUpdates pins ARM
 // SystemData semantics: `createdAt` is stamped once on resource creation
 // and preserved across PUT/PATCH updates; `lastModifiedAt` reflects the

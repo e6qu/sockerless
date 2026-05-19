@@ -2,9 +2,11 @@ package gcp_sdk_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/logging/logadmin"
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/run/apiv2/runpb"
 	"github.com/stretchr/testify/assert"
@@ -133,6 +135,66 @@ func TestSDK_CloudRun_RunJob(t *testing.T) {
 
 	assert.Contains(t, exec.Name, "sdk-run-job")
 	assert.NotEmpty(t, exec.Name)
+}
+
+func TestSDK_CloudRun_RunJob_MultiContainerSharesLocalhost(t *testing.T) {
+	jobsClient := newJobsClient(t)
+	execClient := newExecutionsClient(t)
+
+	createOp, err := jobsClient.CreateJob(ctx, &runpb.CreateJobRequest{
+		Parent: "projects/test-project/locations/us-central1",
+		JobId:  "sdk-run-job-sidecar",
+		Job: &runpb.Job{
+			Template: &runpb.ExecutionTemplate{
+				Template: &runpb.TaskTemplate{
+					Containers: []*runpb.Container{
+						{
+							Name:  "main",
+							Image: httpProbeImageName,
+							Args:  []string{"probe-once"},
+						},
+						{
+							Name:  "sidecar",
+							Image: httpProbeImageName,
+							Args:  []string{"server"},
+						},
+					},
+					Timeout: durationpb.New(30 * time.Second),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	_, err = createOp.Wait(ctx)
+	require.NoError(t, err)
+
+	runOp, err := jobsClient.RunJob(ctx, &runpb.RunJobRequest{
+		Name: "projects/test-project/locations/us-central1/jobs/sdk-run-job-sidecar",
+	})
+	require.NoError(t, err)
+	exec, err := runOp.Wait(ctx)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		got, err := execClient.GetExecution(ctx, &runpb.GetExecutionRequest{Name: exec.Name})
+		require.NoError(t, err)
+		return got.RunningCount == 0 && got.SucceededCount == 1
+	}, 15*time.Second, 200*time.Millisecond)
+
+	client := logadminClient(t)
+	it := client.Entries(ctx, logadmin.Filter(`resource.type="cloud_run_job" AND resource.labels.job_name="sdk-run-job-sidecar"`))
+	var logs []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if s, ok := entry.Payload.(string); ok {
+			logs = append(logs, s)
+		}
+	}
+	assert.True(t, strings.Contains(strings.Join(logs, "\n"), "cloudrun-job-sidecar-ok"), "job main container should reach sidecar over localhost; logs=%v", logs)
 }
 
 func TestSDK_CloudRun_GetExecution(t *testing.T) {

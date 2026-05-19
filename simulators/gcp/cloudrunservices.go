@@ -170,11 +170,11 @@ func containerEnvMap(envVars []EnvVar) map[string]string {
 }
 
 type cloudRunServiceInstance struct {
-	containerID  string
-	hostPort     int
-	image        string
-	envSignature string
-	cancelLogs   context.CancelFunc
+	containerID string
+	sidecars    []*sim.ContainerHandle
+	hostPort    int
+	specSig     string
+	cancelLogs  context.CancelFunc
 }
 
 var cloudRunServiceInstances = struct {
@@ -182,12 +182,11 @@ var cloudRunServiceInstances = struct {
 	byName map[string]*cloudRunServiceInstance
 }{byName: map[string]*cloudRunServiceInstance{}}
 
-func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image string, env map[string]string, sink sim.LogSink) (*cloudRunServiceInstance, error) {
-	localImage := sim.ResolveLocalImage(image)
-	envSig := envSignature(env)
+func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID string, containers []Container, volumes []Volume, sink sim.LogSink) (*cloudRunServiceInstance, error) {
+	specSig := serviceContainersSignature(containers, volumes)
 
 	cloudRunServiceInstances.Lock()
-	if inst := cloudRunServiceInstances.byName[name]; inst != nil && inst.image == localImage && inst.envSignature == envSig {
+	if inst := cloudRunServiceInstances.byName[name]; inst != nil && inst.specSig == specSig {
 		cloudRunServiceInstances.Unlock()
 		return inst, nil
 	}
@@ -196,6 +195,10 @@ func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image s
 	cloudRunServiceInstances.Unlock()
 	stopCloudRunServiceInstance(old)
 
+	main := containers[0]
+	localImage := sim.ResolveLocalImage(main.Image)
+	env := containerEnvMap(main.Env)
+	bindsFor := serviceBindsFor(volumes)
 	platform, err := localImagePlatform(ctx, localImage)
 	if err != nil {
 		return nil, err
@@ -208,11 +211,14 @@ func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image s
 		Image:        localImage,
 		Architecture: platform,
 		HostPort:     hostPort,
+		Command:      main.Command,
+		Args:         main.Args,
 		Env: mergeEnv(mergeEnv(map[string]string{
 			"PORT": "8080",
 		}, env), hostMetadataEnv()),
 		Name:       fmt.Sprintf("sockerless-sim-cloudrun-svc-%s-%d", serviceID, hostPort),
 		Labels:     map[string]string{"sockerless-sim-service": serviceID},
+		Binds:      bindsFor(main),
 		ExtraHosts: hostMetadataExtraHosts(),
 		Sandbox:    sim.SandboxCloudRun,
 	})
@@ -221,14 +227,56 @@ func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image s
 	}
 
 	logCtx, cancelLogs := context.WithCancel(context.Background())
+	instanceStored := false
+	defer func() {
+		if !instanceStored {
+			cancelLogs()
+		}
+	}()
 	go sim.StreamContainerLogs(logCtx, containerID, sink)
 
+	var sidecars []*sim.ContainerHandle
+	for i, sidecar := range containers[1:] {
+		sidecarImage := sim.ResolveLocalImage(sidecar.Image)
+		sidecarPlatform, err := localImagePlatform(ctx, sidecarImage)
+		if err != nil {
+			sim.StopAndRemoveContainer(containerID)
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, err
+		}
+		handle, err := sim.StartContainerSync(sim.ContainerConfig{
+			Image:        sidecarImage,
+			Architecture: sidecarPlatform,
+			Command:      sidecar.Command,
+			Args:         sidecar.Args,
+			Env:          mergeEnv(containerEnvMap(sidecar.Env), hostMetadataEnv()),
+			Name:         fmt.Sprintf("sockerless-sim-cloudrun-svc-%s-sidecar-%d-%d", serviceID, i, hostPort),
+			Labels: map[string]string{
+				"sockerless-sim-service":           serviceID,
+				"sockerless-sim-service-container": sidecar.Name,
+			},
+			NetworkMode: "container:" + containerID,
+			Binds:       bindsFor(sidecar),
+			Sandbox:     sim.SandboxCloudRun,
+		}, sink)
+		if err != nil {
+			sim.StopAndRemoveContainer(containerID)
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, fmt.Errorf("start service sidecar %q: %w", sidecar.Name, err)
+		}
+		sidecars = append(sidecars, handle)
+	}
+
 	inst := &cloudRunServiceInstance{
-		containerID:  containerID,
-		hostPort:     hostPort,
-		image:        localImage,
-		envSignature: envSig,
-		cancelLogs:   cancelLogs,
+		containerID: containerID,
+		sidecars:    sidecars,
+		hostPort:    hostPort,
+		specSig:     specSig,
+		cancelLogs:  cancelLogs,
 	}
 	cloudRunServiceInstances.Lock()
 	if old := cloudRunServiceInstances.byName[name]; old != nil {
@@ -237,6 +285,7 @@ func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID, image s
 		return nil, fmt.Errorf("service %q instance replaced while starting", name)
 	}
 	cloudRunServiceInstances.byName[name] = inst
+	instanceStored = true
 	cloudRunServiceInstances.Unlock()
 	return inst, nil
 }
@@ -255,6 +304,9 @@ func stopCloudRunServiceInstance(inst *cloudRunServiceInstance) {
 	}
 	if inst.cancelLogs != nil {
 		inst.cancelLogs()
+	}
+	for _, h := range inst.sidecars {
+		h.Cancel()
 	}
 	sim.StopAndRemoveContainer(inst.containerID)
 }
@@ -284,6 +336,69 @@ func envSignature(env map[string]string) string {
 		b.WriteByte('\x00')
 	}
 	return b.String()
+}
+
+func serviceBindsFor(volumes []Volume) func(Container) []string {
+	volByName := make(map[string]Volume)
+	for _, v := range volumes {
+		volByName[v.Name] = v
+	}
+	return func(c Container) []string {
+		var binds []string
+		for _, mp := range c.VolumeMounts {
+			v, ok := volByName[mp.Name]
+			if !ok || v.Gcs == nil || v.Gcs.Bucket == "" {
+				continue
+			}
+			bind := GCSBucketHostDir(v.Gcs.Bucket) + ":" + mp.MountPath
+			if v.Gcs.ReadOnly {
+				bind += ":ro"
+			}
+			binds = append(binds, bind)
+		}
+		return binds
+	}
+}
+
+func volumesSignature(volumes []Volume) string {
+	if len(volumes) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, v := range volumes {
+		if v.Gcs != nil {
+			parts = append(parts, v.Name+"|gcs|"+v.Gcs.Bucket+"|"+strconv.FormatBool(v.Gcs.ReadOnly))
+		} else if v.Nfs != nil {
+			parts = append(parts, v.Name+"|nfs|"+v.Nfs.Server+"|"+v.Nfs.Path+"|"+strconv.FormatBool(v.Nfs.ReadOnly))
+		} else if v.Secret != nil {
+			parts = append(parts, v.Name+"|secret|"+v.Secret.Secret)
+		} else {
+			parts = append(parts, v.Name+"|empty")
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\x00")
+}
+
+func volumeMountsSignature(mounts []VolumeMount) string {
+	if len(mounts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(mounts))
+	for _, m := range mounts {
+		parts = append(parts, m.Name+"="+m.MountPath)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\x00")
+}
+
+func serviceContainersSignature(containers []Container, volumes []Volume) string {
+	var parts []string
+	for _, c := range containers {
+		env := containerEnvMap(c.Env)
+		parts = append(parts, c.Name+"|"+sim.ResolveLocalImage(c.Image)+"|"+strings.Join(c.Command, "\x00")+"|"+strings.Join(c.Args, "\x00")+"|"+envSignature(env)+"|"+volumeMountsSignature(c.VolumeMounts))
+	}
+	return strings.Join(parts, "\x01") + "\x02" + volumesSignature(volumes)
 }
 
 // crv2Services is the package-scope handle the cloudfunctions slice
@@ -496,8 +611,6 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "service %q has no container image", name)
 			return
 		}
-		container := svc.Template.Containers[0]
-		image := container.Image
 		bodyBytes, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
 		ct := r.Header.Get("Content-Type")
@@ -505,11 +618,10 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		if len(bodyBytes) > 0 {
 			body = bytes.NewReader(bodyBytes)
 		}
-		env := containerEnvMap(container.Env)
 		sink := &cfLogSink{project: project, functionName: serviceID}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer cancel()
-		inst, err := ensureCloudRunServiceInstance(ctx, name, serviceID, image, env, sink)
+		inst, err := ensureCloudRunServiceInstance(ctx, name, serviceID, svc.Template.Containers, svc.Template.Volumes, sink)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return

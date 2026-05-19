@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	baseURL       string
-	grpcAddr      string // host:port for gRPC Cloud Logging
-	simCmd        *exec.Cmd
-	binaryPath    string
-	evalImageName string // Docker image containing eval-arithmetic binary
-	ctx           = context.Background()
+	baseURL            string
+	grpcAddr           string // host:port for gRPC Cloud Logging
+	simCmd             *exec.Cmd
+	binaryPath         string
+	evalImageName      string // Docker image containing eval-arithmetic binary
+	httpProbeImageName string // Docker image containing localhost probe/server binary
+	ctx                = context.Background()
 )
 
 func TestMain(m *testing.M) {
@@ -55,6 +56,24 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
+	}
+
+	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
+	httpProbeImageName = "sockerless-http-localhost-probe:test"
+	probeDockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /http-localhost-probe .
+FROM alpine:latest
+COPY --from=build /http-localhost-probe /usr/local/bin/http-localhost-probe
+ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
+`
+	probeBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", httpProbeImageName, "-f", "-", probeDir)
+	probeBuild.Stdin = strings.NewReader(probeDockerfile)
+	if out, err := probeBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build http-localhost-probe Docker image: %v\n%s", err, out)
 	}
 
 	// Allocate both ports while both listeners are open. Closing the first

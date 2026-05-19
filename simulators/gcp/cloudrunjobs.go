@@ -253,7 +253,27 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 }
 
 // Container handle tracker for Cloud Run Jobs real execution
-var crjProcessHandles sync.Map // map[execName]*sim.ContainerHandle
+var crjProcessHandles sync.Map // map[execName]*cloudRunJobProcesses
+
+type cloudRunJobProcesses struct {
+	Main     *sim.ContainerHandle
+	Sidecars []*sim.ContainerHandle
+}
+
+func stopCloudRunJobProcesses(p *cloudRunJobProcesses) {
+	if p == nil {
+		return
+	}
+	if p.Main != nil {
+		sim.StopContainer(p.Main.ContainerID)
+		p.Main.Cancel()
+	}
+	for _, h := range p.Sidecars {
+		if h != nil {
+			h.Cancel()
+		}
+	}
+}
 
 // Package-level stores for dashboard access.
 var crjJobs sim.Store[Job]
@@ -456,47 +476,8 @@ func registerCloudRunJobs(srv *sim.Server) {
 				}
 			}
 
-			// Build container config from first container in template
-			var image string
-			var entrypoint, args []string
-			var cmdEnv map[string]string
-			var binds []string
-			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
-				c := taskTmpl.Containers[0]
-				image = c.Image
-				entrypoint = c.Command
-				args = c.Args
-				if len(c.Env) > 0 {
-					cmdEnv = make(map[string]string, len(c.Env))
-					for _, ev := range c.Env {
-						cmdEnv[ev.Name] = ev.Value
-					}
-				}
-				// Translate GCS-backed Volume + VolumeMount pairs to real
-				// host bind mounts. The GCS slice backs each bucket with
-				// a host directory under $SIM_GCS_DATA_DIR so Cloud Run
-				// tasks launched by this sim see real persistent files.
-				if taskTmpl.Volumes != nil && len(c.VolumeMounts) > 0 {
-					volByName := make(map[string]Volume, len(taskTmpl.Volumes))
-					for _, v := range taskTmpl.Volumes {
-						volByName[v.Name] = v
-					}
-					for _, mp := range c.VolumeMounts {
-						v, ok := volByName[mp.Name]
-						if !ok || v.Gcs == nil || v.Gcs.Bucket == "" {
-							continue
-						}
-						bind := GCSBucketHostDir(v.Gcs.Bucket) + ":" + mp.MountPath
-						if v.Gcs.ReadOnly {
-							bind += ":ro"
-						}
-						binds = append(binds, bind)
-					}
-				}
-			}
-
 			succeeded := true
-			if image != "" {
+			if taskTmpl != nil && len(taskTmpl.Containers) > 0 {
 				// Real container execution
 				sink := &crjLogSink{project: proj, jobName: job}
 				execShort := id
@@ -508,31 +489,17 @@ func registerCloudRunJobs(srv *sim.Server) {
 						execShort = last
 					}
 				}
-				localImage := sim.ResolveLocalImage(image)
-				// Architecture: sim's primary capacity is linux/arm64.
-				// Host metadata: route metadata.google.internal reads to
-				// the sim via GCE_METADATA_HOST + /etc/hosts override.
-				envWithMetadata := mergeEnv(cmdEnv, hostMetadataEnv())
-				handle, err := sim.StartContainerSync(sim.ContainerConfig{
-					Image:        localImage,
-					Architecture: "linux/arm64",
-					Command:      entrypoint,
-					Args:         args,
-					Env:          envWithMetadata,
-					Timeout:      timeout,
-					Name:         fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
-					Labels:       map[string]string{"sockerless-sim-execution": id},
-					Binds:        binds,
-					ExtraHosts:   hostMetadataExtraHosts(),
-					Sandbox:      sim.SandboxCloudRun, // BUG-1077.
-				}, sink)
+				handle, sidecars, err := startCloudRunJobContainers(id, execShort, taskTmpl, timeout, sink)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: failed to start container for execution: image=%s err=%v\n", image, err)
+					fmt.Fprintf(os.Stderr, "ERROR: failed to start containers for execution: err=%v\n", err)
 					succeeded = false
 				} else {
-					crjProcessHandles.Store(id, handle)
+					crjProcessHandles.Store(id, &cloudRunJobProcesses{Main: handle, Sidecars: sidecars})
 					result := handle.Wait()
 					crjProcessHandles.Delete(id)
+					for _, h := range sidecars {
+						h.Cancel()
+					}
 					succeeded = result.ExitCode == 0
 				}
 			}
@@ -643,9 +610,7 @@ func registerCloudRunJobs(srv *sim.Server) {
 
 		// Cancel running container if any
 		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
-			handle := v.(*sim.ContainerHandle)
-			sim.StopContainer(handle.ContainerID)
-			handle.Cancel()
+			stopCloudRunJobProcesses(v.(*cloudRunJobProcesses))
 		}
 
 		ok := executions.Update(name, func(e *Execution) {
@@ -678,6 +643,89 @@ func registerCloudRunJobs(srv *sim.Server) {
 		lro := newLRO(project, location, exec, "type.googleapis.com/google.cloud.run.v2.Execution")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
+}
+
+func startCloudRunJobContainers(execID, execShort string, taskTmpl *TaskTemplate, timeout time.Duration, sink sim.LogSink) (*sim.ContainerHandle, []*sim.ContainerHandle, error) {
+	if taskTmpl == nil || len(taskTmpl.Containers) == 0 {
+		return nil, nil, fmt.Errorf("execution has no containers")
+	}
+
+	volByName := make(map[string]Volume)
+	for _, v := range taskTmpl.Volumes {
+		volByName[v.Name] = v
+	}
+	bindsFor := func(c Container) []string {
+		var binds []string
+		for _, mp := range c.VolumeMounts {
+			v, ok := volByName[mp.Name]
+			if !ok || v.Gcs == nil || v.Gcs.Bucket == "" {
+				continue
+			}
+			bind := GCSBucketHostDir(v.Gcs.Bucket) + ":" + mp.MountPath
+			if v.Gcs.ReadOnly {
+				bind += ":ro"
+			}
+			binds = append(binds, bind)
+		}
+		return binds
+	}
+	envFor := func(c Container) map[string]string {
+		cmdEnv := make(map[string]string, len(c.Env))
+		for _, ev := range c.Env {
+			cmdEnv[ev.Name] = ev.Value
+		}
+		return mergeEnv(cmdEnv, hostMetadataEnv())
+	}
+
+	main := taskTmpl.Containers[0]
+	mainHandle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:        sim.ResolveLocalImage(main.Image),
+		Architecture: "linux/arm64",
+		Command:      main.Command,
+		Args:         main.Args,
+		Env:          envFor(main),
+		Timeout:      timeout,
+		Name:         fmt.Sprintf("sockerless-sim-gcp-job-%s", execShort),
+		Labels: map[string]string{
+			"sockerless-sim-execution":           execID,
+			"sockerless-sim-execution-container": main.Name,
+		},
+		Binds:      bindsFor(main),
+		ExtraHosts: hostMetadataExtraHosts(),
+		Sandbox:    sim.SandboxCloudRun,
+	}, sink)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start main container %q: %w", main.Name, err)
+	}
+
+	var sidecars []*sim.ContainerHandle
+	for i, c := range taskTmpl.Containers[1:] {
+		handle, err := sim.StartContainerSync(sim.ContainerConfig{
+			Image:        sim.ResolveLocalImage(c.Image),
+			Architecture: "linux/arm64",
+			Command:      c.Command,
+			Args:         c.Args,
+			Env:          envFor(c),
+			Timeout:      timeout,
+			Name:         fmt.Sprintf("sockerless-sim-gcp-job-%s-sidecar-%d", execShort, i),
+			Labels: map[string]string{
+				"sockerless-sim-execution":           execID,
+				"sockerless-sim-execution-container": c.Name,
+			},
+			NetworkMode: "container:" + mainHandle.ContainerID,
+			Binds:       bindsFor(c),
+			Sandbox:     sim.SandboxCloudRun,
+		}, sink)
+		if err != nil {
+			mainHandle.Cancel()
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, nil, fmt.Errorf("start sidecar container %q: %w", c.Name, err)
+		}
+		sidecars = append(sidecars, handle)
+	}
+	return mainHandle, sidecars, nil
 }
 
 // injectCloudRunJobLog writes a log entry to the Cloud Logging store for a
