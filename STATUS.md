@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-174-skill-sweep` — first audit pass using the 5 skills added in Phase 173.0. |
-| In-flight | Phase 174 runs each new skill across the repo. The skills caught 4 quick-fix BUGs and 3 larger-scope follow-ups. Quick-fix BUGs already fixed in-branch: BUG-1105 (23 `_ = sim.ReadJSON(r, &req)` silent-decode sites across Phase 173 handlers — the very pattern silent-error-swallow-scan codifies, introduced after the skill was written; BUG-1104 meta-shape in action), BUG-1106 (silent decode in `handleKVCreateCertificate`), BUG-1107 (dead `var _ = aws.Config{}` import silencer in metadata_sdk_test.go), BUG-1108 (dead `singleSelectInputValueType` "reserved for future" silencer in bleephub/gh_projects_v2_graphql.go). Larger-scope follow-ups filed as Open: BUG-1109 (Azure File/Queue/Table data planes — same shape as BUG-1103 Blob, scope down to remaining 3), BUG-1110 (streaming-envelope sentinel-header inspection missing in GCS / Cloud Run invoke / ACR blob / Azure Blob PutBlob handlers — class of BUG-1099), BUG-1111 (Azure Functions URLs + AWS Amplify webhook URL + AWS ECR repositoryUri emitted but unrouted — `sim-emitted-url-roundtrip` shape). All regression tests green (AWS/GCP/Azure SDK suites + canonical-config). |
+| Active branch | `phase-174-skill-sweep` — skill-sweep audit + GitHub-issue triage. **PR #180.** |
+| In-flight | Phase 174 ran each of the 5 specialist skills committed in Phase 173.0 across the repo. Round 1: 4 quick-fix BUGs (1105–1108) + 3 larger follow-ups filed as Open (1109/1110/1111). Round 2 (after user filed GitHub issues #181–#188 + asked to fix all outstanding BUGs): all 3 follow-ups closed in-branch (Azure File/Queue/Table data planes via new `storage_dataplane.go`; `openStreamingBody` helper per cloud wired into 9 upload handlers; external-URL field annotations on Azure Functions / Amplify webhook / ECR repo URI) **plus** all 8 GitHub issues closed (Azure Redis ARM case insensitivity via path-normalization middleware, Pub/Sub subscription response fields, SM ListSecrets route, KV malformed URLs, KV real RSA modulus, SQS attribute persistence, Cloud SQL fully-qualified selfLink, SM `:latest` alias resolution). All AWS / GCP / Azure SDK regression suites green. |
 | Last merged | PR #179 — Phase 173 simulator wire-fidelity sweep (2026-05-24, squash `64a13a8`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1111 filed · 1104 fixed · 5 open · 2 false positives. Open: BUG-1075 + BUG-1104 (pre-existing) + BUG-1109 + BUG-1110 + BUG-1111 (filed by Phase 174 sweep; tracked for follow-up phases). |
+| Bugs | 1119 filed · 1117 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

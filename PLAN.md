@@ -56,11 +56,15 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
 | #179 | 173 | Simulator wire-fidelity sweep across all 3 clouds. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. Closed issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
-| open | 174 | First skill-sweep audit using the 5 specialist skills committed in Phase 173.0. 4 quick-fix BUGs (1105–1108) fixed in-branch; 3 larger follow-ups (1109–1111) filed as Open. |
+| open #180 | 174 | Skill-sweep audit + community-issue triage. Round 1 caught 4 quick-fix BUGs (1105–1108); round 2 fixed every outstanding bug (1109–1119, closing 3 round-1 follow-ups + 8 GitHub issues #181–#188). Azure File/Queue/Table data planes added; streaming-envelope helper wired into 9 upload handlers; all 8 community-filed bugs in Phase 173 code fixed. BUGS.md count: 1119 filed · 1117 fixed · 2 open. |
 
 ## Active phase
 
-**Phase 174 — first skill-sweep audit (in flight on `phase-174-skill-sweep`).** Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 runs each of the 5 specialist skills added in Phase 173.0 across the repo. The sweep found 4 quick-fix BUGs (1105–1108, fixed in-branch) and 3 larger follow-ups (1109–1111, Open). 23 silent `sim.ReadJSON` sites in Phase 173 handlers fixed as part of BUG-1105 — exactly the pattern `silent-error-swallow-scan` codifies, introduced after the skill was written; the BUG-1104 meta-shape working as designed. BUGS.md after this branch lands: **1111 filed · 1104 fixed · 5 open · 2 false positives.**
+**Phase 174 — skill-sweep audit + community-issue triage (PR #180, in flight).** Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 ran each of the 5 specialist skills added in Phase 173.0 across the repo, plus addressed 8 GitHub issues filed by the user against Phase 173 code.
+
+Round 1 (audit): 4 quick-fix BUGs caught and fixed (BUG-1105 through 1108) + 3 larger follow-ups filed Open. **Round 2** (user's "fix all outstanding bugs" directive + 8 new GitHub issues): all 3 follow-ups closed (BUG-1109 Azure File/Queue/Table data planes, BUG-1110 streaming-envelope coverage in 9 non-S3 upload handlers, BUG-1111 external URL field annotations) and all 8 GitHub issues closed (BUG-1112 through 1119 — case-insensitive ARM routes, missing response fields, registered routes, fixed URL construction, real crypto, persisted attributes, resolved aliases).
+
+BUGS.md after this branch lands: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking) remain Open.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 

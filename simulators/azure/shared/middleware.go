@@ -189,14 +189,14 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 	// when a new ARM resource type lands and clients are observed to
 	// hit it with non-canonical casing.
 	replacements := map[string]string{
-		"/resourcegroups/":          "/resourceGroups/",
-		"/microsoft.cache/redis":    "/Microsoft.Cache/Redis",
-		"/microsoft.cache":          "/Microsoft.Cache",
-		"/microsoft.servicebus":     "/Microsoft.ServiceBus",
-		"/microsoft.apimanagement":  "/Microsoft.ApiManagement",
+		"/resourcegroups/":           "/resourceGroups/",
+		"/microsoft.cache/redis":     "/Microsoft.Cache/Redis",
+		"/microsoft.cache":           "/Microsoft.Cache",
+		"/microsoft.servicebus":      "/Microsoft.ServiceBus",
+		"/microsoft.apimanagement":   "/Microsoft.ApiManagement",
 		"/microsoft.dbforpostgresql": "/Microsoft.DBforPostgreSQL",
-		"/microsoft.keyvault":       "/Microsoft.KeyVault",
-		"/microsoft.storage":        "/Microsoft.Storage",
+		"/microsoft.keyvault":        "/Microsoft.KeyVault",
+		"/microsoft.storage":         "/Microsoft.Storage",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

@@ -611,8 +611,23 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "service %q has no container image", name)
 			return
 		}
-		bodyBytes, _ := io.ReadAll(r.Body)
-		_ = r.Body.Close()
+		// Cloud Run invoke body is the user's HTTP request payload.
+		// Real Cloud Run accepts gzip-encoded request bodies (the
+		// gateway transparently decompresses for HTTP/1.1 clients);
+		// the sim does the same via openStreamingBody. Malformed
+		// or unsupported encoding bubbles up as a real bad-request
+		// error rather than being silently stored mis-decoded.
+		rc, err := openStreamingBody(r)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
+			return
+		}
+		bodyBytes, readErr := io.ReadAll(rc)
+		_ = rc.Close()
+		if readErr != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read invoke body: %v", readErr)
+			return
+		}
 		ct := r.Header.Get("Content-Type")
 		var body io.Reader
 		if len(bodyBytes) > 0 {

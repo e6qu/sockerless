@@ -258,8 +258,13 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
-	defer r.Body.Close()
-	data, err := io.ReadAll(r.Body)
+	body, err := openStreamingBody(r)
+	if err != nil {
+		sim.AzureError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
 	if err != nil {
 		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return

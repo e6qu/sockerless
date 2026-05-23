@@ -388,8 +388,14 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 
-			// Read remaining body data
-			body, err := io.ReadAll(r.Body)
+			// Read remaining body data (streaming-aware: handles gzip)
+			rc, err := openStreamingBody(r)
+			if err != nil {
+				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
+				return
+			}
+			body, err := io.ReadAll(rc)
+			_ = rc.Close()
 			if err != nil {
 				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
 				return
@@ -449,7 +455,13 @@ func registerACR(srv *sim.Server) {
 	srv.HandleFunc("PUT /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		fullPath := sim.PathParam(r, "path")
 		if repo, ref, ok := parseManifestPath(fullPath); ok {
-			body, err := io.ReadAll(r.Body)
+			rc, err := openStreamingBody(r)
+			if err != nil {
+				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
+				return
+			}
+			body, err := io.ReadAll(rc)
+			_ = rc.Close()
 			if err != nil {
 				writeOCIError(w, "MANIFEST_INVALID", "failed to read body", http.StatusBadRequest)
 				return
@@ -492,7 +504,13 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 
-			body, err := io.ReadAll(r.Body)
+			rc, err := openStreamingBody(r)
+			if err != nil {
+				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
+				return
+			}
+			body, err := io.ReadAll(rc)
+			_ = rc.Close()
 			if err != nil {
 				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
 				return
@@ -544,7 +562,13 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 
-			body, err := io.ReadAll(r.Body)
+			rc, err := openStreamingBody(r)
+			if err != nil {
+				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
+				return
+			}
+			body, err := io.ReadAll(rc)
+			_ = rc.Close()
 			if err != nil {
 				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
 				return

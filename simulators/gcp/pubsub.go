@@ -40,16 +40,16 @@ type PSTopic struct {
 }
 
 type PSSubscription struct {
-	Name                     string             `json:"name"` // projects/{p}/subscriptions/{s}
-	Topic                    string             `json:"topic"`
-	AckDeadlineSeconds       int                `json:"ackDeadlineSeconds,omitempty"`
-	Labels                   map[string]string  `json:"labels,omitempty"`
-	PushConfig               *PSPushConfig      `json:"pushConfig,omitempty"`
-	MessageRetentionDuration string             `json:"messageRetentionDuration,omitempty"`
-	RetainAckedMessages      bool               `json:"retainAckedMessages,omitempty"`
+	Name                     string              `json:"name"` // projects/{p}/subscriptions/{s}
+	Topic                    string              `json:"topic"`
+	AckDeadlineSeconds       int                 `json:"ackDeadlineSeconds,omitempty"`
+	Labels                   map[string]string   `json:"labels,omitempty"`
+	PushConfig               *PSPushConfig       `json:"pushConfig,omitempty"`
+	MessageRetentionDuration string              `json:"messageRetentionDuration,omitempty"`
+	RetainAckedMessages      bool                `json:"retainAckedMessages,omitempty"`
 	ExpirationPolicy         *PSExpirationPolicy `json:"expirationPolicy,omitempty"`
-	EnableMessageOrdering    bool               `json:"enableMessageOrdering,omitempty"`
-	Filter                   string             `json:"filter,omitempty"`
+	EnableMessageOrdering    bool                `json:"enableMessageOrdering,omitempty"`
+	Filter                   string              `json:"filter,omitempty"`
 }
 
 type PSExpirationPolicy struct {

@@ -82,9 +82,9 @@ type FunctionEnvelope struct {
 type FunctionEnvelopeProperties struct {
 	Name              string         `json:"name"`
 	FunctionAppID     string         `json:"function_app_id,omitempty"`
-	ScriptHref        string         `json:"script_href,omitempty"`        // external: Kudu admin URL on the deployed Function App
-	ConfigHref        string         `json:"config_href,omitempty"`        // external: Kudu admin URL on the deployed Function App
-	Href              string         `json:"href,omitempty"`               // external: Kudu admin URL on the deployed Function App
+	ScriptHref        string         `json:"script_href,omitempty"` // external: Kudu admin URL on the deployed Function App
+	ConfigHref        string         `json:"config_href,omitempty"` // external: Kudu admin URL on the deployed Function App
+	Href              string         `json:"href,omitempty"`        // external: Kudu admin URL on the deployed Function App
 	Config            map[string]any `json:"config,omitempty"`
 	InvokeURLTemplate string         `json:"invoke_url_template,omitempty"` // external: HTTP-trigger URL the user's app exposes
 	Language          string         `json:"language,omitempty"`
