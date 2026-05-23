@@ -88,4 +88,3 @@ func TestIMDSSDK_TokenAutomaticRefresh(t *testing.T) {
 		assert.NotEmpty(t, string(body))
 	}
 }
-
