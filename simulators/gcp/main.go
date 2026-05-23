@@ -74,6 +74,7 @@ func main() {
 	registerCloudFunctions(srv)
 	registerOperations(srv)
 	registerSecretManager(srv)
+	registerPubSub(srv)
 	registerCloudBuild(srv)
 
 	// Infrastructure services
