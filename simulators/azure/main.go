@@ -80,6 +80,7 @@ func main() {
 	registerNetwork(srv)
 	registerManagedIdentity(srv)
 	registerKeyVault(srv)
+	registerBlobDataPlane(srv)
 	registerAuthorization(srv)
 	registerContainerAppEnvironment(srv)
 	registerAppServicePlan(srv)

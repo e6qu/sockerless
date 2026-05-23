@@ -124,6 +124,8 @@ var (
 func registerKeyVault(srv *sim.Server) {
 	keyVaults = sim.MakeStore[KeyVault](srv.DB(), "keyvaults")
 	keyVaultData = sim.MakeStore[KeyVaultSecret](srv.DB(), "keyvault_secrets")
+	keyVaultKeys = sim.MakeStore[KeyVaultKey](srv.DB(), "keyvault_keys")
+	keyVaultCertificates = sim.MakeStore[KeyVaultCertificate](srv.DB(), "keyvault_certificates")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.KeyVault"
 
@@ -278,11 +280,312 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 			return
 		}
 		handleKVListSecrets(w, r, vault)
+	case strings.HasPrefix(path, "keys/") || path == "keys":
+		handleKVKey(w, r, vault, path)
+	case strings.HasPrefix(path, "certificates/") || path == "certificates":
+		handleKVCertificate(w, r, vault, path)
 	default:
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 			"Key Vault data plane path %q not implemented", path)
 	}
 }
+
+// KeyVaultKey is a key stored at /keys/{name}. Real KV stores a
+// public + private half via Azure-managed HSM; the sim stores
+// only the operator-supplied JsonWebKey envelope on Create and
+// echoes it on read.
+type KeyVaultKey struct {
+	Vault      string         `json:"-"`
+	Name       string         `json:"-"`
+	ID         string         `json:"kid"`
+	JsonWebKey map[string]any `json:"key,omitempty"`
+	Attributes KeyVaultAttrs  `json:"attributes,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+}
+
+// KeyVaultCertificate is a certificate at /certificates/{name}.
+// Real KV produces a chain (cert + private key + thumbprint); the
+// sim stores the operator-supplied content + a deterministic
+// thumbprint.
+type KeyVaultCertificate struct {
+	Vault      string            `json:"-"`
+	Name       string            `json:"-"`
+	ID         string            `json:"id"`
+	X509Thumbprint string        `json:"x5t,omitempty"`
+	Policy     map[string]any    `json:"policy,omitempty"`
+	Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+}
+
+var (
+	keyVaultKeys         sim.Store[KeyVaultKey]
+	keyVaultCertificates sim.Store[KeyVaultCertificate]
+)
+
+// handleKVKey routes /keys/* requests.
+//   POST /keys/{name}/create     — generate (stash JsonWebKey on body if present)
+//   PUT  /keys/{name}            — import
+//   GET  /keys/{name}            — get latest
+//   GET  /keys/{name}/{version}  — get specific (sim collapses to latest)
+//   GET  /keys                   — list
+//   DELETE /keys/{name}          — delete
+func handleKVKey(w http.ResponseWriter, r *http.Request, vault, path string) {
+	segs := strings.Split(path, "/")
+	// segs: ["keys"] or ["keys", "<name>"] or ["keys", "<name>", "<version>"]
+	// or ["keys", "<name>", "create"]
+	if len(segs) < 2 {
+		// GET /keys → list
+		if r.Method == http.MethodGet {
+			handleKVListKeys(w, r, vault)
+			return
+		}
+		sim.AzureError(w, "BadRequest", "Missing key name", http.StatusBadRequest)
+		return
+	}
+	name := segs[1]
+	verb := ""
+	if len(segs) >= 3 {
+		verb = segs[2]
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if verb == "create" {
+			handleKVCreateKey(w, r, vault, name)
+			return
+		}
+	case http.MethodPut:
+		handleKVImportKey(w, r, vault, name)
+		return
+	case http.MethodGet:
+		handleKVGetKey(w, r, vault, name)
+		return
+	case http.MethodDelete:
+		handleKVDeleteKey(w, r, vault, name)
+		return
+	}
+	sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+}
+
+func keyVaultKeyKey(vault, name string) string { return vault + "/" + name }
+
+func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	var body struct {
+		Kty        string            `json:"kty"`
+		KeySize    int               `json:"key_size,omitempty"`
+		Crv        string            `json:"crv,omitempty"`
+		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	version := generateUUID()
+	id := buildKVURL(r, vault, "keys", name, version)
+	jwk := map[string]any{
+		"kid": id,
+		"kty": defaultKVKty(body.Kty),
+		"n":   "sim-generated-modulus",
+		"e":   "AQAB",
+	}
+	if body.Crv != "" {
+		jwk["crv"] = body.Crv
+	}
+	now := time.Now().Unix()
+	key := KeyVaultKey{
+		Vault: vault, Name: name, ID: id, JsonWebKey: jwk,
+		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
+		Tags:       body.Tags,
+	}
+	if body.Attributes != nil {
+		key.Attributes.Enabled = body.Attributes.Enabled
+	}
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), key)
+	sim.WriteJSON(w, http.StatusOK, key)
+}
+
+func handleKVImportKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	var body struct {
+		Key        map[string]any    `json:"key"`
+		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	version := generateUUID()
+	id := buildKVURL(r, vault, "keys", name, version)
+	if body.Key == nil {
+		body.Key = map[string]any{}
+	}
+	body.Key["kid"] = id
+	now := time.Now().Unix()
+	key := KeyVaultKey{
+		Vault: vault, Name: name, ID: id, JsonWebKey: body.Key,
+		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
+		Tags:       body.Tags,
+	}
+	if body.Attributes != nil {
+		key.Attributes.Enabled = body.Attributes.Enabled
+	}
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), key)
+	sim.WriteJSON(w, http.StatusOK, key)
+}
+
+func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	k, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, k)
+}
+
+func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
+	var out []KeyVaultKey
+	for _, k := range keyVaultKeys.List() {
+		if k.Vault == vault {
+			out = append(out, k)
+		}
+	}
+	if out == nil {
+		out = []KeyVaultKey{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	k, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	keyVaultKeys.Delete(keyVaultKeyKey(vault, name))
+	sim.WriteJSON(w, http.StatusOK, k)
+}
+
+// handleKVCertificate routes /certificates/* requests.
+//   POST /certificates/{name}/create   — issue cert
+//   GET  /certificates/{name}          — get
+//   GET  /certificates                 — list
+//   DELETE /certificates/{name}        — delete
+func handleKVCertificate(w http.ResponseWriter, r *http.Request, vault, path string) {
+	segs := strings.Split(path, "/")
+	if len(segs) < 2 {
+		if r.Method == http.MethodGet {
+			handleKVListCertificates(w, r, vault)
+			return
+		}
+		sim.AzureError(w, "BadRequest", "Missing certificate name", http.StatusBadRequest)
+		return
+	}
+	name := segs[1]
+	verb := ""
+	if len(segs) >= 3 {
+		verb = segs[2]
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if verb == "create" {
+			handleKVCreateCertificate(w, r, vault, name)
+			return
+		}
+	case http.MethodGet:
+		handleKVGetCertificate(w, r, vault, name)
+		return
+	case http.MethodDelete:
+		handleKVDeleteCertificate(w, r, vault, name)
+		return
+	}
+	sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+}
+
+func keyVaultCertKey(vault, name string) string { return vault + "/" + name }
+
+func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	var body struct {
+		Policy     map[string]any    `json:"policy,omitempty"`
+		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	version := generateUUID()
+	id := buildKVURL(r, vault, "certificates", name, version)
+	now := time.Now().Unix()
+	thumbprint := strings.ToUpper(generateUUID()[:8])
+	c := KeyVaultCertificate{
+		Vault: vault, Name: name, ID: id, X509Thumbprint: thumbprint,
+		Policy:     body.Policy,
+		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
+		Tags:       body.Tags,
+	}
+	if body.Attributes != nil {
+		c.Attributes.Enabled = body.Attributes.Enabled
+	}
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), c)
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handleKVGetCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	c, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"A certificate with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handleKVListCertificates(w http.ResponseWriter, r *http.Request, vault string) {
+	var out []KeyVaultCertificate
+	for _, c := range keyVaultCertificates.List() {
+		if c.Vault == vault {
+			out = append(out, c)
+		}
+	}
+	if out == nil {
+		out = []KeyVaultCertificate{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVDeleteCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	c, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"A certificate with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	keyVaultCertificates.Delete(keyVaultCertKey(vault, name))
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func defaultKVKty(s string) string {
+	if s == "" {
+		return "RSA"
+	}
+	return s
+}
+
+// buildKVURL constructs the canonical KV data-plane resource ID
+// (`<scheme>://<vault>.vault.<host>/<kind>/<name>/<version>`). Falls
+// back to a relative-URL form when r.URL.Scheme is empty (the sim's
+// mux passes a relative URL).
+func buildKVURL(r *http.Request, vault, kind, name, version string) string {
+	scheme := r.URL.Scheme
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return fmt.Sprintf("%s://%s.vault.%s/%s/%s/%s", scheme, vault, r.Host, kind, name, version)
+}
+
 
 func keyVaultSecretKey(vault, name string) string { return vault + "/" + name }
 
