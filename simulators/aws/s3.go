@@ -402,9 +402,19 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
+	// AWS SDKs switch to aws-chunked encoding when the request body
+	// is non-seekable (io.Pipe, http.Request.Body, streaming
+	// compressors). Real S3 unwraps that framing server-side; the
+	// sim must do the same or it stores the chunk envelope verbatim.
+	// Sentinel: Content-Encoding: aws-chunked, x-amz-content-sha256:
+	// STREAMING-*, or x-amz-decoded-content-length present.
+	var bodyReader io.Reader = r.Body
+	if isAWSChunkedRequest(r.Header) {
+		bodyReader = newAWSChunkedReader(r.Body)
+	}
+	body, err := io.ReadAll(bodyReader)
 	if err != nil {
-		sim.S3ErrorXML(w, "InternalError", "Failed to read request body",
+		sim.S3ErrorXML(w, "InternalError", "Failed to read request body: "+err.Error(),
 			key, sim.RequestID(r.Context()), http.StatusInternalServerError)
 		return
 	}
