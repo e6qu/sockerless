@@ -108,23 +108,6 @@ func (s *SMSecret) addNewVersion(secretString string, secretBinary []byte) strin
 	return newID
 }
 
-// currentVersion returns the AWSCURRENT version, or the last
-// appended one if no stage labels exist (legacy single-version
-// secrets created before version history was added).
-func (s *SMSecret) currentVersion() (SMSecretVersion, bool) {
-	for _, v := range s.Versions {
-		for _, stg := range v.Stages {
-			if stg == "AWSCURRENT" {
-				return v, true
-			}
-		}
-	}
-	if len(s.Versions) > 0 {
-		return s.Versions[len(s.Versions)-1], true
-	}
-	return SMSecretVersion{}, false
-}
-
 // versionByIDOrStage selects a version by either VersionId (UUID)
 // or VersionStage (canonical or user-defined label). Real
 // GetSecretValue prefers VersionId when both are set; the sim

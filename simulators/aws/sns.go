@@ -110,10 +110,11 @@ func handleSNSCreateTopic(w http.ResponseWriter, r *http.Request) {
 func handleSNSDeleteTopic(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("TopicArn")
 	name := snsTopicNameFromARN(arn)
-	if !snsTopics.Delete(name) {
-		// Real SNS returns success even when the topic doesn't exist
-		// (DeleteTopic is idempotent). Match that.
-	}
+	// snsTopics.Delete returning false is fine here — real SNS
+	// DeleteTopic is idempotent and returns success even when the
+	// topic doesn't exist. The cascade-clear below runs either way
+	// so any dangling subscriptions also get cleared.
+	snsTopics.Delete(name)
 	// Cascade: drop subscriptions pointing at this topic.
 	for _, sub := range snsSubscriptions.List() {
 		if sub.TopicARN == arn {
