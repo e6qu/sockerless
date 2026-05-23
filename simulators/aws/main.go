@@ -73,6 +73,11 @@ func main() {
 	registerEC2(queryRouter, srv)
 	registerIAM(queryRouter, srv)
 	registerSTS(queryRouter)
+	registerSNS(queryRouter, srv)
+
+	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
+	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).
+	registerSQS(awsRouter, srv)
 
 	// POST / handler: check X-Amz-Target first (JSON protocol),
 	// fall back to Action parameter (Query Protocol)
