@@ -14,10 +14,11 @@ provider "aws" {
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
 
-  # Force path-style addressing for S3 so the bucket name appears in the
-  # URL path (https://<endpoint>/<bucket>/...) instead of the subdomain
-  # (https://<bucket>.<endpoint>/...). The sim mounts S3 routes under
-  # /s3/{bucket} which only the path-style form reaches.
+  # Force path-style addressing for S3 so the bucket name appears in
+  # the URL path (https://<endpoint>/<bucket>/...) instead of the
+  # subdomain (https://<bucket>.<endpoint>/...) which can't be
+  # DNS-resolved against a localhost endpoint. Same option real users
+  # set against MinIO / LocalStack / any IP-addressed S3 alternative.
   s3_use_path_style = true
 
   endpoints {
@@ -31,7 +32,7 @@ provider "aws" {
     wafv2            = var.endpoint
     amplify          = var.endpoint
     iam              = var.endpoint
-    s3               = "${var.endpoint}/s3"
+    s3               = var.endpoint
     dynamodb         = var.endpoint
     kms              = var.endpoint
     secretsmanager   = var.endpoint

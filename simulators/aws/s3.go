@@ -85,17 +85,70 @@ func registerS3(srv *sim.Server) {
 
 	mux := srv.Mux()
 
-	// S3 uses path-style URLs: /{bucket} and /{bucket}/{key...}
-	// We need a catch-all handler that dispatches based on path structure.
-	mux.HandleFunc("GET /s3", handleS3ListBuckets)
-	mux.HandleFunc("PUT /s3/{bucket}", handleS3CreateBucket)
-	mux.HandleFunc("HEAD /s3/{bucket}", handleS3HeadBucket)
-	mux.HandleFunc("DELETE /s3/{bucket}", handleS3DeleteBucket)
-	mux.HandleFunc("GET /s3/{bucket}", handleS3GetBucket)
-	mux.HandleFunc("PUT /s3/{bucket}/{key...}", handleS3PutObject)
-	mux.HandleFunc("GET /s3/{bucket}/{key...}", handleS3GetObject)
-	mux.HandleFunc("HEAD /s3/{bucket}/{key...}", handleS3HeadObject)
-	mux.HandleFunc("DELETE /s3/{bucket}/{key...}", handleS3DeleteObject)
+	// S3 uses path-style URLs at the root of the endpoint:
+	//   GET    /                       ListBuckets
+	//   PUT    /{bucket}                CreateBucket
+	//   HEAD   /{bucket}                HeadBucket
+	//   DELETE /{bucket}                DeleteBucket
+	//   GET    /{bucket}                ListObjectsV2 / sub-resource dispatch
+	//   PUT    /{bucket}/{key...}       PutObject
+	//   GET    /{bucket}/{key...}       GetObject
+	//   HEAD   /{bucket}/{key...}       HeadObject
+	//   DELETE /{bucket}/{key...}       DeleteObject
+	//
+	// This matches the real S3 wire protocol; stock `aws` CLI / SDK /
+	// Terraform clients work against the published AWS_ENDPOINT_URL
+	// without a path-prefix workaround. Cross-routing notes:
+	//
+	//   - `POST /` is owned by the AWS-JSON / Query-protocol
+	//     dispatcher in main.go; S3 has no POST-at-root operations
+	//     (multi-object delete is `POST /{bucket}?delete`).
+	//   - Other REST services mount under fixed API-version prefixes
+	//     (Lambda /2015-03-31/, EFS /2015-02-01/, CloudFront
+	//     /2020-05-31/, Route 53 /2013-04-01/, Amplify /apps/ +
+	//     /webhooks/). Go's net/http mux gives literal segments
+	//     priority over wildcards, so `PUT /2015-03-31/functions/...`
+	//     reaches Lambda even though `PUT /{bucket}/{key...}` is
+	//     also registered. The only edge case is a bucket name that
+	//     exactly matches one of those API-version literals (e.g.,
+	//     a bucket named "2015-03-31") plus a key whose path aligns
+	//     with the literal route — sim documents this as a known
+	//     edge case rather than rejecting such bucket names.
+	mux.HandleFunc("GET /{$}", handleS3ListBuckets)
+	mux.HandleFunc("PUT /{bucket}", handleS3CreateBucket)
+	mux.HandleFunc("DELETE /{bucket}", handleS3DeleteBucket)
+	mux.HandleFunc("GET /{bucket}", handleS3GetOrHeadBucket)
+	mux.HandleFunc("PUT /{bucket}/{key...}", handleS3PutObject)
+	mux.HandleFunc("GET /{bucket}/{key...}", handleS3GetOrHeadObject)
+	mux.HandleFunc("DELETE /{bucket}/{key...}", handleS3DeleteObject)
+	// HEAD routes intentionally NOT registered: Go's net/http mux
+	// auto-routes HEAD requests to the matching GET handler when no
+	// HEAD-specific handler exists. Registering both forms together
+	// trips the mux's method-coverage conflict detector against
+	// existing literal routes (e.g., `GET /health`). The dispatch
+	// to HeadBucket / HeadObject happens by method check inside the
+	// GET handler.
+}
+
+// handleS3GetOrHeadBucket dispatches `HEAD /{bucket}` to HeadBucket
+// (metadata-only existence check) and otherwise runs the GET-flavor
+// sub-resource dispatch in handleS3GetBucket.
+func handleS3GetOrHeadBucket(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead {
+		handleS3HeadBucket(w, r)
+		return
+	}
+	handleS3GetBucket(w, r)
+}
+
+// handleS3GetOrHeadObject dispatches `HEAD /{bucket}/{key...}` to
+// HeadObject (headers-only) and otherwise runs the full GetObject.
+func handleS3GetOrHeadObject(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead {
+		handleS3HeadObject(w, r)
+		return
+	}
+	handleS3GetObject(w, r)
 }
 
 func handleS3ListBuckets(w http.ResponseWriter, r *http.Request) {
