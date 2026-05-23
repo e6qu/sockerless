@@ -54,12 +54,14 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #168 | 167–168 | FaaS exec unification on mandatory reverse-agent WebSocket, Path B invoke dispatch removed, AZF bootstrap hardening, cleanup/lifetime semantics tightened. Merged 2026-05-18 at `3565e413`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
+| #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
+| #179 (draft) | 173 | Simulator wire-fidelity sweep across all 3 clouds. 15 commits closing GitHub issues #173–#178 + BUG-1098..1104. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. **Open as draft awaiting CI green + user merge.** |
 
 ## Active phase
 
-**Phase 173 — Simulator wire-fidelity sweep (issues #173–178 + BUG-1104 meta-bug).** Branch `sim-fidelity-issues-173-178`. **Single umbrella PR**; sub-phases 173.0 through 173.12 commit granularly on the same branch until the user signals wrap-up. See "Future phases" § Phase 173 for the full sub-phase list.
+**Phase 173 implementation complete.** All 15 commits landed on branch `sim-fidelity-issues-173-178`; draft PR #179 awaiting CI green + user merge. All 6 GitHub issues (#173–#178) closed with status comments. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
-**Live-cloud (Track A / BUG-1075) is explicitly deprioritized** — the user directive is to drive simulator-fidelity bugs and missing-service coverage to ground first, then return to live cells. BUG-1075 stays Open but is not blocking near-term work.
+**Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
 Recently closed (Phase 167/168 follow-up):
 - FaaS-style exec for lambda, cloudrun, cloudrun-functions, ACA Apps, and AZF uses mandatory reverse-agent WebSocket dispatch.

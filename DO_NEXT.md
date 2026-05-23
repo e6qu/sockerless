@@ -4,22 +4,48 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-PR #172 (pod-model simulator fidelity follow-up — BUG-1096/1097) merged at `1c1fd92`. Next work is **Phase 173 — Simulator wire-fidelity sweep**, a single umbrella branch + PR (`sim-fidelity-issues-173-178`) covering GitHub issues #173–178 plus the meta blind-spot **BUG-1104**. Sub-phases 173.0–173.12 land as granular commits on the same branch; tests pass at each commit boundary; user controls when to wrap up and merge.
+**Phase 173 implementation complete; draft PR #179 awaiting CI green + user merge.**
 
-**Live-cloud (BUG-1075) is deprioritized** per 2026-05-23 user directive — drive simulator-fidelity bugs and missing-service coverage to ground first, then return to Track A.
+Branch `sim-fidelity-issues-173-178`: 15 commits closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
 
-GitHub issues triaged 2026-05-23 (all reply-comments posted):
-- #173 (S3 `/s3/` URL prefix) → BUG-1098 (P0) → 173.1.
-- #174 (S3 stores `aws-chunked` envelope verbatim) → BUG-1099 (P0) → 173.2.
-- #175 (Secrets Manager missing `ListSecretVersionIds`) → BUG-1100 (P1) → 173.3.
-- #176 (AWS sim missing SQS / SNS / APIGW v1+v2 / RDS / ElastiCache) → BUG-1101 (P2 umbrella) → 173.4 (SQS+SNS) / 173.5 (APIGW v2+v1) / 173.6 (RDS+ElastiCache).
-- #177 (GCP sim missing Pub/Sub / Cloud SQL / Memorystore / API Gateway; Secret Manager **already implemented**, correction noted on issue) → BUG-1102 (P2 umbrella) → 173.7 (Pub/Sub) / 173.8 (Memorystore+APIGW) / 173.9 (Cloud SQL Admin).
-- #178 (Azure sim missing Blob data plane / Service Bus / Postgres / Redis / APIM; KV secrets data-plane **already implemented**, correction noted on issue) → BUG-1103 (P2 umbrella) → 173.10 (Blob + KV keys/certs) / 173.11 (Redis + Postgres) / 173.12 (Service Bus + APIM).
+**Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
-Plus the meta-bug:
-- **BUG-1104 (P0 meta)** — Simulator test infrastructure verifies the sim from the inside, not from the outside. Sub-phase 173.0 codifies the four blind-spot fixes (canonical-config invariant in `sdk-tests/`, stock-binary CLI smoke, emitted-URL round-trip lint, sentinel-header logging) plus README scope tables and 6 new project-local skills under `.claude/skills/` (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`).
+## Phase 173 sub-phase status
 
-Per the "no stubs" directive every new sim handler persists real state, returns real-cloud response shapes, and is covered by SDK + CLI + Terraform fidelity tests where the external client surface exists.
+| Sub | Bug | Issue | Commit | Headline |
+|---|---|---|---|---|
+| 173.0 | 1104 (meta) | — | `466c45e` `243dbdd` `ec076a8` | Planning + 6 new skills + sentinel-header logging |
+| 173.1 | 1098 | #173 | `20aff53` | AWS S3 routes re-mounted at canonical root |
+| 173.2 | 1099 | #174 | `b604c81` | AWS S3 aws-chunked envelope decoder |
+| 173.3 | 1100 | #175 | `4b724e3` | AWS SM version history + ListSecretVersionIds + GetRandomPassword |
+| 173.4 | 1101 (1/3) | #176 | `2176c7d` | AWS SQS (JSON) + SNS (Query) — SQS protocol-migration gotcha caught |
+| 173.5 | 1101 (2/3) | #176 | `d549cd9` | AWS APIGW v2 + v1 — singular-`item` v1 quirk caught |
+| 173.6 | 1101 (3/3) | #176 | `fce921c` | AWS RDS + ElastiCache with engine→port mapping |
+| 173.7 | 1102 (1/3) | #177 | `37d7ec1` | GCP Pub/Sub (12 ops, REST) |
+| 173.8 | 1102 (2/3) | #177 | `74cee70` | GCP Memorystore Redis + API Gateway (LRO) |
+| 173.9 | 1102 (3/3) | #177 | `4ebcc61` | GCP Cloud SQL Admin (10 ops) |
+| 173.10 | 1103 (1/3) | #178 | `e2e0c1f` | Azure Blob data plane via subdomain dispatch + KV keys/certs |
+| 173.11 | 1103 (2/3) | #178 | `c5606d9` | Azure Cache for Redis (ARM) + Postgres FlexibleServer (ARM) |
+| 173.12 | 1103 (3/3) | #178 | `70c6639` | Azure Service Bus + APIM (ARM, cascade-delete) |
+
+## Wire-protocol surprises caught (lessons for future-me)
+
+1. **SQS migrated to awsJson1_0 in late 2023** — issue #176's "SQS: awsQuery" matched older docs. Always grep the SDK's serializer source first.
+2. **APIGW v1 uses singular `"item"` as the list-response array field name** vs v2's plural `"items"`. Real-AWS inconsistency.
+3. **JSON tag casing differs across services** — APIGW v1 uses lowercase (`id`, `item`), v2 uses camelCase (`apiId`, `items`).
+4. **`json:"-"` strips fields during sim.Store JSON-serialized persistence** — use non-canonical tag names (`restApiIdRef`) when you need to keep parent refs in stored records.
+5. **SNS → SQS fanout requires real `md5.Sum` on the JSON envelope** — aws-sdk-go-v2 SQS validates client-side.
+6. **Azure Blob data plane needs `<account>.blob.<host>` Host-based subdomain dispatch** — same `WrapHandler` pattern KV already uses.
+
+All codified in skills (`sim-handler-checklist`, `sim-canonical-config-test`, `sim-streaming-body-handler`, `sim-emitted-url-roundtrip`).
+
+## Session-resume checklist
+
+1. `git fetch origin && git checkout main && git pull origin main`.
+2. `git log --oneline -10`.
+3. After PR #179 merges: the next phase number is **174**. No specific phase queued; revisit Track A (live-cloud cells, BUG-1075) only after operator decides.
+4. The `backpedal-pattern-audit` skill should be run periodically to surface any new repeat-pattern shapes in BUGS.md.
+5. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
 
 ## Phase 168 sub-task status
 

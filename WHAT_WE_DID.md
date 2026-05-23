@@ -6,6 +6,32 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-23 — Phase 173: simulator wire-fidelity sweep (PR #179)
+
+Community-filed GitHub issues #173 through #178 surfaced six classes of simulator wire-protocol drift across all three clouds. The smoking gun was issue #173 — AWS S3 routes mounted under a `/s3/` URL prefix instead of the canonical AWS root path — which had been latent since the original S3 handler shipped. Stock `aws` CLI / `aws-sdk-go-v2` / `terraform-provider-aws` pointed at the documented `AWS_ENDPOINT_URL` got `405 Method Not Allowed` on every S3 op.
+
+The interesting question wasn't *why* the bug existed but *why it had been invisible for 165+ phases of test infrastructure*. Investigation found three independent test-side workarounds that reconfigured clients around the bug:
+
+1. `simulators/aws/sdk-tests/s3_test.go:16` set `o.BaseEndpoint = aws.String(baseURL + "/s3")`.
+2. `simulators/aws/cli-tests/helpers_test.go` had a dedicated `awsS3CLI()` helper that appended `/s3` to `AWS_ENDPOINT_URL`.
+3. `simulators/aws/terraform-tests/main.tf:34` had `s3 = "${var.endpoint}/s3"`.
+
+Once any one of those workarounds was in place, that test layer passed against the broken sim, and the developer adding the next test for the same service naturally copied the workaround. The bug had nowhere to surface. This is the meta blind-spot tracked as BUG-1104: simulator tests verifying the sim against itself rather than against the real cloud.
+
+Phase 173 closes all six issues in one umbrella PR with 15 commits on branch `sim-fidelity-issues-173-178`. Sub-phase 173.0 lands the durable countermeasures: six new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all three simulators' shared middleware so chunked / streaming / SSE-C envelopes become greppable in operator output; and a static regression-guard test that refuses the recurring `BaseEndpoint = aws.String(baseURL + "/<service>")` pattern across both `*_test.go` and `.tf` files.
+
+Sub-phases 173.1 through 173.12 add ~180 new simulator operations across all three clouds. AWS: S3 routing fix + `aws-chunked` envelope decoder (closes #173 + #174) + Secrets Manager version history with `ListSecretVersionIds` + `GetRandomPassword` (closes #175) + SQS + SNS + API Gateway v1 + v2 + RDS + ElastiCache (closes #176). GCP: Pub/Sub + Memorystore Redis + API Gateway + Cloud SQL Admin (closes #177; Secret Manager was already implemented per the corrected reply). Azure: Blob data plane via `<account>.blob.<host>` subdomain dispatch + Key Vault keys + Key Vault certificates + Cache for Redis + DB for PostgreSQL FlexibleServer + Service Bus + API Management (closes #178; KV secrets data plane was already implemented per the corrected reply).
+
+Several wire-protocol surprises caught during implementation are now codified in `BUGS.md § Class-of-bug rules` and the new skills:
+
+1. SQS migrated from `awsQuery` to `awsJson1_0` in late 2023 (aws-sdk-go-v2 service/sqs v1.28+). The issue author's hint matched older docs; current SDK dispatches via `X-Amz-Target: AmazonSQS.<Op>`. Initial commit registered SQS via `AWSQueryRouter`; tests returned `UnknownOperationException`; switched to JSON. This is exactly the `sim-handler-checklist` skill's "Read the SDK serializer source — don't guess wire shape" check in flight.
+2. API Gateway v1 emits singular `"item"` as the list-response array field name, not plural `"items"`. Real-AWS inconsistency vs v2's plural. Confirmed against `apigateway@v1.40.0/deserializers.go`.
+3. `json:"-"` strips fields during `sim.Store` JSON-serialized persistence. APIGW handlers needed `restApiIdRef` non-canonical tag names instead, so parent-resource references survived the round-trip.
+4. SNS Publish → SQS fanout requires a real `md5.Sum` on the JSON envelope body — aws-sdk-go-v2 SQS validates message MD5 client-side.
+5. Azure Blob data plane needs `<account>.blob.<host>` Host-based subdomain dispatch — same `WrapHandler` pattern KV already uses.
+
+All six GitHub issues received status comments and were closed before PR merge. The PR title and body were refreshed to reflect the final scope. CI's `check-deps` job flagged Go-module + Terraform-provider drift across 7+ modules; `make upgrade-deps` plus per-module bumps cleaned it up, with smoke tests confirming no regression from the dependency churn. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives**. Only BUG-1075 (live-cloud cells, deprioritized 2026-05-23) and BUG-1104 (meta tracking entry) remain open; BUG-1104 stays in the open table until a `backpedal-pattern-audit` confirms no new instances of the recurring patterns.
+
 ## 2026-05-19 — BUG-1096: simulator pod materialization fidelity
 
 The pod-model review found that several simulators accepted cloud-native multi-container specs but did not actually execute all containers with the cloud's shared-localhost contract. AWS ECS tasks and GCP Cloud Run Services/Jobs reported multi-container resources while only starting the first local workload container. Azure ACA Apps started sidecars on the same Docker bridge network, which gives DNS but not pod-style `127.0.0.1` loopback.

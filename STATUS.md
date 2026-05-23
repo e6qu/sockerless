@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `pod-model-simulator-fidelity` — pod materialization + simulator fidelity follow-up. |
-| In-flight | BUG-1096 fixed in-tree: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps simulators now start every declared pod/task container as a real local workload and use shared network namespaces for localhost sidecar semantics. Added SDK regression coverage across AWS/GCP/Azure, corrected AZF pod docs to match the actual single-container Function App implementation, and wired real GitHub/GitLab runner arithmetic harness targets against a caller-started simulator-backed sockerless daemon. PR #172 CI run `26063005479` surfaced BUG-1097 in AWS ECS task-container naming / sidecar host config; fixed and locally verified with the focused failing tests plus the full AWS SDK target. Push hook also required dependency freshness cleanup: `bleephub` now uses `github.com/go-git/go-git/v5 v5.19.1` and README line-count badges were refreshed. Remaining tracked implementation follow-up: BUG-1075 live-cloud validation, which requires real credentials/setup and must not be marked complete without a real run. |
-| Last merged | PR #170 — Phase 168 follow-up runner smokes and simulator fidelity (2026-05-18, `a5639811`). |
+| Active branch | `sim-fidelity-issues-173-178` — Phase 173 simulator wire-fidelity sweep. **All 15 commits landed; draft PR #179 open and awaiting CI green + merge.** |
+| In-flight | Phase 173 closes all 6 community-filed GitHub issues (#173–#178) plus the meta blind-spot **BUG-1104** (sim tests verify the sim against itself, not against the real cloud — the load-bearing root cause behind 165+ phases of test infrastructure failing to catch wire-protocol bugs). Sub-phases 173.0–173.12: 173.0 codifies the four blind-spot fixes (canonical-config invariant in `sdk-tests/`, sentinel-header logging across all 3 simulators, regression-guard static scan, README scope hooks) and ships 6 new project-local Claude skills. 173.1–173.12 add ~180 new simulator operations across AWS (S3 routing + aws-chunked decode + SM versions + SQS + SNS + APIGW v1+v2 + RDS + ElastiCache), GCP (Pub/Sub + Memorystore Redis + API Gateway + Cloud SQL Admin), and Azure (Blob data plane + KV keys/certs + Cache for Redis + Postgres FlexibleServer + Service Bus + APIM). All 6 issues closed with status comments; PR title + body refreshed to reflect final scope. |
+| Last merged | PR #172 — pod-model simulator fidelity follow-up (2026-05-23, `1c1fd92`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1097 filed · 1095 fixed · 1 open · 2 false positives. Only BUG-1075 remains open from the Phase 168 follow-up list. |
+| Bugs | 1104 filed · 1101 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud validation, deprioritized 2026-05-23) + BUG-1104 (meta blind-spot, mostly closed by 173.0; tracking entry until a `backpedal-pattern-audit` confirms no new instances). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -65,11 +65,12 @@ Self-caught during the "does the exec driver still make sense" check: **cloudrun
 
 User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration is hard limit (no extension hacks); `execStartViaInvoke` ripped entirely; cleanup failures propagate.
 
-## Recently closed phases (last 5)
+## Recently closed phases (last 6)
 
 | PR | Phase | Headline |
 |---|---|---|
-| open | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported; real-runner simulator arithmetic targets added. |
+| open #179 | 173 | Simulator wire-fidelity sweep — 15 commits, ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. **Draft; awaiting CI green + merge.** |
+| #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported; real-runner simulator arithmetic targets added. Merged 2026-05-23 at `1c1fd92`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #168 | 167–168 | FaaS exec unification, reverse-agent-only path, and AZF bootstrap hardening. Merged 2026-05-18 at `3565e413`. |
