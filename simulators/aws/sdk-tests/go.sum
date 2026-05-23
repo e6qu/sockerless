@@ -16,6 +16,10 @@ github.com/aws/aws-sdk-go-v2/service/acm v1.38.3 h1:Fzab84hCu3rw9R9Y3mH7SHfr/cSE
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3/go.mod h1:yCteizCNPaHt0SnNusoGGHvy0JDB0tvGDTVhEt5anZM=
 github.com/aws/aws-sdk-go-v2/service/amplify v1.38.16 h1:gzzIbyyvOBH5LroqCzPbeVXvYATG1E6giLukqFrTAR8=
 github.com/aws/aws-sdk-go-v2/service/amplify v1.38.16/go.mod h1:Cpr737zpOuoLZ137MQ5iImlVxP5A3pdKkVwgOBATy04=
+github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.0 h1:+s2yzvSERu63KCzhRQopwqfKcOYKMbP1LAw0RgR2PRM=
+github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.0/go.mod h1:MwilTAruv11x8EFjsk1R0VfjMdCxB6JHVtanCqsTR5o=
+github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.0 h1:7ZhTP4USoVmODxhrjcw4zyftJw9eRyWXQmM9WL6GzPY=
+github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.0/go.mod h1:+ONaMzn4bVIQwVsamP28xDWWZuYO+6cWupJpZOSlUNE=
 github.com/aws/aws-sdk-go-v2/service/cloudfront v1.64.0 h1:a6XmNe8cAvfrXVKwjXzWl9HHtuyE/n4kBroNm2mSOyo=
 github.com/aws/aws-sdk-go-v2/service/cloudfront v1.64.0/go.mod h1:brhMG/gR2xEB5lezxL2Cx+hqsEzGUn4LhNUtu7+ePFE=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.74.0 h1:6TqDeYdvJJEIJGg5ICy7nzC7/UuHk2Eg3wrpb5bWKPM=

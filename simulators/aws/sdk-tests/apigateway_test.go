@@ -1,0 +1,146 @@
+package aws_sdk_test
+
+import (
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/apigateway"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func apigwClient() *apigateway.Client {
+	return apigateway.NewFromConfig(sdkConfig(), func(o *apigateway.Options) {
+		o.BaseEndpoint = aws.String(baseURL)
+	})
+}
+
+func apigwv2Client() *apigatewayv2.Client {
+	return apigatewayv2.NewFromConfig(sdkConfig(), func(o *apigatewayv2.Options) {
+		o.BaseEndpoint = aws.String(baseURL)
+	})
+}
+
+// TestAPIGatewayV2_ApiLifecycle exercises the HTTP-API minimal flow:
+// CreateApi → CreateIntegration → CreateRoute → CreateStage →
+// GetApi → DeleteApi.
+func TestAPIGatewayV2_ApiLifecycle(t *testing.T) {
+	c := apigwv2Client()
+	create, err := c.CreateApi(ctx, &apigatewayv2.CreateApiInput{
+		Name:         aws.String("hello-api"),
+		ProtocolType: "HTTP",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(create.ApiId))
+	apiId := aws.ToString(create.ApiId)
+	t.Cleanup(func() {
+		_, _ = c.DeleteApi(ctx, &apigatewayv2.DeleteApiInput{ApiId: aws.String(apiId)})
+	})
+
+	get, err := c.GetApi(ctx, &apigatewayv2.GetApiInput{ApiId: aws.String(apiId)})
+	require.NoError(t, err)
+	assert.Equal(t, "hello-api", aws.ToString(get.Name))
+
+	intg, err := c.CreateIntegration(ctx, &apigatewayv2.CreateIntegrationInput{
+		ApiId:           aws.String(apiId),
+		IntegrationType: "HTTP_PROXY",
+		IntegrationUri:  aws.String("https://example.com"),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(intg.IntegrationId))
+
+	rt, err := c.CreateRoute(ctx, &apigatewayv2.CreateRouteInput{
+		ApiId:    aws.String(apiId),
+		RouteKey: aws.String("GET /hello"),
+		Target:   aws.String("integrations/" + aws.ToString(intg.IntegrationId)),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(rt.RouteId))
+
+	stage, err := c.CreateStage(ctx, &apigatewayv2.CreateStageInput{
+		ApiId:     aws.String(apiId),
+		StageName: aws.String("$default"),
+		AutoDeploy: aws.Bool(true),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "$default", aws.ToString(stage.StageName))
+
+	list, err := c.GetApis(ctx, &apigatewayv2.GetApisInput{})
+	require.NoError(t, err)
+	found := false
+	for _, item := range list.Items {
+		if aws.ToString(item.ApiId) == apiId {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found)
+}
+
+// TestAPIGateway_RestApiLifecycle exercises the REST-API minimal flow:
+// CreateRestApi → GetResources → PutMethod → PutIntegration →
+// CreateDeployment → CreateStage → DeleteRestApi.
+func TestAPIGateway_RestApiLifecycle(t *testing.T) {
+	c := apigwClient()
+	create, err := c.CreateRestApi(ctx, &apigateway.CreateRestApiInput{
+		Name:        aws.String("hello-rest"),
+		Description: aws.String("integration test"),
+	})
+	require.NoError(t, err)
+	apiId := aws.ToString(create.Id)
+	require.NotEmpty(t, apiId)
+	t.Cleanup(func() {
+		_, _ = c.DeleteRestApi(ctx, &apigateway.DeleteRestApiInput{RestApiId: aws.String(apiId)})
+	})
+
+	// CreateRestApi auto-creates the root "/" resource.
+	res, err := c.GetResources(ctx, &apigateway.GetResourcesInput{RestApiId: aws.String(apiId)})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1, "expected one root resource on a fresh REST API")
+	rootId := aws.ToString(res.Items[0].Id)
+
+	// CreateResource as a child of the root.
+	child, err := c.CreateResource(ctx, &apigateway.CreateResourceInput{
+		RestApiId: aws.String(apiId),
+		ParentId:  aws.String(rootId),
+		PathPart:  aws.String("hello"),
+	})
+	require.NoError(t, err)
+	childId := aws.ToString(child.Id)
+	require.NotEmpty(t, childId)
+
+	// PutMethod on the child.
+	_, err = c.PutMethod(ctx, &apigateway.PutMethodInput{
+		RestApiId:         aws.String(apiId),
+		ResourceId:        aws.String(childId),
+		HttpMethod:        aws.String("GET"),
+		AuthorizationType: aws.String("NONE"),
+	})
+	require.NoError(t, err)
+
+	// PutIntegration.
+	_, err = c.PutIntegration(ctx, &apigateway.PutIntegrationInput{
+		RestApiId:  aws.String(apiId),
+		ResourceId: aws.String(childId),
+		HttpMethod: aws.String("GET"),
+		Type:       "HTTP_PROXY",
+		Uri:        aws.String("https://example.com"),
+	})
+	require.NoError(t, err)
+
+	// CreateDeployment + CreateStage.
+	dep, err := c.CreateDeployment(ctx, &apigateway.CreateDeploymentInput{
+		RestApiId: aws.String(apiId),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(dep.Id))
+
+	stage, err := c.CreateStage(ctx, &apigateway.CreateStageInput{
+		RestApiId:    aws.String(apiId),
+		StageName:    aws.String("prod"),
+		DeploymentId: dep.Id,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "prod", aws.ToString(stage.StageName))
+}

@@ -99,6 +99,8 @@ func main() {
 	registerCloudFront(srv)
 	registerRoute53(srv)
 	registerAmplify(srv)
+	registerAPIGateway(srv)
+	registerAPIGatewayV2(srv)
 	registerHostMetadata(srv)
 
 	// Dashboard summary endpoints for UI
