@@ -4,9 +4,22 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 168 follow-up merged 2026-05-18 (PR #170, `a5639811` on `origin/main`). Current branch is `pod-model-simulator-fidelity`. The active work is BUG-1096: make simulator pod materialization behave like the real cloud contract for shared localhost, align pod docs with the actual AZF implementation, and add real-runner simulator arithmetic targets.
+PR #172 (pod-model simulator fidelity follow-up — BUG-1096/1097) merged at `1c1fd92`. Next work is **Phase 173 — Simulator wire-fidelity sweep**, a single umbrella branch + PR (`sim-fidelity-issues-173-178`) covering GitHub issues #173–178 plus the meta blind-spot **BUG-1104**. Sub-phases 173.0–173.12 land as granular commits on the same branch; tests pass at each commit boundary; user controls when to wrap up and merge.
 
-This branch has already fixed the major simulator contract gap: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps now start every declared container and sidecars share the main container network namespace so `localhost:<port>` works. Official SDK tests cover each cloud path. Docs now state that AZF does not support multi-container pods today. The real-runner pre-work is wired through `make e2e-github-sim-arithmetic`, `make e2e-gitlab-sim-arithmetic`, and `make e2e-real-runner-sim-arithmetic`; these require a caller-started simulator-backed sockerless daemon and real GitHub/GitLab tokens. PR #172 CI run `26063005479` caught AWS BUG-1097; the branch now preserves the canonical main ECS task-container name and only suffixes sidecars, while avoiding Docker-incompatible sidecar `ExtraHosts` with `NetworkMode=container:<main>`. Push-hook dependency freshness also bumped `bleephub`'s `go-git` dependency to v5.19.1. BUG-1075 still needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
+**Live-cloud (BUG-1075) is deprioritized** per 2026-05-23 user directive — drive simulator-fidelity bugs and missing-service coverage to ground first, then return to Track A.
+
+GitHub issues triaged 2026-05-23 (all reply-comments posted):
+- #173 (S3 `/s3/` URL prefix) → BUG-1098 (P0) → 173.1.
+- #174 (S3 stores `aws-chunked` envelope verbatim) → BUG-1099 (P0) → 173.2.
+- #175 (Secrets Manager missing `ListSecretVersionIds`) → BUG-1100 (P1) → 173.3.
+- #176 (AWS sim missing SQS / SNS / APIGW v1+v2 / RDS / ElastiCache) → BUG-1101 (P2 umbrella) → 173.4 (SQS+SNS) / 173.5 (APIGW v2+v1) / 173.6 (RDS+ElastiCache).
+- #177 (GCP sim missing Pub/Sub / Cloud SQL / Memorystore / API Gateway; Secret Manager **already implemented**, correction noted on issue) → BUG-1102 (P2 umbrella) → 173.7 (Pub/Sub) / 173.8 (Memorystore+APIGW) / 173.9 (Cloud SQL Admin).
+- #178 (Azure sim missing Blob data plane / Service Bus / Postgres / Redis / APIM; KV secrets data-plane **already implemented**, correction noted on issue) → BUG-1103 (P2 umbrella) → 173.10 (Blob + KV keys/certs) / 173.11 (Redis + Postgres) / 173.12 (Service Bus + APIM).
+
+Plus the meta-bug:
+- **BUG-1104 (P0 meta)** — Simulator test infrastructure verifies the sim from the inside, not from the outside. Sub-phase 173.0 codifies the four blind-spot fixes (canonical-config invariant in `sdk-tests/`, stock-binary CLI smoke, emitted-URL round-trip lint, sentinel-header logging) plus README scope tables and 6 new project-local skills under `.claude/skills/` (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`).
+
+Per the "no stubs" directive every new sim handler persists real state, returns real-cloud response shapes, and is covered by SDK + CLI + Terraform fidelity tests where the external client surface exists.
 
 ## Phase 168 sub-task status
 
