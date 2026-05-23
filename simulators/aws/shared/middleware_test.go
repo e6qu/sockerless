@@ -18,10 +18,10 @@ import (
 // happy path stays quiet.
 func TestLoggingMiddleware_StreamingEnvelopeSentinels(t *testing.T) {
 	cases := []struct {
-		name        string
-		headers     map[string]string
-		wantFields  []string
-		wantAbsent  []string
+		name       string
+		headers    map[string]string
+		wantFields []string
+		wantAbsent []string
 	}{
 		{
 			name:       "plain request — no envelope fields",

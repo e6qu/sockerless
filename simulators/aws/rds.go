@@ -17,20 +17,20 @@ import (
 // the sim returns Status=available immediately on Create.
 
 type RDSInstance struct {
-	DBInstanceIdentifier  string
-	DBInstanceClass       string
-	Engine                string
-	EngineVersion         string
-	DBInstanceStatus      string
-	MasterUsername        string
-	DBName                string
-	AllocatedStorage      int
-	Endpoint              string
-	Port                  int
-	AvailabilityZone      string
-	InstanceCreateTime    string
-	ARN                   string
-	Tags                  map[string]string
+	DBInstanceIdentifier string
+	DBInstanceClass      string
+	Engine               string
+	EngineVersion        string
+	DBInstanceStatus     string
+	MasterUsername       string
+	DBName               string
+	AllocatedStorage     int
+	Endpoint             string
+	Port                 int
+	AvailabilityZone     string
+	InstanceCreateTime   string
+	ARN                  string
+	Tags                 map[string]string
 }
 
 var rdsInstances sim.Store[RDSInstance]

@@ -16,12 +16,12 @@ import (
 // `azurerm_redis_cache` resource only needs the ARM lifecycle.
 
 type RedisCache struct {
-	ID         string                 `json:"id"`
-	Name       string                 `json:"name"`
-	Type       string                 `json:"type"`
-	Location   string                 `json:"location,omitempty"`
-	Properties map[string]any         `json:"properties,omitempty"`
-	Tags       map[string]string      `json:"tags,omitempty"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location,omitempty"`
+	Properties map[string]any    `json:"properties,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
 }
 
 var redisCaches sim.Store[RedisCache]

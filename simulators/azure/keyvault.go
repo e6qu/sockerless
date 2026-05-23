@@ -295,11 +295,11 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 // only the operator-supplied JsonWebKey envelope on Create and
 // echoes it on read.
 type KeyVaultKey struct {
-	Vault      string         `json:"-"`
-	Name       string         `json:"-"`
-	ID         string         `json:"kid"`
-	JsonWebKey map[string]any `json:"key,omitempty"`
-	Attributes KeyVaultAttrs  `json:"attributes,omitempty"`
+	Vault      string            `json:"-"`
+	Name       string            `json:"-"`
+	ID         string            `json:"kid"`
+	JsonWebKey map[string]any    `json:"key,omitempty"`
+	Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 }
 
@@ -308,13 +308,13 @@ type KeyVaultKey struct {
 // sim stores the operator-supplied content + a deterministic
 // thumbprint.
 type KeyVaultCertificate struct {
-	Vault      string            `json:"-"`
-	Name       string            `json:"-"`
-	ID         string            `json:"id"`
-	X509Thumbprint string        `json:"x5t,omitempty"`
-	Policy     map[string]any    `json:"policy,omitempty"`
-	Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	Vault          string            `json:"-"`
+	Name           string            `json:"-"`
+	ID             string            `json:"id"`
+	X509Thumbprint string            `json:"x5t,omitempty"`
+	Policy         map[string]any    `json:"policy,omitempty"`
+	Attributes     KeyVaultAttrs     `json:"attributes,omitempty"`
+	Tags           map[string]string `json:"tags,omitempty"`
 }
 
 var (
@@ -323,12 +323,13 @@ var (
 )
 
 // handleKVKey routes /keys/* requests.
-//   POST /keys/{name}/create     — generate (stash JsonWebKey on body if present)
-//   PUT  /keys/{name}            — import
-//   GET  /keys/{name}            — get latest
-//   GET  /keys/{name}/{version}  — get specific (sim collapses to latest)
-//   GET  /keys                   — list
-//   DELETE /keys/{name}          — delete
+//
+//	POST /keys/{name}/create     — generate (stash JsonWebKey on body if present)
+//	PUT  /keys/{name}            — import
+//	GET  /keys/{name}            — get latest
+//	GET  /keys/{name}/{version}  — get specific (sim collapses to latest)
+//	GET  /keys                   — list
+//	DELETE /keys/{name}          — delete
 func handleKVKey(w http.ResponseWriter, r *http.Request, vault, path string) {
 	segs := strings.Split(path, "/")
 	// segs: ["keys"] or ["keys", "<name>"] or ["keys", "<name>", "<version>"]
@@ -468,10 +469,11 @@ func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name strin
 }
 
 // handleKVCertificate routes /certificates/* requests.
-//   POST /certificates/{name}/create   — issue cert
-//   GET  /certificates/{name}          — get
-//   GET  /certificates                 — list
-//   DELETE /certificates/{name}        — delete
+//
+//	POST /certificates/{name}/create   — issue cert
+//	GET  /certificates/{name}          — get
+//	GET  /certificates                 — list
+//	DELETE /certificates/{name}        — delete
 func handleKVCertificate(w http.ResponseWriter, r *http.Request, vault, path string) {
 	segs := strings.Split(path, "/")
 	if len(segs) < 2 {
@@ -585,7 +587,6 @@ func buildKVURL(r *http.Request, vault, kind, name, version string) string {
 	}
 	return fmt.Sprintf("%s://%s.vault.%s/%s/%s/%s", scheme, vault, r.Host, kind, name, version)
 }
-
 
 func keyVaultSecretKey(vault, name string) string { return vault + "/" + name }
 

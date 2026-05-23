@@ -103,8 +103,8 @@ func handleSBCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		Sku:      req.Sku,
 		Tags:     req.Tags,
 		Properties: map[string]any{
-			"provisioningState":   "Succeeded",
-			"serviceBusEndpoint":  "https://" + name + ".servicebus.windows.net:443/",
+			"provisioningState":  "Succeeded",
+			"serviceBusEndpoint": "https://" + name + ".servicebus.windows.net:443/",
 		},
 	}
 	if req.Properties != nil {

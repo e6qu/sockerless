@@ -157,12 +157,12 @@ func handleSNSGetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	attrs := map[string]string{
-		"TopicArn":                t.ARN,
-		"DisplayName":             t.Name,
-		"Owner":                   awsAccountID(),
-		"SubscriptionsConfirmed":  fmt.Sprintf("%d", confirmed),
-		"SubscriptionsPending":    "0",
-		"SubscriptionsDeleted":    "0",
+		"TopicArn":               t.ARN,
+		"DisplayName":            t.Name,
+		"Owner":                  awsAccountID(),
+		"SubscriptionsConfirmed": fmt.Sprintf("%d", confirmed),
+		"SubscriptionsPending":   "0",
+		"SubscriptionsDeleted":   "0",
 	}
 	var b strings.Builder
 	b.WriteString("<GetTopicAttributesResult><Attributes>")

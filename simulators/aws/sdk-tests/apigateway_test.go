@@ -59,8 +59,8 @@ func TestAPIGatewayV2_ApiLifecycle(t *testing.T) {
 	require.NotEmpty(t, aws.ToString(rt.RouteId))
 
 	stage, err := c.CreateStage(ctx, &apigatewayv2.CreateStageInput{
-		ApiId:     aws.String(apiId),
-		StageName: aws.String("$default"),
+		ApiId:      aws.String(apiId),
+		StageName:  aws.String("$default"),
 		AutoDeploy: aws.Bool(true),
 	})
 	require.NoError(t, err)

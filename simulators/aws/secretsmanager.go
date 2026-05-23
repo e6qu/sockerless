@@ -44,18 +44,18 @@ func randIntn(n int) int {
 // version for backward compatibility with handlers that read it
 // directly; the canonical view is the Versions slice.
 type SMSecret struct {
-	ARN              string             `json:"ARN"`
-	Name             string             `json:"Name"`
-	Description      string             `json:"Description,omitempty"`
-	KmsKeyId         string             `json:"KmsKeyId,omitempty"`
-	CreatedDate      float64            `json:"CreatedDate,omitempty"`
-	LastChangedDate  float64            `json:"LastChangedDate,omitempty"`
-	LastAccessedDate float64            `json:"LastAccessedDate,omitempty"`
-	VersionId        string             `json:"VersionId"` // mirror of the AWSCURRENT version's ID
-	SecretString     string             `json:"SecretString,omitempty"`
-	SecretBinary     []byte             `json:"SecretBinary,omitempty"`
-	Tags             []SMTag            `json:"Tags,omitempty"`
-	Versions         []SMSecretVersion  `json:"Versions,omitempty"`
+	ARN              string            `json:"ARN"`
+	Name             string            `json:"Name"`
+	Description      string            `json:"Description,omitempty"`
+	KmsKeyId         string            `json:"KmsKeyId,omitempty"`
+	CreatedDate      float64           `json:"CreatedDate,omitempty"`
+	LastChangedDate  float64           `json:"LastChangedDate,omitempty"`
+	LastAccessedDate float64           `json:"LastAccessedDate,omitempty"`
+	VersionId        string            `json:"VersionId"` // mirror of the AWSCURRENT version's ID
+	SecretString     string            `json:"SecretString,omitempty"`
+	SecretBinary     []byte            `json:"SecretBinary,omitempty"`
+	Tags             []SMTag           `json:"Tags,omitempty"`
+	Versions         []SMSecretVersion `json:"Versions,omitempty"`
 }
 
 // SMSecretVersion is one entry in the per-secret version history.

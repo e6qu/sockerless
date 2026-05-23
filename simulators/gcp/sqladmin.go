@@ -17,19 +17,19 @@ import (
 // immediately on insert.
 
 type SQLInstance struct {
-	Name             string            `json:"name"`
-	Project          string            `json:"project,omitempty"`
-	Region           string            `json:"region,omitempty"`
-	DatabaseVersion  string            `json:"databaseVersion,omitempty"`
-	State            string            `json:"state,omitempty"`
-	BackendType      string            `json:"backendType,omitempty"`
-	InstanceType     string            `json:"instanceType,omitempty"`
-	ConnectionName   string            `json:"connectionName,omitempty"`
-	GceZone          string            `json:"gceZone,omitempty"`
-	CreateTime       string            `json:"createTime,omitempty"`
-	Settings         map[string]any    `json:"settings,omitempty"`
-	IpAddresses      []map[string]any  `json:"ipAddresses,omitempty"`
-	SelfLink         string            `json:"selfLink,omitempty"`
+	Name            string           `json:"name"`
+	Project         string           `json:"project,omitempty"`
+	Region          string           `json:"region,omitempty"`
+	DatabaseVersion string           `json:"databaseVersion,omitempty"`
+	State           string           `json:"state,omitempty"`
+	BackendType     string           `json:"backendType,omitempty"`
+	InstanceType    string           `json:"instanceType,omitempty"`
+	ConnectionName  string           `json:"connectionName,omitempty"`
+	GceZone         string           `json:"gceZone,omitempty"`
+	CreateTime      string           `json:"createTime,omitempty"`
+	Settings        map[string]any   `json:"settings,omitempty"`
+	IpAddresses     []map[string]any `json:"ipAddresses,omitempty"`
+	SelfLink        string           `json:"selfLink,omitempty"`
 }
 
 type SQLDatabase struct {

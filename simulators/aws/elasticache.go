@@ -16,17 +16,17 @@ import (
 // reports Status=available immediately.
 
 type ECCluster struct {
-	CacheClusterId       string
-	CacheNodeType        string
-	Engine               string
-	EngineVersion        string
-	CacheClusterStatus   string
-	NumCacheNodes        int
+	CacheClusterId         string
+	CacheNodeType          string
+	Engine                 string
+	EngineVersion          string
+	CacheClusterStatus     string
+	NumCacheNodes          int
 	CacheClusterCreateTime string
-	ARN                  string
-	Endpoint             string
-	Port                 int
-	Tags                 map[string]string
+	ARN                    string
+	Endpoint               string
+	Port                   int
+	Tags                   map[string]string
 }
 
 var ecClusters sim.Store[ECCluster]

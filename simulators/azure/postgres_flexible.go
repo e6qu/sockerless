@@ -23,22 +23,22 @@ type PGFlexibleServer struct {
 }
 
 type PGDatabase struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Properties map[string]any    `json:"properties,omitempty"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 type PGFirewallRule struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Properties map[string]any    `json:"properties,omitempty"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 var (
-	pgServers      sim.Store[PGFlexibleServer]
-	pgDatabases    sim.Store[PGDatabase]
+	pgServers       sim.Store[PGFlexibleServer]
+	pgDatabases     sim.Store[PGDatabase]
 	pgFirewallRules sim.Store[PGFirewallRule]
 )
 
@@ -83,10 +83,10 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 		Location: req.Location,
 		Tags:     req.Tags,
 		Properties: map[string]any{
-			"state":                "Ready",
-			"version":              "15",
+			"state":                    "Ready",
+			"version":                  "15",
 			"fullyQualifiedDomainName": name + ".postgres.database.azure.com",
-			"administratorLogin":   "psqladmin",
+			"administratorLogin":       "psqladmin",
 			"storage": map[string]any{
 				"storageSizeGB": 32,
 			},
@@ -227,9 +227,9 @@ func handlePGCreateFirewallRule(w http.ResponseWriter, r *http.Request) {
 	_ = sim.ReadJSON(r, &req)
 	id := parent + "/firewallRules/" + ruleName
 	fr := PGFirewallRule{
-		ID:   id,
-		Name: ruleName,
-		Type: "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+		ID:         id,
+		Name:       ruleName,
+		Type:       "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
 		Properties: req.Properties,
 	}
 	pgFirewallRules.Put(id, fr)

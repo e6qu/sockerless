@@ -80,10 +80,10 @@ func apigwv2StoreKey(apiId, resource string) string { return apiId + "/" + resou
 
 func handleAPIGWv2CreateApi(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name                       string            `json:"Name"`
-		ProtocolType               string            `json:"ProtocolType"`
-		RouteSelectionExpression   string            `json:"RouteSelectionExpression"`
-		Tags                       map[string]string `json:"Tags"`
+		Name                     string            `json:"Name"`
+		ProtocolType             string            `json:"ProtocolType"`
+		RouteSelectionExpression string            `json:"RouteSelectionExpression"`
+		Tags                     map[string]string `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", "Invalid request body", http.StatusBadRequest)
@@ -106,7 +106,7 @@ func handleAPIGWv2ListApis(w http.ResponseWriter, r *http.Request) {
 	if all == nil {
 		all = []APIGWv2Api{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"items":all})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": all})
 }
 
 func handleAPIGWv2GetApi(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +181,7 @@ func handleAPIGWv2ListRoutes(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []APIGWv2Route{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"items":out})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +219,7 @@ func handleAPIGWv2ListIntegrations(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []APIGWv2Integration{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"items":out})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func handleAPIGWv2CreateStage(w http.ResponseWriter, r *http.Request) {
@@ -259,5 +259,5 @@ func handleAPIGWv2ListStages(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []APIGWv2Stage{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"items":out})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }

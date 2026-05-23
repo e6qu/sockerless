@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	pubsub "google.golang.org/api/pubsub/v1"
 	"google.golang.org/api/option"
+	pubsub "google.golang.org/api/pubsub/v1"
 )
 
 func pubsubService(t *testing.T) *pubsub.Service {

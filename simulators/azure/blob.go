@@ -42,26 +42,26 @@ import (
 // log added in 173.0 but are not enforced by the handler.
 
 type BlobObject struct {
-	Account     string
-	Container   string
-	Name        string
-	Data        []byte
-	ContentType string
-	BlobType    string
-	ETag        string
+	Account      string
+	Container    string
+	Name         string
+	Data         []byte
+	ContentType  string
+	BlobType     string
+	ETag         string
 	LastModified string
-	Metadata    map[string]string
+	Metadata     map[string]string
 }
 
 type BlobContainerData struct {
-	Account string
-	Name    string
-	Created string
+	Account  string
+	Name     string
+	Created  string
 	Metadata map[string]string
 }
 
 var (
-	blobObjects    sim.Store[BlobObject]
+	blobObjects        sim.Store[BlobObject]
 	blobContainersData sim.Store[BlobContainerData]
 )
 

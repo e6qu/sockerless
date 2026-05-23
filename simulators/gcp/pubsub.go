@@ -404,4 +404,3 @@ func randHex(n int) string {
 	}
 	return string(out)
 }
-

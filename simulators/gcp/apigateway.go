@@ -28,13 +28,13 @@ type APIGWApiConfig struct {
 }
 
 type APIGWGateway struct {
-	Name        string            `json:"name"` // projects/{p}/locations/{loc}/gateways/{gw}
-	DisplayName string            `json:"displayName,omitempty"`
-	ApiConfig   string            `json:"apiConfig,omitempty"`
-	CreateTime  string            `json:"createTime,omitempty"`
-	State       string            `json:"state,omitempty"`
-	DefaultHostname string        `json:"defaultHostname,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	Name            string            `json:"name"` // projects/{p}/locations/{loc}/gateways/{gw}
+	DisplayName     string            `json:"displayName,omitempty"`
+	ApiConfig       string            `json:"apiConfig,omitempty"`
+	CreateTime      string            `json:"createTime,omitempty"`
+	State           string            `json:"state,omitempty"`
+	DefaultHostname string            `json:"defaultHostname,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
 }
 
 var (
