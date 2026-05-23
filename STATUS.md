@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `sim-fidelity-issues-173-178` — Phase 173 simulator wire-fidelity sweep. **18 commits landed; draft PR #179 awaiting CI green + merge.** Latest CI run on `22026e0` confirms `check-deps` green and the rest of the suite running. |
+| Active branch | `sim-fidelity-issues-173-178` — Phase 173 simulator wire-fidelity sweep. **20 commits landed; draft PR #179 CI-green on `a448971`; awaiting user merge.** All 11 CI jobs pass: lint, check-deps, ui, terraform, sim (aws/gcp/azure), smoke, build-check, test, test (e2e). |
 | In-flight | Phase 173 closes all 6 community-filed GitHub issues (#173–#178) plus the meta blind-spot **BUG-1104** (sim tests verify the sim against itself, not against the real cloud — the load-bearing root cause behind 165+ phases of test infrastructure failing to catch wire-protocol bugs). Sub-phases 173.0–173.12 + 3 CI-driven wrap commits (dep freshness, Makefile fanout fix, gofmt pass): 173.0 codifies the four blind-spot fixes (canonical-config invariant in `sdk-tests/`, sentinel-header logging across all 3 simulators, regression-guard static scan, README scope hooks) and ships 6 new project-local Claude skills. 173.1–173.12 add ~180 new simulator operations across AWS (S3 routing + aws-chunked decode + SM versions + SQS + SNS + APIGW v1+v2 + RDS + ElastiCache), GCP (Pub/Sub + Memorystore Redis + API Gateway + Cloud SQL Admin), and Azure (Blob data plane + KV keys/certs + Cache for Redis + Postgres FlexibleServer + Service Bus + APIM). All 6 issues closed with status comments; PR title + body refreshed to reflect final scope. CI fixes: 17 stale dep pins bumped (`make upgrade-deps` + 2 per-module bumps on `backends/{aws,gcp}-common`); Makefile fanout extended to `TEST_DIRS` so future runs catch sdk-tests/cli-tests/terraform-tests drift; `gofmt -w` across all 16 Phase 173 files (lint caught whitespace-only diffs). |
 | Last merged | PR #172 — pod-model simulator fidelity follow-up (2026-05-23, `1c1fd92`). |
 | Standing merge auth | **None.** User merges every PR. |
@@ -69,7 +69,7 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
-| open #179 | 173 | Simulator wire-fidelity sweep — 18 commits (15 implementation + 3 CI-wrap: dep freshness, Makefile fanout, gofmt), ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. **Draft; CI re-running on latest commit; awaiting green + merge.** |
+| open #179 | 173 | Simulator wire-fidelity sweep — 20 commits (15 implementation + 5 CI-wrap: dep freshness, Makefile fanout, gofmt, 2 staticcheck/vet fixes), ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. **Draft; CI-green on `a448971` (all 11 jobs pass); awaiting user merge.** |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported; real-runner simulator arithmetic targets added. Merged 2026-05-23 at `1c1fd92`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |

@@ -4,9 +4,17 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 173 implementation complete; draft PR #179 awaiting CI green + user merge.**
+**Phase 173 implementation complete; draft PR #179 CI-green on `a448971`; awaiting user merge.**
 
-Branch `sim-fidelity-issues-173-178`: 18 commits (15 implementation + 3 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware. CI wrap: dep freshness bumped (17 stale pins cleared), Makefile fanout extended to TEST_DIRS, and `gofmt -w` across all 16 Phase 173 files (lint caught whitespace-only diffs).
+Branch `sim-fidelity-issues-173-178`: 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
+
+CI surfaced 4 real issues, all fixed on the branch:
+1. 17 stale Go-module + Terraform-provider pins — `make upgrade-deps` + 2 per-module bumps on `backends/{aws,gcp}-common`.
+2. Makefile fanout missed `TEST_DIRS` — extended so sdk-tests/cli-tests/terraform-tests don't drift independently.
+3. `gofmt -l` flagged 16 Phase 173 files I had not formatted — `gofmt -w`.
+4. `staticcheck`/`unused` flagged 2 real Go issues — empty branch in `sns.go::handleSNSDeleteTopic` (restructured) and unused `(*SMSecret).currentVersion` method (deleted; dead-code-silencer-scan skill would have flagged it). Plus `go vet`'s printf-checker caught 3 non-constant format string calls to `sim.GCPErrorf` in `sqladmin.go` — passed `err.Error()` directly as the format; literal `%` in an error would have been misinterpreted. Fixed by passing `"%s"` as the constant format.
+
+All 11 CI jobs pass: lint, check-deps, ui, terraform, sim (aws/gcp/azure), smoke, build-check, test, test (e2e).
 
 **Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
@@ -30,6 +38,8 @@ Branch `sim-fidelity-issues-173-178`: 18 commits (15 implementation + 3 CI-drive
 | wrap | — | — | `9820931` | Dep freshness — 17 stale pins bumped + continuity docs |
 | wrap | — | — | `4963570` | Makefile fanout extended to TEST_DIRS |
 | wrap | — | — | `22026e0` | `gofmt -w` across 16 Phase 173 files (lint fix) |
+| wrap | — | — | `ed215de` | staticcheck/unused — SA9003 empty branch in sns.go + unused SMSecret.currentVersion |
+| wrap | — | — | `a448971` | go vet — 3 non-constant format string calls to GCPErrorf in sqladmin.go |
 
 ## Wire-protocol surprises caught (lessons for future-me)
 

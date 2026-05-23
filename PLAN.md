@@ -55,11 +55,11 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
-| #179 (draft) | 173 | Simulator wire-fidelity sweep across all 3 clouds. 18 commits (15 implementation + 3 CI-driven wrap) closing GitHub issues #173–#178 + BUG-1098..1104. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. CI wrap fixed 17 dep drifts, extended Makefile fanout to TEST_DIRS, and gofmt'd 16 files. **Open as draft awaiting CI green + user merge.** |
+| #179 (draft) | 173 | Simulator wire-fidelity sweep across all 3 clouds. 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 + BUG-1098..1104. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. CI wrap fixed 17 dep drifts, extended Makefile fanout to TEST_DIRS, gofmt'd 16 files, fixed 2 staticcheck/unused findings, and fixed 3 non-constant format string vet warnings. **CI-green on `a448971` (all 11 jobs); awaiting user merge.** |
 
 ## Active phase
 
-**Phase 173 implementation complete.** 18 commits landed on branch `sim-fidelity-issues-173-178` (15 implementation + 3 CI-driven wrap: dep freshness, Makefile fanout extension, gofmt pass); draft PR #179 awaiting final CI green + user merge. All 6 GitHub issues (#173–#178) closed with status comments. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
+**Phase 173 implementation complete; CI-green.** 20 commits landed on branch `sim-fidelity-issues-173-178` (15 implementation + 5 CI-driven wrap: dep freshness, Makefile fanout extension, gofmt pass, staticcheck/unused fixes, vet printf-checker fixes); draft PR #179 awaiting user merge. All 6 GitHub issues (#173–#178) closed with status comments. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
