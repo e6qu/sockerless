@@ -6,7 +6,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 **Phase 173 implementation complete; draft PR #179 awaiting CI green + user merge.**
 
-Branch `sim-fidelity-issues-173-178`: 15 commits closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
+Branch `sim-fidelity-issues-173-178`: 18 commits (15 implementation + 3 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware. CI wrap: dep freshness bumped (17 stale pins cleared), Makefile fanout extended to TEST_DIRS, and `gofmt -w` across all 16 Phase 173 files (lint caught whitespace-only diffs).
 
 **Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
@@ -27,6 +27,9 @@ Branch `sim-fidelity-issues-173-178`: 15 commits closing GitHub issues #173–#1
 | 173.10 | 1103 (1/3) | #178 | `e2e0c1f` | Azure Blob data plane via subdomain dispatch + KV keys/certs |
 | 173.11 | 1103 (2/3) | #178 | `c5606d9` | Azure Cache for Redis (ARM) + Postgres FlexibleServer (ARM) |
 | 173.12 | 1103 (3/3) | #178 | `70c6639` | Azure Service Bus + APIM (ARM, cascade-delete) |
+| wrap | — | — | `9820931` | Dep freshness — 17 stale pins bumped + continuity docs |
+| wrap | — | — | `4963570` | Makefile fanout extended to TEST_DIRS |
+| wrap | — | — | `22026e0` | `gofmt -w` across 16 Phase 173 files (lint fix) |
 
 ## Wire-protocol surprises caught (lessons for future-me)
 
