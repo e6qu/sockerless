@@ -111,7 +111,7 @@ func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	var req SQLInstance
 	if err := sim.ReadJSON(r, &req); err != nil {
-		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
 	if req.Name == "" {
@@ -218,7 +218,7 @@ func handleSQLInsertDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	var req SQLDatabase
 	if err := sim.ReadJSON(r, &req); err != nil {
-		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
 	if req.Name == "" {
@@ -274,7 +274,7 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 	}
 	var req SQLUser
 	if err := sim.ReadJSON(r, &req); err != nil {
-		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
 	if req.Name == "" {
