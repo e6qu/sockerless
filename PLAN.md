@@ -54,18 +54,21 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #168 | 167–168 | FaaS exec unification on mandatory reverse-agent WebSocket, Path B invoke dispatch removed, AZF bootstrap hardening, cleanup/lifetime semantics tightened. Merged 2026-05-18 at `3565e413`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
+| #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
+| #179 (draft) | 173 | Simulator wire-fidelity sweep across all 3 clouds. 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 + BUG-1098..1104. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. CI wrap fixed 17 dep drifts, extended Makefile fanout to TEST_DIRS, gofmt'd 16 files, fixed 2 staticcheck/unused findings, and fixed 3 non-constant format string vet warnings. **CI-green on `a448971` (all 11 jobs); awaiting user merge.** |
 
 ## Active phase
 
-No implementation phase is active. The current work is a documentation-only sweep on `docs/post-pr170-doc-sweep` after PR #170 merged.
+**Phase 173 implementation complete; CI-green.** 20 commits landed on branch `sim-fidelity-issues-173-178` (15 implementation + 5 CI-driven wrap: dep freshness, Makefile fanout extension, gofmt pass, staticcheck/unused fixes, vet printf-checker fixes); draft PR #179 awaiting user merge. All 6 GitHub issues (#173–#178) closed with status comments. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
 
-The Phase 167/168 implementation is closed:
+**Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
+
+Recently closed (Phase 167/168 follow-up):
 - FaaS-style exec for lambda, cloudrun, cloudrun-functions, ACA Apps, and AZF uses mandatory reverse-agent WebSocket dispatch.
 - The old invoke/HTTP "Path B" exec path and the parallel `core.CloudExecDriver` interface were removed.
 - Cloud Run, GCF, and ACA default to the real in-memory tmpfs primitive where the cloud exposes it; Lambda and AZF keep non-memory defaults because their platforms do not expose that primitive.
 - Cleanup failures propagate, FaaS pod lifetime is a hard platform limit, and bootstrap registration has explicit per-backend timeouts.
 - Simulator-backed FaaS smoke tests are wired through `make backends/<backend>/test-faas-smoke` and `make faas-smoke-test-all`; CI runs the aggregate.
-- BUG-1075 live-cloud validation remains open and must be closed only after real authenticated cloud runs.
 
 ### Phase 166 — Real fixes for the 3 Phase-165 follow-up Open BUGs (merged at `49050c2d`)
 
@@ -81,7 +84,84 @@ The Phase 167/168 implementation is closed:
 
 ## Future phases
 
-### Track A — Live-cloud validation (one branch per cell)
+### Phase 173 — Simulator wire-fidelity sweep (single umbrella branch + PR)
+
+Branch: `sim-fidelity-issues-173-178`. Covers GitHub issues #173–178 plus the meta blind-spot **BUG-1104**. Sub-phases land as granular commits on the same branch; tests pass at each commit boundary; user controls when to wrap up and merge.
+
+**Why one branch:** the issues share a root cause (BUG-1104 — sim tests verify the sim from the inside, not from the outside) and benefit from landing the test-infrastructure invariants once, then applying them as we add each service. Splitting across PRs would force us to retrofit invariants on already-merged code.
+
+#### 173.0 — Blind-spot invariants + skills (lead) — addresses BUG-1104
+
+The retrospective on why BUG-1098 / 1099 / 1103 shipped: simulator `sdk-tests/` were configured with sim-quirk options (`o.BaseEndpoint = aws.String(baseURL + "/s3")`, `UsePathStyle = true`) so SDK tests passed against a `/s3/`-prefixed simulator no stock client could reach. No CI step ever ran the unmodified `aws` / `gcloud` / `az` CLI binary against the printed `*_ENDPOINT_URL`. Sim-emitted URLs were never asserted to round-trip. Sentinel headers (`Content-Encoding: aws-chunked`, `x-amz-content-sha256: STREAMING-*`, `x-amz-decoded-content-length`) were never logged.
+
+Sub-phase 173.0 codifies the fixes once so 173.1–173.12 inherit them:
+
+1. **Canonical-config invariant in `sdk-tests/`.** Strip `BaseEndpoint = baseURL + "/<service>"` workarounds; allow only endpoint URL + TLS-skip diffs from real-cloud client config. Make the existing S3 quirk a CI-failing test until 173.1 fixes the routing.
+2. **Stock-binary CLI smoke (`aws` / `gcloud` / `az`) installed in the test image.** New `make sim-stock-probe-<service>` Make targets per sim; CI step runs the published CLI binary against the sim's printed endpoint URL and asserts the first 3-5 ops succeed. Real binaries pinned via the test container image (user-confirmed; not containerized invocations).
+3. **Emitted-URL round-trip lint.** Cross-handler test that follows every URL field emitted in a response (advertised endpoints, presigned URLs, LRO operation links, callback URLs) and asserts non-404.
+4. **Sentinel-header logging.** Sim request logger surfaces `Content-Encoding`, `x-amz-content-sha256`, `Transfer-Encoding`, and `x-amz-decoded-content-length` when present. Handlers that read raw bodies without consuming streaming envelopes become greppable in logs.
+5. **README scope statement per sim.** Each `simulators/<cloud>/README.md` gets in-scope + explicitly-out-of-scope service tables, so missing-service issues (#176/177/178) become expectable from the project surface without a filing round-trip.
+6. **New project-local Claude skills under `.claude/skills/`** — encode the patterns above plus the recurring backpedal patterns observed in BUGS.md:
+   - `sim-canonical-config-test` — pre-write check on `sdk-tests/` files.
+   - `sim-emitted-url-roundtrip` — pre-write check on handlers returning URL fields.
+   - `sim-streaming-body-handler` — pre-write check on body-reading handlers.
+   - `silent-error-swallow-scan` — pattern scan for `_ = json.Unmarshal`, `if err != nil { /* fallback */ }`, `_ = err` (BUGS 1016/1017/1018/1019/1025/1033 recur on this shape).
+   - `dead-code-silencer-scan` — pattern scan for `var _ = pkg.Fn` import silencers and `//nolint:unused` without consumer references (BUGS 1020/1021/1022/1024/1034).
+   - `backpedal-pattern-audit` — periodic meta-skill that surfaces "this bug shape was filed N times across M phases" from BUGS.md and proposes new specialist skills.
+
+Tests pass at the boundary of 173.0 by intentionally leaving the S3 sdk-test in a state that fails until 173.1 lands.
+
+#### 173.1 — AWS S3 root routing (BUG-1098)
+
+Re-mount S3 routes at root (`GET /`, `PUT /{bucket}`, `PUT /{bucket}/{key...}`, …). Disambiguate the `POST /` overlap with the JSON-protocol dispatcher: `X-Amz-Target` presence → JSON; SigV4 credential-scope service name (`s3`) → S3-at-root; bucket-named `Host` header → virtual-hosted-style. Drop the `/s3` `BaseEndpoint` workaround from `simulators/aws/sdk-tests/s3_test.go` per the 173.0 canonical-config invariant. Adaptor-fidelity covers stock `aws s3api` CLI + `terraform-provider-aws` against the documented endpoint URL.
+
+#### 173.2 — AWS S3 aws-chunked decode (BUG-1099)
+
+Add `aws-chunked` decoder in `sim` (sentinel: `x-amz-decoded-content-length`). Wire ahead of body reads in `handleS3PutObject` and any other S3 ingestion path. Persist decoded length + md5-of-decoded-bytes ETag. Regression test uses a non-seekable body so the SDK is forced down the streaming-signed path; sim needs TLS enabled for the SDK to take that path — add a TLS-on test fixture.
+
+#### 173.3 — AWS Secrets Manager version-mapping (BUG-1100)
+
+`handleSMListSecretVersionIds` projecting over the existing `SMSecret.Versions` store with `AWSCURRENT` / `AWSPREVIOUS` staging and `IncludeDeprecated` / `MaxResults` / `NextToken` shape. Batches in `RotateSecret`, `RestoreSecret`, `CancelRotateSecret`, `GetRandomPassword`.
+
+#### 173.4 — AWS SQS + SNS (BUG-1101 part 1)
+
+`awsQuery` via `sim.AWSQueryRouter`. SQS: in-memory FIFO + visibility-timeout + dead-letter forwarding. SNS: topic → subscription fan-out + in-process SNS → SQS / Lambda; HTTP subscribers recorded but not delivered.
+
+#### 173.5 — AWS API Gateway v2 (HTTP API) + v1 (REST API) (BUG-1101 part 2)
+
+`restJson1` over `srv.HandleFunc`. Routes + integrations + stages CRUD; no traffic routing.
+
+#### 173.6 — AWS RDS + ElastiCache (BUG-1101 part 3)
+
+Metadata + lifecycle + tags. No engine simulation. Scope-tight to the 90th-percentile `hashicorp/aws` provider lifecycle.
+
+#### 173.7 — GCP Pub/Sub (BUG-1102 part 1)
+
+Topic + subscription + IAM-policy CRUD; `publish` / `pull` / `acknowledge` / `modifyAckDeadline`. `PUBSUB_EMULATOR_HOST` sentinel detection so unmodified consumers re-point cleanly.
+
+#### 173.8 — GCP Memorystore + API Gateway (BUG-1102 part 2)
+
+Both LRO-flavored; reuse the existing `Operations` store with `done: true` synchronously.
+
+#### 173.9 — GCP Cloud SQL Admin (BUG-1102 part 3)
+
+Instance + Database + User CRUD + backups. Scope-tight to provider lifecycle.
+
+#### 173.10 — Azure Blob data plane + Key Vault keys/certs (BUG-1103 part 1)
+
+Blob first because `files.go:192` already advertises the endpoint URL the sim can't service. Reuse the `<account>.blob.<host>` host-suffix-stripping pattern from `files.go::storageServiceHandler`. KV keys + certificates pair naturally since the data-plane host dispatch is already wired for secrets.
+
+#### 173.11 — Azure Cache for Redis + DB for PostgreSQL FlexibleServer (BUG-1103 part 2)
+
+ARM-only; model on the existing Container Apps Jobs handler. LRO via the existing `Operations` store.
+
+#### 173.12 — Azure Service Bus + API Management (BUG-1103 part 3)
+
+Service Bus: full ARM (namespaces + queues + topics + subscriptions + rules) + REST data plane (Send / Receive-and-Delete / Peek-Lock). APIM: ARM surface (~60 ops); no gateway-side traffic routing.
+
+### Track A — Live-cloud validation (deprioritized; one branch per cell)
+
+**Deprioritized 2026-05-23** per user directive: simulator-fidelity bugs and missing-service coverage (Phases 173–181) come first. Track A resumes after the simulator phases land.
 
 Lambda live · Cloud Run Services + ACA Apps live · AZF cloud-dns live · Lambda service-mesh live · ACA/AZF Azure AD live. Teardown self-sufficient per `feedback_teardown_aggressive.md`.
 

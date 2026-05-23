@@ -13,7 +13,11 @@ import (
 
 func s3Client() *s3.Client {
 	return s3.NewFromConfig(sdkConfig(), func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(baseURL + "/s3")
+		o.BaseEndpoint = aws.String(baseURL)
+		// UsePathStyle = true is canonical config for any HTTP S3
+		// endpoint that doesn't resolve `{bucket}.<host>` DNS — the
+		// same option real users set against MinIO, LocalStack, or
+		// any in-cluster S3 alternative addressed by IP / localhost.
 		o.UsePathStyle = true
 	})
 }

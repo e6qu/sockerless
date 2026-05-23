@@ -1,4 +1,4 @@
-go 1.25.0
+go 1.25.8
 
 use (
 	./agent
@@ -7,20 +7,20 @@ use (
 	./backends/aws-common
 	./backends/azure-common
 	./backends/azure-functions
-	./backends/gcp-common
 	./backends/cloudrun
 	./backends/cloudrun-functions
 	./backends/core
 	./backends/docker
 	./backends/ecs
+	./backends/gcp-common
 	./backends/lambda
 
 	./bleephub
 	./cmd/sockerless
 	./cmd/sockerless-admin
 	./github-runner-dispatcher-aws
-	./github-runner-dispatcher-gcp
 	./github-runner-dispatcher-azure
+	./github-runner-dispatcher-gcp
 	./tests
 	./tests/runners/gcp-cells
 )

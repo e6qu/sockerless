@@ -4,9 +4,61 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 168 follow-up merged 2026-05-18 (PR #170, `a5639811` on `origin/main`). Current branch is `pod-model-simulator-fidelity`. The active work is BUG-1096: make simulator pod materialization behave like the real cloud contract for shared localhost, align pod docs with the actual AZF implementation, and add real-runner simulator arithmetic targets.
+**Phase 173 implementation complete; draft PR #179 CI-green on `a448971`; awaiting user merge.**
 
-This branch has already fixed the major simulator contract gap: AWS ECS, GCP Cloud Run Services/Jobs, and Azure ACA Jobs/Apps now start every declared container and sidecars share the main container network namespace so `localhost:<port>` works. Official SDK tests cover each cloud path. Docs now state that AZF does not support multi-container pods today. The real-runner pre-work is wired through `make e2e-github-sim-arithmetic`, `make e2e-gitlab-sim-arithmetic`, and `make e2e-real-runner-sim-arithmetic`; these require a caller-started simulator-backed sockerless daemon and real GitHub/GitLab tokens. PR #172 CI run `26063005479` caught AWS BUG-1097; the branch now preserves the canonical main ECS task-container name and only suffixes sidecars, while avoiding Docker-incompatible sidecar `ExtraHosts` with `NetworkMode=container:<main>`. Push-hook dependency freshness also bumped `bleephub`'s `go-git` dependency to v5.19.1. BUG-1075 still needs real live-cloud credentials/setup; do not fake or mark it done without a live run.
+Branch `sim-fidelity-issues-173-178`: 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
+
+CI surfaced 4 real issues, all fixed on the branch:
+1. 17 stale Go-module + Terraform-provider pins — `make upgrade-deps` + 2 per-module bumps on `backends/{aws,gcp}-common`.
+2. Makefile fanout missed `TEST_DIRS` — extended so sdk-tests/cli-tests/terraform-tests don't drift independently.
+3. `gofmt -l` flagged 16 Phase 173 files I had not formatted — `gofmt -w`.
+4. `staticcheck`/`unused` flagged 2 real Go issues — empty branch in `sns.go::handleSNSDeleteTopic` (restructured) and unused `(*SMSecret).currentVersion` method (deleted; dead-code-silencer-scan skill would have flagged it). Plus `go vet`'s printf-checker caught 3 non-constant format string calls to `sim.GCPErrorf` in `sqladmin.go` — passed `err.Error()` directly as the format; literal `%` in an error would have been misinterpreted. Fixed by passing `"%s"` as the constant format.
+
+All 11 CI jobs pass: lint, check-deps, ui, terraform, sim (aws/gcp/azure), smoke, build-check, test, test (e2e).
+
+**Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
+
+## Phase 173 sub-phase status
+
+| Sub | Bug | Issue | Commit | Headline |
+|---|---|---|---|---|
+| 173.0 | 1104 (meta) | — | `466c45e` `243dbdd` `ec076a8` | Planning + 6 new skills + sentinel-header logging |
+| 173.1 | 1098 | #173 | `20aff53` | AWS S3 routes re-mounted at canonical root |
+| 173.2 | 1099 | #174 | `b604c81` | AWS S3 aws-chunked envelope decoder |
+| 173.3 | 1100 | #175 | `4b724e3` | AWS SM version history + ListSecretVersionIds + GetRandomPassword |
+| 173.4 | 1101 (1/3) | #176 | `2176c7d` | AWS SQS (JSON) + SNS (Query) — SQS protocol-migration gotcha caught |
+| 173.5 | 1101 (2/3) | #176 | `d549cd9` | AWS APIGW v2 + v1 — singular-`item` v1 quirk caught |
+| 173.6 | 1101 (3/3) | #176 | `fce921c` | AWS RDS + ElastiCache with engine→port mapping |
+| 173.7 | 1102 (1/3) | #177 | `37d7ec1` | GCP Pub/Sub (12 ops, REST) |
+| 173.8 | 1102 (2/3) | #177 | `74cee70` | GCP Memorystore Redis + API Gateway (LRO) |
+| 173.9 | 1102 (3/3) | #177 | `4ebcc61` | GCP Cloud SQL Admin (10 ops) |
+| 173.10 | 1103 (1/3) | #178 | `e2e0c1f` | Azure Blob data plane via subdomain dispatch + KV keys/certs |
+| 173.11 | 1103 (2/3) | #178 | `c5606d9` | Azure Cache for Redis (ARM) + Postgres FlexibleServer (ARM) |
+| 173.12 | 1103 (3/3) | #178 | `70c6639` | Azure Service Bus + APIM (ARM, cascade-delete) |
+| wrap | — | — | `9820931` | Dep freshness — 17 stale pins bumped + continuity docs |
+| wrap | — | — | `4963570` | Makefile fanout extended to TEST_DIRS |
+| wrap | — | — | `22026e0` | `gofmt -w` across 16 Phase 173 files (lint fix) |
+| wrap | — | — | `ed215de` | staticcheck/unused — SA9003 empty branch in sns.go + unused SMSecret.currentVersion |
+| wrap | — | — | `a448971` | go vet — 3 non-constant format string calls to GCPErrorf in sqladmin.go |
+
+## Wire-protocol surprises caught (lessons for future-me)
+
+1. **SQS migrated to awsJson1_0 in late 2023** — issue #176's "SQS: awsQuery" matched older docs. Always grep the SDK's serializer source first.
+2. **APIGW v1 uses singular `"item"` as the list-response array field name** vs v2's plural `"items"`. Real-AWS inconsistency.
+3. **JSON tag casing differs across services** — APIGW v1 uses lowercase (`id`, `item`), v2 uses camelCase (`apiId`, `items`).
+4. **`json:"-"` strips fields during sim.Store JSON-serialized persistence** — use non-canonical tag names (`restApiIdRef`) when you need to keep parent refs in stored records.
+5. **SNS → SQS fanout requires real `md5.Sum` on the JSON envelope** — aws-sdk-go-v2 SQS validates client-side.
+6. **Azure Blob data plane needs `<account>.blob.<host>` Host-based subdomain dispatch** — same `WrapHandler` pattern KV already uses.
+
+All codified in skills (`sim-handler-checklist`, `sim-canonical-config-test`, `sim-streaming-body-handler`, `sim-emitted-url-roundtrip`).
+
+## Session-resume checklist
+
+1. `git fetch origin && git checkout main && git pull origin main`.
+2. `git log --oneline -10`.
+3. After PR #179 merges: the next phase number is **174**. No specific phase queued; revisit Track A (live-cloud cells, BUG-1075) only after operator decides.
+4. The `backpedal-pattern-audit` skill should be run periodically to surface any new repeat-pattern shapes in BUGS.md.
+5. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
 
 ## Phase 168 sub-task status
 

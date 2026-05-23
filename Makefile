@@ -124,8 +124,8 @@ lint-all: lint lint-ui ## lint every app (Go + UI)
 clean: ## clean every app's artefacts
 	@$(MAKE) -s _fanout TARGET=clean APPS="$(ALL_APPS)"
 
-upgrade-deps: ## bump every Go module's direct deps to latest (per-module independence preserved — each app runs its own upgrade-deps)
-	@$(MAKE) -s _fanout TARGET=upgrade-deps APPS="$(GO_UI_APPS) $(GO_APPS)"
+upgrade-deps: ## bump every Go module's direct deps to latest (per-module independence preserved — each app runs its own upgrade-deps; TEST_DIRS included so scripts/check-latest-deps.sh stays clean)
+	@$(MAKE) -s _fanout TARGET=upgrade-deps APPS="$(GO_UI_APPS) $(GO_APPS) $(TEST_DIRS)"
 
 check-deps: ## fail if any Go module / Terraform provider is behind its latest published version
 	@bash scripts/check-latest-deps.sh

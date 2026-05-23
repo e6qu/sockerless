@@ -142,19 +142,6 @@ func awsCLI(args ...string) *exec.Cmd {
 	return cmd
 }
 
-func awsS3CLI(args ...string) *exec.Cmd {
-	// S3 routes are under /s3/ prefix in the simulator
-	cmd := exec.Command("aws", args...)
-	cmd.Env = append(os.Environ(),
-		"AWS_ENDPOINT_URL="+baseURL+"/s3",
-		"AWS_ACCESS_KEY_ID=test",
-		"AWS_SECRET_ACCESS_KEY=test",
-		"AWS_DEFAULT_REGION=us-east-1",
-		"AWS_PAGER=",
-	)
-	return cmd
-}
-
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
 	out, err := cmd.CombinedOutput()
