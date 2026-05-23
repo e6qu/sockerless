@@ -177,11 +177,26 @@ func generateRequestID() string {
 
 // AzurePathNormalizationMiddleware normalizes URL path casing for Azure REST API
 // compatibility. Azure SDK clients may use different casing (e.g., "resourcegroups"
-// vs "resourceGroups") and the real Azure API is case-insensitive.
+// vs "resourceGroups") and the real Azure API is case-insensitive on URL paths.
+// The sim canonicalizes known segments to the casing the route registrations use.
+//
+// Provider segments like `Microsoft.Cache/Redis` are emitted by the azurerm
+// Terraform provider in lowercase form (`microsoft.cache/redis`); SDK clients
+// generated from Azure REST API specs typically use the canonical mixed case.
+// Both reach real Azure successfully; both must reach the sim too.
 func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
-	// Map of lowercase segment to canonical casing
+	// Map of lowercase segment to canonical casing. Add new entries
+	// when a new ARM resource type lands and clients are observed to
+	// hit it with non-canonical casing.
 	replacements := map[string]string{
-		"/resourcegroups/": "/resourceGroups/",
+		"/resourcegroups/":          "/resourceGroups/",
+		"/microsoft.cache/redis":    "/Microsoft.Cache/Redis",
+		"/microsoft.cache":          "/Microsoft.Cache",
+		"/microsoft.servicebus":     "/Microsoft.ServiceBus",
+		"/microsoft.apimanagement":  "/Microsoft.ApiManagement",
+		"/microsoft.dbforpostgresql": "/Microsoft.DBforPostgreSQL",
+		"/microsoft.keyvault":       "/Microsoft.KeyVault",
+		"/microsoft.storage":        "/Microsoft.Storage",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

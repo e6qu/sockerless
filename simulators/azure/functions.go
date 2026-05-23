@@ -69,14 +69,24 @@ type FunctionEnvelope struct {
 }
 
 // FunctionEnvelopeProperties holds the properties of a function.
+//
+// ScriptHref / ConfigHref / Href / InvokeURLTemplate are EXTERNAL
+// URLs pointing at the operator's deployed Function App
+// (`https://<app>.azurewebsites.net/admin/host/...`). The sim emits
+// them on every function describe response so SDK consumers parsing
+// the envelope see canonical-shape strings, but the sim does not
+// service those URLs — they live on a different Azure surface
+// (Kudu admin endpoints) the simulator does not implement. Marked
+// as external per the `sim-emitted-url-roundtrip` skill's
+// "document external" branch.
 type FunctionEnvelopeProperties struct {
 	Name              string         `json:"name"`
 	FunctionAppID     string         `json:"function_app_id,omitempty"`
-	ScriptHref        string         `json:"script_href,omitempty"`
-	ConfigHref        string         `json:"config_href,omitempty"`
-	Href              string         `json:"href,omitempty"`
+	ScriptHref        string         `json:"script_href,omitempty"`        // external: Kudu admin URL on the deployed Function App
+	ConfigHref        string         `json:"config_href,omitempty"`        // external: Kudu admin URL on the deployed Function App
+	Href              string         `json:"href,omitempty"`               // external: Kudu admin URL on the deployed Function App
 	Config            map[string]any `json:"config,omitempty"`
-	InvokeURLTemplate string         `json:"invoke_url_template,omitempty"`
+	InvokeURLTemplate string         `json:"invoke_url_template,omitempty"` // external: HTTP-trigger URL the user's app exposes
 	Language          string         `json:"language,omitempty"`
 	IsDisabled        bool           `json:"isDisabled"`
 }

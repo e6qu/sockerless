@@ -93,6 +93,28 @@ func sqlInstanceKey(project, instance string) string {
 	return fmt.Sprintf("%s/%s", project, instance)
 }
 
+// gcpSelfLink builds a fully-qualified selfLink rooted at the
+// scheme+host the request arrived on. Real GCP emits absolute URLs
+// (`https://<service>.googleapis.com/v1/...`); clients pass selfLink
+// around as an opaque pointer and follow it later, which only works
+// when the URL is absolute. The sim previously emitted relative
+// URLs (`/v1/projects/...`) which broke audit / sync / cross-resource
+// reference patterns. Use this helper for every selfLink emission.
+func gcpSelfLink(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	}
+	host := r.Host
+	if host == "" {
+		host = "sqladmin.googleapis.com"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+}
+
 func newSQLOperation(project, opType, targetID string) SQLOperation {
 	now := nowTimestamp()
 	return SQLOperation{
@@ -132,7 +154,7 @@ func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 		IpAddresses: []map[string]any{
 			{"type": "PRIMARY", "ipAddress": "10.0.0.1"},
 		},
-		SelfLink: fmt.Sprintf("/v1/projects/%s/instances/%s", project, req.Name),
+		SelfLink: gcpSelfLink(r, fmt.Sprintf("/v1/projects/%s/instances/%s", project, req.Name)),
 	}
 	sqlInstances.Put(sqlInstanceKey(project, req.Name), inst)
 	op := newSQLOperation(project, "CREATE", req.Name)
@@ -233,7 +255,7 @@ func handleSQLInsertDatabase(w http.ResponseWriter, r *http.Request) {
 		Instance: instance,
 		Project:  project,
 		Charset:  defaultStr(req.Charset, "UTF8"),
-		SelfLink: fmt.Sprintf("/v1/projects/%s/instances/%s/databases/%s", project, instance, req.Name),
+		SelfLink: gcpSelfLink(r, fmt.Sprintf("/v1/projects/%s/instances/%s/databases/%s", project, instance, req.Name)),
 	}
 	sqlDatabases.Put(fmt.Sprintf("%s/%s/%s", project, instance, req.Name), db)
 	op := newSQLOperation(project, "CREATE_DATABASE", req.Name)

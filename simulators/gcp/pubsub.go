@@ -40,11 +40,20 @@ type PSTopic struct {
 }
 
 type PSSubscription struct {
-	Name               string            `json:"name"` // projects/{p}/subscriptions/{s}
-	Topic              string            `json:"topic"`
-	AckDeadlineSeconds int               `json:"ackDeadlineSeconds,omitempty"`
-	Labels             map[string]string `json:"labels,omitempty"`
-	PushConfig         *PSPushConfig     `json:"pushConfig,omitempty"`
+	Name                     string             `json:"name"` // projects/{p}/subscriptions/{s}
+	Topic                    string             `json:"topic"`
+	AckDeadlineSeconds       int                `json:"ackDeadlineSeconds,omitempty"`
+	Labels                   map[string]string  `json:"labels,omitempty"`
+	PushConfig               *PSPushConfig      `json:"pushConfig,omitempty"`
+	MessageRetentionDuration string             `json:"messageRetentionDuration,omitempty"`
+	RetainAckedMessages      bool               `json:"retainAckedMessages,omitempty"`
+	ExpirationPolicy         *PSExpirationPolicy `json:"expirationPolicy,omitempty"`
+	EnableMessageOrdering    bool               `json:"enableMessageOrdering,omitempty"`
+	Filter                   string             `json:"filter,omitempty"`
+}
+
+type PSExpirationPolicy struct {
+	Ttl string `json:"ttl,omitempty"`
 }
 
 type PSPushConfig struct {
@@ -236,12 +245,23 @@ func handlePSCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	if req.AckDeadlineSeconds == 0 {
 		req.AckDeadlineSeconds = 10
 	}
+	// Default messageRetentionDuration to real-GCP's 7-day default
+	// when omitted. Other optional fields stay zero-valued (omitempty
+	// JSON tag elides them on response).
+	if req.MessageRetentionDuration == "" {
+		req.MessageRetentionDuration = "604800s"
+	}
 	s := PSSubscription{
-		Name:               psSubName(project, sub),
-		Topic:              req.Topic,
-		AckDeadlineSeconds: req.AckDeadlineSeconds,
-		Labels:             req.Labels,
-		PushConfig:         req.PushConfig,
+		Name:                     psSubName(project, sub),
+		Topic:                    req.Topic,
+		AckDeadlineSeconds:       req.AckDeadlineSeconds,
+		Labels:                   req.Labels,
+		PushConfig:               req.PushConfig,
+		MessageRetentionDuration: req.MessageRetentionDuration,
+		RetainAckedMessages:      req.RetainAckedMessages,
+		ExpirationPolicy:         req.ExpirationPolicy,
+		EnableMessageOrdering:    req.EnableMessageOrdering,
+		Filter:                   req.Filter,
 	}
 	psSubscriptions.Put(s.Name, s)
 	sim.WriteJSON(w, http.StatusOK, s)

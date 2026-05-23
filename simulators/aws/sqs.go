@@ -34,9 +34,16 @@ type SQSQueue struct {
 	URL               string
 	ARN               string
 	CreatedTimestamp  int64
-	VisibilityTimeout int // seconds
+	VisibilityTimeout int // seconds; mirrored into Attributes["VisibilityTimeout"]
 	Tags              map[string]string
 	Messages          []SQSMessage
+	// Attributes stores every operator-supplied queue attribute
+	// from CreateQueue / SetQueueAttributes — DelaySeconds,
+	// MessageRetentionPeriod, MaximumMessageSize, RedrivePolicy,
+	// KmsMasterKeyId, FifoQueue, ContentBasedDeduplication, etc.
+	// GetQueueAttributes echoes these alongside the system-emitted
+	// values (QueueArn, CreatedTimestamp, message counts).
+	Attributes map[string]string
 }
 
 // SQSMessage is one message currently buffered in a queue.
@@ -124,10 +131,18 @@ func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 		CreatedTimestamp:  time.Now().Unix(),
 		VisibilityTimeout: 30,
 		Tags:              map[string]string{},
+		Attributes:        map[string]string{},
 	}
-	if v, ok := req.Attributes["VisibilityTimeout"]; ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			q.VisibilityTimeout = n
+	// Persist every operator-supplied attribute. VisibilityTimeout
+	// is mirrored to the typed field for hot-path use by Receive;
+	// every attribute is also retained in the Attributes map so
+	// GetQueueAttributes echoes them all back.
+	for k, v := range req.Attributes {
+		q.Attributes[k] = v
+		if k == "VisibilityTimeout" {
+			if n, err := strconv.Atoi(v); err == nil {
+				q.VisibilityTimeout = n
+			}
 		}
 	}
 	for k, v := range req.Tags {
@@ -219,6 +234,11 @@ func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Start with system-emitted attributes; layer in operator-set
+	// attributes (DelaySeconds, MessageRetentionPeriod, etc.) on
+	// top so an explicit operator value wins over any default.
+	// VisibilityTimeout is sourced from the typed field so the
+	// CreateQueue → SetQueueAttributes hot path stays consistent.
 	allAttrs := map[string]string{
 		"QueueArn":                              q.ARN,
 		"VisibilityTimeout":                     strconv.Itoa(q.VisibilityTimeout),
@@ -226,6 +246,14 @@ func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		"ApproximateNumberOfMessages":           strconv.Itoa(visibleCount),
 		"ApproximateNumberOfMessagesNotVisible": strconv.Itoa(invisibleCount),
 	}
+	for k, v := range q.Attributes {
+		allAttrs[k] = v
+	}
+	// VisibilityTimeout in the Attributes map may diverge from the
+	// typed field if SetQueueAttributes only updated the map; the
+	// typed field is the source of truth for the seen-on-receive
+	// behavior, so it wins.
+	allAttrs["VisibilityTimeout"] = strconv.Itoa(q.VisibilityTimeout)
 	out := map[string]string{}
 	for k, v := range allAttrs {
 		if all || wanted[k] {
@@ -251,9 +279,15 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sqsQueues.Update(name, func(q *SQSQueue) {
-		if v, ok := req.Attributes["VisibilityTimeout"]; ok {
-			if n, err := strconv.Atoi(v); err == nil {
-				q.VisibilityTimeout = n
+		if q.Attributes == nil {
+			q.Attributes = map[string]string{}
+		}
+		for k, v := range req.Attributes {
+			q.Attributes[k] = v
+			if k == "VisibilityTimeout" {
+				if n, err := strconv.Atoi(v); err == nil {
+					q.VisibilityTimeout = n
+				}
 			}
 		}
 	})

@@ -10,10 +10,24 @@ import (
 
 // ECR types
 
+// ECRRepository represents an Elastic Container Registry repository.
+//
+// RepositoryUri is the canonical AWS registry URL
+// (`<account>.dkr.ecr.<region>.amazonaws.com/<repo>`) that consumers
+// follow with `docker pull` / `docker push`. The sim's actual ECR
+// Docker-registry surface is served at the documented endpoint URL
+// (the same listener that serves the AWS API), NOT at the
+// repositoryUri. Operators using the sim must override the registry
+// resolver (e.g., via `docker daemon --insecure-registry`) or
+// configure their tooling to recognize the sim's endpoint as the
+// registry host. Marked as external per the
+// `sim-emitted-url-roundtrip` skill's "document external" branch —
+// the URL points at real AWS by shape; the sim provides the same
+// registry surface at a different host.
 type ECRRepository struct {
 	RepositoryArn  string `json:"repositoryArn"`
 	RepositoryName string `json:"repositoryName"`
-	RepositoryUri  string `json:"repositoryUri"`
+	RepositoryUri  string `json:"repositoryUri"` // external: canonical <account>.dkr.ecr.<region>.amazonaws.com/<repo>; sim serves the registry API at its own endpoint
 	RegistryId     string `json:"registryId"`
 	CreatedAt      int64  `json:"createdAt"`
 }

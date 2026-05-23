@@ -77,6 +77,25 @@ func registerSecretManager(srv *sim.Server) {
 	})
 
 	// GetSecret: GET /v1/projects/{project}/secrets/{secret}
+	// ListSecrets: GET /v1/projects/{project}/secrets
+	// Registered explicitly because the global GCS catch-all at the
+	// same path prefix used to swallow this request and return a
+	// GCS-shaped 404 with `bucket "v1"` error message.
+	srv.HandleFunc("GET /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		prefix := fmt.Sprintf("projects/%s/secrets/", project)
+		var out []Secret
+		for _, s := range smSecrets.List() {
+			if strings.HasPrefix(s.Name, prefix) {
+				out = append(out, s)
+			}
+		}
+		if out == nil {
+			out = []Secret{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"secrets": out})
+	})
+
 	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
 		name := fmt.Sprintf("projects/%s/secrets/%s",
 			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
@@ -154,6 +173,15 @@ func registerSecretManager(srv *sim.Server) {
 				// version metadata. tf-google reads back the version after
 				// create to populate the resource state.
 				versionID = versionAction
+				if versionID == "latest" {
+					resolved, ok := resolveLatestVersionID(project, secretID)
+					if !ok {
+						sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+							"no enabled versions for secret projects/%s/secrets/%s", project, secretID)
+						return
+					}
+					versionID = resolved
+				}
 				versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
 				ver, ok := smSecretVersions.Get(versionName)
 				if !ok {
@@ -167,13 +195,17 @@ func registerSecretManager(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
 				return
 			}
-			payload, err := accessSecretPayload(project, secretID, versionID)
+			payload, resolvedID, err := accessSecretPayloadResolved(project, secretID, versionID)
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "%s", err.Error())
 				return
 			}
+			// Real GCP resolves `latest` to the concrete version
+			// number in the response `name` so clients can pin
+			// downstream calls, detect rotation, and log the
+			// exact version that served a request.
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"name": fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID),
+				"name": fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, resolvedID),
 				"payload": map[string]string{
 					"data": base64.StdEncoding.EncodeToString(payload),
 				},
@@ -225,6 +257,17 @@ func registerSecretManager(srv *sim.Server) {
 // "latest" alias. Exported for cloudbuild.go's build-step secretEnv
 // expansion.
 func accessSecretPayload(project, secretID, version string) ([]byte, error) {
+	payload, _, err := accessSecretPayloadResolved(project, secretID, version)
+	return payload, err
+}
+
+// accessSecretPayloadResolved is like accessSecretPayload but also
+// returns the concrete version identifier that "latest" resolved to.
+// Real GCP Secret Manager echoes the resolved version number in
+// every `:access` response's `name` field — without that, rotation-
+// tracking + audit-logging clients see `"latest"` forever and
+// can't detect when the underlying version changes.
+func accessSecretPayloadResolved(project, secretID, version string) ([]byte, string, error) {
 	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
 	if version == "latest" {
 		// Pick the highest-numbered version for this secret.
@@ -243,17 +286,40 @@ func accessSecretPayload(project, secretID, version string) ([]byte, error) {
 			}
 		}
 		if latestN == 0 {
-			return nil, fmt.Errorf("no enabled versions for secret %s", secretName)
+			return nil, "", fmt.Errorf("no enabled versions for secret %s", secretName)
 		}
-		return latestPayload, nil
+		return latestPayload, fmt.Sprintf("%d", latestN), nil
 	}
 
 	versionName := fmt.Sprintf("%s/versions/%s", secretName, version)
 	ver, ok := smSecretVersions.Get(versionName)
 	if !ok {
-		return nil, fmt.Errorf("secret version %s not found", versionName)
+		return nil, "", fmt.Errorf("secret version %s not found", versionName)
 	}
-	return ver.payload, nil
+	return ver.payload, version, nil
+}
+
+// resolveLatestVersionID returns the concrete version number of the
+// "latest" alias for the given secret. Returns "" + false if no
+// versions exist.
+func resolveLatestVersionID(project, secretID string) (string, bool) {
+	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
+	var latestN int
+	for _, v := range smSecretVersions.List() {
+		if !strings.HasPrefix(v.Name, secretName+"/versions/") {
+			continue
+		}
+		idStr := strings.TrimPrefix(v.Name, secretName+"/versions/")
+		var n int
+		_, _ = fmt.Sscanf(idStr, "%d", &n)
+		if n > latestN {
+			latestN = n
+		}
+	}
+	if latestN == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("%d", latestN), true
 }
 
 // resolveSecretManagerReference parses a `projects/{p}/secrets/{s}/versions/{v}`
