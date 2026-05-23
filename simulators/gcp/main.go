@@ -75,6 +75,8 @@ func main() {
 	registerOperations(srv)
 	registerSecretManager(srv)
 	registerPubSub(srv)
+	registerMemorystoreRedis(srv)
+	registerGCPAPIGateway(srv)
 	registerCloudBuild(srv)
 
 	// Infrastructure services
