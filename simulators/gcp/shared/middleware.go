@@ -80,6 +80,31 @@ func LoggingMiddleware(logger zerolog.Logger, provider string) func(http.Handler
 				}
 			}
 
+			// Streaming-envelope sentinels. Surfacing these on the
+			// request log makes the BUG-1099 shape ("handler reads
+			// raw body without consuming the chunked envelope")
+			// greppable in operator output. Fields only appear when
+			// the corresponding header is present, so normal
+			// fixed-Content-Length traffic stays quiet.
+			if ce := r.Header.Get("Content-Encoding"); ce != "" {
+				event.Str("content_encoding", ce)
+			}
+			if te := r.Header.Get("Transfer-Encoding"); te != "" {
+				event.Str("transfer_encoding", te)
+			}
+			if sha := r.Header.Get("x-amz-content-sha256"); strings.HasPrefix(sha, "STREAMING-") {
+				event.Str("streaming_variant", sha)
+			}
+			if dcl := r.Header.Get("x-amz-decoded-content-length"); dcl != "" {
+				event.Str("decoded_content_length", dcl)
+			}
+			if k := r.Header.Get("x-ms-encryption-key-sha256"); k != "" {
+				event.Bool("azure_sse_c", true)
+			}
+			if k := r.Header.Get("x-goog-encryption-key-sha256"); k != "" {
+				event.Bool("gcs_sse_c", true)
+			}
+
 			event.Msg("request")
 		})
 	}
