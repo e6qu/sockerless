@@ -53,7 +53,10 @@ func handleMSRedisCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MSRedisInstance
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	inst := MSRedisInstance{
 		Name:              msRedisInstanceName(project, location, id),
 		DisplayName:       req.DisplayName,
@@ -106,7 +109,10 @@ func handleMSRedisPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req MSRedisInstance
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	msRedisInstances.Update(name, func(i *MSRedisInstance) {
 		if req.DisplayName != "" {
 			i.DisplayName = req.DisplayName

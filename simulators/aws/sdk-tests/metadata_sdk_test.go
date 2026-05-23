@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,5 +89,3 @@ func TestIMDSSDK_TokenAutomaticRefresh(t *testing.T) {
 	}
 }
 
-// Suppress unused-aws-import warning when only constants are referenced.
-var _ = aws.Config{}

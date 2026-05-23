@@ -55,11 +55,12 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
-| #179 (draft) | 173 | Simulator wire-fidelity sweep across all 3 clouds. 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 + BUG-1098..1104. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. CI wrap fixed 17 dep drifts, extended Makefile fanout to TEST_DIRS, gofmt'd 16 files, fixed 2 staticcheck/unused findings, and fixed 3 non-constant format string vet warnings. **CI-green on `a448971` (all 11 jobs); awaiting user merge.** |
+| #179 | 173 | Simulator wire-fidelity sweep across all 3 clouds. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. Closed issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
+| open | 174 | First skill-sweep audit using the 5 specialist skills committed in Phase 173.0. 4 quick-fix BUGs (1105–1108) fixed in-branch; 3 larger follow-ups (1109–1111) filed as Open. |
 
 ## Active phase
 
-**Phase 173 implementation complete; CI-green.** 20 commits landed on branch `sim-fidelity-issues-173-178` (15 implementation + 5 CI-driven wrap: dep freshness, Makefile fanout extension, gofmt pass, staticcheck/unused fixes, vet printf-checker fixes); draft PR #179 awaiting user merge. All 6 GitHub issues (#173–#178) closed with status comments. BUGS.md after merge: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
+**Phase 174 — first skill-sweep audit (in flight on `phase-174-skill-sweep`).** Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 runs each of the 5 specialist skills added in Phase 173.0 across the repo. The sweep found 4 quick-fix BUGs (1105–1108, fixed in-branch) and 3 larger follow-ups (1109–1111, Open). 23 silent `sim.ReadJSON` sites in Phase 173 handlers fixed as part of BUG-1105 — exactly the pattern `silent-error-swallow-scan` codifies, introduced after the skill was written; the BUG-1104 meta-shape working as designed. BUGS.md after this branch lands: **1111 filed · 1104 fixed · 5 open · 2 false positives.**
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 

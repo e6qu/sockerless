@@ -237,7 +237,10 @@ func handleAPIGWCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Description string `json:"description"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
 	d := APIGWDeployment{
 		Id:          generateUUID()[:10],
 		RestApiId:   apiId,

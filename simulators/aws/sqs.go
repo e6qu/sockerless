@@ -174,7 +174,10 @@ func handleSQSListQueues(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueNamePrefix string `json:"QueueNamePrefix"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
 	var urls []string
 	for _, q := range sqsQueues.List() {
 		if req.QueueNamePrefix != "" && !strings.HasPrefix(q.Name, req.QueueNamePrefix) {

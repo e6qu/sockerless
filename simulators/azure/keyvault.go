@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -513,7 +515,11 @@ func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, na
 		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
 		Tags       map[string]string `json:"tags,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		sim.AzureError(w, "InvalidRequest",
+			"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "certificates", name, version)
 	now := time.Now().Unix()

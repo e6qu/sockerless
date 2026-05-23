@@ -93,7 +93,10 @@ func handleSBCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	rg := sim.PathParam(r, "resourceGroupName")
 	name := sim.PathParam(r, "name")
 	var req SBNamespace
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := sbNamespaceID(sub, rg, name)
 	n := SBNamespace{
 		ID:       id,
@@ -178,7 +181,10 @@ func handleSBCreateQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	qName := sim.PathParam(r, "queue")
 	var req SBQueue
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/queues/" + qName
 	q := SBQueue{
 		ID: id, Name: qName, Type: "Microsoft.ServiceBus/namespaces/queues",
@@ -239,7 +245,10 @@ func handleSBCreateTopic(w http.ResponseWriter, r *http.Request) {
 	}
 	tName := sim.PathParam(r, "topic")
 	var req SBTopic
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/topics/" + tName
 	t := SBTopic{
 		ID: id, Name: tName, Type: "Microsoft.ServiceBus/namespaces/topics",
@@ -308,7 +317,10 @@ func handleSBCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	sName := sim.PathParam(r, "sub")
 	var req SBSubscription
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/subscriptions/" + sName
 	s := SBSubscription{
 		ID: id, Name: sName, Type: "Microsoft.ServiceBus/namespaces/topics/subscriptions",

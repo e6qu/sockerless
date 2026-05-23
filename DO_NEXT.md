@@ -4,7 +4,21 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 173 implementation complete; draft PR #179 CI-green on `a448971`; awaiting user merge.**
+**Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 skill-sweep audit in flight on branch `phase-174-skill-sweep`.**
+
+Phase 174 ran each of the 5 specialist skills added in Phase 173.0 across the repo. Findings — 4 quick-fix BUGs (1105–1108) fixed in-branch, 3 larger follow-ups (1109–1111) filed as Open in BUGS.md:
+
+- **BUG-1105** (silent-error-swallow-scan): 23 `_ = sim.ReadJSON(r, &req)` sites across Phase 173 handlers — the very pattern silent-error-swallow-scan codifies, introduced AFTER the skill was written. **BUG-1104 meta-shape in action**; skill caught my own diff. All 23 sites fixed with `if err := ...; err != nil { sim.<X>Error(...); return }`.
+- **BUG-1106** (silent-error-swallow-scan): `handleKVCreateCertificate` silent JSON decode. Same shape; fixed with `errors.Is(err, io.EOF)` carve-out.
+- **BUG-1107** (dead-code-silencer-scan): `var _ = aws.Config{}` in `metadata_sdk_test.go` with the `aws` import only consumed by the silencer. Both deleted.
+- **BUG-1108** (dead-code-silencer-scan): `singleSelectInputValueType` "reserved for future strict-typed variants" + `_ = singleSelectInputValueType` in `bleephub/gh_projects_v2_graphql.go`. Inlined the side-effecting call; type variable + silencer removed.
+
+Larger follow-ups (Open):
+- **BUG-1109** (sim-emitted-url-roundtrip): Azure storage account ARM response advertises File / Queue / Table data-plane URLs that aren't serviced. BUG-1103 Blob fix scope-limited; need to extend.
+- **BUG-1110** (sim-streaming-body-handler): GCS / Cloud Run invoke / ACR blob / Azure Blob PutBlob handlers don't inspect streaming-envelope sentinel headers. Class of BUG-1099 in 5+ other services. Per-handler decoders.
+- **BUG-1111** (sim-emitted-url-roundtrip): Azure Functions URLs + AWS Amplify webhook URL + AWS ECR repositoryUri emitted but unrouted (or undocumented as external).
+
+All regression tests green (AWS/GCP/Azure SDK suites + canonical-config). Branch ready for review + push.
 
 Branch `sim-fidelity-issues-173-178`: 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
 
@@ -17,6 +31,17 @@ CI surfaced 4 real issues, all fixed on the branch:
 All 11 CI jobs pass: lint, check-deps, ui, terraform, sim (aws/gcp/azure), smoke, build-check, test, test (e2e).
 
 **Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
+
+## Phase 174 audit results
+
+| Skill | Sites found | Fix shape | Status |
+|---|---|---|---|
+| `silent-error-swallow-scan` | 23 `_ = sim.ReadJSON` + 1 `_ = json.NewDecoder().Decode` | Add err check + 400 envelope | ✅ Fixed in-branch (BUG-1105, 1106) |
+| `dead-code-silencer-scan` | 1 import silencer + 1 "reserved for future" var | Delete both + their dead refs | ✅ Fixed in-branch (BUG-1107, 1108) |
+| `sim-canonical-config-test` | 0 quirk patterns | — | ✅ Regression-guard test still green |
+| `sim-emitted-url-roundtrip` | Azure {File,Queue,Table} + AZF function URLs + Amplify webhook + ECR repo URI | Per-service: route or document-as-external | ⏳ Filed BUG-1109 + 1111 |
+| `sim-streaming-body-handler` | GCS object upload + Cloud Run invoke + ACR blob × 4 + Azure Blob PutBlob | Per-handler decoder + sentinel inspection | ⏳ Filed BUG-1110 |
+| `backpedal-pattern-audit` | Confirms 1105/1106 are BUG-1016/1017 recurrence; 1107/1108 are BUG-1020/1022 recurrence | Skills validated as load-bearing | ✅ No new pattern categories |
 
 ## Phase 173 sub-phase status
 

@@ -173,7 +173,10 @@ func handleSQLPatchInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req SQLInstance
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	sqlInstances.Update(key, func(i *SQLInstance) {
 		if req.DatabaseVersion != "" {
 			i.DatabaseVersion = req.DatabaseVersion

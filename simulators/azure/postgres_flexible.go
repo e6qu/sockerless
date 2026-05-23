@@ -74,7 +74,10 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 	rg := sim.PathParam(r, "resourceGroupName")
 	name := sim.PathParam(r, "name")
 	var req PGFlexibleServer
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := pgServerID(sub, rg, name)
 	s := PGFlexibleServer{
 		ID:       id,
@@ -161,7 +164,10 @@ func handlePGCreateDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	dbName := sim.PathParam(r, "db")
 	var req PGDatabase
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/databases/" + dbName
 	d := PGDatabase{
 		ID:   id,
@@ -224,7 +230,10 @@ func handlePGCreateFirewallRule(w http.ResponseWriter, r *http.Request) {
 	}
 	ruleName := sim.PathParam(r, "rule")
 	var req PGFirewallRule
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/firewallRules/" + ruleName
 	fr := PGFirewallRule{
 		ID:         id,

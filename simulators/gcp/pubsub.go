@@ -116,7 +116,10 @@ func handlePSCreateTopic(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	topic := sim.PathParam(r, "topic")
 	var req PSTopic
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	t := PSTopic{
 		Name:   psTopicName(project, topic),
 		Labels: req.Labels,
@@ -309,7 +312,10 @@ func handlePSPull(w http.ResponseWriter, r *http.Request, subName string) {
 	var req struct {
 		MaxMessages int `json:"maxMessages"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	if req.MaxMessages <= 0 {
 		req.MaxMessages = 1
 	}
@@ -355,7 +361,10 @@ func handlePSAck(w http.ResponseWriter, r *http.Request, subName string) {
 	var req struct {
 		AckIds []string `json:"ackIds"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	for _, id := range req.AckIds {
 		psInFlight.Delete(id)
 	}
@@ -371,7 +380,10 @@ func handlePSModifyAck(w http.ResponseWriter, r *http.Request, subName string) {
 		AckIds             []string `json:"ackIds"`
 		AckDeadlineSeconds int      `json:"ackDeadlineSeconds"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	now := time.Now()
 	for _, id := range req.AckIds {
 		psInFlight.Update(id, func(m *PSDeliveredMessage) {

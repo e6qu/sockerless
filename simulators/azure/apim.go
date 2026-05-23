@@ -91,7 +91,10 @@ func handleAPIMCreateService(w http.ResponseWriter, r *http.Request) {
 	rg := sim.PathParam(r, "resourceGroupName")
 	name := sim.PathParam(r, "name")
 	var req APIMService
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := apimServiceID(sub, rg, name)
 	s := APIMService{
 		ID:       id,
@@ -178,7 +181,10 @@ func handleAPIMCreateApi(w http.ResponseWriter, r *http.Request) {
 	}
 	apiName := sim.PathParam(r, "api")
 	var req APIMApi
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/apis/" + apiName
 	a := APIMApi{
 		ID: id, Name: apiName, Type: "Microsoft.ApiManagement/service/apis",
@@ -236,7 +242,10 @@ func handleAPIMCreateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	pName := sim.PathParam(r, "product")
 	var req APIMProduct
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/products/" + pName
 	p := APIMProduct{
 		ID: id, Name: pName, Type: "Microsoft.ApiManagement/service/products",
@@ -294,7 +303,10 @@ func handleAPIMCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	sName := sim.PathParam(r, "sub")
 	var req APIMSubscription
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
 	id := parent + "/subscriptions/" + sName
 	s := APIMSubscription{
 		ID: id, Name: sName, Type: "Microsoft.ApiManagement/service/subscriptions",
