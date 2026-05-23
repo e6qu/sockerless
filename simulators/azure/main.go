@@ -83,6 +83,8 @@ func main() {
 	registerBlobDataPlane(srv)
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
+	registerServiceBus(srv)
+	registerAPIM(srv)
 	registerAuthorization(srv)
 	registerContainerAppEnvironment(srv)
 	registerAppServicePlan(srv)
