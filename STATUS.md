@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-176-community-issues` — all 8 community-filed BUGs closed + all 12 in-PR audit findings closed + path-style dispatcher contamination fixed. PR #200 open, CI running. |
-| In-flight | PR #200 — waiting on GitHub Actions (22 jobs); user merges when green. |
-| Last merged | PR #192 — Phase 175 second skill-sweep audit (2026-05-24, squash `ca11405`). |
+| Active branch | None — `main` at `2d8e604` after PR #200 merge. |
+| In-flight | Idle. Awaiting new community-filed issues or directive. |
+| Last merged | PR #200 — Phase 176 community-filed issues + audit findings (2026-05-24, squash `2d8e604`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
 | Bugs | 1141 filed · 1139 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
@@ -69,11 +69,11 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
+| #200 | 176 | 8 community-filed issues closed (#190 reopened + #193..#199) + 12 in-PR skill-audit findings + path-style storage dispatcher contamination fix + `make hooks` bootstrap for pre-commit. 8 BUGs closed (1134-1141). Merged 2026-05-24 at `2d8e604`. |
 | #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191) + signal-driven FaaS smoke tests + CI test-job split + new `timeless-comments` skill. 14 BUGs closed (1120-1133). Merged 2026-05-24 at `ca11405`. |
 | #180 | 174 | Skill-sweep audit + community-issue triage — 3 rounds: round 1 (4 quick BUGs + 3 follow-ups), round 2 (3 follow-ups closed + all 8 GitHub issues #181–#188), round 3 (5 self-audit gaps). 15 BUGs closed (1105–1119). Merged 2026-05-24 at `7a5d588`. |
 | #179 | 173 | Simulator wire-fidelity sweep — 20 commits, ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported. Merged 2026-05-23 at `1c1fd92`. |
 | #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP AR endpoint-fidelity, live-validation runbook. Merged 2026-05-18 at `a5639811`. |
-| #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 
 Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
