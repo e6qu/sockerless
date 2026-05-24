@@ -38,7 +38,11 @@ func TestGCFFaaSE2ESmoke(t *testing.T) {
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "while [ ! -f /tmp/sockerless-done ]; do sleep 1; done"},
+			// Signal-based termination (trap SIGTERM, exit 0) instead
+			// of filesystem polling — eliminates the 1-second polling
+			// race with `touch /tmp/sockerless-done` that flaked on
+			// busy CI runners.
+			Cmd: []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
 		},
 		nil, nil, nil, "gcf_faas_smoke_"+testID,
 	)
@@ -52,7 +56,7 @@ func TestGCFFaaSE2ESmoke(t *testing.T) {
 	}
 
 	runGCFSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf gcf-step-1"}, "gcf-step-1")
-	runGCFSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf gcf-step-2 && touch /tmp/sockerless-done"}, "gcf-step-2")
+	runGCFSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf gcf-step-2 && kill 1"}, "gcf-step-2")
 
 	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
@@ -62,8 +66,8 @@ func TestGCFFaaSE2ESmoke(t *testing.T) {
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container exit")
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout waiting for container exit (30s after kill 1)")
 	}
 
 	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {

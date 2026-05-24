@@ -35,10 +35,17 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
+	// Signal-based termination instead of filesystem polling:
+	//   - `trap 'exit 0' TERM` makes the shell exit cleanly on SIGTERM
+	//   - `sleep 600 & wait` allows the trap to fire while idle (the
+	//     bare `sleep 600` form blocks the trap until the sleep returns)
+	// Step 2's exec sends `kill 1` to PID 1 (the trap'd shell), which
+	// exits 0 immediately. Eliminates the 1-second polling + filesystem-
+	// sync race the previous file-touch design would hit on busy CI.
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "while [ ! -f /tmp/sockerless-done ]; do sleep 1; done"},
+			Cmd:   []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
 		},
 		nil, nil, nil, "cloudrun_faas_smoke_"+testID,
 	)
@@ -54,7 +61,7 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 	}
 
 	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-1"}, "cloudrun-step-1")
-	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-2 && touch /tmp/sockerless-done"}, "cloudrun-step-2")
+	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-2 && kill 1"}, "cloudrun-step-2")
 
 	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
@@ -64,8 +71,8 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container exit")
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout waiting for container exit (30s after kill 1)")
 	}
 
 	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
