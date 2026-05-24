@@ -94,6 +94,7 @@ func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonSQS.TagQueue", handleSQSTagQueue)
 	r.Register("AmazonSQS.UntagQueue", handleSQSUntagQueue)
 	r.Register("AmazonSQS.ListQueueTags", handleSQSListQueueTags)
+	r.Register("AmazonSQS.PurgeQueue", handleSQSPurgeQueue)
 }
 
 // queueNameFromURL extracts the queue name from a queue URL or
@@ -170,6 +171,32 @@ func handleSQSDeleteQueue(w http.ResponseWriter, r *http.Request) {
 			"The specified queue does not exist", http.StatusBadRequest)
 		return
 	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleSQSPurgeQueue removes every message currently held in the
+// queue without deleting the queue itself. Real SQS allows one
+// PurgeQueue per minute; the sim doesn't enforce that throttle
+// because the surface that depends on it (testing-time purge to
+// reset a queue between runs) explicitly works around it. The
+// queue's Attributes / Tags are preserved across the purge.
+func handleSQSPurgeQueue(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	q, ok := sqsQueues.Get(name)
+	if !ok {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
+			"The specified queue does not exist", http.StatusBadRequest)
+		return
+	}
+	q.Messages = nil
+	sqsQueues.Put(name, q)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
