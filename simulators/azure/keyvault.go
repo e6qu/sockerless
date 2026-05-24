@@ -132,17 +132,65 @@ type KeyVaultSecret struct {
 	ContentType string            `json:"contentType,omitempty"`
 }
 
-// kvSecretStored is the persistence record. Vault+Name are exported
-// with normal JSON tags so sim.Store's json.Marshal round-trip
-// preserves them. KeyVaultSecret is embedded so handlers can emit
-// the embedded value directly; the Vault+Name fields don't reach
-// the wire because they aren't on the embedded type. The List
-// handlers iterate over kvSecretStored to filter by Vault.
-type kvSecretStored struct {
-	Vault string `json:"vault"`
-	Name  string `json:"name"`
-	KeyVaultSecret
+// kvSecretVersion is one row in the per-secret version chain. Real
+// Key Vault stores a separate immutable version per Put; clients can
+// list them via `GET /secrets/{name}/versions` and read a specific
+// one via `GET /secrets/{name}/{version}`. The latest version is the
+// default read target on `GET /secrets/{name}`.
+type kvSecretVersion struct {
+	Version     string            `json:"version"`
+	Value       string            `json:"value"`
+	Attributes  KeyVaultAttrs     `json:"attributes"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	ContentType string            `json:"contentType,omitempty"`
 }
+
+// kvSecretStored is the persistence record for a Key Vault secret —
+// the chain of versions plus soft-delete state.
+//
+// State machine:
+//
+//	(SetSecret)            → active (versions appended)
+//	(DeleteSecret)         → soft-deleted (DeletedAt set; row still
+//	                         in primary store but reads via /secrets
+//	                         404, reads via /deletedsecrets succeed)
+//	(POST /deletedsecrets/{name}/recover)   → active again
+//	(DELETE /deletedsecrets/{name})         → purged (row removed)
+//
+// See `.claude/skills/sim-state-machine-completeness/SKILL.md` for the
+// rationale: the state field must exist + the canonical transitions
+// must be implemented so SDKs that read DeletedAt / RecoveryId get
+// real values instead of zero-string.
+type kvSecretStored struct {
+	Vault            string            `json:"vault"`
+	Name             string            `json:"name"`
+	Versions         []kvSecretVersion `json:"versions"`
+	DeletedAt        int64             `json:"deletedAt,omitempty"`
+	ScheduledPurgeAt int64             `json:"scheduledPurgeAt,omitempty"`
+	RecoveryID       string            `json:"recoveryId,omitempty"`
+}
+
+// latest returns the most recently appended version. Empty struct
+// when Versions is empty (shouldn't happen for an active secret —
+// guarded at the handler level).
+func (s kvSecretStored) latest() kvSecretVersion {
+	if len(s.Versions) == 0 {
+		return kvSecretVersion{}
+	}
+	return s.Versions[len(s.Versions)-1]
+}
+
+func (s kvSecretStored) findVersion(version string) (kvSecretVersion, bool) {
+	for _, v := range s.Versions {
+		if v.Version == version {
+			return v, true
+		}
+	}
+	return kvSecretVersion{}, false
+}
+
+// isDeleted reports whether the secret is in the soft-deleted state.
+func (s kvSecretStored) isDeleted() bool { return s.DeletedAt > 0 }
 
 // KeyVaultAttrs mirrors the data-plane SecretAttributes shape.
 type KeyVaultAttrs struct {
@@ -325,12 +373,36 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 	switch {
 	case strings.HasPrefix(path, "secrets/"):
 		segs := strings.Split(path, "/")
-		// segs: ["secrets", "<name>"] or ["secrets", "<name>", "<version>"]
+		// segs:
+		//   ["secrets", "<name>"]                           → /secrets/{name}
+		//   ["secrets", "<name>", "<version>"]              → /secrets/{name}/{version}
+		//   ["secrets", "<name>", "versions"]               → /secrets/{name}/versions
 		if len(segs) < 2 {
 			sim.AzureError(w, "BadRequest", "Missing secret name", http.StatusBadRequest)
 			return
 		}
 		name := segs[1]
+		if len(segs) == 3 && segs[2] == "versions" {
+			if r.Method != http.MethodGet {
+				sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+				return
+			}
+			handleKVListSecretVersions(w, r, vault, name)
+			return
+		}
+		if len(segs) == 3 {
+			// /secrets/{name}/{version} — version-specific Get / Patch.
+			version := segs[2]
+			switch r.Method {
+			case http.MethodGet:
+				handleKVGetSecretVersion(w, r, vault, name, version)
+			case http.MethodPatch:
+				handleKVPatchSecret(w, r, vault, name, version)
+			default:
+				sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			}
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			handleKVSetSecret(w, r, vault, name)
@@ -347,6 +419,38 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 			return
 		}
 		handleKVListSecrets(w, r, vault)
+	case path == "deletedsecrets" || path == "deletedsecrets/":
+		if r.Method != http.MethodGet {
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			return
+		}
+		handleKVListDeletedSecrets(w, r, vault)
+	case strings.HasPrefix(path, "deletedsecrets/"):
+		segs := strings.Split(path, "/")
+		// segs:
+		//   ["deletedsecrets", "<name>"]            → soft-deleted secret Get / Purge
+		//   ["deletedsecrets", "<name>", "recover"] → POST recover
+		if len(segs) < 2 {
+			sim.AzureError(w, "BadRequest", "Missing secret name", http.StatusBadRequest)
+			return
+		}
+		name := segs[1]
+		if len(segs) == 3 && segs[2] == "recover" {
+			if r.Method != http.MethodPost {
+				sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+				return
+			}
+			handleKVRecoverDeletedSecret(w, r, vault, name)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			handleKVGetDeletedSecret(w, r, vault, name)
+		case http.MethodDelete:
+			handleKVPurgeDeletedSecret(w, r, vault, name)
+		default:
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+		}
 	case strings.HasPrefix(path, "keys/") || path == "keys":
 		handleKVKey(w, r, vault, path)
 	case strings.HasPrefix(path, "certificates/") || path == "certificates":
@@ -745,6 +849,54 @@ func buildKVURL(r *http.Request, vault, kind, name, version string) string {
 
 func keyVaultSecretKey(vault, name string) string { return vault + "/" + name }
 
+// kvSecretBundle is the canonical SecretBundle wire shape KV emits
+// on a single-secret read. Distinct from kvSecretVersion (which is
+// the persistence row): adds the full URL `id` and omits the
+// version-only fields.
+type kvSecretBundle struct {
+	ID          string            `json:"id"`
+	Value       string            `json:"value"`
+	Attributes  KeyVaultAttrs     `json:"attributes"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	ContentType string            `json:"contentType,omitempty"`
+}
+
+func secretBundle(r *http.Request, vault, name string, v kvSecretVersion) kvSecretBundle {
+	return kvSecretBundle{
+		ID:          buildKVURL(r, vault, "secrets", name, v.Version),
+		Value:       v.Value,
+		Attributes:  v.Attributes,
+		Tags:        v.Tags,
+		ContentType: v.ContentType,
+	}
+}
+
+// kvSecretItem is the SecretItem shape used inside SecretListResult.
+// No Value (real KV doesn't include value bytes in list responses).
+type kvSecretItem struct {
+	ID          string            `json:"id"`
+	Attributes  KeyVaultAttrs     `json:"attributes"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	ContentType string            `json:"contentType,omitempty"`
+}
+
+// kvSecretListResult is the paged wrapper SDKs deserialise.
+// `nextLink` is empty when there's only one page; this matches real
+// KV for any sim that doesn't actually paginate.
+type kvSecretListResult struct {
+	Value    []kvSecretItem `json:"value"`
+	NextLink string         `json:"nextLink,omitempty"`
+}
+
+// kvDeletedSecretBundle is the wire shape returned by `/deletedsecrets/...`
+// reads — extends the SecretBundle with recovery metadata.
+type kvDeletedSecretBundle struct {
+	kvSecretBundle
+	RecoveryID         string `json:"recoveryId"`
+	DeletedDate        int64  `json:"deletedDate"`
+	ScheduledPurgeDate int64  `json:"scheduledPurgeDate"`
+}
+
 func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
 	var body struct {
 		Value       string            `json:"value"`
@@ -757,73 +909,267 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 			"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	key := keyVaultSecretKey(vault, name)
+	rec, exists := keyVaultData.Get(key)
+	if exists && rec.isDeleted() {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Secret %q is currently in a deleted state and must be purged or recovered before re-creating.", name)
+		return
+	}
 	now := time.Now().Unix()
 	version := generateUUID()
-	// All KV ID emitters route through buildKVURL so the scheme +
-	// host shape stays consistent across handlers. r.URL.Scheme is
-	// unreliable behind the sim's mux (typically empty); the helper
-	// hard-codes `https://` to match real Azure KV.
-	id := buildKVURL(r, vault, "secrets", name, version)
-	secret := KeyVaultSecret{
-		ID:          id,
+	attrs := KeyVaultAttrs{Enabled: true, Created: now, Updated: now}
+	if body.Attributes != nil {
+		attrs.Enabled = body.Attributes.Enabled
+		attrs.NotBefore = body.Attributes.NotBefore
+		attrs.Expires = body.Attributes.Expires
+	}
+	newVersion := kvSecretVersion{
+		Version:     version,
 		Value:       body.Value,
+		Attributes:  attrs,
 		Tags:        body.Tags,
 		ContentType: body.ContentType,
-		Attributes: KeyVaultAttrs{
-			Enabled: true,
-			Created: now,
-			Updated: now,
-		},
 	}
-	if body.Attributes != nil {
-		secret.Attributes.Enabled = body.Attributes.Enabled
-		secret.Attributes.NotBefore = body.Attributes.NotBefore
-		secret.Attributes.Expires = body.Attributes.Expires
+	if !exists {
+		rec = kvSecretStored{Vault: vault, Name: name}
 	}
-	keyVaultData.Put(keyVaultSecretKey(vault, name), kvSecretStored{Vault: vault, Name: name, KeyVaultSecret: secret})
-	sim.WriteJSON(w, http.StatusOK, secret)
+	rec.Versions = append(rec.Versions, newVersion)
+	keyVaultData.Put(key, rec)
+	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, newVersion))
 }
 
 func handleKVGetSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
 	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
-	if !ok {
+	if !ok || rec.isDeleted() || len(rec.Versions) == 0 {
 		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
 			"A secret with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultSecret)
+	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, rec.latest()))
+}
+
+// handleKVGetSecretVersion reads a specific version. Path:
+// `/secrets/{name}/{version}`.
+func handleKVGetSecretVersion(w http.ResponseWriter, r *http.Request, vault, name, version string) {
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"A secret with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	v, found := rec.findVersion(version)
+	if !found {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"Version %q of secret %q was not found.", version, name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, v))
+}
+
+// handleKVPatchSecret updates a specific version's attributes /
+// tags / contentType. Value is immutable per version; PATCH on the
+// secret never changes value. Path: `/secrets/{name}/{version}`.
+func handleKVPatchSecret(w http.ResponseWriter, r *http.Request, vault, name, version string) {
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"A secret with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	var body struct {
+		Tags        map[string]string `json:"tags,omitempty"`
+		ContentType *string           `json:"contentType,omitempty"`
+		Attributes  *KeyVaultAttrs    `json:"attributes,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest",
+			"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i, v := range rec.Versions {
+		if v.Version != version {
+			continue
+		}
+		if body.Tags != nil {
+			v.Tags = body.Tags
+		}
+		if body.ContentType != nil {
+			v.ContentType = *body.ContentType
+		}
+		if body.Attributes != nil {
+			v.Attributes.Enabled = body.Attributes.Enabled
+			v.Attributes.NotBefore = body.Attributes.NotBefore
+			v.Attributes.Expires = body.Attributes.Expires
+			v.Attributes.Updated = time.Now().Unix()
+		}
+		rec.Versions[i] = v
+		keyVaultData.Put(keyVaultSecretKey(vault, name), rec)
+		sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, v))
+		return
+	}
+	sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+		"Version %q of secret %q was not found.", version, name)
 }
 
 func handleKVDeleteSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
 	key := keyVaultSecretKey(vault, name)
 	rec, ok := keyVaultData.Get(key)
-	if !ok {
+	if !ok || rec.isDeleted() {
 		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
 			"A secret with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	keyVaultData.Delete(key)
-	// Real Key Vault returns the deleted secret + a recovery URL. The
-	// sim returns the secret bytes (sufficient for SDK callers that
-	// just check the response body for the deleted resource ID).
-	rec.Attributes.Enabled = false
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultSecret)
+	now := time.Now().Unix()
+	rec.DeletedAt = now
+	// Real KV defaults to 90-day soft-delete retention; sim uses the
+	// same so tests asserting against `scheduledPurgeDate` see a
+	// plausible interval.
+	rec.ScheduledPurgeAt = now + 90*24*60*60
+	rec.RecoveryID = buildKVURL(r, vault, "deletedsecrets", name, "")
+	keyVaultData.Put(key, rec)
+	emitDeletedSecretBundle(w, r, vault, name, rec)
+}
+
+func emitDeletedSecretBundle(w http.ResponseWriter, r *http.Request, vault, name string, rec kvSecretStored) {
+	if len(rec.Versions) == 0 {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"A secret with (name/id) %q has no versions.", name)
+		return
+	}
+	bundle := kvDeletedSecretBundle{
+		kvSecretBundle:     secretBundle(r, vault, name, rec.latest()),
+		RecoveryID:         rec.RecoveryID,
+		DeletedDate:        rec.DeletedAt,
+		ScheduledPurgeDate: rec.ScheduledPurgeAt,
+	}
+	sim.WriteJSON(w, http.StatusOK, bundle)
 }
 
 func handleKVListSecrets(w http.ResponseWriter, r *http.Request, vault string) {
 	all := keyVaultData.Filter(func(s kvSecretStored) bool {
-		return s.Vault == vault
+		return s.Vault == vault && !s.isDeleted()
 	})
 	if all == nil {
 		all = []kvSecretStored{}
 	}
-	out := make([]map[string]any, 0, len(all))
+	out := kvSecretListResult{Value: make([]kvSecretItem, 0, len(all))}
 	for _, s := range all {
-		out = append(out, map[string]any{
-			"id":         s.ID,
-			"attributes": s.Attributes,
-			"tags":       s.Tags,
+		if len(s.Versions) == 0 {
+			continue
+		}
+		latest := s.latest()
+		out.Value = append(out.Value, kvSecretItem{
+			ID:          buildKVURL(r, s.Vault, "secrets", s.Name, ""),
+			Attributes:  latest.Attributes,
+			Tags:        latest.Tags,
+			ContentType: latest.ContentType,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+// handleKVListSecretVersions returns the canonical paged
+// SecretListResult of every version of a named secret.
+// Path: `/secrets/{name}/versions`.
+func handleKVListSecretVersions(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"A secret with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	out := kvSecretListResult{Value: make([]kvSecretItem, 0, len(rec.Versions))}
+	for _, v := range rec.Versions {
+		out.Value = append(out.Value, kvSecretItem{
+			ID:          buildKVURL(r, vault, "secrets", name, v.Version),
+			Attributes:  v.Attributes,
+			Tags:        v.Tags,
+			ContentType: v.ContentType,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+// handleKVGetDeletedSecret reads a soft-deleted secret. Path:
+// `/deletedsecrets/{name}`.
+func handleKVGetDeletedSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"Deleted secret %q was not found.", name)
+		return
+	}
+	emitDeletedSecretBundle(w, r, vault, name, rec)
+}
+
+// handleKVListDeletedSecrets returns the paged list of soft-deleted
+// secrets in the vault. Path: `/deletedsecrets`.
+func handleKVListDeletedSecrets(w http.ResponseWriter, r *http.Request, vault string) {
+	all := keyVaultData.Filter(func(s kvSecretStored) bool {
+		return s.Vault == vault && s.isDeleted()
+	})
+	if all == nil {
+		all = []kvSecretStored{}
+	}
+	type deletedItem struct {
+		kvSecretItem
+		RecoveryID         string `json:"recoveryId"`
+		DeletedDate        int64  `json:"deletedDate"`
+		ScheduledPurgeDate int64  `json:"scheduledPurgeDate"`
+	}
+	out := struct {
+		Value    []deletedItem `json:"value"`
+		NextLink string        `json:"nextLink,omitempty"`
+	}{Value: make([]deletedItem, 0, len(all))}
+	for _, s := range all {
+		if len(s.Versions) == 0 {
+			continue
+		}
+		latest := s.latest()
+		out.Value = append(out.Value, deletedItem{
+			kvSecretItem: kvSecretItem{
+				ID:          buildKVURL(r, s.Vault, "secrets", s.Name, ""),
+				Attributes:  latest.Attributes,
+				Tags:        latest.Tags,
+				ContentType: latest.ContentType,
+			},
+			RecoveryID:         s.RecoveryID,
+			DeletedDate:        s.DeletedAt,
+			ScheduledPurgeDate: s.ScheduledPurgeAt,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+// handleKVRecoverDeletedSecret transitions a soft-deleted secret
+// back to active. Path: `POST /deletedsecrets/{name}/recover`.
+func handleKVRecoverDeletedSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
+	key := keyVaultSecretKey(vault, name)
+	rec, ok := keyVaultData.Get(key)
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"Deleted secret %q was not found.", name)
+		return
+	}
+	rec.DeletedAt = 0
+	rec.ScheduledPurgeAt = 0
+	rec.RecoveryID = ""
+	keyVaultData.Put(key, rec)
+	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, rec.latest()))
+}
+
+// handleKVPurgeDeletedSecret permanently removes a soft-deleted
+// secret. Path: `DELETE /deletedsecrets/{name}`.
+func handleKVPurgeDeletedSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
+	key := keyVaultSecretKey(vault, name)
+	rec, ok := keyVaultData.Get(key)
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"Deleted secret %q was not found.", name)
+		return
+	}
+	keyVaultData.Delete(key)
+	_ = rec
+	w.WriteHeader(http.StatusNoContent)
 }
