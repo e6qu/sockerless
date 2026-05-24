@@ -59,9 +59,10 @@ func TestLambdaFaaSE2ESmoke(t *testing.T) {
 		t.Fatal("timeout waiting for container exit (30s after ContainerStop SIGTERM)")
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
-		t.Fatalf("container remove failed: %v", err)
-	}
+	// The Lambda backend deletes the underlying function when the
+	// container stops, so the container ID is already gone by the
+	// time the test's t.Cleanup runs (Force: true is idempotent
+	// on 404).
 }
 
 func runLambdaSmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {

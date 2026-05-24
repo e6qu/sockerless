@@ -80,9 +80,10 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 		t.Fatal("timeout waiting for container exit (30s after ContainerStop SIGTERM)")
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
-		t.Fatalf("container remove failed: %v", err)
-	}
+	// Cloud Run's backend deletes the underlying service when the
+	// container stops, so the container ID is already gone by the
+	// time the test's t.Cleanup runs (with Force: true, which is
+	// idempotent on 404). No explicit ContainerRemove here.
 }
 
 func runCloudRunSmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {
