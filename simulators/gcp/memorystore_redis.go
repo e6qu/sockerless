@@ -69,17 +69,17 @@ func handleMSRedisCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst := MSRedisInstance{
-		Name:              msRedisInstanceName(project, location, id),
-		DisplayName:       req.DisplayName,
-		Tier:              defaultStr(req.Tier, "BASIC"),
-		RedisVersion:      defaultStr(req.RedisVersion, "REDIS_7_0"),
-		MemorySizeGb:      defaultInt(req.MemorySizeGb, 1),
+		Name:         msRedisInstanceName(project, location, id),
+		DisplayName:  req.DisplayName,
+		Tier:         defaultStr(req.Tier, "BASIC"),
+		RedisVersion: defaultStr(req.RedisVersion, "REDIS_7_0"),
+		MemorySizeGb: defaultInt(req.MemorySizeGb, 1),
 		// Real Memorystore returns an RFC1918 address that the workload
 		// connects to; emit a deterministic 10.x.x.x derived from the
 		// instance ID so callers and terraform-provider-google reads
 		// see a syntactically valid IP rather than a `.example` placeholder
 		// that resolves to NXDOMAIN.
-		Host: simRedisHost(id),
+		Host:              simRedisHost(id),
 		Port:              6379,
 		State:             "READY",
 		CreateTime:        nowTimestamp(),

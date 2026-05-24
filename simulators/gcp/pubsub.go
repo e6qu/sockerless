@@ -108,10 +108,17 @@ func registerPubSub(srv *sim.Server) {
 
 	// Subscriptions.
 	srv.HandleFunc("PUT /v1/projects/{project}/subscriptions/{sub}", handlePSCreateSubscription)
+	srv.HandleFunc("PATCH /v1/projects/{project}/subscriptions/{sub}", handlePSPatchSubscription)
 	srv.HandleFunc("GET /v1/projects/{project}/subscriptions/{sub}", handlePSGetSubscription)
 	srv.HandleFunc("GET /v1/projects/{project}/subscriptions", handlePSListSubscriptions)
 	srv.HandleFunc("DELETE /v1/projects/{project}/subscriptions/{sub}", handlePSDeleteSubscription)
 	srv.HandleFunc("POST /v1/projects/{project}/subscriptions/{subVerb}", handlePSSubscriptionVerb)
+
+	// Topic PATCH is wired alongside Subscription PATCH per the
+	// `projects.topics.patch` REST verb. Less commonly hit (the only
+	// mutable field today is `labels`) but the SDK + terraform provider
+	// both emit it on update.
+	srv.HandleFunc("PATCH /v1/projects/{project}/topics/{topic}", handlePSPatchTopic)
 }
 
 func psTopicName(project, topic string) string {
@@ -275,6 +282,97 @@ func handlePSGetSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, s)
+}
+
+// handlePSPatchSubscription is `projects.subscriptions.patch` —
+// the canonical update verb. Real GCP wraps the resource in a
+// `{"subscription": {...}, "updateMask": "ackDeadlineSeconds,..."}`
+// envelope where updateMask is a comma-separated list of field
+// paths to update. Fields not in the mask retain prior values.
+func handlePSPatchSubscription(w http.ResponseWriter, r *http.Request) {
+	name := psSubName(sim.PathParam(r, "project"), sim.PathParam(r, "sub"))
+	existing, ok := psSubscriptions.Get(name)
+	if !ok {
+		gcpError(w, http.StatusNotFound, "NOT_FOUND", "Subscription not found: "+name)
+		return
+	}
+	var req struct {
+		Subscription PSSubscription `json:"subscription"`
+		UpdateMask   string         `json:"updateMask"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	// Apply each mask path. Unknown paths skip silently (real GCP
+	// returns 400 InvalidArgument; the sim is more permissive here
+	// since the test ecosystem includes terraform-provider-google
+	// which has historically sent paths the sim won't recognise).
+	for _, path := range splitMask(req.UpdateMask) {
+		switch path {
+		case "ackDeadlineSeconds":
+			existing.AckDeadlineSeconds = req.Subscription.AckDeadlineSeconds
+		case "labels":
+			existing.Labels = req.Subscription.Labels
+		case "pushConfig":
+			existing.PushConfig = req.Subscription.PushConfig
+		case "messageRetentionDuration":
+			existing.MessageRetentionDuration = req.Subscription.MessageRetentionDuration
+		case "retainAckedMessages":
+			existing.RetainAckedMessages = req.Subscription.RetainAckedMessages
+		case "expirationPolicy":
+			existing.ExpirationPolicy = req.Subscription.ExpirationPolicy
+		case "enableMessageOrdering":
+			existing.EnableMessageOrdering = req.Subscription.EnableMessageOrdering
+		case "filter":
+			existing.Filter = req.Subscription.Filter
+		}
+	}
+	psSubscriptions.Put(name, existing)
+	sim.WriteJSON(w, http.StatusOK, existing)
+}
+
+// handlePSPatchTopic is `projects.topics.patch`. Labels is the only
+// mutable field today on real Pub/Sub; the sim accepts the same mask
+// shape and applies labels accordingly.
+func handlePSPatchTopic(w http.ResponseWriter, r *http.Request) {
+	name := psTopicName(sim.PathParam(r, "project"), sim.PathParam(r, "topic"))
+	existing, ok := psTopics.Get(name)
+	if !ok {
+		gcpError(w, http.StatusNotFound, "NOT_FOUND", "Topic not found: "+name)
+		return
+	}
+	var req struct {
+		Topic      PSTopic `json:"topic"`
+		UpdateMask string  `json:"updateMask"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	for _, path := range splitMask(req.UpdateMask) {
+		if path == "labels" {
+			existing.Labels = req.Topic.Labels
+		}
+	}
+	psTopics.Put(name, existing)
+	sim.WriteJSON(w, http.StatusOK, existing)
+}
+
+// splitMask parses a comma-separated updateMask into trimmed paths.
+func splitMask(mask string) []string {
+	if mask == "" {
+		return nil
+	}
+	parts := strings.Split(mask, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func handlePSListSubscriptions(w http.ResponseWriter, r *http.Request) {

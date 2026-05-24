@@ -146,6 +146,30 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, parts[0])
 				return
 			}
+			// Path-style fallback (Azurite-style sibling per issue
+			// #190 — single sim port + per-service path prefix):
+			//   /file/{account}/...   → Files data plane
+			//   /queue/{account}/...  → Queues data plane
+			//   /table/{account}/...  → Tables data plane
+			// Connection-string compatibility: callers configure
+			// `FileEndpoint=http://localhost:14568/file/<account>`
+			// etc. Path-style blob lives in blob.go's WrapHandler
+			// (covers the bare `/{account}/...` Azurite default).
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "file"); ok {
+				r.URL.Path = "/" + rest
+				handleFilesDataPlane(w, r, account)
+				return
+			}
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "queue"); ok {
+				r.URL.Path = "/" + rest
+				handleQueuesDataPlane(w, r, account)
+				return
+			}
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "table"); ok {
+				r.URL.Path = "/" + rest
+				handleTablesDataPlane(w, r, account)
+				return
+			}
 			// `.web.` (static website) and `.dfs.` (Data Lake Gen2)
 			// advertise canonical endpoints in StoragePrimaryEndpoints
 			// for wire-fidelity with real Azure, but the sim does not
@@ -166,6 +190,33 @@ func registerStorageDataPlane(srv *sim.Server) {
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+// splitServicePrefix matches `/<service>/<account>/<rest...>` where
+// `<service>` is the literal `service` argument (file / queue / table)
+// and `<account>` is a known storage account. Returns (account,
+// rest-of-path, true) on match. Path-style dispatch sibling for issue
+// #190 — see the WrapHandler above and blob.go's bare-account form.
+func splitServicePrefix(path, service string) (account, rest string, ok bool) {
+	p := strings.TrimPrefix(path, "/")
+	prefix := service + "/"
+	if !strings.HasPrefix(p, prefix) {
+		return "", "", false
+	}
+	p = p[len(prefix):]
+	slash := strings.IndexByte(p, '/')
+	var first string
+	if slash < 0 {
+		first = p
+		p = ""
+	} else {
+		first = p[:slash]
+		p = p[slash+1:]
+	}
+	if !knownStorageAccount(first) {
+		return "", "", false
+	}
+	return first, p, true
 }
 
 // ── Files dispatch ──────────────────────────────────────────────────

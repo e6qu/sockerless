@@ -168,17 +168,20 @@ func registerKeyVault(srv *sim.Server) {
 			sub, rg, name)
 		// vaultUri uses the same subdomain routing as storage so
 		// SDK callers reach the data plane through the standard URL.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
+		// Real Azure ARM `properties.vaultUri` is always `https://`
+		// regardless of TLS termination at the load balancer; emit
+		// the same here for symmetry with the data-plane URL emitters
+		// (`buildKVURL`) which also hard-code https. Mixed schemes
+		// across ARM and data-plane is itself a fidelity drift the
+		// SDK would notice when constructing follow-up data-plane
+		// requests from the ARM vaultUri.
 		hostname := r.Host
 		portSuffix := ""
 		if i := strings.LastIndex(hostname, ":"); i >= 0 {
 			portSuffix = hostname[i:]
 			hostname = hostname[:i]
 		}
-		vaultURI := fmt.Sprintf("%s://%s.vault.%s%s/", scheme, name, hostname, portSuffix)
+		vaultURI := fmt.Sprintf("https://%s.vault.%s%s/", name, hostname, portSuffix)
 
 		if req.Properties.Sku == nil {
 			req.Properties.Sku = &KeyVaultSku{Family: "A", Name: "standard"}

@@ -81,9 +81,64 @@ func registerBlobDataPlane(srv *sim.Server) {
 				handleBlobDataPlane(w, r, parts[0])
 				return
 			}
+			// Path-style fallback (Azurite-compatible): when the host
+			// has no `.blob.` subdomain but the URL path starts with
+			// `/{knownAccount}/...`, dispatch as a blob data-plane
+			// request. Matches the Azure SDK / azurerm provider
+			// default for non-`*.core.windows.net` endpoints. The
+			// account-name lookup against azStorageAccounts protects
+			// against false matches with ARM routes (which start
+			// with `/subscriptions/`).
+			if account, rest, ok := splitPathStyleAccount(r.URL.Path); ok {
+				r.URL.Path = "/" + rest
+				handleBlobDataPlane(w, r, account)
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+// splitPathStyleAccount returns (account, restOfPath, true) when the
+// first path segment matches a known storage account. Used by the
+// blob (and storage_dataplane.go) dispatchers to accept Azurite-style
+// `/{account}/{container}/{blob}` URLs alongside the host-subdomain
+// form. Returns false if the path has no leading segment or the
+// segment isn't a registered account.
+func splitPathStyleAccount(path string) (account, rest string, ok bool) {
+	p := strings.TrimPrefix(path, "/")
+	if p == "" {
+		return "", "", false
+	}
+	slash := strings.IndexByte(p, '/')
+	var first string
+	if slash < 0 {
+		first = p
+		p = ""
+	} else {
+		first = p[:slash]
+		p = p[slash+1:]
+	}
+	if !knownStorageAccount(first) {
+		return "", "", false
+	}
+	return first, p, true
+}
+
+// knownStorageAccount reports whether name matches a registered
+// storage account. The `azStorageAccounts` store is keyed by full
+// ARM resource ID; we scan by Name. O(N) but N is bounded by the
+// number of operator-created accounts (typically 1).
+func knownStorageAccount(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, a := range azStorageAccounts.List() {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func blobObjectKey(account, container, name string) string {
