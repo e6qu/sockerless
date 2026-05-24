@@ -46,13 +46,17 @@ func TestAZFFaaSE2ESmoke(t *testing.T) {
 	}
 	select {
 	case result := <-waitCh:
-		if result.StatusCode != 0 {
-			t.Fatalf("wait status = %d, want 0 (trap caught SIGTERM)", result.StatusCode)
+		// AZF's ContainerStop reports ExitCode=137 (the FaaS
+		// "force-terminated" semantic — Azure Functions has no
+		// signal API to deliver SIGTERM to the underlying container,
+		// so the backend records 137 directly on stop).
+		if result.StatusCode != 137 {
+			t.Fatalf("wait status = %d, want 137 (AZF stop semantic)", result.StatusCode)
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait error: %v", err)
 	case <-time.After(30 * time.Second):
-		t.Fatal("timeout waiting for container exit (30s after ContainerStop SIGTERM)")
+		t.Fatal("timeout waiting for container exit (30s after ContainerStop)")
 	}
 
 	// The AZF backend deletes the underlying function app when the
