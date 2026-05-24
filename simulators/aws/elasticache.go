@@ -31,15 +31,20 @@ type ECCluster struct {
 
 var ecClusters sim.Store[ECCluster]
 
+// ecAPIVersion is the canonical AWS ElastiCache API version (Query
+// Protocol). Used to disambiguate Action names from other awsQuery
+// services in the AWSQueryRouter dispatch.
+const ecAPIVersion = "2015-02-02"
+
 func registerElastiCache(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ecClusters = sim.MakeStore[ECCluster](srv.DB(), "elasticache_clusters")
-	r.Register("CreateCacheCluster", handleECCreate)
-	r.Register("DescribeCacheClusters", handleECDescribe)
-	r.Register("ModifyCacheCluster", handleECModify)
-	r.Register("DeleteCacheCluster", handleECDelete)
-	r.Register("AddTagsToResource", handleECAddTags)
-	r.Register("ListTagsForResource", handleECListTags)
-	r.Register("RemoveTagsFromResource", handleECRemoveTags)
+	r.RegisterVersioned(ecAPIVersion, "CreateCacheCluster", handleECCreate)
+	r.RegisterVersioned(ecAPIVersion, "DescribeCacheClusters", handleECDescribe)
+	r.RegisterVersioned(ecAPIVersion, "ModifyCacheCluster", handleECModify)
+	r.RegisterVersioned(ecAPIVersion, "DeleteCacheCluster", handleECDelete)
+	r.RegisterVersioned(ecAPIVersion, "AddTagsToResource", handleECAddTags)
+	r.RegisterVersioned(ecAPIVersion, "ListTagsForResource", handleECListTags)
+	r.RegisterVersioned(ecAPIVersion, "RemoveTagsFromResource", handleECRemoveTags)
 }
 
 func ecClusterARN(id string) string {

@@ -60,22 +60,27 @@ func snsSubscriptionARN(topicName string) string {
 		awsRegion(), awsAccountID(), topicName, generateUUID())
 }
 
+// snsAPIVersion is the canonical AWS SNS API version (Query
+// Protocol). Used to disambiguate Action names from other awsQuery
+// services in the AWSQueryRouter dispatch.
+const snsAPIVersion = "2010-03-31"
+
 func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	snsTopics = sim.MakeStore[SNSTopic](srv.DB(), "sns_topics")
 	snsSubscriptions = sim.MakeStore[SNSSubscription](srv.DB(), "sns_subscriptions")
 
-	r.Register("CreateTopic", handleSNSCreateTopic)
-	r.Register("DeleteTopic", handleSNSDeleteTopic)
-	r.Register("ListTopics", handleSNSListTopics)
-	r.Register("GetTopicAttributes", handleSNSGetTopicAttributes)
-	r.Register("Subscribe", handleSNSSubscribe)
-	r.Register("Unsubscribe", handleSNSUnsubscribe)
-	r.Register("ListSubscriptions", handleSNSListSubscriptions)
-	r.Register("ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
-	r.Register("Publish", handleSNSPublish)
-	r.Register("TagResource", handleSNSTagResource)
-	r.Register("UntagResource", handleSNSUntagResource)
-	r.Register("ListTagsForResource", handleSNSListTagsForResource)
+	r.RegisterVersioned(snsAPIVersion, "CreateTopic", handleSNSCreateTopic)
+	r.RegisterVersioned(snsAPIVersion, "DeleteTopic", handleSNSDeleteTopic)
+	r.RegisterVersioned(snsAPIVersion, "ListTopics", handleSNSListTopics)
+	r.RegisterVersioned(snsAPIVersion, "GetTopicAttributes", handleSNSGetTopicAttributes)
+	r.RegisterVersioned(snsAPIVersion, "Subscribe", handleSNSSubscribe)
+	r.RegisterVersioned(snsAPIVersion, "Unsubscribe", handleSNSUnsubscribe)
+	r.RegisterVersioned(snsAPIVersion, "ListSubscriptions", handleSNSListSubscriptions)
+	r.RegisterVersioned(snsAPIVersion, "ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
+	r.RegisterVersioned(snsAPIVersion, "Publish", handleSNSPublish)
+	r.RegisterVersioned(snsAPIVersion, "TagResource", handleSNSTagResource)
+	r.RegisterVersioned(snsAPIVersion, "UntagResource", handleSNSUntagResource)
+	r.RegisterVersioned(snsAPIVersion, "ListTagsForResource", handleSNSListTagsForResource)
 }
 
 func snsXMLResponse(w http.ResponseWriter, op string, body string, requestID string) {

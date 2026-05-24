@@ -35,15 +35,20 @@ type RDSInstance struct {
 
 var rdsInstances sim.Store[RDSInstance]
 
+// rdsAPIVersion is the canonical AWS RDS API version (Query
+// Protocol). Used to disambiguate Action names from other awsQuery
+// services in the AWSQueryRouter dispatch.
+const rdsAPIVersion = "2014-10-31"
+
 func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	rdsInstances = sim.MakeStore[RDSInstance](srv.DB(), "rds_instances")
-	r.Register("CreateDBInstance", handleRDSCreate)
-	r.Register("DescribeDBInstances", handleRDSDescribe)
-	r.Register("ModifyDBInstance", handleRDSModify)
-	r.Register("DeleteDBInstance", handleRDSDelete)
-	r.Register("AddTagsToResource", handleRDSAddTags)
-	r.Register("ListTagsForResource", handleRDSListTags)
-	r.Register("RemoveTagsFromResource", handleRDSRemoveTags)
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBInstance", handleRDSCreate)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBInstances", handleRDSDescribe)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBInstance", handleRDSModify)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBInstance", handleRDSDelete)
+	r.RegisterVersioned(rdsAPIVersion, "AddTagsToResource", handleRDSAddTags)
+	r.RegisterVersioned(rdsAPIVersion, "ListTagsForResource", handleRDSListTags)
+	r.RegisterVersioned(rdsAPIVersion, "RemoveTagsFromResource", handleRDSRemoveTags)
 }
 
 func rdsInstanceARN(id string) string {
