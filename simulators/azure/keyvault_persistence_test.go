@@ -20,13 +20,13 @@ func TestKVStoragePersistenceRoundTrip(t *testing.T) {
 		rec := kvSecretStored{
 			Vault: "myvault",
 			Name:  "mysecret",
-			KeyVaultSecret: KeyVaultSecret{
-				ID:          "https://myvault.vault.azure.net/secrets/mysecret/v1",
+			Versions: []kvSecretVersion{{
+				Version:     "v1",
 				Value:       "super-secret-value",
 				ContentType: "text/plain",
 				Tags:        map[string]string{"env": "prod"},
 				Attributes:  KeyVaultAttrs{Enabled: true, Created: 1700000000, Updated: 1700000000},
-			},
+			}},
 		}
 		data, err := json.Marshal(rec)
 		if err != nil {
@@ -42,14 +42,18 @@ func TestKVStoragePersistenceRoundTrip(t *testing.T) {
 		if got.Name != "mysecret" {
 			t.Errorf("Name dropped on round-trip: got %q, want %q", got.Name, "mysecret")
 		}
-		if got.Value != "super-secret-value" {
-			t.Errorf("Value (embedded wire field) dropped: got %q", got.Value)
+		if len(got.Versions) != 1 {
+			t.Fatalf("Versions chain dropped: got %d, want 1", len(got.Versions))
 		}
-		if got.ID != rec.ID {
-			t.Errorf("ID (embedded wire field) drifted: got %q, want %q", got.ID, rec.ID)
+		gotV := got.latest()
+		if gotV.Value != "super-secret-value" {
+			t.Errorf("Value dropped on round-trip: got %q", gotV.Value)
 		}
-		if got.Tags["env"] != "prod" {
-			t.Errorf("Tags dropped: got %v", got.Tags)
+		if gotV.Version != "v1" {
+			t.Errorf("Version drifted: got %q, want %q", gotV.Version, "v1")
+		}
+		if gotV.Tags["env"] != "prod" {
+			t.Errorf("Tags dropped: got %v", gotV.Tags)
 		}
 	})
 

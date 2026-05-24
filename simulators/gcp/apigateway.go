@@ -70,9 +70,31 @@ func registerGCPAPIGateway(srv *sim.Server) {
 	// IAM v1 per AIP-130. Empty default policy until setIamPolicy
 	// lands a real one; testIamPermissions returns the permission set
 	// as-allowed (sim doesn't model authorization).
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:getIamPolicy", handleGCPAPIGWGetIamPolicy)
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:setIamPolicy", handleGCPAPIGWSetIamPolicy)
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:testIamPermissions", handleGCPAPIGWTestIamPermissions)
+	//
+	// Go ServeMux can't parse `{gw}:getIamPolicy`; capture the action
+	// suffix in a single wildcard and split on `:` in the handler.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gwAction}", handleGCPAPIGWIamAction)
+}
+
+func handleGCPAPIGWIamAction(w http.ResponseWriter, r *http.Request) {
+	gwAction := sim.PathParam(r, "gwAction")
+	gw, action, found := strings.Cut(gwAction, ":")
+	if !found {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"unknown action on gateway %q", gwAction)
+		return
+	}
+	switch action {
+	case "getIamPolicy":
+		handleGCPAPIGWGetIamPolicy(w, r, gw)
+	case "setIamPolicy":
+		handleGCPAPIGWSetIamPolicy(w, r, gw)
+	case "testIamPermissions":
+		handleGCPAPIGWTestIamPermissions(w, r, gw)
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"unknown action %q on gateway %q", action, gw)
+	}
 }
 
 // GCPAPIGWIamBinding mirrors google.iam.v1.Binding.
@@ -94,8 +116,8 @@ func apigwIamPolicyKey(project, location, gw string) string {
 	return project + "/" + location + "/" + gw
 }
 
-func handleGCPAPIGWGetIamPolicy(w http.ResponseWriter, r *http.Request) {
-	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "gw"))
+func handleGCPAPIGWGetIamPolicy(w http.ResponseWriter, r *http.Request, gw string) {
+	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), gw)
 	p, ok := apigwIamPolicies.Get(key)
 	if !ok {
 		p = GCPAPIGWIamPolicy{Version: 1, Etag: "ACAB"}
@@ -103,7 +125,7 @@ func handleGCPAPIGWGetIamPolicy(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, p)
 }
 
-func handleGCPAPIGWSetIamPolicy(w http.ResponseWriter, r *http.Request) {
+func handleGCPAPIGWSetIamPolicy(w http.ResponseWriter, r *http.Request, gw string) {
 	var req struct {
 		Policy GCPAPIGWIamPolicy `json:"policy"`
 	}
@@ -111,12 +133,12 @@ func handleGCPAPIGWSetIamPolicy(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
 		return
 	}
-	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "gw"))
+	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), gw)
 	apigwIamPolicies.Put(key, req.Policy)
 	sim.WriteJSON(w, http.StatusOK, req.Policy)
 }
 
-func handleGCPAPIGWTestIamPermissions(w http.ResponseWriter, r *http.Request) {
+func handleGCPAPIGWTestIamPermissions(w http.ResponseWriter, r *http.Request, _ string) {
 	var req struct {
 		Permissions []string `json:"permissions"`
 	}

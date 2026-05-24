@@ -21,7 +21,7 @@ import (
 // S3 gates by known-bucket so a regression here can't slip through.
 func TestAPIGwV2_CreateDeployment_RoutesPastS3(t *testing.T) {
 	ctx := context.Background()
-	c := apigatewayv2.NewFromConfig(sdkConfig())
+	c := apigwv2Client()
 
 	api, err := c.CreateApi(ctx, &apigatewayv2.CreateApiInput{
 		Name:         aws.String("tf-apigw-deploy-test"),

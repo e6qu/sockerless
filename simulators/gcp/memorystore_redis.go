@@ -55,14 +55,34 @@ func registerMemorystoreRedis(srv *sim.Server) {
 	// Sim collapses both transitions inline (no async work to wait
 	// on), but the State field is set + restored so SDKs reading
 	// the instance during the LRO see a value other than zero.
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/instances/{id}:upgrade", handleMSRedisUpgrade)
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/instances/{id}:failover", handleMSRedisFailover)
+	//
+	// Go ServeMux can't parse `{id}:upgrade`; capture the action
+	// suffix in a single wildcard and split on `:` in the handler.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/instances/{idAction}", handleMSRedisAction)
 }
 
-func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request) {
+func handleMSRedisAction(w http.ResponseWriter, r *http.Request) {
+	idAction := sim.PathParam(r, "idAction")
+	id, action, found := strings.Cut(idAction, ":")
+	if !found {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"unknown action on memorystore instance %q", idAction)
+		return
+	}
+	switch action {
+	case "upgrade":
+		handleMSRedisUpgrade(w, r, id)
+	case "failover":
+		handleMSRedisFailover(w, r, id)
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"unknown action %q on memorystore instance %q", action, id)
+	}
+}
+
+func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request, id string) {
 	project := sim.PathParam(r, "project")
 	location := sim.PathParam(r, "location")
-	id := sim.PathParam(r, "id")
 	key := project + "/" + location + "/" + id
 	inst, ok := msRedisInstances.Get(key)
 	if !ok {
@@ -88,10 +108,9 @@ func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleMSRedisFailover(w http.ResponseWriter, r *http.Request) {
+func handleMSRedisFailover(w http.ResponseWriter, r *http.Request, id string) {
 	project := sim.PathParam(r, "project")
 	location := sim.PathParam(r, "location")
-	id := sim.PathParam(r, "id")
 	key := project + "/" + location + "/" + id
 	inst, ok := msRedisInstances.Get(key)
 	if !ok {

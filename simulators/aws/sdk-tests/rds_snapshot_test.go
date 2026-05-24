@@ -18,7 +18,7 @@ import (
 // creating → available into an inline-settle; this test locks the
 // Status field is non-empty + reads back as "available".
 func TestRDS_Snapshot_Lifecycle(t *testing.T) {
-	c := rds.NewFromConfig(sdkConfig())
+	c := rdsClient()
 	ctx := context.Background()
 
 	// Source instance.
