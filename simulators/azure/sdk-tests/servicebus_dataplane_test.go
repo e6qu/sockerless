@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,18 +94,28 @@ func TestServiceBus_PeekLockComplete(t *testing.T) {
 		"PeekLock on a locked queue must return 204 (no other unlocked messages)")
 	resp.Body.Close()
 
-	// CompleteLock — derive {guid}/{lockToken} from the Location header
-	// (extract the trailing path).
-	idx := strings.LastIndex(location, "/")
-	require.Greater(t, idx, 0)
-	idx2 := strings.LastIndex(location[:idx], "/")
-	require.Greater(t, idx2, 0)
-	tail := location[idx2+1:] // "{guid}/{lockToken}"
-
-	resp = sbReq(t, "DELETE", ns, "/"+queue+"/messages/"+tail, nil, nil)
-	require.Equal(t, http.StatusNoContent, resp.StatusCode,
+	// CompleteLock follows the Location header. The sim emits an
+	// absolute URL with the request Host (`{ns}.servicebus.<host>`)
+	// — Azure SDK clients resolve that via DNS in production. The
+	// test harness has no DNS for `*.servicebus.localhost`, so it
+	// resolves the Location to the same connection target as
+	// sbReq (baseURL) while preserving the namespace-prefixed Host
+	// header. Path + query come from Location verbatim.
+	locURL, err := url.Parse(location)
+	require.NoError(t, err)
+	require.Equal(t, ns+".servicebus.localhost", locURL.Host,
+		"Location must point at the namespace subdomain host")
+	require.NotEmpty(t, locURL.Path, "Location path must not be empty")
+	require.Contains(t, locURL.Path, "/messages/",
+		"Location must include the /messages/{id}/{token} path")
+	completeReq, err := http.NewRequest("DELETE", baseURL+locURL.RequestURI(), nil)
+	require.NoError(t, err)
+	completeReq.Host = locURL.Host
+	completeResp, err := http.DefaultClient.Do(completeReq)
+	require.NoError(t, err)
+	completeResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, completeResp.StatusCode,
 		"CompleteLock must return 204")
-	resp.Body.Close()
 
 	// Queue is now empty.
 	resp = sbReq(t, "DELETE", ns, "/"+queue+"/messages/head", nil, nil)

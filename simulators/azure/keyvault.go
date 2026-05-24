@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -15,6 +17,20 @@ import (
 
 	sim "github.com/sockerless/simulator"
 )
+
+// ecCurveByJWKName maps JWK curve names (P-256, P-384, P-521) to
+// crypto/elliptic.Curve. Returns (nil, false) for unknown values.
+func ecCurveByJWKName(name string) (elliptic.Curve, bool) {
+	switch name {
+	case "P-256":
+		return elliptic.P256(), true
+	case "P-384":
+		return elliptic.P384(), true
+	case "P-521":
+		return elliptic.P521(), true
+	}
+	return nil, false
+}
 
 // Azure Key Vault — sockerless runner workflows commonly fetch
 // secrets via `azure/get-keyvault-secrets`, `Get-AzKeyVaultSecret`
@@ -439,27 +455,68 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	// and not get a placeholder string back. Falls back to a
 	// placeholder for non-RSA types since the sim doesn't simulate
 	// EC / oct curves end-to-end.
-	if kty == "RSA" || kty == "RSA-HSM" {
+	switch kty {
+	case "RSA", "RSA-HSM":
 		bits := body.KeySize
 		if bits <= 0 {
 			bits = 2048
 		}
-		if k, err := rsa.GenerateKey(rand.Reader, bits); err == nil {
-			jwk["n"] = base64.RawURLEncoding.EncodeToString(k.N.Bytes())
-			jwk["e"] = base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.E)).Bytes())
-		} else {
-			// Real RSA generation failure is exceedingly rare on a
-			// modern OS; surface the error rather than emit a
-			// placeholder that crypto consumers will misinterpret.
+		k, err := rsa.GenerateKey(rand.Reader, bits)
+		if err != nil {
 			sim.AzureError(w, "InternalServerError",
 				"failed to generate RSA key: "+err.Error(),
 				http.StatusInternalServerError)
 			return
 		}
-	} else {
-		// EC / oct / unknown — keep canonical exponent field for
-		// SDKs that expect both keys present.
-		jwk["e"] = "AQAB"
+		jwk["n"] = base64.RawURLEncoding.EncodeToString(k.N.Bytes())
+		jwk["e"] = base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.E)).Bytes())
+	case "EC", "EC-HSM":
+		// Generate a real EC public key on the requested curve so
+		// JWK consumers (go-jose, crypto/ecdsa) can parse the
+		// resulting `x` / `y` / `crv` triple. The curve name is
+		// the JWK form (P-256 / P-384 / P-521); map to crypto/elliptic.
+		curveName := body.Crv
+		if curveName == "" {
+			curveName = "P-256"
+		}
+		curve, ok := ecCurveByJWKName(curveName)
+		if !ok {
+			sim.AzureError(w, "InvalidRequest",
+				"unsupported curve: "+curveName, http.StatusBadRequest)
+			return
+		}
+		k, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			sim.AzureError(w, "InternalServerError",
+				"failed to generate EC key: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		jwk["crv"] = curveName
+		jwk["x"] = base64.RawURLEncoding.EncodeToString(k.X.Bytes())
+		jwk["y"] = base64.RawURLEncoding.EncodeToString(k.Y.Bytes())
+	case "oct", "oct-HSM":
+		// Symmetric key: emit a real random `k` field of the
+		// requested size (default 256 bits). Real Azure KV's
+		// symmetric keys never expose the material on the wire,
+		// but the sim does so SDK consumers can decode `kty` +
+		// `k` to a usable key for end-to-end smoke tests.
+		bits := body.KeySize
+		if bits <= 0 {
+			bits = 256
+		}
+		keyMaterial := make([]byte, bits/8)
+		if _, err := rand.Read(keyMaterial); err != nil {
+			sim.AzureError(w, "InternalServerError",
+				"failed to generate symmetric key: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		jwk["k"] = base64.RawURLEncoding.EncodeToString(keyMaterial)
+	default:
+		sim.AzureError(w, "InvalidRequest",
+			"unsupported kty: "+kty, http.StatusBadRequest)
+		return
 	}
 	if body.Crv != "" {
 		jwk["crv"] = body.Crv

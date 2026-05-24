@@ -60,16 +60,38 @@ type LambdaPolicyStatement struct {
 	Condition map[string]any `json:"Condition,omitempty"`
 }
 
-// LambdaFunctionUrlConfig is the per-function URL config (real Lambda
-// returns a `FunctionUrl` like `https://<id>.lambda-url.<region>.on.aws/`).
+// LambdaFunctionUrlConfig is the per-function URL config. Real Lambda
+// returns a canonical `FunctionUrl` like
+// `https://<id>.lambda-url.<region>.on.aws/`; the SDK + Terraform
+// provider read it as an opaque advertised URL. The sim emits the
+// same canonical shape — external by design (sockerless does not
+// host the `*.lambda-url.<region>.on.aws` subdomain).
 type LambdaFunctionUrlConfig struct {
 	FunctionArn      string `json:"FunctionArn"`
-	FunctionUrl      string `json:"FunctionUrl"`
+	FunctionUrl      string `json:"FunctionUrl"` // external: real-AWS canonical `<id>.lambda-url.<region>.on.aws`
 	AuthType         string `json:"AuthType"`
 	CreationTime     string `json:"CreationTime"`
 	LastModifiedTime string `json:"LastModifiedTime"`
 	InvokeMode       string `json:"InvokeMode,omitempty"`
 	Cors             any    `json:"Cors,omitempty"`
+}
+
+// lambdaVersionExists reports whether the function has a published
+// version with the given ID. `$LATEST` is the implicit always-live
+// version every function carries; explicit IDs must match one
+// PublishVersion call.
+func lambdaVersionExists(fn, version string) bool {
+	if version == "" || version == "$LATEST" {
+		return true
+	}
+	lambdaVersionsMu.Lock()
+	defer lambdaVersionsMu.Unlock()
+	for _, v := range lambdaVersions[fn] {
+		if v.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 // Stores. In-process maps; lifetime matches the running sim process,
@@ -168,6 +190,11 @@ func handleLambdaCreateAlias(w http.ResponseWriter, r *http.Request) {
 			"Name is required", http.StatusBadRequest)
 		return
 	}
+	if !lambdaVersionExists(name, req.FunctionVersion) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Function version not found: %s on %s", req.FunctionVersion, name)
+		return
+	}
 	alias := LambdaAlias{
 		AliasArn:        fn.FunctionArn + ":" + req.Name,
 		Name:            req.Name,
@@ -244,6 +271,11 @@ func handleLambdaUpdateAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	a := as[aliasName]
 	if req.FunctionVersion != "" {
+		if !lambdaVersionExists(name, req.FunctionVersion) {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
+				"Function version not found: %s on %s", req.FunctionVersion, name)
+			return
+		}
 		a.FunctionVersion = req.FunctionVersion
 	}
 	if req.Description != "" {
@@ -322,7 +354,13 @@ func handleLambdaAddPermission(w http.ResponseWriter, r *http.Request) {
 	}
 	lambdaPolicies[name] = append(lambdaPolicies[name], stmt)
 	lambdaPoliciesMu.Unlock()
-	stmtJSON, _ := json.Marshal(stmt)
+	stmtJSON, err := json.Marshal(stmt)
+	if err != nil {
+		sim.AWSError(w, "InternalServerError",
+			"failed to serialise policy statement: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
 	sim.WriteJSON(w, http.StatusCreated, map[string]any{
 		"Statement": string(stmtJSON),
 	})
@@ -348,7 +386,13 @@ func handleLambdaGetPolicy(w http.ResponseWriter, r *http.Request) {
 		"Id":        "default",
 		"Statement": stmts,
 	}
-	docJSON, _ := json.Marshal(policyDoc)
+	docJSON, err := json.Marshal(policyDoc)
+	if err != nil {
+		sim.AWSError(w, "InternalServerError",
+			"failed to serialise policy document: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Policy":     string(docJSON),
 		"RevisionId": generateUUID(),

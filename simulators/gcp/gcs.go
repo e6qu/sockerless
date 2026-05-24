@@ -106,7 +106,19 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 	}
 
 	defer r.Body.Close()
-	chunk, err := io.ReadAll(r.Body)
+	// Wrap the chunk body through openStreamingBody so a
+	// Content-Encoding: gzip chunk decodes transparently — real GCS
+	// resumable uploads can carry gzip-encoded chunks when the SDK
+	// sets Object.ContentEncoding = "gzip" alongside the streamed
+	// upload.
+	chunkReader, err := openStreamingBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT",
+			"%s", err.Error())
+		return
+	}
+	chunk, err := io.ReadAll(chunkReader)
+	_ = chunkReader.Close()
 	if err != nil {
 		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
 			"failed to read resumable chunk: %v", err)
@@ -544,14 +556,22 @@ func registerGCS(srv *sim.Server) {
 			}
 			metaBytes, err := io.ReadAll(metaPart)
 			_ = metaPart.Close()
-			if err == nil && len(metaBytes) > 0 {
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+					"failed to read multipart metadata part: %v", err)
+				return
+			}
+			if len(metaBytes) > 0 {
 				var meta struct {
 					Name string `json:"name"`
 				}
-				if jsonErr := json.Unmarshal(metaBytes, &meta); jsonErr == nil {
-					if objectName == "" {
-						objectName = meta.Name
-					}
+				if jsonErr := json.Unmarshal(metaBytes, &meta); jsonErr != nil {
+					sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+						"failed to parse multipart metadata: %v", jsonErr)
+					return
+				}
+				if objectName == "" {
+					objectName = meta.Name
 				}
 			}
 			if objectName == "" {
@@ -726,10 +746,12 @@ func registerGCS(srv *sim.Server) {
 	// Registered without method prefix to avoid conflict with "/v2/" (both match all methods,
 	// resolved by path specificity — more specific literal paths always win).
 	//
-	// The first path segment is the BUCKET; refuse the route when no
-	// matching bucket exists in the store. This blocks the routing
-	// leak that previously served GCS-shaped 404s for unhandled
-	// `/v1/...` AIP-151 paths and similar — see TestGCP_Operations_List.
+	// The first path segment is the BUCKET name. Reject (404) when
+	// the store has no matching bucket: this catch-all
+	// `/{bucket}/{object...}` route would otherwise shadow unrelated
+	// top-level paths (e.g. AIP-151 `/v1/...` operations) and answer
+	// them with a GCS-shaped 404 that looks like a real GCS not-found
+	// to clients.
 	srv.HandleFunc("/{bucket}/{object...}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)

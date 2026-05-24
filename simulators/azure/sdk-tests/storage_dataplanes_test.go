@@ -212,6 +212,14 @@ func TestTablesDataPlane(t *testing.T) {
 // `/table/{account}/...`, `/file/{account}/...`. No `.<service>.`
 // subdomain. The Azure SDK + azurerm provider both default to this
 // shape when the configured endpoint isn't `*.core.windows.net`.
+//
+// `x-ms-version` is always set — real Azure-Storage clients send it
+// on every request, and the sim's path-style dispatcher uses it (and
+// the other `x-ms-*` headers / `restype` / `comp` query params) as
+// the protocol discriminator that keeps non-storage co-tenants
+// (IMDS at `/metadata/...`, Monitor ingest at
+// `/dataCollectionRules/...`) routed to their own handlers on the
+// shared sim port.
 func pathStyleStorageReq(t *testing.T, method, prefix, path string, body []byte, headers map[string]string) *http.Response {
 	t.Helper()
 	var br io.Reader
@@ -220,6 +228,9 @@ func pathStyleStorageReq(t *testing.T, method, prefix, path string, body []byte,
 	}
 	req, err := http.NewRequest(method, baseURL+prefix+path, br)
 	require.NoError(t, err)
+	if _, set := headers["x-ms-version"]; !set {
+		req.Header.Set("x-ms-version", "2023-11-03")
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

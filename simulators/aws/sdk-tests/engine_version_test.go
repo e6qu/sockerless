@@ -6,9 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
-	ectypes "github.com/aws/aws-sdk-go-v2/service/elasticache/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
-	"github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,6 +77,3 @@ func TestElastiCache_EngineVersionDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "6.2", aws.ToString(out2.CacheCluster.EngineVersion))
 }
-
-var _ = ectypes.AvailabilityZone{} // anchor the ectypes import for future use
-var _ = types.AvailabilityZone{}   // anchor the rdstypes import

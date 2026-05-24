@@ -158,6 +158,24 @@ func registerStorageDataPlane(srv *sim.Server) {
 			// `FileEndpoint=http://localhost:14568/file/<account>`.
 			// Bare `/{account}/...` (blob default) is matched in
 			// blob.go's WrapHandler.
+			//
+			// Skip when the host carries a non-storage Azure
+			// subdomain (`.vault.`, `.servicebus.`) — those hosts
+			// belong to other data planes and must not be reinterpreted
+			// as storage path-style requests.
+			if hasNonStorageAzureSubdomain(host) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Same protocol-signal discriminator as the blob
+			// path-style fallback in blob.go — keeps non-storage
+			// callers that happen to use `/file/`, `/queue/`, or
+			// `/table/` as a path prefix routed to their own
+			// handlers.
+			if !hasAzureStorageSignal(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if account, rest, ok := splitServicePrefix(r.URL.Path, "file"); ok {
 				r.URL.Path = "/" + rest
 				handleFilesDataPlane(w, r, account)

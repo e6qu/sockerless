@@ -230,7 +230,13 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 		} `xml:"Part"`
 	}
 	defer r.Body.Close()
-	rawBody, _ := io.ReadAll(r.Body)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.S3ErrorXML(w, "IncompleteBody",
+			"Failed to read request body: "+err.Error(),
+			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
 	if err := xml.Unmarshal(rawBody, &req); err != nil {
 		sim.S3ErrorXML(w, "MalformedXML",
 			"Failed to parse CompleteMultipartUpload body: "+err.Error(),
@@ -278,10 +284,18 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 	}
 	s3Objects.Put(bucket+"/"+key, obj)
 
+	// The Location field is the real-AWS canonical
+	// `https://<bucket>.s3.amazonaws.com/<key>` URL that the SDK
+	// surfaces as the completed-upload location. aws-sdk-go-v2's
+	// high-level Uploader and terraform-provider-aws treat it as
+	// advertised metadata (bucket+key are the load-bearing fields
+	// for subsequent operations); the sim emits the canonical shape
+	// for fidelity even though the *.s3.amazonaws.com subdomain
+	// resolves to real S3, not the sim.
 	result := struct {
 		XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
 		Xmlns    string   `xml:"xmlns,attr"`
-		Location string   `xml:"Location"`
+		Location string   `xml:"Location"` // external: real-AWS canonical *.s3.amazonaws.com URL
 		Bucket   string   `xml:"Bucket"`
 		Key      string   `xml:"Key"`
 		ETag     string   `xml:"ETag"`
@@ -331,7 +345,13 @@ func handleS3PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 			} `xml:"Tag"`
 		} `xml:"TagSet"`
 	}
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.S3ErrorXML(w, "IncompleteBody",
+			"Failed to read Tagging body: "+err.Error(),
+			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
 	if err := xml.Unmarshal(body, &req); err != nil {
 		sim.S3ErrorXML(w, "MalformedXML",
 			"Failed to parse Tagging body: "+err.Error(),
@@ -457,7 +477,13 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 		} `xml:"Object"`
 	}
 	defer r.Body.Close()
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.S3ErrorXML(w, "IncompleteBody",
+			"Failed to read Delete body: "+err.Error(),
+			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
 	if err := xml.Unmarshal(body, &req); err != nil {
 		sim.S3ErrorXML(w, "MalformedXML",
 			"Failed to parse Delete body: "+err.Error(),

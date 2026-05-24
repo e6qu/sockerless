@@ -53,8 +53,7 @@ type sbQueueState struct {
 }
 
 var (
-	sbQueueMessages  = sync.Map{} // key: "{namespace}/{queue}" or "{namespace}/{topic}/{sub}" → *sbQueueState
-	sbLockTokenGuids = sync.Map{} // key: lock-token → "{namespace}/{queue}" (for CompleteLock routing)
+	sbQueueMessages = sync.Map{} // key: "{namespace}/{queue}" or "{namespace}/{topic}/{sub}" → *sbQueueState
 )
 
 func sbQueueKey(namespace, path string) string {
@@ -141,6 +140,11 @@ func dispatchSBMessagesOp(w http.ResponseWriter, r *http.Request, key string, ta
 
 func handleSBSendMessage(w http.ResponseWriter, r *http.Request, key string) {
 	defer r.Body.Close()
+	// Service Bus REST sends the message body opaquely with
+	// Content-Length framing; metadata travels in BrokerProperties
+	// header. azservicebus's REST transcoder does not gzip-encode
+	// or chunk-envelope, so a raw read is safe (no openStreamingBody
+	// wrap required).
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		sim.AzureError(w, "BadRequest", "Failed to read body: "+err.Error(), http.StatusBadRequest)
@@ -198,11 +202,17 @@ func handleSBPeekLock(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	st.messages[idx].LockToken = generateUUID()
 	st.messages[idx].LockedUntilUtc = now.Add(60 * time.Second)
-	sbLockTokenGuids.Store(st.messages[idx].LockToken, key)
 	msg := st.messages[idx]
-	location := fmt.Sprintf("https://%s/%s/%s",
-		r.Host, strings.TrimPrefix(strings.SplitN(key, "/", 2)[1], ""),
-		msg.MessageID+"/"+msg.LockToken)
+	// Real Service Bus emits Location as
+	// `https://{ns}/{queue}/messages/{messageID}/{lockToken}` (or
+	// `…/{topic}/subscriptions/{sub}/messages/{messageID}/{lockToken}`
+	// for subscriptions). The path-after-namespace lives in
+	// `key`'s tail (everything after the first "/"); inserting
+	// `/messages/` here aligns with handleSBRESTDataPlane's dispatch,
+	// so the client can DELETE the Location verbatim to CompleteLock.
+	pathTail := strings.SplitN(key, "/", 2)[1]
+	location := fmt.Sprintf("https://%s/%s/messages/%s/%s",
+		r.Host, pathTail, msg.MessageID, msg.LockToken)
 	writeSBMessageResponse(w, msg, location, http.StatusCreated)
 }
 
@@ -223,7 +233,6 @@ func handleSBCompleteLock(w http.ResponseWriter, r *http.Request, key, msgID, lo
 		return
 	}
 	st.messages = append(st.messages[:idx], st.messages[idx+1:]...)
-	sbLockTokenGuids.Delete(lockToken)
 	w.WriteHeader(http.StatusNoContent)
 }
 

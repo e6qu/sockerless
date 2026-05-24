@@ -81,15 +81,28 @@ func registerBlobDataPlane(srv *sim.Server) {
 				handleBlobDataPlane(w, r, parts[0])
 				return
 			}
-			// Path-style fallback (Azurite-compatible). When the host
-			// has no `.blob.` subdomain but the URL path starts with
-			// `/{account}/...`, dispatch as a blob data-plane
-			// request. Matches the Azure SDK / azurerm provider
-			// default for non-`*.core.windows.net` endpoints and the
-			// Azurite connection-string contract. Account names are
-			// accepted as-is (real Azurite is permissive — no prior
-			// ARM registration required); the discriminator from
-			// non-storage routes is the path-prefix exclusion below.
+			// Path-style fallback (Azurite-compatible). When the
+			// host carries NO service-specific Azure subdomain
+			// AND the URL path starts with `/{account}/...` AND
+			// the request carries an Azure-Storage protocol signal,
+			// dispatch as a blob data-plane request. Matches the
+			// Azure SDK / azurerm provider default for non-
+			// `*.core.windows.net` endpoints and the Azurite
+			// connection-string contract. Account names are
+			// accepted as-is (real Azurite is permissive — no
+			// prior ARM registration required); the storage-signal
+			// requirement keeps non-storage co-tenants (IMDS at
+			// `/metadata/...`, Monitor ingest at
+			// `/dataCollectionRules/...`, MSI at `/metadata/...`)
+			// from being misrouted on the shared sim port.
+			if hasNonStorageAzureSubdomain(hostname) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !hasAzureStorageSignal(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if account, rest, ok := splitPathStyleAccount(r.URL.Path); ok {
 				r.URL.Path = "/" + rest
 				handleBlobDataPlane(w, r, account)
@@ -98,6 +111,64 @@ func registerBlobDataPlane(srv *sim.Server) {
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+// hasAzureStorageSignal reports whether the request carries a
+// protocol marker that real Azure Storage SDKs always emit:
+//   - `x-ms-version`     — REST API version selector (every SDK call)
+//   - `x-ms-date`        — request-signing timestamp
+//   - `x-ms-blob-type`   — PutBlob blob-type selector
+//   - `x-ms-type`        — Files PutFile file-type selector
+//   - `Authorization: SharedKey ...` — account-key signed request
+//   - query `restype=`   — container/share/directory operation discriminator
+//   - query `comp=`      — sub-resource (list, properties, metadata, …)
+//   - query `sv=`        — Shared Access Signature (SAS) version
+//
+// Co-tenants on the shared sim port (IMDS `/metadata/...`, Monitor
+// ingest `/dataCollectionRules/...`, MSI token endpoint) never carry
+// any of these markers, so the signal cleanly partitions storage
+// path-style requests from everything else.
+func hasAzureStorageSignal(r *http.Request) bool {
+	if r.Header.Get("x-ms-version") != "" ||
+		r.Header.Get("x-ms-date") != "" ||
+		r.Header.Get("x-ms-blob-type") != "" ||
+		r.Header.Get("x-ms-type") != "" {
+		return true
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "SharedKey ") || strings.HasPrefix(auth, "SharedKeyLite ") {
+		return true
+	}
+	q := r.URL.Query()
+	if q.Get("restype") != "" || q.Get("comp") != "" || q.Get("sv") != "" {
+		return true
+	}
+	return false
+}
+
+// hasNonStorageAzureSubdomain reports whether the host carries an
+// Azure-service subdomain other than the four storage services
+// (blob/file/queue/table). A host like `myvault.vault.localhost`,
+// `myns.servicebus.localhost`, `myfn.azurewebsites.net`, or
+// `mycr.azurecr.io` MUST NOT be dispatched as a path-style storage
+// request — the subdomain identifies a different data plane. New
+// service subdomains added to the sim go here too.
+func hasNonStorageAzureSubdomain(hostname string) bool {
+	for _, marker := range []string{
+		".vault.",
+		".servicebus.",
+		".web.",
+		".dfs.",
+		".azurewebsites.",
+		".azurecr.",
+		".azure-api.",
+		".applicationinsights.",
+		".cognitiveservices.",
+	} {
+		if strings.Contains(hostname, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // splitPathStyleAccount returns (account, restOfPath, true) when the
@@ -149,20 +220,6 @@ func isNonStorageFirstSegment(s string) bool {
 	return false
 }
 
-// knownStorageAccount reports whether name matches a registered
-// storage account. Kept for compatibility with callers that need a
-// strict-mode check; path-style dispatch no longer requires it.
-func knownStorageAccount(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, a := range azStorageAccounts.List() {
-		if a.Name == name {
-			return true
-		}
-	}
-	return false
-}
 
 func blobObjectKey(account, container, name string) string {
 	return account + "/" + container + "/" + name
