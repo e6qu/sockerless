@@ -23,14 +23,23 @@ type Secret struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 }
 
-// SecretVersion represents a single version of a secret. The real
-// API stores versions as enabled / disabled / destroyed; for this
-// simulator we keep only the enabled payload.
+// SecretVersion is the wire shape for a single secret version —
+// metadata only. Real GCP's GetSecretVersion + ListSecretVersions
+// return this shape (no payload bytes); the raw payload appears
+// only in `:access` responses. The sim stores payload bytes in a
+// parallel `smSecretPayloads` store keyed by version name so this
+// struct stays payload-free even after sim.Store JSON round-trips.
 type SecretVersion struct {
 	Name       string `json:"name"`
 	CreateTime string `json:"createTime"`
 	State      string `json:"state"`
-	payload    []byte // unexported raw payload bytes
+}
+
+// smPayloadRecord stores raw secret bytes keyed by full version name.
+// Separate from SecretVersion so the wire-shaped struct stays
+// payload-free (real GCP only returns payloads from :access).
+type smPayloadRecord struct {
+	Data []byte `json:"data"`
 }
 
 // Package-level stores so cloudbuild.go can resolve secret versions
@@ -38,11 +47,13 @@ type SecretVersion struct {
 var (
 	smSecrets        sim.Store[Secret]
 	smSecretVersions sim.Store[SecretVersion]
+	smSecretPayloads sim.Store[smPayloadRecord]
 )
 
 func registerSecretManager(srv *sim.Server) {
 	smSecrets = sim.MakeStore[Secret](srv.DB(), "sm_secrets")
 	smSecretVersions = sim.MakeStore[SecretVersion](srv.DB(), "sm_secret_versions")
+	smSecretPayloads = sim.MakeStore[smPayloadRecord](srv.DB(), "sm_secret_payloads")
 
 	// CreateSecret: POST /v1/projects/{project}/secrets?secretId=X
 	srv.HandleFunc("POST /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
@@ -154,9 +165,9 @@ func registerSecretManager(srv *sim.Server) {
 			Name:       versionName,
 			CreateTime: time.Now().UTC().Format(time.RFC3339),
 			State:      "ENABLED",
-			payload:    raw,
 		}
 		smSecretVersions.Put(versionName, ver)
+		smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw})
 		sim.WriteJSON(w, http.StatusOK, ver)
 	})
 
@@ -255,7 +266,7 @@ func registerSecretManager(srv *sim.Server) {
 				ver.State = "DISABLED"
 			case "destroy":
 				ver.State = "DESTROYED"
-				ver.payload = nil
+				smSecretPayloads.Delete(versionName)
 			default:
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
 				return
@@ -285,7 +296,7 @@ func accessSecretPayloadResolved(project, secretID, version string) ([]byte, str
 	if version == "latest" {
 		// Pick the highest-numbered version for this secret.
 		var latestN int
-		var latestPayload []byte
+		var latestName string
 		for _, v := range smSecretVersions.List() {
 			if !strings.HasPrefix(v.Name, secretName+"/versions/") {
 				continue
@@ -295,21 +306,28 @@ func accessSecretPayloadResolved(project, secretID, version string) ([]byte, str
 			_, _ = fmt.Sscanf(idStr, "%d", &n)
 			if n > latestN {
 				latestN = n
-				latestPayload = v.payload
+				latestName = v.Name
 			}
 		}
 		if latestN == 0 {
 			return nil, "", fmt.Errorf("no enabled versions for secret %s", secretName)
 		}
-		return latestPayload, fmt.Sprintf("%d", latestN), nil
+		pl, ok := smSecretPayloads.Get(latestName)
+		if !ok {
+			return nil, "", fmt.Errorf("payload for %s not found", latestName)
+		}
+		return pl.Data, fmt.Sprintf("%d", latestN), nil
 	}
 
 	versionName := fmt.Sprintf("%s/versions/%s", secretName, version)
-	ver, ok := smSecretVersions.Get(versionName)
-	if !ok {
+	if _, ok := smSecretVersions.Get(versionName); !ok {
 		return nil, "", fmt.Errorf("secret version %s not found", versionName)
 	}
-	return ver.payload, version, nil
+	pl, ok := smSecretPayloads.Get(versionName)
+	if !ok {
+		return nil, "", fmt.Errorf("payload for %s not found", versionName)
+	}
+	return pl.Data, version, nil
 }
 
 // resolveLatestVersionID returns the concrete version number of the

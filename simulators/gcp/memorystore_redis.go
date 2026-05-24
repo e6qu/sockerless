@@ -2,11 +2,22 @@ package main
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// simRedisHost derives a deterministic RFC1918 address from the
+// instance ID so terraform-provider-google reads + redis-cli probes
+// see a syntactically valid IP rather than a `.example` placeholder.
+func simRedisHost(id string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	v := h.Sum32()
+	return fmt.Sprintf("10.%d.%d.%d", (v>>16)&0xff, (v>>8)&0xff, v&0xff)
+}
 
 // Cloud Memorystore for Redis v1 — REST surface scoped to instance
 // lifecycle. Real API: https://redis.googleapis.com/$discovery/rest?version=v1
@@ -58,12 +69,17 @@ func handleMSRedisCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst := MSRedisInstance{
-		Name:              msRedisInstanceName(project, location, id),
-		DisplayName:       req.DisplayName,
-		Tier:              defaultStr(req.Tier, "BASIC"),
-		RedisVersion:      defaultStr(req.RedisVersion, "REDIS_7_0"),
-		MemorySizeGb:      defaultInt(req.MemorySizeGb, 1),
-		Host:              fmt.Sprintf("%s.redis.example", id),
+		Name:         msRedisInstanceName(project, location, id),
+		DisplayName:  req.DisplayName,
+		Tier:         defaultStr(req.Tier, "BASIC"),
+		RedisVersion: defaultStr(req.RedisVersion, "REDIS_7_0"),
+		MemorySizeGb: defaultInt(req.MemorySizeGb, 1),
+		// Real Memorystore returns an RFC1918 address that the workload
+		// connects to; emit a deterministic 10.x.x.x derived from the
+		// instance ID so callers and terraform-provider-google reads
+		// see a syntactically valid IP rather than a `.example` placeholder
+		// that resolves to NXDOMAIN.
+		Host:              simRedisHost(id),
 		Port:              6379,
 		State:             "READY",
 		CreateTime:        nowTimestamp(),

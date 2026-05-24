@@ -75,12 +75,16 @@ type ContainerAppRegistry struct {
 	Identity          string `json:"identity,omitempty"`
 }
 
-// ContainerAppSecret mirrors armappcontainers.Secret.
+// ContainerAppSecret mirrors armappcontainers.Secret. KeyVaultURL is
+// an operator-supplied Azure Key Vault secret reference; the sim KV
+// data plane accepts the URL shape but the ACA App runtime does not
+// auto-resolve at app-start time. External by design — same
+// rationale as JobSecret.KeyVaultURL in containerapps.go.
 type ContainerAppSecret struct {
 	Name        string `json:"name"`
 	Value       string `json:"value,omitempty"`
 	Identity    string `json:"identity,omitempty"`
-	KeyVaultURL string `json:"keyVaultUrl,omitempty"`
+	KeyVaultURL string `json:"keyVaultUrl,omitempty"` // external (operator-supplied): KV secret reference; ACA App runtime doesn't auto-resolve
 }
 
 // ContainerAppTemplate mirrors armappcontainers.Template.

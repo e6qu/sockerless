@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -402,9 +403,10 @@ func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Just consume the body and return the PR
-	var req map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&req)
+	// PR-merge endpoint: bleephub doesn't materialise the merge; the
+	// body's commit-title/method fields are GitHub-spec but not consumed
+	// here. Drain explicitly so the no-decode intent is visible.
+	_, _ = io.Copy(io.Discard, r.Body)
 
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
 }

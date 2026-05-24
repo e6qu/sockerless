@@ -146,9 +146,80 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, parts[0])
 				return
 			}
+			// Path-style fallback for SDKs configured with a non-
+			// `*.core.windows.net` endpoint (Azurite-compatible).
+			// Sockerless runs on a single port, so the service is
+			// discriminated by a path prefix instead of a per-service
+			// port:
+			//   /file/{account}/...   → Files data plane
+			//   /queue/{account}/...  → Queues data plane
+			//   /table/{account}/...  → Tables data plane
+			// Connection-string contract: callers configure
+			// `FileEndpoint=http://localhost:14568/file/<account>`.
+			// Bare `/{account}/...` (blob default) is matched in
+			// blob.go's WrapHandler.
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "file"); ok {
+				r.URL.Path = "/" + rest
+				handleFilesDataPlane(w, r, account)
+				return
+			}
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "queue"); ok {
+				r.URL.Path = "/" + rest
+				handleQueuesDataPlane(w, r, account)
+				return
+			}
+			if account, rest, ok := splitServicePrefix(r.URL.Path, "table"); ok {
+				r.URL.Path = "/" + rest
+				handleTablesDataPlane(w, r, account)
+				return
+			}
+			// `.web.` (static website) and `.dfs.` (Data Lake Gen2)
+			// advertise canonical endpoints in StoragePrimaryEndpoints
+			// for wire-fidelity with real Azure, but the sim does not
+			// implement either data plane today. Respond with a clear
+			// 501 NotImplemented so SDK callers see a typed error
+			// rather than 404 — the runner path doesn't reach these
+			// surfaces. File a BUG and add real handlers when a runner
+			// scenario lands.
+			if strings.Contains(host, ".web.") || strings.Contains(host, ".dfs.") {
+				surface := "static-website"
+				if strings.Contains(host, ".dfs.") {
+					surface = "data-lake-gen2"
+				}
+				sim.AzureErrorf(w, "NotImplemented", http.StatusNotImplemented,
+					"Storage %s data plane (host %q) is not implemented by the simulator", surface, host)
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+// splitServicePrefix matches `/<service>/<account>/<rest...>` where
+// `<service>` is the literal `service` argument (file / queue / table)
+// and `<account>` is a known storage account. Returns (account,
+// rest-of-path, true) on match. Path-style sibling of the bare
+// `/{account}/...` blob form in blob.go.
+func splitServicePrefix(path, service string) (account, rest string, ok bool) {
+	p := strings.TrimPrefix(path, "/")
+	prefix := service + "/"
+	if !strings.HasPrefix(p, prefix) {
+		return "", "", false
+	}
+	p = p[len(prefix):]
+	slash := strings.IndexByte(p, '/')
+	var first string
+	if slash < 0 {
+		first = p
+		p = ""
+	} else {
+		first = p[:slash]
+		p = p[slash+1:]
+	}
+	if !knownStorageAccount(first) {
+		return "", "", false
+	}
+	return first, p, true
 }
 
 // ── Files dispatch ──────────────────────────────────────────────────
@@ -283,7 +354,12 @@ func handleFilesPutFile(w http.ResponseWriter, r *http.Request, account, share, 
 		return
 	}
 	defer r.Body.Close()
-	data, err := io.ReadAll(r.Body)
+	body, err := openStreamingBody(r)
+	if err != nil {
+		sim.AzureError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
@@ -502,9 +578,18 @@ func handleQueuePutMessage(w http.ResponseWriter, r *http.Request, account, queu
 		return
 	}
 	defer r.Body.Close()
-	data, _ := io.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.AzureError(w, "RequestBodyInvalid",
+			"Failed to read request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	var req QueueMessageRequest
-	_ = xml.Unmarshal(data, &req)
+	if err := xml.Unmarshal(data, &req); err != nil {
+		sim.AzureError(w, "InvalidXmlDocument",
+			"The specified XML is not syntactically valid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	now := time.Now()
 	msg := QueueMessage{
 		MessageID:      generateUUID(),

@@ -111,3 +111,93 @@ func TestPubSub_NonExistentTopic(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Topic not found")
 }
+
+// TestPubSub_PatchSubscription exercises projects.subscriptions.patch.
+// The terraform-provider-google + the SDK's *ProjectsSubscriptionsService.Patch
+// both emit this verb to mutate ackDeadlineSeconds, messageRetention,
+// pushConfig, etc. without recreating the subscription. updateMask
+// selects which fields apply; fields not in the mask retain prior values.
+func TestPubSub_PatchSubscription(t *testing.T) {
+	svc := pubsubService(t)
+	project := "test-project"
+	topicName := "projects/" + project + "/topics/patch-topic"
+	subName := "projects/" + project + "/subscriptions/patch-sub"
+
+	_, err := svc.Projects.Topics.Create(topicName, &pubsub.Topic{Name: topicName}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Topics.Delete(topicName).Do() })
+
+	sub, err := svc.Projects.Subscriptions.Create(subName, &pubsub.Subscription{
+		Topic:                    topicName,
+		AckDeadlineSeconds:       10,
+		MessageRetentionDuration: "604800s",
+		Filter:                   "attributes.kind = \"news\"",
+	}).Do()
+	require.NoError(t, err)
+	require.Equal(t, int64(10), sub.AckDeadlineSeconds)
+	require.Equal(t, "604800s", sub.MessageRetentionDuration)
+	t.Cleanup(func() { _, _ = svc.Projects.Subscriptions.Delete(subName).Do() })
+
+	// PATCH ackDeadlineSeconds + messageRetentionDuration only; Filter
+	// stays unchanged because it's not in the mask.
+	patched, err := svc.Projects.Subscriptions.Patch(subName, &pubsub.UpdateSubscriptionRequest{
+		Subscription: &pubsub.Subscription{
+			AckDeadlineSeconds:       60,
+			MessageRetentionDuration: "86400s",
+			Filter:                   "this-should-not-apply",
+		},
+		UpdateMask: "ackDeadlineSeconds,messageRetentionDuration",
+	}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), patched.AckDeadlineSeconds, "ackDeadlineSeconds should be updated")
+	assert.Equal(t, "86400s", patched.MessageRetentionDuration, "messageRetentionDuration should be updated")
+	assert.Equal(t, "attributes.kind = \"news\"", patched.Filter,
+		"Filter must be unchanged — not in updateMask")
+
+	// GET back to confirm persistence.
+	got, err := svc.Projects.Subscriptions.Get(subName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), got.AckDeadlineSeconds)
+	assert.Equal(t, "86400s", got.MessageRetentionDuration)
+	assert.Equal(t, "attributes.kind = \"news\"", got.Filter)
+
+	// Unknown updateMask paths must return 400 InvalidArgument —
+	// silently skipping would hide a caller-side typo.
+	_, err = svc.Projects.Subscriptions.Patch(subName, &pubsub.UpdateSubscriptionRequest{
+		Subscription: &pubsub.Subscription{Labels: map[string]string{"env": "test"}},
+		UpdateMask:   "labels,unknownField",
+	}).Do()
+	require.Error(t, err, "unknown updateMask path must surface as 400")
+	assert.Contains(t, err.Error(), "unknown updateMask path")
+
+	// Confirm the failed PATCH was atomic — the prior `labels` path
+	// in the same mask must NOT have been applied (the request as
+	// a whole rejected, not partially persisted).
+	got2, err := svc.Projects.Subscriptions.Get(subName).Do()
+	require.NoError(t, err)
+	assert.Empty(t, got2.Labels, "failed PATCH must not partially apply labels")
+}
+
+// TestPubSub_PatchTopic exercises projects.topics.patch. The only
+// mutable field on real Pub/Sub topics today is `labels`.
+func TestPubSub_PatchTopic(t *testing.T) {
+	svc := pubsubService(t)
+	topicName := "projects/test-project/topics/patch-topic-labels"
+	_, err := svc.Projects.Topics.Create(topicName, &pubsub.Topic{
+		Name:   topicName,
+		Labels: map[string]string{"env": "before"},
+	}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Topics.Delete(topicName).Do() })
+
+	_, err = svc.Projects.Topics.Patch(topicName, &pubsub.UpdateTopicRequest{
+		Topic:      &pubsub.Topic{Labels: map[string]string{"env": "after", "team": "platform"}},
+		UpdateMask: "labels",
+	}).Do()
+	require.NoError(t, err)
+
+	got, err := svc.Projects.Topics.Get(topicName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "after", got.Labels["env"])
+	assert.Equal(t, "platform", got.Labels["team"])
+}

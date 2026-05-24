@@ -41,6 +41,22 @@ rg -nC2 'NewDecoder\([^)]+\)\.Decode\(' --type go \
   | rg -B1 -A1 '_\s*=' 
 ```
 
+### Pattern A2 — silent two-value reads (`data, _ := io.ReadAll(...)`)
+
+Same shape as A but in the **two-value-with-`_`-in-position-2** form: `data, _ := io.ReadAll(r.Body)` followed within a few lines by `_ = xml.Unmarshal(data, &req)` (or json / yaml / toml) is a two-stacked silent error chain. Pattern A's grep catches the second line but misses the first; this pattern catches the read side directly.
+
+```bash
+# Two-value reads with discarded error position-2 — io.ReadAll, io.Copy, ioutil.ReadAll
+rg -nC1 ',\s*_\s*:?=\s*io\.(ReadAll|Copy)\(' --type go \
+  -g '!*_test.go' -g '!*_gen.go' -g '!vendor/'
+
+# Anywhere `io.ReadAll(r.Body)` lives in a Go handler — flag for review unless
+# the body is documented as fixed-shape JSON serialised with Content-Length.
+rg -n 'io\.ReadAll\(r\.Body\)' --type go -g '!*_test.go' -g '!vendor/'
+```
+
+If `r.Body` ReadAll is followed within ±5 lines by a `_ = json/xml/yaml/toml.Unmarshal(...)`, that's a stacked-swallow chain. Both errors must be checked, or the handler must justify why a malformed wire-byte stream is acceptable.
+
 ### Pattern B — silent base64 / hex / url-decode
 
 Same shape, different codec. The historical bug-fix sweep for `SOCKERLESS_LABELS` (BUG-1019) was this.
@@ -138,8 +154,12 @@ if _, err := io.Copy(w, rc); err != nil {
 - **BUG-1019** — Cloud Functions backend decoded `SOCKERLESS_LABELS` env var with silent base64 + JSON errors, falling through to a legacy fallback that produced ghost containers.
 - **BUG-1025** — bleephub smart-HTTP advertise path swallowed pktline encoder errors at three sites.
 - **BUG-1033** — Five `io.Copy` calls in image-streaming + build response paths swallowed mid-stream copy errors.
+- **BUG-1105** (Phase 174 round 1) — 23 silent `_ = sim.ReadJSON(r, &req)` sites across Phase 173 handlers (apim.go, servicebus.go, postgres_flexible.go, pubsub.go, memorystore_redis.go, apigateway.go, sqladmin.go, sqs.go).
+- **BUG-1106** — silent `_ = json.NewDecoder(r.Body).Decode(&body)` in `handleKVCreateCertificate`.
+- **(Phase 175)** — silent stacked `data, _ := io.ReadAll(r.Body)` + `_ = xml.Unmarshal(data, &req)` in `simulators/azure/storage_dataplane.go:505-507` — exact Pattern A2 shape introduced in Phase 174 round 2 (same PR that added the xml handler).
+- **(Phase 175)** — silent `_ = json.Unmarshal(decoded, &entrypoint)` in `simulators/azure/functions.go:666` + `:670` after base64 decode of `SOCKERLESS_ENTRYPOINT`/`SOCKERLESS_CMD` — BUG-1019 replay on a different env-var pair.
 
-Six bugs across two phases — the recurrence rate justifies the dedicated scan.
+Eight+ bugs across four phases — the recurrence rate justifies the dedicated scan. **Re-run the scan after every PR's own changes**, not just before — the BUG-1104 meta-shape is that helpers written in a PR get bypassed elsewhere in the same PR.
 
 ## Related skills
 

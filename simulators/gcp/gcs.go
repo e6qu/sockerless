@@ -96,7 +96,7 @@ func registerGCS(srv *sim.Server) {
 		now := nowTimestamp()
 		data["id"] = name
 		data["kind"] = "storage#bucket"
-		data["selfLink"] = fmt.Sprintf("https://www.googleapis.com/storage/v1/b/%s", name)
+		data["selfLink"] = gcpSelfLink(r, fmt.Sprintf("/storage/v1/b/%s", name))
 		data["projectNumber"] = "123456789012"
 		data["metageneration"] = "1"
 		data["etag"] = "CAE="

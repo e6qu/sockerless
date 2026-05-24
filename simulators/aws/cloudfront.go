@@ -657,6 +657,10 @@ func handleCFCreateDistribution(w http.ResponseWriter, r *http.Request) {
 	}
 	cfDistributions.Put(id, cfStoredDistribution{Distribution: dist, ETag: etag, Tags: tags})
 	w.Header().Set("ETag", etag)
+	// external: real-AWS canonical Location header; aws-sdk-go-v2
+	// parses the distribution ID from the response body, not from
+	// this header, so callers configured with a sim endpoint work
+	// fine despite the URL host pointing at the real AWS surface.
 	w.Header().Set("Location", fmt.Sprintf("https://cloudfront.amazonaws.com/%s/distribution/%s", cfAPIVersion, id))
 	cfWriteXML(w, http.StatusCreated, dist)
 }
@@ -825,6 +829,8 @@ func handleCFCreateOAC(w http.ResponseWriter, r *http.Request) {
 	}
 	cfOriginAccessControls.Put(id, cfStoredOAC{OAC: oac, ETag: etag})
 	w.Header().Set("ETag", etag)
+	// external: same rationale as the distribution Location header
+	// above — SDK parses ID from body, not from this header.
 	w.Header().Set("Location", fmt.Sprintf("https://cloudfront.amazonaws.com/%s/origin-access-control/%s", cfAPIVersion, id))
 	cfWriteXML(w, http.StatusCreated, oac)
 }

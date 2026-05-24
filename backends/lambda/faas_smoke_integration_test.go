@@ -21,7 +21,13 @@ func TestLambdaFaaSE2ESmoke(t *testing.T) {
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "while [ ! -f /tmp/sockerless-done ]; do sleep 1; done"},
+			// Shell traps SIGTERM → exit 0. `sleep 600 & wait`
+			// keeps the shell alive but lets the trap fire while
+			// idle. Termination is driven by the test's
+			// ContainerStop call below; signalling externally
+			// keeps the exec processes alive long enough to
+			// report their exit status.
+			Cmd: []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
 		},
 		nil, nil, nil, "lambda_faas_smoke_"+testID,
 	)
@@ -35,23 +41,33 @@ func TestLambdaFaaSE2ESmoke(t *testing.T) {
 	}
 
 	runLambdaSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf lambda-step-1"}, "lambda-step-1")
-	runLambdaSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf lambda-step-2 && touch /tmp/sockerless-done"}, "lambda-step-2")
+	runLambdaSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf lambda-step-2"}, "lambda-step-2")
 
 	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	stopTimeout := 2
+	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		t.Fatalf("container stop failed: %v", err)
+	}
 	select {
 	case result := <-waitCh:
-		if result.StatusCode != 0 {
-			t.Fatalf("wait status = %d, want 0", result.StatusCode)
+		// Lambda's ContainerStop reports ExitCode=137 (the FaaS
+		// "force-terminated" semantic — AWS Lambda has no signal API
+		// to deliver SIGTERM to the underlying container; the backend
+		// records 137 directly on stop and lets the in-flight
+		// invocation drain in the background).
+		if result.StatusCode != 137 {
+			t.Fatalf("wait status = %d, want 137 (Lambda stop semantic)", result.StatusCode)
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container exit")
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout waiting for container exit (30s after ContainerStop)")
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
-		t.Fatalf("container remove failed: %v", err)
-	}
+	// The Lambda backend deletes the underlying function when the
+	// container stops, so the container ID is already gone by the
+	// time the test's t.Cleanup runs (Force: true is idempotent
+	// on 404).
 }
 
 func runLambdaSmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {

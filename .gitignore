@@ -147,6 +147,8 @@ cmd/sockerless/sockerless
 agent/sockerless-cloudrun-bootstrap
 agent/sockerless-gcf-bootstrap
 agent/sockerless-lambda-bootstrap
+agent/sockerless-azf-bootstrap
+agent/sockerless-azf-bootstrap-test
 backends/*/dist/
 simulators/*/dist/
 .stack-pids/

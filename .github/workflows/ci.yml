@@ -38,19 +38,53 @@ jobs:
       - name: Check dependency freshness
         run: bash scripts/check-latest-deps.sh
 
-  test:
-    # Native linux/arm64 runner — matches the sim's primary capacity
-    # contract. Workloads are linux/arm64; running on a native arm64
-    # runner means no QEMU emulation anywhere in CI.
+  # test-core: fast unit + library tests, no Docker integration.
+  # Split out so flakes in per-backend integration don't restart the
+  # whole 12-minute monolith. Runs ~3 minutes.
+  test-core:
+    name: test (core)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Architecture checks
+        run: bash scripts/check-cloud-backend-isolation.sh
+      - name: Core + API + agent
+        run: |
+          set -e
+          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 15m ./...); }
+          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 15m ./...); }
+          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 15m ./...); }
+          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
+          run_noflags api
+          run backends/core
+          run_race agent
+          run backends/aws-common
+          run backends/gcp-common
+          run backends/azure-common
+          run bleephub
+          run cmd/sockerless-admin
+          run_work simulators/aws/shared
+          run_work simulators/gcp/shared
+          run_work simulators/azure/shared
+
+  # test-backend: per-backend matrix. Each job runs one backend's
+  # integration tests (TestMain spawns sim + backend, exercises Docker).
+  # Matrix isolates flakes to one job — re-run individual backend
+  # without restarting the others. FaaS smoke tests are skipped here
+  # (`-skip FaaSE2ESmoke`) — they run in `test-faas-smoke` below.
+  test-backend:
+    name: test (${{ matrix.backend }})
     runs-on: ubuntu-24.04-arm
     env:
-      # Every backend's TestMain builds + runs its simulator binary,
-      # starts the backend process, and exercises real Docker containers
-      # against the docker SDK. Ubuntu runners ship with dockerd running,
-      # so the integration tests work without extra setup. SOCKERLESS_TEST_TARGET
-      # is required by every backend's TestMain (no fallbacks, no skips,
-      # explicit config); CI sets sim.
       SOCKERLESS_TEST_TARGET: "sim"
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [ecs, lambda, cloudrun, cloudrun-functions, aca, azure-functions]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -59,50 +93,36 @@ jobs:
           cache: true
       - name: Verify docker available
         run: docker version && docker info
-      - name: Tests (unit + per-backend integration)
+      - name: Integration tests for ${{ matrix.backend }}
         run: |
           set -e
-          # Timeout covers TestMain spawning sim+backend, image pulls, and
-          # full arithmetic / lifecycle runs. Fast packages finish early.
-          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 15m ./...); }
-          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 15m ./...); }
-          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 15m ./...); }
-          run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
+          cd "backends/${{ matrix.backend }}"
+          # ECS doesn't have FaaS smoke tests; skip flag is a no-op there.
+          go test -tags noui -v -skip 'FaaSE2ESmoke' -timeout 15m ./...
 
-          # Architecture checks
-          bash scripts/check-cloud-backend-isolation.sh
-
-          # Core + API
-          run_noflags api
-          run backends/core
-          run_race agent
-
-          # Cloud common modules
-          run backends/aws-common
-          run backends/gcp-common
-          run backends/azure-common
-
-          # Cloud backends (with integration tests)
-          run backends/ecs
-          run_backend() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -skip 'FaaSE2ESmoke' -timeout 15m ./...); }
-          run_backend backends/lambda
-          run_backend backends/cloudrun
-          run_backend backends/cloudrun-functions
-          run_backend backends/aca
-          run_backend backends/azure-functions
-
-          # Runner-shaped FaaS lifecycle guards are dedicated Make targets:
-          # create → start → exec×N → wait → remove against local simulators.
-          make faas-smoke-test-all
-
-          # Services
-          run bleephub
-          run cmd/sockerless-admin
-
-          # Simulator shared libraries
-          run_work simulators/aws/shared
-          run_work simulators/gcp/shared
-          run_work simulators/azure/shared
+  # test-faas-smoke: per-backend FaaS smoke matrix. These tests
+  # exercise the runner-shaped lifecycle (create → start → exec×N →
+  # signal → wait → remove). Isolated to their own jobs so
+  # signal-timing flakes don't restart the unit suite.
+  test-faas-smoke:
+    name: test (${{ matrix.backend }} faas-smoke)
+    runs-on: ubuntu-24.04-arm
+    env:
+      SOCKERLESS_TEST_TARGET: "sim"
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [lambda, cloudrun, gcf, aca, azf]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Verify docker available
+        run: docker version && docker info
+      - name: FaaS smoke for ${{ matrix.backend }}
+        run: make faas-smoke-test-${{ matrix.backend }}
 
   test-e2e:
     # Native linux/arm64 — same rationale as `test`.

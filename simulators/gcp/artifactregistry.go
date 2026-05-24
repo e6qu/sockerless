@@ -25,7 +25,7 @@ type Repository struct {
 	Mode                   string         `json:"mode,omitempty"`
 	Description            string         `json:"description,omitempty"`
 	RemoteRepositoryConfig map[string]any `json:"remoteRepositoryConfig,omitempty"`
-	RegistryURI            string         `json:"registryUri,omitempty"`
+	RegistryURI            string         `json:"registryUri,omitempty"` // external: canonical `<location>-docker.pkg.dev/<project>/<repo>` URI; sim serves OCI at the configured endpoint, not pkg.dev
 	CreateTime             string         `json:"createTime"`
 	UpdateTime             string         `json:"updateTime"`
 }
@@ -33,7 +33,7 @@ type Repository struct {
 // DockerImage represents a Docker image in Artifact Registry.
 type DockerImage struct {
 	Name       string   `json:"name"`
-	URI        string   `json:"uri"`
+	URI        string   `json:"uri"` // external: canonical `<location>-docker.pkg.dev/<project>/<repo>@<digest>` URI; sim serves OCI at the configured endpoint
 	Tags       []string `json:"tags,omitempty"`
 	UploadTime string   `json:"uploadTime"`
 	MediaType  string   `json:"mediaType,omitempty"`

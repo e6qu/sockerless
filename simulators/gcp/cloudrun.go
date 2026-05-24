@@ -101,7 +101,7 @@ type CRServiceStatus struct {
 }
 
 type CRAddress struct {
-	URL string `json:"url"` // external: same canonical run.app URL as CRServiceStatus.URL above
+	URL string `json:"url"` // external: cluster-internal DNS form `http://<svc>.<ns>.svc.cluster.local`; sim does not implement Knative cluster-internal routing
 }
 
 type CRCondition struct {

@@ -64,6 +64,11 @@ type SQSMessage struct {
 var sqsQueues sim.Store[SQSQueue]
 
 // sqsQueueURL builds the canonical queue URL real SQS emits.
+// external: real-AWS canonical `sqs.<region>.amazonaws.com` host;
+// the aws-sdk-go-v2 SQS client treats the queue URL as an opaque
+// key (used as the QueueUrl input to every subsequent operation)
+// rather than dereferencing it directly, so this works for SDK
+// callers configured with a sim endpoint.
 func sqsQueueURL(name string) string {
 	return fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s",
 		awsRegion(), awsAccountID(), name)
@@ -348,9 +353,15 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			"The specified queue does not exist", http.StatusBadRequest)
 		return
 	}
+	// Real SQS caps MaxNumberOfMessages at 10 (silently); requests with
+	// values >10 should NOT be coerced down to 1 (which breaks
+	// SDK pollers that batch 10-at-a-time). Default when zero/negative
+	// is 1 per the API spec.
 	maxN := req.MaxNumberOfMessages
-	if maxN <= 0 || maxN > 10 {
+	if maxN <= 0 {
 		maxN = 1
+	} else if maxN > 10 {
+		maxN = 10
 	}
 	visTimeout := q.VisibilityTimeout
 	if req.VisibilityTimeout != nil {

@@ -103,14 +103,29 @@ type KeyVaultVNetRule struct {
 // KeyVaultSecret is the data-plane secret resource. Real Azure stores
 // per-version material; the sim collapses to the single current
 // version (matches the read-most pattern runners use).
+//
+// This is the wire shape only — what handler responses serialise.
+// The persistence shape (kvSecretStored) wraps it with Vault+Name
+// fields needed for List filters; those fields must not appear on
+// the wire so they live on the wrapper, not here.
 type KeyVaultSecret struct {
-	Vault       string            `json:"-"`
-	Name        string            `json:"-"`
 	ID          string            `json:"id"` // Full URL `<vault>/secrets/{name}/<version>`
 	Value       string            `json:"value"`
 	Attributes  KeyVaultAttrs     `json:"attributes"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	ContentType string            `json:"contentType,omitempty"`
+}
+
+// kvSecretStored is the persistence record. Vault+Name are exported
+// with normal JSON tags so sim.Store's json.Marshal round-trip
+// preserves them. KeyVaultSecret is embedded so handlers can emit
+// the embedded value directly; the Vault+Name fields don't reach
+// the wire because they aren't on the embedded type. The List
+// handlers iterate over kvSecretStored to filter by Vault.
+type kvSecretStored struct {
+	Vault string `json:"vault"`
+	Name  string `json:"name"`
+	KeyVaultSecret
 }
 
 // KeyVaultAttrs mirrors the data-plane SecretAttributes shape.
@@ -124,14 +139,14 @@ type KeyVaultAttrs struct {
 
 var (
 	keyVaults    sim.Store[KeyVault]
-	keyVaultData sim.Store[KeyVaultSecret] // key: <vault>/<secretName>
+	keyVaultData sim.Store[kvSecretStored] // key: <vault>/<secretName>
 )
 
 func registerKeyVault(srv *sim.Server) {
 	keyVaults = sim.MakeStore[KeyVault](srv.DB(), "keyvaults")
-	keyVaultData = sim.MakeStore[KeyVaultSecret](srv.DB(), "keyvault_secrets")
-	keyVaultKeys = sim.MakeStore[KeyVaultKey](srv.DB(), "keyvault_keys")
-	keyVaultCertificates = sim.MakeStore[KeyVaultCertificate](srv.DB(), "keyvault_certificates")
+	keyVaultData = sim.MakeStore[kvSecretStored](srv.DB(), "keyvault_secrets")
+	keyVaultKeys = sim.MakeStore[kvKeyStored](srv.DB(), "keyvault_keys")
+	keyVaultCertificates = sim.MakeStore[kvCertStored](srv.DB(), "keyvault_certificates")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.KeyVault"
 
@@ -154,17 +169,18 @@ func registerKeyVault(srv *sim.Server) {
 			sub, rg, name)
 		// vaultUri uses the same subdomain routing as storage so
 		// SDK callers reach the data plane through the standard URL.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
+		// Real Azure ARM `properties.vaultUri` is always `https://`
+		// regardless of TLS termination at the load balancer; the
+		// sim hard-codes it for consistency with the data-plane URL
+		// emitter (buildKVURL), so SDKs that follow vaultUri into
+		// the data plane don't trip on cross-API scheme drift.
 		hostname := r.Host
 		portSuffix := ""
 		if i := strings.LastIndex(hostname, ":"); i >= 0 {
 			portSuffix = hostname[i:]
 			hostname = hostname[:i]
 		}
-		vaultURI := fmt.Sprintf("%s://%s.vault.%s%s/", scheme, name, hostname, portSuffix)
+		vaultURI := fmt.Sprintf("https://%s.vault.%s%s/", name, hostname, portSuffix)
 
 		if req.Properties.Sku == nil {
 			req.Properties.Sku = &KeyVaultSku{Family: "A", Name: "standard"}
@@ -299,23 +315,26 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 // KeyVaultKey is a key stored at /keys/{name}. Real KV stores a
 // public + private half via Azure-managed HSM; the sim stores
 // only the operator-supplied JsonWebKey envelope on Create and
-// echoes it on read.
+// echoes it on read. Wire shape only; persistence wrapper is
+// kvKeyStored (same shape as kvSecretStored).
 type KeyVaultKey struct {
-	Vault      string            `json:"-"`
-	Name       string            `json:"-"`
 	ID         string            `json:"kid"`
 	JsonWebKey map[string]any    `json:"key,omitempty"`
 	Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 }
 
+type kvKeyStored struct {
+	Vault string `json:"vault"`
+	Name  string `json:"name"`
+	KeyVaultKey
+}
+
 // KeyVaultCertificate is a certificate at /certificates/{name}.
 // Real KV produces a chain (cert + private key + thumbprint); the
 // sim stores the operator-supplied content + a deterministic
-// thumbprint.
+// thumbprint. Wire shape only; persistence wrapper is kvCertStored.
 type KeyVaultCertificate struct {
-	Vault          string            `json:"-"`
-	Name           string            `json:"-"`
 	ID             string            `json:"id"`
 	X509Thumbprint string            `json:"x5t,omitempty"`
 	Policy         map[string]any    `json:"policy,omitempty"`
@@ -323,9 +342,15 @@ type KeyVaultCertificate struct {
 	Tags           map[string]string `json:"tags,omitempty"`
 }
 
+type kvCertStored struct {
+	Vault string `json:"vault"`
+	Name  string `json:"name"`
+	KeyVaultCertificate
+}
+
 var (
-	keyVaultKeys         sim.Store[KeyVaultKey]
-	keyVaultCertificates sim.Store[KeyVaultCertificate]
+	keyVaultKeys         sim.Store[kvKeyStored]
+	keyVaultCertificates sim.Store[kvCertStored]
 )
 
 // handleKVKey routes /keys/* requests.
@@ -426,14 +451,14 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	}
 	now := time.Now().Unix()
 	key := KeyVaultKey{
-		Vault: vault, Name: name, ID: id, JsonWebKey: jwk,
+		ID: id, JsonWebKey: jwk,
 		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
 		Tags:       body.Tags,
 	}
 	if body.Attributes != nil {
 		key.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultKeys.Put(keyVaultKeyKey(vault, name), key)
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{Vault: vault, Name: name, KeyVaultKey: key})
 	sim.WriteJSON(w, http.StatusOK, key)
 }
 
@@ -455,32 +480,32 @@ func handleKVImportKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	body.Key["kid"] = id
 	now := time.Now().Unix()
 	key := KeyVaultKey{
-		Vault: vault, Name: name, ID: id, JsonWebKey: body.Key,
+		ID: id, JsonWebKey: body.Key,
 		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
 		Tags:       body.Tags,
 	}
 	if body.Attributes != nil {
 		key.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultKeys.Put(keyVaultKeyKey(vault, name), key)
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{Vault: vault, Name: name, KeyVaultKey: key})
 	sim.WriteJSON(w, http.StatusOK, key)
 }
 
 func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name string) {
-	k, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
 	if !ok {
 		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
 			"A key with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, k)
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultKey)
 }
 
 func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
 	var out []KeyVaultKey
 	for _, k := range keyVaultKeys.List() {
 		if k.Vault == vault {
-			out = append(out, k)
+			out = append(out, k.KeyVaultKey)
 		}
 	}
 	if out == nil {
@@ -490,14 +515,14 @@ func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
 }
 
 func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name string) {
-	k, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
 	if !ok {
 		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
 			"A key with (name/id) %q was not found in this key vault.", name)
 		return
 	}
 	keyVaultKeys.Delete(keyVaultKeyKey(vault, name))
-	sim.WriteJSON(w, http.StatusOK, k)
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultKey)
 }
 
 // handleKVCertificate routes /certificates/* requests.
@@ -555,7 +580,7 @@ func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, na
 	now := time.Now().Unix()
 	thumbprint := strings.ToUpper(generateUUID()[:8])
 	c := KeyVaultCertificate{
-		Vault: vault, Name: name, ID: id, X509Thumbprint: thumbprint,
+		ID: id, X509Thumbprint: thumbprint,
 		Policy:     body.Policy,
 		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
 		Tags:       body.Tags,
@@ -563,25 +588,25 @@ func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, na
 	if body.Attributes != nil {
 		c.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultCertificates.Put(keyVaultCertKey(vault, name), c)
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), kvCertStored{Vault: vault, Name: name, KeyVaultCertificate: c})
 	sim.WriteJSON(w, http.StatusOK, c)
 }
 
 func handleKVGetCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
-	c, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
 	if !ok {
 		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
 			"A certificate with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, c)
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
 }
 
 func handleKVListCertificates(w http.ResponseWriter, r *http.Request, vault string) {
 	var out []KeyVaultCertificate
 	for _, c := range keyVaultCertificates.List() {
 		if c.Vault == vault {
-			out = append(out, c)
+			out = append(out, c.KeyVaultCertificate)
 		}
 	}
 	if out == nil {
@@ -591,14 +616,14 @@ func handleKVListCertificates(w http.ResponseWriter, r *http.Request, vault stri
 }
 
 func handleKVDeleteCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
-	c, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
 	if !ok {
 		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
 			"A certificate with (name/id) %q was not found in this key vault.", name)
 		return
 	}
 	keyVaultCertificates.Delete(keyVaultCertKey(vault, name))
-	sim.WriteJSON(w, http.StatusOK, c)
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
 }
 
 func defaultKVKty(s string) string {
@@ -620,10 +645,10 @@ func defaultKVKty(s string) string {
 //
 // `r.Host` already carries the `<vault>.vault.<sim-or-real-host>`
 // subdomain the client connected on (the WrapHandler dispatch
-// extracted `vault` from this same r.Host). So `r.Host` IS the
-// canonical host; prepending another `<vault>.vault.` produces
-// the BUG-184 shape `https://kv.vault.kv.vault.azure.net/...`
-// with duplicated host segments. Use `r.Host` directly.
+// extracted `vault` from this same r.Host). `r.Host` IS the
+// canonical host; prepending another `<vault>.vault.` would
+// duplicate host segments like `kv.vault.kv.vault.azure.net`.
+// Use `r.Host` directly.
 func buildKVURL(r *http.Request, vault, kind, name, version string) string {
 	host := r.Host
 	if host == "" {
@@ -648,21 +673,12 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 	}
 	now := time.Now().Unix()
 	version := generateUUID()
-	id := fmt.Sprintf("%s://%s.vault.%s/secrets/%s/%s",
-		r.URL.Scheme, vault, r.Host, name, version)
-	if id == "" || strings.HasPrefix(id, "://") {
-		// Fallback when r.URL.Scheme is empty (the sim's mux passes a
-		// relative URL). Reconstruct from Host so the SDK can parse
-		// the returned ID like a real Key Vault response.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		id = fmt.Sprintf("%s://%s/secrets/%s/%s", scheme, r.Host, name, version)
-	}
+	// All KV ID emitters route through buildKVURL so the scheme +
+	// host shape stays consistent across handlers. r.URL.Scheme is
+	// unreliable behind the sim's mux (typically empty); the helper
+	// hard-codes `https://` to match real Azure KV.
+	id := buildKVURL(r, vault, "secrets", name, version)
 	secret := KeyVaultSecret{
-		Vault:       vault,
-		Name:        name,
 		ID:          id,
 		Value:       body.Value,
 		Tags:        body.Tags,
@@ -678,23 +694,23 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 		secret.Attributes.NotBefore = body.Attributes.NotBefore
 		secret.Attributes.Expires = body.Attributes.Expires
 	}
-	keyVaultData.Put(keyVaultSecretKey(vault, name), secret)
+	keyVaultData.Put(keyVaultSecretKey(vault, name), kvSecretStored{Vault: vault, Name: name, KeyVaultSecret: secret})
 	sim.WriteJSON(w, http.StatusOK, secret)
 }
 
 func handleKVGetSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
-	secret, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
 	if !ok {
 		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
 			"A secret with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, secret)
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultSecret)
 }
 
 func handleKVDeleteSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
 	key := keyVaultSecretKey(vault, name)
-	secret, ok := keyVaultData.Get(key)
+	rec, ok := keyVaultData.Get(key)
 	if !ok {
 		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
 			"A secret with (name/id) %q was not found in this key vault.", name)
@@ -704,18 +720,16 @@ func handleKVDeleteSecret(w http.ResponseWriter, r *http.Request, vault, name st
 	// Real Key Vault returns the deleted secret + a recovery URL. The
 	// sim returns the secret bytes (sufficient for SDK callers that
 	// just check the response body for the deleted resource ID).
-	secret.Attributes.Enabled = false
-	sim.WriteJSON(w, http.StatusOK, secret)
+	rec.Attributes.Enabled = false
+	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultSecret)
 }
 
 func handleKVListSecrets(w http.ResponseWriter, r *http.Request, vault string) {
-	prefix := vault + "/"
-	all := keyVaultData.Filter(func(s KeyVaultSecret) bool {
+	all := keyVaultData.Filter(func(s kvSecretStored) bool {
 		return s.Vault == vault
 	})
-	_ = prefix
 	if all == nil {
-		all = []KeyVaultSecret{}
+		all = []kvSecretStored{}
 	}
 	out := make([]map[string]any, 0, len(all))
 	for _, s := range all {

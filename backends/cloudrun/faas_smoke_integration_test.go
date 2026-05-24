@@ -35,10 +35,18 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 	rc.Close()
 
 	testID := generateTestID()
+	// External-signal termination (ContainerStop → SIGTERM) instead
+	// of filesystem polling. The exec helpers verify their own
+	// stdout/exit code; the test code then issues ContainerStop, the
+	// container's shell receives SIGTERM, the `trap 'exit 0' TERM`
+	// handler fires and exits cleanly. This avoids the previous
+	// `kill 1` from inside the exec, which killed PID 1 before the
+	// exec process could report its exit status (Docker then reported
+	// the exec as exit code -1).
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image: "alpine:latest",
-			Cmd:   []string{"sh", "-c", "while [ ! -f /tmp/sockerless-done ]; do sleep 1; done"},
+			Cmd:   []string{"sh", "-c", "trap 'exit 0' TERM; sleep 600 & wait"},
 		},
 		nil, nil, nil, "cloudrun_faas_smoke_"+testID,
 	)
@@ -54,23 +62,28 @@ func TestCloudRunFaaSE2ESmoke(t *testing.T) {
 	}
 
 	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-1"}, "cloudrun-step-1")
-	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-2 && touch /tmp/sockerless-done"}, "cloudrun-step-2")
+	runCloudRunSmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf cloudrun-step-2"}, "cloudrun-step-2")
 
 	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
+	stopTimeout := 2
+	if err := dockerClient.ContainerStop(ctx, resp.ID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		t.Fatalf("container stop failed: %v", err)
+	}
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
-			t.Fatalf("wait status = %d, want 0", result.StatusCode)
+			t.Fatalf("wait status = %d, want 0 (trap caught SIGTERM)", result.StatusCode)
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait error: %v", err)
-	case <-time.After(5 * time.Minute):
-		t.Fatal("timeout waiting for container exit")
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout waiting for container exit (30s after ContainerStop SIGTERM)")
 	}
 
-	if err := dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
-		t.Fatalf("container remove failed: %v", err)
-	}
+	// Cloud Run's backend deletes the underlying service when the
+	// container stops, so the container ID is already gone by the
+	// time the test's t.Cleanup runs (with Force: true, which is
+	// idempotent on 404). No explicit ContainerRemove here.
 }
 
 func runCloudRunSmokeExec(t *testing.T, ctx context.Context, containerID string, cmd []string, wantStdout string) {

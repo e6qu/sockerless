@@ -802,11 +802,15 @@ func handleAzureFilesPutRange(w http.ResponseWriter, r *http.Request, hostPath s
 
 func readAllRequest(r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
+	body, err := openStreamingBody(r)
+	if err != nil {
+		return nil, err
+	}
 	const max = 1024 * 1024 * 64 // 64 MiB cap per request
 	buf := make([]byte, 0, 4096)
 	tmp := make([]byte, 4096)
 	for {
-		n, err := r.Body.Read(tmp)
+		n, err := body.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
 			if int64(len(buf)) > max {

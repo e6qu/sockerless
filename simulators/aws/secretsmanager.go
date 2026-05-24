@@ -502,6 +502,11 @@ func handleSMTagResource(w http.ResponseWriter, r *http.Request) {
 			s.Tags = append(s.Tags, SMTag{Key: k, Value: v})
 		}
 	})
+	// Real Secrets Manager TagResource returns 200 with the awsJson1_1
+	// Content-Type and an empty body. Set the Content-Type explicitly
+	// so the SDK's deserialiser sees the right MIME; an unset header
+	// would default to text/plain on Go's net/http.
+	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -533,6 +538,7 @@ func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Tags = filtered
 	})
+	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 	w.WriteHeader(http.StatusOK)
 }
 

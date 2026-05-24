@@ -62,7 +62,7 @@ type LambdaFunctionCode struct {
 	S3Bucket        string `json:"S3Bucket,omitempty"`
 	S3Key           string `json:"S3Key,omitempty"`
 	S3ObjectVersion string `json:"S3ObjectVersion,omitempty"`
-	ImageUri        string `json:"ImageUri,omitempty"`
+	ImageUri        string `json:"ImageUri,omitempty"` // external (operator-supplied): OCI image reference, any registry
 	ZipFile         string `json:"ZipFile,omitempty"`
 }
 
@@ -214,6 +214,12 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Code.Location is external: real Lambda returns a presigned S3
+	// URL (`https://awslambda-<region>-tasks.s3.<region>.amazonaws.com/snapshots/<fn>`)
+	// that aws-sdk-go-v2 + terraform-provider-aws + the Lambda console
+	// dereference to fetch the deployment package. The sim does not
+	// host an equivalent surface; clients that follow the URL will
+	// receive whatever real AWS returns for an unknown snapshot.
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Configuration": fn,
 		"Code": map[string]string{
@@ -362,7 +368,25 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 		// RequestResponse — Image-package functions go through the
 		// Runtime API slice; Zip-package functions stay on the
 		// control-plane synthetic path (no container launched).
-		payload, _ := io.ReadAll(r.Body)
+		//
+		// aws-sdk-go-v2 gates request-compression via the
+		// `requestcompression` trait; Lambda Invoke isn't in that
+		// set today but has been flagged for future inclusion. If a
+		// caller sends a `Content-Encoding`, fail loud rather than
+		// forward the gzipped envelope into the runtime.
+		if ce := r.Header.Get("Content-Encoding"); ce != "" {
+			sim.AWSError(w, "InvalidRequest",
+				fmt.Sprintf("Content-Encoding %q not supported on Lambda Invoke", ce),
+				http.StatusUnsupportedMediaType)
+			return
+		}
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.AWSError(w, "RequestBodyInvalid",
+				"failed to read invocation payload: "+err.Error(),
+				http.StatusBadRequest)
+			return
+		}
 		responseBody, unhandled, _ := invokeLambdaViaRuntimeAPI(fn, payload)
 		if unhandled {
 			w.Header().Set("X-Amz-Function-Error", "Unhandled")

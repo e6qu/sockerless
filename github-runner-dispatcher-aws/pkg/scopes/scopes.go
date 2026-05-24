@@ -145,8 +145,7 @@ func WaitFromRateHeaders(h http.Header, now time.Time) time.Duration {
 	}
 	if v := h.Get("X-RateLimit-Reset"); v != "" {
 		if epoch, err := strconv.ParseInt(v, 10, 64); err == nil && epoch > 0 {
-			d := time.Until(time.Unix(epoch, 0))
-			_ = now // signature pinned for testability; default time.Until uses runtime now
+			d := time.Unix(epoch, 0).Sub(now)
 			if d > raw {
 				raw = d
 			}
