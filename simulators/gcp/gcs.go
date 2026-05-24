@@ -126,7 +126,12 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 	}
 
 	contentRange := r.Header.Get("Content-Range")
-	start, end, total := parseGCSContentRange(contentRange, int64(len(chunk)))
+	start, end, total, rangeErr := parseGCSContentRange(contentRange, int64(len(chunk)))
+	if rangeErr != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"%s", rangeErr.Error())
+		return
+	}
 
 	sess.mu.Lock()
 	// Grow the buffer if this chunk extends past current length.
@@ -191,31 +196,43 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 }
 
 // parseGCSContentRange parses `Content-Range: bytes <start>-<end>/<total>`
-// (total may be `*`). Returns (start, end, total) where total is -1 if
-// unknown. Falls back to assuming the chunk is the entire object when
-// the header is missing.
-func parseGCSContentRange(s string, chunkLen int64) (start, end, total int64) {
-	total = -1
+// (total may be `*`). Returns (start, end, total) where total is -1
+// when the header carries `/*`. An absent header assumes the chunk is
+// the entire object; any other malformed shape returns an error so
+// the caller can emit a real 400, matching GCS's Content-Range
+// validation.
+func parseGCSContentRange(s string, chunkLen int64) (start, end, total int64, err error) {
 	if s == "" {
-		return 0, chunkLen - 1, chunkLen
+		return 0, chunkLen - 1, chunkLen, nil
+	}
+	raw := s
+	if !strings.HasPrefix(s, "bytes ") {
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: missing `bytes ` unit", raw)
 	}
 	s = strings.TrimPrefix(s, "bytes ")
 	slash := strings.IndexByte(s, '/')
 	if slash < 0 {
-		return 0, chunkLen - 1, -1
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: missing `/` separator", raw)
 	}
 	rangePart := s[:slash]
 	totalPart := s[slash+1:]
 	dash := strings.IndexByte(rangePart, '-')
 	if dash < 0 {
-		return 0, chunkLen - 1, -1
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: missing `-` in range", raw)
 	}
-	_, _ = fmt.Sscanf(rangePart[:dash], "%d", &start)
-	_, _ = fmt.Sscanf(rangePart[dash+1:], "%d", &end)
-	if totalPart != "*" {
-		_, _ = fmt.Sscanf(totalPart, "%d", &total)
+	if _, e := fmt.Sscanf(rangePart[:dash], "%d", &start); e != nil {
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: bad start: %v", raw, e)
 	}
-	return start, end, total
+	if _, e := fmt.Sscanf(rangePart[dash+1:], "%d", &end); e != nil {
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: bad end: %v", raw, e)
+	}
+	if totalPart == "*" {
+		return start, end, -1, nil
+	}
+	if _, e := fmt.Sscanf(totalPart, "%d", &total); e != nil {
+		return 0, 0, 0, fmt.Errorf("Content-Range %q: bad total: %v", raw, e)
+	}
+	return start, end, total, nil
 }
 
 // gcsObjectMetadata returns the canonical object-metadata response
@@ -499,6 +516,11 @@ func registerGCS(srv *sim.Server) {
 				Name        string `json:"name"`
 				ContentType string `json:"contentType"`
 			}
+			// Resumable-init body is a small fixed-shape JSON metadata
+			// blob (`{"name":"...","contentType":"..."}`). The Go SDK
+			// does not gzip-encode this — chunk uploads at the
+			// session URL carry the streaming envelope (see
+			// handleGCSResumableChunk which wraps openStreamingBody).
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
@@ -547,7 +569,11 @@ func registerGCS(srv *sim.Server) {
 
 		if mediaType == "multipart/related" {
 			// Multipart upload: first part is metadata JSON
-			// (including `name` when not in query), second part is data.
+			// (including `name` when not in query), second part is
+			// data. Real GCS multipart/related bodies are not
+			// content-encoded — gzip travels on the resumable
+			// session chunk PUT instead (handled in
+			// handleGCSResumableChunk via openStreamingBody).
 			mr := multipart.NewReader(r.Body, params["boundary"])
 			metaPart, err := mr.NextPart()
 			if err != nil {
@@ -690,6 +716,10 @@ func registerGCS(srv *sim.Server) {
 				ContentType string `json:"contentType"`
 			} `json:"destination"`
 		}
+		// Compose request body is a fixed-shape JSON document
+		// (sourceObjects + destination); the GCS Go SDK does not
+		// content-encode control-plane JSON bodies. No
+		// openStreamingBody wrap needed.
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
 				"failed to parse compose request: %v", err)

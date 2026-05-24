@@ -176,7 +176,13 @@ func handleSBReceiveAndDelete(w http.ResponseWriter, r *http.Request, key string
 	}
 	msg := st.messages[0]
 	st.messages = st.messages[1:]
-	writeSBMessageResponse(w, msg, "", http.StatusOK)
+	if err := writeSBMessageResponse(w, msg, "", http.StatusOK); err != nil {
+		// Headers may already be on the wire; can't switch to a 500
+		// envelope at this point. Log via the request logger.
+		sim.AzureError(w, "InternalServerError",
+			"emit Service Bus response: "+err.Error(),
+			http.StatusInternalServerError)
+	}
 }
 
 func handleSBPeekLock(w http.ResponseWriter, r *http.Request, key string) {
@@ -213,7 +219,11 @@ func handleSBPeekLock(w http.ResponseWriter, r *http.Request, key string) {
 	pathTail := strings.SplitN(key, "/", 2)[1]
 	location := fmt.Sprintf("https://%s/%s/messages/%s/%s",
 		r.Host, pathTail, msg.MessageID, msg.LockToken)
-	writeSBMessageResponse(w, msg, location, http.StatusCreated)
+	if err := writeSBMessageResponse(w, msg, location, http.StatusCreated); err != nil {
+		sim.AzureError(w, "InternalServerError",
+			"emit Service Bus PeekLock response: "+err.Error(),
+			http.StatusInternalServerError)
+	}
 }
 
 func handleSBCompleteLock(w http.ResponseWriter, r *http.Request, key, msgID, lockToken string) {
@@ -240,8 +250,13 @@ func handleSBCompleteLock(w http.ResponseWriter, r *http.Request, key, msgID, lo
 // uses for Receive responses: BrokerProperties header (JSON-encoded
 // metadata), optional Location header (for PeekLock), and the raw
 // body bytes as the response body. Status is caller-supplied (200 for
-// ReceiveAndDelete, 201 for PeekLock).
-func writeSBMessageResponse(w http.ResponseWriter, msg sbMessage, location string, status int) {
+// ReceiveAndDelete, 201 for PeekLock). Returns an error when the
+// BrokerProperties JSON marshal fails BEFORE the status line goes on
+// the wire — the metadata is load-bearing (SDK reads MessageId /
+// SequenceNumber / LockToken from it), and the caller must respond
+// with a 500 instead of a header-less response that "looks 200" to
+// the client.
+func writeSBMessageResponse(w http.ResponseWriter, msg sbMessage, location string, status int) error {
 	brokerProps := map[string]any{
 		"MessageId":       msg.MessageID,
 		"DeliveryCount":   1,
@@ -253,12 +268,12 @@ func writeSBMessageResponse(w http.ResponseWriter, msg sbMessage, location strin
 		brokerProps["LockedUntilUtc"] = msg.LockedUntilUtc.Format(time.RFC3339Nano)
 		brokerProps["LockToken"] = msg.LockToken
 	}
-	if b, err := json.Marshal(brokerProps); err == nil {
-		w.Header().Set("BrokerProperties", string(b))
+	b, err := json.Marshal(brokerProps)
+	if err != nil {
+		return fmt.Errorf("marshal BrokerProperties: %w", err)
 	}
+	w.Header().Set("BrokerProperties", string(b))
 	if msg.BrokerHeader != "" {
-		// Caller-supplied BrokerProperties at Send time — preserve
-		// in the response.
 		w.Header().Set("X-Sender-BrokerProperties", msg.BrokerHeader)
 	}
 	if msg.ContentType != "" {
@@ -268,5 +283,10 @@ func writeSBMessageResponse(w http.ResponseWriter, msg sbMessage, location strin
 		w.Header().Set("Location", location)
 	}
 	w.WriteHeader(status)
+	// Post-status write failures mean the client disconnected mid-
+	// response — the response envelope is already committed, so we
+	// can't switch to a 500 here. Drop the error: the request logger
+	// (sim.Server) records the connection close.
 	_, _ = w.Write(msg.Body)
+	return nil
 }

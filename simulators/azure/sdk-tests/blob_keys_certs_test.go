@@ -51,8 +51,9 @@ func blobReq(t *testing.T, method, account, path string, body []byte, headers ma
 }
 
 // TestBlobDataPlane_RoundTrip exercises container + blob CRUD
-// through the data-plane subdomain dispatch. Regression guard for
-// BUG-1103 (issue #178, Blob data plane).
+// through the `<account>.blob.<host>` subdomain dispatch — the ARM
+// `storageAccounts` response advertises this exact endpoint URL, so
+// the data plane it points at must serve it.
 func TestBlobDataPlane_RoundTrip(t *testing.T) {
 	account := "testaccount"
 	container := "mycontainer"
@@ -106,10 +107,11 @@ func TestBlobDataPlane_RoundTrip(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestBlobDataPlane_404OnMissingContainer guards against the
-// BUG-1103 shape: the sim used to advertise the endpoint URL but
-// not service it. After the fix the data-plane handler should
-// return a proper 404 (not a generic fall-through).
+// TestBlobDataPlane_404OnMissingContainer locks in the
+// "advertised-endpoint must be serviced" invariant: a GET against a
+// missing container on a non-existent account returns a real 404
+// from the Blob data-plane handler (not a mux fall-through to a
+// generic 404 page).
 func TestBlobDataPlane_404OnMissingContainer(t *testing.T) {
 	resp := blobReq(t, "GET", "noaccount", "/nope?restype=container", nil, nil)
 	defer resp.Body.Close()
@@ -143,8 +145,10 @@ func kvReq(t *testing.T, method, vault, path string, body []byte) *http.Response
 }
 
 // TestKeyVault_KeysAndCertificates exercises the keys + certificates
-// data-plane surfaces added alongside the existing secrets handler.
-// Regression guard for BUG-1103 (Key Vault keys/certs slice).
+// data-plane surfaces (CreateKey / GetKey / ListKeys /
+// CreateCertificate / GetCertificate) on a vault registered through
+// ARM. Locks the symmetric "ARM-creates → data-plane-serves" wiring
+// the secrets handler already covered.
 func TestKeyVault_KeysAndCertificates(t *testing.T) {
 	// Vault must exist in the ARM control plane first.
 	vault := "testvault"

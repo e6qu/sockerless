@@ -160,6 +160,9 @@ func handleS3UploadPart(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.URL.Query().Get("uploadId")
 	partNumStr := r.URL.Query().Get("partNumber")
 	var partNum int
+	// Malformed partNumber leaves partNum=0; the [1, 10000] bounds
+	// check below catches both empty/garbage input and out-of-range
+	// values with the same canonical InvalidArgument response.
 	_, _ = fmt.Sscanf(partNumStr, "%d", &partNum)
 	if partNum < 1 || partNum > 10000 {
 		sim.S3ErrorXML(w, "InvalidArgument",
@@ -230,6 +233,10 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 		} `xml:"Part"`
 	}
 	defer r.Body.Close()
+	// CompleteMultipartUpload body is a small fixed-shape XML
+	// document listing part numbers + ETags. aws-sdk-go-v2 sends it
+	// without aws-chunked or gzip framing (no streaming-envelope
+	// header set), so a direct `io.ReadAll` is wire-faithful.
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
 		sim.S3ErrorXML(w, "IncompleteBody",
@@ -251,6 +258,9 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var assembled []byte
+	// partMD5s accumulates the raw 16-byte MD5 digests of each part
+	// in part-number order; the final ETag hashes their concatenation.
+	partMD5s := make([]byte, 0, len(req.Parts)*md5.Size)
 	for _, p := range req.Parts {
 		part, ok := mp.Parts[p.PartNumber]
 		if !ok {
@@ -266,12 +276,14 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		assembled = append(assembled, part.Data...)
+		partHash := md5.Sum(part.Data)
+		partMD5s = append(partMD5s, partHash[:]...)
 	}
 
-	// Final-object ETag uses S3's multipart convention:
-	// `"<hex(md5(concat(part_md5_bytes)))>-<numParts>"`. We approximate
-	// with hex(md5(assembled))-N for sim-side determinism.
-	finalHash := md5.Sum(assembled)
+	// S3 multipart ETag: `"<hex(md5(concat(part_md5_bytes)))>-<numParts>"`.
+	// Distinct from a single-shot PUT ETag (hex(md5(body))) — SDKs
+	// and the `aws s3api` CLI use the `-N` suffix as a multipart marker.
+	finalHash := md5.Sum(partMD5s)
 	finalETag := fmt.Sprintf(`"%x-%d"`, finalHash, len(req.Parts))
 
 	obj := S3Object{
@@ -345,6 +357,8 @@ func handleS3PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 			} `xml:"Tag"`
 		} `xml:"TagSet"`
 	}
+	// Object Tagging body is a fixed-shape XML document; aws-sdk-go-v2
+	// sends it without aws-chunked or gzip framing.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		sim.S3ErrorXML(w, "IncompleteBody",
@@ -477,6 +491,9 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 		} `xml:"Object"`
 	}
 	defer r.Body.Close()
+	// Multi-object delete body is a fixed-shape XML document
+	// (<Delete><Object>...</Object>...); aws-sdk-go-v2 sends it
+	// without aws-chunked or gzip framing.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		sim.S3ErrorXML(w, "IncompleteBody",

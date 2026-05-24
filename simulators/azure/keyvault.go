@@ -281,9 +281,19 @@ func registerKeyVault(srv *sim.Server) {
 			parts := strings.SplitN(hostname, ".vault.", 2)
 			if len(parts) == 2 {
 				if r.Header.Get("Authorization") == "" {
+					// `authorization` points at the AAD authority the
+					// SDK should fetch a token from. Real KV emits
+					// `https://login.microsoftonline.com/<tenant>` —
+					// external by design (the sim does not host an
+					// AAD/OIDC discovery endpoint). The SDK's
+					// challenge-response code uses its own configured
+					// credential provider against the real AAD; only
+					// `resource` is read from the challenge.
+					// `resource` is the canonical KV resource URI; SDKs
+					// compare it for scope matching.
 					w.Header().Set("WWW-Authenticate", fmt.Sprintf(
 						`Bearer authorization="http://%s", resource="https://vault.azure.net"`,
-						r.Host))
+						r.Host)) // external: real-Azure authorization=https://login.microsoftonline.com/<tenant>
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}

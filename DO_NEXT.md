@@ -4,53 +4,46 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 176 — 8 new/reopened community-filed issues. Branch `phase-176-community-issues`.**
+**Phase 176 — all community-filed issues closed; final audit + PR push remaining.** Branch `phase-176-community-issues`, 9 commits on top of `origin/main`.
 
-PR #192 merged at `ca11405` closed BUG-1120..1133 + 3 GitHub issues (#189/#190/#191). The user re-tested against the merged build and reopened **#190** (path-style storage dispatch didn't work — the fix required ARM registration that real Azurite users don't do) and filed 7 new issues (#193–#199).
+PR #192 (Phase 175) merged at `ca11405` closed BUG-1120..1133 + 3 GitHub issues (#189/#190/#191). The user re-tested against the merged build and reopened **#190** (path-style storage dispatch didn't work — the prior fix required ARM registration that real Azurite users don't do) and filed 7 new issues (#193–#199).
 
-BUGS.md: **1141 filed · 1131 fixed · 10 open.** The 10 open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit cadence) + BUG-1134..1141 (Phase 176 scope).
+Phase 176 closed all 8 (BUG-1134..1141) + every skill-audit finding from the in-PR validation pass + the path-style dispatcher test-state contamination uncovered by running the full Azure SDK suite.
 
-## Phase 176 scope — 8 BUGs
+BUGS.md: **1141 filed · 1139 fixed · 2 open.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta) remain Open.
 
-| BUG | Issue | Sev | Cloud | Headline |
-|---|---|---|---|---|
-| 1134 | #190 reopened | P1 | Azure | Storage path-style needs ARM-prefix exclusion, not known-account allow-list (Azurite-permissive) |
-| 1135 | #193 | P0 | Azure | KV data plane: `WWW-Authenticate: Bearer` 401 on unauthenticated probe — every Azure SDK consumer blocked |
-| 1136 | #194 | P1 | AWS | RDS + ElastiCache: empty `<EngineVersion>` on omit — populate per-engine GA default |
-| 1137 | #195 | P0 | Azure | Service Bus REST data plane: real handlers (SendMessage 201, Receive-and-Delete 200/204, Peek-Lock 201/204, CompleteLock 204) + in-memory message store |
-| 1138 | #196 | P1 | AWS | S3 subresources: multipart family, Object Tagging CRUD, CopyObject |
-| 1139 | #197 | P1 | GCP | `/v1/operations` returns GCS-shaped 404 (same shape as #183) — register explicit handler + tighten GCS catch-all |
-| 1140 | #198 | P1 | GCP | GCS: missing `Objects.compose`, body-form `name` on resumable+multipart, http→https URL emission |
-| 1141 | #199 | P1 | AWS | Lambda subresources: PublishVersion, CreateAlias, AddPermission, CreateFunctionUrlConfig — proper restJson1 envelopes |
+## What landed
 
-Implementation order (P0 first, then by cloud cluster to minimize cross-file context-switching):
+- BUG-1134 — permissive path-style storage with `hasAzureStorageSignal` protocol-marker discriminator (`x-ms-version` / `x-ms-date` / `x-ms-blob-type` / `restype` / `comp` / `SharedKey`). Non-storage co-tenants (IMDS / MSI / Monitor / dataCollectionRules) keep their own routes on the shared sim port.
+- BUG-1135 — KV WrapHandler issues `401 + WWW-Authenticate: Bearer authorization=..., resource="https://vault.azure.net"` on unauthenticated probes. Non-RSA key generation upgraded to real ecdsa + crypto/elliptic + rand.Read; `AQAB` placeholder dropped.
+- BUG-1136 — RDS + ElastiCache populate `EngineVersion` from per-engine GA default maps when the request leaves it empty.
+- BUG-1137 — Real Service Bus REST data plane with persistent message store. SendMessage 201, ReceiveAndDelete 200/204, PeekLock 201 + body + Location pointing at `/messages/{id}/{token}`, CompleteLock DELETE 204. Topic + Subscription equivalents.
+- BUG-1138 — `s3_subresources.go` query-key dispatcher: full multipart cycle (Initiate / UploadPart / Complete / Abort / List), Object Tagging CRUD, CopyObject via `x-amz-copy-source`, multi-object delete.
+- BUG-1139 — Real `GET /v1/operations` cross-service projection from `crOperations` store with AIP-151 filter + name-prefix support; GCS catch-all tightened to refuse unknown bucket segments.
+- BUG-1140 — `:compose` POST handler concatenates source-object bytes; resumable + multipart Init parse `name` from body or query; `mediaLink` / `selfLink` hard-coded https via `gcsObjectMetadata`; resumable chunk PUT registered with `openStreamingBody` body wrap.
+- BUG-1141 — `lambda_subresources.go` registers PublishVersion / ListVersions / Alias CRUD / AddPermission / GetPolicy / RemovePermission / FunctionUrlConfig CRUD under restJson1; CreateAlias + UpdateAlias validate FunctionVersion against PublishVersion history.
 
-1. **BUG-1135** KV WWW-Authenticate (P0) — middleware in `simulators/azure/keyvault.go` wraps all data-plane routes.
-2. **BUG-1137** Service Bus REST (P0) — new in-memory store + 4 real handlers; topic+sub variants.
-3. **BUG-1134** path-style storage (reopened) — ARM-prefix exclusion in `blob.go` + `storage_dataplane.go`.
-4. **BUG-1139** GCP /v1/operations routing leak — explicit handler + GCS catch-all tightening.
-5. **BUG-1140** GCS compose + body-form name + https — new handler, body-parse for upload init, URL helper.
-6. **BUG-1141** Lambda subresources — register 4 endpoint families in `lambda.go`.
-7. **BUG-1138** S3 subresources — query-string dispatcher in `s3.go`.
-8. **BUG-1136** RDS+ElastiCache engine defaults — per-engine maps.
+Plus the in-PR audit pass closed:
+- KV non-RSA placeholder → real EC/oct key generation.
+- SB PeekLock Location → includes `/messages/` segment; SB SendMessage drop dead `sbLockTokenGuids`.
+- Storage blob.go drop dead `knownStorageAccount` helper.
+- engine_version_test.go drop dead `var _ = ...AvailabilityZone{}` silencers + imports.
+- S3 multipart 3 silent `io.ReadAll(_)` → IncompleteBody 400 on body-decode failure.
+- Lambda subresources `json.Marshal` errors checked.
+- GCS multipart metadata decode → fail-loud 400 INVALID_ARGUMENT.
+- Path-style storage dispatcher contamination → `hasAzureStorageSignal` protocol discriminator.
+- ServiceBus PeekLock test → parse Location via `url.Parse` + assert host/path + replay with `Host = locURL.Host`.
 
-Each fix lands with a real SDK test (no auth-bypass quirks, no path-prefix hacks per BUG-1104 invariant).
+## Test results
 
-## Final validation
+All three SDK suites green: AWS 96s, Azure 22s, GCP 28s. Full Azure suite (which had been masking 10 cross-test failures pre-fix) now clean.
 
-After all 8 BUGs close, re-run the 6 specialist skills (per BUG-1104 cadence — Phase 176 is the third audit):
-1. `silent-error-swallow-scan`
-2. `dead-code-silencer-scan`
-3. `sim-canonical-config-test`
-4. `sim-emitted-url-roundtrip`
-5. `sim-streaming-body-handler`
-6. `backpedal-pattern-audit`
+## Next steps
 
-Plus the new `timeless-comments` skill across the Phase 176 diff.
-
-## Open BUGs after Phase 176 lands
-
-Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit cadence) remain Open. Everything community-filed gets a real fix in-PR.
+1. Wait for parallel skill-audit pass to complete (5 background agents).
+2. Update WHAT_WE_DID.md with Phase 176 narrative.
+3. Rebase on `origin/main` (clean) + push.
+4. Open PR linked to issues #190 #193 #194 #195 #196 #197 #198 #199; let CI run; ping user for merge.
 
 ## Invariants snapshot (full list in STATUS.md)
 
@@ -64,7 +57,7 @@ Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit cadence) remain Open
 ## Session-resume checklist
 
 1. `git fetch origin && git checkout phase-176-community-issues && git pull --rebase origin main`.
-2. `git log --oneline -10`.
+2. `git log --oneline -12`.
 3. Read STATUS.md + this file + BUGS.md § Open.
 4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
-5. Pick the next ◻ Phase 176 BUG; commit when verified.
+5. If PR not opened yet, open it; otherwise check `gh pr checks` and report status.

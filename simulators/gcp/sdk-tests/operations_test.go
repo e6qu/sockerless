@@ -13,12 +13,12 @@ import (
 
 // TestGCP_Operations_List exercises the AIP-151 /v1/operations
 // endpoint, verifying:
-// 1. Empty initial state returns 200 + `{"operations": []}` (not
-//    the GCS-shaped 404 routing leak).
+// 1. Empty initial state returns 200 + `{"operations": []}`.
 // 2. After creating LRO-emitting resources across multiple services,
 //    the list contains operations from all of them.
-// 3. The GCS XML-API catch-all does NOT match unhandled `/v1/...`
-//    paths anymore (e.g. /v1/unknown should 404, not GCS-shape).
+// 3. Unknown `/v1/...` paths route past the GCS XML-API catch-all
+//    (i.e. `/v1/unknown` must not come back shaped like
+//    "object 'unknown' not found in bucket 'v1'").
 func TestGCP_Operations_List(t *testing.T) {
 	// Empty list — fresh sim with no LROs.
 	req, _ := http.NewRequest("GET", baseURL+"/v1/operations", nil)
@@ -105,9 +105,10 @@ func TestGCP_Operations_List(t *testing.T) {
 		"filter=done:false should be empty (sim doesn't run async)")
 }
 
-// TestGCP_UnknownV1PathNotGCSShape asserts the GCS XML-API catch-all
-// no longer captures unhandled `/v1/...` paths. An unknown `/v1/xyz`
-// must NOT come back as "object xyz not found in bucket v1".
+// TestGCP_UnknownV1PathNotGCSShape locks the routing invariant: the
+// GCS XML-API catch-all only matches paths whose first segment is a
+// registered bucket. An unknown `/v1/xyz` must NOT come back as
+// "object xyz not found in bucket v1".
 func TestGCP_UnknownV1PathNotGCSShape(t *testing.T) {
 	req, _ := http.NewRequest("GET", baseURL+"/v1/this-does-not-exist", nil)
 	resp, err := http.DefaultClient.Do(req)
