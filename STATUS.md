@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-177-community-issues` — BUG-1142..1147 closed (1 reopen + 1 new community-filed + 4 meta-skill improvements). PR open + awaiting CI + user merge. |
-| In-flight | PR open against `phase-177-community-issues`. |
+| Active branch | `phase-177-community-issues` — BUG-1142..1147 closed (1 reopen + 1 new community-filed + 4 meta-skill improvements). PR #202 open + awaiting CI + user merge. |
+| In-flight | PR #202 — waiting on GitHub Actions; user merges when green. |
 | Last merged | PR #200 — Phase 176 community-filed issues + audit findings (2026-05-24, squash `2d8e604`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |

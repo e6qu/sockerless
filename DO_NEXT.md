@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 177 — 1 reopen + 1 community-filed + 4 process improvements.** Branch `phase-177-community-issues`.
+**Phase 177 — 1 reopen + 1 community-filed + 4 process improvements.** Branch `phase-177-community-issues`, PR #202 open: https://github.com/e6qu/sockerless/pull/202.
 
 PR #200 (Phase 176) merged at `2d8e604` closed BUG-1134..1141 + 8 GitHub issues. User testing against the merged build reopened **#193** (KV `WWW-Authenticate` `authorization` URL breaks the Azure SDK's `parseTenant` — only 3 path segments, SDK indexes `[3]` and panics) and filed **#201** (S3 bucket-level PUT/DELETE subresources route to CreateBucket → 409).
 
