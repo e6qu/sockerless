@@ -195,7 +195,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 
 	// Per-target endpoint + ARM identifiers + auth/bootstrap paths.
-	var endpointURL, project, buildBucket, saJSONPath, gcfBootstrapPath string
+	var endpointURL, logAdminEndpoint, project, buildBucket, saJSONPath, gcfBootstrapPath string
 	switch target {
 	case "sim":
 		// Build simulator
@@ -216,12 +216,13 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-		// Start simulator
+		// Allocate two distinct free ports. Real GCP keeps Cloud Functions
+		// (cloudfunctions.googleapis.com) and Cloud Logging gRPC
+		// (logging.googleapis.com) on entirely separate endpoints — the
+		// sim mirrors that. Harness wires both URLs explicitly to the
+		// backend via SOCKERLESS_ENDPOINT_URL +
+		// SOCKERLESS_GCP_LOGADMIN_ENDPOINT (no derivation).
 		simPort := findFreePort()
-		// gRPC defaults to HTTP+1, which races against any other process
-		// that grabbed it in the gap between findFreePort and Listen.
-		// Pre-allocate a free port explicitly so the sim doesn't pick a
-		// port already in use and log.Fatalf the whole process.
 		simGRPCPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
@@ -257,6 +258,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
 
 		endpointURL = simURL
+		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sockerless-test"
 		buildBucket = "sockerless-test-build"
 
@@ -307,6 +309,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		logAdminEndpoint = requireEnv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 		project = requireEnv("SOCKERLESS_GCF_PROJECT")
 		buildBucket = requireEnv("SOCKERLESS_GCP_BUILD_BUCKET")
 		saJSONPath = requireEnv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -342,6 +345,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+		"SOCKERLESS_GCP_LOGADMIN_ENDPOINT="+logAdminEndpoint,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT="+project,

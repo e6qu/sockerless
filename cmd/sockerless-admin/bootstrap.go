@@ -140,6 +140,9 @@ func BackendEnvFromConfig(env *yamlEnvironment, sim *yamlSimulator) []string {
 	// Simulator endpoint
 	if sim != nil && sim.Port > 0 {
 		result = append(result, fmt.Sprintf("SOCKERLESS_ENDPOINT_URL=http://localhost:%d", sim.Port))
+		if sim.GRPCPort > 0 && sim.Cloud == "gcp" {
+			result = append(result, fmt.Sprintf("SOCKERLESS_GCP_LOGADMIN_ENDPOINT=localhost:%d", sim.GRPCPort))
+		}
 	} else if env.Common.EndpointURL != "" {
 		result = append(result, "SOCKERLESS_ENDPOINT_URL="+env.Common.EndpointURL)
 	}
