@@ -39,7 +39,7 @@ type APIGWv2Integration struct {
 	IntegrationId   string `json:"integrationId"`
 	ApiId           string `json:"apiIdRef,omitempty"`
 	IntegrationType string `json:"integrationType"`
-	IntegrationUri  string `json:"integrationUri,omitempty"`
+	IntegrationUri  string `json:"integrationUri,omitempty"` // external (operator-supplied): integration target — Lambda ARN, HTTP backend, or VPC link target
 }
 
 type APIGWv2Stage struct {

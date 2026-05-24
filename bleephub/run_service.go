@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -58,9 +59,9 @@ func (s *Server) handleRenewRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request body for status updates
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	// The body would carry status fields but bleephub doesn't consume
+	// them today; drain explicitly so it's obvious there's no decode.
+	_, _ = io.Copy(io.Discard, r.Body)
 
 	s.store.mu.Lock()
 	if job.Status == "queued" {
@@ -214,7 +215,10 @@ func (s *Server) handleJobEvents(w http.ResponseWriter, r *http.Request) {
 	planID := r.PathValue("planId")
 
 	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid job event body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	eventName, _ := body["name"].(string)
 	s.logger.Debug().Str("planId", planID).Str("event", eventName).Msg("job event")

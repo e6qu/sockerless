@@ -57,7 +57,7 @@ type PSExpirationPolicy struct {
 }
 
 type PSPushConfig struct {
-	PushEndpoint string `json:"pushEndpoint,omitempty"`
+	PushEndpoint string `json:"pushEndpoint,omitempty"` // external (operator-supplied): webhook target for Push subscriptions; sim doesn't deliver
 }
 
 type PSMessage struct {

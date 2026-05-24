@@ -73,6 +73,11 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 		// OpenID discovery endpoints
 		if r.Method == http.MethodGet && strings.HasSuffix(path, "/.well-known/openid-configuration") {
 			tenantId := extractTenantFromPath(path)
+			// external: `issuer` is a JWT-spec claim convention,
+			// not a routable URL. azidentity verifies token
+			// signatures against the JWKS at `jwks_uri` below
+			// (which IS sim-hosted) and compares `iss` against
+			// the expected value rather than dereferencing it.
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
 				"issuer":                 fmt.Sprintf("https://sts.windows.net/%s/", tenantId),
 				"authorization_endpoint": fmt.Sprintf("/%s/oauth2/v2.0/authorize", tenantId),
@@ -136,6 +141,8 @@ func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) string {
 		"typ": "JWT",
 		"kid": "sockerless-sim-key-1",
 	})
+	// external: `iss` claim — same JWT-spec convention as the
+	// openid-configuration `issuer` above; not dereferenced.
 	payloadJSON, _ := json.Marshal(map[string]any{
 		"tid":   tenantId,
 		"oid":   "test-oid",

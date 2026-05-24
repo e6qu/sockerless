@@ -206,19 +206,6 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 
 	// --- updateProjectV2ItemFieldValue ---
 
-	// singleSelectInputValueType is intentionally elided. A previous
-	// "reserved for future strict-typed variants" stub held this type
-	// alive with a `_ = singleSelectInputValueType` silencer; that
-	// pattern is the BUG-1020 / 1021 shape and was removed in Phase
-	// 174's dead-code-silencer-scan sweep. Reintroduce as a real
-	// type only when an actual mutation needs the strict-typed shape.
-	_ = graphql.NewInputObject(graphql.InputObjectConfig{
-		Name: "ProjectV2FieldValueSingleSelectInput",
-		Fields: graphql.InputObjectConfigFieldMap{
-			"singleSelectOptionId": &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-		},
-	})
-
 	fieldValueInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "ProjectV2FieldValueInput",
 		Fields: graphql.InputObjectConfigFieldMap{

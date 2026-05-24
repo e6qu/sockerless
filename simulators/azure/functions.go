@@ -662,12 +662,24 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 		for _, s := range site.Properties.SiteConfig.AppSettings {
 			switch s.Name {
 			case "SOCKERLESS_ENTRYPOINT":
-				if decoded, err := base64.StdEncoding.DecodeString(s.Value); err == nil {
-					json.Unmarshal(decoded, &entrypoint)
+				decoded, err := base64.StdEncoding.DecodeString(s.Value)
+				if err != nil {
+					msg := fmt.Sprintf("invalid SOCKERLESS_ENTRYPOINT base64: %v", err)
+					return []byte(msg), 1
+				}
+				if err := json.Unmarshal(decoded, &entrypoint); err != nil {
+					msg := fmt.Sprintf("invalid SOCKERLESS_ENTRYPOINT JSON: %v", err)
+					return []byte(msg), 1
 				}
 			case "SOCKERLESS_CMD":
-				if decoded, err := base64.StdEncoding.DecodeString(s.Value); err == nil {
-					json.Unmarshal(decoded, &cmd)
+				decoded, err := base64.StdEncoding.DecodeString(s.Value)
+				if err != nil {
+					msg := fmt.Sprintf("invalid SOCKERLESS_CMD base64: %v", err)
+					return []byte(msg), 1
+				}
+				if err := json.Unmarshal(decoded, &cmd); err != nil {
+					msg := fmt.Sprintf("invalid SOCKERLESS_CMD JSON: %v", err)
+					return []byte(msg), 1
 				}
 			}
 		}

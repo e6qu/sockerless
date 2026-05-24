@@ -44,7 +44,7 @@ type APIGWIntegration struct {
 	ResourceId string `json:"resourceIdRef,omitempty"`
 	RestApiId  string `json:"restApiIdRef,omitempty"`
 	Type       string `json:"type"`
-	Uri        string `json:"uri,omitempty"`
+	Uri        string `json:"uri,omitempty"` // external (operator-supplied): integration target — Lambda ARN, HTTP backend, or VPC link target
 }
 
 type APIGWDeployment struct {

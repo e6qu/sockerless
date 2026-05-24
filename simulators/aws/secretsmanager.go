@@ -502,7 +502,10 @@ func handleSMTagResource(w http.ResponseWriter, r *http.Request) {
 			s.Tags = append(s.Tags, SMTag{Key: k, Value: v})
 		}
 	})
-	w.WriteHeader(http.StatusOK)
+	// awsJson1_1 callers expect an empty-JSON-object body on success;
+	// a header-only 200 trips the aws-sdk-go-v2 deserialiser on some
+	// operations even though spec allows it. Emit `{}` consistently.
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
@@ -533,7 +536,7 @@ func handleSMUntagResource(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Tags = filtered
 	})
-	w.WriteHeader(http.StatusOK)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 // resolveSecretName accepts either a secret name or a full ARN and

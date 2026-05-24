@@ -505,16 +505,10 @@ func handleKMSDeleteAlias(w http.ResponseWriter, r *http.Request) {
 
 func handleKMSListAliases(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0)
-	for _, keyId := range kmsAliases.List() {
-		// Filter rebuilds (key,value) pairs we need to find the alias name.
-		_ = keyId
-	}
-	// `Store` doesn't expose key iteration directly; reconstruct via a
-	// per-alias filter that retains order. Aliases are tracked per
-	// `alias/<name>` key with the target keyId as value.
-	all := kmsAliases.Filter(func(string) bool { return true })
-	_ = all
-	// Use a simple per-key probe — KMS aliases are bounded in practice.
+	// `sim.Store` doesn't expose key iteration; instead, walk every
+	// known key and ask listAliasesForKey which alias names point at
+	// it. The alias store is bounded in practice (one alias per key
+	// in most operator setups) so the O(keys × aliases) scan is fine.
 	for _, key := range kmsKeys.List() {
 		// For each key, find aliases pointing at it.
 		for _, alias := range listAliasesForKey(key.KeyId) {

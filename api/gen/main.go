@@ -110,7 +110,6 @@ func main() {
 	// When run directly from api/gen/, we detect and adjust.
 	specPath := "openapi.yaml"
 	outDir := "."
-	explicitOutDir := false
 
 	if len(os.Args) > 1 {
 		specPath = os.Args[1]
@@ -120,9 +119,7 @@ func main() {
 	}
 	if len(os.Args) > 2 {
 		outDir = os.Args[2]
-		explicitOutDir = true
 	}
-	_ = explicitOutDir
 
 	data, err := os.ReadFile(specPath)
 	if err != nil {

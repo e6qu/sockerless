@@ -146,6 +146,23 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, parts[0])
 				return
 			}
+			// `.web.` (static website) and `.dfs.` (Data Lake Gen2)
+			// advertise canonical endpoints in StoragePrimaryEndpoints
+			// for wire-fidelity with real Azure, but the sim does not
+			// implement either data plane today. Respond with a clear
+			// 501 NotImplemented so SDK callers see a typed error
+			// rather than 404 — the runner path doesn't reach these
+			// surfaces. File a BUG and add real handlers when a runner
+			// scenario lands.
+			if strings.Contains(host, ".web.") || strings.Contains(host, ".dfs.") {
+				surface := "static-website"
+				if strings.Contains(host, ".dfs.") {
+					surface = "data-lake-gen2"
+				}
+				sim.AzureErrorf(w, "NotImplemented", http.StatusNotImplemented,
+					"Storage %s data plane (host %q) is not implemented by the simulator", surface, host)
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -283,7 +300,12 @@ func handleFilesPutFile(w http.ResponseWriter, r *http.Request, account, share, 
 		return
 	}
 	defer r.Body.Close()
-	data, err := io.ReadAll(r.Body)
+	body, err := openStreamingBody(r)
+	if err != nil {
+		sim.AzureError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+	data, err := io.ReadAll(body)
 	if err != nil {
 		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
@@ -502,9 +524,18 @@ func handleQueuePutMessage(w http.ResponseWriter, r *http.Request, account, queu
 		return
 	}
 	defer r.Body.Close()
-	data, _ := io.ReadAll(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.AzureError(w, "RequestBodyInvalid",
+			"Failed to read request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	var req QueueMessageRequest
-	_ = xml.Unmarshal(data, &req)
+	if err := xml.Unmarshal(data, &req); err != nil {
+		sim.AzureError(w, "InvalidXmlDocument",
+			"The specified XML is not syntactically valid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	now := time.Now()
 	msg := QueueMessage{
 		MessageID:      generateUUID(),

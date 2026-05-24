@@ -31,11 +31,11 @@ func (s *Server) handleCreateTimeline(w http.ResponseWriter, r *http.Request) {
 	timelineID := r.PathValue("timelineId")
 	s.logger.Debug().Str("timelineId", timelineID).Msg("create/update timeline")
 
-	body, _ := io.ReadAll(r.Body)
-	if len(body) > 0 {
-		var data interface{}
-		json.Unmarshal(body, &data)
-	}
+	// The handler ignores the body — the timeline is opaque to bleephub
+	// and the body's shape is whatever Azure DevOps' AzurePipelines task
+	// happens to send today. Discard explicitly so it's visible in code
+	// that there's no decode step. Drain to free the underlying conn.
+	_, _ = io.Copy(io.Discard, r.Body)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":       timelineID,
