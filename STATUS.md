@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-175-skill-sweep` — second skill-sweep audit. **PR #192** open, awaiting user merge. |
-| In-flight | 14 BUGs (1120–1133) all closed in-branch + 3 GitHub issues (#189/#190/#191) closed. Includes 2 severe persistence-strip BUGs (GCP SM unexported payload + Azure KV `json:"-"` on Vault/Name) fixed via split storage / wrapper records, 7 silent-error swallows, 5 dead-code silencers, 6 wire-quirk drifts, missing .web./.dfs. dispatch, 11 emitted-URL annotations, 3 streaming-body wraps, Pub/Sub PATCH for subscriptions+topics with strict updateMask validation, Azurite-compatible path-style Azure storage dispatch, KV vaultUri https hard-code, 5 FaaS smoke tests de-flaked via external ContainerStop signalling, CI `test` job split 1→3 with per-backend matrices (11 → 22 total CI jobs). Three new skill artifacts: `silent-error-swallow-scan` Pattern A2, `sim-streaming-body-handler` positive-confirmation rule, and a new `timeless-comments` skill catching time-anchored comments. All 6 specialist skills re-validated clean on the final diff. |
-| Last merged | PR #180 — Phase 174 skill-sweep audit + community-issue triage (2026-05-24, squash `7a5d588`). |
+| Active branch | `phase-176-community-issues` — fix 8 new/reopened GitHub issues + #190 (reopened, prior fix incomplete). |
+| In-flight | 8 BUGs to file + close: KV auth challenge (P0, blocks every Azure SDK KV consumer), Service Bus REST data plane (P0, no persistence + wrong status), path-style storage dispatch (P1 reopened — prior fix required ARM registration), GCP `/v1/operations` routing leak (same shape as #183/#197), GCS compose/body-name/http-URLs, AWS S3 subresources (multipart, tagging, CopyObject), AWS Lambda subresources (PublishVersion, CreateAlias, AddPermission, FunctionUrlConfig), RDS+ElastiCache EngineVersion default. |
+| Last merged | PR #192 — Phase 175 second skill-sweep audit (2026-05-24, squash `ca11405`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1133 filed · 1131 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker). |
+| Bugs | 1141 filed · 1131 fixed · 10 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta) + BUG-1134..1141 (Phase 176 scope). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
