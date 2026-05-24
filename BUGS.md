@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1161 filed · 1159 fixed · 2 open · 2 false positives.**
+**1162 filed · 1160 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -31,6 +31,7 @@ Phase 178 (PR #211, 16 commits) closed BUG-1148..1160 — 9 community-filed issu
 - **1159** `sim-canonical-config-test` extended with paged-iterator rule + `paged-shape verified` column on surface tables.
 - **1160** `sim-state-machine-completeness` skill — every stateful resource type models the documented state machine.
 - **1161** CI gap — `simulators/{aws,gcp,azure}/terraform-tests/` exist with 40 + 16 + 21 stock-provider resources, but the CI `sim` job only invokes `make sdk-test` + `make cli-test` per cloud, never `make tf-test`. Three recent reopens (BUG-1098 / 1099 / 1142 / 1147) all surfaced because the terraform-provider's call sequence differs materially from the SDK's. Fifth class-of-bug remediation: add `tf (aws|gcp|azure)` matrix job to `.github/workflows/ci.yml` running `make tf-test` so the tf-provider call shape gets exercised every push.
+- **1162** Cloud Run + GCF FaaS smoke harnesses (`backends/cloudrun/integration_test.go`, `backends/cloudrun-functions/integration_test.go`) allocated a free port for the sim's HTTP listener but let the gRPC port default to `HTTP+1`. CI flake on `test (cloudrun faas-smoke)`: simulator-gcp's gRPC bound to :HTTP+1 hit `bind: address already in use` and `log.Fatalf` killed the whole sim process, causing the /health check to time out. Pre-allocate a separate free port via `findFreePort()` and pass via `SIM_GCP_GRPC_PORT` — same pattern the SDK + terraform-tests harnesses already use.
 
 Older closed BUGs: 1098..1147 across Phases 173–177. See `WHAT_WE_DID.md` per-phase narrative + PR descriptions for fix detail.
 

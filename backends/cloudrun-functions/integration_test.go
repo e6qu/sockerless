@@ -218,13 +218,19 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 		// Start simulator
 		simPort := findFreePort()
+		// gRPC defaults to HTTP+1, which races against any other process
+		// that grabbed it in the gap between findFreePort and Listen.
+		// Pre-allocate a free port explicitly so the sim doesn't pick a
+		// port already in use and log.Fatalf the whole process.
+		simGRPCPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 		step("starting simulator-gcp")
-		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
+		fmt.Printf("[sim] Starting simulator-gcp on %s (gRPC :%d)...\n", simAddr, simGRPCPort)
 		simCmd := exec.Command(simBinary)
 		simCmd.Env = append(os.Environ(),
 			"SIM_LISTEN_ADDR="+simAddr,
+			fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", simGRPCPort),
 			// The sim's Cloud Build executor runs `docker build` for the
 			// overlay image. The Dockerfile FROM references the user's
 			// image by its raw name (e.g. `sockerless-eval-arithmetic:test`)
