@@ -390,6 +390,199 @@ func registerAzureFunctions(srv *sim.Server) {
 			Properties: site.Properties.AzureStorageAccounts,
 		})
 	})
+
+	registerSiteConfigHandlers(srv, armBase, sites)
+}
+
+// AzureSiteAppSettings is the canonical StringDictionary wire shape
+// real Azure emits at /sites/{name}/config/appsettings — a flat
+// map of setting name → value wrapped in {properties:{...}}.
+type AzureSiteAppSettings struct {
+	ID         string            `json:"id,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	Properties map[string]string `json:"properties"`
+}
+
+// AzureSiteConnStringValue is the per-entry wire shape — connection
+// string value plus the protocol type (MySql / SQLServer / Custom / …).
+type AzureSiteConnStringValue struct {
+	Value string `json:"value"`
+	Type  string `json:"type"`
+}
+
+// AzureSiteConnectionStrings is the wire shape at
+// /sites/{name}/config/connectionstrings.
+type AzureSiteConnectionStrings struct {
+	ID         string                              `json:"id,omitempty"`
+	Name       string                              `json:"name,omitempty"`
+	Type       string                              `json:"type,omitempty"`
+	Properties map[string]AzureSiteConnStringValue `json:"properties"`
+}
+
+// siteConfigPayload persists per-section site config alongside the
+// Site struct. Keyed by the canonical resource ID.
+type siteConfigPayload struct {
+	AppSettings       map[string]string                   `json:"appSettings,omitempty"`
+	ConnectionStrings map[string]AzureSiteConnStringValue `json:"connectionStrings,omitempty"`
+}
+
+var siteConfigStore sim.Store[siteConfigPayload]
+
+func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store[Site]) {
+	siteConfigStore = sim.MakeStore[siteConfigPayload](srv.DB(), "site_configs")
+
+	siteResourceID := func(r *http.Request) string {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+	}
+	siteExists := func(resourceID string) bool {
+		_, ok := sites.Get(resourceID)
+		return ok
+	}
+
+	// PUT /sites/{name}/config/appsettings
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/appsettings", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		var req AzureSiteAppSettings
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		cfg.AppSettings = req.Properties
+		siteConfigStore.Put(resourceID, cfg)
+		sim.WriteJSON(w, http.StatusOK, AzureSiteAppSettings{
+			ID:         resourceID + "/config/appsettings",
+			Name:       "appsettings",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: cfg.AppSettings,
+		})
+	})
+
+	// POST /sites/{name}/config/appsettings/list — real Azure uses
+	// POST for `/list` actions because the response contains secrets
+	// (kept out of GET URLs / proxy logs).
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		props := cfg.AppSettings
+		if props == nil {
+			props = map[string]string{}
+		}
+		sim.WriteJSON(w, http.StatusOK, AzureSiteAppSettings{
+			ID:         resourceID + "/config/appsettings",
+			Name:       "appsettings",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: props,
+		})
+	})
+
+	// PUT /sites/{name}/config/connectionstrings
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		var req AzureSiteConnectionStrings
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		cfg.ConnectionStrings = req.Properties
+		siteConfigStore.Put(resourceID, cfg)
+		sim.WriteJSON(w, http.StatusOK, AzureSiteConnectionStrings{
+			ID:         resourceID + "/config/connectionstrings",
+			Name:       "connectionstrings",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: cfg.ConnectionStrings,
+		})
+	})
+
+	// POST /sites/{name}/config/connectionstrings/list
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionstrings/list", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		props := cfg.ConnectionStrings
+		if props == nil {
+			props = map[string]AzureSiteConnStringValue{}
+		}
+		sim.WriteJSON(w, http.StatusOK, AzureSiteConnectionStrings{
+			ID:         resourceID + "/config/connectionstrings",
+			Name:       "connectionstrings",
+			Type:       "Microsoft.Web/sites/config",
+			Properties: props,
+		})
+	})
+
+	// GET /sites/{name}/config/web — reads the full SiteConfig from
+	// the site row. The siteConfig embedded in SiteProperties is the
+	// canonical persistence; this endpoint just projects it out.
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/web", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		site, ok := sites.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		cfg := site.Properties.SiteConfig
+		if cfg == nil {
+			cfg = &SiteConfig{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":         resourceID + "/config/web",
+			"name":       "web",
+			"type":       "Microsoft.Web/sites/config",
+			"properties": cfg,
+		})
+	})
+
+	// PUT /sites/{name}/config/web
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/web", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		site, ok := sites.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		var req struct {
+			Properties SiteConfig `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			return
+		}
+		site.Properties.SiteConfig = &req.Properties
+		sites.Put(resourceID, site)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":         resourceID + "/config/web",
+			"name":       "web",
+			"type":       "Microsoft.Web/sites/config",
+			"properties": site.Properties.SiteConfig,
+		})
+	})
 }
 
 // AzureStoragePropertyDictionaryResource is the wire shape for
