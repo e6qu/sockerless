@@ -98,6 +98,22 @@ func registerLambda(srv *sim.Server) {
 	mux.HandleFunc("GET /2017-03-31/tags/{arn...}", handleLambdaListTags)
 	mux.HandleFunc("POST /2017-03-31/tags/{arn...}", handleLambdaTagResource)
 	mux.HandleFunc("DELETE /2017-03-31/tags/{arn...}", handleLambdaUntagResource)
+
+	// Versions + aliases + permissions + function URL config.
+	mux.HandleFunc("POST /2015-03-31/functions/{name}/versions", handleLambdaPublishVersion)
+	mux.HandleFunc("GET /2015-03-31/functions/{name}/versions", handleLambdaListVersions)
+	mux.HandleFunc("POST /2015-03-31/functions/{name}/aliases", handleLambdaCreateAlias)
+	mux.HandleFunc("GET /2015-03-31/functions/{name}/aliases", handleLambdaListAliases)
+	mux.HandleFunc("GET /2015-03-31/functions/{name}/aliases/{alias}", handleLambdaGetAlias)
+	mux.HandleFunc("PUT /2015-03-31/functions/{name}/aliases/{alias}", handleLambdaUpdateAlias)
+	mux.HandleFunc("DELETE /2015-03-31/functions/{name}/aliases/{alias}", handleLambdaDeleteAlias)
+	mux.HandleFunc("POST /2015-03-31/functions/{name}/policy", handleLambdaAddPermission)
+	mux.HandleFunc("GET /2015-03-31/functions/{name}/policy", handleLambdaGetPolicy)
+	mux.HandleFunc("DELETE /2015-03-31/functions/{name}/policy/{statement}", handleLambdaRemovePermission)
+	mux.HandleFunc("POST /2021-10-31/functions/{name}/url", handleLambdaCreateFunctionUrlConfig)
+	mux.HandleFunc("GET /2021-10-31/functions/{name}/url", handleLambdaGetFunctionUrlConfig)
+	mux.HandleFunc("PUT /2021-10-31/functions/{name}/url", handleLambdaUpdateFunctionUrlConfig)
+	mux.HandleFunc("DELETE /2021-10-31/functions/{name}/url", handleLambdaDeleteFunctionUrlConfig)
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
