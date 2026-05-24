@@ -115,8 +115,8 @@ func registerS3(srv *sim.Server) {
 	//     with the literal route — sim documents this as a known
 	//     edge case rather than rejecting such bucket names.
 	mux.HandleFunc("GET /{$}", handleS3ListBuckets)
-	mux.HandleFunc("PUT /{bucket}", handleS3CreateBucket)
-	mux.HandleFunc("DELETE /{bucket}", handleS3DeleteBucket)
+	mux.HandleFunc("PUT /{bucket}", handleS3PutBucketDispatch)
+	mux.HandleFunc("DELETE /{bucket}", handleS3DeleteBucketDispatch)
 	mux.HandleFunc("GET /{bucket}", handleS3GetOrHeadBucket)
 	mux.HandleFunc("PUT /{bucket}/{key...}", handleS3PutObjectDispatch)
 	mux.HandleFunc("GET /{bucket}/{key...}", handleS3GetOrHeadObjectDispatch)
@@ -257,25 +257,16 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	switch {
 	case q.Has("policy"):
-		// No policy set on any sim bucket today; real S3 returns 404 + NoSuchBucketPolicy.
-		sim.S3ErrorXML(w, "NoSuchBucketPolicy", "The bucket policy does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "policy", "NoSuchBucketPolicy", "The bucket policy does not exist")
 		return
 	case q.Has("versioning"):
-		// Real S3 returns an empty <VersioningConfiguration/> when versioning was never enabled.
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		emitStoredOrEmptyXML(w, bucket, "versioning", "VersioningConfiguration")
 		return
 	case q.Has("accelerate"):
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		emitStoredOrEmptyXML(w, bucket, "accelerate", "AccelerateConfiguration")
 		return
 	case q.Has("logging"):
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><BucketLoggingStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		emitStoredOrEmptyXML(w, bucket, "logging", "BucketLoggingStatus")
 		return
 	case q.Has("location"):
 		w.Header().Set("Content-Type", "application/xml")
@@ -283,28 +274,22 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` + awsRegion() + `</LocationConstraint>`))
 		return
 	case q.Has("lifecycle"):
-		sim.S3ErrorXML(w, "NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "lifecycle", "NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist")
 		return
 	case q.Has("cors"):
-		sim.S3ErrorXML(w, "NoSuchCORSConfiguration", "The CORS configuration does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "cors", "NoSuchCORSConfiguration", "The CORS configuration does not exist")
 		return
 	case q.Has("website"):
-		sim.S3ErrorXML(w, "NoSuchWebsiteConfiguration", "The website configuration does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "website", "NoSuchWebsiteConfiguration", "The website configuration does not exist")
 		return
 	case q.Has("replication"):
-		sim.S3ErrorXML(w, "ReplicationConfigurationNotFoundError", "The replication configuration was not found",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "replication", "ReplicationConfigurationNotFoundError", "The replication configuration was not found")
 		return
 	case q.Has("encryption"):
-		sim.S3ErrorXML(w, "ServerSideEncryptionConfigurationNotFoundError", "The server side encryption configuration was not found",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "encryption", "ServerSideEncryptionConfigurationNotFoundError", "The server side encryption configuration was not found")
 		return
 	case q.Has("tagging"):
-		sim.S3ErrorXML(w, "NoSuchTagSet", "The TagSet does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "tagging", "NoSuchTagSet", "The TagSet does not exist")
 		return
 	case q.Has("policyStatus"):
 		w.Header().Set("Content-Type", "application/xml")
@@ -312,28 +297,41 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><PolicyStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsPublic>false</IsPublic></PolicyStatus>`))
 		return
 	case q.Has("publicAccessBlock"):
-		sim.S3ErrorXML(w, "NoSuchPublicAccessBlockConfiguration", "The public access block configuration was not found",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "publicAccessBlock", "NoSuchPublicAccessBlockConfiguration", "The public access block configuration was not found")
 		return
 	case q.Has("object-lock"):
-		sim.S3ErrorXML(w, "ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "object-lock", "ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket")
 		return
 	case q.Has("ownershipControls"):
-		sim.S3ErrorXML(w, "OwnershipControlsNotFoundError", "The bucket ownership controls were not found",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		emitStoredOr404(w, r, bucket, "ownershipControls", "OwnershipControlsNotFoundError", "The bucket ownership controls were not found")
 		return
 	case q.Has("requestPayment"):
+		if body, ct, ok := getStoredBucketSubresource(bucket, "requestPayment"); ok {
+			if ct == "" {
+				ct = "application/xml"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><RequestPaymentConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Payer>BucketOwner</Payer></RequestPaymentConfiguration>`))
 		return
 	case q.Has("notification"):
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`))
+		emitStoredOrEmptyXML(w, bucket, "notification", "NotificationConfiguration")
 		return
 	case q.Has("acl"):
+		if body, ct, ok := getStoredBucketSubresource(bucket, "acl"); ok {
+			if ct == "" {
+				ct = "application/xml"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>` + awsAccountID() + `</ID><DisplayName>simulator</DisplayName></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>` + awsAccountID() + `</ID><DisplayName>simulator</DisplayName></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>`))
