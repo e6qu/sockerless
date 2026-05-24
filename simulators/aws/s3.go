@@ -118,9 +118,15 @@ func registerS3(srv *sim.Server) {
 	mux.HandleFunc("PUT /{bucket}", handleS3CreateBucket)
 	mux.HandleFunc("DELETE /{bucket}", handleS3DeleteBucket)
 	mux.HandleFunc("GET /{bucket}", handleS3GetOrHeadBucket)
-	mux.HandleFunc("PUT /{bucket}/{key...}", handleS3PutObject)
-	mux.HandleFunc("GET /{bucket}/{key...}", handleS3GetOrHeadObject)
-	mux.HandleFunc("DELETE /{bucket}/{key...}", handleS3DeleteObject)
+	mux.HandleFunc("PUT /{bucket}/{key...}", handleS3PutObjectDispatch)
+	mux.HandleFunc("GET /{bucket}/{key...}", handleS3GetOrHeadObjectDispatch)
+	mux.HandleFunc("DELETE /{bucket}/{key...}", handleS3DeleteObjectDispatch)
+	// POST routes for S3 subresource families. Without these, the
+	// catch-all `POST /` in main.go dispatches the request as awsQuery
+	// (looks for an `Action` parameter), which returns the wrong-
+	// protocol `MissingAction` envelope.
+	mux.HandleFunc("POST /{bucket}/{key...}", handleS3PostObjectDispatch)
+	mux.HandleFunc("POST /{bucket}", handleS3PostBucketDispatch)
 	// HEAD routes intentionally NOT registered: Go's net/http mux
 	// auto-routes HEAD requests to the matching GET handler when no
 	// HEAD-specific handler exists. Registering both forms together
