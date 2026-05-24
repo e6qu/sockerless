@@ -57,12 +57,13 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #172 | pod-model follow-up | Simulator pod materialization fidelity — multi-container ECS / Cloud Run / ACA jobs+apps materialize all containers with shared-localhost contract. BUG-1096 + 1097 closed. Merged 2026-05-23 at `1c1fd92`. |
 | #179 | 173 | Simulator wire-fidelity sweep across all 3 clouds. ~180 new sim ops + 6 new project-local skills + sentinel-header logging in shared middleware. Closed issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
 | #180 | 174 | Skill-sweep audit + community-issue triage. 3 rounds; BUG-1105..1119 closed; 8 GitHub issues #181–#188 closed. Azure File/Queue/Table data planes added; streaming-envelope helper wired into 9 upload handlers. Merged 2026-05-24 at `7a5d588`. |
+| open #192 | 175 | Second skill-sweep audit + 3 community-filed issues. 14 BUGs closed (1120–1133); 3 GitHub issues closed (#189 Pub/Sub PATCH, #190 Azurite-style path-style Azure storage, #191 KV https hard-code). 2 persistence-strip BUGs fixed via wrapper records; 5 FaaS smoke tests de-flaked via ContainerStop signalling; CI `test` split 1→3 with per-backend matrices (11 → 22 total CI jobs); 3 skill artifacts (Pattern A2 silent two-value reads, sim-streaming-body positive-confirmation rule, new `timeless-comments` skill). |
 
 ## Active phase
 
-**No active phase.** Phase 174 merged at `7a5d588`. About to start Phase 175 — second skill-sweep audit across the now-larger sim surface (Phase 173 + Phase 174 merged) to catch any patterns slipped into the merged code.
+**Phase 175 in flight on `phase-175-skill-sweep` / PR #192.** Awaiting user merge.
 
-BUGS.md: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking — Phase 175 IS the audit cadence) remain Open.
+BUGS.md: **1133 filed · 1131 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker — Phase 176 will be the third execution) remain Open.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 

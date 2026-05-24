@@ -4,27 +4,16 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 174 merged 2026-05-24 (squash `7a5d588`).** No active branch; sitting on `main`.
+**Phase 175 — second skill-sweep audit. Branch `phase-175-skill-sweep`. PR #192, awaiting user merge.**
 
-BUGS.md: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Open: BUG-1075 (live-cloud cells, deprioritized 2026-05-23) + BUG-1104 (meta tracking — periodic skill-sweep cadence).
+14 BUGs closed (1120–1133), 3 GitHub issues closed (#189 Pub/Sub PATCH, #190 Azurite-compatible path-style Azure storage, #191 KV https hard-code), 2 skill extensions + 1 new skill (`timeless-comments`), CI `test` job split into 22 matrix jobs, 5 FaaS smoke tests de-flaked. All 6 specialist skills re-validated clean on the final diff.
 
-## Phase 175 — second skill-sweep audit (next)
-
-Re-run the 6 specialist skills across the now-larger codebase (Phase 173 + Phase 174 sims merged):
-
-1. `silent-error-swallow-scan` — find any `_ = sim.ReadJSON` / silent decode / discarded `err` introduced in the Phase 174 round-2 storage_dataplane.go + streaming.go work.
-2. `dead-code-silencer-scan` — any new `var _ = ...` import silencers or "reserved for future" symbols.
-3. `sim-canonical-config-test` — quirk patterns vs SDK / CLI / Terraform deserializers in newly added handlers.
-4. `sim-emitted-url-roundtrip` — fresh scan for emitted URLs that callers cannot follow back; round 3 of Phase 174 caught 5 leftovers, so a re-run after the merge will catch any I still missed.
-5. `sim-streaming-body-handler` — any new upload handlers that don't go through `openStreamingBody`.
-6. `backpedal-pattern-audit` — any new BUG-1016/1017/1020/1022 shape recurrences in commits since Phase 173 merged.
-
-Launched in parallel via subagents; results consolidated, BUGs filed, then Phase 175 branch created if anything substantive falls out.
+BUGS.md: **1133 filed · 1131 fixed · 2 open · 2 false positives.** Open: BUG-1075 (live-cloud cells, deprioritized) + BUG-1104 (meta tracking — periodic skill-sweep cadence).
 
 ## Open BUGs
 
-- **BUG-1075** — Live-cloud cell validation. Deprioritized 2026-05-23; revisit only when operator decides.
-- **BUG-1104** — Meta tracking entry for the audit cadence. Phase 174 was the first audit; Phase 175 is the second. Stays open as a forever-recurring reminder.
+- **BUG-1075** — Live-cloud cell validation. Deprioritized; revisit only when operator decides.
+- **BUG-1104** — Meta tracking for the audit cadence. Phase 174 was the first audit, Phase 175 the second; stays open as a perpetual reminder.
 
 ## Invariants snapshot (full list in STATUS.md)
 
