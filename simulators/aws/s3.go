@@ -310,9 +310,9 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 			strings.Contains(string(policy), `"Principal": "*"`)
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf(
+		_, _ = fmt.Fprintf(w,
 			`<?xml version="1.0" encoding="UTF-8"?><PolicyStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsPublic>%t</IsPublic></PolicyStatus>`,
-			isPublic)))
+			isPublic)
 		return
 	case q.Has("publicAccessBlock"):
 		emitStoredOr404(w, r, bucket, "publicAccessBlock", "NoSuchPublicAccessBlockConfiguration", "The public access block configuration was not found")
