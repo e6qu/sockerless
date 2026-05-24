@@ -23,11 +23,12 @@ type Secret struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 }
 
-// SecretVersion represents a single version of a secret. Wire shape
-// only — the raw payload bytes live in a parallel store
-// (`smSecretPayloads`) so persistence preserves them across restarts
-// without leaking payload bytes into the GetSecretVersion / list
-// wire responses (real GCP returns payloads only via :access).
+// SecretVersion is the wire shape for a single secret version —
+// metadata only. Real GCP's GetSecretVersion + ListSecretVersions
+// return this shape (no payload bytes); the raw payload appears
+// only in `:access` responses. The sim stores payload bytes in a
+// parallel `smSecretPayloads` store keyed by version name so this
+// struct stays payload-free even after sim.Store JSON round-trips.
 type SecretVersion struct {
 	Name       string `json:"name"`
 	CreateTime string `json:"createTime"`

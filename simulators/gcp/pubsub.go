@@ -304,10 +304,10 @@ func handlePSPatchSubscription(w http.ResponseWriter, r *http.Request) {
 		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 		return
 	}
-	// Apply each mask path. Unknown paths skip silently (real GCP
-	// returns 400 InvalidArgument; the sim is more permissive here
-	// since the test ecosystem includes terraform-provider-google
-	// which has historically sent paths the sim won't recognise).
+	// Apply each mask path. Unknown paths return 400 InvalidArgument
+	// to match real GCP — a silent skip would hide caller bugs (a
+	// typo in updateMask would persist as a no-op the caller assumed
+	// applied).
 	for _, path := range splitMask(req.UpdateMask) {
 		switch path {
 		case "ackDeadlineSeconds":
@@ -326,6 +326,10 @@ func handlePSPatchSubscription(w http.ResponseWriter, r *http.Request) {
 			existing.EnableMessageOrdering = req.Subscription.EnableMessageOrdering
 		case "filter":
 			existing.Filter = req.Subscription.Filter
+		default:
+			gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"unknown updateMask path: "+path)
+			return
 		}
 	}
 	psSubscriptions.Put(name, existing)
@@ -351,8 +355,13 @@ func handlePSPatchTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, path := range splitMask(req.UpdateMask) {
-		if path == "labels" {
+		switch path {
+		case "labels":
 			existing.Labels = req.Topic.Labels
+		default:
+			gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"unknown updateMask path: "+path)
+			return
 		}
 	}
 	psTopics.Put(name, existing)

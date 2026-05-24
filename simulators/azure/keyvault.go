@@ -104,11 +104,10 @@ type KeyVaultVNetRule struct {
 // per-version material; the sim collapses to the single current
 // version (matches the read-most pattern runners use).
 //
-// This is the WIRE shape only. The storage shape (kvSecretStored)
-// carries Vault+Name as exported fields so persistence works across
-// `SIM_PERSIST=true` restarts. Earlier `json:"-"` Vault/Name fields
-// stripped on every store round-trip; the List filter then ran
-// against zero-value Vault strings and returned empty lists.
+// This is the wire shape only — what handler responses serialise.
+// The persistence shape (kvSecretStored) wraps it with Vault+Name
+// fields needed for List filters; those fields must not appear on
+// the wire so they live on the wrapper, not here.
 type KeyVaultSecret struct {
 	ID          string            `json:"id"` // Full URL `<vault>/secrets/{name}/<version>`
 	Value       string            `json:"value"`
@@ -117,10 +116,12 @@ type KeyVaultSecret struct {
 	ContentType string            `json:"contentType,omitempty"`
 }
 
-// kvSecretStored is the persistence record. Vault and Name are
-// exported with normal JSON tags so sim.Store JSON-serialisation
-// preserves them; the wire response emits the embedded
-// KeyVaultSecret only.
+// kvSecretStored is the persistence record. Vault+Name are exported
+// with normal JSON tags so sim.Store's json.Marshal round-trip
+// preserves them. KeyVaultSecret is embedded so handlers can emit
+// the embedded value directly; the Vault+Name fields don't reach
+// the wire because they aren't on the embedded type. The List
+// handlers iterate over kvSecretStored to filter by Vault.
 type kvSecretStored struct {
 	Vault string `json:"vault"`
 	Name  string `json:"name"`
@@ -169,12 +170,10 @@ func registerKeyVault(srv *sim.Server) {
 		// vaultUri uses the same subdomain routing as storage so
 		// SDK callers reach the data plane through the standard URL.
 		// Real Azure ARM `properties.vaultUri` is always `https://`
-		// regardless of TLS termination at the load balancer; emit
-		// the same here for symmetry with the data-plane URL emitters
-		// (`buildKVURL`) which also hard-code https. Mixed schemes
-		// across ARM and data-plane is itself a fidelity drift the
-		// SDK would notice when constructing follow-up data-plane
-		// requests from the ARM vaultUri.
+		// regardless of TLS termination at the load balancer; the
+		// sim hard-codes it for consistency with the data-plane URL
+		// emitter (buildKVURL), so SDKs that follow vaultUri into
+		// the data plane don't trip on cross-API scheme drift.
 		hostname := r.Host
 		portSuffix := ""
 		if i := strings.LastIndex(hostname, ":"); i >= 0 {
@@ -316,10 +315,8 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 // KeyVaultKey is a key stored at /keys/{name}. Real KV stores a
 // public + private half via Azure-managed HSM; the sim stores
 // only the operator-supplied JsonWebKey envelope on Create and
-// echoes it on read.
-//
-// Wire shape only — see KeyVaultSecret for the same persistence-
-// safety rationale (Vault+Name live on kvKeyStored).
+// echoes it on read. Wire shape only; persistence wrapper is
+// kvKeyStored (same shape as kvSecretStored).
 type KeyVaultKey struct {
 	ID         string            `json:"kid"`
 	JsonWebKey map[string]any    `json:"key,omitempty"`
@@ -336,10 +333,7 @@ type kvKeyStored struct {
 // KeyVaultCertificate is a certificate at /certificates/{name}.
 // Real KV produces a chain (cert + private key + thumbprint); the
 // sim stores the operator-supplied content + a deterministic
-// thumbprint.
-//
-// Wire shape only — see KeyVaultSecret for the same persistence-
-// safety rationale (Vault+Name live on kvCertStored).
+// thumbprint. Wire shape only; persistence wrapper is kvCertStored.
 type KeyVaultCertificate struct {
 	ID             string            `json:"id"`
 	X509Thumbprint string            `json:"x5t,omitempty"`
@@ -679,13 +673,10 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 	}
 	now := time.Now().Unix()
 	version := generateUUID()
-	// Use the shared buildKVURL helper. The earlier inline path
-	// concatenated `%s://%s.vault.%s` with `r.URL.Scheme` + a
-	// `<vault>.vault.<host>`-shaped Host, which double-prefixed the
-	// vault on any reverse proxy that populates r.URL.Scheme — exact
-	// BUG-1115 duplicate-host shape. The fallback rescued it in the
-	// sim's mux today; buildKVURL is consistent across all KV emit
-	// sites (BUG-1115).
+	// All KV ID emitters route through buildKVURL so the scheme +
+	// host shape stays consistent across handlers. r.URL.Scheme is
+	// unreliable behind the sim's mux (typically empty); the helper
+	// hard-codes `https://` to match real Azure KV.
 	id := buildKVURL(r, vault, "secrets", name, version)
 	secret := KeyVaultSecret{
 		ID:          id,

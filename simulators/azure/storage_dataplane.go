@@ -146,15 +146,18 @@ func registerStorageDataPlane(srv *sim.Server) {
 				handleTablesDataPlane(w, r, parts[0])
 				return
 			}
-			// Path-style fallback (Azurite-style sibling per issue
-			// #190 — single sim port + per-service path prefix):
+			// Path-style fallback for SDKs configured with a non-
+			// `*.core.windows.net` endpoint (Azurite-compatible).
+			// Sockerless runs on a single port, so the service is
+			// discriminated by a path prefix instead of a per-service
+			// port:
 			//   /file/{account}/...   → Files data plane
 			//   /queue/{account}/...  → Queues data plane
 			//   /table/{account}/...  → Tables data plane
-			// Connection-string compatibility: callers configure
-			// `FileEndpoint=http://localhost:14568/file/<account>`
-			// etc. Path-style blob lives in blob.go's WrapHandler
-			// (covers the bare `/{account}/...` Azurite default).
+			// Connection-string contract: callers configure
+			// `FileEndpoint=http://localhost:14568/file/<account>`.
+			// Bare `/{account}/...` (blob default) is matched in
+			// blob.go's WrapHandler.
 			if account, rest, ok := splitServicePrefix(r.URL.Path, "file"); ok {
 				r.URL.Path = "/" + rest
 				handleFilesDataPlane(w, r, account)
@@ -195,8 +198,8 @@ func registerStorageDataPlane(srv *sim.Server) {
 // splitServicePrefix matches `/<service>/<account>/<rest...>` where
 // `<service>` is the literal `service` argument (file / queue / table)
 // and `<account>` is a known storage account. Returns (account,
-// rest-of-path, true) on match. Path-style dispatch sibling for issue
-// #190 — see the WrapHandler above and blob.go's bare-account form.
+// rest-of-path, true) on match. Path-style sibling of the bare
+// `/{account}/...` blob form in blob.go.
 func splitServicePrefix(path, service string) (account, rest string, ok bool) {
 	p := strings.TrimPrefix(path, "/")
 	prefix := service + "/"

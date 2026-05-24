@@ -81,14 +81,14 @@ func registerBlobDataPlane(srv *sim.Server) {
 				handleBlobDataPlane(w, r, parts[0])
 				return
 			}
-			// Path-style fallback (Azurite-compatible): when the host
+			// Path-style fallback (Azurite-compatible). When the host
 			// has no `.blob.` subdomain but the URL path starts with
 			// `/{knownAccount}/...`, dispatch as a blob data-plane
 			// request. Matches the Azure SDK / azurerm provider
 			// default for non-`*.core.windows.net` endpoints. The
 			// account-name lookup against azStorageAccounts protects
-			// against false matches with ARM routes (which start
-			// with `/subscriptions/`).
+			// against false matches with ARM routes, which start
+			// with `/subscriptions/`.
 			if account, rest, ok := splitPathStyleAccount(r.URL.Path); ok {
 				r.URL.Path = "/" + rest
 				handleBlobDataPlane(w, r, account)
