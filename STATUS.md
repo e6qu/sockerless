@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-177-community-issues` — BUG-1142..1147 closed (1 reopen + 1 new community-filed + 4 meta-skill improvements). PR #202 open + awaiting CI + user merge. |
-| In-flight | PR #202 — waiting on GitHub Actions; user merges when green. |
-| Last merged | PR #200 — Phase 176 community-filed issues + audit findings (2026-05-24, squash `2d8e604`). |
+| Active branch | `phase-178-community-issues` — 1 reopen + 8 community-filed + 4 class-of-bug remediations. Stage A (infrastructure) in flight. |
+| In-flight | Phase 178 — 7 stages on a single PR; no PR open yet. |
+| Last merged | PR #202 — Phase 177 community-filed issues + 4 meta-skill improvements (2026-05-24, squash `aa847b1`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1147 filed · 1145 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
+| Bugs | 1160 filed · 1145 fixed · 15 open · 2 false positives. Open: BUG-1075 + BUG-1104 + BUG-1148..1160. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -69,11 +69,11 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
+| #202 | 177 | KV WWW-Authenticate URL reopen (#193 → BUG-1143) + S3 bucket-subresources (#201 → BUG-1142) + 4 meta-skill improvements (extended sim-canonical-config-test; new surface-table-completeness + reopen-postmortem + tf-tests parity). 6 BUGs closed (1142-1147). Merged 2026-05-24 at `aa847b1`. |
 | #200 | 176 | 8 community-filed issues closed (#190 reopened + #193..#199) + 12 in-PR skill-audit findings + path-style storage dispatcher contamination fix + `make hooks` bootstrap for pre-commit. 8 BUGs closed (1134-1141). Merged 2026-05-24 at `2d8e604`. |
 | #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191) + signal-driven FaaS smoke tests + CI test-job split + new `timeless-comments` skill. 14 BUGs closed (1120-1133). Merged 2026-05-24 at `ca11405`. |
 | #180 | 174 | Skill-sweep audit + community-issue triage — 3 rounds: round 1 (4 quick BUGs + 3 follow-ups), round 2 (3 follow-ups closed + all 8 GitHub issues #181–#188), round 3 (5 self-audit gaps). 15 BUGs closed (1105–1119). Merged 2026-05-24 at `7a5d588`. |
 | #179 | 173 | Simulator wire-fidelity sweep — 20 commits, ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
 | #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported. Merged 2026-05-23 at `1c1fd92`. |
-| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP AR endpoint-fidelity, live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 
 Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

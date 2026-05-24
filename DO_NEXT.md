@@ -4,51 +4,67 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 177 — 1 reopen + 1 community-filed + 4 process improvements.** Branch `phase-177-community-issues`, PR #202 open: https://github.com/e6qu/sockerless/pull/202.
+**Phase 178 — 1 reopen + 8 community-filed + 4 class-of-bug remediations, single PR, 7 stages.** Branch `phase-178-community-issues`, in flight.
 
-PR #200 (Phase 176) merged at `2d8e604` closed BUG-1134..1141 + 8 GitHub issues. User testing against the merged build reopened **#193** (KV `WWW-Authenticate` `authorization` URL breaks the Azure SDK's `parseTenant` — only 3 path segments, SDK indexes `[3]` and panics) and filed **#201** (S3 bucket-level PUT/DELETE subresources route to CreateBucket → 409).
+PR #202 (Phase 177) merged at `aa847b1`. User immediately filed 8 new issues (#203..#210) and reopened #196 (S3 multipart `ListParts` missed in the Phase 176/177 sweeps). The pattern across these and the earlier #190/#193/#196 reopen chain decomposes into **four classes of bug** that current skills don't catch:
 
-The pattern between these two reopens / adjacents + the earlier #190 reopen is the load-bearing finding: my SDK tests bypassed the contract the real SDK actually exercises (raw `net/http` + `Bearer fake-token` instead of `azsecrets.NewClient`; only the user-named subset of a closed operation table instead of the full enumeration). Phase 177 closes both the code fixes AND the process gaps that let them ship.
+1. **Partial-table coverage (Class 1)** — `surface-table-completeness` is reactive; the 30+ sim service surfaces without a table are silent ✗ everywhere. Issue #196's reopen is the canonical proof: bucket subresources tabled, multipart wasn't.
+2. **Mux pattern collision (Class 2)** — collapsed-port sim has no scanner to flag pattern shadowing; the wrong handler responds with a plausible error so wire-shape probes miss it. Surfaces in #204 + #208.
+3. **Wire-shape drift on List / paged endpoints (Class 3)** — single-record envelope from a List endpoint silently passes `.Value[0]`-style SDK tests. Surfaces in #203.
+4. **State-machine fakery (Class 4)** — sim stores data flat; documented state transitions (versioning, soft-delete, snapshot states, failover) aren't modelled. Surfaces in #203 + #205 + #207 + #209.
 
-BUGS.md: **1147 filed · 1139 fixed · 8 open.** Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence) + BUG-1142..1147 (Phase 177 scope).
+Phase 178 closes the 9 community-filed items AND the 4 class-of-bug remediations on a single branch.
 
-## Phase 177 scope — 6 BUGs
+BUGS.md: **1160 filed · 1145 fixed · 15 open.** Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence) + BUG-1148..1160 (Phase 178 scope).
 
-| BUG | Sev | Surface | Headline |
+## Phase 178 scope — 13 BUGs across 7 stages
+
+| Stage | Commits | BUGs | Notes |
 |---|---|---|---|
-| 1142 | P1 | AWS S3 | Bucket-level PUT/DELETE subresources route to CreateBucket → 409. Table-driven dispatcher for 15 PUT + ≥10 DELETE ops; back configs in per-bucket `sim.MakeStore`. Issue #201. |
-| 1143 | P0 | Azure KV | `Bearer authorization="http://<host>", resource="..."` breaks SDK challenge parser (3 path segments). Emit `http://<host>/00000000-…` so SDK `parseTenant` extracts the placeholder UUID. Issue #193 reopened. |
-| 1144 | P1 | skills | Extend `sim-canonical-config-test` SKILL to refuse raw `net/http` when an official SDK package exists for the service. Refactor every existing raw-HTTP sdk-test that has an SDK equivalent. |
-| 1145 | P1 | specs+skills | `specs/SIM_SURFACE_TABLES/` — one MD per service with full op enumeration (sim-impl + sdk-test + tf-test columns). New skill `surface-table-completeness/SKILL.md` enforcing full-table audit before any "fixed" claim. |
-| 1146 | P1 | skills | New skill `reopen-postmortem/SKILL.md` — every reopen BUG carries (a) what test passed but should have failed, (b) what SDK code path was missed, (c) what new canonical-SDK-client test catches the regression. Reopens are P0 by default. |
-| 1147 | P1 | terraform-tests | Every sim surface that has a terraform-provider resource gets a tf-tests entry alongside the sdk-test. Phase 177 adds tf-tests for every S3 subresource fixed under 1142 + every KV op covered by 1143. Extend `sim-canonical-config-test` to cover provider config. |
+| A — infrastructure | 1-5 | 1157 (proactive seed) · 1158 (mux scanner) · 1159 (paged rule) · 1160 (state-machine skill) | Builds scaffolding subsequent stages use. mux scanner runs in warn mode initially. |
+| B — AWS routing | 6-8 | 1154 (awsQuery Version dispatch) · 1150 (S3 vs API Gateway v2) | Closes #204 + #208. Graduates mux scanner to gating. |
+| C — AWS ops | 9-11 | 1148 (S3 ListParts) · 1153 (RDS snapshots + SNS + SQS) | Closes #196 reopen + #207. |
+| D — Azure KV state | 12-15 | 1149 (versioning + paged) · 1151 (PATCH + soft-delete) | Closes #203 + #205. |
+| E — Azure services | 16-19 | 1152 (App Service config) · 1156 (PG FS + APIM + Cache Redis) | Closes #206 + #210. |
+| F — GCP ops | 20-23 | 1155 (Cloud SQL + Memorystore + Pub/Sub + API Gateway IAM) | Closes #209. |
+| G — final audit + PR | 24-26 | tf-tests parity + skill audit + PR open | — |
 
-Implementation order:
+## Stage A — current
 
-1. **Continuity-doc reset** — STATUS.md / DO_NEXT.md / this file / BUGS.md as commit 1.
-2. **BUG-1143** — KV authorization URL fix + canonical `azsecrets.NewClient` test that fails on the pre-fix build.
-3. **BUG-1142** — S3 bucket-subresource dispatcher (table-driven) + per-subresource sdk-tests + tf-tests.
-4. **BUG-1145** — `specs/SIM_SURFACE_TABLES/aws-s3-subresources.md`, `azure-kv-operations.md`, plus skill MD, populated from the 1142 + 1143 work.
-5. **BUG-1147** — tf-tests for the new S3 subresources + KV ops; extend canonical-config-test for provider config.
-6. **BUG-1144** — extend `sim-canonical-config-test` SKILL with the raw-HTTP rule; refactor every existing raw-HTTP sdk-test in `simulators/<cloud>/sdk-tests/` that has an SDK equivalent.
-7. **BUG-1146** — `reopen-postmortem/SKILL.md` + backfill postmortems for BUG-1134, BUG-1135 (and BUG-1130 + BUG-1131 if they qualify).
-8. **In-PR audit pass** — silent-error-swallow + dead-code + canonical-config + emitted-url + streaming-body + backpedal + timeless-comments + fake-implementation + surface-table-completeness + reopen-postmortem.
-9. **Push, open PR, wait for CI, user merges.**
+Commit 1 (this commit): file BUG-1148..1160 + continuity-doc reset.
+Commit 2 — proactive `specs/SIM_SURFACE_TABLES/` seed (~30 services, just ops the sim already touches + obvious siblings).
+Commit 3 — `mux-overlap-scan` skill + scanner + pre-commit hook (warn).
+Commit 4 — extend `sim-canonical-config-test` with paged-iterator rule + backfill existing tables.
+Commit 5 — `sim-state-machine-completeness` skill.
+
+Checkpoint A after commit 5: 30+ tables, scanner reports baseline overlaps, all 3 SDK suites still green.
+
+## Cross-stage rules
+
+- Single branch `phase-178-community-issues`; no merge between stages — only test checkpoints.
+- Each checkpoint failure: fix in-branch on the next commit; re-run checkpoint; move on.
+- BUGS.md strikethrough updates land in the commit that closes each BUG.
+- GitHub issues stay open during the phase; close after PR merges.
+- Continuity docs refresh only at stage boundaries.
+- mux-overlap-scan in warn mode through Stage A; graduates to gating in Stage B commit 7.
 
 ## Invariants snapshot (full list in STATUS.md)
 
 - Never auto-merge; user merges every PR.
 - Single-branch rule per phase; never more than 1 PR open.
 - File BUGs *before* fixing.
-- No fakes / no fallbacks / no silent shims — fail loud or ask, never silently degrade.
+- No fakes / no fallbacks / no silent shims.
 - Every sim surface tested at BOTH the SDK layer AND the terraform-provider layer (when a provider resource exists).
 - Every reopen carries a postmortem trail.
+- Every closed-enumeration surface has a `specs/SIM_SURFACE_TABLES/<name>.md` with no silent ✗ rows.
+- Every List* op has a paged-iterator test.
+- Every stateful resource type has a state-machine skill assertion.
 - `make hooks` on every fresh clone.
 
 ## Session-resume checklist
 
-1. `git fetch origin` + `git status` + `git log --oneline -8`.
-2. `gh pr list --state open` — Phase 177 PR open?
+1. `git fetch origin && git status && git log --oneline -8`.
+2. `gh pr list --state open` — Phase 178 PR open yet? (Should be no until Stage G.)
 3. Read STATUS.md + this file + BUGS.md § Open.
-4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
-5. Pick the next ◻ Phase 177 BUG; commit when verified.
+4. Read `.claude/skills/avoid-vibe-slop/SKILL.md` before any code change.
+5. Pick the next ◻ Phase 178 commit; run checkpoint after each stage boundary.
