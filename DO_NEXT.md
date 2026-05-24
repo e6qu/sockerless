@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 176 — all community-filed issues closed; final audit + PR push remaining.** Branch `phase-176-community-issues`, 9 commits on top of `origin/main`.
+**Phase 176 — PR #200 open, CI running, awaiting user merge.** Branch `phase-176-community-issues`, 11 commits on top of `origin/main`. PR URL: https://github.com/e6qu/sockerless/pull/200.
 
 PR #192 (Phase 175) merged at `ca11405` closed BUG-1120..1133 + 3 GitHub issues (#189/#190/#191). The user re-tested against the merged build and reopened **#190** (path-style storage dispatch didn't work — the prior fix required ARM registration that real Azurite users don't do) and filed 7 new issues (#193–#199).
 
@@ -36,14 +36,16 @@ Plus the in-PR audit pass closed:
 
 ## Test results
 
-All three SDK suites green: AWS 96s, Azure 22s, GCP 28s. Full Azure suite (which had been masking 10 cross-test failures pre-fix) now clean.
+All three SDK suites green locally: AWS 222s (full), Azure 23s, GCP 124s. Full Azure suite (which had been masking 10 cross-test failures pre-fix) now clean.
 
 ## Next steps
 
-1. Wait for parallel skill-audit pass to complete (5 background agents).
-2. Update WHAT_WE_DID.md with Phase 176 narrative.
-3. Rebase on `origin/main` (clean) + push.
-4. Open PR linked to issues #190 #193 #194 #195 #196 #197 #198 #199; let CI run; ping user for merge.
+1. Watch `gh pr checks 200` for CI completion across all 22 jobs.
+2. On green CI → ping user for merge.
+3. After user merges:
+   - Sync local main: `git checkout main && git pull origin main`.
+   - Delete the merged branch locally + on origin.
+   - Reset DO_NEXT / STATUS / WHAT_WE_DID to next phase if there is one; otherwise close to "idle, awaiting new community-filed issues."
 
 ## Invariants snapshot (full list in STATUS.md)
 
@@ -56,8 +58,8 @@ All three SDK suites green: AWS 96s, Azure 22s, GCP 28s. Full Azure suite (which
 
 ## Session-resume checklist
 
-1. `git fetch origin && git checkout phase-176-community-issues && git pull --rebase origin main`.
-2. `git log --oneline -12`.
-3. Read STATUS.md + this file + BUGS.md § Open.
-4. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
-5. If PR not opened yet, open it; otherwise check `gh pr checks` and report status.
+1. `git fetch origin` + `gh pr view 200 --json mergeable,state,statusCheckRollup` to learn whether the PR is still open, merged, or closed.
+2. If still open: `gh pr checks 200` to see CI state; report to the user.
+3. If merged: `git checkout main && git pull origin main`; reset continuity docs to the next phase or "idle."
+4. Read STATUS.md + this file + BUGS.md § Open before doing anything else.
+5. Read [`.claude/skills/avoid-vibe-slop/SKILL.md`](.claude/skills/avoid-vibe-slop/SKILL.md) before any code change.
