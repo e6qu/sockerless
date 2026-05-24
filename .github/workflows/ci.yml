@@ -195,7 +195,7 @@ jobs:
           cache: true
       - uses: hashicorp/setup-terraform@v4
       - name: Run terraform tests
-        run: cd simulators/${{ matrix.cloud }} && make tf-test
+        run: cd simulators/${{ matrix.cloud }} && make terraform-test
         timeout-minutes: 10
         env:
           GOWORK: "off"
