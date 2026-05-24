@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-142.8k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-151.9k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-16.7k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-70.3k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-73.7k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -112,9 +112,9 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 ![core](https://img.shields.io/badge/core-19.2k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-24.3k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-18.9k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-9.9k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-9.7k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-22.6k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-13.5k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-11.6k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-5.9k-5BC0DE)
@@ -156,6 +156,12 @@ For terraform operations:
 ## Quick Start
 
 ```bash
+# One-time bootstrap on a fresh clone: wire up the gofmt / golangci-lint /
+# core-test / rebase-check / latest-deps git hooks declared in
+# `.pre-commit-config.yaml`. Without this, gofmt drift slips into PRs and
+# CI catches it instead of your local commit.
+make hooks
+
 # Bring up a full local dev stack (sim + backend + admin) for any
 # cloud × backend combination. Sim runs on its native port (4566 /
 # 4567 / 4568); backend on :3375; admin UI on :9090/ui/.

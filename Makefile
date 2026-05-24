@@ -96,10 +96,15 @@ ALL_APPS := $(GO_UI_APPS) $(GO_APPS) $(UI_APPS)
 #
 # `make build` → run `make build` in every app, in series. Fail fast.
 
-.PHONY: install build build-noui test test-integration lint clean upgrade-deps check-deps
+.PHONY: install build build-noui test test-integration lint clean upgrade-deps check-deps hooks
 
 install: ## install deps in every app
 	@$(MAKE) -s _fanout TARGET=install APPS="$(ALL_APPS)"
+
+hooks: ## install pre-commit / commit-msg / pre-push git hooks (one-time bootstrap on fresh clones)
+	@command -v pre-commit >/dev/null 2>&1 || { echo "pre-commit not on PATH — install via 'uv pip install pre-commit' or 'pipx install pre-commit'"; exit 1; }
+	@pre-commit install --install-hooks
+	@pre-commit install --hook-type commit-msg --hook-type pre-push
 
 build: ## build every app
 	@$(MAKE) -s _fanout TARGET=build APPS="$(GO_UI_APPS) $(GO_APPS) $(UI_APPS)"

@@ -106,11 +106,16 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 	case "oracle-ee", "oracle-se2":
 		port = 1521
 	}
+	engine := r.FormValue("Engine")
+	engineVersion := r.FormValue("EngineVersion")
+	if engineVersion == "" {
+		engineVersion = rdsDefaultEngineVersion(engine)
+	}
 	inst := RDSInstance{
 		DBInstanceIdentifier: id,
 		DBInstanceClass:      r.FormValue("DBInstanceClass"),
-		Engine:               r.FormValue("Engine"),
-		EngineVersion:        r.FormValue("EngineVersion"),
+		Engine:               engine,
+		EngineVersion:        engineVersion,
 		DBInstanceStatus:     "available",
 		MasterUsername:       r.FormValue("MasterUsername"),
 		DBName:               r.FormValue("DBName"),
@@ -253,4 +258,35 @@ func atoiOrZero(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// rdsDefaultEngineVersion returns the engine's current GA major
+// version when the request omits EngineVersion. Real RDS resolves
+// the default server-side and includes it in the CreateDBInstance
+// response; the terraform-provider-aws resource captures the
+// resolved version into state, so an empty echo persists as `""`
+// and surfaces as state drift on the next plan.
+//
+// Versions kept current as of mid-2026 GA releases. New majors land
+// rarely (1-2× per year); update here when they ship.
+func rdsDefaultEngineVersion(engine string) string {
+	switch engine {
+	case "postgres":
+		return "17.5"
+	case "mysql":
+		return "8.0.40"
+	case "mariadb":
+		return "11.4.4"
+	case "aurora-postgresql":
+		return "16.6"
+	case "aurora-mysql":
+		return "8.0.mysql_aurora.3.07.0"
+	case "oracle-se2":
+		return "19.0.0.0.ru-2024-10.rur-2024-10.r1"
+	case "oracle-ee":
+		return "19.0.0.0.ru-2024-10.rur-2024-10.r1"
+	case "sqlserver-ex", "sqlserver-web", "sqlserver-se", "sqlserver-ee":
+		return "16.00.4150.1.v1"
+	}
+	return ""
 }

@@ -51,8 +51,9 @@ func blobReq(t *testing.T, method, account, path string, body []byte, headers ma
 }
 
 // TestBlobDataPlane_RoundTrip exercises container + blob CRUD
-// through the data-plane subdomain dispatch. Regression guard for
-// BUG-1103 (issue #178, Blob data plane).
+// through the `<account>.blob.<host>` subdomain dispatch — the ARM
+// `storageAccounts` response advertises this exact endpoint URL, so
+// the data plane it points at must serve it.
 func TestBlobDataPlane_RoundTrip(t *testing.T) {
 	account := "testaccount"
 	container := "mycontainer"
@@ -106,10 +107,11 @@ func TestBlobDataPlane_RoundTrip(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestBlobDataPlane_404OnMissingContainer guards against the
-// BUG-1103 shape: the sim used to advertise the endpoint URL but
-// not service it. After the fix the data-plane handler should
-// return a proper 404 (not a generic fall-through).
+// TestBlobDataPlane_404OnMissingContainer locks in the
+// "advertised-endpoint must be serviced" invariant: a GET against a
+// missing container on a non-existent account returns a real 404
+// from the Blob data-plane handler (not a mux fall-through to a
+// generic 404 page).
 func TestBlobDataPlane_404OnMissingContainer(t *testing.T) {
 	resp := blobReq(t, "GET", "noaccount", "/nope?restype=container", nil, nil)
 	defer resp.Body.Close()
@@ -122,6 +124,10 @@ func TestBlobDataPlane_404OnMissingContainer(t *testing.T) {
 }
 
 // kvReq points at the KV data-plane subdomain ({vault}.vault.<host>).
+// The Bearer header is required to clear the sim's WWW-Authenticate
+// challenge that real Azure KV issues on unauthenticated probes
+// (the Azure SDK does a challenge-then-retry token dance). Raw HTTP
+// tests skip the dance by pre-setting the header.
 func kvReq(t *testing.T, method, vault, path string, body []byte) *http.Response {
 	t.Helper()
 	var br io.Reader
@@ -131,6 +137,7 @@ func kvReq(t *testing.T, method, vault, path string, body []byte) *http.Response
 	req, err := http.NewRequest(method, baseURL+path, br)
 	require.NoError(t, err)
 	req.Host = vault + ".vault.localhost"
+	req.Header.Set("Authorization", "Bearer fake-token")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -138,8 +145,10 @@ func kvReq(t *testing.T, method, vault, path string, body []byte) *http.Response
 }
 
 // TestKeyVault_KeysAndCertificates exercises the keys + certificates
-// data-plane surfaces added alongside the existing secrets handler.
-// Regression guard for BUG-1103 (Key Vault keys/certs slice).
+// data-plane surfaces (CreateKey / GetKey / ListKeys /
+// CreateCertificate / GetCertificate) on a vault registered through
+// ARM. Locks the symmetric "ARM-creates → data-plane-serves" wiring
+// the secrets handler already covered.
 func TestKeyVault_KeysAndCertificates(t *testing.T) {
 	// Vault must exist in the ARM control plane first.
 	vault := "testvault"
@@ -192,4 +201,55 @@ func TestKeyVault_KeysAndCertificates(t *testing.T) {
 	resp = kvReq(t, "DELETE", vault, "/certificates/mycert", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
+}
+
+// TestKeyVault_AuthChallenge asserts the WWW-Authenticate: Bearer
+// challenge response on unauthenticated probes. The Azure SDK's KV
+// clients do challenge-then-retry: first request has no
+// Authorization, SDK parses WWW-Authenticate to discover the AAD
+// issuer + resource scope, then fetches a token and retries. The
+// sim must issue the 401 + challenge for any SDK consumer to work.
+func TestKeyVault_AuthChallenge(t *testing.T) {
+	vault := "challengevault"
+	armPath := "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg1/providers/Microsoft.KeyVault/vaults/" + vault
+	armReq, err := http.NewRequest("PUT", baseURL+armPath,
+		strings.NewReader(`{"location":"eastus","properties":{"tenantId":"t","sku":{"name":"standard"}}}`))
+	require.NoError(t, err)
+	armReq.Header.Set("Content-Type", "application/json")
+	armReq.Header.Set("Authorization", "Bearer fake-token")
+	armResp, err := http.DefaultClient.Do(armReq)
+	require.NoError(t, err)
+	armResp.Body.Close()
+
+	// Probe without Authorization — must get 401 + WWW-Authenticate.
+	req, err := http.NewRequest("PUT", baseURL+"/secrets/probe?api-version=7.6",
+		strings.NewReader(`{"value":"v"}`))
+	require.NoError(t, err)
+	req.Host = vault + ".vault.localhost"
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+		"unauthenticated KV probe must 401 (real Azure does)")
+	challenge := resp.Header.Get("WWW-Authenticate")
+	require.NotEmpty(t, challenge, "401 must carry WWW-Authenticate header")
+	assert.Contains(t, challenge, "Bearer ", "challenge must use Bearer scheme")
+	assert.Contains(t, challenge, `authorization=`, "challenge must announce authorization URL")
+	assert.Contains(t, challenge, `resource="https://vault.azure.net"`,
+		"challenge must announce the KV resource scope")
+
+	// Same request with Authorization — must succeed (challenge cleared).
+	req2, err := http.NewRequest("PUT", baseURL+"/secrets/probe?api-version=7.6",
+		strings.NewReader(`{"value":"v"}`))
+	require.NoError(t, err)
+	req2.Host = vault + ".vault.localhost"
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer fake-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusOK, resp2.StatusCode,
+		"authenticated KV request must succeed")
 }

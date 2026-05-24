@@ -81,14 +81,28 @@ func registerBlobDataPlane(srv *sim.Server) {
 				handleBlobDataPlane(w, r, parts[0])
 				return
 			}
-			// Path-style fallback (Azurite-compatible). When the host
-			// has no `.blob.` subdomain but the URL path starts with
-			// `/{knownAccount}/...`, dispatch as a blob data-plane
-			// request. Matches the Azure SDK / azurerm provider
-			// default for non-`*.core.windows.net` endpoints. The
-			// account-name lookup against azStorageAccounts protects
-			// against false matches with ARM routes, which start
-			// with `/subscriptions/`.
+			// Path-style fallback (Azurite-compatible). When the
+			// host carries NO service-specific Azure subdomain
+			// AND the URL path starts with `/{account}/...` AND
+			// the request carries an Azure-Storage protocol signal,
+			// dispatch as a blob data-plane request. Matches the
+			// Azure SDK / azurerm provider default for non-
+			// `*.core.windows.net` endpoints and the Azurite
+			// connection-string contract. Account names are
+			// accepted as-is (real Azurite is permissive — no
+			// prior ARM registration required); the storage-signal
+			// requirement keeps non-storage co-tenants (IMDS at
+			// `/metadata/...`, Monitor ingest at
+			// `/dataCollectionRules/...`, MSI at `/metadata/...`)
+			// from being misrouted on the shared sim port.
+			if hasNonStorageAzureSubdomain(hostname) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !hasAzureStorageSignal(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if account, rest, ok := splitPathStyleAccount(r.URL.Path); ok {
 				r.URL.Path = "/" + rest
 				handleBlobDataPlane(w, r, account)
@@ -99,12 +113,72 @@ func registerBlobDataPlane(srv *sim.Server) {
 	})
 }
 
+// hasAzureStorageSignal reports whether the request carries a
+// protocol marker that real Azure Storage SDKs always emit:
+//   - `x-ms-version`     — REST API version selector (every SDK call)
+//   - `x-ms-date`        — request-signing timestamp
+//   - `x-ms-blob-type`   — PutBlob blob-type selector
+//   - `x-ms-type`        — Files PutFile file-type selector
+//   - `Authorization: SharedKey ...` — account-key signed request
+//   - query `restype=`   — container/share/directory operation discriminator
+//   - query `comp=`      — sub-resource (list, properties, metadata, …)
+//   - query `sv=`        — Shared Access Signature (SAS) version
+//
+// Co-tenants on the shared sim port (IMDS `/metadata/...`, Monitor
+// ingest `/dataCollectionRules/...`, MSI token endpoint) never carry
+// any of these markers, so the signal cleanly partitions storage
+// path-style requests from everything else.
+func hasAzureStorageSignal(r *http.Request) bool {
+	if r.Header.Get("x-ms-version") != "" ||
+		r.Header.Get("x-ms-date") != "" ||
+		r.Header.Get("x-ms-blob-type") != "" ||
+		r.Header.Get("x-ms-type") != "" {
+		return true
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "SharedKey ") || strings.HasPrefix(auth, "SharedKeyLite ") {
+		return true
+	}
+	q := r.URL.Query()
+	if q.Get("restype") != "" || q.Get("comp") != "" || q.Get("sv") != "" {
+		return true
+	}
+	return false
+}
+
+// hasNonStorageAzureSubdomain reports whether the host carries an
+// Azure-service subdomain other than the four storage services
+// (blob/file/queue/table). A host like `myvault.vault.localhost`,
+// `myns.servicebus.localhost`, `myfn.azurewebsites.net`, or
+// `mycr.azurecr.io` MUST NOT be dispatched as a path-style storage
+// request — the subdomain identifies a different data plane. New
+// service subdomains added to the sim go here too.
+func hasNonStorageAzureSubdomain(hostname string) bool {
+	for _, marker := range []string{
+		".vault.",
+		".servicebus.",
+		".web.",
+		".dfs.",
+		".azurewebsites.",
+		".azurecr.",
+		".azure-api.",
+		".applicationinsights.",
+		".cognitiveservices.",
+	} {
+		if strings.Contains(hostname, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // splitPathStyleAccount returns (account, restOfPath, true) when the
-// first path segment matches a known storage account. Used by the
-// blob (and storage_dataplane.go) dispatchers to accept Azurite-style
-// `/{account}/{container}/{blob}` URLs alongside the host-subdomain
-// form. Returns false if the path has no leading segment or the
-// segment isn't a registered account.
+// path looks like Azurite-style storage: `/{account}/{container}/{blob}`.
+// Real Azurite accepts any account name without prior registration;
+// the discriminator from non-storage routes is the prefix exclusion
+// — ARM (`/subscriptions/...`, `/providers/...`), Docker SDK
+// (`/v1.NN/...`), and GCP-shaped paths (`/v1/...`, `/storage/v1/...`)
+// are NOT path-style storage. Anything else with `/{segment}/{rest}`
+// is dispatched to the data plane with `{segment}` as the account.
 func splitPathStyleAccount(path string) (account, rest string, ok bool) {
 	p := strings.TrimPrefix(path, "/")
 	if p == "" {
@@ -119,24 +193,29 @@ func splitPathStyleAccount(path string) (account, rest string, ok bool) {
 		first = p[:slash]
 		p = p[slash+1:]
 	}
-	if !knownStorageAccount(first) {
+	if isNonStorageFirstSegment(first) {
 		return "", "", false
 	}
 	return first, p, true
 }
 
-// knownStorageAccount reports whether name matches a registered
-// storage account. The `azStorageAccounts` store is keyed by full
-// ARM resource ID; we scan by Name. O(N) but N is bounded by the
-// number of operator-created accounts (typically 1).
-func knownStorageAccount(name string) bool {
-	if name == "" {
-		return false
+// isNonStorageFirstSegment reports whether the first path segment
+// belongs to a non-storage route (ARM, Docker SDK, GCP-shaped, or
+// other registered sim surfaces). Anything not in this set is
+// treated as a storage account name for path-style dispatch.
+func isNonStorageFirstSegment(s string) bool {
+	switch s {
+	case "subscriptions", "providers", "tenants", "locations",
+		"storage", "v1", "$metadata":
+		return true
 	}
-	for _, a := range azStorageAccounts.List() {
-		if a.Name == name {
-			return true
-		}
+	// Docker SDK paths: /v1.44/, /v1.41/, etc.
+	if strings.HasPrefix(s, "v1.") {
+		return true
+	}
+	// internal/v1/ surface (sockerless control plane).
+	if s == "internal" {
+		return true
 	}
 	return false
 }

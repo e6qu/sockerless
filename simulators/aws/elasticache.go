@@ -96,11 +96,15 @@ func handleECCreate(w http.ResponseWriter, r *http.Request) {
 	if num == 0 {
 		num = 1
 	}
+	engineVersion := r.FormValue("EngineVersion")
+	if engineVersion == "" {
+		engineVersion = ecDefaultEngineVersion(engine)
+	}
 	c := ECCluster{
 		CacheClusterId:         id,
 		CacheNodeType:          r.FormValue("CacheNodeType"),
 		Engine:                 engine,
-		EngineVersion:          r.FormValue("EngineVersion"),
+		EngineVersion:          engineVersion,
 		CacheClusterStatus:     "available",
 		NumCacheNodes:          num,
 		CacheClusterCreateTime: time.Now().UTC().Format(time.RFC3339),
@@ -228,4 +232,21 @@ func findECByARN(arn string) (ECCluster, bool) {
 		return c, true
 	}
 	return ECCluster{}, false
+}
+
+// ecDefaultEngineVersion returns the engine's current GA major
+// version when CreateCacheCluster omits EngineVersion. Real
+// ElastiCache populates the default server-side; the
+// terraform-provider-aws resource captures the resolved value into
+// state, so an empty echo produces drift on next plan.
+func ecDefaultEngineVersion(engine string) string {
+	switch engine {
+	case "redis":
+		return "7.1"
+	case "valkey":
+		return "8.0"
+	case "memcached":
+		return "1.6.22"
+	}
+	return ""
 }

@@ -158,6 +158,24 @@ func registerStorageDataPlane(srv *sim.Server) {
 			// `FileEndpoint=http://localhost:14568/file/<account>`.
 			// Bare `/{account}/...` (blob default) is matched in
 			// blob.go's WrapHandler.
+			//
+			// Skip when the host carries a non-storage Azure
+			// subdomain (`.vault.`, `.servicebus.`) — those hosts
+			// belong to other data planes and must not be reinterpreted
+			// as storage path-style requests.
+			if hasNonStorageAzureSubdomain(host) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Same protocol-signal discriminator as the blob
+			// path-style fallback in blob.go — keeps non-storage
+			// callers that happen to use `/file/`, `/queue/`, or
+			// `/table/` as a path prefix routed to their own
+			// handlers.
+			if !hasAzureStorageSignal(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if account, rest, ok := splitServicePrefix(r.URL.Path, "file"); ok {
 				r.URL.Path = "/" + rest
 				handleFilesDataPlane(w, r, account)
@@ -196,10 +214,11 @@ func registerStorageDataPlane(srv *sim.Server) {
 }
 
 // splitServicePrefix matches `/<service>/<account>/<rest...>` where
-// `<service>` is the literal `service` argument (file / queue / table)
-// and `<account>` is a known storage account. Returns (account,
-// rest-of-path, true) on match. Path-style sibling of the bare
-// `/{account}/...` blob form in blob.go.
+// `<service>` is the literal `service` argument (file / queue / table).
+// Returns (account, rest-of-path, true) on match. Account names are
+// accepted as-is — real Azurite is permissive — and the service-prefix
+// guarantees the route is intended for storage. Path-style sibling of
+// the bare `/{account}/...` blob form in blob.go.
 func splitServicePrefix(path, service string) (account, rest string, ok bool) {
 	p := strings.TrimPrefix(path, "/")
 	prefix := service + "/"
@@ -216,7 +235,7 @@ func splitServicePrefix(path, service string) (account, rest string, ok bool) {
 		first = p[:slash]
 		p = p[slash+1:]
 	}
-	if !knownStorageAccount(first) {
+	if first == "" {
 		return "", "", false
 	}
 	return first, p, true
