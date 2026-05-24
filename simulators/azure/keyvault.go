@@ -645,10 +645,10 @@ func defaultKVKty(s string) string {
 //
 // `r.Host` already carries the `<vault>.vault.<sim-or-real-host>`
 // subdomain the client connected on (the WrapHandler dispatch
-// extracted `vault` from this same r.Host). So `r.Host` IS the
-// canonical host; prepending another `<vault>.vault.` produces
-// the BUG-184 shape `https://kv.vault.kv.vault.azure.net/...`
-// with duplicated host segments. Use `r.Host` directly.
+// extracted `vault` from this same r.Host). `r.Host` IS the
+// canonical host; prepending another `<vault>.vault.` would
+// duplicate host segments like `kv.vault.kv.vault.azure.net`.
+// Use `r.Host` directly.
 func buildKVURL(r *http.Request, vault, kind, name, version string) string {
 	host := r.Host
 	if host == "" {
