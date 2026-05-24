@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
@@ -228,13 +229,14 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 		name = "/" + name
 	}
 
-	// Derive image from LinuxFxVersion (format: "DOCKER|<image>")
-	image := ""
-	// We can't easily access SiteProperties fields without a type assertion,
-	// but we have the tags which carry the image info from creation.
-	// The image was set during ContainerCreate and stored in registry metadata.
-	if imgTag := derefTag(tags["sockerless-image"]); imgTag != "" {
-		image = imgTag
+	// Derive image from the Function App's site config. ARM stores
+	// container images as LinuxFxVersion="DOCKER|<image>" on the
+	// site's SiteConfig. Tag fallback covers older sites that don't
+	// have site config populated (recovered from registry metadata
+	// alone).
+	image := imageFromSiteProps(props)
+	if image == "" {
+		image = derefTag(tags["sockerless-image"])
 	}
 
 	// Function Apps that exist in Azure are considered "running" (available for invocation)
@@ -295,4 +297,21 @@ func derefTag(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// imageFromSiteProps extracts the container image from a Function
+// App's site config. ARM stores it as `LinuxFxVersion="DOCKER|<image>"`
+// on `Properties.SiteConfig`. Returns empty when the site has no
+// SiteConfig, no LinuxFxVersion, or a non-DOCKER prefix.
+func imageFromSiteProps(props interface{}) string {
+	sp, ok := props.(*armappservice.SiteProperties)
+	if !ok || sp == nil || sp.SiteConfig == nil || sp.SiteConfig.LinuxFxVersion == nil {
+		return ""
+	}
+	v := *sp.SiteConfig.LinuxFxVersion
+	const prefix = "DOCKER|"
+	if !strings.HasPrefix(v, prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(v, prefix)
 }
