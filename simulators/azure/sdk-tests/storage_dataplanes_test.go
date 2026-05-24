@@ -230,43 +230,43 @@ func pathStyleStorageReq(t *testing.T, method, prefix, path string, body []byte,
 
 // TestStorageDataPlane_PathStyleBlob verifies the Azurite-compatible
 // bare-account form: `PUT /{account}/{container}?restype=container`.
-// Requires a registered storage account (sim looks up account name
-// against azStorageAccounts to discriminate path-style from ARM
-// `/subscriptions/...`). TestStorage_CreateAccount creates the
-// `teststorage` account; this test depends on its prior run via
-// alphabetical ordering of TestNNN_ names in the same package.
+// The dispatcher accepts any non-reserved first path segment as the
+// account name (real Azurite is permissive — prior ARM registration
+// is NOT required). Reserved segments (`subscriptions`, `providers`,
+// `v1`, `v1.NN`, `storage`, etc.) fall through to the normal mux.
 func TestStorageDataPlane_PathStyleBlob(t *testing.T) {
-	// `teststorage` is created by TestStorage_CreateAccount; run that
-	// implicitly so this test stands alone.
-	createStorageAccount(t)
-
 	container := "path-style-blob-container"
+	// Account is `azurite-style-acct` — never registered via ARM.
+	// Real Azurite consumers point `BlobEndpoint=http://localhost:.../<account>`
+	// at the data plane directly without going through any control plane.
+	account := "azurite-style-acct"
+
 	// Create container via path-style.
-	resp := pathStyleStorageReq(t, "PUT", "/teststorage", "/"+container+"?restype=container", nil, nil)
+	resp := pathStyleStorageReq(t, "PUT", "/"+account, "/"+container+"?restype=container", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT container path-style")
 	resp.Body.Close()
 	t.Cleanup(func() {
-		r := pathStyleStorageReq(t, "DELETE", "/teststorage", "/"+container+"?restype=container", nil, nil)
+		r := pathStyleStorageReq(t, "DELETE", "/"+account, "/"+container+"?restype=container", nil, nil)
 		r.Body.Close()
 	})
 
 	// PUT blob via path-style.
 	payload := []byte("hello path-style blob")
-	resp = pathStyleStorageReq(t, "PUT", "/teststorage", "/"+container+"/myblob.txt", payload,
+	resp = pathStyleStorageReq(t, "PUT", "/"+account, "/"+container+"/myblob.txt", payload,
 		map[string]string{"x-ms-blob-type": "BlockBlob"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT blob path-style")
 	resp.Body.Close()
 
 	// GET blob via path-style.
-	resp = pathStyleStorageReq(t, "GET", "/teststorage", "/"+container+"/myblob.txt", nil, nil)
+	resp = pathStyleStorageReq(t, "GET", "/"+account, "/"+container+"/myblob.txt", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "GET blob path-style")
 	got, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Equal(t, payload, got, "blob payload round-trip")
 
 	// Bonus: confirm host-based and path-style point at the SAME stored
-	// blob — both forms should retrieve the same bytes.
-	resp = storageDataplaneReq(t, "GET", "teststorage", "blob", "/"+container+"/myblob.txt", nil, nil)
+	// blob — both forms retrieve the same bytes.
+	resp = storageDataplaneReq(t, "GET", account, "blob", "/"+container+"/myblob.txt", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "GET blob host-style")
 	hostGot, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -277,55 +277,60 @@ func TestStorageDataPlane_PathStyleBlob(t *testing.T) {
 // per-service prefix scheme for the non-blob services. `/file/...`,
 // `/queue/...`, `/table/...` are sockerless-specific (Azurite uses
 // per-port; sim runs on one port, so a path prefix discriminates).
+// Like the blob path-style form, no prior ARM registration required.
 func TestStorageDataPlane_PathStyleFileQueueTable(t *testing.T) {
-	createStorageAccount(t)
+	account := "azurite-style-acct"
 
 	// Files.
 	share := "path-style-file-share"
-	resp := pathStyleStorageReq(t, "PUT", "/file/teststorage", "/"+share+"?restype=share", nil, nil)
+	resp := pathStyleStorageReq(t, "PUT", "/file/"+account, "/"+share+"?restype=share", nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT share path-style")
 	resp.Body.Close()
 	t.Cleanup(func() {
-		r := pathStyleStorageReq(t, "DELETE", "/file/teststorage", "/"+share+"?restype=share", nil, nil)
+		r := pathStyleStorageReq(t, "DELETE", "/file/"+account, "/"+share+"?restype=share", nil, nil)
 		r.Body.Close()
 	})
 
 	// Queue.
 	queue := "path-style-queue"
-	resp = pathStyleStorageReq(t, "PUT", "/queue/teststorage", "/"+queue, nil, nil)
+	resp = pathStyleStorageReq(t, "PUT", "/queue/"+account, "/"+queue, nil, nil)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "PUT queue path-style")
 	resp.Body.Close()
 	t.Cleanup(func() {
-		r := pathStyleStorageReq(t, "DELETE", "/queue/teststorage", "/"+queue, nil, nil)
+		r := pathStyleStorageReq(t, "DELETE", "/queue/"+account, "/"+queue, nil, nil)
 		r.Body.Close()
 	})
 
 	// Table.
 	table := "PathStyleTable"
-	resp = pathStyleStorageReq(t, "POST", "/table/teststorage", "/Tables",
+	resp = pathStyleStorageReq(t, "POST", "/table/"+account, "/Tables",
 		[]byte(`{"TableName":"`+table+`"}`),
 		map[string]string{"Content-Type": "application/json"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode, "POST table path-style")
 	resp.Body.Close()
 	t.Cleanup(func() {
-		r := pathStyleStorageReq(t, "DELETE", "/table/teststorage", "/Tables('"+table+"')", nil, nil)
+		r := pathStyleStorageReq(t, "DELETE", "/table/"+account, "/Tables('"+table+"')", nil, nil)
 		r.Body.Close()
 	})
 }
 
-// TestStorageDataPlane_PathStyleUnknownAccount confirms that the
-// path-style dispatcher fails closed: an unknown account name should
-// fall through to the default handler (404), NOT match path-style and
-// then hit a "container not found" 404. This protects against
-// accidental dispatch of ARM-shaped paths through the storage handler.
-func TestStorageDataPlane_PathStyleUnknownAccount(t *testing.T) {
-	resp := pathStyleStorageReq(t, "PUT", "/nonexistent-account",
-		"/somecontainer?restype=container", nil, nil)
+// TestStorageDataPlane_PathStyleARMPrefixExclusion confirms reserved
+// path prefixes (ARM `/subscriptions/`, `/providers/`, Docker SDK
+// `/v1.44/`, GCP-shaped `/v1/`) do NOT dispatch through the
+// path-style storage handler. The path-style dispatcher accepts any
+// other first segment as an account name.
+func TestStorageDataPlane_PathStyleARMPrefixExclusion(t *testing.T) {
+	// ARM-shaped path — should fall through to ARM handler.
+	resp := pathStyleStorageReq(t, "GET",
+		"/subscriptions/00000000-0000-0000-0000-000000000001",
+		"/resourceGroups/test-rg/providers/Microsoft.Web/sites?api-version=2025-03-01",
+		nil, nil)
 	defer resp.Body.Close()
-	// Should fall through to default handler (404 page-not-found),
-	// NOT match path-style + hit an Azure-shaped error.
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
-		"unknown account should 404 via fall-through, not match path-style")
+	// Real ARM path resolves; it should NOT have been dispatched as
+	// a storage data-plane request claiming the "subscriptions"
+	// "account" doesn't have a container.
+	assert.Equal(t, http.StatusOK, resp.StatusCode,
+		"ARM path must reach the ARM handler (subscriptions is reserved)")
 }
 
 // createStorageAccount is a test helper that ensures the `teststorage`

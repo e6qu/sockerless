@@ -196,10 +196,11 @@ func registerStorageDataPlane(srv *sim.Server) {
 }
 
 // splitServicePrefix matches `/<service>/<account>/<rest...>` where
-// `<service>` is the literal `service` argument (file / queue / table)
-// and `<account>` is a known storage account. Returns (account,
-// rest-of-path, true) on match. Path-style sibling of the bare
-// `/{account}/...` blob form in blob.go.
+// `<service>` is the literal `service` argument (file / queue / table).
+// Returns (account, rest-of-path, true) on match. Account names are
+// accepted as-is — real Azurite is permissive — and the service-prefix
+// guarantees the route is intended for storage. Path-style sibling of
+// the bare `/{account}/...` blob form in blob.go.
 func splitServicePrefix(path, service string) (account, rest string, ok bool) {
 	p := strings.TrimPrefix(path, "/")
 	prefix := service + "/"
@@ -216,7 +217,7 @@ func splitServicePrefix(path, service string) (account, rest string, ok bool) {
 		first = p[:slash]
 		p = p[slash+1:]
 	}
-	if !knownStorageAccount(first) {
+	if first == "" {
 		return "", "", false
 	}
 	return first, p, true
