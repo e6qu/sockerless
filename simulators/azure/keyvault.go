@@ -1,8 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -383,11 +389,37 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "keys", name, version)
+	kty := defaultKVKty(body.Kty)
 	jwk := map[string]any{
 		"kid": id,
-		"kty": defaultKVKty(body.Kty),
-		"n":   "sim-generated-modulus",
-		"e":   "AQAB",
+		"kty": kty,
+	}
+	// Generate a real RSA modulus when the request asks for RSA, so
+	// consumers parsing the JWK can reconstruct a valid public key
+	// and not get a placeholder string back. Falls back to a
+	// placeholder for non-RSA types since the sim doesn't simulate
+	// EC / oct curves end-to-end.
+	if kty == "RSA" || kty == "RSA-HSM" {
+		bits := body.KeySize
+		if bits <= 0 {
+			bits = 2048
+		}
+		if k, err := rsa.GenerateKey(rand.Reader, bits); err == nil {
+			jwk["n"] = base64.RawURLEncoding.EncodeToString(k.N.Bytes())
+			jwk["e"] = base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.E)).Bytes())
+		} else {
+			// Real RSA generation failure is exceedingly rare on a
+			// modern OS; surface the error rather than emit a
+			// placeholder that crypto consumers will misinterpret.
+			sim.AzureError(w, "InternalServerError",
+				"failed to generate RSA key: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// EC / oct / unknown — keep canonical exponent field for
+		// SDKs that expect both keys present.
+		jwk["e"] = "AQAB"
 	}
 	if body.Crv != "" {
 		jwk["crv"] = body.Crv
@@ -513,7 +545,11 @@ func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, na
 		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
 		Tags       map[string]string `json:"tags,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		sim.AzureError(w, "InvalidRequest",
+			"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "certificates", name, version)
 	now := time.Now().Unix()
@@ -573,19 +609,27 @@ func defaultKVKty(s string) string {
 }
 
 // buildKVURL constructs the canonical KV data-plane resource ID
-// (`<scheme>://<vault>.vault.<host>/<kind>/<name>/<version>`). Falls
-// back to a relative-URL form when r.URL.Scheme is empty (the sim's
-// mux passes a relative URL).
+// (`https://<vault>.vault.<host>/<kind>/<name>/<version>`).
+//
+// Real Key Vault always emits https URLs; SDKs (azsecrets,
+// azkeys, azcertificates) parse the returned `id`/`kid` and reject
+// http-scheme URLs at the URL-validation stage. The sim hard-codes
+// https for fidelity even though its own listener may be HTTP —
+// clients that follow the URL with their own HTTPS resolver
+// against the canonical `<vault>.vault.azure.net` host succeed.
+//
+// `r.Host` already carries the `<vault>.vault.<sim-or-real-host>`
+// subdomain the client connected on (the WrapHandler dispatch
+// extracted `vault` from this same r.Host). So `r.Host` IS the
+// canonical host; prepending another `<vault>.vault.` produces
+// the BUG-184 shape `https://kv.vault.kv.vault.azure.net/...`
+// with duplicated host segments. Use `r.Host` directly.
 func buildKVURL(r *http.Request, vault, kind, name, version string) string {
-	scheme := r.URL.Scheme
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
+	host := r.Host
+	if host == "" {
+		host = vault + ".vault.azure.net"
 	}
-	return fmt.Sprintf("%s://%s.vault.%s/%s/%s/%s", scheme, vault, r.Host, kind, name, version)
+	return fmt.Sprintf("https://%s/%s/%s/%s", host, kind, name, version)
 }
 
 func keyVaultSecretKey(vault, name string) string { return vault + "/" + name }

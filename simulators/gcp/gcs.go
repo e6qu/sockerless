@@ -352,9 +352,14 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 		} else {
-			// Simple upload
-			var err error
-			data, err = io.ReadAll(r.Body)
+			// Simple upload (streaming-aware: handles gzip).
+			rc, err := openStreamingBody(r)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
+				return
+			}
+			data, err = io.ReadAll(rc)
+			_ = rc.Close()
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
 				return

@@ -68,7 +68,7 @@ type AmplifyBranch struct {
 	TotalNumberOfJobs          string            `json:"totalNumberOfJobs"`
 	EnableBasicAuth            bool              `json:"enableBasicAuth"`
 	EnablePerformanceMode      bool              `json:"enablePerformanceMode"`
-	ThumbnailUrl               string            `json:"thumbnailUrl,omitempty"`
+	ThumbnailUrl               string            `json:"thumbnailUrl,omitempty"` // external: real-AWS hosted thumbnail of the deployed Amplify app — sim doesn't serve screenshots
 	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
 	BuildSpec                  string            `json:"buildSpec,omitempty"`
 	TtL                        string            `json:"ttl"`
@@ -80,10 +80,21 @@ type AmplifyBranch struct {
 	BackendEnvironmentArn      string            `json:"backendEnvironmentArn,omitempty"`
 }
 
+// AmplifyWebhook represents an Amplify webhook endpoint configured
+// for a branch's deploy-on-push automation.
+//
+// WebhookUrl is an EXTERNAL URL pointing at real AWS
+// (`https://webhooks.amplify.<region>.amazonaws.com/prod/webhooks?id=...&token=...`).
+// Real Amplify accepts POSTs to that URL and triggers a deploy; the
+// sim emits the canonical-shape URL so terraform-provider-aws +
+// SDK consumers parsing the envelope see what they expect, but the
+// sim itself does not service POSTs to webhooks.amplify.<region>.
+// Marked as external per the `sim-emitted-url-roundtrip` skill's
+// "document external" branch.
 type AmplifyWebhook struct {
 	WebhookArn  string  `json:"webhookArn"`
 	WebhookId   string  `json:"webhookId"`
-	WebhookUrl  string  `json:"webhookUrl"`
+	WebhookUrl  string  `json:"webhookUrl"` // external: real AWS webhooks.amplify.<region>.amazonaws.com endpoint
 	BranchName  string  `json:"branchName"`
 	Description string  `json:"description,omitempty"`
 	CreateTime  float64 `json:"createTime"`

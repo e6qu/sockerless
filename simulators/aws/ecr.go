@@ -10,10 +10,24 @@ import (
 
 // ECR types
 
+// ECRRepository represents an Elastic Container Registry repository.
+//
+// RepositoryUri is the canonical AWS registry URL
+// (`<account>.dkr.ecr.<region>.amazonaws.com/<repo>`) that consumers
+// follow with `docker pull` / `docker push`. The sim's actual ECR
+// Docker-registry surface is served at the documented endpoint URL
+// (the same listener that serves the AWS API), NOT at the
+// repositoryUri. Operators using the sim must override the registry
+// resolver (e.g., via `docker daemon --insecure-registry`) or
+// configure their tooling to recognize the sim's endpoint as the
+// registry host. Marked as external per the
+// `sim-emitted-url-roundtrip` skill's "document external" branch —
+// the URL points at real AWS by shape; the sim provides the same
+// registry surface at a different host.
 type ECRRepository struct {
 	RepositoryArn  string `json:"repositoryArn"`
 	RepositoryName string `json:"repositoryName"`
-	RepositoryUri  string `json:"repositoryUri"`
+	RepositoryUri  string `json:"repositoryUri"` // external: canonical <account>.dkr.ecr.<region>.amazonaws.com/<repo>; sim serves the registry API at its own endpoint
 	RegistryId     string `json:"registryId"`
 	CreatedAt      int64  `json:"createdAt"`
 }
@@ -39,9 +53,16 @@ type ECRLifecyclePolicy struct {
 // The rule is consulted when a container image URI's registry path
 // starts with `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/…`
 // and `<prefix>` matches a registered `EcrRepositoryPrefix`.
+//
+// UpstreamRegistryUrl is EXTERNAL by design — it's the third-party
+// registry the pull-through cache pulls from (`registry-1.docker.io`,
+// `public.ecr.aws`, `ghcr.io`, etc.). The sim doesn't service the
+// upstream itself; real ECR fetches the upstream image when an
+// authenticated pull arrives, and the sim's image-resolver does the
+// same for backends pointed at the sim's registry surface.
 type ECRPullThroughCacheRule struct {
 	EcrRepositoryPrefix string `json:"ecrRepositoryPrefix"`
-	UpstreamRegistryUrl string `json:"upstreamRegistryUrl"`
+	UpstreamRegistryUrl string `json:"upstreamRegistryUrl"` // external: operator-supplied upstream registry (docker.io / ghcr.io / public.ecr.aws / etc.)
 	UpstreamRegistry    string `json:"upstreamRegistry,omitempty"`
 	RegistryId          string `json:"registryId"`
 	CreatedAt           int64  `json:"createdAt"`

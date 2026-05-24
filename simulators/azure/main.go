@@ -81,6 +81,7 @@ func main() {
 	registerManagedIdentity(srv)
 	registerKeyVault(srv)
 	registerBlobDataPlane(srv)
+	registerStorageDataPlane(srv)
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
 	registerServiceBus(srv)

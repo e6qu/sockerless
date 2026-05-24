@@ -4,7 +4,34 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-**Phase 173 implementation complete; draft PR #179 CI-green on `a448971`; awaiting user merge.**
+**Phase 174 — skill-sweep audit + community-issue triage. Branch `phase-174-skill-sweep`. PR #180 (draft).**
+
+Round 1 (skill audit, committed in `24362f7` + `a54a156`):
+- BUG-1105 — 23 silent `sim.ReadJSON` sites across Phase 173 handlers (silent-error-swallow-scan caught my own diff after the skill was committed; BUG-1104 meta-shape in action).
+- BUG-1106 — silent decode in `handleKVCreateCertificate`.
+- BUG-1107 — dead `var _ = aws.Config{}` import silencer in metadata_sdk_test.go.
+- BUG-1108 — dead `singleSelectInputValueType` "reserved for future" silencer in bleephub.
+
+Round 2 (user's "fix all outstanding" + GitHub issues #181–#188, in flight on the same branch):
+- BUG-1109 (umbrella) → Azure File/Queue/Table data planes (new `storage_dataplane.go` with subdomain dispatch + Files share+file CRUD + Queues with messages + Tables with OData entity addressing).
+- BUG-1110 (umbrella) → `openStreamingBody(r)` helper per cloud (`simulators/azure/streaming.go`, `simulators/gcp/streaming.go`) wired into 9 upload handler sites (GCS, Cloud Run invoke, AR blob upload × 2, ACR blob upload × 4, Azure Blob PutBlob). Transparent gzip decode; 415 on unknown encoding.
+- BUG-1111 → External URL field annotations on Azure Functions ScriptHref/ConfigHref/Href/InvokeURLTemplate + AWS Amplify WebhookUrl + AWS ECR RepositoryUri.
+- BUG-1112 (#181) → Azure ARM case-insensitivity via path-normalization middleware.
+- BUG-1113 (#182) → GCP Pub/Sub subscription response now echoes all 7 canonical fields.
+- BUG-1114 (#183) → GCP Secret Manager ListSecrets registered explicitly (was falling through to GCS catch-all).
+- BUG-1115 (#184) → Azure KV id/kid URLs no longer duplicate the vault host + emit https not http.
+- BUG-1116 (#185) → Azure KV RSA key create generates a real `crypto/rsa.GenerateKey` modulus + base64url encoding.
+- BUG-1117 (#186) → AWS SQS persists every CreateQueue / SetQueueAttributes attribute in a map; GetQueueAttributes echoes them.
+- BUG-1118 (#187) → GCP Cloud SQL selfLink fully-qualified via `gcpSelfLink(r, path)` helper.
+- BUG-1119 (#188) → GCP Secret Manager `:access` + GetSecretVersion resolve `latest` alias to the concrete version number in response `name`.
+
+Round 3 (audit self-check 2026-05-24 after user asked "did we forego, not do, or skip any of the issues or tasks of this PR?"):
+- **#188 part 2** → GCP Secret Manager POST `:enable` / `:disable` / `:destroy` handler also resolves the `latest` alias before mutation (only `:access` + GetSecretVersion had been updated in round 2).
+- **BUG-1111 round 2** → 4 more emitted-URL fields annotated as external: AWS ECR `UpstreamRegistryUrl` (operator-supplied pull-through upstream), AWS Amplify `ThumbnailUrl` (real-AWS hosted screenshot), Azure ContainerApps `JobSecret.KeyVaultURL` (operator-supplied KV reference; ACA Job runtime doesn't auto-resolve), GCP Cloud Run `CRServiceStatus.URL` + `CRAddress.URL` (canonical run.app URL; sim invokes via `/v2-services-invoke` at the configured endpoint).
+
+All AWS / GCP / Azure SDK regression suites green. `go vet` + gofmt clean.
+
+BUGS.md after this branch lands: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Open: BUG-1075 (live-cloud cells, deprioritized 2026-05-23) + BUG-1104 (meta tracking; Phase 174 IS the periodic audit the entry called for).
 
 Branch `sim-fidelity-issues-173-178`: 20 commits (15 implementation + 5 CI-driven wrap) closing GitHub issues #173–#178 (all commented + closed) plus the meta blind-spot BUG-1104. ~180 new simulator operations across AWS / GCP / Azure; ~25 new SDK + HTTP integration tests; 6 new project-local Claude skills (`sim-canonical-config-test`, `sim-emitted-url-roundtrip`, `sim-streaming-body-handler`, `silent-error-swallow-scan`, `dead-code-silencer-scan`, `backpedal-pattern-audit`); sentinel-header logging across all 3 simulators' shared middleware.
 
@@ -17,6 +44,32 @@ CI surfaced 4 real issues, all fixed on the branch:
 All 11 CI jobs pass: lint, check-deps, ui, terraform, sim (aws/gcp/azure), smoke, build-check, test, test (e2e).
 
 **Open BUGs after merge**: BUG-1075 (live-cloud cells; deprioritized 2026-05-23) and BUG-1104 (meta tracking entry until a quarterly `backpedal-pattern-audit` confirms no new instances). BUGS.md: **1104 filed · 1101 fixed · 2 open · 2 false positives.**
+
+## Phase 174 audit results
+
+| Skill | Sites found | Fix shape | Status |
+|---|---|---|---|
+| `silent-error-swallow-scan` | 23 `_ = sim.ReadJSON` + 1 `_ = json.NewDecoder().Decode` | Add err check + 400 envelope | ✅ Fixed (BUG-1105, 1106) |
+| `dead-code-silencer-scan` | 1 import silencer + 1 "reserved for future" var | Delete both + their dead refs | ✅ Fixed (BUG-1107, 1108) |
+| `sim-canonical-config-test` | 0 quirk patterns | — | ✅ Regression-guard test still green |
+| `sim-emitted-url-roundtrip` | Azure {File,Queue,Table} + AZF function URLs + Amplify webhook + ECR repo URI | New `storage_dataplane.go` for the 3 data planes; field-annotations for the rest | ✅ Fixed (BUG-1109 + 1111) |
+| `sim-streaming-body-handler` | GCS object upload + Cloud Run invoke + AR blob × 2 + ACR blob × 4 + Azure Blob PutBlob = 9 sites | `openStreamingBody(r)` helper per cloud (gzip transparent decode + 415 unknown) | ✅ Fixed (BUG-1110) |
+| `backpedal-pattern-audit` | 1105/1106 ≡ BUG-1016/1017 recurrence; 1107/1108 ≡ BUG-1020/1022 recurrence | Skills validated as load-bearing — the audit cadence IS the load-bearing piece | ✅ No new pattern categories |
+
+## GitHub issues triage (round 2)
+
+8 issues filed by the user against Phase 173 code, all closed in-branch:
+
+| Issue | BUG | Headline |
+|---|---|---|
+| #181 | 1112 | Azure Cache for Redis ARM case-sensitive — fixed via path-normalization middleware (extended to 6 provider segments) |
+| #182 | 1113 | GCP Pub/Sub Subscription response dropped 5 of 7 fields — added all 5 + ExpirationPolicy nested struct |
+| #183 | 1114 | GCP Secret Manager ListSecrets fell through to GCS catch-all — registered explicit handler |
+| #184 | 1115 | Azure KV id/kid URLs duplicated host + http scheme — buildKVURL now uses r.Host directly + https |
+| #185 | 1116 | Azure KV RSA key create returned placeholder modulus — real crypto/rsa.GenerateKey + base64url N/E |
+| #186 | 1117 | AWS SQS CreateQueue attributes silently dropped — added Attributes map; persist + echo all |
+| #187 | 1118 | GCP Cloud SQL selfLink was relative — added gcpSelfLink helper, used for instance + database |
+| #188 | 1119 | GCP Secret Manager `:latest` alias not resolved in response — accessSecretPayloadResolved + resolveLatestVersionID helpers |
 
 ## Phase 173 sub-phase status
 

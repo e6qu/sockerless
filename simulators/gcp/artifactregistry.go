@@ -316,12 +316,17 @@ func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Sto
 		}
 
 	case http.MethodPut:
-		data, err := io.ReadAll(r.Body)
+		rc, err := openStreamingBody(r)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
+			return
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
 			return
 		}
-		defer r.Body.Close()
 
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "" {
@@ -537,12 +542,17 @@ func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs sim.Store
 			return
 		}
 
-		data, err := io.ReadAll(r.Body)
+		rc, err := openStreamingBody(r)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
+			return
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
 			return
 		}
-		defer r.Body.Close()
 
 		contentType := r.Header.Get("Content-Type")
 		if contentType == "" {

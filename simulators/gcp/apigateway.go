@@ -75,7 +75,10 @@ func handleGCPAPIGWCreateApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req APIGWApi
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	name := fmt.Sprintf("projects/%s/locations/global/apis/%s", project, apiId)
 	api := APIGWApi{
 		Name:        name,
@@ -133,7 +136,10 @@ func handleGCPAPIGWCreateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req APIGWApiConfig
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	name := fmt.Sprintf("projects/%s/locations/global/apis/%s/configs/%s", project, api, cfgId)
 	c := APIGWApiConfig{
 		Name:        name,
@@ -193,7 +199,10 @@ func handleGCPAPIGWCreateGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req APIGWGateway
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
 	name := fmt.Sprintf("projects/%s/locations/%s/gateways/%s", project, location, gwId)
 	g := APIGWGateway{
 		Name:            name,

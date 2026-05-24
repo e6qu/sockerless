@@ -40,11 +40,20 @@ type PSTopic struct {
 }
 
 type PSSubscription struct {
-	Name               string            `json:"name"` // projects/{p}/subscriptions/{s}
-	Topic              string            `json:"topic"`
-	AckDeadlineSeconds int               `json:"ackDeadlineSeconds,omitempty"`
-	Labels             map[string]string `json:"labels,omitempty"`
-	PushConfig         *PSPushConfig     `json:"pushConfig,omitempty"`
+	Name                     string              `json:"name"` // projects/{p}/subscriptions/{s}
+	Topic                    string              `json:"topic"`
+	AckDeadlineSeconds       int                 `json:"ackDeadlineSeconds,omitempty"`
+	Labels                   map[string]string   `json:"labels,omitempty"`
+	PushConfig               *PSPushConfig       `json:"pushConfig,omitempty"`
+	MessageRetentionDuration string              `json:"messageRetentionDuration,omitempty"`
+	RetainAckedMessages      bool                `json:"retainAckedMessages,omitempty"`
+	ExpirationPolicy         *PSExpirationPolicy `json:"expirationPolicy,omitempty"`
+	EnableMessageOrdering    bool                `json:"enableMessageOrdering,omitempty"`
+	Filter                   string              `json:"filter,omitempty"`
+}
+
+type PSExpirationPolicy struct {
+	Ttl string `json:"ttl,omitempty"`
 }
 
 type PSPushConfig struct {
@@ -116,7 +125,10 @@ func handlePSCreateTopic(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	topic := sim.PathParam(r, "topic")
 	var req PSTopic
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	t := PSTopic{
 		Name:   psTopicName(project, topic),
 		Labels: req.Labels,
@@ -233,12 +245,23 @@ func handlePSCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	if req.AckDeadlineSeconds == 0 {
 		req.AckDeadlineSeconds = 10
 	}
+	// Default messageRetentionDuration to real-GCP's 7-day default
+	// when omitted. Other optional fields stay zero-valued (omitempty
+	// JSON tag elides them on response).
+	if req.MessageRetentionDuration == "" {
+		req.MessageRetentionDuration = "604800s"
+	}
 	s := PSSubscription{
-		Name:               psSubName(project, sub),
-		Topic:              req.Topic,
-		AckDeadlineSeconds: req.AckDeadlineSeconds,
-		Labels:             req.Labels,
-		PushConfig:         req.PushConfig,
+		Name:                     psSubName(project, sub),
+		Topic:                    req.Topic,
+		AckDeadlineSeconds:       req.AckDeadlineSeconds,
+		Labels:                   req.Labels,
+		PushConfig:               req.PushConfig,
+		MessageRetentionDuration: req.MessageRetentionDuration,
+		RetainAckedMessages:      req.RetainAckedMessages,
+		ExpirationPolicy:         req.ExpirationPolicy,
+		EnableMessageOrdering:    req.EnableMessageOrdering,
+		Filter:                   req.Filter,
 	}
 	psSubscriptions.Put(s.Name, s)
 	sim.WriteJSON(w, http.StatusOK, s)
@@ -309,7 +332,10 @@ func handlePSPull(w http.ResponseWriter, r *http.Request, subName string) {
 	var req struct {
 		MaxMessages int `json:"maxMessages"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	if req.MaxMessages <= 0 {
 		req.MaxMessages = 1
 	}
@@ -355,7 +381,10 @@ func handlePSAck(w http.ResponseWriter, r *http.Request, subName string) {
 	var req struct {
 		AckIds []string `json:"ackIds"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	for _, id := range req.AckIds {
 		psInFlight.Delete(id)
 	}
@@ -371,7 +400,10 @@ func handlePSModifyAck(w http.ResponseWriter, r *http.Request, subName string) {
 		AckIds             []string `json:"ackIds"`
 		AckDeadlineSeconds int      `json:"ackDeadlineSeconds"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	now := time.Now()
 	for _, id := range req.AckIds {
 		psInFlight.Update(id, func(m *PSDeliveredMessage) {
