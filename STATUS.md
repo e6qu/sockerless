@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-178-community-issues` — 1 reopen + 8 community-filed + 4 class-of-bug remediations. Stage A (infrastructure) in flight. |
-| In-flight | Phase 178 — 7 stages on a single PR; no PR open yet. |
+| Active branch | `phase-178-community-issues` — Stages A-F complete (15 commits); BUG-1148..1160 all closed. Ready for PR. |
+| In-flight | Phase 178 final audit + PR push. |
 | Last merged | PR #202 — Phase 177 community-filed issues + 4 meta-skill improvements (2026-05-24, squash `aa847b1`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1160 filed · 1145 fixed · 15 open · 2 false positives. Open: BUG-1075 + BUG-1104 + BUG-1148..1160. |
+| Bugs | 1160 filed · 1158 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
