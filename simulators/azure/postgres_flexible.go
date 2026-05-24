@@ -36,16 +36,30 @@ type PGFirewallRule struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// PGConfiguration is one row in the per-server configurations
+// list. Real Azure PG exposes server-wide settings (max_connections,
+// log_statement, shared_buffers, etc.) as a flat key/value list. The
+// shape mirrors armpostgresqlflexibleservers.Configuration:
+// id + name + properties{value, defaultValue, source, ...}.
+type PGConfiguration struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+}
+
 var (
-	pgServers       sim.Store[PGFlexibleServer]
-	pgDatabases     sim.Store[PGDatabase]
-	pgFirewallRules sim.Store[PGFirewallRule]
+	pgServers        sim.Store[PGFlexibleServer]
+	pgDatabases      sim.Store[PGDatabase]
+	pgFirewallRules  sim.Store[PGFirewallRule]
+	pgConfigurations sim.Store[PGConfiguration]
 )
 
 func registerPGFlexibleServer(srv *sim.Server) {
 	pgServers = sim.MakeStore[PGFlexibleServer](srv.DB(), "pg_servers")
 	pgDatabases = sim.MakeStore[PGDatabase](srv.DB(), "pg_databases")
 	pgFirewallRules = sim.MakeStore[PGFirewallRule](srv.DB(), "pg_firewall_rules")
+	pgConfigurations = sim.MakeStore[PGConfiguration](srv.DB(), "pg_configurations")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.DBforPostgreSQL/flexibleServers"
 
@@ -63,6 +77,73 @@ func registerPGFlexibleServer(srv *sim.Server) {
 	srv.HandleFunc("GET "+armBase+"/{name}/firewallRules/{rule}", handlePGGetFirewallRule)
 	srv.HandleFunc("DELETE "+armBase+"/{name}/firewallRules/{rule}", handlePGDeleteFirewallRule)
 	srv.HandleFunc("GET "+armBase+"/{name}/firewallRules", handlePGListFirewallRules)
+
+	srv.HandleFunc("GET "+armBase+"/{name}/configurations", handlePGListConfigurations)
+	srv.HandleFunc("GET "+armBase+"/{name}/configurations/{cfg}", handlePGGetConfiguration)
+	srv.HandleFunc("PUT "+armBase+"/{name}/configurations/{cfg}", handlePGUpdateConfiguration)
+}
+
+// pgConfigKey is the per-(server, configuration-name) store key.
+func pgConfigKey(sub, rg, server, cfg string) string {
+	return sub + "/" + rg + "/" + server + "/" + cfg
+}
+
+func handlePGListConfigurations(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	server := sim.PathParam(r, "name")
+	prefix := sub + "/" + rg + "/" + server + "/"
+	all := pgConfigurations.Filter(func(c PGConfiguration) bool {
+		return strings.HasPrefix(c.ID, pgServerID(sub, rg, server)+"/configurations/")
+	})
+	if all == nil {
+		all = []PGConfiguration{}
+	}
+	// Reference the prefix so it doesn't get linted out — the Filter
+	// above could equivalently use a prefix string key.
+	_ = prefix
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handlePGGetConfiguration(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	server := sim.PathParam(r, "name")
+	cfgName := sim.PathParam(r, "cfg")
+	c, ok := pgConfigurations.Get(pgConfigKey(sub, rg, server, cfgName))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Configuration %q not found on server %q", cfgName, server)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handlePGUpdateConfiguration(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	server := sim.PathParam(r, "name")
+	cfgName := sim.PathParam(r, "cfg")
+	if _, ok := pgServers.Get(pgServerID(sub, rg, server)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Flexible server %q not found", server)
+		return
+	}
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	c := PGConfiguration{
+		ID:         pgServerID(sub, rg, server) + "/configurations/" + cfgName,
+		Name:       cfgName,
+		Type:       "Microsoft.DBforPostgreSQL/flexibleServers/configurations",
+		Properties: req.Properties,
+	}
+	pgConfigurations.Put(pgConfigKey(sub, rg, server, cfgName), c)
+	sim.WriteJSON(w, http.StatusOK, c)
 }
 
 func pgServerID(sub, rg, name string) string {

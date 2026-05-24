@@ -24,10 +24,25 @@ type RedisCache struct {
 	Tags       map[string]string `json:"tags,omitempty"`
 }
 
-var redisCaches sim.Store[RedisCache]
+// RedisFirewallRule is one per-cache firewall rule (start..end IP).
+// Real Azure stores them as sub-resources at
+// /Redis/{cache}/firewallRules/{name}; terraform-provider-azurerm
+// uses azurerm_redis_firewall_rule.
+type RedisFirewallRule struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+}
+
+var (
+	redisCaches        sim.Store[RedisCache]
+	redisFirewallRules sim.Store[RedisFirewallRule]
+)
 
 func registerCacheRedis(srv *sim.Server) {
 	redisCaches = sim.MakeStore[RedisCache](srv.DB(), "redis_caches")
+	redisFirewallRules = sim.MakeStore[RedisFirewallRule](srv.DB(), "redis_firewall_rules")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Cache/Redis"
 
@@ -36,6 +51,110 @@ func registerCacheRedis(srv *sim.Server) {
 	srv.HandleFunc("DELETE "+armBase+"/{name}", handleRedisCacheDelete)
 	srv.HandleFunc("GET "+armBase, handleRedisCacheListByRG)
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Cache/Redis", handleRedisCacheListBySubscription)
+
+	srv.HandleFunc("PUT "+armBase+"/{name}/firewallRules/{rule}", handleRedisCacheCreateFirewallRule)
+	srv.HandleFunc("GET "+armBase+"/{name}/firewallRules/{rule}", handleRedisCacheGetFirewallRule)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/firewallRules/{rule}", handleRedisCacheDeleteFirewallRule)
+	srv.HandleFunc("GET "+armBase+"/{name}/firewallRules", handleRedisCacheListFirewallRules)
+
+	srv.HandleFunc("POST "+armBase+"/{name}/listKeys", handleRedisCacheListKeys)
+}
+
+func redisCacheID(sub, rg, name string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Cache/Redis/%s", sub, rg, name)
+}
+
+func redisFirewallRuleKey(sub, rg, cache, rule string) string {
+	return sub + "/" + rg + "/" + cache + "/" + rule
+}
+
+func handleRedisCacheCreateFirewallRule(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	rule := sim.PathParam(r, "rule")
+	if _, ok := redisCaches.Get(redisCacheID(sub, rg, cache)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Redis cache %q not found", cache)
+		return
+	}
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	fr := RedisFirewallRule{
+		ID:         redisCacheID(sub, rg, cache) + "/firewallRules/" + rule,
+		Name:       rule,
+		Type:       "Microsoft.Cache/Redis/firewallRules",
+		Properties: req.Properties,
+	}
+	redisFirewallRules.Put(redisFirewallRuleKey(sub, rg, cache, rule), fr)
+	sim.WriteJSON(w, http.StatusOK, fr)
+}
+
+func handleRedisCacheGetFirewallRule(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	rule := sim.PathParam(r, "rule")
+	fr, ok := redisFirewallRules.Get(redisFirewallRuleKey(sub, rg, cache, rule))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Firewall rule %q not found on cache %q", rule, cache)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, fr)
+}
+
+func handleRedisCacheDeleteFirewallRule(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	rule := sim.PathParam(r, "rule")
+	if !redisFirewallRules.Delete(redisFirewallRuleKey(sub, rg, cache, rule)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Firewall rule %q not found on cache %q", rule, cache)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleRedisCacheListFirewallRules(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	prefix := sub + "/" + rg + "/" + cache + "/"
+	all := redisFirewallRules.Filter(func(fr RedisFirewallRule) bool {
+		return strings.HasPrefix(fr.ID, redisCacheID(sub, rg, cache)+"/firewallRules/")
+	})
+	if all == nil {
+		all = []RedisFirewallRule{}
+	}
+	_ = prefix
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+// handleRedisCacheListKeys returns the primary + secondary access keys.
+// Real Azure generates 32-byte random keys per cache; the sim returns
+// deterministic placeholders derived from the cache name so tests can
+// assert against a stable shape. Real consumers' contract is "these
+// strings are non-empty and round-trip through the SDK".
+func handleRedisCacheListKeys(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if _, ok := redisCaches.Get(redisCacheID(sub, rg, name)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Redis cache %q not found", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"primaryKey":   "sim-primary-key-" + name,
+		"secondaryKey": "sim-secondary-key-" + name,
+	})
 }
 
 func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
