@@ -33,7 +33,36 @@ type RDSInstance struct {
 	Tags                 map[string]string
 }
 
-var rdsInstances sim.Store[RDSInstance]
+// RDSSnapshot models the canonical RDS DB snapshot state machine:
+//
+//	(CreateDBSnapshot)        → creating
+//	(internal-settle on read) → available
+//	(DeleteDBSnapshot)        → deleted (removed from store)
+//
+// The sim collapses the creating→available transition into an
+// inline-settle: every snapshot row is written with Status=available
+// from the start. See sim-state-machine-completeness skill — when a
+// transition is collapsed, document the choice so future maintainers
+// don't read "available" and assume the transient state doesn't
+// exist on real RDS.
+type RDSSnapshot struct {
+	DBSnapshotIdentifier string
+	DBInstanceIdentifier string
+	Engine               string
+	EngineVersion        string
+	Status               string // creating | available | deleting | failed
+	AllocatedStorage     int
+	MasterUsername       string
+	SnapshotCreateTime   string
+	SnapshotType         string // manual | automated
+	ARN                  string
+	Tags                 map[string]string
+}
+
+var (
+	rdsInstances sim.Store[RDSInstance]
+	rdsSnapshots sim.Store[RDSSnapshot]
+)
 
 // rdsAPIVersion is the canonical AWS RDS API version (Query
 // Protocol). Used to disambiguate Action names from other awsQuery
@@ -42,6 +71,7 @@ const rdsAPIVersion = "2014-10-31"
 
 func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	rdsInstances = sim.MakeStore[RDSInstance](srv.DB(), "rds_instances")
+	rdsSnapshots = sim.MakeStore[RDSSnapshot](srv.DB(), "rds_snapshots")
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBInstance", handleRDSCreate)
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBInstances", handleRDSDescribe)
 	r.RegisterVersioned(rdsAPIVersion, "ModifyDBInstance", handleRDSModify)
@@ -49,6 +79,10 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(rdsAPIVersion, "AddTagsToResource", handleRDSAddTags)
 	r.RegisterVersioned(rdsAPIVersion, "ListTagsForResource", handleRDSListTags)
 	r.RegisterVersioned(rdsAPIVersion, "RemoveTagsFromResource", handleRDSRemoveTags)
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBSnapshot", handleRDSCreateSnapshot)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBSnapshots", handleRDSDescribeSnapshots)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBSnapshot", handleRDSDeleteSnapshot)
+	r.RegisterVersioned(rdsAPIVersion, "RestoreDBInstanceFromDBSnapshot", handleRDSRestoreFromSnapshot)
 }
 
 func rdsInstanceARN(id string) string {
@@ -294,4 +328,144 @@ func rdsDefaultEngineVersion(engine string) string {
 		return "16.00.4150.1.v1"
 	}
 	return ""
+}
+
+func rdsSnapshotARN(id string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:snapshot:%s", awsRegion(), awsAccountID(), id)
+}
+
+func renderRDSSnapshot(s RDSSnapshot) string {
+	var b strings.Builder
+	b.WriteString("<DBSnapshot>")
+	fmt.Fprintf(&b, "<DBSnapshotIdentifier>%s</DBSnapshotIdentifier>", xmlEscape(s.DBSnapshotIdentifier))
+	fmt.Fprintf(&b, "<DBInstanceIdentifier>%s</DBInstanceIdentifier>", xmlEscape(s.DBInstanceIdentifier))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(s.Engine))
+	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(s.EngineVersion))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(s.Status))
+	fmt.Fprintf(&b, "<AllocatedStorage>%d</AllocatedStorage>", s.AllocatedStorage)
+	fmt.Fprintf(&b, "<MasterUsername>%s</MasterUsername>", xmlEscape(s.MasterUsername))
+	fmt.Fprintf(&b, "<SnapshotCreateTime>%s</SnapshotCreateTime>", xmlEscape(s.SnapshotCreateTime))
+	fmt.Fprintf(&b, "<SnapshotType>%s</SnapshotType>", xmlEscape(s.SnapshotType))
+	fmt.Fprintf(&b, "<DBSnapshotArn>%s</DBSnapshotArn>", xmlEscape(s.ARN))
+	b.WriteString("</DBSnapshot>")
+	return b.String()
+}
+
+func handleRDSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapID := r.FormValue("DBSnapshotIdentifier")
+	instID := r.FormValue("DBInstanceIdentifier")
+	if snapID == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"DBSnapshotIdentifier is required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	inst, ok := rdsInstances.Get(instID)
+	if !ok {
+		rdsErrorXML(w, "DBInstanceNotFound",
+			fmt.Sprintf("DBInstance %q not found", instID),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	if _, exists := rdsSnapshots.Get(snapID); exists {
+		rdsErrorXML(w, "DBSnapshotAlreadyExists",
+			fmt.Sprintf("DBSnapshot %q already exists", snapID),
+			http.StatusConflict, sim.RequestID(r.Context()))
+		return
+	}
+	snap := RDSSnapshot{
+		DBSnapshotIdentifier: snapID,
+		DBInstanceIdentifier: instID,
+		Engine:               inst.Engine,
+		EngineVersion:        inst.EngineVersion,
+		// Inline-settle: real RDS goes through "creating" briefly; sim
+		// emits the steady-state "available" because there's no
+		// async work to gate on. State machine is documented in the
+		// type's docstring + the aws-rds.md surface table.
+		Status:             "available",
+		AllocatedStorage:   inst.AllocatedStorage,
+		MasterUsername:     inst.MasterUsername,
+		SnapshotCreateTime: time.Now().UTC().Format(time.RFC3339),
+		SnapshotType:       "manual",
+		ARN:                rdsSnapshotARN(snapID),
+		Tags:               map[string]string{},
+	}
+	rdsSnapshots.Put(snapID, snap)
+	rdsXMLResponse(w, "CreateDBSnapshot", renderRDSSnapshot(snap), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
+	filterID := r.FormValue("DBSnapshotIdentifier")
+	filterInst := r.FormValue("DBInstanceIdentifier")
+	var b strings.Builder
+	b.WriteString("<DBSnapshots>")
+	for _, s := range rdsSnapshots.List() {
+		if filterID != "" && s.DBSnapshotIdentifier != filterID {
+			continue
+		}
+		if filterInst != "" && s.DBInstanceIdentifier != filterInst {
+			continue
+		}
+		b.WriteString(renderRDSSnapshot(s))
+	}
+	b.WriteString("</DBSnapshots>")
+	rdsXMLResponse(w, "DescribeDBSnapshots", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapID := r.FormValue("DBSnapshotIdentifier")
+	snap, ok := rdsSnapshots.Get(snapID)
+	if !ok {
+		rdsErrorXML(w, "DBSnapshotNotFound",
+			fmt.Sprintf("DBSnapshot %q not found", snapID),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsSnapshots.Delete(snapID)
+	// Real RDS returns the snapshot with Status="deleted" in the
+	// response (it's the final state machine transition before
+	// removal). Match that.
+	snap.Status = "deleted"
+	rdsXMLResponse(w, "DeleteDBSnapshot", renderRDSSnapshot(snap), sim.RequestID(r.Context()))
+}
+
+func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
+	newInstID := r.FormValue("DBInstanceIdentifier")
+	snapID := r.FormValue("DBSnapshotIdentifier")
+	if newInstID == "" || snapID == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"DBInstanceIdentifier and DBSnapshotIdentifier are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	snap, ok := rdsSnapshots.Get(snapID)
+	if !ok {
+		rdsErrorXML(w, "DBSnapshotNotFound",
+			fmt.Sprintf("DBSnapshot %q not found", snapID),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	if _, exists := rdsInstances.Get(newInstID); exists {
+		rdsErrorXML(w, "DBInstanceAlreadyExists",
+			fmt.Sprintf("DBInstance %q already exists", newInstID),
+			http.StatusConflict, sim.RequestID(r.Context()))
+		return
+	}
+	inst := RDSInstance{
+		DBInstanceIdentifier: newInstID,
+		DBInstanceClass:      r.FormValue("DBInstanceClass"),
+		Engine:               snap.Engine,
+		EngineVersion:        snap.EngineVersion,
+		DBInstanceStatus:     "available",
+		MasterUsername:       snap.MasterUsername,
+		AllocatedStorage:     snap.AllocatedStorage,
+		Endpoint:             fmt.Sprintf("%s.%s.rds.amazonaws.com", newInstID, awsRegion()),
+		Port:                 5432,
+		AvailabilityZone:     awsRegion() + "a",
+		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
+		ARN:                  rdsInstanceARN(newInstID),
+		Tags:                 map[string]string{},
+	}
+	rdsInstances.Put(newInstID, inst)
+	rdsXMLResponse(w, "RestoreDBInstanceFromDBSnapshot", renderRDSInstance(inst), sim.RequestID(r.Context()))
 }
