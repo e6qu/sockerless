@@ -812,7 +812,6 @@ func registerGCS(srv *sim.Server) {
 		w.Write(body)
 	})
 
-
 	// Download object data (JSON API)
 	srv.HandleFunc("GET /download/storage/v1/b/{bucket}/o/{object...}", func(w http.ResponseWriter, r *http.Request) {
 		bucketName := sim.PathParam(r, "bucket")

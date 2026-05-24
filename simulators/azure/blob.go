@@ -220,7 +220,6 @@ func isNonStorageFirstSegment(s string) bool {
 	return false
 }
 
-
 func blobObjectKey(account, container, name string) string {
 	return account + "/" + container + "/" + name
 }

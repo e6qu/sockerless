@@ -34,14 +34,14 @@ import (
 // generated; CompleteLock with the matching token removes the message
 // from the queue. ReceiveAndDelete atomically removes without lock.
 type sbMessage struct {
-	MessageID       string
-	Body            []byte
-	ContentType     string
-	BrokerHeader    string
-	EnqueuedTime    time.Time
-	LockedUntilUtc  time.Time
-	LockToken       string
-	SequenceNumber  int64
+	MessageID      string
+	Body           []byte
+	ContentType    string
+	BrokerHeader   string
+	EnqueuedTime   time.Time
+	LockedUntilUtc time.Time
+	LockToken      string
+	SequenceNumber int64
 }
 
 // sbQueueState is the per-queue message log. Topic subscriptions

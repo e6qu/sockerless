@@ -525,4 +525,3 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	sim.WriteXML(w, http.StatusOK, out)
 }
-

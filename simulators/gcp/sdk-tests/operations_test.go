@@ -13,12 +13,12 @@ import (
 
 // TestGCP_Operations_List exercises the AIP-151 /v1/operations
 // endpoint, verifying:
-// 1. Empty initial state returns 200 + `{"operations": []}`.
-// 2. After creating LRO-emitting resources across multiple services,
-//    the list contains operations from all of them.
-// 3. Unknown `/v1/...` paths route past the GCS XML-API catch-all
-//    (i.e. `/v1/unknown` must not come back shaped like
-//    "object 'unknown' not found in bucket 'v1'").
+//  1. Empty initial state returns 200 + `{"operations": []}`.
+//  2. After creating LRO-emitting resources across multiple services,
+//     the list contains operations from all of them.
+//  3. Unknown `/v1/...` paths route past the GCS XML-API catch-all
+//     (i.e. `/v1/unknown` must not come back shaped like
+//     "object 'unknown' not found in bucket 'v1'").
 func TestGCP_Operations_List(t *testing.T) {
 	// Empty list — fresh sim with no LROs.
 	req, _ := http.NewRequest("GET", baseURL+"/v1/operations", nil)
