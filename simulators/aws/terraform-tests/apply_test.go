@@ -108,6 +108,22 @@ func TestStackProductionShape(t *testing.T) {
 	require.Contains(t, ssmARN, ":parameter/tf-test/runner/config",
 		"SSM Parameter ARN must include :parameter<leading-slash><name>; got %s", ssmARN)
 
+	// S3 bucket-subresource round-trips. Each output below depends on
+	// the terraform-provider-aws Create+Read cycle returning the value
+	// the apply set. If any bucket-subresource handler in the sim is
+	// missing or returns a wrong-shape body, the provider's Read fails
+	// to parse the value and the output is empty / wrong.
+	require.Equal(t, "Enabled", outputs.must(t, "s3_bucket_versioning_status"),
+		"PutBucketVersioning Status must round-trip through GetBucketVersioning")
+	require.Equal(t, "https://app.example.com", outputs.must(t, "s3_bucket_cors_origin"),
+		"PutBucketCors allowed_origins[0] must round-trip")
+	require.Equal(t, "AES256", outputs.must(t, "s3_bucket_sse_algorithm"),
+		"PutBucketEncryption sse_algorithm must round-trip")
+	require.Equal(t, "index.html", outputs.must(t, "s3_bucket_website_index"),
+		"PutBucketWebsite IndexDocument.Suffix must round-trip")
+	require.Equal(t, "BucketOwnerEnforced", outputs.must(t, "s3_bucket_ownership"),
+		"PutBucketOwnershipControls object_ownership must round-trip")
+
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)

@@ -34,6 +34,41 @@ A simulator-test client config must be **the same config a real-cloud user would
 
 That's it. Everything else (signers, retry policy, HTTP transport, base-endpoint suffixes, path-style addressing, etc.) must match a stock consumer's config.
 
+## The "use the SDK, not raw HTTP" rule
+
+Every test under `simulators/<cloud>/sdk-tests/` MUST construct the cloud provider's official SDK client for the service under test. Raw `net/http` is a finding by default — it bypasses the SDK's challenge-then-retry handshake, request signing, response parser, retry policy, and pagination, all of which are part of the contract real consumers depend on. The Phase 176 KV tests that pre-set `Authorization: Bearer fake-token` and posted raw HTTP requests passed against PR #200 but skipped the SDK's `parseTenant` parser entirely — issue #193 reopened the moment a real consumer ran `azsecrets.NewClient` against the merged build.
+
+Permitted raw-HTTP scenarios (narrow, must be commented):
+
+- **The SDK has no method for this surface** (e.g., IMDS `/metadata/instance`, MSI token endpoint — these aren't surfaced by `azidentity` or other public SDKs; a raw HTTP test is the canonical client).
+- **The test exercises a 404 / NotImplemented gap intentionally**, where the SDK would refuse to construct a request for an op the sim doesn't support yet.
+- **The test is a wire-shape probe** that verifies headers / status codes the SDK abstracts away (e.g., asserting the exact `WWW-Authenticate:` header value bytes). Pair the wire-shape test with an SDK-driven round-trip test that exercises the same surface end-to-end.
+
+If none of those apply, refactor the test to use the SDK. The refactor lands in the same PR as any fix that touches the surface — *partial* SDK coverage is the bug shape this section refuses.
+
+The companion `surface-table-completeness` skill's `sdk-test` column shows whether each row has SDK-driven coverage; rows without an SDK test even though one is possible are a finding for this skill.
+
+### Permitted SDK-config diffs beyond endpoint URL + TLS-skip + static creds
+
+Real-cloud SDK clients sometimes refuse to talk to non-canonical endpoints unless small per-client knobs are flipped. These are allowed *only when documented* (a comment naming the sim-listener constraint):
+
+- `InsecureAllowCredentialWithHTTP: true` — sim listens on plain HTTP; real cloud is HTTPS.
+- `DisableChallengeResourceVerification: true` (Azure KV SDKs) — sim's `<vault>.vault.localhost` host doesn't suffix-match the challenge's `resource="https://vault.azure.net"`.
+- Custom `Transport` that rewrites HTTPS → HTTP at request time — when the SDK's BearerTokenPolicy refuses non-HTTPS regardless of `InsecureAllowCredentialWithHTTP` (Azure KV).
+- DNS-rewriting transport — sim listens on loopback; real-cloud DNS names don't resolve on the test runner. Keep the Host header, dial the loopback address.
+
+Each diff carries a one-line comment naming the constraint and pointing at the canonical-cloud equivalent. Without the comment, the diff is indistinguishable from a sim-quirk masking a real wire bug.
+
+## Terraform-provider tests
+
+The rule extends to `simulators/<cloud>/terraform-tests/` with the same shape:
+
+- Every `provider "<cloud>" {}` block in `main.tf` must use the canonical configuration documented by the upstream `terraform-provider-<cloud>` — endpoint overrides (`endpoints { s3 = "<sim>" }`, etc.) are the only allowed diff.
+- `skip_credentials_validation = true` / `skip_metadata_api_check = true` are allowed *with a comment* naming the sim-listener as the reason; never as the path of least resistance.
+- Terraform-provider resources must match real-cloud resource names — `aws_s3_bucket_versioning`, not a sim-specific variant.
+
+The `tf-test` column in `specs/SIM_SURFACE_TABLES/<surface>.md` tracks coverage; rows with a real terraform-provider resource but no tf-test entry are findings.
+
 ## Refused patterns
 
 The following options are **anti-patterns** in `simulators/<cloud>/{sdk,cli,terraform}-tests/`. If you find them, the sim has a wire-protocol bug — fix the sim, not the test.

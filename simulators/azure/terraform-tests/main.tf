@@ -269,6 +269,32 @@ resource "azurerm_linux_function_app" "az_fa" {
   site_config {}
 }
 
+# Key Vault + a single secret. The secret resource is what fires the
+# challenge-then-retry handshake: terraform-provider-azurerm constructs
+# an azsecrets client, issues the unauthenticated PUT, parses the
+# WWW-Authenticate response (which is where issue #193 reopened — the
+# authorization URL must split to ≥ 4 segments or the SDK's
+# parseTenant panics), fetches a token from the configured credential,
+# retries the PUT. If the sim's challenge format is wrong, apply fails
+# with `index out of range [3]`.
+resource "azurerm_key_vault" "az_kv" {
+  provider                  = azurerm
+  name                      = "tf-azrm-kv"
+  resource_group_name       = azurerm_resource_group.az_rg.name
+  location                  = azurerm_resource_group.az_rg.location
+  tenant_id                 = "11111111-1111-1111-1111-111111111111"
+  sku_name                  = "standard"
+  purge_protection_enabled  = false
+  soft_delete_retention_days = 7
+}
+
+resource "azurerm_key_vault_secret" "az_kv_secret" {
+  provider     = azurerm
+  name         = "tf-azrm-secret"
+  value        = "hunter2"
+  key_vault_id = azurerm_key_vault.az_kv.id
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "resource_group_id" {

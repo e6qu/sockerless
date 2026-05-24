@@ -281,19 +281,23 @@ func registerKeyVault(srv *sim.Server) {
 			parts := strings.SplitN(hostname, ".vault.", 2)
 			if len(parts) == 2 {
 				if r.Header.Get("Authorization") == "" {
-					// `authorization` points at the AAD authority the
-					// SDK should fetch a token from. Real KV emits
-					// `https://login.microsoftonline.com/<tenant>` —
-					// external by design (the sim does not host an
-					// AAD/OIDC discovery endpoint). The SDK's
-					// challenge-response code uses its own configured
-					// credential provider against the real AAD; only
-					// `resource` is read from the challenge.
-					// `resource` is the canonical KV resource URI; SDKs
-					// compare it for scope matching.
+					// `authorization` must be a URL whose `/`-split
+					// yields ≥ 4 segments — every official Azure SDK
+					// (Go / .NET / Python / Java) extracts the tenant
+					// via `parts[3]` on this URL, with no bounds
+					// check. Real KV emits
+					// `https://login.microsoftonline.com/<tenant>`;
+					// for the sim we substitute the zero-UUID tenant
+					// (the SDK only needs *some* extractable string
+					// at `parts[3]` — it then asks its own configured
+					// credential provider for a token, not the sim).
+					// `resource` is the canonical KV audience URI; the
+					// SDK does a host-suffix match against the request
+					// host, so it must remain `https://vault.azure.net`.
+					const kvChallengeTenant = "00000000-0000-0000-0000-000000000000"
 					w.Header().Set("WWW-Authenticate", fmt.Sprintf(
-						`Bearer authorization="http://%s", resource="https://vault.azure.net"`,
-						r.Host)) // external: real-Azure authorization=https://login.microsoftonline.com/<tenant>
+						`Bearer authorization="http://%s/%s", resource="https://vault.azure.net"`,
+						r.Host, kvChallengeTenant))
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}

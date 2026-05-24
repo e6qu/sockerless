@@ -378,6 +378,73 @@ resource "aws_s3_bucket" "tf_bucket" {
   force_destroy = true
 }
 
+# S3 bucket-subresource fan-out. Every resource here calls a distinct
+# `PUT /{bucket}?<subresource>` against the sim — without the bucket-
+# subresource dispatcher in s3_bucket_subresources.go, each would
+# route to CreateBucket and 409. tf-provider-aws follows each Create
+# with a paired Read against the matching GET subresource; PUT→GET
+# round-trip is what the provider asserts on apply, so any break in
+# the dispatcher surfaces here as `plan diff after apply`.
+
+resource "aws_s3_bucket_versioning" "tf_bucket_versioning" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# NB: aws_s3_bucket_lifecycle_configuration covered in
+# `sdk-tests/s3_bucket_subresources_test.go::TestS3_Bucket_Lifecycle_RoundTrip`
+# but NOT here: tf-provider-aws polls GetBucketLifecycleConfiguration for
+# 3 minutes after the PUT, waiting on real-AWS's eventually-consistent
+# replication to surface the rule. The sim's GET returns the PUT body
+# immediately, but the provider's poll-loop comparator doesn't match
+# because it inspects internal fields the sim doesn't reconstruct
+# (LastModified, etc.). Track in BUG-1147; revisit when adding the
+# matching `wait_for_propagation = false` provider knob or modelling
+# the eventually-consistent timestamp the provider compares against.
+
+resource "aws_s3_bucket_cors_configuration" "tf_bucket_cors" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  cors_rule {
+    allowed_methods = ["GET", "PUT"]
+    allowed_origins = ["https://app.example.com"]
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "tf_bucket_sse" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_website_configuration" "tf_bucket_website" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  index_document {
+    suffix = "index.html"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "tf_bucket_pab" {
+  bucket                  = aws_s3_bucket.tf_bucket.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "tf_bucket_ownership" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 # DynamoDB table — runner state-locking + per-pod registries.
 resource "aws_dynamodb_table" "tf_table" {
   name         = "tf-test-table"
@@ -470,4 +537,22 @@ output "secretsmanager_secret_arn" {
 }
 output "ssm_parameter_arn" {
   value = aws_ssm_parameter.tf_param.arn
+}
+output "s3_bucket_versioning_status" {
+  value = aws_s3_bucket_versioning.tf_bucket_versioning.versioning_configuration[0].status
+}
+output "s3_bucket_cors_origin" {
+  value = one([for rule in aws_s3_bucket_cors_configuration.tf_bucket_cors.cors_rule : tolist(rule.allowed_origins)[0]])
+}
+output "s3_bucket_sse_algorithm" {
+  value = one([for rule in aws_s3_bucket_server_side_encryption_configuration.tf_bucket_sse.rule : rule.apply_server_side_encryption_by_default[0].sse_algorithm])
+}
+output "s3_bucket_website_index" {
+  value = aws_s3_bucket_website_configuration.tf_bucket_website.index_document[0].suffix
+}
+output "s3_bucket_pab_block_public_acls" {
+  value = aws_s3_bucket_public_access_block.tf_bucket_pab.block_public_acls
+}
+output "s3_bucket_ownership" {
+  value = aws_s3_bucket_ownership_controls.tf_bucket_ownership.rule[0].object_ownership
 }
