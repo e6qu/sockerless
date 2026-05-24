@@ -121,6 +121,8 @@ func handleS3GetOrHeadObjectDispatch(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	switch {
+	case q.Has("uploadId"):
+		handleS3ListParts(w, r)
 	case q.Has("tagging"):
 		handleS3GetObjectTagging(w, r)
 	default:
@@ -363,6 +365,90 @@ func handleS3AbortMultipart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleS3ListParts returns the set of uploaded parts for an in-flight
+// multipart upload. aws-sdk-go-v2's `manager.Uploader` calls
+// `ListParts` on every retry path to learn which part numbers have
+// already been uploaded and skip re-sending those — without this
+// route, the retry path issues UploadPart for every part on every
+// retry (correctness-affecting; not just slow).
+func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	key := sim.PathParam(r, "key")
+	uploadID := r.URL.Query().Get("uploadId")
+
+	s3MultipartUploadsMu.Lock()
+	mp, ok := s3MultipartUploads[uploadID]
+	s3MultipartUploadsMu.Unlock()
+	if !ok || mp.Bucket != bucket || mp.Key != key {
+		sim.S3ErrorXML(w, "NoSuchUpload",
+			"The specified multipart upload does not exist",
+			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	}
+
+	type partXML struct {
+		PartNumber   int    `xml:"PartNumber"`
+		LastModified string `xml:"LastModified"`
+		ETag         string `xml:"ETag"`
+		Size         int    `xml:"Size"`
+	}
+	result := struct {
+		XMLName   xml.Name `xml:"ListPartsResult"`
+		Xmlns     string   `xml:"xmlns,attr"`
+		Bucket    string   `xml:"Bucket"`
+		Key       string   `xml:"Key"`
+		UploadID  string   `xml:"UploadId"`
+		Initiator struct {
+			ID          string `xml:"ID"`
+			DisplayName string `xml:"DisplayName"`
+		} `xml:"Initiator"`
+		Owner struct {
+			ID          string `xml:"ID"`
+			DisplayName string `xml:"DisplayName"`
+		} `xml:"Owner"`
+		StorageClass         string    `xml:"StorageClass"`
+		PartNumberMarker     int       `xml:"PartNumberMarker"`
+		NextPartNumberMarker int       `xml:"NextPartNumberMarker"`
+		MaxParts             int       `xml:"MaxParts"`
+		IsTruncated          bool      `xml:"IsTruncated"`
+		Parts                []partXML `xml:"Part"`
+	}{
+		Xmlns:                "http://s3.amazonaws.com/doc/2006-03-01/",
+		Bucket:               bucket,
+		Key:                  key,
+		UploadID:             uploadID,
+		StorageClass:         "STANDARD",
+		PartNumberMarker:     0,
+		NextPartNumberMarker: 0,
+		MaxParts:             1000,
+		IsTruncated:          false,
+	}
+	result.Initiator.ID = awsAccountID()
+	result.Initiator.DisplayName = "simulator"
+	result.Owner.ID = awsAccountID()
+	result.Owner.DisplayName = "simulator"
+
+	// Emit parts in PartNumber order; aws-sdk-go-v2's pagination iterator
+	// assumes monotonic ordering.
+	for n := 1; n <= 10000; n++ {
+		part, ok := mp.Parts[n]
+		if !ok {
+			continue
+		}
+		result.Parts = append(result.Parts, partXML{
+			PartNumber:   n,
+			LastModified: mp.Initiated.UTC().Format(time.RFC3339),
+			ETag:         part.ETag,
+			Size:         len(part.Data),
+		})
+		if n > result.NextPartNumberMarker {
+			result.NextPartNumberMarker = n
+		}
+	}
+
+	sim.WriteXML(w, http.StatusOK, result)
 }
 
 // ── Object tagging ───────────────────────────────────────────────────
