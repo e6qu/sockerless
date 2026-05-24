@@ -154,9 +154,9 @@ for f in $(rg -l 'io\.ReadAll\(r\.Body\)' simulators/); do
 done
 ```
 
-### Positive-confirmation check (added Phase 175)
+### Positive-confirmation check
 
-The Phase 174 audit closed 9 upload sites by wiring them through `openStreamingBody(r)` (or `awsChunkedReader` for AWS S3). The Phase 175 sweep found 3 sites that **bypassed the helper introduced in the same PR**: Azure Files PutFile + PutRange + AWS Lambda Invoke. Two were in `simulators/azure/storage_dataplane.go` — the file that ALSO contains the rest of the wired-through handlers. The lesson is that "the helper exists" is not a sufficient signal; we need a positive enumeration of every upload handler and a per-handler check.
+A helper added in a PR is not automatically called by other handlers in the same PR — the existence of `openStreamingBody` is not a sufficient signal that every upload handler uses it. Every upload-handler PR must include a positive enumeration of every site that should call the helper, plus a per-site verification that it actually does.
 
 **Rule**: every handler in a file named `*_dataplane.go`, `*blob*.go`, `*storage*.go`, `*files*.go`, `*queue*.go`, `*bucket*.go`, or that handles a `PUT` / `POST` / `PATCH` with a binary body, MUST do one of:
 

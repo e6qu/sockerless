@@ -43,7 +43,7 @@ rg -nC2 'NewDecoder\([^)]+\)\.Decode\(' --type go \
 
 ### Pattern A2 — silent two-value reads (`data, _ := io.ReadAll(...)`)
 
-Same shape as A but in the **two-value-with-`_`-in-position-2** form. Phase 175 found this at `simulators/azure/storage_dataplane.go:505-507`: `data, _ := io.ReadAll(r.Body)` followed by `_ = xml.Unmarshal(data, &req)` — two stacked silent errors in three lines. The earlier Pattern A grep matches the second line but **not** the first.
+Same shape as A but in the **two-value-with-`_`-in-position-2** form: `data, _ := io.ReadAll(r.Body)` followed within a few lines by `_ = xml.Unmarshal(data, &req)` (or json / yaml / toml) is a two-stacked silent error chain. Pattern A's grep catches the second line but misses the first; this pattern catches the read side directly.
 
 ```bash
 # Two-value reads with discarded error position-2 — io.ReadAll, io.Copy, ioutil.ReadAll
