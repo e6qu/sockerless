@@ -36,7 +36,6 @@ provider "azurerm" {
 
   metadata_host = trimprefix(trimprefix(var.endpoint, "https://"), "http://")
 
-  skip_provider_registration   = true
   resource_provider_registrations = "none"
 
   features {}
