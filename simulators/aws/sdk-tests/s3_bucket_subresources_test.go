@@ -13,11 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS3_Bucket_Versioning_RoundTrip exercises the canonical
-// PutBucketVersioning → GetBucketVersioning round-trip through the
-// real S3 SDK. Pre-PR-200 the PUT routed to CreateBucket and
-// returned 409 BucketAlreadyOwnedByYou; this test fails against
-// that build.
+// TestS3_Bucket_Versioning_RoundTrip locks the invariant: PUT
+// `/{bucket}?versioning` must route to the bucket-subresource
+// dispatcher and persist the configuration, GET must return the
+// same configuration back. A regression that re-routes the PUT
+// to CreateBucket would surface as 409 BucketAlreadyOwnedByYou
+// and fail this test.
 func TestS3_Bucket_Versioning_RoundTrip(t *testing.T) {
 	c := s3Client()
 	ctx := context.Background()
@@ -30,7 +31,7 @@ func TestS3_Bucket_Versioning_RoundTrip(t *testing.T) {
 			Status: types.BucketVersioningStatusEnabled,
 		},
 	})
-	require.NoError(t, err, "PutBucketVersioning must succeed (pre-fix: routed to CreateBucket → 409)")
+	require.NoError(t, err, "PutBucketVersioning must succeed (subresource dispatcher routes the PUT, not CreateBucket)")
 
 	get, err := c.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: aws.String(bucket)})
 	require.NoError(t, err)

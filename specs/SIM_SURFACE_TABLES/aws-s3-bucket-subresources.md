@@ -84,6 +84,7 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 
 - Add tf-tests for at least the high-fanout subresources (`?versioning`, `?lifecycle`, `?cors`, `?policy`, `?encryption`, `?tagging`, `?website`) — tracked under BUG-1147 in the same PR.
 - Replication round-trip test — needs source-bucket + destination-bucket fixture + IAM role; deferred until a runner scenario exercises it.
+- **All remaining ✗ sdk-test / tf-test rows in the tables above** (logging, acl, requestPayment, accelerate, ownershipControls, notification, publicAccessBlock, object-lock, intelligent-tiering, inventory, analytics, metrics, location, policyStatus + HeadBucket / DeleteBucket / ListBuckets) are deferred under this entry. The sim handlers route correctly today (Phase 177's table-driven dispatcher covers them); the gap is *test coverage*. New sdk-tests + tf-tests land when (a) a runner scenario exercises the surface, (b) a community-filed issue surfaces it, or (c) a periodic audit lands a sweep. Until then, regressions in those rows surface only through the dispatcher invariant: the `bucketSubresourceHandlers` map is the canonical enumeration; deletion of an entry without an accompanying table update is a finding for `surface-table-completeness`.
 
 ## Reopens that produced this table
 

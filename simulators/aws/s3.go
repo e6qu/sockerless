@@ -292,9 +292,27 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		emitStoredOr404(w, r, bucket, "tagging", "NoSuchTagSet", "The TagSet does not exist")
 		return
 	case q.Has("policyStatus"):
+		// PolicyStatus is derived from the stored bucket policy. Real
+		// S3: no policy → 404 NoSuchBucketPolicy; policy present →
+		// IsPublic true iff the policy grants any action to
+		// Principal:"*" without a matching Condition restricting it.
+		// Sim approximation: scan for `"Principal":"*"` or `"AWS":"*"`
+		// substrings — catches the common "public read-bucket" shape
+		// without parsing the full IAM AST.
+		policy, _, ok := getStoredBucketSubresource(bucket, "policy")
+		if !ok {
+			sim.S3ErrorXML(w, "NoSuchBucketPolicy", "The bucket policy does not exist",
+				bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+			return
+		}
+		isPublic := strings.Contains(string(policy), `"Principal":"*"`) ||
+			strings.Contains(string(policy), `"AWS":"*"`) ||
+			strings.Contains(string(policy), `"Principal": "*"`)
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><PolicyStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsPublic>false</IsPublic></PolicyStatus>`))
+		_, _ = w.Write([]byte(fmt.Sprintf(
+			`<?xml version="1.0" encoding="UTF-8"?><PolicyStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsPublic>%t</IsPublic></PolicyStatus>`,
+			isPublic)))
 		return
 	case q.Has("publicAccessBlock"):
 		emitStoredOr404(w, r, bucket, "publicAccessBlock", "NoSuchPublicAccessBlockConfiguration", "The public access block configuration was not found")
@@ -323,6 +341,19 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		emitStoredOrEmptyXML(w, bucket, "notification", "NotificationConfiguration")
 		return
 	case q.Has("acl"):
+		// Real S3: when ownershipControls = BucketOwnerEnforced, ACLs
+		// are disabled and GetBucketAcl returns
+		// `AccessControlListNotSupported` (400). Check the stored
+		// ownership-controls body for that string before falling
+		// through to the canonical owner-grant.
+		if oc, _, ok := getStoredBucketSubresource(bucket, "ownershipControls"); ok {
+			if strings.Contains(string(oc), "BucketOwnerEnforced") {
+				sim.S3ErrorXML(w, "AccessControlListNotSupported",
+					"The bucket does not allow ACLs", bucket,
+					sim.RequestID(r.Context()), http.StatusBadRequest)
+				return
+			}
+		}
 		if body, ct, ok := getStoredBucketSubresource(bucket, "acl"); ok {
 			if ct == "" {
 				ct = "application/xml"

@@ -15,7 +15,7 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 
 | Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|---|
-| Challenge handshake | any `<vault>.vault.<host>/...` w/o `Authorization` | ✓ `keyvault.go::registerKeyVaultDataPlane` (WrapHandler) | ✓ `keyvault_sdk_test.go::TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + Keys + Certificates | n/a | URL format must split to ≥ 4 segments (BUG-1143). |
+| Challenge handshake | any `<vault>.vault.<host>/...` w/o `Authorization` | ✓ `keyvault.go::registerKeyVault` (WrapHandler) + `handleKeyVaultDataPlane` | ✓ `keyvault_sdk_test.go::TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + Keys + Certificates | n/a | URL format must split to ≥ 4 segments (BUG-1143). |
 
 ## Secrets
 
@@ -63,7 +63,9 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 
 - CreateCertificate response shape: switch to canonical 202 + CertificateOperation + add `GET /certificates/{name}/pending` polling endpoint so the full SDK LRO contract round-trips. File as follow-up BUG when a runner scenario lands.
 - Cryptographic operations (Sign/Verify/Encrypt/Decrypt/WrapKey/UnwrapKey): out of scope for the simulator (no real key material), but should surface as canonical 501 NotImplemented envelopes rather than 404 fall-throughs.
-- tf-tests for `azurerm_key_vault_secret` / `azurerm_key_vault_key` / `azurerm_key_vault_certificate` — tracked under BUG-1147.
+- tf-tests for `azurerm_key_vault_secret` covered under BUG-1147 in Phase 177; `azurerm_key_vault_key` + `azurerm_key_vault_certificate` deferred until a runner scenario lands.
+- **All remaining ✗ sim-handler rows** (UpdateSecret, BackupSecret/RestoreSecret, RecoverDeletedSecret/PurgeDeletedSecret, UpdateKey, ImportKey, crypto ops, BackupKey/RestoreKey, GetCertificateOperation, UpdateCertificate, ImportCertificate, MergeCertificate) are deferred under this entry. Soft-delete + Backup/Restore are big surfaces requiring their own persistence model; UpdateSecret / UpdateKey / UpdateCertificate are the most likely next requests from a community-filed issue and land first when one arrives.
+- **All remaining ✗ sdk-test rows** (GetSecret-specific-version, ListSecrets, ListSecretVersions, ListKeys, ListKeyVersions, DeleteKey, ListCertificates, DeleteCertificate) are deferred under this entry. The sim handlers exist; the gap is canonical-SDK-driven test coverage. Sweep lands when a community-filed issue or scheduled audit surfaces a regression.
 
 ## Reopens that produced this table
 
