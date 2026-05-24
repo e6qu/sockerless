@@ -173,6 +173,33 @@ jobs:
         env:
           GOWORK: "off"
 
+  tf:
+    # Stock hashicorp/aws / hashicorp/google / hashicorp/azurerm
+    # providers run against the sim binary via `terraform init` +
+    # `terraform apply -auto-approve`. Exercises the provider's
+    # call-sequence shape, which differs materially from the SDK's
+    # (every recent reopen — BUG-1098 / 1099 / 1142 / 1147 — surfaced
+    # against a provider sequence that the SDK tests had already
+    # marked green).
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    name: tf (${{ matrix.cloud }})
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - uses: hashicorp/setup-terraform@v4
+      - name: Run terraform tests
+        run: cd simulators/${{ matrix.cloud }} && make tf-test
+        timeout-minutes: 10
+        env:
+          GOWORK: "off"
+
   ui:
     runs-on: ubuntu-latest
     steps:
