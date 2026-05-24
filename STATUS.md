@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — no active phase. Phase 175 sweep starting next. |
-| In-flight | Nothing in-flight. About to launch parallel skill-sweep agents (6 specialist skills) across the now-larger codebase to find any patterns slipped into Phase 173+174 merged code. |
+| Active branch | `phase-175-skill-sweep` — second skill-sweep audit. PR not yet opened. |
+| In-flight | Six parallel skill-sweep agents found 36 candidate sites across 6 BUG umbrellas (1120–1128); all P0/P1 sites closed in-branch. Includes 2 severe persistence-strip BUGs (GCP SM unexported payload + Azure KV `json:"-"` on Vault/Name) that silently corrupted persisted secret data on restart, fixed via split storage / wrapper records. Plus 7 silent error swallows, 5 dead-code silencers (1 a Phase 174 regression), 6 wire-quirk drifts, missing .web./.dfs. dispatch, 11 emitted-URL annotations + 1 mis-annotation correction, 3 streaming-body wraps. Two skill extensions landed (Pattern A2 silent two-value reads; positive-confirmation upload-handler rule). All AWS / GCP / Azure SDK regression suites + bleephub + dispatcher tests green. |
 | Last merged | PR #180 — Phase 174 skill-sweep audit + community-issue triage (2026-05-24, squash `7a5d588`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1119 filed · 1117 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking — periodic skill-sweep cadence). |
+| Bugs | 1128 filed · 1124 fixed · 4 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking — periodic skill-sweep cadence) + BUG-1128 (meta-shape: helpers introduced in PR get bypassed in same PR) and one more meta tracking entry. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
