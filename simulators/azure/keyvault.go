@@ -245,6 +245,14 @@ func registerKeyVault(srv *sim.Server) {
 	// Data plane — subdomain routing via WrapHandler. Host pattern:
 	// `<vault>.vault.<sim-host>:<port>`. Strip the suffix to identify
 	// the vault and route to the right handler.
+	//
+	// Requests without an `Authorization` header receive a 401 +
+	// `WWW-Authenticate: Bearer` challenge so the Azure SDK's KV
+	// clients (azsecrets/azkeys/azcertificates) can complete their
+	// challenge-then-retry token-acquisition flow. Real KV is
+	// HTTPS-only and the SDK refuses to attach the token until it
+	// has read the challenge; the sim trusts any Bearer token
+	// thereafter (validation is real-AAD's job).
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
@@ -256,6 +264,13 @@ func registerKeyVault(srv *sim.Server) {
 			// localhost (sim) and vault.azure.net (real cloud) suffixes.
 			parts := strings.SplitN(hostname, ".vault.", 2)
 			if len(parts) == 2 {
+				if r.Header.Get("Authorization") == "" {
+					w.Header().Set("WWW-Authenticate", fmt.Sprintf(
+						`Bearer authorization="http://%s", resource="https://vault.azure.net"`,
+						r.Host))
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				handleKeyVaultDataPlane(w, r, parts[0])
 				return
 			}

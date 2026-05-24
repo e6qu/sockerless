@@ -85,6 +85,7 @@ func main() {
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
 	registerServiceBus(srv)
+	registerServiceBusDataPlane(srv)
 	registerAPIM(srv)
 	registerAuthorization(srv)
 	registerContainerAppEnvironment(srv)
