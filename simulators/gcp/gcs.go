@@ -440,9 +440,14 @@ func registerGCS(srv *sim.Server) {
 		})
 	})
 
-	// XML API style object access (used by cloud.google.com/go/storage for reads)
+	// XML API style object access (used by cloud.google.com/go/storage for reads).
 	// Registered without method prefix to avoid conflict with "/v2/" (both match all methods,
-	// resolved by path specificity - more specific literal paths always win).
+	// resolved by path specificity — more specific literal paths always win).
+	//
+	// The first path segment is the BUCKET; refuse the route when no
+	// matching bucket exists in the store. This blocks the routing
+	// leak that previously served GCS-shaped 404s for unhandled
+	// `/v1/...` AIP-151 paths and similar — see TestGCP_Operations_List.
 	srv.HandleFunc("/{bucket}/{object...}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
@@ -451,6 +456,10 @@ func registerGCS(srv *sim.Server) {
 		bucketName := sim.PathParam(r, "bucket")
 		objectName := sim.PathParam(r, "object")
 		if objectName == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, ok := buckets.Get(bucketName); !ok {
 			http.NotFound(w, r)
 			return
 		}
@@ -468,6 +477,7 @@ func registerGCS(srv *sim.Server) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
+
 
 	// Download object data (JSON API)
 	srv.HandleFunc("GET /download/storage/v1/b/{bucket}/o/{object...}", func(w http.ResponseWriter, r *http.Request) {
