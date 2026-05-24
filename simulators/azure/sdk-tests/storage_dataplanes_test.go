@@ -343,18 +343,3 @@ func TestStorageDataPlane_PathStyleARMPrefixExclusion(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode,
 		"ARM path must reach the ARM handler (subscriptions is reserved)")
 }
-
-// createStorageAccount is a test helper that ensures the `teststorage`
-// account exists. Idempotent — safe to call from multiple tests.
-func createStorageAccount(t *testing.T) {
-	t.Helper()
-	body := []byte(`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"properties":{"accessTier":"Hot"}}`)
-	req, _ := http.NewRequest("PUT",
-		baseURL+"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/storage-rg/providers/Microsoft.Storage/storageAccounts/teststorage?api-version=2023-05-01",
-		bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer fake-token")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-}
