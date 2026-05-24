@@ -229,6 +229,19 @@ func registerSecretManager(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "missing :action suffix on version %q", versionAction)
 				return
 			}
+			// Resolve `latest` alias to the concrete version number
+			// per real GCP behaviour — :enable/:disable/:destroy on
+			// `latest` act on the resolved version, and the response
+			// `name` carries that version (not the literal "latest").
+			if versionID == "latest" {
+				resolved, ok := resolveLatestVersionID(project, secretID)
+				if !ok {
+					sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+						"no enabled versions for secret projects/%s/secrets/%s", project, secretID)
+					return
+				}
+				versionID = resolved
+			}
 			versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
 			ver, ok := smSecretVersions.Get(versionName)
 			if !ok {

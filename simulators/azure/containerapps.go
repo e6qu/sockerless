@@ -98,11 +98,20 @@ type EventTrigger struct {
 }
 
 // JobSecret holds a secret reference for a Container Apps Job.
+//
+// KeyVaultURL is an operator-supplied reference to an Azure Key Vault
+// secret (`https://<vault>.vault.azure.net/secrets/<name>[/<version>]`).
+// The sim stores and round-trips the string but does not auto-resolve
+// it on Job execution — real ACA reads the KV secret at job-start
+// time using the supplied managed identity. The sim's KV data plane
+// (in keyvault.go) accepts the same URL shape when followed by a
+// data-plane client, but the ACA Job runtime itself doesn't do the
+// resolution step today. Operator-supplied external URL.
 type JobSecret struct {
 	Name        string `json:"name"`
 	Value       string `json:"value,omitempty"`
 	Identity    string `json:"identity,omitempty"`
-	KeyVaultURL string `json:"keyVaultUrl,omitempty"`
+	KeyVaultURL string `json:"keyVaultUrl,omitempty"` // external (operator-supplied): KV secret reference; sim KV data plane accepts the URL shape but ACA Job runtime doesn't auto-resolve
 }
 
 // JobRegistry holds a container registry reference for a Container Apps Job.

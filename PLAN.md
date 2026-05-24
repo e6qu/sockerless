@@ -60,9 +60,9 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Active phase
 
-**Phase 174 — skill-sweep audit + community-issue triage (PR #180, in flight).** Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 ran each of the 5 specialist skills added in Phase 173.0 across the repo, plus addressed 8 GitHub issues filed by the user against Phase 173 code.
+**Phase 174 — skill-sweep audit + community-issue triage (PR #180, in flight).** Phase 173 merged 2026-05-24 (squash `64a13a8`). Phase 174 ran each of the 5 specialist skills added in Phase 173.0 across the repo, plus addressed 8 GitHub issues filed by the user against Phase 173 code, plus a self-audit close-out round.
 
-Round 1 (audit): 4 quick-fix BUGs caught and fixed (BUG-1105 through 1108) + 3 larger follow-ups filed Open. **Round 2** (user's "fix all outstanding bugs" directive + 8 new GitHub issues): all 3 follow-ups closed (BUG-1109 Azure File/Queue/Table data planes, BUG-1110 streaming-envelope coverage in 9 non-S3 upload handlers, BUG-1111 external URL field annotations) and all 8 GitHub issues closed (BUG-1112 through 1119 — case-insensitive ARM routes, missing response fields, registered routes, fixed URL construction, real crypto, persisted attributes, resolved aliases).
+Round 1 (audit): 4 quick-fix BUGs caught and fixed (BUG-1105 through 1108) + 3 larger follow-ups filed Open. **Round 2** (user's "fix all outstanding bugs" directive + 8 new GitHub issues): all 3 follow-ups closed (BUG-1109 Azure File/Queue/Table data planes, BUG-1110 streaming-envelope coverage in 9 non-S3 upload handlers, BUG-1111 external URL field annotations) and all 8 GitHub issues closed (BUG-1112 through 1119 — case-insensitive ARM routes, missing response fields, registered routes, fixed URL construction, real crypto, persisted attributes, resolved aliases). **Round 3** (self-audit close-out): 5 remaining gaps closed — GCP SM `:enable` / `:disable` / `:destroy` `latest`-alias resolution (part 2 of issue #188) + 4 more emitted-URL annotations (ECR `UpstreamRegistryUrl`, Amplify `ThumbnailUrl`, ACA `JobSecret.KeyVaultURL`, Cloud Run `CRServiceStatus.URL` + `CRAddress.URL`).
 
 BUGS.md after this branch lands: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking) remain Open.
 

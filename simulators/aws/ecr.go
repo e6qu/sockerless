@@ -53,9 +53,16 @@ type ECRLifecyclePolicy struct {
 // The rule is consulted when a container image URI's registry path
 // starts with `<account>.dkr.ecr.<region>.amazonaws.com/<prefix>/…`
 // and `<prefix>` matches a registered `EcrRepositoryPrefix`.
+//
+// UpstreamRegistryUrl is EXTERNAL by design — it's the third-party
+// registry the pull-through cache pulls from (`registry-1.docker.io`,
+// `public.ecr.aws`, `ghcr.io`, etc.). The sim doesn't service the
+// upstream itself; real ECR fetches the upstream image when an
+// authenticated pull arrives, and the sim's image-resolver does the
+// same for backends pointed at the sim's registry surface.
 type ECRPullThroughCacheRule struct {
 	EcrRepositoryPrefix string `json:"ecrRepositoryPrefix"`
-	UpstreamRegistryUrl string `json:"upstreamRegistryUrl"`
+	UpstreamRegistryUrl string `json:"upstreamRegistryUrl"` // external: operator-supplied upstream registry (docker.io / ghcr.io / public.ecr.aws / etc.)
 	UpstreamRegistry    string `json:"upstreamRegistry,omitempty"`
 	RegistryId          string `json:"registryId"`
 	CreatedAt           int64  `json:"createdAt"`

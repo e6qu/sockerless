@@ -68,7 +68,7 @@ type AmplifyBranch struct {
 	TotalNumberOfJobs          string            `json:"totalNumberOfJobs"`
 	EnableBasicAuth            bool              `json:"enableBasicAuth"`
 	EnablePerformanceMode      bool              `json:"enablePerformanceMode"`
-	ThumbnailUrl               string            `json:"thumbnailUrl,omitempty"`
+	ThumbnailUrl               string            `json:"thumbnailUrl,omitempty"` // external: real-AWS hosted thumbnail of the deployed Amplify app — sim doesn't serve screenshots
 	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
 	BuildSpec                  string            `json:"buildSpec,omitempty"`
 	TtL                        string            `json:"ttl"`

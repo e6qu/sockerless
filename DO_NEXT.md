@@ -25,6 +25,10 @@ Round 2 (user's "fix all outstanding" + GitHub issues #181–#188, in flight on 
 - BUG-1118 (#187) → GCP Cloud SQL selfLink fully-qualified via `gcpSelfLink(r, path)` helper.
 - BUG-1119 (#188) → GCP Secret Manager `:access` + GetSecretVersion resolve `latest` alias to the concrete version number in response `name`.
 
+Round 3 (audit self-check 2026-05-24 after user asked "did we forego, not do, or skip any of the issues or tasks of this PR?"):
+- **#188 part 2** → GCP Secret Manager POST `:enable` / `:disable` / `:destroy` handler also resolves the `latest` alias before mutation (only `:access` + GetSecretVersion had been updated in round 2).
+- **BUG-1111 round 2** → 4 more emitted-URL fields annotated as external: AWS ECR `UpstreamRegistryUrl` (operator-supplied pull-through upstream), AWS Amplify `ThumbnailUrl` (real-AWS hosted screenshot), Azure ContainerApps `JobSecret.KeyVaultURL` (operator-supplied KV reference; ACA Job runtime doesn't auto-resolve), GCP Cloud Run `CRServiceStatus.URL` + `CRAddress.URL` (canonical run.app URL; sim invokes via `/v2-services-invoke` at the configured endpoint).
+
 All AWS / GCP / Azure SDK regression suites green. `go vet` + gofmt clean.
 
 BUGS.md after this branch lands: **1119 filed · 1117 fixed · 2 open · 2 false positives.** Open: BUG-1075 (live-cloud cells, deprioritized 2026-05-23) + BUG-1104 (meta tracking; Phase 174 IS the periodic audit the entry called for).
