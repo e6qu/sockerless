@@ -156,6 +156,12 @@ For terraform operations:
 ## Quick Start
 
 ```bash
+# One-time bootstrap on a fresh clone: wire up the gofmt / golangci-lint /
+# core-test / rebase-check / latest-deps git hooks declared in
+# `.pre-commit-config.yaml`. Without this, gofmt drift slips into PRs and
+# CI catches it instead of your local commit.
+make hooks
+
 # Bring up a full local dev stack (sim + backend + admin) for any
 # cloud × backend combination. Sim runs on its native port (4566 /
 # 4567 / 4568); backend on :3375; admin UI on :9090/ui/.
