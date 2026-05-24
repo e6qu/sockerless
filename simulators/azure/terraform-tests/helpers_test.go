@@ -60,7 +60,14 @@ func generateTLSCerts(dir string) (string, string, string) {
 		log.Fatalf("Failed to generate server key: %v", err)
 	}
 
-	// Server certificate template
+	// Server certificate template. The sim emits subdomain URLs that
+	// mirror real Azure's per-resource DNS naming (<vault>.vault.azure.net,
+	// <account>.blob.core.windows.net, etc.). We replicate that under
+	// `.localhost` so the SDK's URL parsers see canonical Azure shapes
+	// and the OS resolver returns 127.0.0.1 via RFC 6761 (`.localhost.`
+	// is loopback by spec; systemd-resolved on Ubuntu 24 honours it).
+	// Cert carries one wildcard SAN per Azure service subdomain we
+	// emit, plus the literal `localhost` for the ARM/control-plane URL.
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: "localhost"},
@@ -69,7 +76,18 @@ func generateTLSCerts(dir string) (string, string, string) {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
-		DNSNames:     []string{"localhost"},
+		DNSNames: []string{
+			"localhost",
+			"*.vault.localhost",
+			"*.blob.localhost",
+			"*.file.localhost",
+			"*.queue.localhost",
+			"*.table.localhost",
+			"*.web.localhost",
+			"*.dfs.localhost",
+			"*.azurecr.localhost",
+			"*.servicebus.localhost",
+		},
 	}
 
 	// Sign server cert with CA
@@ -150,7 +168,11 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to start simulator: %v", err)
 	}
 
-	baseURL = fmt.Sprintf("https://127.0.0.1:%d", simPort)
+	// localhost (not 127.0.0.1) so the sim emits subdomain URIs
+	// rooted at `.localhost` — RFC 6761 makes *.localhost resolve
+	// to loopback on systemd-resolved, and the cert above carries
+	// the matching wildcard SANs for each Azure service.
+	baseURL = fmt.Sprintf("https://localhost:%d", simPort)
 
 	if err := waitForHealth(baseURL+"/health", caCertPath); err != nil {
 		simCmd.Process.Kill()

@@ -101,6 +101,39 @@ func registerAzureFunctions(srv *sim.Server) {
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 
+	// Subscription-scoped check for site-name availability. Real Azure
+	// validates `<name>.azurewebsites.net` against the global namespace;
+	// terraform-provider-azurerm calls this before site creation so
+	// conflicts surface as `nameAvailable: false` instead of a 409 on
+	// PUT. The sim has no real cross-subscription namespace so we check
+	// the local sites store — any existing site name reads as taken.
+	srv.HandleFunc(
+		"POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checkNameAvailability",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			}
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			suffix := "/providers/Microsoft.Web/sites/" + req.Name
+			taken := len(sites.Filter(func(s Site) bool {
+				return strings.HasSuffix(s.ID, suffix)
+			})) > 0
+			resp := map[string]any{
+				"nameAvailable": !taken,
+				"message":       "",
+			}
+			if taken {
+				resp["reason"] = "AlreadyExists"
+				resp["message"] = fmt.Sprintf("Hostname '%s' already exists. Please select a different name.", req.Name)
+			}
+			sim.WriteJSON(w, http.StatusOK, resp)
+		},
+	)
+
 	// PUT - Create or update function app
 	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")

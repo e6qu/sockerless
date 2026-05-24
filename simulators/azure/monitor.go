@@ -136,6 +136,23 @@ func registerAzureMonitor(srv *sim.Server) {
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 
+	// Subscription-scoped list of soft-deleted workspaces. Real Azure
+	// keeps deleted workspaces recoverable for 14 days; terraform-
+	// provider-azurerm queries this pre-create to find a recoverable
+	// match. The sim hard-deletes workspaces (no soft-delete state
+	// tracked), so the truthful response is always an empty list.
+	deletedWorkspacesHandler := func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+	}
+	srv.HandleFunc(
+		"GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/locations/{location}/deletedWorkspaces",
+		deletedWorkspacesHandler,
+	)
+	srv.HandleFunc(
+		"GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/deletedWorkspaces",
+		deletedWorkspacesHandler,
+	)
+
 	// PUT - Create or update workspace
 	srv.HandleFunc("PUT "+armBase+"/workspaces/{workspaceName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
