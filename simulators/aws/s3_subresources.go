@@ -39,8 +39,20 @@ var (
 )
 
 // handleS3PostObjectDispatch routes POST /{bucket}/{key...} based on
-// the canonical S3 subresource query strings.
+// the canonical S3 subresource query strings. The wildcard pattern
+// `POST /{bucket}/{key...}` is the most-greedy POST route on the
+// AWS sim's collapsed-port mux; without a known-bucket gate it
+// would shadow any other AWS service whose POST path happens to
+// share the 2+-segment shape (issue #204: API Gateway v2
+// `POST /v2/apis/{id}/deployments`). The gate routes to NotFound
+// when the first segment isn't a registered bucket so the SDK
+// surfaces a real 404 instead of an S3-shaped InvalidRequest.
 func handleS3PostObjectDispatch(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	q := r.URL.Query()
 	switch {
 	case q.Has("uploads"):
@@ -76,8 +88,14 @@ func handleS3PostBucketDispatch(w http.ResponseWriter, r *http.Request) {
 // handleS3PutObjectDispatch routes PUT /{bucket}/{key...} based on the
 // special headers and subresource query strings. CopyObject is
 // signaled by `x-amz-copy-source`; UploadPart by `?uploadId` + `?partNumber`;
-// PutObjectTagging by `?tagging`; otherwise PutObject.
+// PutObjectTagging by `?tagging`; otherwise PutObject. Known-bucket
+// gate (see handleS3PostObjectDispatch for rationale).
 func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	q := r.URL.Query()
 	if r.Header.Get("x-amz-copy-source") != "" {
 		handleS3CopyObject(w, r)
@@ -94,8 +112,13 @@ func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleS3GetOrHeadObjectDispatch routes GET / HEAD /{bucket}/{key...}
-// based on subresource query strings.
+// based on subresource query strings. Known-bucket gate.
 func handleS3GetOrHeadObjectDispatch(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	q := r.URL.Query()
 	switch {
 	case q.Has("tagging"):
@@ -106,8 +129,13 @@ func handleS3GetOrHeadObjectDispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleS3DeleteObjectDispatch routes DELETE /{bucket}/{key...} based on
-// subresource query strings.
+// subresource query strings. Known-bucket gate.
 func handleS3DeleteObjectDispatch(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		http.NotFound(w, r)
+		return
+	}
 	q := r.URL.Query()
 	switch {
 	case q.Has("uploadId"):
