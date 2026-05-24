@@ -391,8 +391,25 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 			return
 		}
 		if len(segs) == 3 {
-			// /secrets/{name}/{version} — version-specific Get / Patch.
 			version := segs[2]
+			// /secrets/{name}/ (empty version, trailing slash) — the
+			// azsecrets SDK constructs this when GetSecret is called
+			// with an empty version arg. Real Azure KV resolves it
+			// against the latest version, same as /secrets/{name}.
+			if version == "" {
+				switch r.Method {
+				case http.MethodGet:
+					handleKVGetSecret(w, r, vault, name)
+				case http.MethodPut:
+					handleKVSetSecret(w, r, vault, name)
+				case http.MethodDelete:
+					handleKVDeleteSecret(w, r, vault, name)
+				default:
+					sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+				}
+				return
+			}
+			// /secrets/{name}/{version} — version-specific Get / Patch.
 			switch r.Method {
 			case http.MethodGet:
 				handleKVGetSecretVersion(w, r, vault, name, version)
