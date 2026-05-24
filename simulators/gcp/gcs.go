@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -67,6 +69,166 @@ var (
 	gcsBuckets sim.Store[Bucket]
 	gcsObjects sim.Store[GCSObject]
 )
+
+// gcsResumableSession holds the in-flight state of a resumable upload
+// between session initiation (POST with metadata) and finalization
+// (the chunk PUT that delivers the last byte). Keyed by upload_id in
+// gcsResumableSessions.
+type gcsResumableSession struct {
+	mu          sync.Mutex
+	Bucket      string
+	Object      string
+	ContentType string
+	Data        []byte
+}
+
+var gcsResumableSessions sync.Map // upload_id → *gcsResumableSession
+
+// handleGCSResumableChunk processes a chunk PUT during a resumable
+// upload. The client sends `Content-Range: bytes <start>-<end>/<total>`
+// (or `bytes <start>-<end>/*` if total unknown). When `end+1 == total`,
+// the upload is complete: the session bytes get persisted as a real
+// GCS object and the canonical 200 + object-metadata response goes back.
+// Otherwise the sim returns 308 Resume Incomplete with a `Range` header
+// naming the bytes received so the client knows where to resume.
+func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID string, buckets sim.Store[Bucket], objects sim.Store[GCSObject]) {
+	sv, ok := gcsResumableSessions.Load(uploadID)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"resumable upload session %q not found", uploadID)
+		return
+	}
+	sess := sv.(*gcsResumableSession)
+	if _, exists := buckets.Get(sess.Bucket); !exists {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"bucket %q not found", sess.Bucket)
+		return
+	}
+
+	defer r.Body.Close()
+	chunk, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+			"failed to read resumable chunk: %v", err)
+		return
+	}
+
+	contentRange := r.Header.Get("Content-Range")
+	start, end, total := parseGCSContentRange(contentRange, int64(len(chunk)))
+
+	sess.mu.Lock()
+	// Grow the buffer if this chunk extends past current length.
+	needed := int(end + 1)
+	if needed > len(sess.Data) {
+		grown := make([]byte, needed)
+		copy(grown, sess.Data)
+		sess.Data = grown
+	}
+	copy(sess.Data[start:end+1], chunk)
+	dataLen := int64(len(sess.Data))
+	sess.mu.Unlock()
+
+	if total < 0 || dataLen < total {
+		// Resume Incomplete.
+		w.Header().Set("Range", fmt.Sprintf("bytes=0-%d", dataLen-1))
+		w.WriteHeader(308)
+		return
+	}
+
+	// Final chunk — finalize the object. Trim accumulated data to
+	// the exact total (in case the buffer was over-grown).
+	sess.mu.Lock()
+	finalData := sess.Data[:total]
+	sess.mu.Unlock()
+	gcsResumableSessions.Delete(uploadID)
+
+	objContentType := sess.ContentType
+	if objContentType == "" {
+		objContentType = "application/octet-stream"
+	}
+	now := nowTimestamp()
+	hash := md5.Sum(finalData)
+	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
+	etag := fmt.Sprintf("%x", hash)
+
+	objPath := filepath.Join(GCSBucketHostDir(sess.Bucket), sess.Object)
+	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+			"create object dir: %v", err)
+		return
+	}
+	if err := os.WriteFile(objPath, finalData, 0o644); err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+			"write resumable object: %v", err)
+		return
+	}
+
+	obj := GCSObject{
+		Name:        sess.Object,
+		Bucket:      sess.Bucket,
+		Size:        strconv.FormatInt(total, 10),
+		ContentType: objContentType,
+		TimeCreated: now,
+		Updated:     now,
+		Md5Hash:     md5Hash,
+		Etag:        etag,
+		data:        finalData,
+	}
+	objects.Put(sess.Bucket+"/"+sess.Object, obj)
+	sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
+}
+
+// parseGCSContentRange parses `Content-Range: bytes <start>-<end>/<total>`
+// (total may be `*`). Returns (start, end, total) where total is -1 if
+// unknown. Falls back to assuming the chunk is the entire object when
+// the header is missing.
+func parseGCSContentRange(s string, chunkLen int64) (start, end, total int64) {
+	total = -1
+	if s == "" {
+		return 0, chunkLen - 1, chunkLen
+	}
+	s = strings.TrimPrefix(s, "bytes ")
+	slash := strings.IndexByte(s, '/')
+	if slash < 0 {
+		return 0, chunkLen - 1, -1
+	}
+	rangePart := s[:slash]
+	totalPart := s[slash+1:]
+	dash := strings.IndexByte(rangePart, '-')
+	if dash < 0 {
+		return 0, chunkLen - 1, -1
+	}
+	_, _ = fmt.Sscanf(rangePart[:dash], "%d", &start)
+	_, _ = fmt.Sscanf(rangePart[dash+1:], "%d", &end)
+	if totalPart != "*" {
+		_, _ = fmt.Sscanf(totalPart, "%d", &total)
+	}
+	return start, end, total
+}
+
+// gcsObjectMetadata returns the canonical object-metadata response
+// shape with hard-coded https URLs (real GCS is HTTPS-only on the
+// JSON API surface).
+func gcsObjectMetadata(r *http.Request, obj GCSObject) map[string]any {
+	escapedObject := url.PathEscape(obj.Name)
+	selfLink := fmt.Sprintf("https://%s/storage/v1/b/%s/o/%s", r.Host, obj.Bucket, escapedObject)
+	mediaLink := fmt.Sprintf("https://%s/download/storage/v1/b/%s/o/%s?alt=media", r.Host, obj.Bucket, escapedObject)
+	return map[string]any{
+		"kind":        "storage#object",
+		"id":          fmt.Sprintf("%s/%s/1", obj.Bucket, obj.Name),
+		"selfLink":    selfLink,
+		"mediaLink":   mediaLink,
+		"name":        obj.Name,
+		"bucket":      obj.Bucket,
+		"generation":  "1",
+		"size":        obj.Size,
+		"contentType": obj.ContentType,
+		"timeCreated": obj.TimeCreated,
+		"updated":     obj.Updated,
+		"md5Hash":     obj.Md5Hash,
+		"etag":        obj.Etag,
+	}
+}
 
 func registerGCS(srv *sim.Server) {
 	buckets := sim.MakeStore[Bucket](srv.DB(), "gcs_buckets")
@@ -263,33 +425,7 @@ func registerGCS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "object %q not found in bucket %q", objectName, bucketName)
 			return
 		}
-
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		// Real GCS percent-encodes the object component in selfLink /
-		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
-		// Use url.PathEscape so consumers parsing the URL back into the
-		// (bucket, object) pair don't pick up a different object.
-		escapedObject := url.PathEscape(objectName)
-		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
-		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":        "storage#object",
-			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),
-			"selfLink":    selfLink,
-			"mediaLink":   mediaLink,
-			"name":        obj.Name,
-			"bucket":      obj.Bucket,
-			"generation":  "1",
-			"size":        obj.Size,
-			"contentType": obj.ContentType,
-			"timeCreated": obj.TimeCreated,
-			"updated":     obj.Updated,
-			"md5Hash":     obj.Md5Hash,
-			"etag":        obj.Etag,
-		})
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
 	})
 
 	// Delete object
@@ -306,15 +442,25 @@ func registerGCS(srv *sim.Server) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Resumable chunk uploads come back as PUT on the same path with
+	// `upload_id` in the query — share the same dispatch by treating
+	// PUT identically to POST for the upload route.
+	srv.HandleFunc("PUT /upload/storage/v1/b/{bucket}/o", func(w http.ResponseWriter, r *http.Request) {
+		uploadID := r.URL.Query().Get("upload_id")
+		if uploadID == "" {
+			sim.GCPError(w, http.StatusBadRequest,
+				"PUT /upload/... requires upload_id (resumable chunk only)",
+				"INVALID_ARGUMENT")
+			return
+		}
+		handleGCSResumableChunk(w, r, uploadID, buckets, objects)
+	})
+
 	// Upload object
 	srv.HandleFunc("POST /upload/storage/v1/b/{bucket}/o", func(w http.ResponseWriter, r *http.Request) {
 		bucketName := sim.PathParam(r, "bucket")
 		objectName := r.URL.Query().Get("name")
-
-		if objectName == "" {
-			sim.GCPError(w, http.StatusBadRequest, "name query parameter is required", "INVALID_ARGUMENT")
-			return
-		}
+		uploadType := r.URL.Query().Get("uploadType")
 
 		if _, ok := buckets.Get(bucketName); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucketName)
@@ -329,16 +475,90 @@ func registerGCS(srv *sim.Server) {
 
 		defer r.Body.Close()
 
+		// Resumable upload session initiation. Real GCS accepts the
+		// metadata (including `name`) as JSON in the body and returns
+		// 200 + a Location header containing an opaque session ID;
+		// the SDK then PUTs chunks at that session URL with
+		// Content-Range headers. Each PUT either returns 308 Resume
+		// Incomplete (with a Range header naming the bytes received)
+		// or 200 with the finalized object metadata.
+		if uploadType == "resumable" {
+			var meta struct {
+				Name        string `json:"name"`
+				ContentType string `json:"contentType"`
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+					"failed to read resumable metadata: %v", err)
+				return
+			}
+			if len(body) > 0 {
+				if err := json.Unmarshal(body, &meta); err != nil {
+					sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+						"failed to parse resumable metadata: %v", err)
+					return
+				}
+			}
+			if objectName == "" {
+				objectName = meta.Name
+			}
+			if objectName == "" {
+				sim.GCPError(w, http.StatusBadRequest,
+					"name is required (in query or body)", "INVALID_ARGUMENT")
+				return
+			}
+			sessionID := generateUUID()
+			gcsResumableSessions.Store(sessionID, &gcsResumableSession{
+				Bucket:      bucketName,
+				Object:      objectName,
+				ContentType: meta.ContentType,
+				Data:        nil,
+			})
+			location := fmt.Sprintf("https://%s/upload/storage/v1/b/%s/o?uploadType=resumable&upload_id=%s",
+				r.Host, bucketName, sessionID)
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Resumable chunk upload — PUT (or POST per some SDKs) at the
+		// session URL. Looks up the session by upload_id, parses the
+		// Content-Range header, appends bytes, and returns 308 if the
+		// upload isn't complete yet or the canonical object metadata
+		// when the total size is reached.
+		uploadID := r.URL.Query().Get("upload_id")
+		if uploadID != "" {
+			handleGCSResumableChunk(w, r, uploadID, buckets, objects)
+			return
+		}
+
 		if mediaType == "multipart/related" {
-			// Multipart upload: first part is metadata JSON, second part is data
+			// Multipart upload: first part is metadata JSON
+			// (including `name` when not in query), second part is data.
 			mr := multipart.NewReader(r.Body, params["boundary"])
-			// Skip metadata part
 			metaPart, err := mr.NextPart()
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read metadata part: %v", err)
 				return
 			}
+			metaBytes, err := io.ReadAll(metaPart)
 			_ = metaPart.Close()
+			if err == nil && len(metaBytes) > 0 {
+				var meta struct {
+					Name string `json:"name"`
+				}
+				if jsonErr := json.Unmarshal(metaBytes, &meta); jsonErr == nil {
+					if objectName == "" {
+						objectName = meta.Name
+					}
+				}
+			}
+			if objectName == "" {
+				sim.GCPError(w, http.StatusBadRequest,
+					"name is required (in query or multipart metadata)", "INVALID_ARGUMENT")
+				return
+			}
 			// Read data part
 			dataPart, err := mr.NextPart()
 			if err != nil {
@@ -352,6 +572,11 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 		} else {
+			if objectName == "" {
+				sim.GCPError(w, http.StatusBadRequest,
+					"name query parameter is required", "INVALID_ARGUMENT")
+				return
+			}
 			// Simple upload (streaming-aware: handles gzip).
 			rc, err := openStreamingBody(r)
 			if err != nil {
@@ -409,35 +634,92 @@ func registerGCS(srv *sim.Server) {
 		objects.Put(key, obj)
 
 		// Real GCS object responses include `kind` + `id` + `selfLink` +
-		// `mediaLink`. terraform-provider-google's `google_storage_bucket_object`
-		// reads `selfLink` into the resource's `self_link` attribute on
-		// apply, so missing it means the attribute is empty downstream.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
+		// `mediaLink` (https-hard-coded — GCS' JSON API is HTTPS-only).
+		// terraform-provider-google's `google_storage_bucket_object`
+		// reads `selfLink` into the resource's `self_link` attribute
+		// on apply, so missing it means the attribute is empty
+		// downstream.
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
+	})
+
+	// Objects.compose — concatenate source objects into a destination
+	// object. Real GCS reads up to 32 source objects in order and
+	// emits a single composed object; the Go SDK's high-level write
+	// path uses this for compositing, and any S3-multipart-equivalent
+	// against GCS uses it as the joining primitive.
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/o/{destObject...}", func(w http.ResponseWriter, r *http.Request) {
+		// Only dispatch :compose paths — other POSTs at this prefix
+		// should fall through to the upload handler family.
+		destObject := sim.PathParam(r, "destObject")
+		if !strings.HasSuffix(destObject, "/compose") {
+			http.NotFound(w, r)
+			return
 		}
-		// Real GCS percent-encodes the object component in selfLink /
-		// mediaLink (object names commonly contain `/`, ` `, `?`, `#`).
-		// Use url.PathEscape so consumers parsing the URL back into the
-		// (bucket, object) pair don't pick up a different object.
-		escapedObject := url.PathEscape(objectName)
-		selfLink := fmt.Sprintf("%s://%s/storage/v1/b/%s/o/%s", scheme, r.Host, bucketName, escapedObject)
-		mediaLink := fmt.Sprintf("%s://%s/download/storage/v1/b/%s/o/%s?alt=media", scheme, r.Host, bucketName, escapedObject)
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":        "storage#object",
-			"id":          fmt.Sprintf("%s/%s/1", bucketName, objectName),
-			"selfLink":    selfLink,
-			"mediaLink":   mediaLink,
-			"name":        obj.Name,
-			"bucket":      obj.Bucket,
-			"generation":  "1",
-			"size":        obj.Size,
-			"contentType": obj.ContentType,
-			"timeCreated": obj.TimeCreated,
-			"updated":     obj.Updated,
-			"md5Hash":     obj.Md5Hash,
-			"etag":        obj.Etag,
-		})
+		destObject = strings.TrimSuffix(destObject, "/compose")
+		bucketName := sim.PathParam(r, "bucket")
+		if _, ok := buckets.Get(bucketName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucketName)
+			return
+		}
+		var req struct {
+			SourceObjects []struct {
+				Name       string `json:"name"`
+				Generation string `json:"generation,omitempty"`
+			} `json:"sourceObjects"`
+			Destination *struct {
+				ContentType string `json:"contentType"`
+			} `json:"destination"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"failed to parse compose request: %v", err)
+			return
+		}
+		if len(req.SourceObjects) == 0 {
+			sim.GCPError(w, http.StatusBadRequest,
+				"compose requires at least one sourceObject", "INVALID_ARGUMENT")
+			return
+		}
+		var composed []byte
+		for _, src := range req.SourceObjects {
+			srcObj, ok := objects.Get(bucketName + "/" + src.Name)
+			if !ok {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+					"source object %q not found in bucket %q", src.Name, bucketName)
+				return
+			}
+			composed = append(composed, srcObj.data...)
+		}
+		contentType := "application/octet-stream"
+		if req.Destination != nil && req.Destination.ContentType != "" {
+			contentType = req.Destination.ContentType
+		}
+		now := nowTimestamp()
+		hash := md5.Sum(composed)
+		md5Hash := base64.StdEncoding.EncodeToString(hash[:])
+		etag := fmt.Sprintf("%x", hash)
+		objPath := filepath.Join(GCSBucketHostDir(bucketName), destObject)
+		if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create dest dir: %v", err)
+			return
+		}
+		if err := os.WriteFile(objPath, composed, 0o644); err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write composed object: %v", err)
+			return
+		}
+		composedObj := GCSObject{
+			Name:        destObject,
+			Bucket:      bucketName,
+			Size:        strconv.Itoa(len(composed)),
+			ContentType: contentType,
+			TimeCreated: now,
+			Updated:     now,
+			Md5Hash:     md5Hash,
+			Etag:        etag,
+			data:        composed,
+		}
+		objects.Put(bucketName+"/"+destObject, composedObj)
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, composedObj))
 	})
 
 	// XML API style object access (used by cloud.google.com/go/storage for reads).

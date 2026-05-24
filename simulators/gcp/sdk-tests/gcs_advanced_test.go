@@ -1,0 +1,217 @@
+package gcp_sdk_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// gcsRESTCreate creates a bucket via raw REST (used by the advanced
+// tests that need to drive multipart / resumable / compose directly).
+func gcsRESTCreate(t *testing.T, bucket string) {
+	t.Helper()
+	body := strings.NewReader(`{"name":"` + bucket + `"}`)
+	req, _ := http.NewRequest("POST", baseURL+"/storage/v1/b?project=p", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+}
+
+// gcsObjectMetadataRaw fetches GCS object metadata via the JSON API.
+func gcsObjectMetadataRaw(t *testing.T, bucket, object string) map[string]any {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/storage/v1/b/" + bucket + "/o/" + object)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var m map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&m))
+	return m
+}
+
+// TestGCS_EmittedURLsHTTPS asserts the JSON API emits selfLink +
+// mediaLink with https://, matching real GCS (HTTPS-only).
+func TestGCS_EmittedURLsHTTPS(t *testing.T) {
+	bucket := "https-bucket"
+	gcsRESTCreate(t, bucket)
+
+	uploadReq, _ := http.NewRequest("POST",
+		baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=media&name=hk",
+		strings.NewReader("https-test"))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp, err := http.DefaultClient.Do(uploadReq)
+	require.NoError(t, err)
+	uploadBody, _ := io.ReadAll(uploadResp.Body)
+	uploadResp.Body.Close()
+	require.Equal(t, http.StatusOK, uploadResp.StatusCode, "upload status: %s", uploadBody)
+
+	var uploadMeta map[string]any
+	require.NoError(t, json.Unmarshal(uploadBody, &uploadMeta))
+	assert.Truef(t, strings.HasPrefix(uploadMeta["selfLink"].(string), "https://"),
+		"upload selfLink must be https://; got %q", uploadMeta["selfLink"])
+	assert.Truef(t, strings.HasPrefix(uploadMeta["mediaLink"].(string), "https://"),
+		"upload mediaLink must be https://; got %q", uploadMeta["mediaLink"])
+
+	getMeta := gcsObjectMetadataRaw(t, bucket, "hk")
+	assert.Truef(t, strings.HasPrefix(getMeta["selfLink"].(string), "https://"),
+		"GET selfLink must be https://; got %q", getMeta["selfLink"])
+	assert.Truef(t, strings.HasPrefix(getMeta["mediaLink"].(string), "https://"),
+		"GET mediaLink must be https://; got %q", getMeta["mediaLink"])
+}
+
+// TestGCS_ResumableUpload exercises the full resumable upload contract:
+// 1. POST init with metadata in body → 200 + Location with upload_id
+// 2. PUT partial chunk with Content-Range → 308 Resume Incomplete
+// 3. PUT final chunk → 200 + object metadata
+// 4. GET on the destination returns the concatenated payload
+func TestGCS_ResumableUpload(t *testing.T) {
+	bucket := "resumable-bucket"
+	gcsRESTCreate(t, bucket)
+
+	initBody := strings.NewReader(`{"name":"resumable-obj","contentType":"text/plain"}`)
+	initReq, _ := http.NewRequest("POST",
+		baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=resumable",
+		initBody)
+	initReq.Header.Set("Content-Type", "application/json")
+	initResp, err := http.DefaultClient.Do(initReq)
+	require.NoError(t, err)
+	initResp.Body.Close()
+	require.Equal(t, http.StatusOK, initResp.StatusCode)
+	location := initResp.Header.Get("Location")
+	require.NotEmpty(t, location, "Location header must carry the session URL")
+	assert.True(t, strings.HasPrefix(location, "https://"),
+		"sim emits https:// to match real GCS fidelity")
+	assert.Contains(t, location, "upload_id=")
+
+	// Sim listens on plain HTTP under test (`baseURL` is `http://...`).
+	// Real GCS is HTTPS-only so the sim's Location header is https; the
+	// SDK follows it verbatim against a TLS-fronted sim in production
+	// deployments. For local HTTP testing, swap the scheme back so the
+	// chunk PUT reaches the same listener.
+	if strings.HasPrefix(baseURL, "http://") {
+		location = strings.Replace(location, "https://", "http://", 1)
+	}
+
+	payload := []byte("0123456789abcdef")
+	totalSize := len(payload)
+	half := totalSize / 2
+
+	chunk1 := payload[:half]
+	c1Req, _ := http.NewRequest("PUT", location, bytes.NewReader(chunk1))
+	c1Req.Header.Set("Content-Range",
+		fmt.Sprintf("bytes 0-%d/%d", half-1, totalSize))
+	c1Resp, err := http.DefaultClient.Do(c1Req)
+	require.NoError(t, err)
+	c1Resp.Body.Close()
+	require.Equal(t, 308, c1Resp.StatusCode,
+		"partial chunk must return 308 Resume Incomplete")
+	rangeHdr := c1Resp.Header.Get("Range")
+	assert.Equal(t, fmt.Sprintf("bytes=0-%d", half-1), rangeHdr)
+
+	chunk2 := payload[half:]
+	c2Req, _ := http.NewRequest("PUT", location, bytes.NewReader(chunk2))
+	c2Req.Header.Set("Content-Range",
+		fmt.Sprintf("bytes %d-%d/%d", half, totalSize-1, totalSize))
+	c2Resp, err := http.DefaultClient.Do(c2Req)
+	require.NoError(t, err)
+	c2Body, _ := io.ReadAll(c2Resp.Body)
+	c2Resp.Body.Close()
+	require.Equal(t, http.StatusOK, c2Resp.StatusCode,
+		"final chunk must return 200; got %d body=%s", c2Resp.StatusCode, c2Body)
+
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(c2Body, &meta))
+	assert.Equal(t, "resumable-obj", meta["name"])
+	assert.Equal(t, "16", meta["size"])
+
+	xmlResp, err := http.Get(baseURL + "/" + bucket + "/resumable-obj")
+	require.NoError(t, err)
+	defer xmlResp.Body.Close()
+	got, _ := io.ReadAll(xmlResp.Body)
+	assert.Equal(t, payload, got, "object bytes must equal concatenated chunks")
+}
+
+// TestGCS_MultipartUploadBodyName exercises name-in-multipart-metadata
+// (the form the Go SDK uses when Object.Name is set on the struct).
+func TestGCS_MultipartUploadBodyName(t *testing.T) {
+	bucket := "multipart-bucket"
+	gcsRESTCreate(t, bucket)
+
+	boundary := "BB"
+	mpBody := strings.Join([]string{
+		"--" + boundary,
+		"Content-Type: application/json",
+		"",
+		`{"name":"mpk"}`,
+		"--" + boundary,
+		"Content-Type: application/octet-stream",
+		"",
+		"multipart-payload",
+		"--" + boundary + "--",
+	}, "\r\n")
+	req, _ := http.NewRequest("POST",
+		baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=multipart",
+		strings.NewReader(mpBody))
+	req.Header.Set("Content-Type", "multipart/related; boundary="+boundary)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "multipart status: %s", body)
+
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(body, &meta))
+	assert.Equal(t, "mpk", meta["name"])
+	assert.Truef(t, strings.HasPrefix(meta["selfLink"].(string), "https://"),
+		"multipart upload selfLink must be https://")
+}
+
+// TestGCS_ObjectsCompose exercises POST /storage/v1/b/{bucket}/o/{name}/compose.
+func TestGCS_ObjectsCompose(t *testing.T) {
+	bucket := "compose-bucket"
+	gcsRESTCreate(t, bucket)
+
+	for _, p := range []struct{ name, body string }{
+		{"part1", "hello "}, {"part2", "world"},
+	} {
+		req, _ := http.NewRequest("POST",
+			baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=media&name="+p.name,
+			strings.NewReader(p.body))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "upload %s", p.name)
+	}
+
+	composeBody := `{"sourceObjects":[{"name":"part1"},{"name":"part2"}],"destination":{"contentType":"text/plain"}}`
+	req, _ := http.NewRequest("POST",
+		baseURL+"/storage/v1/b/"+bucket+"/o/composed/compose",
+		strings.NewReader(composeBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "compose status: %s", body)
+
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(body, &meta))
+	assert.Equal(t, "composed", meta["name"])
+	assert.Equal(t, "11", meta["size"], "concat size = 6+5 = 11")
+	assert.Equal(t, "text/plain", meta["contentType"])
+
+	xmlResp, err := http.Get(baseURL + "/" + bucket + "/composed")
+	require.NoError(t, err)
+	defer xmlResp.Body.Close()
+	got, _ := io.ReadAll(xmlResp.Body)
+	assert.Equal(t, "hello world", string(got))
+}
