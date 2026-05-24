@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | None — `main` at `2d8e604` after PR #200 merge. |
-| In-flight | Idle. Awaiting new community-filed issues or directive. |
+| Active branch | `phase-177-community-issues` — BUG-1142..1147 closed (1 reopen + 1 new community-filed + 4 meta-skill improvements). PR open + awaiting CI + user merge. |
+| In-flight | PR open against `phase-177-community-issues`. |
 | Last merged | PR #200 — Phase 176 community-filed issues + audit findings (2026-05-24, squash `2d8e604`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1141 filed · 1139 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
+| Bugs | 1147 filed · 1145 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
