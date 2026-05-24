@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Generate per-service surface-table stubs from registered HandleFunc
+# patterns. Each stub lists what the sim already handles (✓ rows); ✗
+# rows for missing ops + sdk-test / tf-test columns are filled in by
+# subsequent per-surface PRs.
+#
+# Usage: bash scripts/seed-surface-tables.sh
+#
+# Idempotent — re-running overwrites the stubs with fresh extracts but
+# preserves the hand-written sections inside the `<!-- HAND-WRITTEN BEGIN -->`
+# / `<!-- HAND-WRITTEN END -->` block.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="$REPO_ROOT/specs/SIM_SURFACE_TABLES"
+mkdir -p "$OUT_DIR"
+
+# Tables Phase 175-177 wrote by hand. The seeder leaves these alone.
+PRESERVED_TABLES=(
+  aws-s3-bucket-subresources
+  azure-kv-data-plane
+)
+
+is_preserved() {
+  local name="$1"
+  for p in "${PRESERVED_TABLES[@]}"; do
+    [[ "$name" == "$p" ]] && return 0
+  done
+  return 1
+}
+
+# Infra / runtime files that don't represent a sim service surface.
+# Listed inline below in the [[ =~ ]] check; this comment block keeps
+# the catalog readable: main, dashboard, metadata, streaming, awschunked,
+# aws_identity, auth, authorization, managedidentity, oauth2, operations,
+# quota, serviceusage, ui_embed, ui_noembed, lambda_runtime, ssm_proto,
+# logfilter, cloudwatch_metrics, kql.
+
+# Map cloud:file → canonical surface-table file.
+table_for_file() {
+  case "$1:$2" in
+    aws:s3|aws:s3_subresources) echo "aws-s3" ;;
+    aws:lambda|aws:lambda_subresources) echo "aws-lambda" ;;
+    aws:cloudfront|aws:cloudfront_functions|aws:cloudfront_keys|aws:cloudfront_policies) echo "aws-cloudfront" ;;
+    aws:amplify|aws:amplify_domains) echo "aws-amplify" ;;
+    aws:iam|aws:iam_slr_oidc) echo "aws-iam" ;;
+    azure:blob|azure:files|azure:storage_dataplane) echo "azure-storage" ;;
+    azure:containerapps|azure:containerapps_apps|azure:containerappsenv) echo "azure-containerapps" ;;
+    azure:servicebus|azure:servicebus_dataplane) echo "azure-servicebus" ;;
+    azure:insights|azure:monitor) echo "azure-monitor" ;;
+    gcp:cloudrun|gcp:cloudrunjobs|gcp:cloudrunservices) echo "gcp-cloudrun" ;;
+    *) echo "$1-$2" ;;
+  esac
+}
+
+# Pass 1 — collect all (table, source-file, line, method, path, handler) rows.
+tmp_rows="$(mktemp)"
+trap 'rm -f "$tmp_rows"' EXIT
+
+for cloud in aws azure gcp; do
+  for go_file in "$REPO_ROOT/simulators/$cloud"/*.go; do
+    [[ -f "$go_file" ]] || continue
+    [[ "$go_file" =~ _test\.go$ ]] && continue
+    base="$(basename "$go_file" .go)"
+    if [[ "$base" =~ ^(main|dashboard|metadata|streaming|awschunked|aws_identity|auth|authorization|managedidentity|oauth2|operations|quota|serviceusage|ui_embed|ui_noembed|lambda_runtime|ssm_proto|logfilter|cloudwatch_metrics|kql)$ ]]; then
+      continue
+    fi
+    has_handle="$(grep -c 'HandleFunc(\|\.Register("' "$go_file" || true)"
+    [[ "$has_handle" == "0" ]] && continue
+    table_name="$(table_for_file "$cloud" "$base")"
+    is_preserved "$table_name" && continue
+
+    # REST-style routes: mux.HandleFunc("METHOD /pattern", handler).
+    { grep -nE '\.HandleFunc\(' "$go_file" || true; } \
+      | { sed -E 's/^([0-9]+):.*HandleFunc\("([A-Z]+) ([^"]+)",[[:space:]]*([a-zA-Z0-9_.]+).*$/\1\t\2 \3\t\4/' || true; } \
+      | { grep -E '^[0-9]+	[A-Z]+ ' || true; } \
+      | while IFS=$'\t' read -r line route handler; do
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$table_name" "$cloud" "$base" "$line" "$route" "$handler"
+        done
+
+    # AWS awsJson1.1 / awsQuery actions: r.Register("Service.Action", handler).
+    { grep -nE '\.Register\("' "$go_file" || true; } \
+      | { sed -E 's/^([0-9]+):.*\.Register\("([^"]+)",[[:space:]]*([a-zA-Z0-9_.]+).*$/\1\t\2\t\3/' || true; } \
+      | { grep -E '^[0-9]+	[A-Za-z]' || true; } \
+      | while IFS=$'\t' read -r line action handler; do
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$table_name" "$cloud" "$base" "$line" "Action $action" "$handler"
+        done
+  done
+done > "$tmp_rows"
+
+# Pass 2 — for each table, emit a stub with all collected rows.
+tables=()
+while IFS= read -r t; do
+  tables+=("$t")
+done < <(cut -f1 "$tmp_rows" | sort -u)
+
+for table_name in "${tables[@]}"; do
+  is_preserved "$table_name" && continue
+  out_md="$OUT_DIR/$table_name.md"
+
+  # Preserve existing hand-written block, if present.
+  hand_block=""
+  if [[ -f "$out_md" ]]; then
+    hand_block="$(awk '/<!-- HAND-WRITTEN BEGIN -->/,/<!-- HAND-WRITTEN END -->/' "$out_md" || true)"
+  fi
+  if [[ -z "$hand_block" ]]; then
+    hand_block=$'<!-- HAND-WRITTEN BEGIN -->\n<!-- HAND-WRITTEN END -->'
+  fi
+
+  # First source file for this table — used in the header path hint.
+  first_file="$(awk -v t="$table_name" -F'\t' '$1==t {print $2"/"$3".go"; exit}' "$tmp_rows")"
+
+  {
+    echo "# Sim surface — $table_name"
+    echo
+    echo "Surface registered in \`simulators/$first_file\` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by \`scripts/seed-surface-tables.sh\` from \`mux.HandleFunc(...)\` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them."
+    echo
+    echo "## Status legend"
+    echo
+    echo "- ✓ — implemented + tested"
+    echo "- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)"
+    echo "- 501 — stubbed NotImplemented (wire-visible gap)"
+    echo "- n/a — no terraform-provider resource for this op"
+    echo
+    echo "## Implemented ops (extracted from HandleFunc registrations)"
+    echo
+    echo "| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |"
+    echo "|---|---|---|---|---|---|"
+    awk -v t="$table_name" -F'\t' '$1==t {printf "| `%s` | ✓ `simulators/%s/%s.go:%s::%s` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |\n", $5, $2, $3, $4, $6}' "$tmp_rows"
+    echo
+    echo "## Open subtasks staged forward"
+    echo
+    echo "- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep)."
+    echo "- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep."
+    echo
+    echo "$hand_block"
+  } > "$out_md"
+  n="$(awk -v t="$table_name" -F'\t' '$1==t' "$tmp_rows" | wc -l | tr -d ' ')"
+  echo "seeded: $out_md ($n ops)"
+done
+
+# Rewrite README index.
+{
+  echo "# Sim surface tables"
+  echo
+  echo "Per-service canonical-operation enumerations for every sim surface. Each table lists implemented ops (✓ rows) extracted by the seeder + ✗ rows for missing ops added by subsequent PRs. The companion skill \`.claude/skills/surface-table-completeness/SKILL.md\` enforces \"no silent ✗ rows\" — every gap is paired with a BUG or deferred-subtask reference."
+  echo
+  echo "Re-run \`bash scripts/seed-surface-tables.sh\` after adding new \`HandleFunc\` registrations to refresh the implemented-ops sections (hand-written sections inside \`<!-- HAND-WRITTEN BEGIN/END -->\` are preserved)."
+  echo
+  echo "## Index"
+  echo
+  for f in "$OUT_DIR"/*.md; do
+    name="$(basename "$f" .md)"
+    [[ "$name" == "README" ]] && continue
+    echo "- [\`$name\`]($name.md)"
+  done
+} > "$OUT_DIR/README.md"
+echo "index: $OUT_DIR/README.md"
