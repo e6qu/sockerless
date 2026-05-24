@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-174-skill-sweep` — skill-sweep audit + GitHub-issue triage. **PR #180.** |
-| In-flight | Phase 174 ran each of the 5 specialist skills committed in Phase 173.0 across the repo. Round 1: 4 quick-fix BUGs (1105–1108) + 3 larger follow-ups filed as Open (1109/1110/1111). Round 2 (after user filed GitHub issues #181–#188 + asked to fix all outstanding BUGs): all 3 follow-ups closed in-branch (Azure File/Queue/Table data planes via new `storage_dataplane.go`; `openStreamingBody` helper per cloud wired into 9 upload handlers; external-URL field annotations on Azure Functions / Amplify webhook / ECR repo URI) **plus** all 8 GitHub issues closed (Azure Redis ARM case insensitivity via path-normalization middleware, Pub/Sub subscription response fields, SM ListSecrets route, KV malformed URLs, KV real RSA modulus, SQS attribute persistence, Cloud SQL fully-qualified selfLink, SM `:latest` alias resolution). Round 3 (audit self-check, 2026-05-24): 5 gaps closed in-branch — GCP Secret Manager `:enable`/`:disable`/`:destroy` `latest`-alias resolution (part 2 of issue #188), plus 4 more emitted-URL-field annotations (ECR `UpstreamRegistryUrl`, Amplify `ThumbnailUrl`, ACA `JobSecret.KeyVaultURL`, Cloud Run `CRServiceStatus.URL` + `CRAddress.URL`). All AWS / GCP / Azure SDK regression suites green. |
-| Last merged | PR #179 — Phase 173 simulator wire-fidelity sweep (2026-05-24, squash `64a13a8`). |
+| Active branch | `main` — no active phase. Phase 175 sweep starting next. |
+| In-flight | Nothing in-flight. About to launch parallel skill-sweep agents (6 specialist skills) across the now-larger codebase to find any patterns slipped into Phase 173+174 merged code. |
+| Last merged | PR #180 — Phase 174 skill-sweep audit + community-issue triage (2026-05-24, squash `7a5d588`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1119 filed · 1117 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking). |
+| Bugs | 1119 filed · 1117 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud, deprioritized) + BUG-1104 (meta tracking — periodic skill-sweep cadence). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -69,12 +69,11 @@ User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration 
 
 | PR | Phase | Headline |
 |---|---|---|
-| open #179 | 173 | Simulator wire-fidelity sweep — 20 commits (15 implementation + 5 CI-wrap: dep freshness, Makefile fanout, gofmt, 2 staticcheck/vet fixes), ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. **Draft; CI-green on `a448971` (all 11 jobs pass); awaiting user merge.** |
-| #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported; real-runner simulator arithmetic targets added. Merged 2026-05-23 at `1c1fd92`. |
-| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP Artifact Registry endpoint-fidelity fix covered by SDK/gcloud/Terraform/OCI, and live-validation runbook. Merged 2026-05-18 at `a5639811`. |
+| #180 | 174 | Skill-sweep audit + community-issue triage — 3 rounds: round 1 (4 quick BUGs + 3 follow-ups), round 2 (3 follow-ups closed + all 8 GitHub issues #181–#188), round 3 (5 self-audit gaps). 15 BUGs closed (1105–1119). Merged 2026-05-24 at `7a5d588`. |
+| #179 | 173 | Simulator wire-fidelity sweep — 20 commits, ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
+| #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported. Merged 2026-05-23 at `1c1fd92`. |
+| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP AR endpoint-fidelity, live-validation runbook. Merged 2026-05-18 at `a5639811`. |
 | #169 | 168 follow-up | Runner attach hardening and final CI stabilization. Merged 2026-05-18 at `0bd75902`. |
 | #168 | 167–168 | FaaS exec unification, reverse-agent-only path, and AZF bootstrap hardening. Merged 2026-05-18 at `3565e413`. |
-| #167 | 166 | Real fixes for Phase 165 follow-ups (4 BUGs: 1040 Azure azurerm + 1041 GCP IAM SA + 1042 AWS 5 sim handler gaps + 1045 codex state-persistence). Merged 2026-05-17 at `49050c2d`. |
-| #165 | 165 | Third vibe-slop sweep + sim test-pyramid expansion + codex review + continuity-doc compression. 9 BUGs closed. Merged 2026-05-17 at `288b76d3`. |
 
 Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
