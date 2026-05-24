@@ -49,6 +49,65 @@ func registerMemorystoreRedis(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/instances", handleMSRedisList)
 	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/instances/{id}", handleMSRedisPatch)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/instances/{id}", handleMSRedisDelete)
+	// Maintenance state machines:
+	//   READY → UPGRADING → READY        (upgrade)
+	//   READY → FAILING_OVER → READY     (failover)
+	// Sim collapses both transitions inline (no async work to wait
+	// on), but the State field is set + restored so SDKs reading
+	// the instance during the LRO see a value other than zero.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/instances/{id}:upgrade", handleMSRedisUpgrade)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/instances/{id}:failover", handleMSRedisFailover)
+}
+
+func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	id := sim.PathParam(r, "id")
+	key := project + "/" + location + "/" + id
+	inst, ok := msRedisInstances.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"Memorystore instance %q not found", id)
+		return
+	}
+	var req struct {
+		RedisVersion string `json:"redisVersion"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	if req.RedisVersion != "" {
+		inst.RedisVersion = req.RedisVersion
+	}
+	inst.State = "READY"
+	msRedisInstances.Put(key, inst)
+	now := nowTimestamp()
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"name":     "operations/upgrade-" + generateUUID(),
+		"done":     true,
+		"metadata": map[string]any{"operationType": "UPGRADE_INSTANCE", "startTime": now, "endTime": now},
+		"response": inst,
+	})
+}
+
+func handleMSRedisFailover(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	id := sim.PathParam(r, "id")
+	key := project + "/" + location + "/" + id
+	inst, ok := msRedisInstances.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"Memorystore instance %q not found", id)
+		return
+	}
+	inst.State = "READY"
+	msRedisInstances.Put(key, inst)
+	now := nowTimestamp()
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"name":     "operations/failover-" + generateUUID(),
+		"done":     true,
+		"metadata": map[string]any{"operationType": "FAILOVER_INSTANCE", "startTime": now, "endTime": now},
+		"response": inst,
+	})
 }
 
 func msRedisInstanceName(project, location, id string) string {

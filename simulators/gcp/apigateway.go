@@ -47,6 +47,7 @@ func registerGCPAPIGateway(srv *sim.Server) {
 	apigwApis = sim.MakeStore[APIGWApi](srv.DB(), "gcp_apigw_apis")
 	apigwConfigs = sim.MakeStore[APIGWApiConfig](srv.DB(), "gcp_apigw_configs")
 	apigwGateways = sim.MakeStore[APIGWGateway](srv.DB(), "gcp_apigw_gateways")
+	apigwIamPolicies = sim.MakeStore[GCPAPIGWIamPolicy](srv.DB(), "gcp_apigw_iam_policies")
 
 	// Apis (always under locations/global per real GCP).
 	srv.HandleFunc("POST /v1/projects/{project}/locations/global/apis", handleGCPAPIGWCreateApi)
@@ -65,6 +66,66 @@ func registerGCPAPIGateway(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gateways/{gw}", handleGCPAPIGWGetGateway)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gateways", handleGCPAPIGWListGateways)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/gateways/{gw}", handleGCPAPIGWDeleteGateway)
+
+	// IAM v1 per AIP-130. Empty default policy until setIamPolicy
+	// lands a real one; testIamPermissions returns the permission set
+	// as-allowed (sim doesn't model authorization).
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:getIamPolicy", handleGCPAPIGWGetIamPolicy)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:setIamPolicy", handleGCPAPIGWSetIamPolicy)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways/{gw}:testIamPermissions", handleGCPAPIGWTestIamPermissions)
+}
+
+// GCPAPIGWIamBinding mirrors google.iam.v1.Binding.
+type GCPAPIGWIamBinding struct {
+	Role    string   `json:"role"`
+	Members []string `json:"members"`
+}
+
+// GCPAPIGWIamPolicy is the canonical google.iam.v1.Policy shape.
+type GCPAPIGWIamPolicy struct {
+	Version  int                  `json:"version"`
+	Etag     string               `json:"etag,omitempty"`
+	Bindings []GCPAPIGWIamBinding `json:"bindings,omitempty"`
+}
+
+var apigwIamPolicies sim.Store[GCPAPIGWIamPolicy]
+
+func apigwIamPolicyKey(project, location, gw string) string {
+	return project + "/" + location + "/" + gw
+}
+
+func handleGCPAPIGWGetIamPolicy(w http.ResponseWriter, r *http.Request) {
+	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "gw"))
+	p, ok := apigwIamPolicies.Get(key)
+	if !ok {
+		p = GCPAPIGWIamPolicy{Version: 1, Etag: "ACAB"}
+	}
+	sim.WriteJSON(w, http.StatusOK, p)
+}
+
+func handleGCPAPIGWSetIamPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Policy GCPAPIGWIamPolicy `json:"policy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	key := apigwIamPolicyKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "gw"))
+	apigwIamPolicies.Put(key, req.Policy)
+	sim.WriteJSON(w, http.StatusOK, req.Policy)
+}
+
+func handleGCPAPIGWTestIamPermissions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	// Sim doesn't model authorization; echo the requested set as allowed.
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"permissions": req.Permissions})
 }
 
 func handleGCPAPIGWCreateApi(w http.ResponseWriter, r *http.Request) {

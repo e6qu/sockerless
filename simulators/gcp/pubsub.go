@@ -98,6 +98,7 @@ func registerPubSub(srv *sim.Server) {
 	psSubscriptions = sim.MakeStore[PSSubscription](srv.DB(), "pubsub_subscriptions")
 	psQueues = sim.MakeStore[psQueue](srv.DB(), "pubsub_queues")
 	psInFlight = sim.MakeStore[PSDeliveredMessage](srv.DB(), "pubsub_inflight")
+	psSnapshots = sim.MakeStore[PSSnapshot](srv.DB(), "pubsub_snapshots")
 
 	// Topics.
 	srv.HandleFunc("PUT /v1/projects/{project}/topics/{topic}", handlePSCreateTopic)
@@ -119,6 +120,92 @@ func registerPubSub(srv *sim.Server) {
 	// mutable field today is `labels`) but the SDK + terraform provider
 	// both emit it on update.
 	srv.HandleFunc("PATCH /v1/projects/{project}/topics/{topic}", handlePSPatchTopic)
+
+	// Snapshots — per-subscription point-in-time markers used for
+	// Seek operations. The sim doesn't replay messages from the
+	// snapshot point, but the CRUD round-trips so terraform-provider-google's
+	// google_pubsub_subscription with snapshot tracking + SDK code
+	// that creates snapshots between deploys both work.
+	srv.HandleFunc("PUT /v1/projects/{project}/snapshots/{snap}", handlePSCreateSnapshot)
+	srv.HandleFunc("GET /v1/projects/{project}/snapshots/{snap}", handlePSGetSnapshot)
+	srv.HandleFunc("GET /v1/projects/{project}/snapshots", handlePSListSnapshots)
+	srv.HandleFunc("DELETE /v1/projects/{project}/snapshots/{snap}", handlePSDeleteSnapshot)
+}
+
+// PSSnapshot is the per-snapshot wire shape. ExpireTime is set
+// inline to (creation + 7d) because real Pub/Sub holds snapshots
+// for at most 7 days; the field is load-bearing on real consumers'
+// Seek logic.
+type PSSnapshot struct {
+	Name       string            `json:"name"`
+	Topic      string            `json:"topic"`
+	ExpireTime string            `json:"expireTime"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+var psSnapshots sim.Store[PSSnapshot]
+
+func psSnapshotKey(project, name string) string {
+	return project + "/" + name
+}
+
+func handlePSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	snap := sim.PathParam(r, "snap")
+	var req struct {
+		Subscription string            `json:"subscription"`
+		Labels       map[string]string `json:"labels,omitempty"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	// Real Pub/Sub validates the subscription exists; sim defers
+	// (sub may not be in the store yet for a brand-new project).
+	now := time.Now().UTC()
+	expire := now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	s := PSSnapshot{
+		Name:       "projects/" + project + "/snapshots/" + snap,
+		Topic:      req.Subscription,
+		ExpireTime: expire,
+		Labels:     req.Labels,
+	}
+	psSnapshots.Put(psSnapshotKey(project, snap), s)
+	sim.WriteJSON(w, http.StatusOK, s)
+}
+
+func handlePSGetSnapshot(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	snap := sim.PathParam(r, "snap")
+	s, ok := psSnapshots.Get(psSnapshotKey(project, snap))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"snapshot %q not found", snap)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, s)
+}
+
+func handlePSListSnapshots(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	all := psSnapshots.Filter(func(s PSSnapshot) bool {
+		return strings.HasPrefix(s.Name, "projects/"+project+"/snapshots/")
+	})
+	if all == nil {
+		all = []PSSnapshot{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"snapshots": all})
+}
+
+func handlePSDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	snap := sim.PathParam(r, "snap")
+	if !psSnapshots.Delete(psSnapshotKey(project, snap)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"snapshot %q not found", snap)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func psTopicName(project, topic string) string {
