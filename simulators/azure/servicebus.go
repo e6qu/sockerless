@@ -48,11 +48,26 @@ type SBSubscription struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// SBAuthorizationRule is a SAS authorization rule on a namespace,
+// queue, or topic. Real Azure auto-provisions `RootManageSharedAccessKey`
+// on every namespace; operators add named rules with scoped rights.
+type SBAuthorizationRule struct {
+	ID         string                  `json:"id"`
+	Name       string                  `json:"name"`
+	Type       string                  `json:"type"`
+	Properties SBAuthorizationRuleSpec `json:"properties"`
+}
+
+type SBAuthorizationRuleSpec struct {
+	Rights []string `json:"rights"`
+}
+
 var (
 	sbNamespaces    sim.Store[SBNamespace]
 	sbQueues        sim.Store[SBQueue]
 	sbTopics        sim.Store[SBTopic]
 	sbSubscriptions sim.Store[SBSubscription]
+	sbAuthRules     sim.Store[SBAuthorizationRule]
 )
 
 func registerServiceBus(srv *sim.Server) {
@@ -60,6 +75,7 @@ func registerServiceBus(srv *sim.Server) {
 	sbQueues = sim.MakeStore[SBQueue](srv.DB(), "sb_queues")
 	sbTopics = sim.MakeStore[SBTopic](srv.DB(), "sb_topics")
 	sbSubscriptions = sim.MakeStore[SBSubscription](srv.DB(), "sb_subscriptions")
+	sbAuthRules = sim.MakeStore[SBAuthorizationRule](srv.DB(), "sb_auth_rules")
 
 	const ns = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ServiceBus/namespaces"
 
@@ -67,6 +83,32 @@ func registerServiceBus(srv *sim.Server) {
 	srv.HandleFunc("GET "+ns+"/{name}", handleSBGetNamespace)
 	srv.HandleFunc("DELETE "+ns+"/{name}", handleSBDeleteNamespace)
 	srv.HandleFunc("GET "+ns, handleSBListNamespacesByRG)
+
+	// AuthorizationRules at namespace, queue, and topic scope. Real
+	// Azure auto-provisions `RootManageSharedAccessKey` on namespace
+	// PUT; named rules can be added with scoped rights (Listen, Send,
+	// Manage). The listKeys + regenerateKeys actions return real-
+	// shape SAS keys derived from the rule's resource ID.
+	srv.HandleFunc("PUT "+ns+"/{name}/authorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/authorizationRules", "namespaces"))
+	srv.HandleFunc("GET "+ns+"/{name}/authorizationRules/{rule}", sbAuthRuleGet("namespaces"))
+	srv.HandleFunc("DELETE "+ns+"/{name}/authorizationRules/{rule}", sbAuthRuleDelete("namespaces"))
+	srv.HandleFunc("GET "+ns+"/{name}/authorizationRules", sbAuthRuleList("namespaces"))
+	srv.HandleFunc("POST "+ns+"/{name}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("namespaces"))
+	srv.HandleFunc("POST "+ns+"/{name}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("namespaces"))
+
+	srv.HandleFunc("PUT "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/queues/authorizationRules", "queues"))
+	srv.HandleFunc("GET "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleGet("queues"))
+	srv.HandleFunc("DELETE "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleDelete("queues"))
+	srv.HandleFunc("GET "+ns+"/{name}/queues/{queue}/authorizationRules", sbAuthRuleList("queues"))
+	srv.HandleFunc("POST "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("queues"))
+	srv.HandleFunc("POST "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("queues"))
+
+	srv.HandleFunc("PUT "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/topics/authorizationRules", "topics"))
+	srv.HandleFunc("GET "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}", sbAuthRuleGet("topics"))
+	srv.HandleFunc("DELETE "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}", sbAuthRuleDelete("topics"))
+	srv.HandleFunc("GET "+ns+"/{name}/topics/{topic}/authorizationRules", sbAuthRuleList("topics"))
+	srv.HandleFunc("POST "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("topics"))
+	srv.HandleFunc("POST "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("topics"))
 
 	srv.HandleFunc("PUT "+ns+"/{name}/queues/{queue}", handleSBCreateQueue)
 	srv.HandleFunc("GET "+ns+"/{name}/queues/{queue}", handleSBGetQueue)
@@ -120,6 +162,22 @@ func handleSBCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		n.Sku = map[string]any{"name": "Standard", "tier": "Standard"}
 	}
 	sbNamespaces.Put(id, n)
+
+	// Real Azure auto-provisions `RootManageSharedAccessKey` (Listen+
+	// Send+Manage) on every new namespace. Only create on first PUT —
+	// preserve any operator edits across subsequent PUTs.
+	rootID := id + "/authorizationRules/RootManageSharedAccessKey"
+	if _, ok := sbAuthRules.Get(rootID); !ok {
+		sbAuthRules.Put(rootID, SBAuthorizationRule{
+			ID:   rootID,
+			Name: "RootManageSharedAccessKey",
+			Type: "Microsoft.ServiceBus/namespaces/authorizationRules",
+			Properties: SBAuthorizationRuleSpec{
+				Rights: []string{"Listen", "Send", "Manage"},
+			},
+		})
+	}
+
 	sim.WriteJSON(w, http.StatusOK, n)
 }
 
@@ -356,6 +414,158 @@ func handleSBDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// sbAuthRuleParentID returns the resource ID of the namespace / queue /
+// topic that owns an authorization rule, based on the scope kind.
+func sbAuthRuleParentID(r *http.Request, scope string) string {
+	base := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	switch scope {
+	case "queues":
+		return base + "/queues/" + sim.PathParam(r, "queue")
+	case "topics":
+		return base + "/topics/" + sim.PathParam(r, "topic")
+	default:
+		return base
+	}
+}
+
+// sbAuthRuleParentExists returns true iff the parent namespace / queue
+// / topic is present in its store.
+func sbAuthRuleParentExists(parent, scope string) bool {
+	switch scope {
+	case "queues":
+		_, ok := sbQueues.Get(parent)
+		return ok
+	case "topics":
+		_, ok := sbTopics.Get(parent)
+		return ok
+	default:
+		_, ok := sbNamespaces.Get(parent)
+		return ok
+	}
+}
+
+func sbAuthRuleCreate(armType, scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		parent := sbAuthRuleParentID(r, scope)
+		if !sbAuthRuleParentExists(parent, scope) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "parent resource not found: %s", parent)
+			return
+		}
+		rule := sim.PathParam(r, "rule")
+		var req SBAuthorizationRule
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+			return
+		}
+		rights := req.Properties.Rights
+		if len(rights) == 0 {
+			rights = []string{"Listen"}
+		}
+		id := parent + "/authorizationRules/" + rule
+		stored := SBAuthorizationRule{
+			ID:   id,
+			Name: rule,
+			Type: armType,
+			Properties: SBAuthorizationRuleSpec{
+				Rights: rights,
+			},
+		}
+		sbAuthRules.Put(id, stored)
+		sim.WriteJSON(w, http.StatusOK, stored)
+	}
+}
+
+func sbAuthRuleGet(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := sbAuthRuleParentID(r, scope) + "/authorizationRules/" + sim.PathParam(r, "rule")
+		rule, ok := sbAuthRules.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rule)
+	}
+}
+
+func sbAuthRuleDelete(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := sbAuthRuleParentID(r, scope) + "/authorizationRules/" + sim.PathParam(r, "rule")
+		if !sbAuthRules.Delete(id) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func sbAuthRuleList(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		parent := sbAuthRuleParentID(r, scope)
+		prefix := parent + "/authorizationRules/"
+		var out []SBAuthorizationRule
+		for _, rule := range sbAuthRules.List() {
+			if strings.HasPrefix(rule.ID, prefix) {
+				out = append(out, rule)
+			}
+		}
+		if out == nil {
+			out = []SBAuthorizationRule{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	}
+}
+
+// sbAuthRuleListKeysBody returns the canonical Service Bus AccessKeys
+// shape. Keys are deterministic 44-char base64 strings derived from
+// the rule resource ID (mirrors real-Azure SAS-key shape; same key
+// across reads, distinct between primary / secondary).
+func sbAuthRuleListKeysBody(ruleID, namespace, ruleName string) map[string]any {
+	primary := simListKey32(ruleID, "primary")
+	secondary := simListKey32(ruleID, "secondary")
+	// Real Azure builds connection strings as:
+	//   Endpoint=sb://<ns>.servicebus.windows.net/;SharedAccessKeyName=<rule>;SharedAccessKey=<key>
+	endpoint := "Endpoint=sb://" + namespace + ".servicebus.windows.net/"
+	return map[string]any{
+		"primaryKey":                primary,
+		"secondaryKey":              secondary,
+		"primaryConnectionString":   endpoint + ";SharedAccessKeyName=" + ruleName + ";SharedAccessKey=" + primary,
+		"secondaryConnectionString": endpoint + ";SharedAccessKeyName=" + ruleName + ";SharedAccessKey=" + secondary,
+		"keyName":                   ruleName,
+	}
+}
+
+func sbAuthRuleListKeys(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ruleName := sim.PathParam(r, "rule")
+		id := sbAuthRuleParentID(r, scope) + "/authorizationRules/" + ruleName
+		if _, ok := sbAuthRules.Get(id); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
+			return
+		}
+		ns := sim.PathParam(r, "name")
+		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(id, ns, ruleName))
+	}
+}
+
+func sbAuthRuleRegenerateKeys(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ruleName := sim.PathParam(r, "rule")
+		id := sbAuthRuleParentID(r, scope) + "/authorizationRules/" + ruleName
+		if _, ok := sbAuthRules.Get(id); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
+			return
+		}
+		// Real Azure rotates either primary or secondary based on the
+		// body's `keyType`; the new key is random. The sim is
+		// deterministic per resource ID, so post-rotation keys are
+		// identical to pre-rotation. Operators relying on rotation
+		// for security boundary testing should know — this is
+		// documented in the bug; the wire shape is correct.
+		ns := sim.PathParam(r, "name")
+		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(id, ns, ruleName))
+	}
 }
 
 func handleSBListSubscriptions(w http.ResponseWriter, r *http.Request) {

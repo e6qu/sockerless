@@ -77,6 +77,7 @@ func main() {
 
 	// Infrastructure services
 	registerResourceGroups(srv)
+	registerTags(srv)
 	registerNetwork(srv)
 	registerManagedIdentity(srv)
 	registerKeyVault(srv)

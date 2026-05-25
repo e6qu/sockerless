@@ -20,11 +20,26 @@ done
 sorted=$(printf '%s\n' "${modules[@]}" | sort -u)
 
 failed=0
+# Track placeholder dist/ directories so we tear them down on exit
+# regardless of whether linting succeeds or fails.
+placeholders=()
+# shellcheck disable=SC2317  # invoked via `trap`, not directly
+cleanup() {
+  for p in "${placeholders[@]}"; do
+    rm -rf "$p"
+  done
+}
+trap cleanup EXIT
+
 for mod in $sorted; do
-  # Skip modules needing UI build artifacts
+  # Modules with a `//go:embed all:dist` directive fail to compile when
+  # dist/ doesn't exist, which masks every other lint finding. Stub a
+  # placeholder so the lint covers the rest of the package. Real
+  # builds rebuild dist/ in their own flow.
   if grep -qr 'all:dist' "$mod"/*.go 2>/dev/null && [ ! -d "$mod/dist" ]; then
-    echo "lint: $mod (skipped — dist/ not built)"
-    continue
+    mkdir -p "$mod/dist"
+    touch "$mod/dist/.lint-placeholder"
+    placeholders+=("$mod/dist")
   fi
   echo "lint: $mod"
   if ! (cd "$mod" && GOWORK=off golangci-lint run --timeout 2m ./...); then

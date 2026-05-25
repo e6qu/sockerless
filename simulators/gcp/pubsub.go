@@ -276,6 +276,12 @@ func handlePSTopicVerb(w http.ResponseWriter, r *http.Request) {
 	switch verb {
 	case "publish":
 		handlePSPublish(w, r, sim.PathParam(r, "project"), topic)
+	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+		// Canonical AIP-141 three-verb cluster. Resource ID matches
+		// the full topic name so policies set against the topic
+		// round-trip via :getIamPolicy.
+		topicName := psTopicName(sim.PathParam(r, "project"), topic)
+		handleResourceIAM(w, r, gcpResourceIAMStore(), topicName, verb)
 	default:
 		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown verb: "+verb)
 	}
@@ -512,6 +518,8 @@ func handlePSSubscriptionVerb(w http.ResponseWriter, r *http.Request) {
 		handlePSAck(w, r, name)
 	case "modifyAckDeadline":
 		handlePSModifyAck(w, r, name)
+	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+		handleResourceIAM(w, r, gcpResourceIAMStore(), name, verb)
 	default:
 		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown verb: "+verb)
 	}

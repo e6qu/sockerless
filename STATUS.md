@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle. No phase in flight. |
-| In-flight | None. |
-| Last merged | PR #211 — Phase 178 community-filed issues + 5 class-of-bug remediations (2026-05-25, squash `7a7c9f0`). |
+| Active branch | `phase-179-community-issues` — Phase 179. Two reopens (#209 / #210) + three new issues (#213 / #214 / #215). |
+| In-flight | Filing BUGs 1174..1180; no PR open yet. |
+| Last merged | PR #212 — continuity-doc reset after Phase 178 (2026-05-25, squash `be1d6dd`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1173 filed · 1171 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
+| Bugs | 1180 filed · 1171 fixed · 9 open · 2 false positives. Open: BUG-1075 + BUG-1104 + BUG-1174..1180. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

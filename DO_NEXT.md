@@ -4,13 +4,19 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Idle on `main`. PR #211 (Phase 178) merged 2026-05-25 at squash `7a7c9f0` — closed 9 community-filed issues + 5 class-of-bug remediations + 12 real-handler/shape fixes the new tf-azure CI gate surfaced.
+Phase 179 in flight on `phase-179-community-issues`. Two reopens (#209 / #210 — postmortems in BUG-1174 / 1175 / 1176) + three new community-filed issues (#213 / #214 / #215). 7 BUGs filed: 1174..1180.
 
-BUGS.md: **1173 filed · 1171 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta) remain Open.
+## Stage plan
 
-## Next phase trigger
-
-Reactive only — fires when a new community-filed issue arrives or a CI regression surfaces against `main`. New work lands on `phase-179-*` per the standing single-branch / one-PR rule.
+1. **Stage A — shared scaffolding.**
+   - GCP per-resource IAM-verb dispatcher (AIP-141: `getIamPolicy` / `setIamPolicy` / `testIamPermissions`). Single shared helper registered on every IAM-bearing resource type.
+   - Azure listKeys helper: `base64(sha256(resourceID|key-kind))` — 44-char deterministic, mirrors real-Azure shape.
+2. **Stage B — #209 fixes.** Memorystore `:upgrade` lookup key fix + Pub/Sub topics + subscriptions `:getIamPolicy` / `:testIamPermissions` via Stage A dispatcher.
+3. **Stage C — #210.** Replace Azure Redis listKeys placeholder with Stage A helper; sweep sibling services (Service Bus / EventHub / Cosmos DB listKeys) for the same placeholder.
+4. **Stage D — #213.** Azure Resources Tags API — `PATCH .../Microsoft.Resources/tags/default` + per-resource `PATCH` for tags-only updates.
+5. **Stage E — #214.** Service Bus `authorizationRules` family at namespace + queue + topic level. Auto-provision `RootManageSharedAccessKey` on namespace PUT.
+6. **Stage F — #215.** AWS IAM `CreatePolicy` + `CreateInstanceProfile` lifecycle + API Gateway v1 method/integration response handlers.
+7. **Stage G — continuity-doc reset** (final commit).
 
 ## Standing invariants (full list in STATUS.md)
 
