@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1170 filed · 1168 fixed · 2 open · 2 false positives.**
+**1171 filed · 1169 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -40,6 +40,7 @@ Phase 178 (PR #211, 16 commits) closed BUG-1148..1160 — 9 community-filed issu
 - **1168** ACA `POST .../containerApps/{name}/listSecrets` 404 — terraform-provider-azurerm reads via this endpoint on every plan refresh (secrets are kept out of GET responses). Register the handler; return `{value: app.Properties.Configuration.Secrets}` (always a real read of the stored secret list, empty when the resource has none — no fake values).
 - **1169** ACA `POST .../jobs/{name}/listSecrets` 404 — same shape as 1168 but for Container Apps Jobs. Register the handler returning `{value: job.Properties.Configuration.Secrets}`.
 - **1170** Linux Function App `POST .../sites/{name}/config/appSettings/list` 404 — the canonical-cased handler was registered as lowercase `appsettings` and Go ServeMux is case-sensitive, but terraform-provider-azurerm sends camelCase `appSettings`. Real Azure ARM is case-insensitive on action segments. Register both casings, same pattern as appserviceplan.go's `serverFarms`/`serverfarms` and the BUG-1166 fix on checknameavailability.
+- **1171** Linux Function App `POST .../sites/{name}/config/connectionStrings/list` + `PUT .../config/connectionStrings` 404 — same case-sensitivity bug as BUG-1170 but for connection strings. Register both camelCase and lowercase variants.
 
 Older closed BUGs: 1098..1147 across Phases 173–177. See `WHAT_WE_DID.md` per-phase narrative + PR descriptions for fix detail.
 

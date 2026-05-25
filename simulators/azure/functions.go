@@ -531,8 +531,12 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", appSettingsListHandler)
 	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appSettings/list", appSettingsListHandler)
 
-	// PUT /sites/{name}/config/connectionstrings
-	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", func(w http.ResponseWriter, r *http.Request) {
+	// PUT /sites/{name}/config/{connectionstrings|connectionStrings}.
+	// Real Azure ARM is case-insensitive on action segments; the older
+	// Azure CLI / azurestack send lowercase, terraform-provider-azurerm
+	// sends camelCase. Register both — same pattern as appSettings/list
+	// (BUG-1170) and checknameavailability (BUG-1166).
+	connStringsPutHandler := func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -553,10 +557,11 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: cfg.ConnectionStrings,
 		})
-	})
+	}
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", connStringsPutHandler)
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionStrings", connStringsPutHandler)
 
-	// POST /sites/{name}/config/connectionstrings/list
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionstrings/list", func(w http.ResponseWriter, r *http.Request) {
+	connStringsListHandler := func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -574,7 +579,9 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: props,
 		})
-	})
+	}
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionstrings/list", connStringsListHandler)
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionStrings/list", connStringsListHandler)
 
 	// GET /sites/{name}/config/web — reads the full SiteConfig from
 	// the site row. The siteConfig embedded in SiteProperties is the
