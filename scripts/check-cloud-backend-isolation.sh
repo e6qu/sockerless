@@ -100,10 +100,10 @@ for backend in "${cloud_backends[@]}"; do
 
   # Check guarded patterns in delegate files
   for pattern in "${guarded_patterns[@]}"; do
-    matches=$(grep -rn "$pattern" "$backend"/backend_delegates.go 2>/dev/null || true)
+    matches=$(grep -Hrn "$pattern" "$backend"/backend_delegates.go 2>/dev/null || true)
     if [ -n "$matches" ]; then
       # Verify the delegate resolves the container first
-      for line_num in $(echo "$matches" | grep -oP '^\S+:\K\d+'); do
+      for line_num in $(echo "$matches" | cut -d: -f2); do
         # Check that ResolveContainerIDAuto or ResolveContainerAuto appears nearby
         context=$(sed -n "$((line_num-5)),$((line_num))p" "$backend"/backend_delegates.go 2>/dev/null || true)
         if ! echo "$context" | grep -q 'ResolveContainer'; then

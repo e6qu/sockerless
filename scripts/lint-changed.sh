@@ -16,6 +16,10 @@ for f in "$@"; do
   fi
 done
 
+if [ "${#modules[@]}" -eq 0 ]; then
+  exit 0
+fi
+
 # Deduplicate
 sorted=$(printf '%s\n' "${modules[@]}" | sort -u)
 
@@ -23,8 +27,11 @@ failed=0
 # Track placeholder dist/ directories so we tear them down on exit
 # regardless of whether linting succeeds or fails.
 placeholders=()
-# shellcheck disable=SC2317  # invoked via `trap`, not directly
+# shellcheck disable=SC2317,SC2329  # invoked via `trap`, not directly
 cleanup() {
+  if [ "${#placeholders[@]}" -eq 0 ]; then
+    return
+  fi
   for p in "${placeholders[@]}"; do
     rm -rf "$p"
   done
