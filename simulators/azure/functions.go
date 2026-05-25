@@ -428,6 +428,62 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
+	// POST /config/authsettings/list — Easy Auth configuration. The
+	// sim doesn't model App Service authentication, so the truthful
+	// response is `enabled: false` + default empty fields (no auth
+	// providers configured). terraform-provider-azurerm reads on
+	// every plan refresh; an error here blocks state convergence.
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/authsettings/list", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":   resourceID + "/config/authsettings",
+			"name": "authsettings",
+			"type": "Microsoft.Web/sites/config",
+			"properties": map[string]any{
+				"enabled": false,
+			},
+		})
+	})
+
+	// POST /config/authsettingsV2/list — Auth V2 (the newer Easy Auth
+	// shape introduced in API 2020-12-01). Same truthful default:
+	// authentication is not enabled on this sim site.
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/authsettingsv2/list", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":   resourceID + "/config/authsettingsV2",
+			"name": "authsettingsV2",
+			"type": "Microsoft.Web/sites/config",
+			"properties": map[string]any{
+				"platform":          map[string]any{"enabled": false},
+				"globalValidation":  map[string]any{},
+				"identityProviders": map[string]any{},
+				"login":             map[string]any{},
+				"httpSettings":      map[string]any{},
+			},
+		})
+	})
+
+	// Also add to lowercase canonicalization map so /authsettingsV2 →
+	// /authsettingsv2 in the middleware. Done via the package-level
+	// middleware (BUG-1172).
+
 	// POST /config/publishingcredentials/list — real Azure returns the
 	// SCM publishing user/password for App Service deployment + Kudu
 	// console access. terraform-provider-azurerm reads via this endpoint

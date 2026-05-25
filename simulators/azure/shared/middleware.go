@@ -218,6 +218,10 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 		"/slotconfignames":       "/slotconfignames",
 		"/listsecrets":           "/listsecrets",
 		"/checknameavailability": "/checknameavailability",
+		"/authsettings":          "/authsettings",
+		"/authsettingsv2":        "/authsettingsv2",
+		"/publishingcredentials": "/publishingcredentials",
+		"/azurestorageaccounts":  "/azurestorageaccounts",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
