@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/base64"
 )
 
@@ -15,13 +14,5 @@ import (
 // having to capture the random key out-of-band.
 func simListKey32(resourceID, kind string) string {
 	sum := sha256.Sum256([]byte("sim-listkey-32|" + resourceID + "|" + kind))
-	return base64.StdEncoding.EncodeToString(sum[:])
-}
-
-// simListKey64 returns a deterministic 88-character base64-encoded
-// 64-byte key derived from the resource ID + key kind. Storage
-// accounts + Cosmos primary/secondary master keys use this length.
-func simListKey64(resourceID, kind string) string {
-	sum := sha512.Sum512([]byte("sim-listkey-64|" + resourceID + "|" + kind))
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
