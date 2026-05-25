@@ -213,15 +213,16 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 
 		// Action verbs + sub-resource segments — canonicalize to
 		// lowercase to match handler registrations.
-		"/appsettings":           "/appsettings",
-		"/connectionstrings":     "/connectionstrings",
-		"/slotconfignames":       "/slotconfignames",
-		"/listsecrets":           "/listsecrets",
-		"/checknameavailability": "/checknameavailability",
-		"/authsettings":          "/authsettings",
-		"/authsettingsv2":        "/authsettingsv2",
-		"/publishingcredentials": "/publishingcredentials",
-		"/azurestorageaccounts":  "/azurestorageaccounts",
+		"/appsettings":                        "/appsettings",
+		"/connectionstrings":                  "/connectionstrings",
+		"/slotconfignames":                    "/slotconfignames",
+		"/listsecrets":                        "/listsecrets",
+		"/checknameavailability":              "/checknameavailability",
+		"/authsettings":                       "/authsettings",
+		"/authsettingsv2":                     "/authsettingsv2",
+		"/publishingcredentials":              "/publishingcredentials",
+		"/azurestorageaccounts":               "/azurestorageaccounts",
+		"/basicpublishingcredentialspolicies": "/basicpublishingcredentialspolicies",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

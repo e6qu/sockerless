@@ -428,6 +428,55 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
+	// POST /config/backup/list — App Service backup configuration. The
+	// sim doesn't model backup schedules; the truthful response is an
+	// empty properties bag (no backup configured).
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":         resourceID + "/config/backup",
+			"name":       "backup",
+			"type":       "Microsoft.Web/sites/config",
+			"properties": map[string]any{},
+		})
+	})
+
+	// GET /sites/{name}/basicPublishingCredentialsPolicies/{ftp|scm} —
+	// the per-protocol allow flag for FTP / SCM basic auth on the
+	// site's publishing endpoints. Real Azure: `properties.allow`
+	// true/false. terraform-provider-azurerm reads both on every plan
+	// refresh; either error blocks state convergence. Sim returns
+	// true (allowed, the real Azure default for newly-created sites).
+	basicPubCredsHandler := func(policyName string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			name := sim.PathParam(r, "siteName")
+			resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+			if _, ok := sites.Get(resourceID); !ok {
+				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+					"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"id":         resourceID + "/basicPublishingCredentialsPolicies/" + policyName,
+				"name":       policyName,
+				"type":       "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+				"properties": map[string]any{"allow": true},
+			})
+		}
+	}
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/basicpublishingcredentialspolicies/ftp", basicPubCredsHandler("ftp"))
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/basicpublishingcredentialspolicies/scm", basicPubCredsHandler("scm"))
+
 	// GET /config/logs — App Service diagnostic logs configuration
 	// (application logging, http logging, detailed errors, failed
 	// request tracing). The sim doesn't model log retention; truthful
