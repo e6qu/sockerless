@@ -295,11 +295,13 @@ func registerContainerAppsApps(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
 	})
 
-	// POST /containerApps/{appName}/listSecrets — real ACA keeps
+	// POST /containerApps/{appName}/listsecrets — real ACA keeps
 	// secrets out of GET responses; the dedicated listSecrets POST
 	// returns them. terraform-provider-azurerm refreshes via this
 	// endpoint on every plan after create.
-	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/listSecrets", func(w http.ResponseWriter, r *http.Request) {
+	// Single lowercase registration; AzurePathNormalizationMiddleware
+	// canonicalizes any client casing to lowercase before dispatch.
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/listsecrets", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		name := sim.PathParam(r, "appName")

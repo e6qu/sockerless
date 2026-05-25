@@ -185,9 +185,22 @@ func generateRequestID() string {
 // generated from Azure REST API specs typically use the canonical mixed case.
 // Both reach real Azure successfully; both must reach the sim too.
 func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
-	// Map of lowercase segment to canonical casing. Add new entries
-	// when a new ARM resource type lands and clients are observed to
-	// hit it with non-canonical casing.
+	// Map of lowercase segment → canonical casing the route registrations
+	// expect. Two categories:
+	//
+	//   (1) Resource-type / provider segments that real Azure clients
+	//       send mixed-case but we register canonical mixed-case
+	//       (resourceGroups, Microsoft.Cache, etc.). Lower → canonical
+	//       mixed-case.
+	//
+	//   (2) Action / sub-resource verbs where real Azure clients send
+	//       *varying* casings (terraform-provider-azurerm uses camelCase
+	//       `appSettings`, older azurestack uses lowercase
+	//       `appsettings`). To get a single deterministic handler-side
+	//       casing, we canonicalize every variant to LOWERCASE and
+	//       register the handlers lowercase. Real Azure ARM is
+	//       case-insensitive on these so any client casing reaches
+	//       the same handler.
 	replacements := map[string]string{
 		"/resourcegroups/":           "/resourceGroups/",
 		"/microsoft.cache/redis":     "/Microsoft.Cache/Redis",
@@ -197,6 +210,14 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 		"/microsoft.dbforpostgresql": "/Microsoft.DBforPostgreSQL",
 		"/microsoft.keyvault":        "/Microsoft.KeyVault",
 		"/microsoft.storage":         "/Microsoft.Storage",
+
+		// Action verbs + sub-resource segments — canonicalize to
+		// lowercase to match handler registrations.
+		"/appsettings":           "/appsettings",
+		"/connectionstrings":     "/connectionstrings",
+		"/slotconfignames":       "/slotconfignames",
+		"/listsecrets":           "/listsecrets",
+		"/checknameavailability": "/checknameavailability",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

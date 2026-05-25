@@ -374,11 +374,11 @@ func registerContainerApps(srv *sim.Server) {
 		})
 	})
 
-	// POST /jobs/{jobName}/listSecrets — same shape as the
-	// containerApps listSecrets handler: secrets aren't returned on
-	// GET; the dedicated POST returns them. terraform-provider-azurerm
-	// reads via this endpoint on every plan refresh.
-	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/listSecrets", func(w http.ResponseWriter, r *http.Request) {
+	// POST /jobs/{jobName}/listsecrets — same shape as the containerApps
+	// listsecrets handler: secrets aren't returned on GET; the dedicated
+	// POST returns them. Single lowercase registration; the middleware
+	// canonicalizes any client casing to lowercase before dispatch.
+	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/listsecrets", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		name := sim.PathParam(r, "jobName")

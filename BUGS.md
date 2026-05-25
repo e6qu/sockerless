@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1171 filed · 1169 fixed · 2 open · 2 false positives.**
+**1173 filed · 1171 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -41,6 +41,8 @@ Phase 178 (PR #211, 16 commits) closed BUG-1148..1160 — 9 community-filed issu
 - **1169** ACA `POST .../jobs/{name}/listSecrets` 404 — same shape as 1168 but for Container Apps Jobs. Register the handler returning `{value: job.Properties.Configuration.Secrets}`.
 - **1170** Linux Function App `POST .../sites/{name}/config/appSettings/list` 404 — the canonical-cased handler was registered as lowercase `appsettings` and Go ServeMux is case-sensitive, but terraform-provider-azurerm sends camelCase `appSettings`. Real Azure ARM is case-insensitive on action segments. Register both casings, same pattern as appserviceplan.go's `serverFarms`/`serverfarms` and the BUG-1166 fix on checknameavailability.
 - **1171** Linux Function App `POST .../sites/{name}/config/connectionStrings/list` + `PUT .../config/connectionStrings` 404 — same case-sensitivity bug as BUG-1170 but for connection strings. Register both camelCase and lowercase variants.
+- **1172** Systematic fix for the action-verb case-sensitivity class-of-bug (rolling up BUG-1166 / 1168–1171 mechanisms). Real Azure ARM is case-insensitive on action segments; Go ServeMux is not. Approach: extend `AzurePathNormalizationMiddleware` to canonicalize known action / sub-resource verbs (`appsettings`, `connectionstrings`, `slotconfignames`, `listsecrets`, `checknameavailability`) to a single lowercase form before dispatch. Convert handler registrations to lowercase; drop the duplicate camelCase registrations from BUG-1166/1170/1171. One map entry now handles all future client-casing variants of these verbs.
+- **1173** Linux Function App `GET .../sites/{name}/config/slotConfigNames` 404 — terraform-provider-azurerm reads "sticky settings" on every plan refresh. The sim didn't model slot swaps, so no handler existed. Register GET + PUT returning `{appSettingNames: [], connectionStringNames: [], azureStorageConfigNames: []}` (empty arrays — sim has no slot-swap state, the truthful response). Real round-trip if operator sets a `sticky_settings` block: the PUT body's `properties` field gets stored on the site-config row + returned by subsequent GETs.
 
 Older closed BUGs: 1098..1147 across Phases 173–177. See `WHAT_WE_DID.md` per-phase narrative + PR descriptions for fix detail.
 

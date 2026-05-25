@@ -130,11 +130,9 @@ func registerAzureFunctions(srv *sim.Server) {
 		}
 		sim.WriteJSON(w, http.StatusOK, resp)
 	}
-	// terraform-provider-azurerm lowercases the action segment; the
-	// real ARM API treats provider paths case-insensitively. Register
-	// both casings (same pattern as appserviceplan.go's serverFarms /
-	// serverfarms split).
-	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checkNameAvailability", checkNameAvailabilityHandler)
+	// Single lowercase registration; AzurePathNormalizationMiddleware
+	// canonicalizes any client casing (`checkNameAvailability` /
+	// `CheckNameAvailability`) down to lowercase before dispatch.
 	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checknameavailability", checkNameAvailabilityHandler)
 
 	// PUT - Create or update function app
@@ -461,6 +459,16 @@ type AzureSiteConnectionStrings struct {
 type siteConfigPayload struct {
 	AppSettings       map[string]string                   `json:"appSettings,omitempty"`
 	ConnectionStrings map[string]AzureSiteConnStringValue `json:"connectionStrings,omitempty"`
+	SlotConfigNames   *SlotConfigNames                    `json:"slotConfigNames,omitempty"`
+}
+
+// SlotConfigNames mirrors the real Microsoft.Web/sites/config/slotconfignames
+// shape: the lists of app-setting / connection-string / azure-storage
+// names that are pinned to a deployment slot during slot swap.
+type SlotConfigNames struct {
+	AppSettingNames         []string `json:"appSettingNames,omitempty"`
+	ConnectionStringNames   []string `json:"connectionStringNames,omitempty"`
+	AzureStorageConfigNames []string `json:"azureStorageConfigNames,omitempty"`
 }
 
 var siteConfigStore sim.Store[siteConfigPayload]
@@ -503,13 +511,12 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 		})
 	})
 
-	// POST /sites/{name}/config/{appsettings|appSettings}/list — real
-	// Azure uses POST for `/list` actions because the response contains
-	// secrets (kept out of GET URLs / proxy logs). Real ARM treats
-	// the segment case-insensitively; terraform-provider-azurerm sends
-	// camelCase `appSettings`, the Azure CLI / older SDKs send
-	// lowercase. Register both.
-	appSettingsListHandler := func(w http.ResponseWriter, r *http.Request) {
+	// POST /sites/{name}/config/appsettings/list — real Azure uses POST
+	// for `/list` actions because the response contains secrets (kept
+	// out of GET URLs / proxy logs). Single lowercase registration;
+	// AzurePathNormalizationMiddleware canonicalizes any client casing
+	// (`appSettings` / `AppSettings`) to lowercase before dispatch.
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -527,16 +534,12 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: props,
 		})
-	}
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", appSettingsListHandler)
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appSettings/list", appSettingsListHandler)
+	})
 
-	// PUT /sites/{name}/config/{connectionstrings|connectionStrings}.
-	// Real Azure ARM is case-insensitive on action segments; the older
-	// Azure CLI / azurestack send lowercase, terraform-provider-azurerm
-	// sends camelCase. Register both — same pattern as appSettings/list
-	// (BUG-1170) and checknameavailability (BUG-1166).
-	connStringsPutHandler := func(w http.ResponseWriter, r *http.Request) {
+	// PUT + POST /list for /config/connectionstrings — single lowercase
+	// registration; AzurePathNormalizationMiddleware canonicalizes
+	// camelCase variants to lowercase before dispatch.
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -557,11 +560,8 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: cfg.ConnectionStrings,
 		})
-	}
-	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", connStringsPutHandler)
-	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionStrings", connStringsPutHandler)
-
-	connStringsListHandler := func(w http.ResponseWriter, r *http.Request) {
+	})
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionstrings/list", func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -579,9 +579,54 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: props,
 		})
+	})
+
+	// GET /sites/{name}/config/slotconfignames — the "sticky settings"
+	// list (which app-setting / connection-string / azure-storage names
+	// should be preserved during slot swap). terraform-provider-azurerm
+	// reads this on every plan refresh even when the resource has no
+	// `sticky_settings` block. The sim doesn't model slot swaps, so
+	// the truthful response is empty arrays for every category. PUT is
+	// also supported so a future `sticky_settings` block round-trips.
+	slotConfigNamesGet := func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		names := cfg.SlotConfigNames
+		if names == nil {
+			names = &SlotConfigNames{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":         resourceID + "/config/slotconfignames",
+			"name":       "slotconfignames",
+			"type":       "Microsoft.Web/sites/config",
+			"properties": names,
+		})
 	}
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionstrings/list", connStringsListHandler)
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/connectionStrings/list", connStringsListHandler)
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/slotconfignames", slotConfigNamesGet)
+	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/slotconfignames", func(w http.ResponseWriter, r *http.Request) {
+		resourceID := siteResourceID(r)
+		if !siteExists(resourceID) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Site %q not found.", sim.PathParam(r, "siteName"))
+			return
+		}
+		var req struct {
+			Properties SlotConfigNames `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg, _ := siteConfigStore.Get(resourceID)
+		cfg.SlotConfigNames = &req.Properties
+		siteConfigStore.Put(resourceID, cfg)
+		slotConfigNamesGet(w, r)
+	})
 
 	// GET /sites/{name}/config/web — reads the full SiteConfig from
 	// the site row. The siteConfig embedded in SiteProperties is the
