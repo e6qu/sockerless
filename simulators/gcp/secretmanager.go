@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"hash/crc32"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,9 +21,10 @@ import (
 
 // Secret represents a Cloud Secret Manager secret resource.
 type Secret struct {
-	Name       string            `json:"name"`
-	CreateTime string            `json:"createTime"`
-	Labels     map[string]string `json:"labels,omitempty"`
+	Name        string            `json:"name"`
+	CreateTime  string            `json:"createTime"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Replication map[string]any    `json:"replication,omitempty"`
 }
 
 // SecretVersion is the wire shape for a single secret version —
@@ -30,16 +34,18 @@ type Secret struct {
 // parallel `smSecretPayloads` store keyed by version name so this
 // struct stays payload-free even after sim.Store JSON round-trips.
 type SecretVersion struct {
-	Name       string `json:"name"`
-	CreateTime string `json:"createTime"`
-	State      string `json:"state"`
+	Name                           string `json:"name"`
+	CreateTime                     string `json:"createTime"`
+	State                          string `json:"state"`
+	ClientSpecifiedPayloadChecksum bool   `json:"clientSpecifiedPayloadChecksum,omitempty"`
 }
 
 // smPayloadRecord stores raw secret bytes keyed by full version name.
 // Separate from SecretVersion so the wire-shaped struct stays
 // payload-free (real GCP only returns payloads from :access).
 type smPayloadRecord struct {
-	Data []byte `json:"data"`
+	Data       []byte `json:"data"`
+	DataCrc32c int64  `json:"dataCrc32c"`
 }
 
 // Package-level stores so cloudbuild.go can resolve secret versions
@@ -48,6 +54,7 @@ var (
 	smSecrets        sim.Store[Secret]
 	smSecretVersions sim.Store[SecretVersion]
 	smSecretPayloads sim.Store[smPayloadRecord]
+	smCRC32CTable    = crc32.MakeTable(crc32.Castagnoli)
 )
 
 func registerSecretManager(srv *sim.Server) {
@@ -65,7 +72,8 @@ func registerSecretManager(srv *sim.Server) {
 		}
 
 		var req struct {
-			Labels map[string]string `json:"labels,omitempty"`
+			Labels      map[string]string `json:"labels,omitempty"`
+			Replication map[string]any    `json:"replication,omitempty"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -79,9 +87,10 @@ func registerSecretManager(srv *sim.Server) {
 		}
 
 		secret := Secret{
-			Name:       name,
-			CreateTime: time.Now().UTC().Format(time.RFC3339),
-			Labels:     req.Labels,
+			Name:        name,
+			CreateTime:  time.Now().UTC().Format(time.RFC3339),
+			Labels:      req.Labels,
+			Replication: req.Replication,
 		}
 		smSecrets.Put(name, secret)
 		sim.WriteJSON(w, http.StatusOK, secret)
@@ -118,6 +127,63 @@ func registerSecretManager(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, secret)
 	})
 
+	// UpdateSecret: PATCH /v1/projects/{project}/secrets/{secret}?updateMask=labels
+	srv.HandleFunc("PATCH /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/secrets/%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
+		secret, ok := smSecrets.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
+			return
+		}
+
+		updateMask := strings.TrimSpace(r.URL.Query().Get("updateMask"))
+		if updateMask == "" {
+			sim.GCPError(w, http.StatusBadRequest, "updateMask query parameter is required", "INVALID_ARGUMENT")
+			return
+		}
+
+		var req struct {
+			Labels map[string]string `json:"labels"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+
+		for _, field := range strings.Split(updateMask, ",") {
+			switch strings.TrimSpace(field) {
+			case "labels":
+				secret.Labels = copyLabels(req.Labels)
+			case "":
+			default:
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported updateMask field %q", field)
+				return
+			}
+		}
+		smSecrets.Put(name, secret)
+		sim.WriteJSON(w, http.StatusOK, secret)
+	})
+
+	// DeleteSecret: DELETE /v1/projects/{project}/secrets/{secret}
+	srv.HandleFunc("DELETE /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/secrets/%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
+		if !smSecrets.Delete(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
+			return
+		}
+
+		prefix := name + "/versions/"
+		for _, v := range smSecretVersions.List() {
+			if strings.HasPrefix(v.Name, prefix) {
+				smSecretVersions.Delete(v.Name)
+				smSecretPayloads.Delete(v.Name)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
 	// AddSecretVersion: POST /v1/projects/{project}/secrets/{secret}:addVersion.
 	// Go's ServeMux doesn't allow `{wild}:suffix` — register a generic
 	// POST /secrets/{secretAction} handler and parse the colon suffix.
@@ -138,7 +204,8 @@ func registerSecretManager(srv *sim.Server) {
 
 		var req struct {
 			Payload struct {
-				Data string `json:"data"` // base64-encoded
+				Data       string `json:"data"` // base64-encoded
+				DataCrc32c *int64 `json:"dataCrc32c,string,omitempty"`
 			} `json:"payload"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
@@ -148,6 +215,12 @@ func registerSecretManager(srv *sim.Server) {
 		raw, err := base64.StdEncoding.DecodeString(req.Payload.Data)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "payload.data must be base64: %v", err)
+			return
+		}
+		checksum := int64(crc32.Checksum(raw, smCRC32CTable))
+		if req.Payload.DataCrc32c != nil && *req.Payload.DataCrc32c != checksum {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"payload.dataCrc32c mismatch: got %d, want %d", *req.Payload.DataCrc32c, checksum)
 			return
 		}
 
@@ -162,13 +235,68 @@ func registerSecretManager(srv *sim.Server) {
 		versionID := fmt.Sprintf("%d", n+1)
 		versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
 		ver := SecretVersion{
-			Name:       versionName,
-			CreateTime: time.Now().UTC().Format(time.RFC3339),
-			State:      "ENABLED",
+			Name:                           versionName,
+			CreateTime:                     time.Now().UTC().Format(time.RFC3339),
+			State:                          "ENABLED",
+			ClientSpecifiedPayloadChecksum: req.Payload.DataCrc32c != nil,
 		}
 		smSecretVersions.Put(versionName, ver)
-		smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw})
+		smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw, DataCrc32c: checksum})
 		sim.WriteJSON(w, http.StatusOK, ver)
+	})
+
+	// ListSecretVersions: GET /v1/projects/{project}/secrets/{secret}/versions
+	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}/versions", func(w http.ResponseWriter, r *http.Request) {
+		secretName := fmt.Sprintf("projects/%s/secrets/%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
+		if _, ok := smSecrets.Get(secretName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
+			return
+		}
+		if filter := strings.TrimSpace(r.URL.Query().Get("filter")); filter != "" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported filter %q", filter)
+			return
+		}
+
+		prefix := secretName + "/versions/"
+		var versions []SecretVersion
+		for _, v := range smSecretVersions.List() {
+			if strings.HasPrefix(v.Name, prefix) {
+				versions = append(versions, v)
+			}
+		}
+		sort.Slice(versions, func(i, j int) bool {
+			iv, iok := secretVersionNumber(versions[i].Name, prefix)
+			jv, jok := secretVersionNumber(versions[j].Name, prefix)
+			if iok && jok && iv != jv {
+				return iv > jv
+			}
+			if versions[i].CreateTime != versions[j].CreateTime {
+				return versions[i].CreateTime > versions[j].CreateTime
+			}
+			return versions[i].Name > versions[j].Name
+		})
+
+		start, pageSize, ok := secretManagerPagination(w, r, len(versions))
+		if !ok {
+			return
+		}
+		end := len(versions)
+		if pageSize > 0 && start+pageSize < end {
+			end = start + pageSize
+		}
+		page := versions[start:end]
+		if page == nil {
+			page = []SecretVersion{}
+		}
+		resp := map[string]any{
+			"versions":  page,
+			"totalSize": len(versions),
+		}
+		if end < len(versions) {
+			resp["nextPageToken"] = strconv.Itoa(end)
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// AccessSecretVersion: GET /v1/projects/{project}/secrets/{secret}/versions/{version}:access.
@@ -218,7 +346,8 @@ func registerSecretManager(srv *sim.Server) {
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
 				"name": fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, resolvedID),
 				"payload": map[string]string{
-					"data": base64.StdEncoding.EncodeToString(payload),
+					"data":       base64.StdEncoding.EncodeToString(payload.Data),
+					"dataCrc32c": strconv.FormatInt(payload.DataCrc32c, 10),
 				},
 			})
 		})
@@ -276,13 +405,59 @@ func registerSecretManager(srv *sim.Server) {
 		})
 }
 
+func copyLabels(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func secretVersionNumber(name, prefix string) (int, bool) {
+	raw := strings.TrimPrefix(name, prefix)
+	n, err := strconv.Atoi(raw)
+	return n, err == nil
+}
+
+func secretManagerPagination(w http.ResponseWriter, r *http.Request, total int) (int, int, bool) {
+	start := 0
+	if token := r.URL.Query().Get("pageToken"); token != "" {
+		n, err := strconv.Atoi(token)
+		if err != nil || n < 0 || n > total {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageToken %q", token)
+			return 0, 0, false
+		}
+		start = n
+	}
+
+	pageSize := 0
+	if raw := r.URL.Query().Get("pageSize"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageSize %q", raw)
+			return 0, 0, false
+		}
+		if n > 25000 {
+			n = 25000
+		}
+		pageSize = n
+	}
+	return start, pageSize, true
+}
+
 // accessSecretPayload resolves a secret-version reference to its raw
 // payload. Handles both explicit versions (e.g. "3") and the special
 // "latest" alias. Exported for cloudbuild.go's build-step secretEnv
 // expansion.
 func accessSecretPayload(project, secretID, version string) ([]byte, error) {
 	payload, _, err := accessSecretPayloadResolved(project, secretID, version)
-	return payload, err
+	if err != nil {
+		return nil, err
+	}
+	return payload.Data, nil
 }
 
 // accessSecretPayloadResolved is like accessSecretPayload but also
@@ -291,7 +466,7 @@ func accessSecretPayload(project, secretID, version string) ([]byte, error) {
 // every `:access` response's `name` field — without that, rotation-
 // tracking + audit-logging clients see `"latest"` forever and
 // can't detect when the underlying version changes.
-func accessSecretPayloadResolved(project, secretID, version string) ([]byte, string, error) {
+func accessSecretPayloadResolved(project, secretID, version string) (smPayloadRecord, string, error) {
 	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
 	if version == "latest" {
 		// Pick the highest-numbered version for this secret.
@@ -310,24 +485,24 @@ func accessSecretPayloadResolved(project, secretID, version string) ([]byte, str
 			}
 		}
 		if latestN == 0 {
-			return nil, "", fmt.Errorf("no enabled versions for secret %s", secretName)
+			return smPayloadRecord{}, "", fmt.Errorf("no enabled versions for secret %s", secretName)
 		}
 		pl, ok := smSecretPayloads.Get(latestName)
 		if !ok {
-			return nil, "", fmt.Errorf("payload for %s not found", latestName)
+			return smPayloadRecord{}, "", fmt.Errorf("payload for %s not found", latestName)
 		}
-		return pl.Data, fmt.Sprintf("%d", latestN), nil
+		return pl, fmt.Sprintf("%d", latestN), nil
 	}
 
 	versionName := fmt.Sprintf("%s/versions/%s", secretName, version)
 	if _, ok := smSecretVersions.Get(versionName); !ok {
-		return nil, "", fmt.Errorf("secret version %s not found", versionName)
+		return smPayloadRecord{}, "", fmt.Errorf("secret version %s not found", versionName)
 	}
 	pl, ok := smSecretPayloads.Get(versionName)
 	if !ok {
-		return nil, "", fmt.Errorf("payload for %s not found", versionName)
+		return smPayloadRecord{}, "", fmt.Errorf("payload for %s not found", versionName)
 	}
-	return pl.Data, version, nil
+	return pl, version, nil
 }
 
 // resolveLatestVersionID returns the concrete version number of the
