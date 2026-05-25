@@ -306,6 +306,38 @@ func registerKeyVault(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
 
+	// Subscription-scoped vault list — terraform-provider-azurerm
+	// populates a per-subscription cache by walking this list when it
+	// needs to map a vault URL back to a resource ID (e.g. resolving
+	// azurerm_key_vault_secret's KV URI on every plan refresh).
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/vaults", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+		all := keyVaults.Filter(func(v KeyVault) bool {
+			return strings.HasPrefix(v.ID, prefix)
+		})
+		if all == nil {
+			all = []KeyVault{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+	})
+
+	// GET /subscriptions/{sub}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}
+	// terraform-provider-azurerm queries this pre-create to detect
+	// recoverable soft-deleted vaults (KV soft-delete is enabled by
+	// default and has a 90-day recovery window). The sim doesn't model
+	// vault-level soft-delete, so the truthful response is 404 in the
+	// Azure envelope (i.e. not the Go default 404 page that breaks the
+	// provider's error parser). Same for the list variant.
+	deletedVaultsNotFound := func(w http.ResponseWriter, r *http.Request) {
+		sim.AzureErrorf(w, "VaultNotFound", http.StatusNotFound,
+			"The vault %q was not found.", sim.PathParam(r, "name"))
+	}
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}", deletedVaultsNotFound)
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/deletedVaults", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+	})
+
 	// Data plane — subdomain routing via WrapHandler. Host pattern:
 	// `<vault>.vault.<sim-host>:<port>`. Strip the suffix to identify
 	// the vault and route to the right handler.

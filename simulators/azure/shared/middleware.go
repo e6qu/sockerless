@@ -223,6 +223,8 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 		"/publishingcredentials":              "/publishingcredentials",
 		"/azurestorageaccounts":               "/azurestorageaccounts",
 		"/basicpublishingcredentialspolicies": "/basicpublishingcredentialspolicies",
+		"/deletedvaults":                      "/deletedVaults",
+		"/deletedworkspaces":                  "/deletedWorkspaces",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
