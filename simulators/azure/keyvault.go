@@ -334,6 +334,19 @@ func registerKeyVault(srv *sim.Server) {
 			"The vault %q was not found.", sim.PathParam(r, "name"))
 	}
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}", deletedVaultsNotFound)
+
+	// POST .../deletedVaults/{name}/purge — terraform-provider-azurerm
+	// calls this on destroy after a soft-delete-enabled vault is
+	// deleted, to permanently purge it (so the name can be reused).
+	// Sim hard-deletes vaults at DELETE time (no soft-delete state),
+	// so the purge has nothing to actually remove — respond 200 OK
+	// with an empty JSON body so the LRO poller parses cleanly. Real
+	// Azure returns 202 + an Azure-AsyncOperation header pointing at
+	// an operationStatus URL; the sim's clients use the body to
+	// confirm immediate completion.
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/deletedVaults", func(w http.ResponseWriter, r *http.Request) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
 	})
