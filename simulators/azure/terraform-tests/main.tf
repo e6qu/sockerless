@@ -196,10 +196,11 @@ resource "azurerm_container_app" "az_ca" {
 
   template {
     container {
-      name   = "main"
-      image  = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
-      cpu    = 0.25
-      memory = "0.5Gi"
+      name    = "main"
+      image   = "public.ecr.aws/docker/library/alpine:latest"
+      cpu     = 0.25
+      memory  = "0.5Gi"
+      command = ["sh", "-c", "sleep infinity"]
     }
   }
 }
@@ -223,10 +224,11 @@ resource "azurerm_container_app_job" "az_caj" {
 
   template {
     container {
-      name   = "main"
-      image  = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
-      cpu    = 0.25
-      memory = "0.5Gi"
+      name    = "main"
+      image   = "public.ecr.aws/docker/library/alpine:latest"
+      cpu     = 0.25
+      memory  = "0.5Gi"
+      command = ["sh", "-c", "echo hello && exit 0"]
     }
   }
 }

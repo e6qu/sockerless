@@ -107,32 +107,35 @@ func registerAzureFunctions(srv *sim.Server) {
 	// conflicts surface as `nameAvailable: false` instead of a 409 on
 	// PUT. The sim has no real cross-subscription namespace so we check
 	// the local sites store — any existing site name reads as taken.
-	srv.HandleFunc(
-		"POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checkNameAvailability",
-		func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				Name string `json:"name"`
-				Type string `json:"type"`
-			}
-			if err := sim.ReadJSON(r, &req); err != nil {
-				sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			suffix := "/providers/Microsoft.Web/sites/" + req.Name
-			taken := len(sites.Filter(func(s Site) bool {
-				return strings.HasSuffix(s.ID, suffix)
-			})) > 0
-			resp := map[string]any{
-				"nameAvailable": !taken,
-				"message":       "",
-			}
-			if taken {
-				resp["reason"] = "AlreadyExists"
-				resp["message"] = fmt.Sprintf("Hostname '%s' already exists. Please select a different name.", req.Name)
-			}
-			sim.WriteJSON(w, http.StatusOK, resp)
-		},
-	)
+	checkNameAvailabilityHandler := func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		suffix := "/providers/Microsoft.Web/sites/" + req.Name
+		taken := len(sites.Filter(func(s Site) bool {
+			return strings.HasSuffix(s.ID, suffix)
+		})) > 0
+		resp := map[string]any{
+			"nameAvailable": !taken,
+			"message":       "",
+		}
+		if taken {
+			resp["reason"] = "AlreadyExists"
+			resp["message"] = fmt.Sprintf("Hostname '%s' already exists. Please select a different name.", req.Name)
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	}
+	// terraform-provider-azurerm lowercases the action segment; the
+	// real ARM API treats provider paths case-insensitively. Register
+	// both casings (same pattern as appserviceplan.go's serverFarms /
+	// serverfarms split).
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checkNameAvailability", checkNameAvailabilityHandler)
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checknameavailability", checkNameAvailabilityHandler)
 
 	// PUT - Create or update function app
 	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}", func(w http.ResponseWriter, r *http.Request) {

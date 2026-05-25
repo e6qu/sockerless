@@ -141,6 +141,22 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
+	// Pre-pull the multi-arch alpine image the test's azurerm_container_app
+	// uses. The sim's ACA PUT handler starts the workload container on the
+	// host's Docker daemon synchronously; if the image isn't cached the
+	// pull blows the terraform-provider's request budget. ECR Public
+	// Gallery serves linux/{amd64,arm64} variants without auth.
+	pull := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest")
+	pull.Stdout = os.Stdout
+	pull.Stderr = os.Stderr
+	if err := pull.Run(); err != nil {
+		log.Fatalf("Failed to pre-pull alpine image: %v", err)
+	}
+	tag := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest")
+	if err := tag.Run(); err != nil {
+		log.Fatalf("Failed to retag alpine: %v", err)
+	}
+
 	// Generate TLS certificates
 	certDir, err := os.MkdirTemp("", "azure-tls-*")
 	if err != nil {
