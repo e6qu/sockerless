@@ -32,16 +32,43 @@ type IAMAttachedPolicy struct {
 	PolicyName string
 }
 
+// IAMPolicy is a managed policy (Microsoft.IAM/policies).
+type IAMPolicy struct {
+	PolicyName       string `json:"policyName"`
+	PolicyId         string `json:"policyId"`
+	Arn              string `json:"arn"`
+	Path             string `json:"path"`
+	Description      string `json:"description"`
+	PolicyDocument   string `json:"policyDocument"` // URL-decoded JSON
+	DefaultVersionId string `json:"defaultVersionId"`
+	CreateDate       string `json:"createDate"`
+}
+
+// IAMInstanceProfile is a Microsoft.IAM/instanceProfiles resource. Each
+// instance profile can hold at most one role (real AWS constraint).
+type IAMInstanceProfile struct {
+	InstanceProfileName string `json:"instanceProfileName"`
+	InstanceProfileId   string `json:"instanceProfileId"`
+	Arn                 string `json:"arn"`
+	Path                string `json:"path"`
+	CreateDate          string `json:"createDate"`
+	RoleName            string `json:"roleName,omitempty"`
+}
+
 var (
 	iamRoles            sim.Store[IAMRole]
 	iamRolePolicies     sim.Store[IAMRolePolicy]
 	iamAttachedPolicies sim.Store[IAMAttachedPolicy]
+	iamPolicies         sim.Store[IAMPolicy]
+	iamInstanceProfiles sim.Store[IAMInstanceProfile]
 )
 
 func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	iamRoles = sim.MakeStore[IAMRole](srv.DB(), "iam_roles")
 	iamRolePolicies = sim.MakeStore[IAMRolePolicy](srv.DB(), "iam_role_policies")
 	iamAttachedPolicies = sim.MakeStore[IAMAttachedPolicy](srv.DB(), "iam_attached_policies")
+	iamPolicies = sim.MakeStore[IAMPolicy](srv.DB(), "iam_policies")
+	iamInstanceProfiles = sim.MakeStore[IAMInstanceProfile](srv.DB(), "iam_instance_profiles")
 
 	r.Register("CreateRole", handleIAMCreateRole)
 	r.Register("GetRole", handleIAMGetRole)
@@ -55,6 +82,24 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("ListAttachedRolePolicies", handleIAMListAttachedRolePolicies)
 	r.Register("ListRolePolicies", handleIAMListRolePolicies)
 	r.Register("ListInstanceProfilesForRole", handleIAMListInstanceProfilesForRole)
+
+	// Managed policies — canonical TF flow CreateRole → CreatePolicy →
+	// AttachRolePolicy needs at least Create + Get + Delete + List.
+	r.Register("CreatePolicy", handleIAMCreatePolicy)
+	r.Register("GetPolicy", handleIAMGetPolicy)
+	r.Register("DeletePolicy", handleIAMDeletePolicy)
+	r.Register("ListPolicies", handleIAMListPolicies)
+	r.Register("GetPolicyVersion", handleIAMGetPolicyVersion)
+
+	// Instance profiles — needed to bind a role to an EC2 / ECS task
+	// launch template. CreateInstanceProfile → AddRoleToInstanceProfile
+	// is the canonical pair.
+	r.Register("CreateInstanceProfile", handleIAMCreateInstanceProfile)
+	r.Register("GetInstanceProfile", handleIAMGetInstanceProfile)
+	r.Register("DeleteInstanceProfile", handleIAMDeleteInstanceProfile)
+	r.Register("ListInstanceProfiles", handleIAMListInstanceProfiles)
+	r.Register("AddRoleToInstanceProfile", handleIAMAddRoleToInstanceProfile)
+	r.Register("RemoveRoleFromInstanceProfile", handleIAMRemoveRoleFromInstanceProfile)
 
 	// Service-linked roles + OIDC providers (iam_slr_oidc.go)
 	registerIAMSLRandOIDC(r, srv)
@@ -261,16 +306,22 @@ func handleIAMListAttachedRolePolicies(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleIAMListInstanceProfilesForRole(w http.ResponseWriter, r *http.Request) {
-	// The simulator doesn't create instance profiles. Return empty list
-	// so terraform can proceed with deleting IAM roles during destroy.
+	roleName := r.FormValue("RoleName")
+	profiles := iamInstanceProfiles.Filter(func(ip IAMInstanceProfile) bool {
+		return ip.RoleName == roleName
+	})
+	var members strings.Builder
+	for _, ip := range profiles {
+		fmt.Fprint(&members, "<member>", iamInstanceProfileXML(ip), "</member>")
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ListInstanceProfilesForRoleResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ListInstanceProfilesForRoleResult>
-    <InstanceProfiles/>
+    <InstanceProfiles>%s</InstanceProfiles>
     <IsTruncated>false</IsTruncated>
   </ListInstanceProfilesForRoleResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListInstanceProfilesForRoleResponse>`, generateUUID())
+</ListInstanceProfilesForRoleResponse>`, members.String(), generateUUID())
 }
 
 func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
@@ -292,4 +343,220 @@ func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
   </ListRolePoliciesResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
 </ListRolePoliciesResponse>`, members.String(), generateUUID())
+}
+
+// Managed policies + instance profiles. The canonical TF flow is
+// CreateRole → CreatePolicy → AttachRolePolicy → CreateInstanceProfile
+// → AddRoleToInstanceProfile; without these handlers, terraform-
+// provider-aws fails at step 2 (CreatePolicy InvalidAction).
+
+func iamPolicyXML(p IAMPolicy) string {
+	return fmt.Sprintf(`<PolicyName>%s</PolicyName><PolicyId>%s</PolicyId><Arn>%s</Arn><Path>%s</Path><DefaultVersionId>%s</DefaultVersionId><CreateDate>%s</CreateDate><AttachmentCount>0</AttachmentCount><PermissionsBoundaryUsageCount>0</PermissionsBoundaryUsageCount><IsAttachable>true</IsAttachable><Description>%s</Description>`,
+		p.PolicyName, p.PolicyId, p.Arn, p.Path, p.DefaultVersionId, p.CreateDate, p.Description)
+}
+
+func iamInstanceProfileXML(ip IAMInstanceProfile) string {
+	roleBlock := ""
+	if ip.RoleName != "" {
+		if role, ok := iamRoles.Get(ip.RoleName); ok {
+			roleBlock = "<Roles><member>" + iamRoleXML(role) + "</member></Roles>"
+		}
+	}
+	if roleBlock == "" {
+		roleBlock = "<Roles/>"
+	}
+	return fmt.Sprintf(`<InstanceProfileName>%s</InstanceProfileName><InstanceProfileId>%s</InstanceProfileId><Arn>%s</Arn><Path>%s</Path><CreateDate>%s</CreateDate>%s`,
+		ip.InstanceProfileName, ip.InstanceProfileId, ip.Arn, ip.Path, ip.CreateDate, roleBlock)
+}
+
+func handleIAMCreatePolicy(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("PolicyName")
+	if name == "" {
+		iamErrorXML(w, "ValidationError", "PolicyName is required", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("Path")
+	if path == "" {
+		path = "/"
+	}
+	doc := r.FormValue("PolicyDocument")
+	if decoded, err := url.QueryUnescape(doc); err == nil {
+		doc = decoded
+	}
+	policy := IAMPolicy{
+		PolicyName:       name,
+		PolicyId:         "ANPA" + strings.ToUpper(generateUUID()[:16]),
+		Arn:              fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name),
+		Path:             path,
+		Description:      r.FormValue("Description"),
+		PolicyDocument:   doc,
+		DefaultVersionId: "v1",
+		CreateDate:       time.Now().UTC().Format(time.RFC3339),
+	}
+	iamPolicies.Put(policy.Arn, policy)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreatePolicyResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <CreatePolicyResult><Policy>%s</Policy></CreatePolicyResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</CreatePolicyResponse>`, iamPolicyXML(policy), generateUUID())
+}
+
+func handleIAMGetPolicy(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("PolicyArn")
+	policy, ok := iamPolicies.Get(arn)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Policy %s was not found.", arn), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetPolicyResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <GetPolicyResult><Policy>%s</Policy></GetPolicyResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetPolicyResponse>`, iamPolicyXML(policy), generateUUID())
+}
+
+func handleIAMDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("PolicyArn")
+	if !iamPolicies.Delete(arn) {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Policy %s was not found.", arn), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DeletePolicyResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</DeletePolicyResponse>`, generateUUID())
+}
+
+func handleIAMListPolicies(w http.ResponseWriter, r *http.Request) {
+	var members strings.Builder
+	for _, p := range iamPolicies.List() {
+		fmt.Fprint(&members, "<member>", iamPolicyXML(p), "</member>")
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ListPoliciesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ListPoliciesResult><Policies>%s</Policies><IsTruncated>false</IsTruncated></ListPoliciesResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</ListPoliciesResponse>`, members.String(), generateUUID())
+}
+
+func handleIAMGetPolicyVersion(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("PolicyArn")
+	versionID := r.FormValue("VersionId")
+	policy, ok := iamPolicies.Get(arn)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Policy %s was not found.", arn), http.StatusNotFound)
+		return
+	}
+	if versionID == "" {
+		versionID = policy.DefaultVersionId
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetPolicyVersionResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <GetPolicyVersionResult><PolicyVersion><Document>%s</Document><VersionId>%s</VersionId><IsDefaultVersion>true</IsDefaultVersion><CreateDate>%s</CreateDate></PolicyVersion></GetPolicyVersionResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetPolicyVersionResponse>`, url.QueryEscape(policy.PolicyDocument), versionID, policy.CreateDate, generateUUID())
+}
+
+func handleIAMCreateInstanceProfile(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("InstanceProfileName")
+	if name == "" {
+		iamErrorXML(w, "ValidationError", "InstanceProfileName is required", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("Path")
+	if path == "" {
+		path = "/"
+	}
+	ip := IAMInstanceProfile{
+		InstanceProfileName: name,
+		InstanceProfileId:   "AIPA" + strings.ToUpper(generateUUID()[:16]),
+		Arn:                 fmt.Sprintf("arn:aws:iam::%s:instance-profile%s%s", awsAccountID(), path, name),
+		Path:                path,
+		CreateDate:          time.Now().UTC().Format(time.RFC3339),
+	}
+	iamInstanceProfiles.Put(name, ip)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <CreateInstanceProfileResult><InstanceProfile>%s</InstanceProfile></CreateInstanceProfileResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</CreateInstanceProfileResponse>`, iamInstanceProfileXML(ip), generateUUID())
+}
+
+func handleIAMGetInstanceProfile(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("InstanceProfileName")
+	ip, ok := iamInstanceProfiles.Get(name)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Instance Profile %s was not found.", name), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <GetInstanceProfileResult><InstanceProfile>%s</InstanceProfile></GetInstanceProfileResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetInstanceProfileResponse>`, iamInstanceProfileXML(ip), generateUUID())
+}
+
+func handleIAMDeleteInstanceProfile(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("InstanceProfileName")
+	if !iamInstanceProfiles.Delete(name) {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Instance Profile %s was not found.", name), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DeleteInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</DeleteInstanceProfileResponse>`, generateUUID())
+}
+
+func handleIAMListInstanceProfiles(w http.ResponseWriter, r *http.Request) {
+	var members strings.Builder
+	for _, ip := range iamInstanceProfiles.List() {
+		fmt.Fprint(&members, "<member>", iamInstanceProfileXML(ip), "</member>")
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ListInstanceProfilesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ListInstanceProfilesResult><InstanceProfiles>%s</InstanceProfiles><IsTruncated>false</IsTruncated></ListInstanceProfilesResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</ListInstanceProfilesResponse>`, members.String(), generateUUID())
+}
+
+func handleIAMAddRoleToInstanceProfile(w http.ResponseWriter, r *http.Request) {
+	ipName := r.FormValue("InstanceProfileName")
+	roleName := r.FormValue("RoleName")
+	ip, ok := iamInstanceProfiles.Get(ipName)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Instance Profile %s was not found.", ipName), http.StatusNotFound)
+		return
+	}
+	if _, ok := iamRoles.Get(roleName); !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Role %s was not found.", roleName), http.StatusNotFound)
+		return
+	}
+	if ip.RoleName != "" && ip.RoleName != roleName {
+		iamErrorXML(w, "LimitExceeded",
+			fmt.Sprintf("Cannot exceed quota for InstanceSessionsPerInstanceProfile: 1. Instance profile %s already holds role %s.", ipName, ip.RoleName),
+			http.StatusConflict)
+		return
+	}
+	ip.RoleName = roleName
+	iamInstanceProfiles.Put(ipName, ip)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AddRoleToInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</AddRoleToInstanceProfileResponse>`, generateUUID())
+}
+
+func handleIAMRemoveRoleFromInstanceProfile(w http.ResponseWriter, r *http.Request) {
+	ipName := r.FormValue("InstanceProfileName")
+	ip, ok := iamInstanceProfiles.Get(ipName)
+	if !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Instance Profile %s was not found.", ipName), http.StatusNotFound)
+		return
+	}
+	ip.RoleName = ""
+	iamInstanceProfiles.Put(ipName, ip)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<RemoveRoleFromInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</RemoveRoleFromInstanceProfileResponse>`, generateUUID())
 }
