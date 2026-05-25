@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1167 filed · 1165 fixed · 2 open · 2 false positives.**
+**1170 filed · 1168 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -37,6 +37,9 @@ Phase 178 (PR #211, 16 commits) closed BUG-1148..1160 — 9 community-filed issu
 - **1165** `POST /subscriptions/{sub}/providers/Microsoft.Web/checkNameAvailability` returned the Go default 404 page. terraform-provider-azurerm calls it before creating a site to check global-namespace availability for `<name>.azurewebsites.net`. Register the handler; query the existing `sites` store and return `{nameAvailable: true}` / `{nameAvailable: false, reason: "AlreadyExists"}` based on real conflict state.
 - **1166** `POST /subscriptions/{sub}/providers/Microsoft.Web/checknameavailability` (all-lowercase verb segment) — the canonical-cased handler from BUG-1165 didn't match. Real Azure ARM treats provider paths case-insensitively; terraform-provider-azurerm sends the lowercase form. Register the lowercase variant alongside (same pattern as appserviceplan.go's `serverFarms`/`serverfarms` split).
 - **1167** `azurerm_container_app` PUT returned 500 in the tf-azure CI gate. main.tf used `mcr.microsoft.com/azuredocs/aci-helloworld:latest` which ships amd64-only manifests; the sim hard-codes `linux/arm64` for ACA workloads (the sim's primary capacity contract) and CI runs on `ubuntu-24.04-arm`, so the image pull failed with `no matching manifest`. Real fix: change main.tf to `public.ecr.aws/docker/library/alpine:latest` + long-running command (multi-arch via ECR Public Gallery, no auth required) and pre-pull in TestMain so the sim's synchronous ACA-PUT path doesn't pay registry latency on the critical path. No fakes — the sim still actually starts the container; just on an image that exists for the runner's architecture.
+- **1168** ACA `POST .../containerApps/{name}/listSecrets` 404 — terraform-provider-azurerm reads via this endpoint on every plan refresh (secrets are kept out of GET responses). Register the handler; return `{value: app.Properties.Configuration.Secrets}` (always a real read of the stored secret list, empty when the resource has none — no fake values).
+- **1169** ACA `POST .../jobs/{name}/listSecrets` 404 — same shape as 1168 but for Container Apps Jobs. Register the handler returning `{value: job.Properties.Configuration.Secrets}`.
+- **1170** Linux Function App `POST .../sites/{name}/config/appSettings/list` 404 — the canonical-cased handler was registered as lowercase `appsettings` and Go ServeMux is case-sensitive, but terraform-provider-azurerm sends camelCase `appSettings`. Real Azure ARM is case-insensitive on action segments. Register both casings, same pattern as appserviceplan.go's `serverFarms`/`serverfarms` and the BUG-1166 fix on checknameavailability.
 
 Older closed BUGs: 1098..1147 across Phases 173–177. See `WHAT_WE_DID.md` per-phase narrative + PR descriptions for fix detail.
 

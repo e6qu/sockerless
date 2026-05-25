@@ -503,10 +503,13 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 		})
 	})
 
-	// POST /sites/{name}/config/appsettings/list — real Azure uses
-	// POST for `/list` actions because the response contains secrets
-	// (kept out of GET URLs / proxy logs).
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", func(w http.ResponseWriter, r *http.Request) {
+	// POST /sites/{name}/config/{appsettings|appSettings}/list — real
+	// Azure uses POST for `/list` actions because the response contains
+	// secrets (kept out of GET URLs / proxy logs). Real ARM treats
+	// the segment case-insensitively; terraform-provider-azurerm sends
+	// camelCase `appSettings`, the Azure CLI / older SDKs send
+	// lowercase. Register both.
+	appSettingsListHandler := func(w http.ResponseWriter, r *http.Request) {
 		resourceID := siteResourceID(r)
 		if !siteExists(resourceID) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
@@ -524,7 +527,9 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 			Type:       "Microsoft.Web/sites/config",
 			Properties: props,
 		})
-	})
+	}
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appsettings/list", appSettingsListHandler)
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/appSettings/list", appSettingsListHandler)
 
 	// PUT /sites/{name}/config/connectionstrings
 	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/config/connectionstrings", func(w http.ResponseWriter, r *http.Request) {
