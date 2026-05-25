@@ -60,13 +60,13 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191). 14 BUGs closed (1120–1133); persistence-strip wrapper records; CI test-job split 1→3 (22 jobs); new `timeless-comments` skill. Merged 2026-05-24 at `ca11405`. |
 | #200 | 176 | 8 community-filed issues (#190 reopened + #193..#199) + 12 in-PR audit findings + path-style storage dispatcher + `make hooks`. 8 BUGs closed (1134–1141). Merged 2026-05-24 at `2d8e604`. |
 | #202 | 177 | KV WWW-Authenticate URL reopen (#193) + S3 bucket-subresources (#201) + 4 meta-skill improvements (sim-canonical-config-test extension, surface-table-completeness, reopen-postmortem, tf-tests parity). 6 BUGs closed (1142–1147). Merged 2026-05-24 at `aa847b1`. |
-| open #211 | 178 | 9 community-filed issues (#196 reopen + #203..#210) + 4 class-of-bug remediations (proactive surface-table seed (46 tables), mux-overlap scanner, paged-iterator rule, state-machine skill). 13 BUGs closed (1148–1160). |
+| #211 | 178 | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations (proactive surface-table seed (46 tables), mux-overlap scanner, paged-iterator rule, state-machine skill, CI-gated tf-tests matrix). 25 BUGs closed (1148–1173) including 12 real handler/shape gaps the new tf-azure gate surfaced. Merged 2026-05-25 at `7a7c9f0`. |
 
 ## Active phase
 
-**Phase 178 in flight on `phase-178-community-issues` / PR #211.** Awaiting user merge.
+**Idle on `main`.** No phase in flight.
 
-BUGS.md: **1160 filed · 1158 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker) remain Open.
+BUGS.md: **1173 filed · 1171 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker) remain Open.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 

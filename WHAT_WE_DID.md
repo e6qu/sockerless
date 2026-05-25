@@ -22,9 +22,22 @@ PR #202 (Phase 177) merged. The user immediately filed 8 new issues (#203..#210)
 
 **Stage F — GCP missing ops.** BUG-1155 (#209): Cloud SQL `backupRuns.{insert,list,get,delete}` with state machine + `instances/{name}/clone` LRO; selfLink hard-coded `https://`. Memorystore Redis `:upgrade` + `:failover` with state-preserved transitions. Pub/Sub Snapshot CRUD with 7d ExpireTime. API Gateway AIP-130 IAM v1 (getIamPolicy / setIamPolicy / testIamPermissions).
 
-**Stage G (CI follow-up) — gate the tf-tests.** BUG-1161: new `tf (aws|gcp|azure)` matrix job in `.github/workflows/ci.yml` runs `make tf-test` per cloud (stock `hashicorp/aws` / `hashicorp/google` / `hashicorp/azurerm` providers against the sim binary via `terraform init` + `apply -auto-approve`). The Makefile target + the test sources already existed; this just wires the gate so the tf-provider call shape is exercised every push.
+**Stage G (CI follow-up) — gate the tf-tests.** BUG-1161: new `tf (aws|gcp|azure)` matrix job in `.github/workflows/ci.yml` runs `make terraform-test` per cloud (stock `hashicorp/aws` / `hashicorp/google` / `hashicorp/azurerm` providers against the sim binary via `terraform init` + `apply -auto-approve`). The Makefile target + the test sources already existed; this just wires the gate so the tf-provider call shape is exercised every push.
 
-BUGS.md after this branch lands: **1161 filed · 1159 fixed · 2 open.** The proactive surface-table seed + the mux-overlap scanner + the paged-iterator rule + the state-machine skill + the CI-gated tf-tests are the load-bearing scaffolding that should keep similar reopen patterns from recurring — the next time the user finds a missing op, the table audit catches it before "fixed" is claimed, and the tf-provider gate catches divergence between SDK and provider call sequences.
+**Stage G (post-gate) — 12 real handler / wire-shape gaps the gate caught and we fixed in the same PR.** BUG-1162..1173:
+- AWS `GetBucketAcl` returned 400 on `BucketOwnerEnforced` (real AWS only returns 400 from PutBucketAcl) — BUG-1167.
+- azurerm provider rejected `skip_provider_registration=true + resource_provider_registrations="none"` clash (BUG-1163).
+- Cloud Run + GCF `grpcAddrFromEndpoint` HTTP+1 fake → replaced with explicit `LogAdminEndpoint` config / `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` env var (BUG-1162). Real GCP has Cloud Logging on its own endpoint; the sim now mirrors that.
+- ACA arm64 manifest gap — main.tf switched to `public.ecr.aws/docker/library/alpine:latest` (multi-arch) + ECR-Public rate-limit retry in TestMain (BUG-1167 + helper retry).
+- KV subscription-scoped `GET /subscriptions/{sub}/providers/Microsoft.KeyVault/vaults` + `GET .../deletedVaults` + `POST .../deletedVaults/{name}/purge` handlers (terraform-provider-azurerm's KV cache).
+- App Service config sub-resources: `slotconfignames` (BUG-1173), `publishingcredentials/list` (BUG-1167-deferred), `authsettings/list` + `authsettingsV2/list`, `logs`, `backup/list`, `basicPublishingCredentialsPolicies/{ftp,scm}`.
+- `Microsoft.Web/checkNameAvailability` + `Microsoft.Web/sites/{name}/config/azurestorageaccounts/list` (the latter was registered as GET; real Azure uses POST; the response also dropped `properties` field when empty → provider nil-deref).
+- ACA `containerApps/{name}/listSecrets` + `jobs/{name}/listSecrets` (terraform-provider-azurerm reads on every plan).
+- Subscription-scoped `GET /subscriptions/{sub}/resources` (KV URL → resource-ID cache lookup).
+- Log Analytics `deletedWorkspaces` (workspace-soft-delete cache miss).
+- Systematic action-verb canonicalization (BUG-1172): extended `AzurePathNormalizationMiddleware` to lowercase 13 known action / sub-resource segments (`appsettings`, `connectionstrings`, `slotconfignames`, `listsecrets`, `checknameavailability`, `authsettings`, `authsettingsv2`, `publishingcredentials`, `azurestorageaccounts`, `basicpublishingcredentialspolicies`, `deletedvaults`, `deletedworkspaces`). Replaces per-route duplicate handler registrations.
+
+BUGS.md after this branch lands: **1173 filed · 1171 fixed · 2 open.** The proactive surface-table seed + the mux-overlap scanner + the paged-iterator rule + the state-machine skill + the CI-gated tf-tests are the load-bearing scaffolding that should keep similar reopen patterns from recurring — the next time the user finds a missing op, the table audit catches it before "fixed" is claimed, and the tf-provider gate catches divergence between SDK and provider call sequences.
 
 ## 2026-05-24 — Phase 177: KV WWW-Authenticate URL reopen + S3 bucket-subresources + four meta-skill improvements
 

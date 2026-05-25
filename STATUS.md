@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-178-community-issues` — PR #211 open + awaiting CI + user merge. 18 commits closed BUG-1148..1161 (1 reopen + 8 community-filed + 5 class-of-bug remediations). |
-| In-flight | PR #211 — CI running on 25 jobs (22 prior + 3 new `tf` matrix). |
-| Last merged | PR #202 — Phase 177 community-filed issues + 4 meta-skill improvements (2026-05-24, squash `aa847b1`). |
+| Active branch | `main` — idle. No phase in flight. |
+| In-flight | None. |
+| Last merged | PR #211 — Phase 178 community-filed issues + 5 class-of-bug remediations (2026-05-25, squash `7a7c9f0`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1161 filed · 1159 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
+| Bugs | 1173 filed · 1171 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,7 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
-| #211 | 178 (in flight) | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations: proactive surface-table seed (46 tables) + mux-overlap scanner + paged-iterator rule + state-machine skill + CI-gated tf-tests (`tf (aws\|gcp\|azure)` matrix). 14 BUGs closed (1148-1161). |
+| #211 | 178 | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations: proactive surface-table seed (46 tables) + mux-overlap scanner + paged-iterator rule + state-machine skill + CI-gated tf-tests (`tf (aws\|gcp\|azure)` matrix). 25 BUGs closed (1148-1173). Surfaced + fixed 12 real handler / shape gaps via the new tf-azure gate (KV subscription-list / deletedVaults / purge, App Service publishingcredentials/authsettings/slotconfignames/logs/backup/basicPublishingCredentialsPolicies, Microsoft.Web checkNameAvailability, azurestorageaccounts properties-shape, ACA listSecrets, App Service config case-canonicalization, arm64 image manifest, ECR-Public rate-limit retry). Merged at `7a7c9f0`. |
 | #202 | 177 | KV WWW-Authenticate URL reopen (#193) + S3 bucket-subresources (#201) + 4 meta-skill improvements (sim-canonical-config-test extension, surface-table-completeness, reopen-postmortem, tf-tests parity). 6 BUGs closed (1142-1147). Merged at `aa847b1`. |
 | #200 | 176 | 8 community-filed issues (#190 reopened + #193..#199) + 12 in-PR audit findings + path-style storage dispatcher contamination + `make hooks`. 8 BUGs closed (1134-1141). Merged at `2d8e604`. |
 | #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191) + signal-driven FaaS smoke tests + CI test-job split + new `timeless-comments` skill. 14 BUGs closed (1120-1133). Merged at `ca11405`. |
