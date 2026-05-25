@@ -428,6 +428,33 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
+	// GET /config/logs — App Service diagnostic logs configuration
+	// (application logging, http logging, detailed errors, failed
+	// request tracing). The sim doesn't model log retention; truthful
+	// default response is every category disabled.
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/logs", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":   resourceID + "/config/logs",
+			"name": "logs",
+			"type": "Microsoft.Web/sites/config",
+			"properties": map[string]any{
+				"applicationLogs":       map[string]any{"fileSystem": map[string]any{"level": "Off"}},
+				"httpLogs":              map[string]any{},
+				"detailedErrorMessages": map[string]any{"enabled": false},
+				"failedRequestsTracing": map[string]any{"enabled": false},
+			},
+		})
+	})
+
 	// POST /config/authsettings/list — Easy Auth configuration. The
 	// sim doesn't model App Service authentication, so the truthful
 	// response is `enabled: false` + default empty fields (no auth
