@@ -97,8 +97,10 @@ func registerACR(srv *sim.Server) {
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
 
-	// POST - Check name availability (azurerm v3 calls this before creating a registry)
-	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checkNameAvailability", func(w http.ResponseWriter, r *http.Request) {
+	// POST - Check name availability (azurerm v3 calls this before
+	// creating a registry). Lowercase registration; the middleware
+	// canonicalizes camelCase → lowercase before dispatch.
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checknameavailability", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name string `json:"name"`
 			Type string `json:"type"`

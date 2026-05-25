@@ -404,9 +404,10 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
-	// GET — symmetrical read so terraform / inspect tooling can verify
-	// the mapping.
-	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/azurestorageaccounts/list", func(w http.ResponseWriter, r *http.Request) {
+	// POST /list — real Azure uses POST for `/list` actions because the
+	// response contains storage account keys (kept out of GET URLs).
+	// terraform-provider-azurerm reads via this endpoint on every plan.
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/azurestorageaccounts/list", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		name := sim.PathParam(r, "siteName")
