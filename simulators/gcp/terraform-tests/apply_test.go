@@ -31,7 +31,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	out, err := init.CombinedOutput()
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
-	apply := terraformCmd("apply", "-auto-approve")
+	apply := terraformCmd("apply", "-auto-approve", "-var", "secret_label_env=dev")
 	out, err = apply.CombinedOutput()
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
@@ -68,6 +68,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, secretVersionID, "projects/test-project/secrets/tf-test-secret/versions/",
 		"Secret version ID must include the canonical secret path; got %s", secretVersionID)
 
+	secretLabelEnv := outputs.must(t, "secret_label_env")
+	require.Equal(t, "dev", secretLabelEnv,
+		"Secret Manager labels must round-trip through terraform state; got env=%s", secretLabelEnv)
+
 	subnetID := outputs.must(t, "subnet_id")
 	require.Contains(t, subnetID, "projects/test-project/regions/us-central1/subnetworks/tf-test-subnet",
 		"subnet id must include the canonical region+name path; got %s", subnetID)
@@ -90,7 +94,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Equal(t, "projects/test-project/serviceAccounts/tf-test-runner-sa@test-project.iam.gserviceaccount.com", saName,
 		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
 
-	destroy := terraformCmd("destroy", "-auto-approve")
+	destroy := terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev")
 	out, err = destroy.CombinedOutput()
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }

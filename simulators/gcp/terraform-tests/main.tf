@@ -195,7 +195,12 @@ resource "google_storage_bucket_object" "tf_artifact" {
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
-  secret_id = "tf-test-secret"
+  secret_id       = "tf-test-secret"
+  deletion_policy = "DELETE"
+
+  labels = {
+    env = var.secret_label_env
+  }
 
   replication {
     auto {}
@@ -203,8 +208,9 @@ resource "google_secret_manager_secret" "tf_secret" {
 }
 
 resource "google_secret_manager_secret_version" "tf_secret_v1" {
-  secret      = google_secret_manager_secret.tf_secret.id
-  secret_data = "tf-test-secret-payload"
+  secret          = google_secret_manager_secret.tf_secret.id
+  secret_data     = "tf-test-secret-payload"
+  deletion_policy = "DELETE"
 }
 
 # ---------- IAM (service account) ----------
@@ -250,6 +256,10 @@ output "storage_bucket_url" {
 
 output "secret_version_id" {
   value = google_secret_manager_secret_version.tf_secret_v1.id
+}
+
+output "secret_label_env" {
+  value = google_secret_manager_secret.tf_secret.labels.env
 }
 
 output "subnet_id" {
