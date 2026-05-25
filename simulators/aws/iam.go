@@ -105,14 +105,22 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerIAMSLRandOIDC(r, srv)
 }
 
-func iamRoleXML(role IAMRole) string {
+// iamRoleFieldsXML emits the inner role fields without the `<Role>`
+// wrapper. Used inline inside `<member>` elements where AWS's XML
+// schema puts role fields directly under member (instance profile
+// Roles list, ListAttachedRolePolicies list members, etc.).
+func iamRoleFieldsXML(role IAMRole) string {
 	doc := url.QueryEscape(role.AssumeRolePolicyDocument)
 	maxSession := role.MaxSessionDuration
 	if maxSession == 0 {
 		maxSession = 3600
 	}
-	return fmt.Sprintf(`<Role><RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration></Role>`,
+	return fmt.Sprintf(`<RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration>`,
 		role.RoleName, role.RoleId, role.Arn, role.Path, doc, role.CreateDate, maxSession)
+}
+
+func iamRoleXML(role IAMRole) string {
+	return "<Role>" + iamRoleFieldsXML(role) + "</Role>"
 }
 
 func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +367,8 @@ func iamInstanceProfileXML(ip IAMInstanceProfile) string {
 	roleBlock := ""
 	if ip.RoleName != "" {
 		if role, ok := iamRoles.Get(ip.RoleName); ok {
-			roleBlock = "<Roles><member>" + iamRoleXML(role) + "</member></Roles>"
+			// AWS XML: <Roles><member>{inner role fields, no <Role> wrapper}</member></Roles>
+			roleBlock = "<Roles><member>" + iamRoleFieldsXML(role) + "</member></Roles>"
 		}
 	}
 	if roleBlock == "" {
