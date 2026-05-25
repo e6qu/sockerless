@@ -60,6 +60,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: mux-overlap-scan
+        name: Mux-overlap scan (warn mode; gating in Stage B)
+        entry: bash scripts/scan-mux-overlap.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

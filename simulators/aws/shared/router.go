@@ -101,31 +101,65 @@ func (r *AzureRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mux.ServeHTTP(w, req)
 }
 
-// AWSQueryRouter routes AWS Query Protocol requests based on the Action form parameter.
-// EC2, IAM, and STS use POST with form-encoded body containing Action=OperationName.
+// AWSQueryRouter routes AWS Query Protocol requests based on the
+// (Version, Action) form parameter pair. Multiple AWS services
+// define an Action with the same name (`ListTagsForResource` exists
+// on RDS, SNS, ElastiCache, CloudWatchLogs at minimum); the
+// canonical disambiguator is the per-service `Version` form field
+// (RDS=2014-10-31, ElastiCache=2015-02-02, SNS=2010-03-31, etc.).
+//
+// Services with collision-prone Action names register via
+// `RegisterVersioned(version, action, handler)`. Services whose
+// action names are globally unique (EC2's `CreateVpc`, STS's
+// `GetCallerIdentity`) keep using the legacy `Register(action,
+// handler)` form; those handlers live under the empty-string
+// version bucket and act as a fallback when no versioned match.
 type AWSQueryRouter struct {
-	handlers map[string]http.HandlerFunc
+	// versioned[version][action] → handler. Empty-string version is
+	// the legacy bucket used by Register(action, handler).
+	versioned map[string]map[string]http.HandlerFunc
 }
 
 // NewAWSQueryRouter creates a new AWS Query Protocol request router.
 func NewAWSQueryRouter() *AWSQueryRouter {
 	return &AWSQueryRouter{
-		handlers: make(map[string]http.HandlerFunc),
+		versioned: make(map[string]map[string]http.HandlerFunc),
 	}
 }
 
-// Register adds a handler for an Action value.
+// Register adds a handler for an Action value with no Version
+// constraint. Used by services whose Action names don't collide
+// across AWS — EC2 / IAM / STS / IAM SLR+OIDC.
+//
 // Example action: "CreateVpc", "GetCallerIdentity"
 func (r *AWSQueryRouter) Register(action string, handler http.HandlerFunc) {
-	r.handlers[action] = handler
+	r.RegisterVersioned("", action, handler)
 }
 
-// ServeHTTP dispatches to the handler matching the Action form parameter.
+// RegisterVersioned adds a handler for an (Action, Version) pair.
+// Required when the same Action name is defined by multiple AWS
+// services — the Version form parameter selects which service the
+// caller is targeting.
+//
+// Example: r.RegisterVersioned("2014-10-31", "ListTagsForResource",
+// handleRDSListTags) so RDS's ListTagsForResource doesn't shadow
+// (or get shadowed by) ElastiCache's ListTagsForResource at the
+// router level.
+func (r *AWSQueryRouter) RegisterVersioned(version, action string, handler http.HandlerFunc) {
+	if r.versioned[version] == nil {
+		r.versioned[version] = make(map[string]http.HandlerFunc)
+	}
+	r.versioned[version][action] = handler
+}
+
+// ServeHTTP dispatches by (Version, Action). When Version is set
+// and a versioned handler exists, it wins. Otherwise the legacy
+// bucket (version="") is consulted as a fallback.
 func (r *AWSQueryRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err := req.ParseForm(); err != nil {
 		w.Header().Set("Content-Type", "text/xml")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`<Response><Errors><Error><Code>MalformedInput</Code><Message>Could not parse form body</Message></Error></Errors></Response>`))
+		_, _ = w.Write([]byte(`<Response><Errors><Error><Code>MalformedInput</Code><Message>Could not parse form body</Message></Error></Errors></Response>`))
 		return
 	}
 
@@ -133,19 +167,29 @@ func (r *AWSQueryRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if action == "" {
 		w.Header().Set("Content-Type", "text/xml")
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`<Response><Errors><Error><Code>MissingAction</Code><Message>Action parameter is required</Message></Error></Errors></Response>`))
+		_, _ = w.Write([]byte(`<Response><Errors><Error><Code>MissingAction</Code><Message>Action parameter is required</Message></Error></Errors></Response>`))
 		return
 	}
 
-	handler, ok := r.handlers[action]
-	if !ok {
-		w.Header().Set("Content-Type", "text/xml")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`<Response><Errors><Error><Code>InvalidAction</Code><Message>The action ` + action + ` is not valid</Message></Error></Errors></Response>`))
-		return
+	version := req.FormValue("Version")
+	if version != "" {
+		if vmap, ok := r.versioned[version]; ok {
+			if handler, ok := vmap[action]; ok {
+				handler(w, req)
+				return
+			}
+		}
+	}
+	if vmap, ok := r.versioned[""]; ok {
+		if handler, ok := vmap[action]; ok {
+			handler(w, req)
+			return
+		}
 	}
 
-	handler(w, req)
+	w.Header().Set("Content-Type", "text/xml")
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(`<Response><Errors><Error><Code>InvalidAction</Code><Message>The action ` + action + ` is not valid</Message></Error></Errors></Response>`))
 }
 
 // ReadJSON reads and decodes a JSON request body into the given value.

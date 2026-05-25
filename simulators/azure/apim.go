@@ -46,11 +46,40 @@ type APIMSubscription struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// APIMOperation is one operation under an API. Real Azure paths:
+// `Microsoft.ApiManagement/service/{svc}/apis/{api}/operations/{op}`.
+type APIMOperation struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// APIMBackend models a backend endpoint registered under a service.
+type APIMBackend struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// APIMNamedValue models a per-service named value (typed key/value
+// used for variable substitution inside policies).
+type APIMNamedValue struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 var (
 	apimServices      sim.Store[APIMService]
 	apimApis          sim.Store[APIMApi]
 	apimProducts      sim.Store[APIMProduct]
 	apimSubscriptions sim.Store[APIMSubscription]
+	apimOperations    sim.Store[APIMOperation]
+	apimBackends      sim.Store[APIMBackend]
+	apimNamedValues   sim.Store[APIMNamedValue]
 )
 
 func registerAPIM(srv *sim.Server) {
@@ -58,6 +87,9 @@ func registerAPIM(srv *sim.Server) {
 	apimApis = sim.MakeStore[APIMApi](srv.DB(), "apim_apis")
 	apimProducts = sim.MakeStore[APIMProduct](srv.DB(), "apim_products")
 	apimSubscriptions = sim.MakeStore[APIMSubscription](srv.DB(), "apim_subscriptions")
+	apimOperations = sim.MakeStore[APIMOperation](srv.DB(), "apim_operations")
+	apimBackends = sim.MakeStore[APIMBackend](srv.DB(), "apim_backends")
+	apimNamedValues = sim.MakeStore[APIMNamedValue](srv.DB(), "apim_named_values")
 
 	const base = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ApiManagement/service"
 
@@ -80,6 +112,177 @@ func registerAPIM(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions/{sub}", handleAPIMGetSubscription)
 	srv.HandleFunc("DELETE "+base+"/{name}/subscriptions/{sub}", handleAPIMDeleteSubscription)
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions", handleAPIMListSubscriptions)
+
+	// Operations: scoped to an API. Path:
+	// /service/{svc}/apis/{api}/operations/{op}.
+	srv.HandleFunc("PUT "+base+"/{name}/apis/{api}/operations/{op}", handleAPIMCreateOperation)
+	srv.HandleFunc("GET "+base+"/{name}/apis/{api}/operations/{op}", handleAPIMGetOperation)
+	srv.HandleFunc("DELETE "+base+"/{name}/apis/{api}/operations/{op}", handleAPIMDeleteOperation)
+	srv.HandleFunc("GET "+base+"/{name}/apis/{api}/operations", handleAPIMListOperations)
+
+	// Backends: scoped to the service.
+	srv.HandleFunc("PUT "+base+"/{name}/backends/{backend}", handleAPIMCreateBackend)
+	srv.HandleFunc("GET "+base+"/{name}/backends/{backend}", handleAPIMGetBackend)
+	srv.HandleFunc("DELETE "+base+"/{name}/backends/{backend}", handleAPIMDeleteBackend)
+	srv.HandleFunc("GET "+base+"/{name}/backends", handleAPIMListBackends)
+
+	// NamedValues: scoped to the service.
+	srv.HandleFunc("PUT "+base+"/{name}/namedValues/{nv}", handleAPIMCreateNamedValue)
+	srv.HandleFunc("GET "+base+"/{name}/namedValues/{nv}", handleAPIMGetNamedValue)
+	srv.HandleFunc("DELETE "+base+"/{name}/namedValues/{nv}", handleAPIMDeleteNamedValue)
+	srv.HandleFunc("GET "+base+"/{name}/namedValues", handleAPIMListNamedValues)
+}
+
+// Sub-resource handlers — each follows the same shape: PUT replaces,
+// GET returns the row or 404, DELETE removes, LIST filters by parent.
+// Store keys are `<sub>/<rg>/<service>[/api]/<resource>` so cascade
+// delete + per-service filter stay cheap.
+
+func apimOperationKey(sub, rg, svc, api, op string) string {
+	return sub + "/" + rg + "/" + svc + "/" + api + "/" + op
+}
+func apimBackendKey(sub, rg, svc, b string) string { return sub + "/" + rg + "/" + svc + "/" + b }
+func apimNamedValueKey(sub, rg, svc, n string) string {
+	return sub + "/" + rg + "/" + svc + "/" + n
+}
+
+func handleAPIMCreateOperation(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	svc := sim.PathParam(r, "name")
+	api := sim.PathParam(r, "api")
+	op := sim.PathParam(r, "op")
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	o := APIMOperation{
+		ID:         apimServiceID(sub, rg, svc) + "/apis/" + api + "/operations/" + op,
+		Name:       op,
+		Type:       "Microsoft.ApiManagement/service/apis/operations",
+		Properties: req.Properties,
+	}
+	apimOperations.Put(apimOperationKey(sub, rg, svc, api, op), o)
+	sim.WriteJSON(w, http.StatusOK, o)
+}
+func handleAPIMGetOperation(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, api, op := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "api"), sim.PathParam(r, "op")
+	o, ok := apimOperations.Get(apimOperationKey(sub, rg, svc, api, op))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Operation %q not found", op)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, o)
+}
+func handleAPIMDeleteOperation(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, api, op := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "api"), sim.PathParam(r, "op")
+	if !apimOperations.Delete(apimOperationKey(sub, rg, svc, api, op)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Operation %q not found", op)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+func handleAPIMListOperations(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, api := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "api")
+	prefix := apimServiceID(sub, rg, svc) + "/apis/" + api + "/operations/"
+	all := apimOperations.Filter(func(o APIMOperation) bool { return strings.HasPrefix(o.ID, prefix) })
+	if all == nil {
+		all = []APIMOperation{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleAPIMCreateBackend(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, b := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "backend")
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	be := APIMBackend{
+		ID:         apimServiceID(sub, rg, svc) + "/backends/" + b,
+		Name:       b,
+		Type:       "Microsoft.ApiManagement/service/backends",
+		Properties: req.Properties,
+	}
+	apimBackends.Put(apimBackendKey(sub, rg, svc, b), be)
+	sim.WriteJSON(w, http.StatusOK, be)
+}
+func handleAPIMGetBackend(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, b := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "backend")
+	be, ok := apimBackends.Get(apimBackendKey(sub, rg, svc, b))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Backend %q not found", b)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, be)
+}
+func handleAPIMDeleteBackend(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, b := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "backend")
+	if !apimBackends.Delete(apimBackendKey(sub, rg, svc, b)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Backend %q not found", b)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+func handleAPIMListBackends(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")
+	prefix := apimServiceID(sub, rg, svc) + "/backends/"
+	all := apimBackends.Filter(func(b APIMBackend) bool { return strings.HasPrefix(b.ID, prefix) })
+	if all == nil {
+		all = []APIMBackend{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleAPIMCreateNamedValue(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, n := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "nv")
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	nv := APIMNamedValue{
+		ID:         apimServiceID(sub, rg, svc) + "/namedValues/" + n,
+		Name:       n,
+		Type:       "Microsoft.ApiManagement/service/namedValues",
+		Properties: req.Properties,
+	}
+	apimNamedValues.Put(apimNamedValueKey(sub, rg, svc, n), nv)
+	sim.WriteJSON(w, http.StatusOK, nv)
+}
+func handleAPIMGetNamedValue(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, n := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "nv")
+	nv, ok := apimNamedValues.Get(apimNamedValueKey(sub, rg, svc, n))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "NamedValue %q not found", n)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, nv)
+}
+func handleAPIMDeleteNamedValue(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc, n := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "nv")
+	if !apimNamedValues.Delete(apimNamedValueKey(sub, rg, svc, n)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "NamedValue %q not found", n)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+func handleAPIMListNamedValues(w http.ResponseWriter, r *http.Request) {
+	sub, rg, svc := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")
+	prefix := apimServiceID(sub, rg, svc) + "/namedValues/"
+	all := apimNamedValues.Filter(func(nv APIMNamedValue) bool { return strings.HasPrefix(nv.ID, prefix) })
+	if all == nil {
+		all = []APIMNamedValue{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 }
 
 func apimServiceID(sub, rg, name string) string {

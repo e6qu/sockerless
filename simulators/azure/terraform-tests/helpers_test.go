@@ -60,7 +60,14 @@ func generateTLSCerts(dir string) (string, string, string) {
 		log.Fatalf("Failed to generate server key: %v", err)
 	}
 
-	// Server certificate template
+	// Server certificate template. The sim emits subdomain URLs that
+	// mirror real Azure's per-resource DNS naming (<vault>.vault.azure.net,
+	// <account>.blob.core.windows.net, etc.). We replicate that under
+	// `.localhost` so the SDK's URL parsers see canonical Azure shapes
+	// and the OS resolver returns 127.0.0.1 via RFC 6761 (`.localhost.`
+	// is loopback by spec; systemd-resolved on Ubuntu 24 honours it).
+	// Cert carries one wildcard SAN per Azure service subdomain we
+	// emit, plus the literal `localhost` for the ARM/control-plane URL.
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: "localhost"},
@@ -69,7 +76,18 @@ func generateTLSCerts(dir string) (string, string, string) {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
-		DNSNames:     []string{"localhost"},
+		DNSNames: []string{
+			"localhost",
+			"*.vault.localhost",
+			"*.blob.localhost",
+			"*.file.localhost",
+			"*.queue.localhost",
+			"*.table.localhost",
+			"*.web.localhost",
+			"*.dfs.localhost",
+			"*.azurecr.localhost",
+			"*.servicebus.localhost",
+		},
 	}
 
 	// Sign server cert with CA
@@ -123,6 +141,38 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
+	// Pre-pull the multi-arch alpine image the test's azurerm_container_app
+	// uses. The sim's ACA PUT handler starts the workload container on the
+	// host's Docker daemon synchronously; if the image isn't cached the
+	// pull blows the terraform-provider's request budget. ECR Public
+	// Gallery serves linux/{amd64,arm64} variants without auth.
+	//
+	// ECR Public can return `toomanyrequests` on cold CI runners. Retry
+	// with exponential backoff before giving up — never just one
+	// attempt against a public registry.
+	pullImage := "public.ecr.aws/docker/library/alpine:latest"
+	backoff := 5 * time.Second
+	var pullErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		pull := exec.Command("docker", "pull", pullImage)
+		pull.Stdout = os.Stdout
+		pull.Stderr = os.Stderr
+		pullErr = pull.Run()
+		if pullErr == nil {
+			break
+		}
+		log.Printf("alpine pull attempt %d failed: %v — retrying in %s", attempt, pullErr, backoff)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	if pullErr != nil {
+		log.Fatalf("Failed to pre-pull alpine image after retries: %v", pullErr)
+	}
+	tag := exec.Command("docker", "tag", pullImage, "alpine:latest")
+	if err := tag.Run(); err != nil {
+		log.Fatalf("Failed to retag alpine: %v", err)
+	}
+
 	// Generate TLS certificates
 	certDir, err := os.MkdirTemp("", "azure-tls-*")
 	if err != nil {
@@ -150,7 +200,11 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to start simulator: %v", err)
 	}
 
-	baseURL = fmt.Sprintf("https://127.0.0.1:%d", simPort)
+	// localhost (not 127.0.0.1) so the sim emits subdomain URIs
+	// rooted at `.localhost` — RFC 6761 makes *.localhost resolve
+	// to loopback on systemd-resolved, and the cert above carries
+	// the matching wildcard SANs for each Azure service.
+	baseURL = fmt.Sprintf("https://localhost:%d", simPort)
 
 	if err := waitForHealth(baseURL+"/health", caCertPath); err != nil {
 		simCmd.Process.Kill()

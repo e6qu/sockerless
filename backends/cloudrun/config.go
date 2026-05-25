@@ -16,11 +16,17 @@ type Config struct {
 	Region        string
 	VPCConnector  string
 	LogID         string
-	BuildBucket   string        // GCS bucket for Cloud Build context upload
-	BuildPlatform string        // Docker build platform for overlay images
-	EndpointURL   string        // Custom endpoint URL
-	PollInterval  time.Duration // Cloud API poll interval (default 2s)
-	LogTimeout    time.Duration // Cloud Logging query timeout (default 30s)
+	BuildBucket   string // GCS bucket for Cloud Build context upload
+	BuildPlatform string // Docker build platform for overlay images
+	EndpointURL   string // Custom endpoint URL (sim/emulator) for run.googleapis.com peers
+	// LogAdminEndpoint is the host:port for Cloud Logging admin gRPC.
+	// In real GCP this is logging.googleapis.com:443; in sim mode this
+	// points at the simulator's gRPC listener. Required whenever
+	// EndpointURL is set (no derivation from EndpointURL — they are
+	// distinct APIs in real GCP).
+	LogAdminEndpoint string
+	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	LogTimeout       time.Duration // Cloud Logging query timeout (default 30s)
 
 	// UseService switches container execution from Cloud Run Jobs to
 	// Cloud Run Services with internal ingress. Required for:
@@ -134,6 +140,7 @@ func ConfigFromEnv() Config {
 		BuildBucket:         os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
 		BuildPlatform:       envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
 		EndpointURL:         os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		LogAdminEndpoint:    os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT"),
 		PollInterval:        parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
 		LogTimeout:          parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		UseService:          os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
@@ -257,11 +264,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.LogAdminEndpoint = os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+		if sim.GRPCPort > 0 {
+			c.LogAdminEndpoint = fmt.Sprintf("localhost:%d", sim.GRPCPort)
+		}
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
 	return c
@@ -271,6 +282,10 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 func (c Config) Validate() error {
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_PROJECT is required")
+	}
+	if c.EndpointURL != "" && c.LogAdminEndpoint == "" {
+		return fmt.Errorf("SOCKERLESS_GCP_LOGADMIN_ENDPOINT is required when SOCKERLESS_ENDPOINT_URL is set " +
+			"(Cloud Logging is a distinct API in real GCP; the sim mirrors that — set both URLs explicitly)")
 	}
 	if c.UseService && c.VPCConnector == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_USE_SERVICE=1 requires SOCKERLESS_GCR_VPC_CONNECTOR — Services need a VPC connector for peer-reachable internal DNS")

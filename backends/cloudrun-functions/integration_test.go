@@ -195,7 +195,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 
 	// Per-target endpoint + ARM identifiers + auth/bootstrap paths.
-	var endpointURL, project, buildBucket, saJSONPath, gcfBootstrapPath string
+	var endpointURL, logAdminEndpoint, project, buildBucket, saJSONPath, gcfBootstrapPath string
 	switch target {
 	case "sim":
 		// Build simulator
@@ -216,15 +216,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
-		// Start simulator
+		// Allocate two distinct free ports. Real GCP keeps Cloud Functions
+		// (cloudfunctions.googleapis.com) and Cloud Logging gRPC
+		// (logging.googleapis.com) on entirely separate endpoints — the
+		// sim mirrors that. Harness wires both URLs explicitly to the
+		// backend via SOCKERLESS_ENDPOINT_URL +
+		// SOCKERLESS_GCP_LOGADMIN_ENDPOINT (no derivation).
 		simPort := findFreePort()
+		simGRPCPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
 		step("starting simulator-gcp")
-		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
+		fmt.Printf("[sim] Starting simulator-gcp on %s (gRPC :%d)...\n", simAddr, simGRPCPort)
 		simCmd := exec.Command(simBinary)
 		simCmd.Env = append(os.Environ(),
 			"SIM_LISTEN_ADDR="+simAddr,
+			fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", simGRPCPort),
 			// The sim's Cloud Build executor runs `docker build` for the
 			// overlay image. The Dockerfile FROM references the user's
 			// image by its raw name (e.g. `sockerless-eval-arithmetic:test`)
@@ -251,6 +258,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
 
 		endpointURL = simURL
+		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sockerless-test"
 		buildBucket = "sockerless-test-build"
 
@@ -301,6 +309,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		logAdminEndpoint = requireEnv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 		project = requireEnv("SOCKERLESS_GCF_PROJECT")
 		buildBucket = requireEnv("SOCKERLESS_GCP_BUILD_BUCKET")
 		saJSONPath = requireEnv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -336,6 +345,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendCmd.Env = append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+		"SOCKERLESS_GCP_LOGADMIN_ENDPOINT="+logAdminEndpoint,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT="+project,

@@ -341,19 +341,10 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		emitStoredOrEmptyXML(w, bucket, "notification", "NotificationConfiguration")
 		return
 	case q.Has("acl"):
-		// Real S3: when ownershipControls = BucketOwnerEnforced, ACLs
-		// are disabled and GetBucketAcl returns
-		// `AccessControlListNotSupported` (400). Check the stored
-		// ownership-controls body for that string before falling
-		// through to the canonical owner-grant.
-		if oc, _, ok := getStoredBucketSubresource(bucket, "ownershipControls"); ok {
-			if strings.Contains(string(oc), "BucketOwnerEnforced") {
-				sim.S3ErrorXML(w, "AccessControlListNotSupported",
-					"The bucket does not allow ACLs", bucket,
-					sim.RequestID(r.Context()), http.StatusBadRequest)
-				return
-			}
-		}
+		// Real S3: GetBucketAcl returns the canonical owner-only ACL
+		// even on BucketOwnerEnforced buckets (200, not the 400 that
+		// PutBucketAcl returns). terraform-provider-aws's bucket Read
+		// reads the ACL regardless of ownership-controls state.
 		if body, ct, ok := getStoredBucketSubresource(bucket, "acl"); ok {
 			if ct == "" {
 				ct = "application/xml"

@@ -151,7 +151,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker build alpine local tags: %v\n%s", err, out)
 	}
 
-	var endpointURL, project, bootstrapPath, buildBucket, saJSONPath string
+	var endpointURL, logAdminEndpoint, project, bootstrapPath, buildBucket, saJSONPath string
 	switch target {
 	case "sim":
 		simDir := repoRoot + "/simulators/gcp"
@@ -167,13 +167,21 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		}
 		cleanups = append(cleanups, func() { os.Remove(simBinary) })
 
+		// Allocate two distinct free ports. Real GCP keeps Cloud Run's
+		// REST API (run.googleapis.com) and Cloud Logging's gRPC API
+		// (logging.googleapis.com) on entirely separate endpoints —
+		// the sim mirrors that. The harness wires both URLs explicitly
+		// to the backend via SOCKERLESS_ENDPOINT_URL +
+		// SOCKERLESS_GCP_LOGADMIN_ENDPOINT (no derivation).
 		simPort := findFreePort()
+		simGRPCPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
 		simURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
-		fmt.Printf("[sim] Starting simulator-gcp on %s...\n", simAddr)
+		fmt.Printf("[sim] Starting simulator-gcp on %s (gRPC :%d)...\n", simAddr, simGRPCPort)
 		simCmd := exec.Command(simBinary)
 		simCmd.Env = append(os.Environ(),
 			"SIM_LISTEN_ADDR="+simAddr,
+			fmt.Sprintf("SIM_GCP_GRPC_PORT=%d", simGRPCPort),
 			"PATH="+os.Getenv("PATH"),
 			// The sim's Cloud Build executor runs `docker build` for the
 			// overlay image. The Dockerfile FROM references the user's
@@ -196,6 +204,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		fmt.Printf("[sim] simulator-gcp ready at %s\n", simURL)
 
 		endpointURL = simURL
+		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sim-project"
 		buildBucket = "sockerless-test-build"
 
@@ -243,6 +252,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
+		logAdminEndpoint = requireEnv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 		project = requireEnv("SOCKERLESS_GCR_PROJECT")
 		bootstrapPath = requireEnv("SOCKERLESS_CLOUDRUN_BOOTSTRAP")
 		buildBucket = requireEnv("SOCKERLESS_GCP_BUILD_BUCKET")
@@ -269,6 +279,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	storageHost = strings.TrimPrefix(storageHost, "https://")
 	backendEnv := append(os.Environ(),
 		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+		"SOCKERLESS_GCP_LOGADMIN_ENDPOINT="+logAdminEndpoint,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCR_PROJECT="+project,

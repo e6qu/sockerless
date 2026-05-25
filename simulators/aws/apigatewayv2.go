@@ -50,11 +50,25 @@ type APIGWv2Stage struct {
 	CreatedDate string `json:"createdDate"`
 }
 
+// APIGWv2Deployment models the snapshot of an HTTP API's routes +
+// integrations + stages at a point in time. terraform-provider-aws
+// emits `POST /v2/apis/{apiId}/deployments` on `aws_apigatewayv2_deployment`
+// — without this route registered the request used to fall through
+// to the S3 wildcard dispatcher and 400 with an InvalidRequest envelope.
+type APIGWv2Deployment struct {
+	DeploymentId     string `json:"deploymentId"`
+	ApiId            string `json:"apiIdRef,omitempty"`
+	Description      string `json:"description,omitempty"`
+	DeploymentStatus string `json:"deploymentStatus"` // DEPLOYED | PENDING | FAILED
+	CreatedDate      string `json:"createdDate"`
+}
+
 var (
 	apigwv2Apis         sim.Store[APIGWv2Api]
 	apigwv2Routes       sim.Store[APIGWv2Route]
 	apigwv2Integrations sim.Store[APIGWv2Integration]
 	apigwv2Stages       sim.Store[APIGWv2Stage]
+	apigwv2Deployments  sim.Store[APIGWv2Deployment]
 )
 
 func registerAPIGatewayV2(srv *sim.Server) {
@@ -62,6 +76,7 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	apigwv2Routes = sim.MakeStore[APIGWv2Route](srv.DB(), "apigwv2_routes")
 	apigwv2Integrations = sim.MakeStore[APIGWv2Integration](srv.DB(), "apigwv2_integrations")
 	apigwv2Stages = sim.MakeStore[APIGWv2Stage](srv.DB(), "apigwv2_stages")
+	apigwv2Deployments = sim.MakeStore[APIGWv2Deployment](srv.DB(), "apigwv2_deployments")
 
 	mux := srv.Mux()
 	mux.HandleFunc("POST /v2/apis", handleAPIGWv2CreateApi)
@@ -74,6 +89,10 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	mux.HandleFunc("GET /v2/apis/{apiId}/integrations", handleAPIGWv2ListIntegrations)
 	mux.HandleFunc("POST /v2/apis/{apiId}/stages", handleAPIGWv2CreateStage)
 	mux.HandleFunc("GET /v2/apis/{apiId}/stages", handleAPIGWv2ListStages)
+	mux.HandleFunc("POST /v2/apis/{apiId}/deployments", handleAPIGWv2CreateDeployment)
+	mux.HandleFunc("GET /v2/apis/{apiId}/deployments", handleAPIGWv2ListDeployments)
+	mux.HandleFunc("GET /v2/apis/{apiId}/deployments/{deploymentId}", handleAPIGWv2GetDeployment)
+	mux.HandleFunc("DELETE /v2/apis/{apiId}/deployments/{deploymentId}", handleAPIGWv2DeleteDeployment)
 }
 
 func apigwv2StoreKey(apiId, resource string) string { return apiId + "/" + resource }
@@ -260,4 +279,66 @@ func handleAPIGWv2ListStages(w http.ResponseWriter, r *http.Request) {
 		out = []APIGWv2Stage{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func handleAPIGWv2CreateDeployment(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	if _, ok := apigwv2Apis.Get(apiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid API identifier")
+		return
+	}
+	var req struct {
+		Description string `json:"Description"`
+		StageName   string `json:"StageName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	d := APIGWv2Deployment{
+		DeploymentId:     generateUUID()[:10],
+		ApiId:            apiId,
+		Description:      req.Description,
+		DeploymentStatus: "DEPLOYED",
+		CreatedDate:      time.Now().UTC().Format(time.RFC3339),
+	}
+	apigwv2Deployments.Put(apigwv2StoreKey(apiId, d.DeploymentId), d)
+	sim.WriteJSON(w, http.StatusCreated, d)
+}
+
+func handleAPIGWv2ListDeployments(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	var out []APIGWv2Deployment
+	for _, d := range apigwv2Deployments.List() {
+		if d.ApiId == apiId {
+			out = append(out, d)
+		}
+	}
+	if out == nil {
+		out = []APIGWv2Deployment{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func handleAPIGWv2GetDeployment(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	deploymentId := sim.PathParam(r, "deploymentId")
+	d, ok := apigwv2Deployments.Get(apigwv2StoreKey(apiId, deploymentId))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Deployment identifier specified %s", deploymentId)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d)
+}
+
+func handleAPIGWv2DeleteDeployment(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	deploymentId := sim.PathParam(r, "deploymentId")
+	if !apigwv2Deployments.Delete(apigwv2StoreKey(apiId, deploymentId)) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Deployment identifier specified %s", deploymentId)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

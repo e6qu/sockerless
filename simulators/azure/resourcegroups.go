@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -88,6 +89,26 @@ func registerResourceGroups(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"value": []any{},
 		})
+	})
+
+	// GET - List resources in subscription. terraform-provider-azurerm
+	// uses this to populate per-subscription caches (e.g. resolving a
+	// Key Vault URL → resource ID for azurerm_key_vault_secret on
+	// every plan refresh). Real Azure supports a `$filter` query but
+	// the sim returns every Key Vault in the subscription regardless
+	// — terraform-provider-azurerm's KV-cache logic filters client-
+	// side by `properties.vaultUri`, so the broader list is harmless.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/resources", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+		vaults := keyVaults.Filter(func(v KeyVault) bool {
+			return strings.HasPrefix(v.ID, prefix)
+		})
+		values := make([]any, 0, len(vaults))
+		for _, v := range vaults {
+			values = append(values, v)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": values})
 	})
 
 	// HEAD - Check resource group existence

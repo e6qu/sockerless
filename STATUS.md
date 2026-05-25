@@ -6,74 +6,57 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-177-community-issues` — BUG-1142..1147 closed (1 reopen + 1 new community-filed + 4 meta-skill improvements). PR #202 open + awaiting CI + user merge. |
-| In-flight | PR #202 — waiting on GitHub Actions; user merges when green. |
-| Last merged | PR #200 — Phase 176 community-filed issues + audit findings (2026-05-24, squash `2d8e604`). |
+| Active branch | `phase-178-community-issues` — PR #211 open + awaiting CI + user merge. 18 commits closed BUG-1148..1161 (1 reopen + 8 community-filed + 5 class-of-bug remediations). |
+| In-flight | PR #211 — CI running on 25 jobs (22 prior + 3 new `tf` matrix). |
+| Last merged | PR #202 — Phase 177 community-filed issues + 4 meta-skill improvements (2026-05-24, squash `aa847b1`). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1147 filed · 1145 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
+| Bugs | 1161 filed · 1159 fixed · 2 open · 2 false positives. Open: BUG-1075 (live-cloud) + BUG-1104 (audit-cadence meta). |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
 
 ### Process
-- **Never auto-merge PRs.** Push, wait for `gh pr checks` green, ping user. One-time exceptions don't carry forward.
+- **Never auto-merge PRs.** Push, wait for `gh pr checks` green, ping user.
 - **Single-branch rule.** All in-flight work for one phase lands on one branch; many granular commits, one PR.
 - **File BUGs *before* fixing.** Survey first, write `BUGS.md § Open` entries, only then start fix commits.
-- **State save every task.** STATUS.md + DO_NEXT.md + WHAT_WE_DID.md + MEMORY.md + `_tasks/done/`.
+- **State save every task.** STATUS.md + DO_NEXT.md + WHAT_WE_DID.md + MEMORY.md.
 - **Test all the time.** `go test ./...` in every touched module; harness-touch re-runs the harness; terraform-touch runs `terragrunt validate`.
-- **Verify each significant chunk.** Don't batch fixes; commit + run tests + push between sub-tasks so CI catches regressions early.
 - **Branch hygiene.** Rebase phase branch on `origin/main` before pushing; sync local `main` after merge.
-- **Pre-push hooks own the truth.** If `check-latest-deps` flags dep drift, bump deps in the same branch — never skip the hook.
-- **Read `.claude/skills/avoid-vibe-slop/SKILL.md` before every non-trivial change** — the catalogue exists to apply at write-time.
+- **Pre-push hooks own the truth.** If `check-latest-deps` flags dep drift, bump deps in the same branch — never skip.
+- **Read `.claude/skills/avoid-vibe-slop/SKILL.md` before every non-trivial change.**
 
 ### Architecture
 - **Components stay decoupled from admin / UI.** Sims, backends, bleephub run independently via env vars; admin reads only `/v1/health`, `/v1/info`, env.
 - **Backend ↔ host primitive must match.** ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, GCF in CRF, ACA in ACA, AZF in AZF.
 - **No fakes / no fallbacks.** Unknown values fail loud. Operator-requested persistence + auth never silently degrade.
-- **Persistence is opt-in + fail-loud.** `BLEEPHUB_PERSIST=true` / `SIM_PERSIST=true` → SQLite. Open-failure *and* write-failure must surface (BUG-985/986 + BUG-997); never silent in-memory fallback.
-- **HTTP handlers in `backends/core/handle_*.go` must dispatch through `s.self.<Method>`** — never read `s.Store.*` directly (BUG-991/992/995).
+- **Persistence is opt-in + fail-loud.** `BLEEPHUB_PERSIST=true` / `SIM_PERSIST=true` → SQLite. Open-failure *and* write-failure must surface.
+- **HTTP handlers in `backends/core/handle_*.go` must dispatch through `s.self.<Method>`** — never read `s.Store.*` directly.
 - **Test target gating.** Backend integration tests require `SOCKERLESS_TEST_TARGET=sim|cloud`; never implicit skip.
-- **No phase or bug IDs in code comments or test docstrings** (BUG-994/1014/1026/1036). Metadata lives in commits / PRs / BUGS.md; comments document the *why*.
-- **SDK/CLI/Terraform provider call sequences differ materially from each other** (BUG-1029/1030/1038-sub-fix/1095). Simulator endpoint-fidelity fixes need the real external clients, not internal shortcuts; one missing canonical field can surface only in gcloud or Terraform.
-- **specs/CLOUD_RESOURCE_MAPPING.md is authoritative** for "how does sockerless model X on cloud Y."
+- **No phase / bug IDs in code comments or test docstrings.** Metadata lives in commits / PRs / BUGS.md; comments document the *why*.
+- **SDK / CLI / Terraform-provider call sequences differ materially.** Simulator endpoint-fidelity fixes need the real external clients, not internal shortcuts.
+- **`specs/CLOUD_RESOURCE_MAPPING.md` is authoritative** for "how does sockerless model X on cloud Y."
+- **Closed enumeration → full-table audit before "fixed".** Surface tables live in `specs/SIM_SURFACE_TABLES/` (46+ tables seeded in Phase 178). No silent ✗ rows.
+- **Every reopen carries a postmortem trail** (what test passed but should have failed; what SDK code path was missed; what new canonical-client test catches the regression). P0 by default.
+- **Mux pattern overlap is a real-bug class.** Collapsed-port sim has no DNS-level service isolation; `scripts/scan-mux-overlap.sh` runs in pre-commit (warn mode).
+- **List* ops use paged-iterator tests.** Single-record envelopes silently pass `.Value[0]`-style tests.
+- **Stateful resources model their state machine.** `sim-state-machine-completeness` skill audits every row of every surface table whose handler is stateful.
 
 ### bleephub-specific
-- **`gh` CLI is the reference adaptor.** If it works against `api.github.com`, it must work against bleephub. No URL hackery.
-- **`gh` is HTTPS-only against non-`github.com` hosts.** Quick-start in `bleephub/README.md` covers the self-signed-cert + system-trust path.
-- **GitHub Apps and OAuth Apps are separate concepts.** Distinct store entries, distinct token prefixes (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`).
-- **Installation tokens are immutable snapshots.** Re-mint to pick up perm changes.
-- **Body coercion is per-GitHub-spec.** `flexBool` / `flexInt` accept both typed and string-coerced JSON (what `gh api -f` sends).
-- **No `alg:none` JWTs in OAuth issuance** — BUG-1000.
+- **`gh` CLI is the reference adaptor.** No URL hackery.
+- **`gh` is HTTPS-only against non-`github.com` hosts.** Quick-start covers self-signed-cert + system-trust path.
+- **GitHub Apps and OAuth Apps are separate concepts** with distinct token prefixes (`ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_`).
+- **No `alg:none` JWTs in OAuth issuance.**
 
-## Phase 167 — Pod-model analysis + Phase 168 execution (merged)
-
-User directive (2026-05-17): compare pod abstraction across 7 backends; trace runner ↔ backend call sequences; root-cause the "12-step CI job = 12+ min" symptom; design simplifications. Analysis only — no code edits.
-
-Phase 167/168 deliverables:
-- Cross-backend pod-model comparison: long-lived backends (docker/ecs/cloudrun/aca) hold one container/task/revision for the entire job; FaaS backends (lambda/gcf/azf) are invoke-on-demand. Per-backend exec dispatch differs in ways that the audit caught + codex review re-checked.
-- Root cause of "12 steps = 12+ min": **Path B silent fallback in lambda + cloudrun + cloudrun-functions** dispatch. When the in-container reverse-agent doesn't dial back, every `docker exec` becomes a fresh function invocation cold-starting in 30-90s. 12 invocations × cold-start = the wall-clock symptom.
-- Phase 168 implementation: unified exec on Model A (mandatory reverse-agent WebSocket; no Path B anywhere); default storage to in-memory tmpfs on cloudrun + cloudrun-functions + ACA (lambda + azf platforms reject `BackingMemory` so they keep current defaults); ripped all Path B code; ripped the parallel `core.CloudExecDriver` interface; cleanup failures propagate; FaaS pod lifetime is hard-capped at platform max.
-- Driver model preserved: typed `core.ExecDriver` stays as the load-bearing abstraction. Each backend registers ONE driver matching its platform's primitive. Operator pluggability remains.
-
-Codex review caught 3 corrections during Phase 167:
-- AZF is Path A only (no Path B) — opposite of my initial claim.
-- Tmpfs default scope must exclude lambda + azf (their volume translators reject `BackingMemory`).
-- Tmpfs size clamping is itself a silent fallback (must fail-loud startup instead).
-
-Self-caught during the "does the exec driver still make sense" check: **cloudrun ALSO has the Path A/B pattern**, missed in the initial Phase 167 analysis. Added to Phase 168 scope as BUG-1054.
-
-User-confirmed for Phase 168: Model A; no fallbacks anywhere; FaaS max duration is hard limit (no extension hacks); `execStartViaInvoke` ripped entirely; cleanup failures propagate.
-
-## Recently closed phases (last 6)
+## Recently closed phases
 
 | PR | Phase | Headline |
 |---|---|---|
-| #200 | 176 | 8 community-filed issues closed (#190 reopened + #193..#199) + 12 in-PR skill-audit findings + path-style storage dispatcher contamination fix + `make hooks` bootstrap for pre-commit. 8 BUGs closed (1134-1141). Merged 2026-05-24 at `2d8e604`. |
-| #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191) + signal-driven FaaS smoke tests + CI test-job split + new `timeless-comments` skill. 14 BUGs closed (1120-1133). Merged 2026-05-24 at `ca11405`. |
-| #180 | 174 | Skill-sweep audit + community-issue triage — 3 rounds: round 1 (4 quick BUGs + 3 follow-ups), round 2 (3 follow-ups closed + all 8 GitHub issues #181–#188), round 3 (5 self-audit gaps). 15 BUGs closed (1105–1119). Merged 2026-05-24 at `7a5d588`. |
-| #179 | 173 | Simulator wire-fidelity sweep — 20 commits, ~180 sim ops added across AWS/GCP/Azure, closes issues #173–#178 + BUG-1098..1104. Merged 2026-05-24 at `64a13a8`. |
-| #172 | pod-model follow-up | Simulator pod materialization fidelity: real multi-container execution + localhost sidecar SDK tests for ECS, Cloud Run Services/Jobs, ACA Jobs/Apps; AZF pod docs corrected to unsupported. Merged 2026-05-23 at `1c1fd92`. |
-| #170 | 168 follow-up | FaaS runner smokes for Lambda/Cloud Run/GCF/ACA/AZF, Make/CI wiring, AZF bootstrap coverage, GCP AR endpoint-fidelity, live-validation runbook. Merged 2026-05-18 at `a5639811`. |
+| #211 | 178 (in flight) | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations: proactive surface-table seed (46 tables) + mux-overlap scanner + paged-iterator rule + state-machine skill + CI-gated tf-tests (`tf (aws\|gcp\|azure)` matrix). 14 BUGs closed (1148-1161). |
+| #202 | 177 | KV WWW-Authenticate URL reopen (#193) + S3 bucket-subresources (#201) + 4 meta-skill improvements (sim-canonical-config-test extension, surface-table-completeness, reopen-postmortem, tf-tests parity). 6 BUGs closed (1142-1147). Merged at `aa847b1`. |
+| #200 | 176 | 8 community-filed issues (#190 reopened + #193..#199) + 12 in-PR audit findings + path-style storage dispatcher contamination + `make hooks`. 8 BUGs closed (1134-1141). Merged at `2d8e604`. |
+| #192 | 175 | Second skill-sweep audit + 3 community-filed issues (#189/#190/#191) + signal-driven FaaS smoke tests + CI test-job split + new `timeless-comments` skill. 14 BUGs closed (1120-1133). Merged at `ca11405`. |
+| #180 | 174 | Skill-sweep audit + community-issue triage — 3 rounds; 15 BUGs closed (1105–1119). Merged at `7a5d588`. |
+| #179 | 173 | Simulator wire-fidelity sweep — 20 commits, ~180 sim ops added; closes #173–#178 + BUG-1098..1104. Merged at `64a13a8`. |
 
-Older phases (#112–#161): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).
+Older phases (#112–#172): one-line headlines in [PLAN.md § Closed phases](PLAN.md); per-phase narrative in [WHAT_WE_DID.md](WHAT_WE_DID.md).

@@ -295,6 +295,30 @@ func registerContainerAppsApps(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
 	})
 
+	// POST /containerApps/{appName}/listsecrets — real ACA keeps
+	// secrets out of GET responses; the dedicated listSecrets POST
+	// returns them. terraform-provider-azurerm refreshes via this
+	// endpoint on every plan after create.
+	// Single lowercase registration; AzurePathNormalizationMiddleware
+	// canonicalizes any client casing to lowercase before dispatch.
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/listsecrets", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		app, ok := apps.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		secrets := []ContainerAppSecret{}
+		if app.Properties.Configuration != nil {
+			secrets = app.Properties.Configuration.Secrets
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})
+	})
+
 	// DELETE - Delete containerApp
 	srv.HandleFunc("DELETE "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")

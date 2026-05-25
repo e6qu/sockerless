@@ -19,11 +19,16 @@ type Config struct {
 	Timeout        int
 	Memory         string
 	CPU            string
-	BuildBucket    string        // GCS bucket for Cloud Build context upload
-	BuildPlatform  string        // Docker build platform for overlay images
-	EndpointURL    string        // Custom endpoint URL
-	PollInterval   time.Duration // Cloud API poll interval (default 2s)
-	LogTimeout     time.Duration // Cloud Logging query timeout (default 30s)
+	BuildBucket    string // GCS bucket for Cloud Build context upload
+	BuildPlatform  string // Docker build platform for overlay images
+	EndpointURL    string // Custom endpoint URL (sim/emulator) for cloudfunctions.googleapis.com peers
+	// LogAdminEndpoint is the host:port for Cloud Logging admin gRPC.
+	// In real GCP this is logging.googleapis.com:443; in sim mode this
+	// points at the simulator's gRPC listener. Required whenever
+	// EndpointURL is set (distinct APIs in real GCP).
+	LogAdminEndpoint string
+	PollInterval     time.Duration // Cloud API poll interval (default 2s)
+	LogTimeout       time.Duration // Cloud Logging query timeout (default 30s)
 
 	// CallbackURL is the reverse-agent WebSocket URL injected into
 	// the function container env so a bootstrap inside can dial back
@@ -146,19 +151,20 @@ type PrewarmOverlay struct {
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
 	return Config{
-		Project:        os.Getenv("SOCKERLESS_GCF_PROJECT"),
-		Region:         envOrDefault("SOCKERLESS_GCF_REGION", "us-central1"),
-		ServiceAccount: os.Getenv("SOCKERLESS_GCF_SERVICE_ACCOUNT"),
-		Timeout:        envOrDefaultInt("SOCKERLESS_GCF_TIMEOUT", 3600),
-		Memory:         envOrDefault("SOCKERLESS_GCF_MEMORY", "4Gi"),
-		CPU:            envOrDefault("SOCKERLESS_GCF_CPU", "1"),
-		BuildBucket:    os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
-		BuildPlatform:  envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
-		EndpointURL:    os.Getenv("SOCKERLESS_ENDPOINT_URL"),
-		PollInterval:   parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		LogTimeout:     parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
-		CallbackURL:    os.Getenv("SOCKERLESS_CALLBACK_URL"),
-		EnableCommit:   os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
+		Project:          os.Getenv("SOCKERLESS_GCF_PROJECT"),
+		Region:           envOrDefault("SOCKERLESS_GCF_REGION", "us-central1"),
+		ServiceAccount:   os.Getenv("SOCKERLESS_GCF_SERVICE_ACCOUNT"),
+		Timeout:          envOrDefaultInt("SOCKERLESS_GCF_TIMEOUT", 3600),
+		Memory:           envOrDefault("SOCKERLESS_GCF_MEMORY", "4Gi"),
+		CPU:              envOrDefault("SOCKERLESS_GCF_CPU", "1"),
+		BuildBucket:      os.Getenv("SOCKERLESS_GCP_BUILD_BUCKET"),
+		BuildPlatform:    envOrDefault("SOCKERLESS_GCP_BUILD_PLATFORM", "linux/amd64"),
+		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
+		LogAdminEndpoint: os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT"),
+		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
+		LogTimeout:       parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
+		CallbackURL:      os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		EnableCommit:     os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		BootstrapBinaryPath: envOrDefault(
 			"SOCKERLESS_GCF_BOOTSTRAP",
 			"/opt/sockerless/sockerless-gcf-bootstrap",
@@ -337,11 +343,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.EndpointURL = env.Common.EndpointURL
+	c.LogAdminEndpoint = os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
 	}
 	if sim != nil && sim.Port > 0 {
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
+		if sim.GRPCPort > 0 {
+			c.LogAdminEndpoint = fmt.Sprintf("localhost:%d", sim.GRPCPort)
+		}
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases)
 	return c
@@ -354,6 +364,10 @@ func (c Config) Validate() error {
 	}
 	if c.BuildBucket == "" {
 		return fmt.Errorf("SOCKERLESS_GCP_BUILD_BUCKET is required (Cloud Functions Gen2 source archive lands here)")
+	}
+	if c.EndpointURL != "" && c.LogAdminEndpoint == "" {
+		return fmt.Errorf("SOCKERLESS_GCP_LOGADMIN_ENDPOINT is required when SOCKERLESS_ENDPOINT_URL is set " +
+			"(Cloud Logging is a distinct API in real GCP; set both URLs explicitly)")
 	}
 	switch c.NetworkDiscovery {
 	case api.NetworkDiscoveryHostAliases, api.NetworkDiscoveryNATGatewayOnly:

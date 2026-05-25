@@ -36,6 +36,11 @@ type SNSTopic struct {
 	Name string
 	ARN  string
 	Tags map[string]string
+	// Attributes are mutable settings — Policy, DisplayName,
+	// DeliveryPolicy, KmsMasterKeyId, etc. — set via
+	// SetTopicAttributes and surfaced by GetTopicAttributes alongside
+	// the fixed read-only Owner / SubscriptionsConfirmed fields.
+	Attributes map[string]string
 }
 
 type SNSSubscription struct {
@@ -60,22 +65,28 @@ func snsSubscriptionARN(topicName string) string {
 		awsRegion(), awsAccountID(), topicName, generateUUID())
 }
 
+// snsAPIVersion is the canonical AWS SNS API version (Query
+// Protocol). Used to disambiguate Action names from other awsQuery
+// services in the AWSQueryRouter dispatch.
+const snsAPIVersion = "2010-03-31"
+
 func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	snsTopics = sim.MakeStore[SNSTopic](srv.DB(), "sns_topics")
 	snsSubscriptions = sim.MakeStore[SNSSubscription](srv.DB(), "sns_subscriptions")
 
-	r.Register("CreateTopic", handleSNSCreateTopic)
-	r.Register("DeleteTopic", handleSNSDeleteTopic)
-	r.Register("ListTopics", handleSNSListTopics)
-	r.Register("GetTopicAttributes", handleSNSGetTopicAttributes)
-	r.Register("Subscribe", handleSNSSubscribe)
-	r.Register("Unsubscribe", handleSNSUnsubscribe)
-	r.Register("ListSubscriptions", handleSNSListSubscriptions)
-	r.Register("ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
-	r.Register("Publish", handleSNSPublish)
-	r.Register("TagResource", handleSNSTagResource)
-	r.Register("UntagResource", handleSNSUntagResource)
-	r.Register("ListTagsForResource", handleSNSListTagsForResource)
+	r.RegisterVersioned(snsAPIVersion, "CreateTopic", handleSNSCreateTopic)
+	r.RegisterVersioned(snsAPIVersion, "DeleteTopic", handleSNSDeleteTopic)
+	r.RegisterVersioned(snsAPIVersion, "ListTopics", handleSNSListTopics)
+	r.RegisterVersioned(snsAPIVersion, "GetTopicAttributes", handleSNSGetTopicAttributes)
+	r.RegisterVersioned(snsAPIVersion, "SetTopicAttributes", handleSNSSetTopicAttributes)
+	r.RegisterVersioned(snsAPIVersion, "Subscribe", handleSNSSubscribe)
+	r.RegisterVersioned(snsAPIVersion, "Unsubscribe", handleSNSUnsubscribe)
+	r.RegisterVersioned(snsAPIVersion, "ListSubscriptions", handleSNSListSubscriptions)
+	r.RegisterVersioned(snsAPIVersion, "ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
+	r.RegisterVersioned(snsAPIVersion, "Publish", handleSNSPublish)
+	r.RegisterVersioned(snsAPIVersion, "TagResource", handleSNSTagResource)
+	r.RegisterVersioned(snsAPIVersion, "UntagResource", handleSNSUntagResource)
+	r.RegisterVersioned(snsAPIVersion, "ListTagsForResource", handleSNSListTagsForResource)
 }
 
 func snsXMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
@@ -165,6 +176,12 @@ func handleSNSGetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		"SubscriptionsPending":   "0",
 		"SubscriptionsDeleted":   "0",
 	}
+	// Mutable attributes set via SetTopicAttributes override the
+	// fixed defaults — real SNS does the same (e.g. a `DisplayName`
+	// set on the topic replaces the auto-derived value).
+	for k, v := range t.Attributes {
+		attrs[k] = v
+	}
 	var b strings.Builder
 	b.WriteString("<GetTopicAttributesResult><Attributes>")
 	for k, v := range attrs {
@@ -173,6 +190,38 @@ func handleSNSGetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	b.WriteString("</Attributes></GetTopicAttributesResult>")
 	snsXMLResponse(w, "GetTopicAttributes", b.String(), sim.RequestID(r.Context()))
+}
+
+// handleSNSSetTopicAttributes updates a single (AttributeName,
+// AttributeValue) pair on a topic. terraform-provider-aws emits this
+// repeatedly on aws_sns_topic for DeliveryPolicy / Policy / KmsMasterKeyId /
+// etc.; pre-fix the sim returned InvalidAction and the apply failed.
+func handleSNSSetTopicAttributes(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("TopicArn")
+	name := snsTopicNameFromARN(arn)
+	t, ok := snsTopics.Get(name)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	attrName := r.FormValue("AttributeName")
+	attrValue := r.FormValue("AttributeValue")
+	if attrName == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"AttributeName is required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if t.Attributes == nil {
+		t.Attributes = map[string]string{}
+	}
+	if attrValue == "" {
+		delete(t.Attributes, attrName)
+	} else {
+		t.Attributes[attrName] = attrValue
+	}
+	snsTopics.Put(name, t)
+	snsXMLResponse(w, "SetTopicAttributes", "", sim.RequestID(r.Context()))
 }
 
 func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {

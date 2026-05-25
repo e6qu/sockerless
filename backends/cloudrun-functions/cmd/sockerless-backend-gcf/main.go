@@ -53,7 +53,7 @@ func main() {
 		logger.Fatal().Err(err).Msg("invalid configuration")
 	}
 
-	gcpClients, err := backend.NewGCPClients(context.Background(), config.Project, config.EndpointURL)
+	gcpClients, err := backend.NewGCPClients(context.Background(), config.Project, config.EndpointURL, config.LogAdminEndpoint)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to initialize GCP clients")
 	}

@@ -67,10 +67,16 @@ case "$BACKEND_TYPE" in
         ;;
     cloudrun)
         echo "=== Starting GCP simulator ==="
-        SIM_LISTEN_ADDR=":4567" /usr/local/bin/simulator-gcp 2>/tmp/sim.log &
+        # gRPC is a separate listener (Cloud Logging is its own API in
+        # real GCP). Default port is 4568 (HTTP 4567 + 1 historically;
+        # set explicitly via SIM_GCP_GRPC_PORT so the backend's
+        # SOCKERLESS_GCP_LOGADMIN_ENDPOINT below points at it
+        # unambiguously).
+        SIM_LISTEN_ADDR=":4567" SIM_GCP_GRPC_PORT="4568" /usr/local/bin/simulator-gcp 2>/tmp/sim.log &
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4567/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4567"
+        export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:4568"
         export SOCKERLESS_GCR_PROJECT="sim-project"
         export SOCKERLESS_CALLBACK_URL="ws://$(callback_host):3375/v1/cloudrun/reverse"
         BACKEND_BIN="/usr/local/bin/sockerless-backend-cloudrun"

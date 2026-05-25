@@ -39,9 +39,13 @@ case "$CLOUD" in
         exec sockerless-backend-ecs --addr "$BACKEND_ADDR" --log-level debug
         ;;
     gcp)
-        SIM_LISTEN_ADDR=":4567" simulator-gcp &
+        # gRPC is a separate listener (Cloud Logging is its own API in
+        # real GCP). Pin both ports explicitly so the backend can wire
+        # SOCKERLESS_GCP_LOGADMIN_ENDPOINT to the gRPC port.
+        SIM_LISTEN_ADDR=":4567" SIM_GCP_GRPC_PORT="4568" simulator-gcp &
         wait_for_url "http://127.0.0.1:4567/health"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4567"
+        export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:4568"
         export SOCKERLESS_GCR_PROJECT="sim-project"
         exec sockerless-backend-cloudrun --addr "$BACKEND_ADDR" --log-level debug
         ;;

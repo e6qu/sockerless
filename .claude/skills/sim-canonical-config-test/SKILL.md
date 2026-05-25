@@ -69,6 +69,30 @@ The rule extends to `simulators/<cloud>/terraform-tests/` with the same shape:
 
 The `tf-test` column in `specs/SIM_SURFACE_TABLES/<surface>.md` tracks coverage; rows with a real terraform-provider resource but no tf-test entry are findings.
 
+## Paged-iterator rule (List* ops)
+
+Every `List*` operation in a surface table must have an sdk-test that exercises the SDK's **paged iterator**, not just `.Value[0]`-style auto-unwrap.
+
+The class of bug this catches: when the sim returns a single-record envelope (`{value, id, attributes}`) from an endpoint that should return a paged list (`{value: [{id, attributes}, ...], nextLink}`), an SDK call like `client.ListSecretVersions(ctx, name)` auto-unwraps the wrong shape and `out.Value[0]` returns the single record as if it were the first page's only entry. Test passes. Real consumers that drive `client.NewListSecretVersionsPager(...).NextPage(ctx)` hit a deserialise error or get zero items per page.
+
+This is BUG-1149 (issue #203) in canonical form.
+
+**The rule**:
+
+- Every row in a surface table with verb `GET` and path matching `*/list` / `*?list-type=*` / `/{collection}` (no specific resource ID) has the `paged-shape verified` column.
+- The cell is ✓ only when a test drives the SDK's canonical pagination idiom (`Pager.NextPage`, `Paginator.HasMorePages`, `iterator.Next`) and asserts the response can be unmarshaled into the paged response type — not just that `.Value[0]` is non-nil.
+- ✗ rows in this column are paired with a deferral pointer to BUG-1159 (paged-iterator sweep).
+
+**Canonical patterns per cloud**:
+
+| Cloud | Paged iterator API |
+|---|---|
+| AWS (`aws-sdk-go-v2`) | `client.NewListXxxPaginator(input).HasMorePages()` + `paginator.NextPage(ctx)` |
+| Azure (`azure-sdk-for-go`) | `client.NewListXxxPager(...).NextPage(ctx)` |
+| GCP (`google.golang.org/api`) | `client.List(...).Pages(ctx, func(resp *T) error { ... })` |
+
+A test that calls `client.ListXxx(ctx, ...)` directly and reads `.Value[0]` does NOT satisfy this rule — it's the exact shape that masks the bug.
+
 ## Refused patterns
 
 The following options are **anti-patterns** in `simulators/<cloud>/{sdk,cli,terraform}-tests/`. If you find them, the sim has a wire-protocol bug — fix the sim, not the test.

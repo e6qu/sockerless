@@ -64,16 +64,42 @@ type SQLOperation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
+// SQLBackupRun models the per-instance backup state machine:
+//
+//	(insert)  → ENQUEUED
+//	(internal-settle)        → RUNNING (transient — sim collapses)
+//	(internal-settle)        → SUCCESSFUL
+//	(delete)                 → row removed
+//
+// Real Cloud SQL exposes Status field; tests + tf-provider read it
+// during the backup-completion wait loop. Sim collapses the in-flight
+// states into SUCCESSFUL inline (documented per
+// sim-state-machine-completeness skill).
+type SQLBackupRun struct {
+	Kind         string `json:"kind"`
+	ID           string `json:"id"`
+	Instance     string `json:"instance"`
+	Description  string `json:"description,omitempty"`
+	Status       string `json:"status"` // ENQUEUED|RUNNING|SUCCESSFUL|FAILED
+	EnqueuedTime string `json:"enqueuedTime,omitempty"`
+	StartTime    string `json:"startTime,omitempty"`
+	EndTime      string `json:"endTime,omitempty"`
+	Type         string `json:"type,omitempty"` // ON_DEMAND|AUTOMATED
+	SelfLink     string `json:"selfLink,omitempty"`
+}
+
 var (
-	sqlInstances sim.Store[SQLInstance]
-	sqlDatabases sim.Store[SQLDatabase]
-	sqlUsers     sim.Store[SQLUser]
+	sqlInstances  sim.Store[SQLInstance]
+	sqlDatabases  sim.Store[SQLDatabase]
+	sqlUsers      sim.Store[SQLUser]
+	sqlBackupRuns sim.Store[SQLBackupRun]
 )
 
 func registerCloudSQL(srv *sim.Server) {
 	sqlInstances = sim.MakeStore[SQLInstance](srv.DB(), "sql_instances")
 	sqlDatabases = sim.MakeStore[SQLDatabase](srv.DB(), "sql_databases")
 	sqlUsers = sim.MakeStore[SQLUser](srv.DB(), "sql_users")
+	sqlBackupRuns = sim.MakeStore[SQLBackupRun](srv.DB(), "sql_backup_runs")
 
 	srv.HandleFunc("POST /v1/projects/{project}/instances", handleSQLInsertInstance)
 	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}", handleSQLGetInstance)
@@ -87,32 +113,152 @@ func registerCloudSQL(srv *sim.Server) {
 
 	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/users", handleSQLInsertUser)
 	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/users", handleSQLListUsers)
+
+	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/backupRuns", handleSQLInsertBackupRun)
+	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/backupRuns", handleSQLListBackupRuns)
+	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLGetBackupRun)
+	srv.HandleFunc("DELETE /v1/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLDeleteBackupRun)
+	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/clone", handleSQLCloneInstance)
+}
+
+func sqlBackupRunKey(project, instance, id string) string {
+	return project + "/" + instance + "/" + id
+}
+
+func handleSQLInsertBackupRun(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	if _, ok := sqlInstances.Get(sqlInstanceKey(project, instance)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found", instance)
+		return
+	}
+	id := generateUUID()
+	now := nowTimestamp()
+	br := SQLBackupRun{
+		Kind:         "sql#backupRun",
+		ID:           id,
+		Instance:     instance,
+		Status:       "SUCCESSFUL", // inline-settle (state machine documented on the type)
+		EnqueuedTime: now,
+		StartTime:    now,
+		EndTime:      now,
+		Type:         "ON_DEMAND",
+		SelfLink:     gcpSelfLink(r, "/sql/v1/projects/"+project+"/instances/"+instance+"/backupRuns/"+id),
+	}
+	sqlBackupRuns.Put(sqlBackupRunKey(project, instance, id), br)
+	sim.WriteJSON(w, http.StatusOK, br)
+}
+
+func handleSQLListBackupRuns(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	prefix := project + "/" + instance + "/"
+	all := sqlBackupRuns.Filter(func(b SQLBackupRun) bool {
+		return strings.HasPrefix(sqlBackupRunKey(project, b.Instance, b.ID), prefix)
+	})
+	if all == nil {
+		all = []SQLBackupRun{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"kind":  "sql#backupRunsList",
+		"items": all,
+	})
+}
+
+func handleSQLGetBackupRun(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	id := sim.PathParam(r, "id")
+	br, ok := sqlBackupRuns.Get(sqlBackupRunKey(project, instance, id))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"backupRun %q on instance %q not found", id, instance)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, br)
+}
+
+func handleSQLDeleteBackupRun(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	id := sim.PathParam(r, "id")
+	if !sqlBackupRuns.Delete(sqlBackupRunKey(project, instance, id)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"backupRun %q on instance %q not found", id, instance)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleSQLCloneInstance creates a new instance from an existing
+// source. Real Cloud SQL emits an LRO; sim returns the canonical
+// completed Operation shape inline.
+func handleSQLCloneInstance(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	source := sim.PathParam(r, "instance")
+	src, ok := sqlInstances.Get(sqlInstanceKey(project, source))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"source instance %q not found", source)
+		return
+	}
+	var req struct {
+		CloneContext struct {
+			DestinationInstanceName string `json:"destinationInstanceName"`
+		} `json:"cloneContext"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	dest := req.CloneContext.DestinationInstanceName
+	if dest == "" {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"cloneContext.destinationInstanceName is required")
+		return
+	}
+	if _, exists := sqlInstances.Get(sqlInstanceKey(project, dest)); exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS",
+			"instance %q already exists", dest)
+		return
+	}
+	cloned := src
+	cloned.Name = dest
+	cloned.SelfLink = gcpSelfLink(r, "/sql/v1/projects/"+project+"/instances/"+dest)
+	sqlInstances.Put(sqlInstanceKey(project, dest), cloned)
+	now := nowTimestamp()
+	op := map[string]any{
+		"kind":          "sql#operation",
+		"operationType": "CLONE",
+		"status":        "DONE",
+		"name":          "clone-" + generateUUID(),
+		"targetProject": project,
+		"targetId":      dest,
+		"insertTime":    now,
+		"endTime":       now,
+		"selfLink":      gcpSelfLink(r, "/sql/v1/operations/clone-"+generateUUID()),
+	}
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func sqlInstanceKey(project, instance string) string {
 	return fmt.Sprintf("%s/%s", project, instance)
 }
 
-// gcpSelfLink builds a fully-qualified selfLink rooted at the
-// scheme+host the request arrived on. Real GCP emits absolute URLs
-// (`https://<service>.googleapis.com/v1/...`); clients pass selfLink
-// around as an opaque pointer and follow it later, which only works
-// when the URL is absolute. The sim previously emitted relative
-// URLs (`/v1/projects/...`) which broke audit / sync / cross-resource
-// reference patterns. Use this helper for every selfLink emission.
+// gcpSelfLink builds a fully-qualified selfLink rooted at the host
+// the request arrived on, with `https` hard-coded. Real GCP emits
+// `https://<service>.googleapis.com/v1/...` regardless of the
+// caller's transport; the sim listens on plain HTTP locally but
+// emitting `http://` selfLink URLs (issue #209) breaks downstream
+// tooling that strips/expects an HTTPS-only contract. Same shape as
+// the Phase 176 GCS `gcsObjectMetadata` hard-coded-https fix
+// (BUG-1140).
 func gcpSelfLink(r *http.Request, path string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if r.URL.Scheme != "" {
-		scheme = r.URL.Scheme
-	}
 	host := r.Host
 	if host == "" {
 		host = "sqladmin.googleapis.com"
 	}
-	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+	return fmt.Sprintf("https://%s%s", host, path)
 }
 
 func newSQLOperation(project, opType, targetID string) SQLOperation {

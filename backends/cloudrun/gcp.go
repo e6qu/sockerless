@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
 
 	logging "cloud.google.com/go/logging"
 	"cloud.google.com/go/logging/logadmin"
@@ -39,14 +38,27 @@ type GCPClients struct {
 }
 
 // NewGCPClients initializes GCP SDK clients.
-func NewGCPClients(ctx context.Context, project string, endpointURL string) (*GCPClients, error) {
+//
+// In real-cloud mode (endpointURL == ""), all clients hit their canonical
+// Google API endpoints (run.googleapis.com, logging.googleapis.com, etc).
+//
+// In sim mode (endpointURL != ""), the caller MUST also pass
+// logAdminEndpoint pointing at the sim's gRPC listener (Cloud Logging is
+// a separate API at logging.googleapis.com in production, so the sim
+// models it as a separate endpoint URL too). No default derivation —
+// the caller wires both explicitly.
+func NewGCPClients(ctx context.Context, project, endpointURL, logAdminEndpoint string) (*GCPClients, error) {
 	if endpointURL != "" {
-		return newGCPClientsWithEndpoint(ctx, project, endpointURL)
+		if logAdminEndpoint == "" {
+			return nil, fmt.Errorf("NewGCPClients: logAdminEndpoint is required when endpointURL is set " +
+				"(Cloud Logging is a distinct API in real GCP; the sim mirrors that — pass the sim's gRPC host:port)")
+		}
+		return newGCPClientsWithEndpoint(ctx, project, endpointURL, logAdminEndpoint)
 	}
 	return newGCPClientsDefault(ctx, project)
 }
 
-func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL string) (*GCPClients, error) {
+func newGCPClientsWithEndpoint(ctx context.Context, project, endpointURL, logAdminEndpoint string) (*GCPClients, error) {
 	opts := []option.ClientOption{
 		option.WithEndpoint(endpointURL),
 		option.WithoutAuthentication(),
@@ -70,16 +82,8 @@ func newGCPClientsWithEndpoint(ctx context.Context, project string, endpointURL 
 		return nil, err
 	}
 
-	// logadmin uses gRPC — connect to the simulator's gRPC port (HTTP port + 1)
-	grpcAddr, err := grpcAddrFromEndpoint(endpointURL)
-	if err != nil {
-		_ = jobsClient.Close()
-		_ = execClient.Close()
-		_ = servicesClient.Close()
-		return nil, fmt.Errorf("failed to derive gRPC address: %w", err)
-	}
 	logAdminOpts := []option.ClientOption{
-		option.WithEndpoint(grpcAddr),
+		option.WithEndpoint(logAdminEndpoint),
 		option.WithoutAuthentication(),
 		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
 	}
@@ -197,19 +201,4 @@ func newGCPClientsDefault(ctx context.Context, project string) (*GCPClients, err
 		Storage:    storageClient,
 		DNS:        dnsService,
 	}, nil
-}
-
-// grpcAddrFromEndpoint derives the gRPC address (host:port+1) from an HTTP endpoint URL.
-// The GCP simulator runs gRPC on the HTTP port + 1.
-func grpcAddrFromEndpoint(endpointURL string) (string, error) {
-	u, err := url.Parse(endpointURL)
-	if err != nil {
-		return "", err
-	}
-	host := u.Hostname()
-	port, err := strconv.Atoi(u.Port())
-	if err != nil {
-		return "", fmt.Errorf("invalid port in endpoint %q: %w", endpointURL, err)
-	}
-	return fmt.Sprintf("%s:%d", host, port+1), nil
 }

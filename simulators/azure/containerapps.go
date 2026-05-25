@@ -374,6 +374,28 @@ func registerContainerApps(srv *sim.Server) {
 		})
 	})
 
+	// POST /jobs/{jobName}/listsecrets — same shape as the containerApps
+	// listsecrets handler: secrets aren't returned on GET; the dedicated
+	// POST returns them. Single lowercase registration; the middleware
+	// canonicalizes any client casing to lowercase before dispatch.
+	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/listsecrets", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "jobName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
+		job, ok := jobs.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/jobs/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		secrets := []JobSecret{}
+		if job.Properties.Configuration != nil {
+			secrets = job.Properties.Configuration.Secrets
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})
+	})
+
 	// DELETE - Delete job
 	srv.HandleFunc("DELETE "+basePath+"/jobs/{jobName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
