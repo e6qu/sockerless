@@ -4,18 +4,13 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-PR #211 (Phase 178) open + awaiting CI + user merge. 16 commits closed BUG-1148..1160, including the 4 class-of-bug remediations from this PR's meta scope (proactive surface tables, mux-overlap scanner, paged-iterator rule, state-machine skill).
+Idle on `main`. PR #211 (Phase 178) merged 2026-05-25 at squash `7a7c9f0` — closed 9 community-filed issues + 5 class-of-bug remediations + 12 real-handler/shape fixes the new tf-azure CI gate surfaced.
 
-GitHub issues closed: #196 reopen + #203..#210 — all commented with the PR link.
+BUGS.md: **1173 filed · 1171 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta) remain Open.
 
-BUGS.md: **1160 filed · 1158 fixed · 2 open.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta) remain Open.
+## Next phase trigger
 
-## After PR #211 merges
-
-1. `git checkout main && git pull origin main`.
-2. `git branch -d phase-178-community-issues && git fetch --prune origin`.
-3. Reset STATUS / DO_NEXT to "idle" once the PR merges.
-4. Watch for new community-filed issues. New issues land in `phase-179-community-issues` per the standing single-branch / one-PR rule.
+Reactive only — fires when a new community-filed issue arrives or a CI regression surfaces against `main`. New work lands on `phase-179-*` per the standing single-branch / one-PR rule.
 
 ## Standing invariants (full list in STATUS.md)
 
