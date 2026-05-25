@@ -146,13 +146,29 @@ func TestMain(m *testing.M) {
 	// host's Docker daemon synchronously; if the image isn't cached the
 	// pull blows the terraform-provider's request budget. ECR Public
 	// Gallery serves linux/{amd64,arm64} variants without auth.
-	pull := exec.Command("docker", "pull", "public.ecr.aws/docker/library/alpine:latest")
-	pull.Stdout = os.Stdout
-	pull.Stderr = os.Stderr
-	if err := pull.Run(); err != nil {
-		log.Fatalf("Failed to pre-pull alpine image: %v", err)
+	//
+	// ECR Public can return `toomanyrequests` on cold CI runners. Retry
+	// with exponential backoff before giving up — never just one
+	// attempt against a public registry.
+	pullImage := "public.ecr.aws/docker/library/alpine:latest"
+	backoff := 5 * time.Second
+	var pullErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		pull := exec.Command("docker", "pull", pullImage)
+		pull.Stdout = os.Stdout
+		pull.Stderr = os.Stderr
+		pullErr = pull.Run()
+		if pullErr == nil {
+			break
+		}
+		log.Printf("alpine pull attempt %d failed: %v — retrying in %s", attempt, pullErr, backoff)
+		time.Sleep(backoff)
+		backoff *= 2
 	}
-	tag := exec.Command("docker", "tag", "public.ecr.aws/docker/library/alpine:latest", "alpine:latest")
+	if pullErr != nil {
+		log.Fatalf("Failed to pre-pull alpine image after retries: %v", pullErr)
+	}
+	tag := exec.Command("docker", "tag", pullImage, "alpine:latest")
 	if err := tag.Run(); err != nil {
 		log.Fatalf("Failed to retag alpine: %v", err)
 	}
