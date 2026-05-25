@@ -83,7 +83,7 @@ func handleMSRedisAction(w http.ResponseWriter, r *http.Request) {
 func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request, id string) {
 	project := sim.PathParam(r, "project")
 	location := sim.PathParam(r, "location")
-	key := project + "/" + location + "/" + id
+	key := msRedisInstanceName(project, location, id)
 	inst, ok := msRedisInstances.Get(key)
 	if !ok {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
@@ -111,7 +111,7 @@ func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request, id string) {
 func handleMSRedisFailover(w http.ResponseWriter, r *http.Request, id string) {
 	project := sim.PathParam(r, "project")
 	location := sim.PathParam(r, "location")
-	key := project + "/" + location + "/" + id
+	key := msRedisInstanceName(project, location, id)
 	inst, ok := msRedisInstances.Get(key)
 	if !ok {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",

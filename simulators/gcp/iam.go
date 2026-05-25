@@ -228,40 +228,26 @@ func registerIAM(srv *sim.Server) {
 		}
 	})
 
-	// Resource IAM (for artifact registry, etc.) - getIamPolicy / setIamPolicy
+	// Catch-all AIP-141 IAM dispatcher (Artifact Registry + any
+	// resource not handled by a more-specific verb dispatcher).
+	// Resources with their own verb dispatcher (Pub/Sub topics +
+	// subscriptions, Memorystore instances, etc.) delegate to
+	// handleResourceIAM directly.
 	srv.HandleFunc("POST /v1/{resource...}", func(w http.ResponseWriter, r *http.Request) {
 		resource := sim.PathParam(r, "resource")
-
-		if strings.HasSuffix(resource, ":getIamPolicy") {
-			resource = strings.TrimSuffix(resource, ":getIamPolicy")
-			policy, ok := resourcePolicies.Get(resource)
-			if !ok {
-				policy = IAMPolicy{
-					Bindings: []IAMBinding{},
-					Etag:     generateUUID()[:8],
-					Version:  1,
-				}
+		var action string
+		for _, verb := range []string{":getIamPolicy", ":setIamPolicy", ":testIamPermissions"} {
+			if strings.HasSuffix(resource, verb) {
+				action = strings.TrimPrefix(verb, ":")
+				resource = strings.TrimSuffix(resource, verb)
+				break
 			}
-			sim.WriteJSON(w, http.StatusOK, policy)
-		} else if strings.HasSuffix(resource, ":setIamPolicy") {
-			resource = strings.TrimSuffix(resource, ":setIamPolicy")
-			var req struct {
-				Policy IAMPolicy `json:"policy"`
-			}
-			if err := sim.ReadJSON(r, &req); err != nil {
-				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-				return
-			}
-
-			req.Policy.Etag = generateUUID()[:8]
-			if req.Policy.Version == 0 {
-				req.Policy.Version = 1
-			}
-			resourcePolicies.Put(resource, req.Policy)
-			sim.WriteJSON(w, http.StatusOK, req.Policy)
-		} else {
-			http.NotFound(w, r)
 		}
+		if action == "" {
+			http.NotFound(w, r)
+			return
+		}
+		handleResourceIAM(w, r, resourcePolicies, resource, action)
 	})
 
 	// Bucket IAM - getIamPolicy
@@ -299,7 +285,10 @@ func registerIAM(srv *sim.Server) {
 	})
 }
 
-// handleResourceIAM processes :getIamPolicy and :setIamPolicy for a named resource.
+// handleResourceIAM processes the three AIP-141 IAM verbs against a named
+// resource: getIamPolicy / setIamPolicy / testIamPermissions. Every GCP
+// resource type exposes this triple; the sim's per-resource handlers
+// delegate the verb branch here.
 func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[IAMPolicy], resource, action string) {
 	switch action {
 	case "getIamPolicy":
@@ -326,7 +315,26 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 		}
 		store.Put(resource, req.Policy)
 		sim.WriteJSON(w, http.StatusOK, req.Policy)
+	case "testIamPermissions":
+		var req struct {
+			Permissions []string `json:"permissions"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		// Sim doesn't model authorization; echo the requested set as
+		// allowed. Real GCP filters to the subset the caller actually
+		// has — but every caller in the sim is effectively a project
+		// admin, so the full echo is the truthful response.
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"permissions": req.Permissions})
 	default:
 		http.NotFound(w, r)
 	}
 }
+
+// gcpResourceIAMStore returns the package-level resource-IAM store
+// used by per-resource handlers. Centralises the cross-service IAM
+// policy persistence so getIamPolicy / setIamPolicy round-trips
+// match regardless of which resource type registered the policy.
+func gcpResourceIAMStore() sim.Store[IAMPolicy] { return gcpResourcePolicies }

@@ -138,22 +138,26 @@ func handleRedisCacheListFirewallRules(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRedisCacheListKeys returns the primary + secondary access keys.
-// Real Azure generates 32-byte random keys per cache; the sim returns
-// deterministic placeholders derived from the cache name so tests can
-// assert against a stable shape. Real consumers' contract is "these
-// strings are non-empty and round-trip through the SDK".
+// Real Azure generates 32-byte random keys per cache; the sim emits
+// deterministic 44-char base64 strings (sha256 of resource ID + key
+// kind) so the wire shape matches what clients expect (Redis AUTH
+// tokens, downstream connection strings that reference the
+// `primary_access_key` attribute in terraform-provider-azurerm). Same
+// key across reads; distinct between primary / secondary; distinct
+// between caches.
 func handleRedisCacheListKeys(w http.ResponseWriter, r *http.Request) {
 	sub := sim.PathParam(r, "subscriptionId")
 	rg := sim.PathParam(r, "resourceGroupName")
 	name := sim.PathParam(r, "name")
-	if _, ok := redisCaches.Get(redisCacheID(sub, rg, name)); !ok {
+	id := redisCacheID(sub, rg, name)
+	if _, ok := redisCaches.Get(id); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 			"Redis cache %q not found", name)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryKey":   "sim-primary-key-" + name,
-		"secondaryKey": "sim-secondary-key-" + name,
+		"primaryKey":   simListKey32(id, "primary"),
+		"secondaryKey": simListKey32(id, "secondary"),
 	})
 }
 
