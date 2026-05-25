@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -423,6 +425,44 @@ func registerAzureFunctions(srv *sim.Server) {
 			Name:       "azurestorageaccounts",
 			Type:       "Microsoft.Web/sites/config",
 			Properties: site.Properties.AzureStorageAccounts,
+		})
+	})
+
+	// POST /config/publishingcredentials/list — real Azure returns the
+	// SCM publishing user/password for App Service deployment + Kudu
+	// console access. terraform-provider-azurerm reads via this endpoint
+	// on every plan refresh.
+	//
+	// The sim derives a deterministic password from the site name
+	// (so test assertions can be stable + same site keeps the same
+	// credentials across PUT cycles). Real Azure rotates these on
+	// `POST .../newpassword`, which the sim doesn't model.
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/publishingcredentials/list", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		user := "$" + name
+		// Deterministic 24-char password derived from the site name —
+		// stable across reads, distinct per site, no PII.
+		sum := sha256.Sum256([]byte("sim-publishing-pwd:" + resourceID))
+		password := hex.EncodeToString(sum[:12])
+		scmURI := fmt.Sprintf("https://%s:%s@%s.scm.azurewebsites.net", user, password, name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":   resourceID + "/config/publishingcredentials",
+			"name": "publishingcredentials",
+			"type": "Microsoft.Web/sites/config",
+			"properties": map[string]any{
+				"name":               name,
+				"publishingUserName": user,
+				"publishingPassword": password,
+				"scmUri":             scmURI,
+			},
 		})
 	})
 
