@@ -398,11 +398,19 @@ func registerAzureFunctions(srv *sim.Server) {
 		sites.Put(resourceID, site)
 
 		// ARM convention: respond with the resource shape that was PUT.
+		props := site.Properties.AzureStorageAccounts
+		if props == nil {
+			// Real Azure always returns `properties: {}` (empty object,
+			// not absent). terraform-provider-azurerm panics with
+			// nil-deref in FlattenStorageAccounts when properties is
+			// absent. Emit empty map.
+			props = map[string]*AzureStorageInfoValue{}
+		}
 		sim.WriteJSON(w, http.StatusOK, AzureStoragePropertyDictionaryResource{
 			ID:         resourceID + "/config/azurestorageaccounts",
 			Name:       "azurestorageaccounts",
 			Type:       "Microsoft.Web/sites/config",
-			Properties: site.Properties.AzureStorageAccounts,
+			Properties: props,
 		})
 	})
 
@@ -420,11 +428,19 @@ func registerAzureFunctions(srv *sim.Server) {
 				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
+		props := site.Properties.AzureStorageAccounts
+		if props == nil {
+			// Real Azure always returns `properties: {}` (empty object,
+			// not absent). terraform-provider-azurerm panics with
+			// nil-deref in FlattenStorageAccounts when properties is
+			// absent. Emit empty map.
+			props = map[string]*AzureStorageInfoValue{}
+		}
 		sim.WriteJSON(w, http.StatusOK, AzureStoragePropertyDictionaryResource{
 			ID:         resourceID + "/config/azurestorageaccounts",
 			Name:       "azurestorageaccounts",
 			Type:       "Microsoft.Web/sites/config",
-			Properties: site.Properties.AzureStorageAccounts,
+			Properties: props,
 		})
 	})
 
@@ -856,10 +872,13 @@ func registerSiteConfigHandlers(srv *sim.Server, armBase string, sites sim.Store
 // armappservice.AzureStoragePropertyDictionaryResource — a flat
 // dictionary of volume-name → Azure Files mount info.
 type AzureStoragePropertyDictionaryResource struct {
-	ID         string                            `json:"id,omitempty"`
-	Name       string                            `json:"name,omitempty"`
-	Type       string                            `json:"type,omitempty"`
-	Properties map[string]*AzureStorageInfoValue `json:"properties,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	// Properties is always emitted (no omitempty) — real Azure returns
+	// `properties: {}` even with no storage accounts, and
+	// terraform-provider-azurerm nil-derefs when absent.
+	Properties map[string]*AzureStorageInfoValue `json:"properties"`
 }
 
 // AzureStorageInfoValue mirrors armappservice.AzureStorageInfoValue.
