@@ -140,8 +140,13 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"azurerm Container App Job id must include canonical ARM path; got %s", azrmCAJ)
 
 	azrmSP := outputs.must(t, "azrm_service_plan_id")
-	require.Contains(t, azrmSP, "/providers/Microsoft.Web/serverfarms/tf-azrm-sp",
-		"azurerm Service Plan id must include canonical ARM path; got %s", azrmSP)
+	// terraform-provider-azurerm normalizes Microsoft.Web/serverfarms
+	// to the SDK-canonical `serverFarms` (camelCase) in state. The
+	// sim emits lowercase in its ARM responses; the provider's ID
+	// parser uppercases the F before storing. Match the provider's
+	// canonical form here.
+	require.Contains(t, strings.ToLower(azrmSP), "/providers/microsoft.web/serverfarms/tf-azrm-sp",
+		"azurerm Service Plan id must include canonical ARM path (case-insensitive); got %s", azrmSP)
 
 	azrmST := outputs.must(t, "azrm_storage_account_id")
 	require.Contains(t, azrmST, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345",
