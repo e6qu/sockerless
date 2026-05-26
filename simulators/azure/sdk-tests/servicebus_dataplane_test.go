@@ -3,6 +3,7 @@ package azure_sdk_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -192,6 +193,19 @@ func sbAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
 	return client
 }
 
+func sbRawAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
+	t.Helper()
+	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", namespace)
+	client, err := azservicebus.NewClientFromConnectionString(conn, &azservicebus.ClientOptions{
+		CustomEndpoint: sbAMQPEndpoint,
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true, // #nosec G402 -- test-only self-signed simulator certificate.
+		},
+	})
+	require.NoError(t, err)
+	return client
+}
+
 func TestServiceBus_AMQPSDKQueueSendReceive(t *testing.T) {
 	client := sbAMQPClient(t, "sdk-amqp-data")
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
@@ -253,4 +267,67 @@ func TestServiceBus_AMQPSDKTopicSubscriptionSendReceive(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	assert.Equal(t, []byte("hello from topic"), messages[0].Body)
+}
+
+func TestServiceBus_RawAMQPSDKQueueSendReceive(t *testing.T) {
+	client := sbRawAMQPClient(t, "sdk-raw-amqp-data")
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+
+	sender, err := client.NewSender("rawamqpqueue", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sender.Close(context.Background()) })
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer sendCancel()
+	err = sender.SendMessage(sendCtx, &azservicebus.Message{Body: []byte("hello from raw amqp")}, nil)
+	require.NoError(t, err)
+
+	receiver, err := client.NewReceiverForQueue("rawamqpqueue", &azservicebus.ReceiverOptions{
+		ReceiveMode: azservicebus.ReceiveModeReceiveAndDelete,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
+
+	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, []byte("hello from raw amqp"), messages[0].Body)
+}
+
+func TestServiceBus_RawAMQPSDKTopicSubscriptionSendReceive(t *testing.T) {
+	namespace := "sdk-raw-amqp-topic"
+	topic := "rawamqptopic"
+	sub := "sub1"
+	adminClient := sbAdminClient(t, namespace)
+	_, err := adminClient.CreateTopic(ctx, topic, nil)
+	require.NoError(t, err)
+	_, err = adminClient.CreateSubscription(ctx, topic, sub, nil)
+	require.NoError(t, err)
+
+	client := sbRawAMQPClient(t, namespace)
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+
+	sender, err := client.NewSender(topic, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sender.Close(context.Background()) })
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer sendCancel()
+	err = sender.SendMessage(sendCtx, &azservicebus.Message{Body: []byte("hello from raw topic")}, nil)
+	require.NoError(t, err)
+
+	receiver, err := client.NewReceiverForSubscription(topic, sub, &azservicebus.ReceiverOptions{
+		ReceiveMode: azservicebus.ReceiveModeReceiveAndDelete,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
+
+	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, []byte("hello from raw topic"), messages[0].Body)
 }

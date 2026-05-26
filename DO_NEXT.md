@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after PR #229. Issue #227 Azure Blob block staging was implemented and covered by the official `azblob/blockblob` SDK, and issue #228 Azure Service Bus AMQP queue plus topic/subscription Send/Receive was implemented and covered by the official `azservicebus` SDK.
+Main is idle after PR #231, the issue #230 Service Bus raw AMQP/TLS transport fix. Azure Service Bus now exposes the official SDK's default AMQP/TLS path in addition to the WebSocket AMQP path from PR #229.
 
 ## Stage plan
 
@@ -13,6 +13,15 @@ Current phase: none. Start the next pass by syncing `main`, listing open GitHub 
 Issue #227 finding: Blob had single-shot Put/Get coverage but no block-list subresource dispatch, so `?comp=block` and `?comp=blocklist` were misrouted. The fix persists committed and uncommitted block state and materializes committed block blobs in list order.
 
 Issue #228 finding: Service Bus REST data-plane coverage did not cover the official Go SDK, which uses AMQP 1.0 over WebSocket. The fix adds the AMQP slice for SASL anonymous, CBS claim RPC, entity sender/receiver links, link credit, accepted dispositions, receive-and-delete transfers, topic fan-out, and subscription receiver paths.
+
+Issue #230 finding: WebSocket-only AMQP support still leaked simulator transport plumbing into public simulator callers because official SDK users had to provide `NewWebSocketConn`. The fix adds a raw AMQP/TLS listener, derives namespace from protocol-visible host data, and covers queue plus topic/subscription Send/Receive with the official SDK using `CustomEndpoint` and no WebSocket adapter.
+
+Issue #230 plan/contract:
+- Raw AMQP/TLS is a separate Service Bus listener because it is a TCP/TLS transport, not an HTTP path route.
+- Namespace routing prefers AMQP Open `hostname`, with TLS SNI as early metadata/fallback. This matches the SDK `CustomEndpoint` model: redirect the TCP target while preserving the original Service Bus namespace/audience.
+- Queue, topic, subscription, CBS, and management routing use AMQP link source/target addresses: `{queue}`, `{topic}`, `{topic}/Subscriptions/{subscription}`, `$cbs`, and `{entity}/$management`.
+- No simulator-only `/namespace/...` path routing exists for raw AMQP; that would be less cloud-faithful and would leak simulator plumbing into clients.
+- The canonical regressions use the official `azservicebus` SDK default AMQP/TLS path with `ClientOptions.CustomEndpoint` and TLS config, without `NewWebSocketConn`, for both queue and topic/subscription Send/Receive.
 
 ## Standing invariants (full list in STATUS.md)
 

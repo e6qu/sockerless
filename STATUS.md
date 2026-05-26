@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after PR #229. |
+| Active branch | `main` — idle after issue #230 Service Bus raw AMQP/TLS transport fix. |
 | In-flight | None. Ready for the next fresh issue sweep. |
-| Last merged | PR #229 — Azure Blob block staging + Service Bus AMQP queue/topic-subscription data-plane fixes (2026-05-26). |
+| Last merged | PR #231 — Service Bus raw AMQP/TLS transport for official SDK default AMQP path (2026-05-26). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1185 filed · 1185 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1186 filed · 1186 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #231 | issue #230 | Azure Service Bus now exposes raw AMQP/TLS transport for the official `azservicebus` default path, with namespace routing preferring AMQP Open hostname over TLS SNI fallback, entity routing through AMQP link addresses, and SDK queue + topic/subscription Send/Receive tests using `CustomEndpoint` without `NewWebSocketConn`. |
 | #229 | issues #227/#228 | Azure Blob block staging routes now support official `azblob/blockblob` StageBlock, CommitBlockList, and GetBlockList; Azure Service Bus message data plane now supports official `azservicebus` AMQP-over-WebSocket queue and topic/subscription Send/Receive with CBS negotiation and receive-and-delete coverage. |
 | #226 | 226 | Azure Storage blob/file/queue/table data-plane host/path dispatch now has official Azure SDK lifecycle + List pager coverage; SDK audit fixed missing File ListShares and Tables `/{table}()` entity-list shape; added `azure-storage-data-plane` surface table and refreshed stale Key Vault data-plane table rows. |
 | #225 | issue #223 | Azure Service Bus namespace-level ATOM XML admin routes for queues, topics, subscriptions, and rules; official `azservicebus/admin` SDK lifecycle coverage; surface table for the host-scoped admin protocol. |

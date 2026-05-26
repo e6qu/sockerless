@@ -9,6 +9,7 @@
 //	SIM_LISTEN_ADDR  — listen address (default ":4568")
 //	SIM_TLS_CERT     — TLS certificate file (optional)
 //	SIM_TLS_KEY      — TLS key file (optional)
+//	SIM_SERVICEBUS_AMQP_LISTEN_ADDR — raw Service Bus AMQP/TLS listen address (optional)
 //	SIM_LOG_LEVEL    — log level: trace, debug, info, warn, error (default "info")
 //
 // SDK configuration:
@@ -99,7 +100,27 @@ func main() {
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if amqpAddr := os.Getenv("SIM_SERVICEBUS_AMQP_LISTEN_ADDR"); amqpAddr != "" {
+		certFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_CERT", cfg.TLSCert)
+		keyFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_KEY", cfg.TLSKey)
+		ln, err := startSBAMQPTLSListener(ctx, amqpAddr, certFile, keyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+		log.Printf("Service Bus raw AMQP/TLS listening on %s", ln.Addr())
+	}
+
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

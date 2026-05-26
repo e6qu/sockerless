@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -46,10 +49,16 @@ var sbAMQPUpgrader = websocket.Upgrader{
 
 type sbAMQPConn struct {
 	namespace    string
-	ws           *websocket.Conn
+	transport    sbAMQPTransport
 	nextHandle   uint32
 	nextDelivery uint32
 	links        map[uint64]*sbAMQPLink
+}
+
+type sbAMQPTransport interface {
+	Read(context.Context) ([]byte, error)
+	Write([]byte) error
+	Close() error
 }
 
 type sbAMQPLink struct {
@@ -82,24 +91,72 @@ func handleSBAMQPWebSocket(w http.ResponseWriter, r *http.Request, namespace str
 	if err != nil {
 		return
 	}
-	c := &sbAMQPConn{
-		namespace:    namespace,
-		ws:           conn,
-		nextDelivery: 1,
-		links:        map[uint64]*sbAMQPLink{},
-	}
+	c := newSBAMQPConn(namespace, sbAMQPWebSocketTransport{conn: conn})
 	c.serve(r.Context())
 }
 
-func (c *sbAMQPConn) serve(ctx context.Context) {
-	defer func() { _ = c.ws.Close() }()
-	for {
-		mt, data, err := c.ws.ReadMessage()
-		if err != nil {
+func startSBAMQPTLSListener(ctx context.Context, listenAddr, certFile, keyFile string) (net.Listener, error) {
+	if listenAddr == "" {
+		return nil, nil
+	}
+	if certFile == "" || keyFile == "" {
+		return nil, fmt.Errorf("service bus raw AMQP listener %s requires TLS cert and key", listenAddr)
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load Service Bus AMQP TLS certificate: %w", err)
+	}
+	ln, err := tls.Listen("tcp", listenAddr, &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listen for Service Bus raw AMQP on %s: %w", listenAddr, err)
+	}
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go serveSBAMQPTLSConn(ctx, conn)
+		}
+	}()
+	return ln, nil
+}
+
+func serveSBAMQPTLSConn(ctx context.Context, conn net.Conn) {
+	namespace := ""
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
 			return
 		}
-		if mt != websocket.BinaryMessage {
-			continue
+		namespace = sbAMQPNamespaceFromHost(tlsConn.ConnectionState().ServerName)
+	}
+	c := newSBAMQPConn(namespace, newSBAMQPRawTransport(conn))
+	c.serve(ctx)
+}
+
+func newSBAMQPConn(namespace string, transport sbAMQPTransport) *sbAMQPConn {
+	return &sbAMQPConn{
+		namespace:    namespace,
+		transport:    transport,
+		nextDelivery: 1,
+		links:        map[uint64]*sbAMQPLink{},
+	}
+}
+
+func (c *sbAMQPConn) serve(ctx context.Context) {
+	defer func() { _ = c.transport.Close() }()
+	for {
+		data, err := c.transport.Read(ctx)
+		if err != nil {
+			return
 		}
 		for len(data) > 0 {
 			if len(data) >= 8 && bytes.Equal(data[:4], []byte{'A', 'M', 'Q', 'P'}) {
@@ -131,12 +188,12 @@ func (c *sbAMQPConn) serve(ctx context.Context) {
 func (c *sbAMQPConn) handleProto(header []byte) error {
 	switch header[4] {
 	case 3:
-		if err := c.writeWS([]byte{'A', 'M', 'Q', 'P', 3, 1, 0, 0}); err != nil {
+		if err := c.writeBytes([]byte{'A', 'M', 'Q', 'P', 3, 1, 0, 0}); err != nil {
 			return err
 		}
 		return c.writeFrame(amqpFrameTypeSASL, 0, encodeDescribedList(amqpDescSASLMechanism, []any{amqpSymbol("ANONYMOUS")}))
 	case 0:
-		return c.writeWS([]byte{'A', 'M', 'Q', 'P', 0, 1, 0, 0})
+		return c.writeBytes([]byte{'A', 'M', 'Q', 'P', 0, 1, 0, 0})
 	default:
 		return fmt.Errorf("unsupported AMQP protocol id %d", header[4])
 	}
@@ -147,6 +204,9 @@ func (c *sbAMQPConn) handleFrame(ctx context.Context, frame amqpFrame) error {
 	case 0x41: // sasl-init
 		return c.writeFrame(amqpFrameTypeSASL, 0, encodeDescribedList(amqpDescSASLOutcome, []any{uint8(0)}))
 	case amqpDescOpen:
+		if namespace := sbAMQPNamespaceFromHost(asString(field(frame.fields, 1))); namespace != "" {
+			c.namespace = namespace
+		}
 		return c.writeFrame(amqpFrameTypeAMQP, 0, encodeDescribedList(amqpDescOpen, []any{
 			"sockerless-servicebus",
 			nil,
@@ -473,11 +533,88 @@ func (c *sbAMQPConn) writeFrame(frameType byte, channel uint16, body []byte) err
 	frame[5] = frameType
 	binary.BigEndian.PutUint16(frame[6:8], channel)
 	frame = append(frame, body...)
-	return c.writeWS(frame)
+	return c.writeBytes(frame)
 }
 
-func (c *sbAMQPConn) writeWS(data []byte) error {
-	return c.ws.WriteMessage(websocket.BinaryMessage, data)
+func (c *sbAMQPConn) writeBytes(data []byte) error {
+	return c.transport.Write(data)
+}
+
+type sbAMQPWebSocketTransport struct {
+	conn *websocket.Conn
+}
+
+func (t sbAMQPWebSocketTransport) Read(context.Context) ([]byte, error) {
+	for {
+		mt, data, err := t.conn.ReadMessage()
+		if err != nil {
+			return nil, err
+		}
+		if mt == websocket.BinaryMessage {
+			return data, nil
+		}
+	}
+}
+
+func (t sbAMQPWebSocketTransport) Write(data []byte) error {
+	return t.conn.WriteMessage(websocket.BinaryMessage, data)
+}
+
+func (t sbAMQPWebSocketTransport) Close() error {
+	return t.conn.Close()
+}
+
+type sbAMQPRawTransport struct {
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func newSBAMQPRawTransport(conn net.Conn) *sbAMQPRawTransport {
+	return &sbAMQPRawTransport{conn: conn, r: bufio.NewReader(conn)}
+}
+
+func (t *sbAMQPRawTransport) Read(context.Context) ([]byte, error) {
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(t.r, header); err != nil {
+		return nil, err
+	}
+	if bytes.Equal(header[:4], []byte{'A', 'M', 'Q', 'P'}) {
+		return header, nil
+	}
+	size := int(binary.BigEndian.Uint32(header[:4]))
+	if size < 8 {
+		return nil, fmt.Errorf("invalid AMQP frame size %d", size)
+	}
+	frame := make([]byte, size)
+	copy(frame, header)
+	_, err := io.ReadFull(t.r, frame[8:])
+	return frame, err
+}
+
+func (t *sbAMQPRawTransport) Write(data []byte) error {
+	_, err := t.conn.Write(data)
+	return err
+}
+
+func (t *sbAMQPRawTransport) Close() error {
+	return t.conn.Close()
+}
+
+func sbAMQPNamespaceFromHost(host string) string {
+	host = strings.Trim(strings.TrimSpace(host), ".")
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if i := strings.Index(host, ".servicebus."); i > 0 {
+		return host[:i]
+	}
+	if i := strings.Index(host, "."); i > 0 {
+		return host[:i]
+	}
+	return host
 }
 
 func parseAMQPFrame(data []byte) (amqpFrame, error) {

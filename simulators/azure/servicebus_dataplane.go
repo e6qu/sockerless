@@ -24,8 +24,9 @@ import (
 //   POST   /{topic}/subscriptions/{sub}/messages/head   Sub PeekLock          → 201 or 204
 //   DELETE /{topic}/subscriptions/{sub}/messages/{guid}/{lockToken}  Complete → 204
 //
-// The AMQP data plane (default for the Azure SDK + azservicebus) is
-// exposed over `/$servicebus/websocket` on the same namespace host.
+// The AMQP data plane is exposed as raw AMQP/TLS on the configured
+// Service Bus AMQP listener and as AMQP-over-WebSocket on
+// `/$servicebus/websocket` for clients that opt into that transport.
 // The AMQP slice implements SASL anonymous, CBS claim negotiation,
 // entity sender/receiver links, and accepted delivery dispositions.
 
