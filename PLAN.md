@@ -61,12 +61,16 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #200 | 176 | 8 community-filed issues (#190 reopened + #193..#199) + 12 in-PR audit findings + path-style storage dispatcher + `make hooks`. 8 BUGs closed (1134–1141). Merged 2026-05-24 at `2d8e604`. |
 | #202 | 177 | KV WWW-Authenticate URL reopen (#193) + S3 bucket-subresources (#201) + 4 meta-skill improvements (sim-canonical-config-test extension, surface-table-completeness, reopen-postmortem, tf-tests parity). 6 BUGs closed (1142–1147). Merged 2026-05-24 at `aa847b1`. |
 | #211 | 178 | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations (proactive surface-table seed (46 tables), mux-overlap scanner, paged-iterator rule, state-machine skill, CI-gated tf-tests matrix). 25 BUGs closed (1148–1173) including 12 real handler/shape gaps the new tf-azure gate surfaced. Merged 2026-05-25 at `7a7c9f0`. |
+| #216 | 179 | 2 reopens (#209/#210) + 3 new issues (#213/#214/#215). BUG-1174..1180 closed: GCP Redis upgrade/failover keying, Pub/Sub IAM verbs, Azure real-shape listKeys, Resources Tags API, Service Bus authorizationRules, AWS IAM policy/instance-profile lifecycle, API Gateway method/integration responses. Merged 2026-05-25 at `9620a53`. |
+| #217 | 179 follow-up | README badge refresh from Phase 179 plus hook portability fixes (`lint-changed.sh`, `check-cloud-backend-isolation.sh`). Merged 2026-05-25 at `f0da588`. |
+| #219 | issue #218 | GCP Secret Manager lifecycle endpoints: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata, payload CRC32C; covered by SDK, gcloud CLI, and Terraform tests. Merged 2026-05-25 at `06ee3a5`. |
+| #221 | issue #220 | Azure Blob `GET /?comp=list` now emits per-container `<Properties>` with `Last-Modified` and quoted `Etag`; container ETags persist from create through get/list. Raw wire + real Azure CLI regressions added. |
 
 ## Active phase
 
-**Idle on `main`.** No phase in flight.
+**Idle on `main`.** No phase in flight after PR #221.
 
-BUGS.md: **1173 filed · 1171 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker) remain Open.
+BUGS.md: **1181 filed · 1181 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker) remain Open.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
