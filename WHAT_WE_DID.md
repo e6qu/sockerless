@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Issues #227/#228: Azure Blob block staging + Service Bus AMQP data plane
+
+PR #229 closed issues #227 and #228. Both reports were real. Blob block operations were being treated as ordinary `PutBlob` or falling through because the blob data-plane dispatcher did not branch on `?comp=block` and `?comp=blocklist`. The fix adds persistent committed/uncommitted block state, StageBlock, CommitBlockList, and GetBlockList handlers, and official `azblob/blockblob` SDK coverage for staging, listing, committing, and downloading the materialized blob.
+
+Service Bus had a deeper protocol gap: the simulator had a real REST message data plane, but the official `azservicebus` client uses AMQP 1.0 over WebSocket. The fix adds the AMQP slice needed by canonical Send/Receive flows: WebSocket upgrade, SASL anonymous, CBS claim RPC, sender and receiver links, link credit, accepted dispositions, management-link open, settled receive-and-delete transfers, topic fan-out to simulator subscriptions, and subscription receiver path normalization. Coverage uses the official Go SDK to send and receive both a queue message and a topic/subscription message through the simulator.
+
+Docs now include `specs/SIM_SURFACE_TABLES/azure-servicebus-data-plane.md`, and the Storage data-plane table lists the block blob rows. BUG-1184 and BUG-1185 are closed; BUG-1075 and BUG-1104 remain the only open BUG entries.
+
 ## 2026-05-26 — Phase 226: Azure host-scoped protocol audit
 
 PR #225's Service Bus admin fix exposed the broader pattern: ARM/control-plane coverage does not prove service-native host-scoped SDK protocols work. Phase 226 started with the current Azure host/data-plane surfaces and found the concrete sibling gap in Storage. Blob, File, Queue, and Table data planes already had raw HTTP tests, but only raw wire coverage meant the official SDK call shapes were not locked in.

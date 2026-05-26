@@ -2,11 +2,18 @@ package azure_sdk_test
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,4 +158,99 @@ func TestServiceBus_TopicSubscriptionRoundTrip(t *testing.T) {
 		"/"+topic+"/subscriptions/"+sub+"/messages/head", nil, nil)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
+}
+
+func sbAMQPClient(t *testing.T, namespace string) *azservicebus.Client {
+	t.Helper()
+	hostPort := strings.TrimPrefix(baseURL, "http://")
+	_, port, ok := strings.Cut(hostPort, ":")
+	require.True(t, ok, "baseURL must include a port: %s", baseURL)
+	conn := fmt.Sprintf("Endpoint=sb://%s.servicebus.localhost:%s/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", namespace, port)
+	client, err := azservicebus.NewClientFromConnectionString(conn, &azservicebus.ClientOptions{
+		NewWebSocketConn: func(ctx context.Context, args azservicebus.NewWebSocketConnArgs) (net.Conn, error) {
+			u, err := url.Parse(args.Host)
+			if err != nil {
+				return nil, err
+			}
+			u.Scheme = "ws"
+			dialer := &net.Dialer{}
+			wsConn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
+				Subprotocols: []string{"amqp"},
+				HTTPClient: &http.Client{Transport: &http.Transport{
+					DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+						return dialer.DialContext(ctx, network, "127.0.0.1:"+port)
+					},
+				}},
+			})
+			if err != nil {
+				return nil, err
+			}
+			return websocket.NetConn(context.Background(), wsConn, websocket.MessageBinary), nil
+		},
+	})
+	require.NoError(t, err)
+	return client
+}
+
+func TestServiceBus_AMQPSDKQueueSendReceive(t *testing.T) {
+	client := sbAMQPClient(t, "sdk-amqp-data")
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+
+	sender, err := client.NewSender("amqpqueue", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sender.Close(context.Background()) })
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer sendCancel()
+	err = sender.SendMessage(sendCtx, &azservicebus.Message{Body: []byte("hello from azservicebus")}, nil)
+	require.NoError(t, err)
+
+	receiver, err := client.NewReceiverForQueue("amqpqueue", &azservicebus.ReceiverOptions{
+		ReceiveMode: azservicebus.ReceiveModeReceiveAndDelete,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
+
+	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, []byte("hello from azservicebus"), messages[0].Body)
+}
+
+func TestServiceBus_AMQPSDKTopicSubscriptionSendReceive(t *testing.T) {
+	namespace := "sdk-amqp-topic"
+	topic := "amqptopic"
+	sub := "sub1"
+	adminClient := sbAdminClient(t, namespace)
+	_, err := adminClient.CreateTopic(ctx, topic, nil)
+	require.NoError(t, err)
+	_, err = adminClient.CreateSubscription(ctx, topic, sub, nil)
+	require.NoError(t, err)
+
+	client := sbAMQPClient(t, namespace)
+	t.Cleanup(func() { _ = client.Close(context.Background()) })
+
+	sender, err := client.NewSender(topic, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sender.Close(context.Background()) })
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer sendCancel()
+	err = sender.SendMessage(sendCtx, &azservicebus.Message{Body: []byte("hello from topic")}, nil)
+	require.NoError(t, err)
+
+	receiver, err := client.NewReceiverForSubscription(topic, sub, &azservicebus.ReceiverOptions{
+		ReceiveMode: azservicebus.ReceiveModeReceiveAndDelete,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
+
+	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, []byte("hello from topic"), messages[0].Body)
 }

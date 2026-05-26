@@ -32,7 +32,10 @@ import (
 //	GET    /{container}?restype=container&comp=list ListBlobs (XML)
 //	GET    /?comp=list                             ListContainers (XML)
 //	PUT    /{container}/{blob}                     PutBlob
+//	PUT    /{container}/{blob}?comp=block          StageBlock
+//	PUT    /{container}/{blob}?comp=blocklist      CommitBlockList
 //	GET    /{container}/{blob}                     GetBlob
+//	GET    /{container}/{blob}?comp=blocklist      GetBlockList
 //	HEAD   /{container}/{blob}                     GetBlobProperties
 //	DELETE /{container}/{blob}                     DeleteBlob
 //
@@ -62,14 +65,33 @@ type BlobContainerData struct {
 	Metadata map[string]string
 }
 
+type BlobBlockData struct {
+	Account         string
+	Container       string
+	Blob            string
+	BlockID         string
+	UncommittedData []byte
+	CommittedData   []byte
+	HasUncommitted  bool
+	HasCommitted    bool
+	CommitOrdinal   int
+}
+
+type blockRef struct {
+	id   string
+	data []byte
+}
+
 var (
 	blobObjects        sim.Store[BlobObject]
 	blobContainersData sim.Store[BlobContainerData]
+	blobBlocks         sim.Store[BlobBlockData]
 )
 
 func registerBlobDataPlane(srv *sim.Server) {
 	blobObjects = sim.MakeStore[BlobObject](srv.DB(), "blob_objects")
 	blobContainersData = sim.MakeStore[BlobContainerData](srv.DB(), "blob_containers_data")
+	blobBlocks = sim.MakeStore[BlobBlockData](srv.DB(), "blob_blocks")
 
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +250,9 @@ func blobObjectKey(account, container, name string) string {
 func blobContainerKey(account, container string) string {
 	return account + "/" + container
 }
+func blobBlockKey(account, container, blob, blockID string) string {
+	return account + "/" + container + "/" + blob + "/" + blockID
+}
 
 func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
@@ -273,8 +298,20 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 	blob := segs[1]
 	switch r.Method {
 	case http.MethodPut:
+		switch q.Get("comp") {
+		case "block":
+			handleStageBlock(w, r, account, container, blob)
+			return
+		case "blocklist":
+			handleCommitBlockList(w, r, account, container, blob)
+			return
+		}
 		handlePutBlob(w, r, account, container, blob)
 	case http.MethodGet:
+		if q.Get("comp") == "blocklist" {
+			handleGetBlockList(w, r, account, container, blob)
+			return
+		}
 		handleGetBlob(w, r, account, container, blob)
 	case http.MethodHead:
 		handleHeadBlob(w, r, account, container, blob)
@@ -316,6 +353,11 @@ func handleDeleteContainer(w http.ResponseWriter, r *http.Request, account, cont
 	for _, b := range blobObjects.List() {
 		if strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), prefix) {
 			blobObjects.Delete(blobObjectKey(b.Account, b.Container, b.Name))
+		}
+	}
+	for _, b := range blobBlocks.List() {
+		if strings.HasPrefix(blobBlockKey(b.Account, b.Container, b.Blob, b.BlockID), prefix) {
+			blobBlocks.Delete(blobBlockKey(b.Account, b.Container, b.Blob, b.BlockID))
 		}
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -442,6 +484,213 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 	w.WriteHeader(http.StatusCreated)
 }
 
+func handleStageBlock(w http.ResponseWriter, r *http.Request, account, container, blob string) {
+	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
+		sim.AzureError(w, "ContainerNotFound",
+			"The specified container does not exist.", http.StatusNotFound)
+		return
+	}
+	blockID := r.URL.Query().Get("blockid")
+	if blockID == "" {
+		sim.AzureError(w, "MissingRequiredQueryParameter",
+			"StageBlock requires blockid.", http.StatusBadRequest)
+		return
+	}
+	body, err := openStreamingBody(r)
+	if err != nil {
+		sim.AzureError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	key := blobBlockKey(account, container, blob, blockID)
+	block, _ := blobBlocks.Get(key)
+	block.Account = account
+	block.Container = container
+	block.Blob = blob
+	block.BlockID = blockID
+	block.UncommittedData = data
+	block.HasUncommitted = true
+	blobBlocks.Put(key, block)
+	w.WriteHeader(http.StatusCreated)
+}
+
+type blockListRequest struct {
+	XMLName     xml.Name `xml:"BlockList"`
+	Committed   []string `xml:"Committed"`
+	Latest      []string `xml:"Latest"`
+	Uncommitted []string `xml:"Uncommitted"`
+}
+
+func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, container, blob string) {
+	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
+		sim.AzureError(w, "ContainerNotFound",
+			"The specified container does not exist.", http.StatusNotFound)
+		return
+	}
+	defer r.Body.Close()
+	var req blockListRequest
+	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
+		sim.AzureError(w, "InvalidXmlDocument", err.Error(), http.StatusBadRequest)
+		return
+	}
+	refs := make([]blockRef, 0, len(req.Committed)+len(req.Latest)+len(req.Uncommitted))
+	for _, id := range req.Committed {
+		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
+		if !ok || !block.HasCommitted {
+			sim.AzureError(w, "InvalidBlockList",
+				"The specified block list is invalid.", http.StatusBadRequest)
+			return
+		}
+		refs = append(refs, blockRef{id: id, data: block.CommittedData})
+	}
+	for _, id := range req.Latest {
+		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
+		if !ok || (!block.HasUncommitted && !block.HasCommitted) {
+			sim.AzureError(w, "InvalidBlockList",
+				"The specified block list is invalid.", http.StatusBadRequest)
+			return
+		}
+		data := block.CommittedData
+		if block.HasUncommitted {
+			data = block.UncommittedData
+		}
+		refs = append(refs, blockRef{id: id, data: data})
+	}
+	for _, id := range req.Uncommitted {
+		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
+		if !ok || !block.HasUncommitted {
+			sim.AzureError(w, "InvalidBlockList",
+				"The specified block list is invalid.", http.StatusBadRequest)
+			return
+		}
+		refs = append(refs, blockRef{id: id, data: block.UncommittedData})
+	}
+
+	var data []byte
+	committed := map[string]blockRef{}
+	for _, ref := range refs {
+		data = append(data, ref.data...)
+		committed[ref.id] = ref
+	}
+	prefix := account + "/" + container + "/" + blob + "/"
+	for _, block := range blobBlocks.List() {
+		key := blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID)
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		ref, keepCommitted := committed[block.BlockID]
+		block.HasCommitted = keepCommitted
+		if keepCommitted {
+			block.CommittedData = ref.data
+			block.CommitOrdinal = indexBlockRef(refs, block.BlockID)
+			block.HasUncommitted = false
+			block.UncommittedData = nil
+		}
+		if !block.HasCommitted && !block.HasUncommitted {
+			blobBlocks.Delete(key)
+			continue
+		}
+		blobBlocks.Put(key, block)
+	}
+	for idx, ref := range refs {
+		key := blobBlockKey(account, container, blob, ref.id)
+		block, _ := blobBlocks.Get(key)
+		block.Account = account
+		block.Container = container
+		block.Blob = blob
+		block.BlockID = ref.id
+		block.CommittedData = ref.data
+		block.HasCommitted = true
+		block.HasUncommitted = false
+		block.UncommittedData = nil
+		block.CommitOrdinal = idx
+		blobBlocks.Put(key, block)
+	}
+
+	hash := md5.Sum(data)
+	etag := `"` + hex.EncodeToString(hash[:]) + `"`
+	lastMod := time.Now().UTC().Format(time.RFC1123)
+	blobObjects.Put(blobObjectKey(account, container, blob), BlobObject{
+		Account:      account,
+		Container:    container,
+		Name:         blob,
+		Data:         data,
+		ContentType:  r.Header.Get("Content-Type"),
+		BlobType:     "BlockBlob",
+		ETag:         etag,
+		LastModified: lastMod,
+		Metadata:     collectMetadata(r),
+	})
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Last-Modified", lastMod)
+	w.WriteHeader(http.StatusCreated)
+}
+
+func indexBlockRef(refs []blockRef, id string) int {
+	for i, ref := range refs {
+		if ref.id == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func handleGetBlockList(w http.ResponseWriter, r *http.Request, account, container, blob string) {
+	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
+		sim.AzureError(w, "ContainerNotFound",
+			"The specified container does not exist.", http.StatusNotFound)
+		return
+	}
+	listType := r.URL.Query().Get("blocklisttype")
+	if listType == "" {
+		listType = "committed"
+	}
+	type blockEntry struct {
+		Name string `xml:"Name"`
+		Size int64  `xml:"Size"`
+	}
+	type blockList struct {
+		XMLName           xml.Name     `xml:"BlockList"`
+		CommittedBlocks   []blockEntry `xml:"CommittedBlocks>Block"`
+		UncommittedBlocks []blockEntry `xml:"UncommittedBlocks>Block"`
+	}
+	out := blockList{}
+	prefix := account + "/" + container + "/" + blob + "/"
+	for _, block := range blobBlocks.List() {
+		if !strings.HasPrefix(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID), prefix) {
+			continue
+		}
+		if (listType == "committed" || listType == "all") && block.HasCommitted {
+			out.CommittedBlocks = append(out.CommittedBlocks, blockEntry{
+				Name: block.BlockID,
+				Size: int64(len(block.CommittedData)),
+			})
+		}
+		if (listType == "uncommitted" || listType == "all") && block.HasUncommitted {
+			out.UncommittedBlocks = append(out.UncommittedBlocks, blockEntry{
+				Name: block.BlockID,
+				Size: int64(len(block.UncommittedData)),
+			})
+		}
+	}
+	sort.Slice(out.CommittedBlocks, func(i, j int) bool {
+		left, _ := blobBlocks.Get(blobBlockKey(account, container, blob, out.CommittedBlocks[i].Name))
+		right, _ := blobBlocks.Get(blobBlockKey(account, container, blob, out.CommittedBlocks[j].Name))
+		return left.CommitOrdinal < right.CommitOrdinal
+	})
+	sort.Slice(out.UncommittedBlocks, func(i, j int) bool {
+		return out.UncommittedBlocks[i].Name < out.UncommittedBlocks[j].Name
+	})
+	w.Header().Set("Content-Type", "application/xml")
+	body, _ := xml.Marshal(out)
+	_, _ = w.Write(body)
+}
+
 func handleGetBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	b, ok := blobObjects.Get(blobObjectKey(account, container, blob))
 	if !ok {
@@ -468,6 +717,12 @@ func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container
 		sim.AzureError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
+	}
+	prefix := account + "/" + container + "/" + blob + "/"
+	for _, block := range blobBlocks.List() {
+		if strings.HasPrefix(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID), prefix) {
+			blobBlocks.Delete(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID))
+		}
 	}
 	w.WriteHeader(http.StatusAccepted)
 }

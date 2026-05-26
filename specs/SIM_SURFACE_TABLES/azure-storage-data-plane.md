@@ -19,6 +19,9 @@ These are the service-native Storage REST data planes advertised from `Microsoft
 | DeleteContainer | `DELETE /{container}?restype=container` | ✓ `handleDeleteContainer` | ✓ `TestStorageSDK_BlobLifecycleAndPagedLists` | ✓ `TestBlobDataPlane_RoundTrip` | n/a | Cascades blobs. |
 | ListContainers | `GET /?comp=list` | ✓ `handleListContainers` | ✓ `TestStorageSDK_BlobLifecycleAndPagedLists` | ✓ `TestBlobDataPlane_ListContainersProperties` | ✓ SDK pager | Emits per-container `Properties` with `Last-Modified` and `Etag`. |
 | PutBlob | `PUT /{container}/{blob}` | ✓ `handlePutBlob` | ✓ `TestStorageSDK_BlobLifecycleAndPagedLists` | ✓ `TestBlobDataPlane_RoundTrip` | n/a | |
+| StageBlock | `PUT /{container}/{blob}?comp=block&blockid=...` | ✓ `handleStageBlock` | ✓ `TestStorageSDK_BlobBlockStaging` | ✗ | n/a | Persists uncommitted block data by base64 block ID. |
+| CommitBlockList | `PUT /{container}/{blob}?comp=blocklist` | ✓ `handleCommitBlockList` | ✓ `TestStorageSDK_BlobBlockStaging` | ✗ | n/a | Commits the requested block IDs in order and materializes the block blob bytes. |
+| GetBlockList | `GET /{container}/{blob}?comp=blocklist&blocklisttype=...` | ✓ `handleGetBlockList` | ✓ `TestStorageSDK_BlobBlockStaging` | ✗ | n/a | Returns committed and/or uncommitted block lists with SDK-compatible XML shape. |
 | GetBlob | `GET /{container}/{blob}` | ✓ `handleGetBlob` | ✓ `TestStorageSDK_BlobLifecycleAndPagedLists` | ✓ `TestBlobDataPlane_RoundTrip` | n/a | |
 | GetBlobProperties | `HEAD /{container}/{blob}` | ✓ `handleHeadBlob` | ✗ | ✓ `TestBlobDataPlane_RoundTrip` | n/a | |
 | DeleteBlob | `DELETE /{container}/{blob}` | ✓ `handleDeleteBlob` | ✓ `TestStorageSDK_BlobLifecycleAndPagedLists` | ✓ `TestBlobDataPlane_RoundTrip` | n/a | |

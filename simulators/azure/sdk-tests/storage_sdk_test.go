@@ -1,6 +1,8 @@
 package azure_sdk_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,9 +10,11 @@ import (
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/file"
 	fileservice "github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/service"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
@@ -89,6 +93,62 @@ func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
 
 	_, err = client.DeleteBlob(ctx, container, blobName, nil)
 	require.NoError(t, err)
+}
+
+func TestStorageSDK_BlobBlockStaging(t *testing.T) {
+	account := "sdkblockblobacct"
+	container := "sdk-block-container"
+	blobName := "staged.txt"
+	payloadA := []byte("hello ")
+	payloadB := []byte("from blocks")
+
+	client, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
+		&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = client.CreateContainer(ctx, container, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = client.DeleteContainer(ctx, container, nil) })
+
+	blobClient, err := blockblob.NewClientWithNoCredential(
+		storageSDKURL(t, account, "blob")+container+"/"+blobName,
+		&blockblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	blockA := base64.StdEncoding.EncodeToString([]byte("block-000001"))
+	blockB := base64.StdEncoding.EncodeToString([]byte("block-000002"))
+	_, err = blobClient.StageBlock(ctx, blockA, streaming.NopCloser(bytes.NewReader(payloadA)), nil)
+	require.NoError(t, err)
+	_, err = blobClient.StageBlock(ctx, blockB, streaming.NopCloser(bytes.NewReader(payloadB)), nil)
+	require.NoError(t, err)
+
+	uncommitted, err := blobClient.GetBlockList(ctx, blockblob.BlockListTypeUncommitted, nil)
+	require.NoError(t, err)
+	require.Len(t, uncommitted.UncommittedBlocks, 2)
+	require.NotNil(t, uncommitted.UncommittedBlocks[0].Name)
+	require.NotNil(t, uncommitted.UncommittedBlocks[1].Name)
+	assert.ElementsMatch(t,
+		[]string{blockA, blockB},
+		[]string{*uncommitted.UncommittedBlocks[0].Name, *uncommitted.UncommittedBlocks[1].Name})
+
+	_, err = blobClient.CommitBlockList(ctx, []string{blockA, blockB}, nil)
+	require.NoError(t, err)
+
+	allBlocks, err := blobClient.GetBlockList(ctx, blockblob.BlockListTypeAll, nil)
+	require.NoError(t, err)
+	require.Len(t, allBlocks.CommittedBlocks, 2)
+	require.Empty(t, allBlocks.UncommittedBlocks)
+	require.NotNil(t, allBlocks.CommittedBlocks[0].Name)
+	require.NotNil(t, allBlocks.CommittedBlocks[1].Name)
+	assert.Equal(t, blockA, *allBlocks.CommittedBlocks[0].Name)
+	assert.Equal(t, blockB, *allBlocks.CommittedBlocks[1].Name)
+
+	download, err := client.DownloadStream(ctx, container, blobName, nil)
+	require.NoError(t, err)
+	got, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.NoError(t, download.Body.Close())
+	assert.Equal(t, append(payloadA, payloadB...), got)
 }
 
 func TestStorageSDK_FileLifecycleAndPagedLists(t *testing.T) {

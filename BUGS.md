@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1183 filed · 1183 fixed · 2 open · 2 false positives.**
+**1185 filed · 1185 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+PR #229 closed BUG-1184 / issue #227 and BUG-1185 / issue #228. Azure Blob now implements real block blob staging for official `azblob/blockblob` StageBlock, CommitBlockList, and GetBlockList flows, with committed/uncommitted block state persisted in the simulator store. Azure Service Bus now exposes an AMQP 1.0 WebSocket data-plane slice for official `azservicebus` queue and topic/subscription Send/Receive, including SASL anonymous negotiation, CBS claim RPCs, entity sender/receiver links, link credit, accepted delivery dispositions, topic fan-out, subscription receiver paths, and receive-and-delete message transfer.
 
 Phase 226 closes BUG-1183: Azure Storage blob/file/queue/table data-plane host/path dispatch now has official Azure SDK lifecycle + List pager coverage. The SDK tests exposed two real protocol gaps fixed in the simulator: File `GET /?comp=list` service-level ListShares, and Tables SDK entity-list path `/{table}()`. The phase also adds `azure-storage-data-plane.md` and refreshes stale Key Vault data-plane table rows.
 

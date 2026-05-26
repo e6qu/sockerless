@@ -3,6 +3,7 @@ module github.com/sockerless/simulator-azure
 go 1.25.0
 
 require (
+	github.com/Azure/go-amqp v1.6.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/gorilla/websocket v1.5.3
 	github.com/sockerless/simulator v0.0.0

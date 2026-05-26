@@ -24,10 +24,10 @@ import (
 //   POST   /{topic}/subscriptions/{sub}/messages/head   Sub PeekLock          → 201 or 204
 //   DELETE /{topic}/subscriptions/{sub}/messages/{guid}/{lockToken}  Complete → 204
 //
-// The AMQP data plane (default for the Azure SDK + azservicebus) lives
-// over WebSocket and isn't implemented; REST is the documented HTTP
-// fallback used by lightweight clients, legacy .NET apps, and the
-// Microsoft.Hybrid connectors.
+// The AMQP data plane (default for the Azure SDK + azservicebus) is
+// exposed over `/$servicebus/websocket` on the same namespace host.
+// The AMQP slice implements SASL anonymous, CBS claim negotiation,
+// entity sender/receiver links, and accepted delivery dispositions.
 
 // sbMessage is a single enqueued message. Lock semantics: when a
 // PeekLock returns a message, LockedUntilUtc is set + LockToken is
@@ -77,6 +77,10 @@ func registerServiceBusDataPlane(srv *sim.Server) {
 			parts := strings.SplitN(host, ".servicebus.", 2)
 			if len(parts) != 2 {
 				next.ServeHTTP(w, r)
+				return
+			}
+			if strings.Trim(r.URL.Path, "/") == "$servicebus/websocket" {
+				handleSBAMQPWebSocket(w, r, parts[0])
 				return
 			}
 			if handleSBAdminDataPlane(w, r, parts[0]) {

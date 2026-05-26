@@ -4,13 +4,15 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 226 is active on `phase-226-azure-host-protocol-audit`. PR #225 merged and issue #223 is closed with a verification comment. The first next-phase audit target is complete locally: Azure Storage blob/file/queue/table host/path data planes now have official Azure SDK lifecycle + List pager coverage, plus the `azure-storage-data-plane` surface table.
+Main is idle after PR #229. Issue #227 Azure Blob block staging was implemented and covered by the official `azblob/blockblob` SDK, and issue #228 Azure Service Bus AMQP queue plus topic/subscription Send/Receive was implemented and covered by the official `azservicebus` SDK.
 
 ## Stage plan
 
-Current phase: push Phase 226, open a PR, wait for CI, and let the user merge.
+Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
 
-Phase 226 findings: Storage was the real sibling gap. Blob and Queue SDK paths already worked once covered. File SDK exposed missing service-level `GET /?comp=list` ListShares. Tables SDK exposed the canonical entity-list path `/{table}()`, distinct from the raw-wire `/{table}` path. Key Vault did not need code changes in this pass, but its data-plane surface table had stale rows and was corrected.
+Issue #227 finding: Blob had single-shot Put/Get coverage but no block-list subresource dispatch, so `?comp=block` and `?comp=blocklist` were misrouted. The fix persists committed and uncommitted block state and materializes committed block blobs in list order.
+
+Issue #228 finding: Service Bus REST data-plane coverage did not cover the official Go SDK, which uses AMQP 1.0 over WebSocket. The fix adds the AMQP slice for SASL anonymous, CBS claim RPC, entity sender/receiver links, link credit, accepted dispositions, receive-and-delete transfers, topic fan-out, and subscription receiver paths.
 
 ## Standing invariants (full list in STATUS.md)
 
