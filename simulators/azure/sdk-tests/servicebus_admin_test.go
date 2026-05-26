@@ -84,6 +84,25 @@ func TestServiceBusAdmin_QueueSDKLifecycle(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestServiceBusAdmin_QueueListPagingIsNamespaceScoped(t *testing.T) {
+	ctx := context.Background()
+	other := sbAdminClient(t, "sdk-admin-queue-other")
+	target := sbAdminClient(t, "sdk-admin-queue-target")
+
+	_, err := other.CreateQueue(ctx, "other-q1", nil)
+	require.NoError(t, err)
+	_, err = target.CreateQueue(ctx, "target-q1", nil)
+	require.NoError(t, err)
+	_, err = other.CreateQueue(ctx, "other-q2", nil)
+	require.NoError(t, err)
+
+	pager := target.NewListQueuesPager(&admin.ListQueuesOptions{MaxPageSize: 1})
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, page.Queues, 1)
+	assert.Equal(t, "target-q1", page.Queues[0].QueueName)
+}
+
 func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
 	client := sbAdminClient(t, "sdk-admin-topic")
 	ctx := context.Background()
@@ -95,11 +114,27 @@ func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, topicName, createdTopic.TopicName)
 
+	gotTopic, err := client.GetTopic(ctx, topicName, nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotTopic)
+	assert.Equal(t, topicName, gotTopic.TopicName)
+
+	topicPager := client.NewListTopicsPager(&admin.ListTopicsOptions{MaxPageSize: 1})
+	topicPage, err := topicPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, topicPage.Topics, 1)
+	assert.Equal(t, topicName, topicPage.Topics[0].TopicName)
+
 	createdSub, err := client.CreateSubscription(ctx, topicName, subName, nil)
 	require.NoError(t, err)
 	assert.Equal(t, subName, createdSub.SubscriptionName)
 
-	subPager := client.NewListSubscriptionsPager(topicName, nil)
+	gotSub, err := client.GetSubscription(ctx, topicName, subName, nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotSub)
+	assert.Equal(t, subName, gotSub.SubscriptionName)
+
+	subPager := client.NewListSubscriptionsPager(topicName, &admin.ListSubscriptionsOptions{MaxPageSize: 1})
 	subPage, err := subPager.NextPage(ctx)
 	require.NoError(t, err)
 	require.Len(t, subPage.Subscriptions, 1)
@@ -112,7 +147,12 @@ func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ruleName, createdRule.Name)
 
-	rulePager := client.NewListRulesPager(topicName, subName, nil)
+	gotRule, err := client.GetRule(ctx, topicName, subName, ruleName, nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotRule)
+	assert.Equal(t, ruleName, gotRule.Name)
+
+	rulePager := client.NewListRulesPager(topicName, subName, &admin.ListRulesOptions{MaxPageSize: 2})
 	rulePage, err := rulePager.NextPage(ctx)
 	require.NoError(t, err)
 	require.Len(t, rulePage.Rules, 2)
@@ -120,8 +160,19 @@ func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
 
 	_, err = client.DeleteRule(ctx, topicName, subName, ruleName, nil)
 	require.NoError(t, err)
+	gotRule, err = client.GetRule(ctx, topicName, subName, ruleName, nil)
+	require.NoError(t, err)
+	assert.Nil(t, gotRule)
+
 	_, err = client.DeleteSubscription(ctx, topicName, subName, nil)
 	require.NoError(t, err)
+	gotSub, err = client.GetSubscription(ctx, topicName, subName, nil)
+	require.NoError(t, err)
+	assert.Nil(t, gotSub)
+
 	_, err = client.DeleteTopic(ctx, topicName, nil)
 	require.NoError(t, err)
+	gotTopic, err = client.GetTopic(ctx, topicName, nil)
+	require.NoError(t, err)
+	assert.Nil(t, gotTopic)
 }

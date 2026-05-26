@@ -4,13 +4,13 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Idle on `main` after PR #222. The admin stack cleanup is closed: the stack Makefile starts durable background components with simulator-safe backend env defaults, and the admin UI exposes per-component UI links, default topology contexts, restart/stop controls, full stack shutdown, and visible recovery `make` commands on failure.
+PR #225 is open on `fix/issue-223-azure-service-bus-atom`. Issue #223 was real: Azure Service Bus had ARM management and REST message data-plane coverage, but not the namespace-level ATOM XML admin protocol used by the official `azservicebus/admin` SDK. The PR adds queue, topic, subscription, and rule admin routes, SDK lifecycle coverage, and the `azure-servicebus-admin` surface table.
 
 ## Stage plan
 
-No active implementation phase.
+Current phase: finish PR #225, wait for CI, and let the user merge.
 
-Next work starts only when a new community issue or explicit user task arrives. Use the reference routine below: inspect the real issue, file a BUG first unless the task is purely documentary, fix on a fresh branch from `origin/main`, add canonical-client coverage, create a PR, and never merge it locally.
+Next phase plan: audit service-native SDK protocols that sit beside ARM/control-plane routes and may be hidden behind host-wrapper dispatch rather than plain `HandleFunc` registrations. Start with Azure host-scoped data-plane surfaces already in the repo: Service Bus admin/data-plane, Key Vault data plane, and Storage data planes. For each touched service, add or update a `specs/SIM_SURFACE_TABLES/*` table first, then add canonical SDK paged-iterator coverage for every List* operation before declaring the service rounded out.
 
 ## Standing invariants (full list in STATUS.md)
 

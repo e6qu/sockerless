@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after PR #222. |
-| In-flight | None. Admin stack lifecycle/UI cleanup is closed by PR #222. |
+| Active branch | `fix/issue-223-azure-service-bus-atom` — PR #225 open. |
+| In-flight | PR #225 closes issue #223 / BUG-1182: Azure Service Bus namespace-level ATOM XML admin protocol for queues, topics, subscriptions, and rules. |
 | Last merged | PR #222 — admin stack Makefile fixes + UI lifecycle controls, per-component UI links, default topology contexts, and visible recovery `make` commands (2026-05-26). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1181 filed · 1181 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1182 filed · 1182 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #225 | issue #223 | Azure Service Bus namespace-level ATOM XML admin routes for queues, topics, subscriptions, and rules; official `azservicebus/admin` SDK lifecycle coverage; surface table for the host-scoped admin protocol. |
 | #222 | admin stack UI | Fixed stack Makefile parsing/background-process/env defaults; admin UI can restart/stop individual topology instances and managed processes, schedule full `make stack-down`, link component UIs, create default local contexts, and show recovery `make` commands on failure. |
 | #221 | issue #220 | Azure Blob `GET /?comp=list` now emits per-container `<Properties>` with `Last-Modified` and quoted `Etag`; container ETags persist from create through get/list. Raw wire + real Azure CLI regressions added. |
 | #219 | issue #218 | GCP Secret Manager lifecycle endpoints: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata, payload CRC32C; covered by SDK, gcloud CLI, and Terraform tests. |

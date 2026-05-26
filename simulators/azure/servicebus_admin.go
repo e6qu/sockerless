@@ -416,11 +416,12 @@ func handleSBAdminDeleteEntity(w http.ResponseWriter, r *http.Request, namespace
 
 func handleSBAdminListQueues(w http.ResponseWriter, r *http.Request, namespace string) {
 	prefix := sbAdminNamespaceID(namespace) + "/queues/"
+	queues := sbQueues.Filter(func(q SBQueue) bool {
+		return strings.HasPrefix(q.ID, prefix)
+	})
 	entries := []sbAdminQueueEntry{}
-	for _, q := range sbAdminPaged(sbQueues.List(), r) {
-		if strings.HasPrefix(q.ID, prefix) {
-			entries = append(entries, sbAdminQueueEntryFor(r, namespace, q.Name, q))
-		}
+	for _, q := range sbAdminPaged(queues, r) {
+		entries = append(entries, sbAdminQueueEntryFor(r, namespace, q.Name, q))
 	}
 	writeSBAdminXML(w, http.StatusOK, sbAdminQueueFeed{
 		AtomSchema: sbAtomSchema,
@@ -432,11 +433,12 @@ func handleSBAdminListQueues(w http.ResponseWriter, r *http.Request, namespace s
 
 func handleSBAdminListTopics(w http.ResponseWriter, r *http.Request, namespace string) {
 	prefix := sbAdminNamespaceID(namespace) + "/topics/"
+	topics := sbTopics.Filter(func(topic SBTopic) bool {
+		return strings.HasPrefix(topic.ID, prefix) && !strings.Contains(strings.TrimPrefix(topic.ID, prefix), "/")
+	})
 	entries := []sbAdminTopicEntry{}
-	for _, topic := range sbAdminPaged(sbTopics.List(), r) {
-		if strings.HasPrefix(topic.ID, prefix) && !strings.Contains(strings.TrimPrefix(topic.ID, prefix), "/") {
-			entries = append(entries, sbAdminTopicEntryFor(r, namespace, topic.Name, topic))
-		}
+	for _, topic := range sbAdminPaged(topics, r) {
+		entries = append(entries, sbAdminTopicEntryFor(r, namespace, topic.Name, topic))
 	}
 	writeSBAdminXML(w, http.StatusOK, sbAdminTopicFeed{
 		AtomSchema: sbAtomSchema,
@@ -499,11 +501,12 @@ func handleSBAdminDeleteSubscription(w http.ResponseWriter, r *http.Request, nam
 
 func handleSBAdminListSubscriptions(w http.ResponseWriter, r *http.Request, namespace, topic string) {
 	prefix := sbAdminTopicID(namespace, topic) + "/subscriptions/"
+	subscriptions := sbSubscriptions.Filter(func(sub SBSubscription) bool {
+		return strings.HasPrefix(sub.ID, prefix)
+	})
 	entries := []sbAdminSubscriptionEntry{}
-	for _, sub := range sbAdminPaged(sbSubscriptions.List(), r) {
-		if strings.HasPrefix(sub.ID, prefix) {
-			entries = append(entries, sbAdminSubscriptionEntryFor(r, namespace, topic, sub.Name, sub))
-		}
+	for _, sub := range sbAdminPaged(subscriptions, r) {
+		entries = append(entries, sbAdminSubscriptionEntryFor(r, namespace, topic, sub.Name, sub))
 	}
 	writeSBAdminXML(w, http.StatusOK, sbAdminSubscriptionFeed{
 		AtomSchema: sbAtomSchema,
@@ -556,11 +559,12 @@ func handleSBAdminDeleteRule(w http.ResponseWriter, r *http.Request, namespace, 
 
 func handleSBAdminListRules(w http.ResponseWriter, r *http.Request, namespace, topic, sub string) {
 	prefix := sbAdminSubscriptionID(namespace, topic, sub) + "/rules/"
+	rules := sbRules.Filter(func(rule SBRule) bool {
+		return strings.HasPrefix(rule.ID, prefix)
+	})
 	entries := []sbAdminRuleEntry{}
-	for _, rule := range sbAdminPaged(sbRules.List(), r) {
-		if strings.HasPrefix(rule.ID, prefix) {
-			entries = append(entries, sbAdminRuleEntryFor(r, namespace, topic, sub, rule.Name, rule))
-		}
+	for _, rule := range sbAdminPaged(rules, r) {
+		entries = append(entries, sbAdminRuleEntryFor(r, namespace, topic, sub, rule.Name, rule))
 	}
 	writeSBAdminXML(w, http.StatusOK, sbAdminRuleFeed{
 		AtomSchema: sbAtomSchema,

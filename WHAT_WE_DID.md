@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Issue #223: Azure Service Bus ATOM admin protocol
+
+PR #225 closes #223 / BUG-1182. The report was real: the Azure simulator had ARM management routes for `Microsoft.ServiceBus` and REST message data-plane routes under `{namespace}.servicebus.<host>`, but the official `azservicebus/admin` SDK speaks a third protocol: namespace-level ATOM XML admin routes on the Service Bus host. Requests such as `PUT /{queue}?api-version=2021-05` were falling through to the message data-plane dispatcher and returning `ResourceNotFound`.
+
+The fix adds the namespace admin protocol for queues, topics, subscriptions, and rules, including ATOM entry/feed responses, empty-feed not-found behavior expected by the SDK, `$Default` rule creation for subscriptions, and cascade cleanup when topics/subscriptions are deleted. Coverage uses the official Go admin SDK for queue lifecycle plus topic/subscription/rule lifecycle, including paged List calls.
+
+The systematic lesson is that some cloud services have service-native host-scoped protocols beside their ARM/control-plane APIs. A route seeder that only sees top-level mux registrations can miss those sub-surfaces. The next phase plan is to audit host-wrapper/data-plane SDK surfaces across the current Azure services, starting with Service Bus, Key Vault, and Storage, and to keep each rounded-out service represented by a surface table plus paged canonical-client tests.
+
 ## 2026-05-26 — Admin stack lifecycle UI + Makefile repair
 
 PR #222 closed the admin-stack cleanup task. The Makefile issue was real: `backend-build-dir` had an unterminated nested `$(strip ...)` call, and the stack lifecycle targets also exposed two runtime bugs once the parser was fixed. Background services were started from short-lived recipe shells and died with the parent, and the Azure/GCP/FaaS stack shortcuts did not write the simulator-safe backend env defaults that the binaries require.

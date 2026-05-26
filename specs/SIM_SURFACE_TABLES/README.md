@@ -37,6 +37,7 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 - [`azure-kv-data-plane`](azure-kv-data-plane.md)
 - [`azure-monitor`](azure-monitor.md)
 - [`azure-resourcegroups`](azure-resourcegroups.md)
+- [`azure-servicebus-admin`](azure-servicebus-admin.md)
 - [`azure-storage`](azure-storage.md)
 - [`azure-subscription`](azure-subscription.md)
 - [`gcp-apigateway`](gcp-apigateway.md)
