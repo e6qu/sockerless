@@ -121,8 +121,8 @@ start-component:
 	( cd $$dir && \
 	    ( trap '' HUP ; \
 	      trap 'kill $$child 2>/dev/null || true' TERM INT ; \
-	      env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
-	        > $$logfile 2>&1 & \
+	      nohup env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
+	        > $$logfile 2>&1 < /dev/null & \
 	      child=$$! ; \
 	      wait $$child ; \
 	      code=$$? ; \

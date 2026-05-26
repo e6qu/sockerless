@@ -129,12 +129,12 @@ stack-up:
 	  NAME=backend PORT=$(STACK_BE_PORT) SIM_PORT=$(STACK_SIM_PORT_$(STACK_SIM)) ENV_FILE=$(STACK_PID_DIR)/backend.env
 	@sleep 1
 	@printf "$(COLOR_CYAN)▸ Starting admin on :$(STACK_ADMIN_PORT)$(COLOR_RESET)\n"
-	@cd cmd/sockerless-admin && \
+	@( cd cmd/sockerless-admin || exit 1; \
 	  nohup ./sockerless-admin --addr :$(STACK_ADMIN_PORT) \
 	    --simulator sim-$(STACK_SIM)=http://localhost:$(STACK_SIM_PORT_$(STACK_SIM)) \
 	    --backend backend-$(STACK_BE)=http://localhost:$(STACK_BE_PORT) \
-	    > $(STACK_PID_DIR)/admin.log 2>&1 & \
-	  echo $$! > $(STACK_PID_DIR)/admin.pid
+	    > $(STACK_PID_DIR)/admin.log 2>&1 < /dev/null & \
+	  echo $$! > $(STACK_PID_DIR)/admin.pid )
 	@sleep 1
 	@printf "\n$(COLOR_GREEN)Stack up:$(COLOR_RESET)\n"
 	@printf "  $(COLOR_BOLD)admin UI:$(COLOR_RESET)        http://localhost:$(STACK_ADMIN_PORT)/ui/\n"
@@ -150,9 +150,10 @@ stack-bleephub-up: ## also start bleephub on :5555 after a stack target is runni
 	@printf "$(COLOR_CYAN)▸ Building bleephub$(COLOR_RESET)\n"
 	@$(MAKE) -s -C bleephub build
 	@printf "$(COLOR_CYAN)▸ Starting bleephub on :$(STACK_BLEEPHUB_PORT)$(COLOR_RESET)\n"
-	@cd bleephub && ./bleephub-server -addr :$(STACK_BLEEPHUB_PORT) \
-	  > $(STACK_PID_DIR)/bleephub.log 2>&1 & \
-	  echo $$! > $(STACK_PID_DIR)/bleephub.pid
+	@( cd bleephub || exit 1; \
+	  nohup ./bleephub-server -addr :$(STACK_BLEEPHUB_PORT) \
+	    > $(STACK_PID_DIR)/bleephub.log 2>&1 < /dev/null & \
+	  echo $$! > $(STACK_PID_DIR)/bleephub.pid )
 	@printf "  $(COLOR_BOLD)bleephub UI:$(COLOR_RESET)    http://localhost:$(STACK_BLEEPHUB_PORT)/ui/\n"
 
 stack-status: ## show running stack components
