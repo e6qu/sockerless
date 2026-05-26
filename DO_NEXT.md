@@ -4,13 +4,13 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-PR #225 is open on `fix/issue-223-azure-service-bus-atom`. Issue #223 was real: Azure Service Bus had ARM management and REST message data-plane coverage, but not the namespace-level ATOM XML admin protocol used by the official `azservicebus/admin` SDK. The PR adds queue, topic, subscription, and rule admin routes, SDK lifecycle coverage, and the `azure-servicebus-admin` surface table.
+Phase 226 is active on `phase-226-azure-host-protocol-audit`. PR #225 merged and issue #223 is closed with a verification comment. The first next-phase audit target is complete locally: Azure Storage blob/file/queue/table host/path data planes now have official Azure SDK lifecycle + List pager coverage, plus the `azure-storage-data-plane` surface table.
 
 ## Stage plan
 
-Current phase: finish PR #225, wait for CI, and let the user merge.
+Current phase: push Phase 226, open a PR, wait for CI, and let the user merge.
 
-Next phase plan: audit service-native SDK protocols that sit beside ARM/control-plane routes and may be hidden behind host-wrapper dispatch rather than plain `HandleFunc` registrations. Start with Azure host-scoped data-plane surfaces already in the repo: Service Bus admin/data-plane, Key Vault data plane, and Storage data planes. For each touched service, add or update a `specs/SIM_SURFACE_TABLES/*` table first, then add canonical SDK paged-iterator coverage for every List* operation before declaring the service rounded out.
+Phase 226 findings: Storage was the real sibling gap. Blob and Queue SDK paths already worked once covered. File SDK exposed missing service-level `GET /?comp=list` ListShares. Tables SDK exposed the canonical entity-list path `/{table}()`, distinct from the raw-wire `/{table}` path. Key Vault did not need code changes in this pass, but its data-plane surface table had stale rows and was corrected.
 
 ## Standing invariants (full list in STATUS.md)
 

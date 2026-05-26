@@ -1,0 +1,219 @@
+package azure_sdk_test
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/file"
+	fileservice "github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/service"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type storageSDKTransport struct {
+	inner *http.Client
+}
+
+func (t storageSDKTransport) Do(req *http.Request) (*http.Response, error) {
+	rewritten := req.Clone(req.Context())
+	u := *req.URL
+	rewritten.Host = req.URL.Host
+	u.Host = strings.TrimPrefix(baseURL, "http://")
+	u.Scheme = "http"
+	rewritten.URL = &u
+	client := t.inner
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return client.Do(rewritten)
+}
+
+func storageSDKURL(t *testing.T, account, service string) string {
+	t.Helper()
+	hostPort := strings.TrimPrefix(baseURL, "http://")
+	_, port, ok := strings.Cut(hostPort, ":")
+	require.True(t, ok, "baseURL must include a port: %s", baseURL)
+	return "http://" + account + "." + service + ".localhost:" + port + "/"
+}
+
+func storageSDKOptions() azcore.ClientOptions {
+	return azcore.ClientOptions{Transport: storageSDKTransport{}}
+}
+
+func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
+	account := "sdkblobacct"
+	container := "sdk-blob-container"
+	blobName := "one.txt"
+	payload := []byte("hello from azblob")
+
+	client, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
+		&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = client.CreateContainer(ctx, container, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = client.DeleteContainer(ctx, container, nil) })
+
+	_, err = client.UploadBuffer(ctx, container, blobName, payload, nil)
+	require.NoError(t, err)
+
+	download, err := client.DownloadStream(ctx, container, blobName, nil)
+	require.NoError(t, err)
+	got, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.NoError(t, download.Body.Close())
+	assert.Equal(t, payload, got)
+
+	blobPager := client.NewListBlobsFlatPager(container, &azblob.ListBlobsFlatOptions{MaxResults: to.Ptr(int32(1))})
+	blobPage, err := blobPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, blobPage.Segment)
+	require.Len(t, blobPage.Segment.BlobItems, 1)
+	require.NotNil(t, blobPage.Segment.BlobItems[0].Name)
+	assert.Equal(t, blobName, *blobPage.Segment.BlobItems[0].Name)
+
+	containerPager := client.NewListContainersPager(&azblob.ListContainersOptions{MaxResults: to.Ptr(int32(1))})
+	containerPage, err := containerPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, containerPage.ContainerItems, 1)
+	require.NotNil(t, containerPage.ContainerItems[0].Name)
+	assert.Equal(t, container, *containerPage.ContainerItems[0].Name)
+
+	_, err = client.DeleteBlob(ctx, container, blobName, nil)
+	require.NoError(t, err)
+}
+
+func TestStorageSDK_FileLifecycleAndPagedLists(t *testing.T) {
+	account := "sdkfileacct"
+	share := "sdk-file-share"
+	fileName := "one.txt"
+	payload := []byte("hello from azfile")
+
+	serviceClient, err := fileservice.NewClientWithNoCredential(storageSDKURL(t, account, "file"),
+		&fileservice.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = serviceClient.CreateShare(ctx, share, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteShare(ctx, share, nil) })
+
+	fileClient, err := file.NewClientWithNoCredential(storageSDKURL(t, account, "file")+share+"/"+fileName,
+		&file.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = fileClient.Create(ctx, int64(len(payload)), nil)
+	require.NoError(t, err)
+	require.NoError(t, fileClient.UploadBuffer(ctx, payload, nil))
+
+	buf := make([]byte, len(payload))
+	n, err := fileClient.DownloadBuffer(ctx, buf, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(payload)), n)
+	assert.Equal(t, payload, buf)
+
+	sharePager := serviceClient.NewListSharesPager(&fileservice.ListSharesOptions{MaxResults: to.Ptr(int32(1))})
+	sharePage, err := sharePager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, sharePage.Shares, 1)
+	require.NotNil(t, sharePage.Shares[0].Name)
+	assert.Equal(t, share, *sharePage.Shares[0].Name)
+
+	rootPager := serviceClient.NewShareClient(share).NewRootDirectoryClient().NewListFilesAndDirectoriesPager(nil)
+	rootPage, err := rootPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, rootPage.Segment)
+	require.Len(t, rootPage.Segment.Files, 1)
+	require.NotNil(t, rootPage.Segment.Files[0].Name)
+	assert.Equal(t, fileName, *rootPage.Segment.Files[0].Name)
+
+	_, err = fileClient.Delete(ctx, nil)
+	require.NoError(t, err)
+}
+
+func TestStorageSDK_QueueLifecycleAndPagedLists(t *testing.T) {
+	account := "sdkqueueacct"
+	queueName := "sdkqueue"
+	message := "hello from azqueue"
+
+	serviceClient, err := azqueue.NewServiceClientWithNoCredential(storageSDKURL(t, account, "queue"),
+		&azqueue.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = serviceClient.CreateQueue(ctx, queueName, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteQueue(ctx, queueName, nil) })
+
+	queueClient := serviceClient.NewQueueClient(queueName)
+	_, err = queueClient.EnqueueMessage(ctx, message, nil)
+	require.NoError(t, err)
+
+	dequeued, err := queueClient.DequeueMessage(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, dequeued.Messages, 1)
+	require.NotNil(t, dequeued.Messages[0].MessageText)
+	assert.Equal(t, message, *dequeued.Messages[0].MessageText)
+	require.NotNil(t, dequeued.Messages[0].MessageID)
+	require.NotNil(t, dequeued.Messages[0].PopReceipt)
+
+	_, err = queueClient.DeleteMessage(ctx, *dequeued.Messages[0].MessageID, *dequeued.Messages[0].PopReceipt, nil)
+	require.NoError(t, err)
+
+	pager := serviceClient.NewListQueuesPager(&azqueue.ListQueuesOptions{MaxResults: to.Ptr(int32(1))})
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, page.Queues, 1)
+	require.NotNil(t, page.Queues[0].Name)
+	assert.Equal(t, queueName, *page.Queues[0].Name)
+}
+
+func TestStorageSDK_TableLifecycleAndPagedLists(t *testing.T) {
+	account := "sdktableacct"
+	tableName := "SdkTable"
+
+	serviceClient, err := aztables.NewServiceClientWithNoCredential(storageSDKURL(t, account, "table"),
+		&aztables.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = serviceClient.CreateTable(ctx, tableName, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteTable(ctx, tableName, nil) })
+
+	tableClient := serviceClient.NewClient(tableName)
+	entity := map[string]any{
+		"PartitionKey": "p1",
+		"RowKey":       "r1",
+		"Value":        "hello from aztables",
+	}
+	body, err := json.Marshal(entity)
+	require.NoError(t, err)
+	_, err = tableClient.AddEntity(ctx, body, nil)
+	require.NoError(t, err)
+
+	got, err := tableClient.GetEntity(ctx, "p1", "r1", nil)
+	require.NoError(t, err)
+	assert.Contains(t, string(got.Value), "hello from aztables")
+
+	entityPager := tableClient.NewListEntitiesPager(&aztables.ListEntitiesOptions{Top: to.Ptr(int32(1))})
+	entityPage, err := entityPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, entityPage.Entities, 1)
+	assert.Contains(t, string(entityPage.Entities[0]), "hello from aztables")
+
+	tablePager := serviceClient.NewListTablesPager(&aztables.ListTablesOptions{Top: to.Ptr(int32(1))})
+	tablePage, err := tablePager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, tablePage.Tables, 1)
+	require.NotNil(t, tablePage.Tables[0].Name)
+	assert.Equal(t, tableName, *tablePage.Tables[0].Name)
+
+	_, err = tableClient.DeleteEntity(ctx, "p1", "r1", nil)
+	require.NoError(t, err)
+}
