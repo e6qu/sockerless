@@ -38,7 +38,7 @@ rg -nC1 '_\s*=\s*(yaml|toml|xml)\.(Unmarshal|NewDecoder)' \
 # Decoder constructed and immediately Decode-d with dropped error
 rg -nC2 'NewDecoder\([^)]+\)\.Decode\(' --type go \
   -g '!*_test.go' \
-  | rg -B1 -A1 '_\s*=' 
+  | rg -B1 -A1 '_\s*='
 ```
 
 ### Pattern A2 — silent two-value reads (`data, _ := io.ReadAll(...)`)

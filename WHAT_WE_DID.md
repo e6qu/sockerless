@@ -6,6 +6,22 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Issue #220: Azure Blob List Containers properties
+
+PR #221 closed #220. The issue was real: Azure Blob `GET /?comp=list` returned `<Container><Name>...</Name></Container>` entries without the real Azure `<Properties>` block, so Azure CLI / SDK consumers saw empty `properties.lastModified` and `properties.etag` even though single-container `GET /{container}?restype=container` returned `Last-Modified`.
+
+The fix persisted a real container ETag at create time, returned that same ETag from `Get Container Properties`, and emitted per-container `<Properties><Last-Modified>...</Last-Modified><Etag>...</Etag></Properties>` from `List Containers`. The list response is sorted by container name for deterministic output.
+
+Coverage added both sides that matter for this bug: a raw wire XML regression in `simulators/azure/sdk-tests/blob_keys_certs_test.go`, and a real `az storage container create/show/list` regression in `simulators/azure/cli-tests/blob_test.go`. The PR also carried the generated README badge refresh and a tiny trailing-whitespace cleanup in the `silent-error-swallow-scan` skill.
+
+## 2026-05-25 — Phase 180: GCP Secret Manager lifecycle endpoints
+
+PR #219 closed #218. GCP Secret Manager gained the lifecycle paths real clients were missing: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata preservation, and payload CRC32C behavior. The fix shipped with SDK, gcloud CLI, and Terraform coverage for create/add/list/update/delete flows.
+
+## 2026-05-25 — Phase 179: 2 reopens + 3 community-filed issues
+
+PR #216 closed two reopens (#209 / #210) and three new issues (#213 / #214 / #215), filing and fixing BUG-1174..1180. The reopen themes were the same post-Phase-178 lesson: a green single-client test can still miss another real client path or a content-shape assertion. Fixes covered GCP Memorystore upgrade/failover keying, Pub/Sub IAM verbs, real-shape Azure listKeys, Azure Resources Tags API, Service Bus authorizationRules, AWS IAM managed-policy / instance-profile lifecycle, and API Gateway v1 method/integration response handlers. PR #217 followed with the README badge refresh and hook portability fixes.
+
 ## 2026-05-25 — Phase 178: 9 community-filed issues closed (1 reopen + 8 new) + five class-of-bug remediations
 
 PR #202 (Phase 177) merged. The user immediately filed 8 new issues (#203..#210) and reopened #196 (S3 multipart `ListParts` missed in Phase 176/177's S3 sweep). The reopen + the new issues decomposed into **five distinct classes of bug** that the existing skill catalogue caught only partially: (1) partial-table coverage — `surface-table-completeness` was reactive, requiring a table to exist before it could enforce completeness, and the repo had 30+ service surfaces without tables; (2) mux pattern collision — the collapsed-port sim had no scanner to flag pattern shadowing, so the wrong handler responded with a plausible-looking error; (3) wire-shape drift on List / paged endpoints — single-record envelope from a List op silently passed `.Value[0]`-style SDK tests; (4) state-machine fakery — sim stored data flat with no lifecycle states even though SDKs read them; (5) terraform-provider call sequence drift — `simulators/{cloud}/terraform-tests/` existed locally with 77 stock-provider resources across the three clouds but the CI `sim` job invoked only `sdk-test` + `cli-test`, so every recent reopen (BUG-1098 / 1099 / 1142 / 1147) surfaced against a tf-provider sequence the SDK tests had already marked green. Phase 178 closes the 9 community-filed items AND the 5 class-of-bug remediations on a single PR (18 commits, 6 stages + a CI-wiring follow-up).

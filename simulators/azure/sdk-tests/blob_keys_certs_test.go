@@ -2,11 +2,13 @@ package azure_sdk_test
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,6 +107,48 @@ func TestBlobDataPlane_RoundTrip(t *testing.T) {
 	resp = blobReq(t, "DELETE", account, "/"+container+"?restype=container", nil, nil)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	resp.Body.Close()
+}
+
+func TestBlobDataPlane_ListContainersProperties(t *testing.T) {
+	account := "listpropsacct"
+	container := "probe"
+
+	resp := blobReq(t, "PUT", account, "/"+container+"?restype=container", nil, nil)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	createdETag := resp.Header.Get("ETag")
+	createdLastModified := resp.Header.Get("Last-Modified")
+	resp.Body.Close()
+	require.NotEmpty(t, createdETag)
+	require.NotEmpty(t, createdLastModified)
+
+	resp = blobReq(t, "GET", account, "/"+container+"?restype=container", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, createdETag, resp.Header.Get("ETag"))
+	assert.Equal(t, createdLastModified, resp.Header.Get("Last-Modified"))
+	resp.Body.Close()
+
+	resp = blobReq(t, "GET", account, "/?comp=list", nil, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	type listContainersResponse struct {
+		Containers []struct {
+			Name       string `xml:"Name"`
+			Properties struct {
+				LastModified string `xml:"Last-Modified"`
+				ETag         string `xml:"Etag"`
+			} `xml:"Properties"`
+		} `xml:"Containers>Container"`
+	}
+	var got listContainersResponse
+	require.NoError(t, xml.Unmarshal(body, &got))
+	require.Len(t, got.Containers, 1)
+	require.Equal(t, container, got.Containers[0].Name)
+	require.Equal(t, createdLastModified, got.Containers[0].Properties.LastModified)
+	require.Equal(t, createdETag, got.Containers[0].Properties.ETag)
+	_, err := time.Parse(http.TimeFormat, got.Containers[0].Properties.LastModified)
+	require.NoError(t, err)
 }
 
 // TestBlobDataPlane_404OnMissingContainer locks in the

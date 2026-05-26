@@ -4,19 +4,13 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Phase 179 in flight on `phase-179-community-issues`. Two reopens (#209 / #210 — postmortems in BUG-1174 / 1175 / 1176) + three new community-filed issues (#213 / #214 / #215). 7 BUGs filed: 1174..1180.
+Idle on `main` after PR #221. Issue #220 is closed: Azure Blob `GET /?comp=list` now returns per-container `<Properties>` with `Last-Modified` and quoted `Etag`, backed by the persisted container ETag also returned by `GET /{container}?restype=container`.
 
 ## Stage plan
 
-1. **Stage A — shared scaffolding.**
-   - GCP per-resource IAM-verb dispatcher (AIP-141: `getIamPolicy` / `setIamPolicy` / `testIamPermissions`). Single shared helper registered on every IAM-bearing resource type.
-   - Azure listKeys helper: `base64(sha256(resourceID|key-kind))` — 44-char deterministic, mirrors real-Azure shape.
-2. **Stage B — #209 fixes.** Memorystore `:upgrade` lookup key fix + Pub/Sub topics + subscriptions `:getIamPolicy` / `:testIamPermissions` via Stage A dispatcher.
-3. **Stage C — #210.** Replace Azure Redis listKeys placeholder with Stage A helper; sweep sibling services (Service Bus / EventHub / Cosmos DB listKeys) for the same placeholder.
-4. **Stage D — #213.** Azure Resources Tags API — `PATCH .../Microsoft.Resources/tags/default` + per-resource `PATCH` for tags-only updates.
-5. **Stage E — #214.** Service Bus `authorizationRules` family at namespace + queue + topic level. Auto-provision `RootManageSharedAccessKey` on namespace PUT.
-6. **Stage F — #215.** AWS IAM `CreatePolicy` + `CreateInstanceProfile` lifecycle + API Gateway v1 method/integration response handlers.
-7. **Stage G — continuity-doc reset** (final commit).
+No active implementation phase.
+
+Next work starts only when a new community issue or explicit user task arrives. Use the reference routine below: inspect the real issue, file a BUG first unless the task is purely documentary, fix on a fresh branch from `origin/main`, add canonical-client coverage, create a PR, and never merge it locally.
 
 ## Standing invariants (full list in STATUS.md)
 
@@ -34,7 +28,7 @@ Phase 179 in flight on `phase-179-community-issues`. Two reopens (#209 / #210 �
 
 1. `git fetch origin && gh pr list --state open && git status`.
 2. If a phase PR is open: `gh pr checks <N>`; report state.
-3. If merged: sync `main`, delete merged branch, prune remotes, refresh continuity docs to idle.
+3. If a PR merged: sync `main`, delete merged branch, prune remotes, refresh continuity docs to idle.
 4. If fresh issues filed: `gh issue list --state open --limit 30`; file each as a BUG in BUGS.md before any fix attempt.
 5. Read `.claude/skills/avoid-vibe-slop/SKILL.md` before any code change.
 

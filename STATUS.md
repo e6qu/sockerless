@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `phase-179-community-issues` — Phase 179. Two reopens (#209 / #210) + three new issues (#213 / #214 / #215). |
-| In-flight | Filing BUGs 1174..1180; no PR open yet. |
-| Last merged | PR #212 — continuity-doc reset after Phase 178 (2026-05-25, squash `be1d6dd`). |
+| Active branch | `main` — idle after PR #221. |
+| In-flight | None. Issue #220 is closed by PR #221. |
+| Last merged | PR #221 — Azure Blob `List Containers` properties (`Last-Modified` + quoted `Etag`) for issue #220 (2026-05-26). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1180 filed · 1171 fixed · 9 open · 2 false positives. Open: BUG-1075 + BUG-1104 + BUG-1174..1180. |
+| Bugs | 1181 filed · 1181 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,10 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #221 | issue #220 | Azure Blob `GET /?comp=list` now emits per-container `<Properties>` with `Last-Modified` and quoted `Etag`; container ETags persist from create through get/list. Raw wire + real Azure CLI regressions added. |
+| #219 | issue #218 | GCP Secret Manager lifecycle endpoints: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata, payload CRC32C; covered by SDK, gcloud CLI, and Terraform tests. |
+| #217 | 179 follow-up | README badge refresh from Phase 179 plus hook portability fixes (`lint-changed.sh`, `check-cloud-backend-isolation.sh`). |
+| #216 | 179 | 2 reopens (#209/#210) + 3 new issues (#213/#214/#215). BUG-1174..1180 closed: GCP Redis upgrade/failover keying, Pub/Sub IAM verbs, Azure real-shape listKeys, Resources Tags API, Service Bus authorizationRules, AWS IAM policy/instance-profile lifecycle, API Gateway method/integration responses. |
 | #211 | 178 | 9 community-filed issues (#196 reopen + #203..#210) + 5 class-of-bug remediations: proactive surface-table seed (46 tables) + mux-overlap scanner + paged-iterator rule + state-machine skill + CI-gated tf-tests (`tf (aws\|gcp\|azure)` matrix). 25 BUGs closed (1148-1173). Surfaced + fixed 12 real handler / shape gaps via the new tf-azure gate (KV subscription-list / deletedVaults / purge, App Service publishingcredentials/authsettings/slotconfignames/logs/backup/basicPublishingCredentialsPolicies, Microsoft.Web checkNameAvailability, azurestorageaccounts properties-shape, ACA listSecrets, App Service config case-canonicalization, arm64 image manifest, ECR-Public rate-limit retry). Merged at `7a7c9f0`. |
 | #202 | 177 | KV WWW-Authenticate URL reopen (#193) + S3 bucket-subresources (#201) + 4 meta-skill improvements (sim-canonical-config-test extension, surface-table-completeness, reopen-postmortem, tf-tests parity). 6 BUGs closed (1142-1147). Merged at `aa847b1`. |
 | #200 | 176 | 8 community-filed issues (#190 reopened + #193..#199) + 12 in-PR audit findings + path-style storage dispatcher contamination + `make hooks`. 8 BUGs closed (1134-1141). Merged at `2d8e604`. |
