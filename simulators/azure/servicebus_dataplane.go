@@ -79,6 +79,9 @@ func registerServiceBusDataPlane(srv *sim.Server) {
 				next.ServeHTTP(w, r)
 				return
 			}
+			if handleSBAdminDataPlane(w, r, parts[0]) {
+				return
+			}
 			handleSBRESTDataPlane(w, r, parts[0])
 		})
 	})
