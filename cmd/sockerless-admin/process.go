@@ -233,6 +233,26 @@ func (pm *ProcessManager) Stop(name string) error {
 	return nil
 }
 
+// Restart stops a running managed process, or starts it directly when
+// it is already stopped/failed.
+func (pm *ProcessManager) Restart(name string) error {
+	pm.mu.Lock()
+	proc, ok := pm.processes[name]
+	if !ok {
+		pm.mu.Unlock()
+		return fmt.Errorf("process %q not found", name)
+	}
+	running := proc.Status == "running"
+	pm.mu.Unlock()
+
+	if running {
+		if err := pm.Stop(name); err != nil {
+			return err
+		}
+	}
+	return pm.Start(name)
+}
+
 // StopAll stops all running managed processes.
 func (pm *ProcessManager) StopAll() {
 	pm.mu.Lock()

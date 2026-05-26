@@ -54,6 +54,124 @@ interface ConfigEditTarget {
   instance: TopologyInstance;
 }
 
+interface ActionError {
+  kicker: string;
+  message: string;
+  commands: string[];
+}
+
+interface StackPreset {
+  label: string;
+  command: string;
+  project: TopologyProject;
+}
+
+interface InstanceActionVars {
+  project: string;
+  inst: TopologyInstance;
+  projectCfg?: TopologyProject;
+}
+
+const stackPresets: StackPreset[] = [
+  {
+    label: "Azure ACA",
+    command: "make stack-azure-aca",
+    project: {
+      name: "local-azure-aca",
+      instances: [
+        { name: "sim-azure", kind: "sim", cloud: "azure", port: 4568 },
+        {
+          name: "aca",
+          kind: "backend",
+          cloud: "azure",
+          backend: "aca",
+          port: 3375,
+          sim: "sim-azure",
+          config: {
+            SOCKERLESS_ACA_SUBSCRIPTION_ID:
+              "00000000-0000-0000-0000-000000000000",
+            SOCKERLESS_ACA_RESOURCE_GROUP: "sim-rg",
+            SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE: "default",
+            SOCKERLESS_CALLBACK_URL: "ws://localhost:3375/v1/aca/reverse",
+          },
+        },
+      ],
+    },
+  },
+  {
+    label: "AWS ECS",
+    command: "make stack-aws-ecs",
+    project: {
+      name: "local-aws-ecs",
+      instances: [
+        { name: "sim-aws", kind: "sim", cloud: "aws", port: 4566 },
+        {
+          name: "ecs",
+          kind: "backend",
+          cloud: "aws",
+          backend: "ecs",
+          port: 3375,
+          sim: "sim-aws",
+          config: {
+            AWS_REGION: "us-east-1",
+          },
+        },
+      ],
+    },
+  },
+  {
+    label: "GCP Cloud Run",
+    command: "make stack-gcp-cloudrun",
+    project: {
+      name: "local-gcp-cloudrun",
+      instances: [
+        { name: "sim-gcp", kind: "sim", cloud: "gcp", port: 4567 },
+        {
+          name: "cloudrun",
+          kind: "backend",
+          cloud: "gcp",
+          backend: "cloudrun",
+          port: 3375,
+          sim: "sim-gcp",
+          config: {
+            SOCKERLESS_GCR_PROJECT: "sim-project",
+            SOCKERLESS_LOG_TIMEOUT: "2s",
+          },
+        },
+      ],
+    },
+  },
+];
+
+function startCommand(inst: TopologyInstance, project?: TopologyProject): string {
+  const args = [
+    "make start-component",
+    `KIND=${inst.kind}`,
+    `NAME=${inst.name}`,
+    `PORT=${inst.port}`,
+  ];
+  if (inst.cloud) args.push(`CLOUD=${inst.cloud}`);
+  if (inst.backend) args.push(`BACKEND=${inst.backend}`);
+  if (inst.kind === "backend" && inst.sim) {
+    const sim = project?.instances?.find(
+      (candidate) => candidate.name === inst.sim,
+    );
+    args.push(`SIM_PORT=${sim?.port ?? "<sim port>"}`);
+  }
+  return args.join(" ");
+}
+
+function stopCommand(inst: TopologyInstance): string {
+  return `make stop-component NAME=${inst.name}`;
+}
+
+function rebuildCommand(inst: TopologyInstance): string {
+  const args = ["make rebuild-component", `KIND=${inst.kind}`];
+  if (inst.cloud) args.push(`CLOUD=${inst.cloud}`);
+  if (inst.backend) args.push(`BACKEND=${inst.backend}`);
+  return args.join(" ");
+}
+
 /**
  * TopologyPage — single-screen view of `sockerless.yaml`. Each project
  * expands into its instance list with per-row Start/Stop/Rebuild +
@@ -88,10 +206,17 @@ export function TopologyPage() {
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(
     null,
   );
+  const [actionError, setActionError] = useState<ActionError | null>(null);
 
   const { data: configMetadata } = useQuery({
     queryKey: ["config-metadata"],
     queryFn: () => api.topologyConfigMetadata(),
+    staleTime: 60_000,
+  });
+
+  const { data: topologyFile } = useQuery({
+    queryKey: ["topology-file"],
+    queryFn: () => api.topologyFile(),
     staleTime: 60_000,
   });
 
@@ -106,6 +231,12 @@ export function TopologyPage() {
       invalidate();
       push({ tone: "success", title: `Project ${p.name} created` });
     },
+    onError: (err, p) =>
+      setActionError({
+        kicker: "create project failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: [`edit ${topologyFile?.path ?? "sockerless.yaml"}`],
+      }),
   });
 
   const removeProjectMutation = useMutation({
@@ -165,49 +296,95 @@ export function TopologyPage() {
   });
 
   const startInstanceMutation = useMutation({
-    mutationFn: ({
-      project,
-      name,
-    }: {
-      project: string;
-      name: string;
-    }) => api.topologyInstanceStart(project, name),
+    mutationFn: ({ project, inst }: InstanceActionVars) =>
+      api.topologyInstanceStart(project, inst.name),
     onSuccess: (_d, vars) => {
       invalidate();
-      push({ tone: "success", title: `Started ${vars.name}` });
+      push({ tone: "success", title: `Started ${vars.inst.name}` });
     },
-    onError: (err, vars) => reportError(err, `Failed to start ${vars.name}`),
+    onError: (err, vars) => {
+      reportError(err, `Failed to start ${vars.inst.name}`);
+      setActionError({
+        kicker: "start failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: [
+          "make stack-status",
+          startCommand(vars.inst, vars.projectCfg),
+        ],
+      });
+    },
   });
 
   const stopInstanceMutation = useMutation({
-    mutationFn: ({
-      project,
-      name,
-    }: {
-      project: string;
-      name: string;
-    }) => api.topologyInstanceStop(project, name),
+    mutationFn: ({ project, inst }: InstanceActionVars) =>
+      api.topologyInstanceStop(project, inst.name),
     onSuccess: (_d, vars) => {
       invalidate();
-      push({ tone: "success", title: `Stopped ${vars.name}` });
+      push({ tone: "success", title: `Stopped ${vars.inst.name}` });
     },
-    onError: (err, vars) => reportError(err, `Failed to stop ${vars.name}`),
+    onError: (err, vars) => {
+      reportError(err, `Failed to stop ${vars.inst.name}`);
+      setActionError({
+        kicker: "stop failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: [stopCommand(vars.inst), "make stack-status"],
+      });
+    },
+  });
+
+  const restartInstanceMutation = useMutation({
+    mutationFn: ({ project, inst }: InstanceActionVars) =>
+      api.topologyInstanceRestart(project, inst.name),
+    onSuccess: (_d, vars) => {
+      invalidate();
+      push({ tone: "success", title: `Restarted ${vars.inst.name}` });
+    },
+    onError: (err, vars) =>
+      setActionError({
+        kicker: "restart failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: [
+          stopCommand(vars.inst),
+          startCommand(vars.inst, vars.projectCfg),
+        ],
+      }),
+  });
+
+  const stopStackMutation = useMutation({
+    mutationFn: () => api.topologyStopAll(),
+    onSuccess: (resp) => {
+      invalidate();
+      push({
+        tone: "success",
+        title:
+          resp.status === "stopping"
+            ? "Stack shutdown scheduled"
+            : `Stopped ${resp.stopped ?? 0} instance(s)`,
+      });
+    },
+    onError: (err) =>
+      setActionError({
+        kicker: "stop stack failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: ["make stop-components", "make stack-down"],
+      }),
   });
 
   const rebuildInstanceMutation = useMutation({
-    mutationFn: ({
-      project,
-      name,
-    }: {
-      project: string;
-      name: string;
-    }) => api.topologyInstanceRebuild(project, name),
+    mutationFn: ({ project, inst }: InstanceActionVars) =>
+      api.topologyInstanceRebuild(project, inst.name),
     onSuccess: (_d, vars) => {
       invalidate();
-      push({ tone: "success", title: `Rebuilt ${vars.name}` });
+      push({ tone: "success", title: `Rebuilt ${vars.inst.name}` });
     },
-    onError: (err, vars) =>
-      reportError(err, `Failed to rebuild ${vars.name}`),
+    onError: (err, vars) => {
+      reportError(err, `Failed to rebuild ${vars.inst.name}`);
+      setActionError({
+        kicker: "rebuild failed",
+        message: err instanceof Error ? err.message : String(err),
+        commands: [rebuildCommand(vars.inst)],
+      });
+    },
   });
 
   const reloadInstanceMutation = useMutation({
@@ -226,7 +403,18 @@ export function TopologyPage() {
   });
 
   if (isLoading) return <Spinner label="loading topology" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
+    );
+  }
   if (!topology) return <Spinner label="loading topology" />;
 
   const projects = topology.projects ?? [];
@@ -240,7 +428,7 @@ export function TopologyPage() {
       <PageHeading
         kicker="admin · topology"
         title={<>Topology</>}
-        meta={`${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalInstances} instance${totalInstances === 1 ? "" : "s"}`}
+        meta={`${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalInstances} instance${totalInstances === 1 ? "" : "s"} · ${topologyFile?.path ?? "sockerless.yaml"}`}
         actions={
           <div className="inline-flex items-center gap-2">
             <Link
@@ -265,17 +453,33 @@ export function TopologyPage() {
             >
               + project
             </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => stopStackMutation.mutate()}
+              disabled={stopStackMutation.isPending || totalInstances === 0}
+            >
+              stop stack
+            </Button>
           </div>
         }
       />
 
+      {actionError && (
+        <ErrorPanel
+          kicker={actionError.kicker}
+          message={actionError.message}
+          commands={actionError.commands}
+        />
+      )}
+
+      <TopologyFileCard path={topologyFile?.path ?? "sockerless.yaml"} />
+
       {projects.length === 0 ? (
-        <p
-          className="font-mono uppercase tracking-[0.18em] py-6 text-center"
-          style={{ color: "var(--color-fg-subtle)", fontSize: "0.7rem" }}
-        >
-          — no projects configured —
-        </p>
+        <QuickStartCard
+          presets={stackPresets}
+          onCreate={(preset) => addProjectMutation.mutate(preset.project)}
+        />
       ) : (
         <div className="flex flex-col gap-4">
           {projects.map((p) => (
@@ -304,24 +508,35 @@ export function TopologyPage() {
               onStart={(inst) =>
                 startInstanceMutation.mutate({
                   project: p.name,
-                  name: inst.name,
+                  inst,
+                  projectCfg: p,
                 })
               }
               onStop={(inst) =>
                 stopInstanceMutation.mutate({
                   project: p.name,
-                  name: inst.name,
+                  inst,
+                  projectCfg: p,
                 })
               }
               onRebuild={(inst) =>
                 rebuildInstanceMutation.mutate({
                   project: p.name,
-                  name: inst.name,
+                  inst,
+                  projectCfg: p,
+                })
+              }
+              onRestart={(inst) =>
+                restartInstanceMutation.mutate({
+                  project: p.name,
+                  inst,
+                  projectCfg: p,
                 })
               }
               busy={{
                 start: startInstanceMutation,
                 stop: stopInstanceMutation,
+                restart: restartInstanceMutation,
                 rebuild: rebuildInstanceMutation,
               }}
             />
@@ -376,8 +591,12 @@ export function TopologyPage() {
             await reloadInstanceMutation.mutateAsync({ project, name });
           }}
           onRestart={async (project, name) => {
-            await stopInstanceMutation.mutateAsync({ project, name });
-            await startInstanceMutation.mutateAsync({ project, name });
+            const projectCfg = topology.projects?.find((p) => p.name === project);
+            await restartInstanceMutation.mutateAsync({
+              project,
+              inst: configEdit.instance,
+              projectCfg,
+            });
           }}
         />
       )}
@@ -403,9 +622,121 @@ export function TopologyPage() {
 }
 
 interface BusyMutations {
-  start: { isPending: boolean; variables?: { name: string } };
-  stop: { isPending: boolean; variables?: { name: string } };
-  rebuild: { isPending: boolean; variables?: { name: string } };
+  start: { isPending: boolean; variables?: InstanceActionVars };
+  stop: { isPending: boolean; variables?: InstanceActionVars };
+  restart: { isPending: boolean; variables?: InstanceActionVars };
+  rebuild: { isPending: boolean; variables?: InstanceActionVars };
+}
+
+function TopologyFileCard({ path }: { path: string }) {
+  return (
+    <section className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]" style={cardStyle}>
+      <div className="px-4 py-3">
+        <div
+          className="font-mono uppercase tracking-[0.18em]"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.62rem" }}
+        >
+          topology file
+        </div>
+        <div
+          className="mt-1 font-mono"
+          style={{ color: "var(--color-fg)", fontSize: "0.86rem" }}
+        >
+          {path}
+        </div>
+      </div>
+      <div
+        className="flex flex-col gap-1 px-4 py-3"
+        style={{ borderLeft: "1px solid var(--color-border)" }}
+      >
+        {["make stack-status", "make stack-down"].map((cmd) => (
+          <code
+            key={cmd}
+            style={{
+              background: "var(--color-bg)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              fontSize: "0.72rem",
+              padding: "0.25rem 0.45rem",
+            }}
+          >
+            {cmd}
+          </code>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function QuickStartCard({
+  presets,
+  onCreate,
+}: {
+  presets: StackPreset[];
+  onCreate: (preset: StackPreset) => void;
+}) {
+  return (
+    <section style={cardStyle}>
+      <header
+        className="px-4 py-3"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <div
+          className="font-display"
+          style={{
+            fontStyle: "italic",
+            fontWeight: 600,
+            fontSize: "1rem",
+            letterSpacing: "-0.02em",
+          }}
+        >
+          No projects configured
+        </div>
+        <div
+          className="mt-0.5 font-mono uppercase tracking-[0.18em]"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.62rem" }}
+        >
+          create topology entries or run the equivalent stack command
+        </div>
+      </header>
+      <div className="grid gap-3 p-4 md:grid-cols-3">
+        {presets.map((preset) => (
+          <div
+            key={preset.label}
+            className="flex flex-col gap-3 p-3"
+            style={{
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            <div
+              className="font-mono uppercase tracking-[0.16em]"
+              style={{ color: "var(--color-fg)", fontSize: "0.7rem" }}
+            >
+              {preset.label}
+            </div>
+            <code
+              style={{
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-xs)",
+                color: "var(--color-fg-muted)",
+                fontSize: "0.72rem",
+                padding: "0.35rem 0.5rem",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {preset.command}
+            </code>
+            <Button variant="primary" size="sm" onClick={() => onCreate(preset)}>
+              create
+            </Button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ProjectCard({
@@ -417,6 +748,7 @@ function ProjectCard({
   onDeleteProject,
   onStart,
   onStop,
+  onRestart,
   onRebuild,
   busy,
 }: {
@@ -428,6 +760,7 @@ function ProjectCard({
   onDeleteProject: () => void;
   onStart: (inst: TopologyInstance) => void;
   onStop: (inst: TopologyInstance) => void;
+  onRestart: (inst: TopologyInstance) => void;
   onRebuild: (inst: TopologyInstance) => void;
   busy: BusyMutations;
 }) {
@@ -501,6 +834,7 @@ function ProjectCard({
               onDelete={() => onDeleteInstance(inst)}
               onStart={() => onStart(inst)}
               onStop={() => onStop(inst)}
+              onRestart={() => onRestart(inst)}
               onRebuild={() => onRebuild(inst)}
               busy={busy}
             />
@@ -519,6 +853,7 @@ function InstanceRow({
   onDelete,
   onStart,
   onStop,
+  onRestart,
   onRebuild,
   busy,
 }: {
@@ -529,6 +864,7 @@ function InstanceRow({
   onDelete: () => void;
   onStart: () => void;
   onStop: () => void;
+  onRestart: () => void;
   onRebuild: () => void;
   busy: BusyMutations;
 }) {
@@ -549,7 +885,7 @@ function InstanceRow({
     : "unknown";
 
   const isBusy = (m: BusyMutations[keyof BusyMutations]) =>
-    m.isPending && m.variables?.name === instance.name;
+    m.isPending && m.variables?.inst.name === instance.name;
 
   return (
     <li className="px-4 py-3">
@@ -611,6 +947,14 @@ function InstanceRow({
           <Button
             variant="secondary"
             size="sm"
+            onClick={onRestart}
+            disabled={isBusy(busy.restart)}
+          >
+            restart
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onRebuild}
             disabled={isBusy(busy.rebuild)}
           >
@@ -631,6 +975,23 @@ function InstanceRow({
           >
             logs
           </Link>
+          <a
+            href={`http://localhost:${instance.port}/ui/`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              fontSize: "0.7rem",
+              fontFamily: "var(--font-mono)",
+              padding: "0.25rem 0.6rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-xs)",
+              color: "var(--color-fg-muted)",
+              textDecoration: "none",
+              letterSpacing: "0.05em",
+            }}
+          >
+            UI
+          </a>
           <Button variant="ghost" size="sm" onClick={onConfigEdit}>
             config
           </Button>

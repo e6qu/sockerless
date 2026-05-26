@@ -16,6 +16,7 @@ STACK_PID_DIR := $(CURDIR)/.stack-pids
 STACK_SIM_PORT_aws   := 4566
 STACK_SIM_PORT_gcp   := 4567
 STACK_SIM_PORT_azure := 4568
+STACK_SIM_GRPC_PORT_gcp := 4568
 
 # Backend port is 3375 by convention (every backend defaults to that).
 STACK_BE_PORT  := 3375
@@ -91,14 +92,45 @@ stack-up:
 	@$(MAKE) -s rebuild-component KIND=backend CLOUD=$(STACK_SIM_CLOUD_$(STACK_BE)) BACKEND=$(STACK_BE)
 	@printf "$(COLOR_CYAN)▸ Building admin$(COLOR_RESET)\n"
 	@$(MAKE) -s -C cmd/sockerless-admin build
+	@mkdir -p $(STACK_PID_DIR)
+	@rm -f $(STACK_PID_DIR)/backend.env
+	@if [ "$(STACK_BE)" = "aca" ]; then \
+	  { \
+	    printf 'SOCKERLESS_ACA_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000000\n'; \
+	    printf 'SOCKERLESS_ACA_RESOURCE_GROUP=sim-rg\n'; \
+	    printf 'SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=default\n'; \
+	    printf 'SOCKERLESS_CALLBACK_URL=ws://localhost:$(STACK_BE_PORT)/v1/aca/reverse\n'; \
+	  } > $(STACK_PID_DIR)/backend.env; \
+	elif [ "$(STACK_BE)" = "azf" ]; then \
+	  { \
+	    printf 'SOCKERLESS_AZF_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000000\n'; \
+	    printf 'SOCKERLESS_AZF_RESOURCE_GROUP=sim-rg\n'; \
+	    printf 'SOCKERLESS_AZF_STORAGE_ACCOUNT=simstorage\n'; \
+	    printf 'SOCKERLESS_CALLBACK_URL=ws://localhost:$(STACK_BE_PORT)/v1/azf/reverse\n'; \
+	  } > $(STACK_PID_DIR)/backend.env; \
+	elif [ "$(STACK_BE)" = "cloudrun" ]; then \
+	  { \
+	    printf 'SOCKERLESS_GCR_PROJECT=sim-project\n'; \
+	    printf 'SOCKERLESS_GCP_LOGADMIN_ENDPOINT=localhost:$(STACK_SIM_GRPC_PORT_gcp)\n'; \
+	  } > $(STACK_PID_DIR)/backend.env; \
+	elif [ "$(STACK_BE)" = "gcf" ]; then \
+	  { \
+	    printf 'SOCKERLESS_GCF_PROJECT=sim-project\n'; \
+	  } > $(STACK_PID_DIR)/backend.env; \
+	elif [ "$(STACK_BE)" = "lambda" ]; then \
+	  { \
+	    printf 'SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::123456789012:role/sockerless-sim-lambda\n'; \
+	    printf 'SOCKERLESS_CALLBACK_URL=ws://localhost:$(STACK_BE_PORT)/v1/lambda/reverse\n'; \
+	  } > $(STACK_PID_DIR)/backend.env; \
+	fi
 	@$(MAKE) -s start-component KIND=sim CLOUD=$(STACK_SIM) NAME=sim PORT=$(STACK_SIM_PORT_$(STACK_SIM))
 	@sleep 1
 	@$(MAKE) -s start-component KIND=backend CLOUD=$(STACK_SIM_CLOUD_$(STACK_BE)) BACKEND=$(STACK_BE) \
-	  NAME=backend PORT=$(STACK_BE_PORT) SIM_PORT=$(STACK_SIM_PORT_$(STACK_SIM))
+	  NAME=backend PORT=$(STACK_BE_PORT) SIM_PORT=$(STACK_SIM_PORT_$(STACK_SIM)) ENV_FILE=$(STACK_PID_DIR)/backend.env
 	@sleep 1
 	@printf "$(COLOR_CYAN)▸ Starting admin on :$(STACK_ADMIN_PORT)$(COLOR_RESET)\n"
 	@cd cmd/sockerless-admin && \
-	  ./sockerless-admin --addr :$(STACK_ADMIN_PORT) \
+	  nohup ./sockerless-admin --addr :$(STACK_ADMIN_PORT) \
 	    --simulator sim-$(STACK_SIM)=http://localhost:$(STACK_SIM_PORT_$(STACK_SIM)) \
 	    --backend backend-$(STACK_BE)=http://localhost:$(STACK_BE_PORT) \
 	    > $(STACK_PID_DIR)/admin.log 2>&1 & \
@@ -124,19 +156,7 @@ stack-bleephub-up: ## also start bleephub on :5555 (run AFTER a stack-X-Y)
 	@printf "  $(COLOR_BOLD)bleephub UI:$(COLOR_RESET)    http://localhost:$(STACK_BLEEPHUB_PORT)/ui/\n"
 
 stack-status: ## show running stack components
-	@if [ ! -d $(STACK_PID_DIR) ]; then \
-	  printf "$(COLOR_DIM)No stack running.$(COLOR_RESET)\n"; \
-	  exit 0; \
-	fi
-	@for pidfile in $(STACK_PID_DIR)/*.pid; do \
-	  [ -f "$$pidfile" ] || continue ; \
-	  pid=$$(cat $$pidfile); name=$$(basename $$pidfile .pid); \
-	  if ps -p $$pid > /dev/null 2>&1; then \
-	    printf "  $(COLOR_GREEN)● %-10s$(COLOR_RESET) pid=%s\n" "$$name" "$$pid"; \
-	  else \
-	    printf "  $(COLOR_RED)○ %-10s$(COLOR_RESET) pid=%s (dead)\n" "$$name" "$$pid"; \
-	  fi ; \
-	done
+	@$(MAKE) -s status-components
 
 # stack-observability-up brings up the OTel collector + VictoriaLogs
 # + Jaeger as background processes. PIDs land in
@@ -275,17 +295,6 @@ stack-observability-validate: ## assert telemetry lands in VictoriaLogs + Jaeger
 	 exit 1
 
 stack-down: ## stop all running stack processes
-	@if [ ! -d $(STACK_PID_DIR) ]; then \
-	  printf "$(COLOR_DIM)No stack running.$(COLOR_RESET)\n"; \
-	  exit 0; \
-	fi
-	@for pidfile in $(STACK_PID_DIR)/*.pid; do \
-	  [ -f "$$pidfile" ] || continue ; \
-	  pid=$$(cat $$pidfile); name=$$(basename $$pidfile .pid); \
-	  kill $$pid 2>/dev/null && \
-	    printf "  $(COLOR_DIM)stopped %-10s pid=%s$(COLOR_RESET)\n" "$$name" "$$pid" || \
-	    printf "  $(COLOR_DIM)not running %-10s pid=%s$(COLOR_RESET)\n" "$$name" "$$pid" ; \
-	  rm -f $$pidfile ; \
-	done
+	@$(MAKE) -s stop-components
 	@rm -rf $(STACK_PID_DIR)
 	@printf "$(COLOR_GREEN)Stack down.$(COLOR_RESET)\n"

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Idle on `main` after PR #221. Issue #220 is closed: Azure Blob `GET /?comp=list` now returns per-container `<Properties>` with `Last-Modified` and quoted `Etag`, backed by the persisted container ETag also returned by `GET /{container}?restype=container`.
+Idle on `main` after PR #222. The admin stack cleanup is closed: the stack Makefile starts durable background components with simulator-safe backend env defaults, and the admin UI exposes per-component UI links, default topology contexts, restart/stop controls, full stack shutdown, and visible recovery `make` commands on failure.
 
 ## Stage plan
 

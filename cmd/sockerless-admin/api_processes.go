@@ -11,6 +11,8 @@ func registerProcessAPI(mux *http.ServeMux, procMgr *ProcessManager) {
 	mux.HandleFunc("GET /api/v1/processes", handleProcessList(procMgr))
 	mux.HandleFunc("POST /api/v1/processes/{name}/start", handleProcessStart(procMgr))
 	mux.HandleFunc("POST /api/v1/processes/{name}/stop", handleProcessStop(procMgr))
+	mux.HandleFunc("POST /api/v1/processes/{name}/restart", handleProcessRestart(procMgr))
+	mux.HandleFunc("POST /api/v1/processes/stop-all", handleProcessStopAll(procMgr))
 	mux.HandleFunc("GET /api/v1/processes/{name}/logs", handleProcessLogs(procMgr))
 }
 
@@ -44,6 +46,25 @@ func handleProcessStop(procMgr *ProcessManager) http.HandlerFunc {
 		}
 		info, _ := procMgr.Get(name)
 		writeJSON(w, http.StatusOK, info)
+	}
+}
+
+func handleProcessRestart(procMgr *ProcessManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if err := procMgr.Restart(name); err != nil {
+			writeJSON(w, processErrorStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		info, _ := procMgr.Get(name)
+		writeJSON(w, http.StatusOK, info)
+	}
+}
+
+func handleProcessStopAll(procMgr *ProcessManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		procMgr.StopAll()
+		writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 	}
 }
 

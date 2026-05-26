@@ -65,7 +65,18 @@ export function ContextsPage() {
   });
 
   if (isLoading) return <Spinner label="loading contexts" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
+    );
+  }
   if (!data) return <Spinner label="loading contexts" />;
 
   return (

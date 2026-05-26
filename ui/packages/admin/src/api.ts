@@ -121,6 +121,11 @@ export interface Topology {
   ports?: PortConfig;
 }
 
+export interface TopologyFileInfo {
+  path: string;
+  exists: boolean;
+}
+
 export interface InstanceRef {
   project: string;
   instance: TopologyInstance;
@@ -262,6 +267,14 @@ export class AdminApiClient {
     return this.post(`/api/v1/processes/${encodeURIComponent(name)}/stop`);
   }
 
+  processRestart(name: string): Promise<ProcessInfo> {
+    return this.post(`/api/v1/processes/${encodeURIComponent(name)}/restart`);
+  }
+
+  processStopAll(): Promise<{ status: string }> {
+    return this.post("/api/v1/processes/stop-all");
+  }
+
   processLogs(name: string, lines?: number): Promise<string[]> {
     const qs = lines ? `?lines=${lines}` : "";
     return this.request(
@@ -295,6 +308,10 @@ export class AdminApiClient {
 
   topology(): Promise<Topology> {
     return this.request("/api/v1/topology");
+  }
+
+  topologyFile(): Promise<TopologyFileInfo> {
+    return this.request("/api/v1/topology/file");
   }
 
   topologyReplace(t: Topology): Promise<Topology> {
@@ -358,6 +375,19 @@ export class AdminApiClient {
     return this.post(
       `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/stop`,
     );
+  }
+
+  topologyInstanceRestart(
+    project: string,
+    name: string,
+  ): Promise<{ status: string }> {
+    return this.post(
+      `/api/v1/topology/projects/${encodeURIComponent(project)}/instances/${encodeURIComponent(name)}/restart`,
+    );
+  }
+
+  topologyStopAll(): Promise<{ status: string; stopped?: number }> {
+    return this.post("/api/v1/topology/stop-all");
   }
 
   topologyInstanceRebuild(

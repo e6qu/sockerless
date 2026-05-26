@@ -7,9 +7,15 @@ export interface ErrorPanelProps {
   message?: string;
   /** Optional kicker label (e.g. "fetch failed"). */
   kicker?: string;
+  /** Operator commands that recover this failure path. */
+  commands?: string[];
 }
 
-export function ErrorPanel({ message, kicker = "error" }: ErrorPanelProps) {
+export function ErrorPanel({
+  message,
+  kicker = "error",
+  commands = [],
+}: ErrorPanelProps) {
   return (
     <div
       className="px-4 py-3 font-mono"
@@ -28,7 +34,29 @@ export function ErrorPanel({ message, kicker = "error" }: ErrorPanelProps) {
       >
         {kicker}
       </div>
-      {message ?? "request failed"}
+      <div>{message ?? "request failed"}</div>
+      {commands.length > 0 && (
+        <div
+          className="mt-3"
+          style={{ color: "var(--color-fg)", fontSize: "0.76rem" }}
+        >
+          {commands.map((cmd) => (
+            <code
+              key={cmd}
+              className="mb-1 block"
+              style={{
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-xs)",
+                padding: "0.35rem 0.5rem",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {cmd}
+            </code>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

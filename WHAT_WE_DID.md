@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Admin stack lifecycle UI + Makefile repair
+
+PR #222 closed the admin-stack cleanup task. The Makefile issue was real: `backend-build-dir` had an unterminated nested `$(strip ...)` call, and the stack lifecycle targets also exposed two runtime bugs once the parser was fixed. Background services were started from short-lived recipe shells and died with the parent, and the Azure/GCP/FaaS stack shortcuts did not write the simulator-safe backend env defaults that the binaries require.
+
+The fix replaces the fragile nested backend lookup expressions with explicit backend path maps, has `start-component` record a durable wrapper PID that forwards stop signals and writes exit status, and has `stack-up` write per-backend env files for the local simulator stacks before starting the backend. `stack-status` / `stack-down` now delegate to the shared component lifecycle targets instead of carrying a second stop/status implementation.
+
+The admin API and UI now cover the operator lifecycle from one place: topology instances and managed processes can start, stop, and restart; the topology page schedules the repo's real `make stack-down`; individual component UIs are linked from admin; empty topology gets default local contexts; and admin/API failure panels show the concrete recovery `make` commands. The skill update added an `avoid-vibe-slop` check requiring real post-start status + request probes for Makefile/script background-service targets.
+
 ## 2026-05-26 — Issue #220: Azure Blob List Containers properties
 
 PR #221 closed #220. The issue was real: Azure Blob `GET /?comp=list` returned `<Container><Name>...</Name></Container>` entries without the real Azure `<Properties>` block, so Azure CLI / SDK consumers saw empty `properties.lastModified` and `properties.etag` even though single-container `GET /{container}?restype=container` returned `Last-Modified`.

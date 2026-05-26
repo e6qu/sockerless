@@ -77,6 +77,76 @@ func TestHandleProcessStartStop(t *testing.T) {
 	}
 }
 
+func TestHandleProcessRestart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("platform gate: sleep binary not available on this OS — Unix-like host required")
+	}
+
+	pm := NewProcessManager(nil)
+	pm.AddProcess(ProcessConfig{Name: "restart-test", Binary: "sleep", Args: []string{"60"}, Type: "backend"})
+	if err := pm.Start("restart-test"); err != nil {
+		t.Fatalf("initial start failed: %v", err)
+	}
+	first, _ := pm.Get("restart-test")
+	if first.PID == 0 {
+		t.Fatal("expected initial PID")
+	}
+
+	handler := handleProcessRestart(pm)
+	req := httptest.NewRequest("POST", "/api/v1/processes/restart-test/restart", nil)
+	req.SetPathValue("name", "restart-test")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("restart: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var info ProcessInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if info.Status != "running" {
+		t.Errorf("expected status=running, got %s", info.Status)
+	}
+	if info.PID == 0 || info.PID == first.PID {
+		t.Errorf("expected restarted process with new PID, got old=%d new=%d", first.PID, info.PID)
+	}
+
+	_ = pm.Stop("restart-test")
+}
+
+func TestHandleProcessStopAll(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("platform gate: sleep binary not available on this OS — Unix-like host required")
+	}
+
+	pm := NewProcessManager(nil)
+	pm.AddProcess(ProcessConfig{Name: "a", Binary: "sleep", Args: []string{"60"}, Type: "backend"})
+	pm.AddProcess(ProcessConfig{Name: "b", Binary: "sleep", Args: []string{"60"}, Type: "simulator"})
+	if err := pm.Start("a"); err != nil {
+		t.Fatalf("start a: %v", err)
+	}
+	if err := pm.Start("b"); err != nil {
+		t.Fatalf("start b: %v", err)
+	}
+
+	handler := handleProcessStopAll(pm)
+	req := httptest.NewRequest("POST", "/api/v1/processes/stop-all", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("stop-all: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, name := range []string{"a", "b"} {
+		info, _ := pm.Get(name)
+		if info.Status != "stopped" {
+			t.Errorf("%s status = %s, want stopped", name, info.Status)
+		}
+	}
+}
+
 func TestHandleProcessStartNotFound(t *testing.T) {
 	pm := NewProcessManager(nil)
 

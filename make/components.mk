@@ -25,6 +25,20 @@ COMPONENTS_STATE_DIR := $(CURDIR)/.sockerless-state
         logs-component status-components stop-components \
         purge-state purge-state-all
 
+BACKEND_BINARY_ecs      := backends/ecs/sockerless-backend-ecs
+BACKEND_BINARY_lambda   := backends/lambda/sockerless-backend-lambda
+BACKEND_BINARY_cloudrun := backends/cloudrun/sockerless-backend-cloudrun
+BACKEND_BINARY_gcf      := backends/cloudrun-functions/sockerless-backend-gcf
+BACKEND_BINARY_aca      := backends/aca/sockerless-backend-aca
+BACKEND_BINARY_azf      := backends/azure-functions/sockerless-backend-azf
+
+BACKEND_BUILD_DIR_ecs      := backends/ecs
+BACKEND_BUILD_DIR_lambda   := backends/lambda
+BACKEND_BUILD_DIR_cloudrun := backends/cloudrun
+BACKEND_BUILD_DIR_gcf      := backends/cloudrun-functions
+BACKEND_BUILD_DIR_aca      := backends/aca
+BACKEND_BUILD_DIR_azf      := backends/azure-functions
+
 # component-binary returns the on-disk binary path for KIND/CLOUD/BACKEND.
 define component-binary
 $(strip $(if $(filter sim,$(1)),simulators/$(2)/simulator-$(2), \
@@ -34,13 +48,7 @@ $(error component-binary: unknown KIND $(1))))))
 endef
 
 define backend-binary-path
-$(strip $(if $(filter ecs,$(1)),backends/ecs/sockerless-backend-ecs, \
-$(if $(filter lambda,$(1)),backends/lambda/sockerless-backend-lambda, \
-$(if $(filter cloudrun,$(1)),backends/cloudrun/sockerless-backend-cloudrun, \
-$(if $(filter gcf,$(1)),backends/cloudrun-functions/sockerless-backend-gcf, \
-$(if $(filter aca,$(1)),backends/aca/sockerless-backend-aca, \
-$(if $(filter azf,$(1)),backends/azure-functions/sockerless-backend-azf, \
-$(error backend-binary-path: unknown BACKEND $(1))))))))
+$(strip $(if $(BACKEND_BINARY_$(1)),$(BACKEND_BINARY_$(1)),$(error backend-binary-path: unknown BACKEND $(1))))
 endef
 
 # component-build-dir returns the make -C directory for KIND/CLOUD/BACKEND.
@@ -52,13 +60,7 @@ $(error component-build-dir: unknown KIND $(1))))))
 endef
 
 define backend-build-dir
-$(strip $(if $(filter ecs,$(1)),backends/ecs, \
-$(if $(filter lambda,$(1)),backends/lambda, \
-$(if $(filter cloudrun,$(1)),backends/cloudrun, \
-$(if $(filter gcf,$(1)),backends/cloudrun-functions, \
-$(if $(filter aca,$(1)),backends/aca, \
-$(if $(filter azf,$(1)),backends/azure-functions, \
-$(error backend-build-dir: unknown BACKEND $(1))))))))
+$(strip $(if $(BACKEND_BUILD_DIR_$(1)),$(BACKEND_BUILD_DIR_$(1)),$(error backend-build-dir: unknown BACKEND $(1))))
 endef
 
 # component-flag returns the addr/listen flag the binary expects.
@@ -117,14 +119,16 @@ start-component:
 	exitfile=$(COMPONENTS_PID_DIR)/$(NAME).exit; \
 	logfile=$(COMPONENTS_PID_DIR)/$(NAME).log; \
 	( cd $$dir && \
-	    env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
-	      > $$logfile 2>&1 & \
-	    bin_pid=$$! ; \
-	    echo $$bin_pid > $$pidfile ; \
-	    ( wait $$bin_pid ; \
+	    ( trap '' HUP ; \
+	      trap 'kill $$child 2>/dev/null || true' TERM INT ; \
+	      env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
+	        > $$logfile 2>&1 & \
+	      child=$$! ; \
+	      wait $$child ; \
 	      code=$$? ; \
-	      printf '%d %s\n' $$code "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > $$exitfile ) \
-	    > /dev/null 2>&1 & \
+	      printf '%d %s\n' $$code "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > $$exitfile ; \
+	      exit $$code ) & \
+	    echo $$! > $$pidfile ; \
 	  )
 	@printf "  pid=$$(cat $(COMPONENTS_PID_DIR)/$(NAME).pid) log=$(COMPONENTS_PID_DIR)/$(NAME).log\n"
 

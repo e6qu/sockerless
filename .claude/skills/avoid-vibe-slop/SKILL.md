@@ -65,6 +65,7 @@ Stop after each "no" and resolve it before writing code.
 24. **Did you just claim something works?** Did you actually run it? "Works on my machine" without an `$ ` shell prompt and real output in the message is suspicious.
 25. **After `git commit` reports success, did you run `git log --oneline -1` to verify the SHA actually advanced?** Pre-commit hook auto-fixes can roll back a commit silently. "Hook output passed" ≠ "commit landed" (pattern 31).
 26. **First-pass review is sycophantic-by-default.** When closing a BUG or finishing a substantial change, plan an explicit re-verification pass with fresh eyes — typically surfaces new bugs the first pass rubber-stamped (patterns 24, 32). Budget the time; don't skip it.
+27. **Did a Makefile / script start background services?** A zero exit code or PID file is not evidence. Verify with the repo's status target and at least one real HTTP / CLI request after the parent command has returned. Background-process bugs often hide until the launching shell exits.
 
 ## Failure modes to recognise in your own output
 
@@ -82,6 +83,7 @@ Stop and rewrite if you catch yourself producing any of these:
 - Assertions on bug IDs / phase numbers / internal IDs in error strings — pattern 28. Re-derive from the contract.
 - Sed / regex on Go source spanning multiple files — pattern 35. Run `go build && go test` immediately; visual inspection misses joined lines + eaten args.
 - Code change merged without docs change — pattern 33. If the behaviour changed, the README, env-var table, and adjacent comment block need to change with it.
+- Stack / dev-server target says "up" but no post-start status + request probe was run — Q27. Start scripts lie when child processes die with the parent shell.
 - Commit message says "passed" but you didn't run `git log` afterward — pattern 31. The hook may have rolled it back.
 
 ## Sockerless-specific invariants (load-bearing; don't violate)
@@ -114,5 +116,6 @@ When this skill fires, restate the 1–2 checklist items most relevant to the cu
 - Behaviour change → Q19 (sync docs).
 - Closing a BUG → Q26 (explicit re-verification pass).
 - After commit → Q25 (verify SHA advanced).
+- Make / process lifecycle fix → Q24 + Q27 (real status and request probe after start).
 
 Then proceed — or stop and ask if a "no" surfaced.
