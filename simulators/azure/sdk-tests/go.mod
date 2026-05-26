@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
+	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1
 	github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.10.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3 v3.1.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5 v5.1.0
@@ -15,6 +16,9 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azcertificates v1.4.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.4.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.7.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.6.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue v1.0.1
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -22,7 +26,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/internal v1.2.0 // indirect
 	github.com/Azure/go-amqp v1.4.0 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.1 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

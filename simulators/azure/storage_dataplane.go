@@ -47,6 +47,7 @@ type FileShareData struct {
 	Quota    int // GiB
 	Metadata map[string]string
 	Created  string
+	ETag     string
 }
 
 type FileObject struct {
@@ -253,6 +254,12 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 	q := r.URL.Query()
 	restype := q.Get("restype")
 
+	// List Shares: GET /?comp=list
+	if path == "" && q.Get("comp") == "list" {
+		handleFilesListShares(w, r, account)
+		return
+	}
+
 	// Share-level ops: /{share}?restype=share[&comp=...]
 	if !strings.Contains(path, "/") && path != "" && restype == "share" {
 		switch r.Method {
@@ -302,10 +309,12 @@ func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, sha
 	s := FileShareData{
 		Account: account, Name: share, Quota: 5120,
 		Metadata: collectMetadata(r),
-		Created:  time.Now().UTC().Format(time.RFC1123),
+		Created:  time.Now().UTC().Format(http.TimeFormat),
+		ETag:     `"` + generateUUID() + `"`,
 	}
 	fileShareData.Put(key, s)
 	w.Header().Set("Last-Modified", s.Created)
+	w.Header().Set("ETag", s.ETag)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -331,11 +340,45 @@ func handleFilesGetShareProperties(w http.ResponseWriter, r *http.Request, accou
 		return
 	}
 	w.Header().Set("Last-Modified", s.Created)
+	w.Header().Set("ETag", s.ETag)
 	w.Header().Set("x-ms-share-quota", fmt.Sprintf("%d", s.Quota))
 	for k, v := range s.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func handleFilesListShares(w http.ResponseWriter, r *http.Request, account string) {
+	type shareProperties struct {
+		LastModified string `xml:"Last-Modified"`
+		ETag         string `xml:"Etag"`
+		Quota        int    `xml:"Quota"`
+	}
+	type shareEntry struct {
+		Name       string          `xml:"Name"`
+		Properties shareProperties `xml:"Properties"`
+	}
+	type enum struct {
+		XMLName xml.Name     `xml:"EnumerationResults"`
+		Shares  []shareEntry `xml:"Shares>Share"`
+	}
+	out := enum{}
+	prefix := account + "/"
+	for _, s := range fileShareData.List() {
+		if strings.HasPrefix(fileShareKey(s.Account, s.Name), prefix) {
+			out.Shares = append(out.Shares, shareEntry{
+				Name: s.Name,
+				Properties: shareProperties{
+					LastModified: s.Created,
+					ETag:         s.ETag,
+					Quota:        s.Quota,
+				},
+			})
+		}
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	body, _ := xml.Marshal(out)
+	_, _ = w.Write(body)
 }
 
 func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share string) {
@@ -785,6 +828,10 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 	}
 	if path == "Tables" && r.Method == http.MethodGet {
 		handleTablesList(w, r, account)
+		return
+	}
+	if strings.HasSuffix(path, "()") && r.Method == http.MethodGet {
+		handleEntityQuery(w, r, account, strings.TrimSuffix(path, "()"))
 		return
 	}
 

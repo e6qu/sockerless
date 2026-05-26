@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Phase 226: Azure host-scoped protocol audit
+
+PR #225's Service Bus admin fix exposed the broader pattern: ARM/control-plane coverage does not prove service-native host-scoped SDK protocols work. Phase 226 started with the current Azure host/data-plane surfaces and found the concrete sibling gap in Storage. Blob, File, Queue, and Table data planes already had raw HTTP tests, but only raw wire coverage meant the official SDK call shapes were not locked in.
+
+The phase adds official Azure SDK tests for blob, file, queue, and table lifecycle flows, including List pager calls on every supported List surface. The new SDK coverage found two real protocol gaps: File service-level `GET /?comp=list` ListShares was missing, and the Tables SDK lists entities through `/{table}()` while the raw test used `/{table}`. Both shapes are now implemented.
+
+Docs now include `specs/SIM_SURFACE_TABLES/azure-storage-data-plane.md`, and the Key Vault data-plane table was refreshed for rows already implemented and covered by SDK state-machine tests. BUG-1183 is closed by this phase; BUG-1075 and BUG-1104 remain the only open BUG entries.
+
 ## 2026-05-26 — Issue #223: Azure Service Bus ATOM admin protocol
 
 PR #225 closes #223 / BUG-1182. The report was real: the Azure simulator had ARM management routes for `Microsoft.ServiceBus` and REST message data-plane routes under `{namespace}.servicebus.<host>`, but the official `azservicebus/admin` SDK speaks a third protocol: namespace-level ATOM XML admin routes on the Service Bus host. Requests such as `PUT /{queue}?api-version=2021-05` were falling through to the message data-plane dispatcher and returning `ResourceNotFound`.

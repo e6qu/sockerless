@@ -23,13 +23,13 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 |---|---|---|---|---|---|
 | SetSecret | `PUT /secrets/{name}` | ✓ `keyvault.go::handleKVSetSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✗ | tf: `azurerm_key_vault_secret` |
 | GetSecret | `GET /secrets/{name}` | ✓ `handleKVGetSecret` | ✓ same | ✗ | |
-| GetSecret (specific version) | `GET /secrets/{name}/{version}` | ✓ same | ✗ | ✗ | |
+| GetSecret (specific version) | `GET /secrets/{name}/{version}` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✗ | |
 | ListSecrets | `GET /secrets` | ✓ `handleKVListSecrets` | ✗ | ✗ | |
-| ListSecretVersions | `GET /secrets/{name}/versions` | ✓ same | ✗ | ✗ | |
-| DeleteSecret | `DELETE /secrets/{name}` | ✓ `handleKVDeleteSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✗ | |
-| UpdateSecret | `PATCH /secrets/{name}/{version}` | ✗ | ✗ | ✗ | Used by `azurerm_key_vault_secret` updates. |
+| ListSecretVersions | `GET /secrets/{name}/versions` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✗ | SDK pager. |
+| DeleteSecret | `DELETE /secrets/{name}` | ✓ `handleKVDeleteSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + `TestKeyVault_State_SoftDeleteRoundTrip` | ✗ | |
+| UpdateSecret | `PATCH /secrets/{name}/{version}` | ✓ `handleKVPatchSecret` | ✗ | ✗ | Used by `azurerm_key_vault_secret` updates. |
 | BackupSecret / RestoreSecret | `POST /secrets/{name}/backup` / `/secrets/restore` | ✗ | ✗ | ✗ | Low-frequency; surface 501 if a runner scenario hits them. |
-| RecoverDeletedSecret / PurgeDeletedSecret | `POST /deletedsecrets/{name}/recover` / `DELETE /deletedsecrets/{name}` | ✗ | ✗ | ✗ | Requires soft-delete feature. |
+| RecoverDeletedSecret / PurgeDeletedSecret | `POST /deletedsecrets/{name}/recover` / `DELETE /deletedsecrets/{name}` | ✓ `handleKVRecoverDeletedSecret` / `handleKVPurgeDeletedSecret` | ✓ `TestKeyVault_State_SoftDeleteRoundTrip` | ✗ | Soft-delete state machine. |
 
 ## Keys
 
@@ -64,8 +64,8 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 - CreateCertificate response shape: switch to canonical 202 + CertificateOperation + add `GET /certificates/{name}/pending` polling endpoint so the full SDK LRO contract round-trips. File as follow-up BUG when a runner scenario lands.
 - Cryptographic operations (Sign/Verify/Encrypt/Decrypt/WrapKey/UnwrapKey): out of scope for the simulator (no real key material), but should surface as canonical 501 NotImplemented envelopes rather than 404 fall-throughs.
 - tf-tests for `azurerm_key_vault_secret` covered under BUG-1147 in Phase 177; `azurerm_key_vault_key` + `azurerm_key_vault_certificate` deferred until a runner scenario lands.
-- **All remaining ✗ sim-handler rows** (UpdateSecret, BackupSecret/RestoreSecret, RecoverDeletedSecret/PurgeDeletedSecret, UpdateKey, ImportKey, crypto ops, BackupKey/RestoreKey, GetCertificateOperation, UpdateCertificate, ImportCertificate, MergeCertificate) are deferred under this entry. Soft-delete + Backup/Restore are big surfaces requiring their own persistence model; UpdateSecret / UpdateKey / UpdateCertificate are the most likely next requests from a community-filed issue and land first when one arrives.
-- **All remaining ✗ sdk-test rows** (GetSecret-specific-version, ListSecrets, ListSecretVersions, ListKeys, ListKeyVersions, DeleteKey, ListCertificates, DeleteCertificate) are deferred under this entry. The sim handlers exist; the gap is canonical-SDK-driven test coverage. Sweep lands when a community-filed issue or scheduled audit surfaces a regression.
+- **All remaining ✗ sim-handler rows** (BackupSecret/RestoreSecret, UpdateKey, ImportKey, crypto ops, BackupKey/RestoreKey, GetCertificateOperation, UpdateCertificate, ImportCertificate, MergeCertificate) are deferred under this entry. Backup/Restore and crypto operations are big surfaces requiring their own persistence or key-material model; UpdateKey / UpdateCertificate are the most likely next requests from a community-filed issue and land first when one arrives.
+- **All remaining ✗ sdk-test rows** (ListSecrets, ListKeys, ListKeyVersions, DeleteKey, ListCertificates, DeleteCertificate, UpdateSecret) are deferred under this entry. The sim handlers exist for several of these rows; the remaining gap is canonical-SDK-driven test coverage. Sweep lands when a community-filed issue or scheduled audit surfaces a regression.
 
 ## Reopens that produced this table
 
