@@ -48,6 +48,13 @@ type SBSubscription struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+type SBRule struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 // SBAuthorizationRule is a SAS authorization rule on a namespace,
 // queue, or topic. Real Azure auto-provisions `RootManageSharedAccessKey`
 // on every namespace; operators add named rules with scoped rights.
@@ -67,6 +74,7 @@ var (
 	sbQueues        sim.Store[SBQueue]
 	sbTopics        sim.Store[SBTopic]
 	sbSubscriptions sim.Store[SBSubscription]
+	sbRules         sim.Store[SBRule]
 	sbAuthRules     sim.Store[SBAuthorizationRule]
 )
 
@@ -75,6 +83,7 @@ func registerServiceBus(srv *sim.Server) {
 	sbQueues = sim.MakeStore[SBQueue](srv.DB(), "sb_queues")
 	sbTopics = sim.MakeStore[SBTopic](srv.DB(), "sb_topics")
 	sbSubscriptions = sim.MakeStore[SBSubscription](srv.DB(), "sb_subscriptions")
+	sbRules = sim.MakeStore[SBRule](srv.DB(), "sb_rules")
 	sbAuthRules = sim.MakeStore[SBAuthorizationRule](srv.DB(), "sb_auth_rules")
 
 	const ns = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ServiceBus/namespaces"
@@ -213,6 +222,11 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			sbSubscriptions.Delete(s.ID)
 		}
 	}
+	for _, rule := range sbRules.List() {
+		if strings.HasPrefix(rule.ID, prefix) {
+			sbRules.Delete(rule.ID)
+		}
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -349,6 +363,11 @@ func handleSBDeleteTopic(w http.ResponseWriter, r *http.Request) {
 			sbSubscriptions.Delete(s.ID)
 		}
 	}
+	for _, rule := range sbRules.List() {
+		if strings.HasPrefix(rule.ID, prefix) {
+			sbRules.Delete(rule.ID)
+		}
+	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -412,6 +431,11 @@ func handleSBDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 	if !sbSubscriptions.Delete(id) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
+	}
+	for _, rule := range sbRules.List() {
+		if strings.HasPrefix(rule.ID, id+"/rules/") {
+			sbRules.Delete(rule.ID)
+		}
 	}
 	w.WriteHeader(http.StatusAccepted)
 }

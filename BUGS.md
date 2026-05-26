@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1181 filed · 1181 fixed · 2 open · 2 false positives.**
+**1182 filed · 1182 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+PR #225 closes BUG-1182 / issue #223: Azure Service Bus namespace-level ATOM XML admin protocol was missing from the `{namespace}.servicebus.<host>` data-plane dispatcher, so the official `azservicebus/admin` SDK could not create, read, list, or delete queues, topics, subscriptions, or rules. The fix adds the namespace admin surface, SDK lifecycle + paged-list coverage, and an `azure-servicebus-admin` surface table. In-PR audit also fixed the systematic list bug where namespace filtering happened after `$top` / `$skip`.
 
 PR #221 closed BUG-1181 / issue #220: Azure Blob `List Containers` now returns per-container `<Properties>` with `Last-Modified` and quoted `Etag`, backed by the same stored container ETag returned by `Get Container Properties`. Raw wire + real `az storage container list` regressions cover the gap.
 
