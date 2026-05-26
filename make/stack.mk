@@ -142,7 +142,7 @@ stack-up:
 	@printf "  $(COLOR_BOLD)sim-$(STACK_SIM):$(COLOR_RESET)        http://localhost:$(STACK_SIM_PORT_$(STACK_SIM))\n"
 	@printf "  Logs in $(STACK_PID_DIR)/*.log · stop with $(COLOR_BOLD)make stack-down$(COLOR_RESET)\n"
 
-stack-bleephub-up: ## also start bleephub on :5555 (run AFTER a stack-X-Y)
+stack-bleephub-up: ## also start bleephub on :5555 after a stack target is running
 	@if [ ! -d $(STACK_PID_DIR) ]; then \
 	  printf "$(COLOR_RED)No stack running — start one first with make stack-aws-ecs (etc).$(COLOR_RESET)\n"; \
 	  exit 1; \
