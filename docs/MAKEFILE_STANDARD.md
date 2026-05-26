@@ -1,19 +1,19 @@
-# Makefile standardization — proposal
+# Makefile standardization
 
-Draft. Reviewable before any code lands. Goal: every independently-buildable app in this repo has its own Makefile with a consistent target surface, and the top-level Makefile delegates to them — no duplicated build commands.
+Every independently-buildable app in this repo has its own Makefile with a consistent target surface. The top-level Makefile delegates to those leaf Makefiles and owns only fan-out targets, cross-cutting test suites, and stack orchestration.
 
 ## Why
 
-Today's top-level Makefile (481 lines, 93 targets) hard-codes every `cd <dir> && go build …` recipe inline. Adding a backend or a sim means editing the global Makefile in 3–6 places. Per-app Makefiles + a thin top-level orchestrator fixes that:
+Per-app Makefiles keep build and run details beside the app they belong to. The top-level Makefile stays as a thin orchestrator:
 
 - Anyone hacking on `backends/ecs` runs `make build` from inside that dir, no `cd ../..; make build-ecs-with-ui` ceremony.
 - `simulators/azure/Makefile` documents how that one sim builds + runs, in the place a developer would look first.
-- The top-level Makefile is a list of apps + a delegation rule, not a 481-line script.
-- New backends/sims/UI packages: drop in a leaf Makefile (3 lines) — no top-level edit needed when discovery is glob-based.
+- The top-level Makefile is an explicit app list, fan-out helper, path delegation rule, and stack orchestration include.
+- New backends, simulators, UI packages, and test harnesses add a leaf Makefile plus one list entry in the top-level Makefile.
 
 ## Inventory of independently-buildable apps
 
-19 leaf Makefiles total. Three kinds:
+The top-level app lists currently cover three kinds of independently buildable packages:
 
 ### Go binaries with optional embedded UI (12)
 
@@ -42,7 +42,7 @@ Today's top-level Makefile (481 lines, 93 targets) hard-codes every `cd <dir> &&
 | `github-runner-dispatcher-gcp` | dispatcher binary |
 | `github-runner-dispatcher-azure` | dispatcher binary |
 
-### UI packages (13)
+### UI packages (14)
 
 | Package | Embeds into |
 |---|---|
@@ -124,10 +124,11 @@ Convention: leaf Makefiles only carry **data** (the table above). All recipe cod
 ```
 make/
 ├── colors.mk         # Pretty output: $(CYAN), $(GREEN), $(RESET) helpers
+├── components.mk     # Per-component start/stop/rebuild/log/status targets
 ├── go-app.mk         # Recipes for Go-binary-with-optional-UI apps
 ├── go-lib.mk         # Recipes for Go libraries (test/lint/clean only)
 ├── ui-app.mk         # Recipes for UI packages
-└── stack.mk          # Stack-orchestration recipes used by top-level
+└── stack.mk          # Pre-canned dev-stack recipes used by top-level
 ```
 
 `go-app.mk` outline:
@@ -206,135 +207,85 @@ help:
 	@awk … (same)
 ```
 
-## Top-level Makefile (refactored)
+## Top-level Makefile
 
-Drops 95% of the existing line count. Becomes a delegation table + stack orchestration.
+The top-level Makefile has four jobs:
 
-```make
-# Apps — auto-discovered. Drop a Makefile in any of these dirs and it
-# joins the rebuild/test/lint set automatically.
+- Maintain explicit lists of Go-with-UI apps, Go apps, UI packages, and test harness directories.
+- Fan out standard targets such as `build`, `test`, `test-integration`, `lint`, `lint-ui`, `clean`, `install`, `upgrade-deps`, and `check-deps`.
+- Delegate path targets: `make backends/ecs/build` runs `make -C backends/ecs build`; `make ui/packages/admin/test` runs that package's tests.
+- Include `make/components.mk` and `make/stack.mk` for local stack lifecycle.
 
-GO_APPS := \
-  cmd/sockerless cmd/sockerless-admin bleephub agent \
-  backends/docker backends/ecs backends/lambda \
-  backends/cloudrun backends/cloudrun-functions \
-  backends/aca backends/azure-functions \
-  simulators/aws simulators/gcp simulators/azure \
-  github-runner-dispatcher-aws \
-  github-runner-dispatcher-gcp \
-  github-runner-dispatcher-azure
+Per-app aliases were intentionally removed. Use the path-delegation form:
 
-UI_APPS := $(wildcard ui/packages/*)
-
-ALL_APPS := $(GO_APPS) $(UI_APPS)
-
-.DEFAULT_GOAL := help
-
-# Per-target fan-out. `make build` builds everything. `make test`
-# tests everything. Etc.
-build test lint clean install:
-	@for app in $(ALL_APPS); do \
-	  printf "\n=== $$app: $@ ===\n"; \
-	  $(MAKE) -C $$app $@ || exit $$?; \
-	done
-
-# Per-app delegation: `make ecs.build` → `make -C backends/ecs build`.
-# Naming uses dots so it parses cleanly in shells + ides.
-%.build %.test %.lint %.run %.dev %.clean %.embed:
-	@app=$(word 1, $(subst ., ,$*)); \
-	target=$(word 2, $(subst ., ,$*)); \
-	dir=$$(make/find-app.sh $$app); \
-	$(MAKE) -C $$dir $$target
-
-# Stack orchestration — see make/stack.mk
-include make/stack.mk
-
-help:
-	@cat docs/MAKEFILE_STANDARD.md   # or a generated summary
+```sh
+make cmd/sockerless-admin/build
+make backends/ecs/test-integration
+make simulators/aws/sdk-tests/test
+make ui/packages/admin/test
 ```
+
+Cross-cutting Docker-driven suites remain as top-level targets because they span multiple apps or external tools: `e2e-*`, `tf-int-test-*`, `smoke-test-*`, `faas-smoke-test-*`, `upstream-test-*`, and `bleephub-gh-docker-test`.
 
 ## Stack orchestration
 
-The killer feature. `make stack-aws-ecs` brings up a working dev stack for one cloud-backend pair:
+`make/stack.mk` provides six pre-canned single-cell stacks:
 
-```make
-# make/stack.mk
+| Target | Starts |
+|---|---|
+| `make stack-aws-ecs` | AWS simulator + ECS backend + admin |
+| `make stack-aws-lambda` | AWS simulator + Lambda backend + admin |
+| `make stack-gcp-cloudrun` | GCP simulator + Cloud Run backend + admin |
+| `make stack-gcp-gcf` | GCP simulator + Cloud Run Functions backend + admin |
+| `make stack-azure-aca` | Azure simulator + ACA backend + admin |
+| `make stack-azure-azf` | Azure simulator + Azure Functions backend + admin |
+| `make stack-bleephub-up` | Optional bleephub on `:5555`, after a stack is running |
 
-STACK_PID_DIR := .stack-pids
+Each `stack-X-Y` target composes the real per-component targets from `make/components.mk`:
 
-# Each stack target = simulator + backend + admin (+ bleephub optional).
-# The 6 supported pairs:
-
-stack-aws-ecs:        STACK_SIM=aws      STACK_BE=ecs       stack-up
-stack-aws-lambda:     STACK_SIM=aws      STACK_BE=lambda    stack-up
-stack-gcp-cloudrun:   STACK_SIM=gcp      STACK_BE=cloudrun  stack-up
-stack-gcp-gcf:        STACK_SIM=gcp      STACK_BE=gcf       stack-up
-stack-azure-aca:      STACK_SIM=azure    STACK_BE=aca       stack-up
-stack-azure-azf:      STACK_SIM=azure    STACK_BE=azf       stack-up
-
-stack-up:
-	mkdir -p $(STACK_PID_DIR)
-	@echo "→ starting simulator-$(STACK_SIM) on its default port"
-	@$(MAKE) -C simulators/$(STACK_SIM) build-noui
-	@simulators/$(STACK_SIM)/simulator-$(STACK_SIM) & echo $$! > $(STACK_PID_DIR)/sim.pid
-	@echo "→ starting backend-$(STACK_BE) pointed at sim"
-	@$(MAKE) -C backends/$(STACK_BE) build-noui
-	@SOCKERLESS_ENDPOINT_URL=http://localhost:<sim-port> \
-	   backends/$(STACK_BE)/sockerless-backend-$(STACK_BE) & \
-	   echo $$! > $(STACK_PID_DIR)/backend.pid
-	@echo "→ starting admin server with both registered"
-	@$(MAKE) -C cmd/sockerless-admin build
-	@cmd/sockerless-admin/sockerless-admin \
-	   --simulator sim-$(STACK_SIM)=http://localhost:<sim-port> \
-	   --backend $(STACK_BE)=http://localhost:3375 & \
-	   echo $$! > $(STACK_PID_DIR)/admin.pid
-	@echo
-	@echo "Stack up:"
-	@echo "  simulator-$(STACK_SIM)  http://localhost:<sim-port>"
-	@echo "  backend-$(STACK_BE)     http://localhost:3375"
-	@echo "  admin UI                http://localhost:9090/ui/"
-	@echo "  Stop with: make stack-down"
-
-stack-down:
-	@for pidfile in $(STACK_PID_DIR)/*.pid; do \
-	  [ -f $$pidfile ] || continue; \
-	  pid=$$(cat $$pidfile); \
-	  kill $$pid 2>/dev/null || true; \
-	  rm $$pidfile; \
-	done
-	@rmdir $(STACK_PID_DIR) 2>/dev/null || true
-	@echo "Stack down."
-
-stack-status:
-	@for pidfile in $(STACK_PID_DIR)/*.pid 2>/dev/null; do \
-	  pid=$$(cat $$pidfile); \
-	  ps -p $$pid >/dev/null && echo "$$pidfile: $$pid (alive)" || echo "$$pidfile: $$pid (dead)"; \
-	done
+```sh
+make rebuild-component KIND=sim CLOUD=aws
+make rebuild-component KIND=backend CLOUD=aws BACKEND=ecs
+make start-component KIND=sim CLOUD=aws NAME=sim PORT=4566
+make start-component KIND=backend CLOUD=aws BACKEND=ecs NAME=backend PORT=3375 SIM_PORT=4566
 ```
 
-Plus `make stack-bleephub-up` to optionally add bleephub on `:5555`.
+The pre-canned stack names are operator shortcuts for the common one-simulator, one-backend, one-admin workflow. Arbitrary topologies use `start-component` directly or the admin topology API documented in `docs/ADMIN_ORCHESTRATION.md`.
 
-> **As-implemented note (Phase 79).** The pre-canned `stack-X-Y` macros above survive and behave the same way for operators, but their bodies have been rewritten to compose per-component targets from `make/components.mk` (`make start-component KIND=… NAME=… PORT=…` etc). See `docs/ADMIN_ORCHESTRATION.md` for the per-component lifecycle surface admin uses to spawn arbitrary topologies (0..N of every kind across multiple projects). PID + log files are now keyed by component NAME (`.stack-pids/<NAME>.{pid,log}`) rather than by role, so admin can manage multiple sims / backends / bleephubs side by side.
+Runtime files are keyed by component name:
 
-## Migration plan
+| File | Purpose |
+|---|---|
+| `.stack-pids/<NAME>.pid` | Supervisor process PID. |
+| `.stack-pids/<NAME>.log` | Component stdout/stderr. |
+| `.stack-pids/<NAME>.exit` | Exit code + UTC timestamp from the supervised child process. |
+| `.stack-pids/<NAME>.env` | Optional per-instance env file, written by admin topology lifecycle. |
+| `.stack-pids/backend.env` | Pre-canned stack backend env file for simulator-safe defaults. |
 
-1. Land `make/` directory with `colors.mk`, `go-app.mk`, `go-lib.mk`, `ui-app.mk`, `stack.mk` first.
-2. Add the 19 leaf Makefiles in one commit (each is 5–10 lines).
-3. Rewrite top-level `Makefile` to delegate. Cross-cutting Docker-driven suites (`e2e-*`, `tf-int-test-*`, `smoke-test-*`, `faas-smoke-test-*`, `upstream-test-*`, `bleephub-gh-docker-test`) stay as top-level targets. Per-app aliases (`sim-test-*`, `bleephub-test`, `test-{unit,e2e,agent,core,bleephub}`) were removed once the path-delegation rule covered the same surface — sockerless has no legacy compatibility surface; use the `<dir>/<target>` path-delegation form.
-4. Add CI smoke-test that runs `make help` (validates that every leaf Makefile is wired correctly) + `make build` (validates the whole rebuild path).
+`start-component` starts a supervisor that ignores HUP, forwards TERM/INT to the child, and records the child exit code. `stop-component` sends SIGTERM to the supervisor and removes the pidfile. `status-components` and `stop-components` sweep every `.stack-pids/*.pid`.
 
-## Discussion points before I start
+The pre-canned stack targets write `.stack-pids/backend.env` only when the selected backend needs local simulator defaults:
 
-1. **Per-app `run` defaults**. Each app's `run` will start the binary with its default port. Acceptable? Or do we want each `run` to also point at an upstream sim by env-var (i.e. `make run` in `backends/ecs` auto-detects sim availability + sets `SOCKERLESS_ENDPOINT_URL`)?
+| Backend family | Env written |
+|---|---|
+| ACA | `SOCKERLESS_ACA_SUBSCRIPTION_ID`, `SOCKERLESS_ACA_RESOURCE_GROUP`, `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE`, `SOCKERLESS_CALLBACK_URL` |
+| Azure Functions | `SOCKERLESS_AZF_SUBSCRIPTION_ID`, `SOCKERLESS_AZF_RESOURCE_GROUP`, `SOCKERLESS_AZF_STORAGE_ACCOUNT`, `SOCKERLESS_CALLBACK_URL` |
+| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
+| Cloud Run Functions | `SOCKERLESS_GCF_PROJECT` |
+| Lambda | `SOCKERLESS_LAMBDA_ROLE_ARN`, `SOCKERLESS_CALLBACK_URL` |
 
-2. **`build` defaults to with-UI**. The current top-level Makefile has `build-X-with-ui` as the deliberate variant; here I'm proposing `build` = with-UI + `build-noui` for the lean variant. Reverse this? My thinking: a fresh `make build` should produce a runnable binary out of the box, and "runnable" means having the UI baked in for the dashboard pages.
+These are the same backend env vars an operator would pass by hand. No admin-specific env contract is introduced.
 
-3. **Stack target naming**. `stack-aws-ecs` vs `stack-up CLOUD=aws BE=ecs` vs `aws-ecs.up`. Pick one.
+## Operational checks
 
-4. **Orthogonal test categories**. The Docker-driven cross-cutting suites — `tf-int-test-*` (terraform), `smoke-test-*` (Docker-in-Docker smoke), `upstream-test-*` (act + gitlab-ci-local), `e2e-*` (real-runner), `bleephub-gh-docker-test` — kept as top-level Makefile recipes. Per-app sim-vs-backend integration is reached through `make backends/<x>/test-integration`; runner-shaped FaaS backend smokes are reached through `make backends/<x>/test-faas-smoke` or the aggregate `make faas-smoke-test-all`. The pure-alias `sim-test-*` shim has been removed — every callsite now uses path delegation.
+After changing Makefile plumbing, run the smallest target that proves the changed path:
 
-5. **Auto-discovery vs explicit listing for `GO_APPS`**. Globbing (`backends/*/`, `simulators/*/`) is more robust as new apps land but obscures what's wired up. Explicit listing in `Makefile` is verbose but greppable. Currently I'm proposing explicit. Override?
+```sh
+make help
+make stack-status
+make stack-azure-aca
+curl -fsS http://localhost:9090/api/v1/overview
+make stack-down
+```
 
-6. **`help` output format**. Auto-generated from `## comments` in each Makefile (concise, lives with the recipe), or hand-curated table in this doc (richer, drifts more)? I propose auto-generated.
-
-Once you sign off (or course-correct), I'll land the migration in a single commit on `phase-130`.
+For leaf Makefile changes, also run the relevant path target, for example `make backends/ecs/build` or `make ui/packages/admin/test`.

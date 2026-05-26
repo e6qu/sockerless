@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-155.4k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-16.7k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-75.3k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-155.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-17.3k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-75.4k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -129,7 +129,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **TypeScript**
 
-![ui/admin](https://img.shields.io/badge/ui%2Fadmin-7.6k-3178C6)
+![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.3k-3178C6)
 ![ui/core](https://img.shields.io/badge/ui%2Fcore-3.6k-3178C6)
 ![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-3.3k-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
@@ -179,6 +179,8 @@ docker ps -a
 # Browse the operator UI:
 #   admin       http://localhost:9090/ui/
 #   sim AWS     http://localhost:4566 (or :4567 GCP / :4568 Azure)
+# The admin UI links each component's own /ui/ surface and can
+# start/stop/restart individual topology instances or stop the whole stack.
 
 # Tear down when done:
 make stack-down               # stops sim + backend + admin
@@ -266,6 +268,8 @@ The pattern works for any app + any standardized target.
 
 Two layers, both writing PID + log files under `.stack-pids/<name>.{pid,log}` so `stack-status` / `stack-down` find every component.
 
+Pre-canned stack targets also write `.stack-pids/backend.env` when the selected backend needs simulator-safe defaults. For example, the Azure ACA / AZF targets provide local subscription/resource-group/storage values and reverse-agent callback URLs, Cloud Run provides `SOCKERLESS_GCR_PROJECT` + Cloud Logging gRPC endpoint, GCF provides `SOCKERLESS_GCF_PROJECT`, and Lambda provides a simulator role ARN + callback URL. These are real backend env vars, not admin-specific hooks.
+
 **Pre-canned stacks** — the common 1-sim + 1-backend + admin shape:
 
 | Target | Stack |
@@ -276,7 +280,7 @@ Two layers, both writing PID + log files under `.stack-pids/<name>.{pid,log}` so
 | `make stack-gcp-gcf` | sim-gcp + backend-gcf + admin |
 | `make stack-azure-aca` | sim-azure (:4568) + backend-aca + admin |
 | `make stack-azure-azf` | sim-azure + backend-azf + admin |
-| `make stack-bleephub-up` | also start bleephub on :5555 (run after a stack-X-Y) |
+| `make stack-bleephub-up` | also start bleephub on :5555 after one of the stack targets |
 | `make stack-status` | show running components |
 | `make stack-down` | stop all running components, clean PIDs |
 
@@ -292,7 +296,7 @@ Two layers, both writing PID + log files under `.stack-pids/<name>.{pid,log}` so
 | `make logs-component NAME=… [LINES=200]` | tail one component's log |
 | `make status-components` / `make stop-components` | sweep across every running component |
 
-Logs land in `.stack-pids/<NAME>.log` (one per component instance). The pre-canned `stack-X-Y` macros use `sim` / `backend` / `admin` as the names, so back-compat with `stack-status` / `stack-down` is preserved.
+Logs land in `.stack-pids/<NAME>.log` (one per component instance). `start-component` records a supervisor PID that forwards stop signals to the child process and writes `.stack-pids/<NAME>.exit` when the child exits. The pre-canned stack macros use `sim` / `backend` / `admin` as the names, so back-compat with `stack-status` / `stack-down` is preserved.
 
 ### Per-app shortcuts
 
@@ -301,7 +305,7 @@ Every app's own Makefile is the source of truth. To work on a single app, `cd` i
 ```bash
 cd backends/ecs
 make help                # shows everything available
-make build               # builds with embedded UI if dist/ available, else falls back
+make build               # builds with embedded UI
 make run                 # foreground server with sensible defaults
 make test                # go test ./...
 ```
@@ -428,7 +432,7 @@ make test-integration             # build-tag + env-var gated tests (against sim
 ```bash
 cd ui/packages/admin
 make run                          # vite dev server on :5173 with hot reload
-                                  # (proxies /api → :9090, so admin Go server must be running)
+                                  # (proxies /api/v1 → :9090, so admin Go server must be running)
 ```
 
 In another terminal:

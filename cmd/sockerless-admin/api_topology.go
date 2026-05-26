@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -13,6 +14,7 @@ import (
 //	GET    /api/v1/observability
 //	GET    /api/v1/topology
 //	PUT    /api/v1/topology
+//	GET    /api/v1/topology/file
 //	GET    /api/v1/topology/instances
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}
 //	GET    /api/v1/topology/projects/{project}/instances/{instance}/logs
@@ -24,7 +26,9 @@ import (
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/reload
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/start
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/stop
+//	POST   /api/v1/topology/projects/{project}/instances/{instance}/restart
 //	POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild
+//	POST   /api/v1/topology/stop-all
 //	POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>
 //
 // Lifecycle endpoints shell `make {start|stop|rebuild}-component` (see
@@ -38,11 +42,14 @@ import (
 func registerTopologyAPI(mux *http.ServeMux, mgr *TopologyManager, lifecycle *InstanceLifecycle) {
 	mux.HandleFunc("GET /api/v1/topology", handleTopologyGet(mgr))
 	mux.HandleFunc("PUT /api/v1/topology", handleTopologyPut(mgr))
+	mux.HandleFunc("GET /api/v1/topology/file", handleTopologyFile(mgr))
 	mux.HandleFunc("GET /api/v1/topology/instances", handleTopologyInstances(mgr))
 	mux.HandleFunc("GET /api/v1/topology/projects/{project}/instances/{instance}", handleInstanceGet(mgr))
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/start", handleInstanceStart(mgr, lifecycle))
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/stop", handleInstanceStop(mgr, lifecycle))
+	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/restart", handleInstanceRestart(mgr, lifecycle))
 	mux.HandleFunc("POST /api/v1/topology/projects/{project}/instances/{instance}/rebuild", handleInstanceRebuild(mgr, lifecycle))
+	mux.HandleFunc("POST /api/v1/topology/stop-all", handleTopologyStopAll(mgr, lifecycle))
 	mux.HandleFunc("POST /api/v1/topology/allocate-port", handleAllocatePort(mgr))
 	mux.HandleFunc("POST /api/v1/topology/projects", handleProjectAdd(mgr))
 	mux.HandleFunc("DELETE /api/v1/topology/projects/{project}", handleProjectRemove(mgr))
@@ -80,6 +87,22 @@ func handleTopologyPut(mgr *TopologyManager) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, mgr.Get())
+	}
+}
+
+func handleTopologyFile(mgr *TopologyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := mgr.Path()
+		_, err := os.Stat(path)
+		exists := err == nil
+		if err != nil && !os.IsNotExist(err) {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"path":   path,
+			"exists": exists,
+		})
 	}
 }
 
@@ -185,6 +208,41 @@ func handleInstanceStop(mgr *TopologyManager, lifecycle *InstanceLifecycle) http
 			"status":  "stopped",
 			"project": ref.Project,
 			"name":    ref.Instance.Name,
+		})
+	}
+}
+
+func handleInstanceRestart(mgr *TopologyManager, lifecycle *InstanceLifecycle) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if lifecycle == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "lifecycle not configured"})
+			return
+		}
+		ref, simPort, ok := resolveInstanceForLifecycle(mgr, w, r)
+		if !ok {
+			return
+		}
+		if err := lifecycle.Restart(r.Context(), ref.Project, ref.Instance, simPort); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "restarted",
+			"project": ref.Project,
+			"name":    ref.Instance.Name,
+		})
+	}
+}
+
+func handleTopologyStopAll(mgr *TopologyManager, lifecycle *InstanceLifecycle) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if lifecycle == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "lifecycle not configured"})
+			return
+		}
+		lifecycle.StackDownLater(250 * time.Millisecond)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "stopping",
 		})
 	}
 }

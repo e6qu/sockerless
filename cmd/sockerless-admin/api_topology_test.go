@@ -100,13 +100,20 @@ func TestAPILifecycleNilLifecycle(t *testing.T) {
 			{Name: "s", Kind: InstanceKindBleephub, Port: 5500},
 		}},
 	}})
-	for _, action := range []string{"start", "stop", "rebuild"} {
+	for _, action := range []string{"start", "stop", "restart", "rebuild"} {
 		req := httptest.NewRequest("POST", "/api/v1/topology/projects/p/instances/s/"+action, nil)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s: status = %d, want 503; body=%s", action, w.Code, w.Body.String())
 		}
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/topology/stop-all", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("stop-all: status = %d, want 503; body=%s", w.Code, w.Body.String())
 	}
 }
 

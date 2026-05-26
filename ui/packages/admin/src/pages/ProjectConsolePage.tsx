@@ -58,7 +58,18 @@ export function ProjectConsolePage() {
   });
 
   if (isLoading) return <Spinner label="loading topology" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
+    );
+  }
   if (!topology) return <Spinner label="loading topology" />;
 
   const projectCfg = (topology.projects ?? []).find((p) => p.name === project);

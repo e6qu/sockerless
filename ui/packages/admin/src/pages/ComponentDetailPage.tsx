@@ -17,6 +17,10 @@ import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
+function componentUIURL(addr: string): string {
+  return `${addr.replace(/\/$/, "")}/ui/`;
+}
+
 export function ComponentDetailPage() {
   const { name } = useParams<{ name: string }>();
   const queryClient = useQueryClient();
@@ -64,7 +68,14 @@ export function ComponentDetailPage() {
   });
 
   if (isLoading) return <Spinner label="loading component" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={["make cmd/sockerless-admin/run", "make stack-status"]}
+      />
+    );
+  }
   if (!components) return <Spinner label="loading component" />;
   if (!comp) {
     return (
@@ -100,24 +111,69 @@ export function ComponentDetailPage() {
           </span>
         }
         actions={
-          reloadable && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => reload.mutate()}
-              disabled={reload.isPending}
+          <div className="inline-flex items-center gap-2">
+            <a
+              href={componentUIURL(comp.addr)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono"
+              style={{
+                color: "var(--color-accent)",
+                fontSize: "0.74rem",
+                textDecoration: "none",
+              }}
             >
-              {reload.isPending ? "Reloading…" : "Reload"}
-            </Button>
-          )
+              open UI
+            </a>
+            {reloadable && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => reload.mutate()}
+                disabled={reload.isPending}
+              >
+                {reload.isPending ? "Reloading…" : "Reload"}
+              </Button>
+            )}
+          </div>
         }
       />
+
+      <section
+        className="mb-4 px-4 py-3 font-mono"
+        style={{
+          background: "var(--color-bg-subtle)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "var(--radius-sm)",
+          color: "var(--color-fg-muted)",
+          fontSize: "0.78rem",
+        }}
+      >
+        <div
+          className="mb-1 uppercase"
+          style={{ color: "var(--color-fg-subtle)", fontSize: "0.62rem" }}
+        >
+          direct UI
+        </div>
+        <a
+          href={componentUIURL(comp.addr)}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--color-accent)", textDecoration: "none" }}
+        >
+          {componentUIURL(comp.addr)}
+        </a>
+      </section>
 
       {reload.error && (
         <div className="mb-4">
           <ErrorPanel
             kicker="reload failed"
             message={(reload.error as Error)?.message}
+            commands={[
+              "make reload-component NAME=" + comp.name,
+              "make stack-status",
+            ]}
           />
         </div>
       )}

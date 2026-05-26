@@ -46,7 +46,13 @@ function ComponentMetricsPanel({ component }: { component: AdminComponent }) {
         {component.name}
       </h3>
       {isError ? (
-        <ErrorPanel message={error?.message ?? "metrics unavailable"} />
+        <ErrorPanel
+          message={error?.message ?? "metrics unavailable"}
+          commands={[
+            `make reload-component NAME=${component.name}`,
+            "make stack-status",
+          ]}
+        />
       ) : data ? (
         <pre
           className="font-mono"
@@ -91,7 +97,18 @@ export function MetricsPage() {
   });
 
   if (isLoading) return <Spinner label="loading components" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
+    );
+  }
   if (!components) return <Spinner label="loading components" />;
 
   return (

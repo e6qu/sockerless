@@ -61,7 +61,7 @@ GO_APPS := \
   github-runner-dispatcher-gcp \
   github-runner-dispatcher-azure
 
-# UI packages (13). Each consumed by the corresponding GO_UI_APPS entry
+# UI packages (14). Each consumed by the corresponding GO_UI_APPS entry
 # (except `core` which is a shared library, and `frontend-docker` which
 # is standalone).
 UI_APPS := \

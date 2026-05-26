@@ -6,6 +6,7 @@ import {
   StatusBadge,
 } from "@sockerless/ui-core/components";
 import { AdminApiClient } from "../api.js";
+import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
@@ -18,19 +19,14 @@ export function DashboardPage() {
   if (isLoading) return <Spinner label="loading overview" />;
   if (isError) {
     return (
-      <div
-        className="px-4 py-3 font-mono"
-        style={{
-          background: "var(--color-status-error-soft)",
-          color: "var(--color-status-error)",
-          border: "1px solid var(--color-status-error)",
-          borderLeft: "3px solid var(--color-status-error)",
-          borderRadius: "var(--radius-sm)",
-          fontSize: "0.78rem",
-        }}
-      >
-        error: {error?.message ?? "failed to load"}
-      </div>
+      <ErrorPanel
+        message={error?.message ?? "failed to load"}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
     );
   }
   if (!data) return <Spinner label="loading overview" />;

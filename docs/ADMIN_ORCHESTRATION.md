@@ -21,7 +21,10 @@ projects:
     instances:
       - { name: gcp-sim,  kind: sim,      cloud: gcp,   port: 4567 }
       - { name: gcp-be,   kind: backend,  cloud: gcp,   backend: cloudrun,
-          port: 3376, sim: gcp-sim }
+          port: 3376, sim: gcp-sim,
+          config:
+            SOCKERLESS_GCR_PROJECT: sim-project
+            SOCKERLESS_GCP_LOGADMIN_ENDPOINT: localhost:4568 }
 
 ports:
   ranges:
@@ -53,6 +56,7 @@ All under `/api/v1/topology`:
 |---|---|
 | `GET    /api/v1/topology` | full topology document |
 | `PUT    /api/v1/topology` | replace topology atomically (validate + write + swap) |
+| `GET    /api/v1/topology/file` | topology file path and whether it exists |
 | `GET    /api/v1/topology/instances` | flat list of every instance, annotated with project name |
 | `POST   /api/v1/topology/projects` | add a project (body = `ProjectConfig`) |
 | `DELETE /api/v1/topology/projects/{project}` | remove a project + all its instances |
@@ -63,7 +67,9 @@ All under `/api/v1/topology`:
 | `GET    /api/v1/topology/projects/{project}/instances/{instance}/status` | `{running, pid, health, health_detail}` |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/start` | shells `make start-component` |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/stop` | shells `make stop-component` |
+| `POST   /api/v1/topology/projects/{project}/instances/{instance}/restart` | stop + start with a freshly rendered env file |
 | `POST   /api/v1/topology/projects/{project}/instances/{instance}/rebuild` | shells `make rebuild-component` |
+| `POST   /api/v1/topology/stop-all` | schedules the repo's real `make stack-down` path |
 | `POST   /api/v1/topology/allocate-port?kind=<sim|backend|bleephub>` | next free port from the configured pool |
 
 Status codes:
@@ -98,7 +104,17 @@ make status-components
 make stop-components
 ```
 
-The legacy `make stack-aws-ecs` / `stack-gcp-cloudrun` / etc. now compose `rebuild-component` + `start-component` calls under the hood — same effective behaviour.
+The legacy `make stack-aws-ecs` / `stack-gcp-cloudrun` / etc. now compose `rebuild-component` + `start-component` calls under the hood. They also write `.stack-pids/backend.env` for backends that require simulator-safe env defaults:
+
+| Stack family | Env written for the backend |
+|---|---|
+| ACA | `SOCKERLESS_ACA_SUBSCRIPTION_ID`, `SOCKERLESS_ACA_RESOURCE_GROUP`, `SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE`, `SOCKERLESS_CALLBACK_URL` |
+| AZF | `SOCKERLESS_AZF_SUBSCRIPTION_ID`, `SOCKERLESS_AZF_RESOURCE_GROUP`, `SOCKERLESS_AZF_STORAGE_ACCOUNT`, `SOCKERLESS_CALLBACK_URL` |
+| Cloud Run | `SOCKERLESS_GCR_PROJECT`, `SOCKERLESS_GCP_LOGADMIN_ENDPOINT` |
+| GCF | `SOCKERLESS_GCF_PROJECT` |
+| Lambda | `SOCKERLESS_LAMBDA_ROLE_ARN`, `SOCKERLESS_CALLBACK_URL` |
+
+These are the same component env vars an operator would pass by hand; the stack target just makes the local simulator shortcut runnable without hand-authoring an env file first.
 
 ## Per-instance env files
 
@@ -106,7 +122,7 @@ When an instance has a `config:` map in `sockerless.yaml`, admin's lifecycle she
 
 ## Topology file path
 
-Admin reads + writes `<cwd>/sockerless.yaml` by convention (matches how `make` finds the repo root). The `--topology` flag is reserved for a future override; today admin assumes you run it from the repo root.
+Admin reads + writes `sockerless.yaml` by convention. The UI calls `GET /api/v1/topology/file` and shows the exact path the running admin process is using, so operators can either use the UI forms or edit that file directly and reload the page. Lifecycle make commands resolve the repo root before shelling out, so admin can be launched from the repo root or from `cmd/sockerless-admin`.
 
 ## Concurrency
 
@@ -120,13 +136,18 @@ What it shows:
 
 - **Project tree.** One card per project; expanding a project shows every instance with kind / cloud / backend / port / sim-ref summary.
 - **Per-instance status.** Each row polls `GET /api/v1/topology/projects/{p}/instances/{i}/status` every 2 s while the page is open. The status badge shows `ok` (running + `/v1/health` 2xx), `unhealthy` (running + non-2xx or timeout, with the failure reason), `unknown` (running but no health probe answered), or `stopped` (no live PID).
+- **Topology file and recovery commands.** The top card shows the active `sockerless.yaml` path plus `make stack-status` / `make stack-down`.
+- **Default contexts.** When there are no projects, the page offers one-click local Azure ACA, AWS ECS, and GCP Cloud Run topology presets and shows the equivalent `make stack-*` command for each.
 - **Port registry.** A side card lists configured `ports.ranges[<kind>]` next to every claimed port across all projects (sorted by port number) so you can see at a glance what's free.
 
 What it can do:
 
 - **Add project / delete project.** "+ project" opens a single-field modal; "delete project" prompts a confirmation modal. Deleting a project does NOT stop running processes — stop instances first if you want a clean teardown.
 - **Add / edit / delete instance.** "+ instance" opens a per-kind form (sim → cloud + port; backend → cloud + backend + port + optional sim ref; bleephub → port). The form includes an "auto-allocate" button that calls `POST /api/v1/topology/allocate-port?kind=<kind>` and fills the port field. Edit lets you change everything except the name + kind (rename = delete + add); the env-config table is fully editable.
-- **Start / Stop / Rebuild per instance.** Buttons in each row POST to the lifecycle endpoints, which in turn shell `make {start|stop|rebuild}-component`. Toast feedback on success + failure; the row's status badge picks up the new state on the next poll tick.
+- **Start / stop / restart / rebuild per instance.** Buttons in each row POST to the lifecycle endpoints, which in turn shell the relevant `make *-component` target. Toast feedback on success + failure; the row's status badge picks up the new state on the next poll tick.
+- **Open logs, console, and component UI.** Each row links to the admin log stream, the project console, and the component's own `http://localhost:<port>/ui/` surface.
+- **Stop the whole stack.** The header-level "stop stack" button schedules the same `make stack-down` target operators run from a terminal. The response returns before admin kills itself, so the UI will disconnect after the shutdown starts.
+- **Show make recovery commands on failure.** Query and mutation failure panels include the concrete `make` command(s) for the failed action, so the operator can recover from the shell when the UI cannot complete the action.
 
 What it does NOT do (intentional, per components-decoupled invariant):
 

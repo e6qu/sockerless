@@ -1,6 +1,6 @@
 # Sockerless UI
 
-Bun + Turborepo workspace. 12 packages share a single design system + API client; per-backend / per-simulator apps are thin (a couple of dozen lines apiece).
+Bun + Turborepo workspace. 14 packages share a single design system + API client; per-backend / per-simulator apps are thin (a couple of dozen lines apiece).
 
 ## Packages
 
@@ -10,7 +10,7 @@ Bun + Turborepo workspace. 12 packages share a single design system + API client
 | `backend-{ecs,lambda,cloudrun,gcf,aca,azf,docker}` | Per-backend Vite apps. Each is `<BackendApp title="..." />` plus an `index.html` that loads the design-system fonts + index.css. |
 | `frontend-docker` | Docker-frontend UI (in-process docker daemon view). |
 | `simulator-{aws,gcp,azure}` | Per-cloud simulator dashboards (sim-only routes). |
-| `admin` | Cross-backend admin dashboard (lists every running backend, drills into each). |
+| `admin` | Cross-backend admin dashboard: component health, containers, contexts, process lifecycle, topology lifecycle, logs, resources, cleanup, and make-command recovery panels. |
 | `bleephub` | Standalone hub UI (separate product surface). |
 
 ## Design system
@@ -27,7 +27,8 @@ The `dark` class is toggled by the `<ThemeToggle>` component (sidebar footer) ba
 
 - `<ErrorBoundary>` (top of every app) catches unhandled exceptions.
 - `<ToastProvider>` (just inside ErrorBoundary) renders a top-right notification stack. Push via `useToast().push({ tone, title, body })`; helper `useReportError()` formats unknown errors as toasts. `useToastQueryErrors(error)` wraps a TanStack Query error.
-- `<InlineError title detail action>` — in-page banner for operation failures (data load failed, mutation rejected). Rendered alongside a "Retry" button on every page that loads remote data.
+- `<InlineError title detail action>` — in-page banner for operation failures in shared backend/simulator apps.
+- Admin uses `<ErrorPanel>` for page-level failures and includes concrete recovery commands such as `make stack-status`, `make stack-down`, `make start-component ...`, or `make rebuild-component ...` when a UI action maps to Makefile lifecycle.
 
 ## Modals
 
@@ -62,7 +63,9 @@ make stack-status         # show which components are running + their PIDs
 make stack-down           # stop every running stack process and clean up .stack-pids/
 ```
 
-Each `stack-*-*` target builds the three components, starts them as background processes, and writes their PIDs to `.stack-pids/` so `stack-down` can find them later. Internally these targets compose `make start-component` calls (see below + `docs/ADMIN_ORCHESTRATION.md`). Logs land in `.stack-pids/sim.log`, `.stack-pids/backend.log`, `.stack-pids/admin.log`.
+Each `stack-*-*` target builds the three components, starts them as background processes, and writes their PIDs to `.stack-pids/` so `stack-down` can find them later. Internally these targets compose `make start-component` calls for the simulator and backend (see below + `docs/ADMIN_ORCHESTRATION.md`) and start admin with its registered component URLs. Logs land in `.stack-pids/sim.log`, `.stack-pids/backend.log`, and `.stack-pids/admin.log`; supervised simulator/backend exits are recorded in matching `.exit` files.
+
+For simulator stacks, the root Makefile also writes `.stack-pids/backend.env` when the selected backend needs local defaults. ACA / AZF get local subscription and resource-group values plus reverse-agent callbacks, Cloud Run gets `SOCKERLESS_GCR_PROJECT` plus the simulator Cloud Logging endpoint, GCF gets `SOCKERLESS_GCF_PROJECT`, and Lambda gets a simulator role ARN plus callback URL.
 
 Default ports (overridable via env in `make/stack.mk`):
 - AWS sim `:4566`, GCP sim `:4567`, Azure sim `:4568`
@@ -70,7 +73,7 @@ Default ports (overridable via env in `make/stack.mk`):
 - Admin UI `:9090`
 - bleephub `:5555` (separate target: `make stack-bleephub-up`)
 
-Open the admin UI at `http://localhost:9090/ui/` once `stack-status` reports it green.
+Open the admin UI at `http://localhost:9090/ui/` once `stack-status` reports it green. From there, the admin UI links each component's own `/ui/` route, starts/stops/restarts individual topology instances, rebuilds them, and can stop the whole stack.
 
 ### Arbitrary topology (multiple sims / backends / bleephubs)
 
@@ -90,11 +93,11 @@ make status-components       # show every running component
 make stop-components         # SIGTERM every running component
 ```
 
-Persist the topology in `sockerless.yaml` at the repo root and admin will reconcile + drive lifecycle automatically. See `docs/ADMIN_ORCHESTRATION.md` for the full schema + REST surface.
+Persist the topology in `sockerless.yaml` at the repo root and admin will reconcile + drive lifecycle automatically. When no topology exists, the admin topology page offers default local contexts for Azure ACA, AWS ECS, and GCP Cloud Run and shows the equivalent `make stack-*` command. See `docs/ADMIN_ORCHESTRATION.md` for the full schema + REST surface.
 
 ## Working on a single UI package (vite hot reload)
 
-When you only want to iterate on one backend's UI without booting the full stack, run that package's Vite dev server. It assumes the backend is already running on `:3375` (start it via `make stack-X-Y` from the root).
+When you only want to iterate on one backend's UI without booting the full stack, run that package's Vite dev server. It assumes the backend is already running on `:3375` (for example, start it via `make stack-aws-ecs` from the root).
 
 ```sh
 cd ui/packages/backend-ecs

@@ -30,7 +30,26 @@ func NewInstanceLifecycle(repoRoot string, timeout time.Duration) *InstanceLifec
 	if timeout == 0 {
 		timeout = 5 * time.Minute
 	}
+	if repoRoot == "" {
+		repoRoot = discoverRepoRoot()
+	}
 	return &InstanceLifecycle{repoRoot: repoRoot, timeout: timeout}
+}
+
+func discoverRepoRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "make", "components.mk")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+	}
 }
 
 // Start invokes `make start-component` with the per-instance
@@ -121,6 +140,37 @@ func mergeConfig(managed, operator map[string]string) map[string]string {
 // Stop invokes `make stop-component NAME=<inst.Name>`.
 func (l *InstanceLifecycle) Stop(ctx context.Context, inst Instance) error {
 	return l.runMake(ctx, "stop-component", "NAME="+inst.Name)
+}
+
+// Restart stops an instance using the same no-op semantics as
+// stop-component, then starts it again with a freshly rendered env file.
+func (l *InstanceLifecycle) Restart(ctx context.Context, project string, inst Instance, simPort int) error {
+	if err := l.Stop(ctx, inst); err != nil {
+		return err
+	}
+	return l.Start(ctx, project, inst, simPort)
+}
+
+// StopInstances stops the supplied topology instances without touching
+// the admin process itself.
+func (l *InstanceLifecycle) StopInstances(ctx context.Context, instances []InstanceRef) error {
+	for _, ref := range instances {
+		if err := l.Stop(ctx, ref.Instance); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// StackDownLater schedules the repo's full stack-down target. The
+// delay gives the HTTP response a chance to flush before `make
+// stack-down` kills the admin process itself when it is present in
+// .stack-pids/.
+func (l *InstanceLifecycle) StackDownLater(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		_ = l.runMake(context.Background(), "stack-down")
+	}()
 }
 
 // Reload re-renders the env file and signals the component via

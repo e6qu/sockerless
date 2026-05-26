@@ -12,6 +12,10 @@ import { ErrorPanel } from "../components/ErrorPanel.js";
 
 const api = new AdminApiClient();
 
+function componentUIURL(comp: AdminComponent): string {
+  return `${comp.addr.replace(/\/$/, "")}/ui/`;
+}
+
 const columns: ColumnDef<AdminComponent>[] = [
   {
     accessorKey: "name",
@@ -59,6 +63,26 @@ const columns: ColumnDef<AdminComponent>[] = [
     ),
   },
   {
+    id: "ui",
+    header: "UI",
+    cell: ({ row }) => (
+      <a
+        href={componentUIURL(row.original)}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(event) => event.stopPropagation()}
+        className="font-mono"
+        style={{
+          color: "var(--color-accent)",
+          fontSize: "0.74rem",
+          textDecoration: "none",
+        }}
+      >
+        open
+      </a>
+    ),
+  },
+  {
     accessorKey: "uptime",
     header: "Uptime",
     cell: ({ getValue }) => {
@@ -87,7 +111,18 @@ export function ComponentsPage() {
   });
 
   if (isLoading) return <Spinner label="loading components" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={[
+          "make cmd/sockerless-admin/run",
+          "make stack-azure-aca",
+          "make stack-status",
+        ]}
+      />
+    );
+  }
   if (!data) return <Spinner label="loading components" />;
 
   return (

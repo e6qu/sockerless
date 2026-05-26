@@ -45,10 +45,22 @@ export function ProcessDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["processes"] }),
   });
 
+  const restart = useMutation({
+    mutationFn: () => api.processRestart(name!),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["processes"] }),
+  });
+
   const proc = processes?.find((p) => p.name === name);
 
   if (isLoading) return <Spinner label="loading process" />;
-  if (isError) return <ErrorPanel message={error?.message} />;
+  if (isError) {
+    return (
+      <ErrorPanel
+        message={error?.message}
+        commands={["make cmd/sockerless-admin/run", "make stack-status"]}
+      />
+    );
+  }
   if (!processes) return <Spinner label="loading process" />;
   if (!proc) {
     return (
@@ -80,40 +92,76 @@ export function ProcessDetailPage() {
           </span>
         }
         actions={
-          running ? (
+          <div className="inline-flex items-center gap-2">
+            {running ? (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => stop.mutate()}
+                disabled={stop.isPending}
+              >
+                {stop.isPending ? "Stopping…" : "Stop"}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => start.mutate()}
+                disabled={
+                  start.isPending ||
+                  proc.status === "starting" ||
+                  proc.status === "stopping"
+                }
+              >
+                {start.isPending ? "Starting…" : "Start"}
+              </Button>
+            )}
             <Button
-              variant="danger"
+              variant="secondary"
               size="sm"
-              onClick={() => stop.mutate()}
-              disabled={stop.isPending}
-            >
-              {stop.isPending ? "Stopping…" : "Stop"}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => start.mutate()}
+              onClick={() => restart.mutate()}
               disabled={
-                start.isPending ||
+                restart.isPending ||
                 proc.status === "starting" ||
                 proc.status === "stopping"
               }
             >
-              {start.isPending ? "Starting…" : "Start"}
+              {restart.isPending ? "Restarting…" : "Restart"}
             </Button>
-          )
+          </div>
         }
       />
 
       {start.error && (
         <div className="mb-3">
-          <ErrorPanel kicker="start failed" message={(start.error as Error)?.message} />
+          <ErrorPanel
+            kicker="start failed"
+            message={(start.error as Error)?.message}
+            commands={[
+              `make start-component NAME=${proc.name} KIND=${proc.type || "<kind>"} PORT=<port>`,
+            ]}
+          />
         </div>
       )}
       {stop.error && (
         <div className="mb-3">
-          <ErrorPanel kicker="stop failed" message={(stop.error as Error)?.message} />
+          <ErrorPanel
+            kicker="stop failed"
+            message={(stop.error as Error)?.message}
+            commands={[`make stop-component NAME=${proc.name}`]}
+          />
+        </div>
+      )}
+      {restart.error && (
+        <div className="mb-3">
+          <ErrorPanel
+            kicker="restart failed"
+            message={(restart.error as Error)?.message}
+            commands={[
+              `make stop-component NAME=${proc.name}`,
+              `make start-component NAME=${proc.name} KIND=<kind> PORT=<port>`,
+            ]}
+          />
         </div>
       )}
       {proc.exit_code !== 0 && proc.status !== "running" && (
