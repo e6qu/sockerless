@@ -19,6 +19,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.7.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue v1.0.1
+	github.com/coder/websocket v1.8.14
 	github.com/stretchr/testify v1.11.1
 )
 
