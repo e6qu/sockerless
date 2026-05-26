@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,6 +58,7 @@ type BlobContainerData struct {
 	Account  string
 	Name     string
 	Created  string
+	ETag     string
 	Metadata map[string]string
 }
 
@@ -293,11 +295,12 @@ func handleCreateContainer(w http.ResponseWriter, r *http.Request, account, cont
 	c := BlobContainerData{
 		Account:  account,
 		Name:     container,
-		Created:  time.Now().UTC().Format(time.RFC1123),
+		Created:  time.Now().UTC().Format(http.TimeFormat),
+		ETag:     `"` + generateUUID() + `"`,
 		Metadata: collectMetadata(r),
 	}
 	blobContainersData.Put(key, c)
-	w.Header().Set("ETag", `"`+generateUUID()+`"`)
+	w.Header().Set("ETag", c.ETag)
 	w.Header().Set("Last-Modified", c.Created)
 	w.WriteHeader(http.StatusCreated)
 }
@@ -326,6 +329,7 @@ func handleGetContainer(w http.ResponseWriter, r *http.Request, account, contain
 		return
 	}
 	w.Header().Set("Last-Modified", c.Created)
+	w.Header().Set("ETag", c.ETag)
 	for k, v := range c.Metadata {
 		w.Header().Set("x-ms-meta-"+k, v)
 	}
@@ -333,8 +337,13 @@ func handleGetContainer(w http.ResponseWriter, r *http.Request, account, contain
 }
 
 func handleListContainers(w http.ResponseWriter, r *http.Request, account string) {
+	type containerProperties struct {
+		LastModified string `xml:"Last-Modified"`
+		ETag         string `xml:"Etag"`
+	}
 	type containerEntry struct {
-		Name string `xml:"Name"`
+		Name       string              `xml:"Name"`
+		Properties containerProperties `xml:"Properties"`
 	}
 	type enum struct {
 		XMLName    xml.Name         `xml:"EnumerationResults"`
@@ -344,9 +353,18 @@ func handleListContainers(w http.ResponseWriter, r *http.Request, account string
 	prefix := account + "/"
 	for _, c := range blobContainersData.List() {
 		if strings.HasPrefix(blobContainerKey(c.Account, c.Name), prefix) {
-			out.Containers = append(out.Containers, containerEntry{Name: c.Name})
+			out.Containers = append(out.Containers, containerEntry{
+				Name: c.Name,
+				Properties: containerProperties{
+					LastModified: c.Created,
+					ETag:         c.ETag,
+				},
+			})
 		}
 	}
+	sort.Slice(out.Containers, func(i, j int) bool {
+		return out.Containers[i].Name < out.Containers[j].Name
+	})
 	w.Header().Set("Content-Type", "application/xml")
 	body, _ := xml.Marshal(out)
 	_, _ = w.Write(body)
