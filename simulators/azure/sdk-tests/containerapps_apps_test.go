@@ -74,6 +74,9 @@ func TestSDK_ContainerAppsApps_CreateGetDelete(t *testing.T) {
 	require.NotNil(t, app.Properties.LatestRevisionFqdn)
 	assert.NotEmpty(t, *app.Properties.LatestRevisionFqdn,
 		"LatestRevisionFqdn is what cloudServiceRegisterCNAME reads to seed Private DNS")
+	host, _ := simHostParts(t)
+	assert.True(t, strings.HasSuffix(*app.Properties.LatestRevisionFqdn, ".internal.sim-env."+host),
+		"LatestRevisionFqdn must be an Azure-shaped hostname under the simulator ARM host")
 
 	// GET round-trip.
 	getResp, err := client.Get(ctx, rg, "sdk-test-app", nil)

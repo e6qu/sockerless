@@ -158,7 +158,7 @@ func handleSBCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState":  "Succeeded",
-			"serviceBusEndpoint": "https://" + name + ".servicebus.windows.net:443/",
+			"serviceBusEndpoint": fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, name, "servicebus")),
 		},
 	}
 	if req.Properties != nil {
@@ -545,12 +545,12 @@ func sbAuthRuleList(scope string) http.HandlerFunc {
 // shape. Keys are deterministic 44-char base64 strings derived from
 // the rule resource ID (mirrors real-Azure SAS-key shape; same key
 // across reads, distinct between primary / secondary).
-func sbAuthRuleListKeysBody(ruleID, namespace, ruleName string) map[string]any {
+func sbAuthRuleListKeysBody(r *http.Request, ruleID, namespace, ruleName string) map[string]any {
 	primary := simListKey32(ruleID, "primary")
 	secondary := simListKey32(ruleID, "secondary")
-	// Real Azure builds connection strings as:
-	//   Endpoint=sb://<ns>.servicebus.windows.net/;SharedAccessKeyName=<rule>;SharedAccessKey=<key>
-	endpoint := "Endpoint=sb://" + namespace + ".servicebus.windows.net/"
+	// Real Azure builds Service Bus connection strings with the namespace
+	// endpoint followed by the SAS rule name and key.
+	endpoint := "Endpoint=sb://" + azureEndpointHost(r, namespace, "servicebus") + "/"
 	return map[string]any{
 		"primaryKey":                primary,
 		"secondaryKey":              secondary,
@@ -569,7 +569,7 @@ func sbAuthRuleListKeys(scope string) http.HandlerFunc {
 			return
 		}
 		ns := sim.PathParam(r, "name")
-		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(id, ns, ruleName))
+		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(r, id, ns, ruleName))
 	}
 }
 
@@ -588,7 +588,7 @@ func sbAuthRuleRegenerateKeys(scope string) http.HandlerFunc {
 		// for security boundary testing should know — this is
 		// documented in the bug; the wire shape is correct.
 		ns := sim.PathParam(r, "name")
-		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(id, ns, ruleName))
+		sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(r, id, ns, ruleName))
 	}
 }
 

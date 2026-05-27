@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -501,7 +502,7 @@ func registerContainerApps(srv *sim.Server) {
 				}
 
 				sink := &acaLogSink{jobName: jobShortName}
-				handle, sidecars, err := startACAJobContainers(id, shortExecID, tmpl, envID, timeout, netName, netAliases, sink)
+				handle, sidecars, err := startACAJobContainers(context.Background(), id, shortExecID, tmpl, envID, timeout, netName, netAliases, sink)
 				if err != nil {
 					succeeded = false
 				} else {
@@ -647,7 +648,7 @@ func registerContainerApps(srv *sim.Server) {
 	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/executions/{execName}/exec", handleACAJobExec)
 }
 
-func startACAJobContainers(execID, shortExecID string, tmpl *JobTemplate, envID string, timeout time.Duration, netName string, netAliases []string, sink sim.LogSink) (*sim.ContainerHandle, []*sim.ContainerHandle, error) {
+func startACAJobContainers(ctx context.Context, execID, shortExecID string, tmpl *JobTemplate, envID string, timeout time.Duration, netName string, netAliases []string, sink sim.LogSink) (*sim.ContainerHandle, []*sim.ContainerHandle, error) {
 	if tmpl == nil || len(tmpl.Containers) == 0 {
 		return nil, nil, fmt.Errorf("execution has no containers")
 	}
@@ -680,9 +681,14 @@ func startACAJobContainers(execID, shortExecID string, tmpl *JobTemplate, envID 
 	}
 
 	main := tmpl.Containers[0]
+	mainImage := sim.ResolveLocalImage(main.Image)
+	mainPlatform, err := localImagePlatform(ctx, mainImage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect main container %q image platform: %w", main.Name, err)
+	}
 	mainHandle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(main.Image),
-		Architecture: "linux/arm64",
+		Image:        mainImage,
+		Architecture: mainPlatform,
 		Command:      main.Command,
 		Args:         main.Args,
 		Env:          envFor(main),
@@ -705,9 +711,18 @@ func startACAJobContainers(execID, shortExecID string, tmpl *JobTemplate, envID 
 
 	var sidecars []*sim.ContainerHandle
 	for i, c := range tmpl.Containers[1:] {
+		sidecarImage := sim.ResolveLocalImage(c.Image)
+		sidecarPlatform, err := localImagePlatform(ctx, sidecarImage)
+		if err != nil {
+			mainHandle.Cancel()
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, nil, fmt.Errorf("inspect sidecar container %q image platform: %w", c.Name, err)
+		}
 		handle, err := sim.StartContainerSync(sim.ContainerConfig{
-			Image:        sim.ResolveLocalImage(c.Image),
-			Architecture: "linux/arm64",
+			Image:        sidecarImage,
+			Architecture: sidecarPlatform,
 			Command:      c.Command,
 			Args:         c.Args,
 			Env:          envFor(c),

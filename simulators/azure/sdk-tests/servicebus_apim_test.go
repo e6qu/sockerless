@@ -23,7 +23,14 @@ func TestAzureServiceBus_ARMLifecycle(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"provisioningState":"Succeeded"`)
-	assert.Contains(t, string(body), "lifecycle-sb.servicebus.windows.net")
+	_, hostPort := simHostParts(t)
+	assert.Contains(t, string(body), "lifecycle-sb.servicebus."+hostPort)
+
+	resp = armReq(t, "POST", nsPath+"/authorizationRules/RootManageSharedAccessKey/listKeys", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	keysBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Contains(t, string(keysBody), "Endpoint=sb://lifecycle-sb.servicebus."+hostPort+"/")
 
 	// Create a queue.
 	qPath := nsPath + "/queues/myqueue"
@@ -73,7 +80,8 @@ func TestAzureAPIM_ARMLifecycle(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"provisioningState":"Succeeded"`)
-	assert.Contains(t, string(body), "lifecycle-apim.azure-api.net")
+	_, hostPort := simHostParts(t)
+	assert.Contains(t, string(body), "lifecycle-apim.azure-api."+hostPort)
 
 	apiPath := svcPath + "/apis/myapi"
 	resp = armReq(t, "PUT", apiPath, `{"properties":{"displayName":"My API","path":"v1"}}`)

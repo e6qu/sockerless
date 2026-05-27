@@ -184,11 +184,14 @@ func hasNonStorageAzureSubdomain(hostname string) bool {
 	for _, marker := range []string{
 		".vault.",
 		".servicebus.",
+		".redis.cache.",
+		".postgres.database.",
 		".web.",
 		".dfs.",
 		".azurewebsites.",
 		".azurecr.",
 		".azure-api.",
+		".azurecontainerapps.",
 		".applicationinsights.",
 		".cognitiveservices.",
 	} {
