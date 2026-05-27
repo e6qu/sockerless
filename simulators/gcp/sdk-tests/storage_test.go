@@ -94,16 +94,34 @@ func TestGCS_CopierFromRewriteTo(t *testing.T) {
 	src := bucket.Object("dir/source file.txt")
 	w := src.NewWriter(ctx)
 	w.ContentType = "text/plain"
+	w.CacheControl = "public, max-age=60"
+	w.ContentDisposition = `inline; filename="source.txt"`
+	w.ContentLanguage = "en"
+	w.Metadata = map[string]string{
+		"replace": "source",
+		"source":  "kept",
+	}
 	_, err = w.Write([]byte("copied through rewriteTo"))
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
 
 	dst := bucket.Object("copied/dest file.txt")
-	attrs, err := dst.CopierFrom(src).Run(ctx)
+	copier := dst.CopierFrom(src)
+	copier.ContentType = "application/x-dest"
+	copier.CacheControl = "no-cache"
+	copier.Metadata = map[string]string{
+		"dest":    "yes",
+		"replace": "dest",
+	}
+	attrs, err := copier.Run(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "copied/dest file.txt", attrs.Name)
 	assert.Equal(t, int64(len("copied through rewriteTo")), attrs.Size)
-	assert.Equal(t, "text/plain", attrs.ContentType)
+	assert.Equal(t, "application/x-dest", attrs.ContentType)
+	assert.Equal(t, "no-cache", attrs.CacheControl)
+	assert.Equal(t, `inline; filename="source.txt"`, attrs.ContentDisposition)
+	assert.Equal(t, "en", attrs.ContentLanguage)
+	assert.Equal(t, map[string]string{"dest": "yes", "replace": "dest"}, attrs.Metadata)
 
 	r, err := dst.NewReader(ctx)
 	require.NoError(t, err)

@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Issues #236/#237: GCS copy metadata + persistence helper
+
+PR #238 closed the two follow-ups from the storage-copy review. Issue #236 was a real public-surface gap: GCS `rewriteTo` and `copyTo` accept a destination object resource, not just `contentType`, so SDK or raw JSON callers setting destination metadata needed those fields persisted and returned like real Cloud Storage. Issue #237 was the corresponding implementation risk: upload, resumable upload, compose, and copy/rewrite had duplicated object persistence logic.
+
+The fix extends the simulator object model for custom metadata plus the public HTTP metadata fields exercised by copy/rewrite callers: cache control, content disposition, content encoding, content language, storage class, and custom time. Copy/rewrite now starts from the stored source object metadata, applies destination-supplied fields as overrides, and leaves absent fields inherited from the source. JSON metadata responses and download headers return the persisted values.
+
+The write paths now share one `persistGCSObject` helper that writes the real object bytes to the bucket backing directory, computes size/hash/etag, timestamps the object, clones metadata, and updates the simulator store. Upload, resumable upload finalization, compose, and copy/rewrite use that helper.
+
+Coverage uses the official Go storage SDK for `ObjectHandle.CopierFrom(...).Run(ctx)` with destination metadata overrides and source-field inheritance. A raw JSON API `copyTo` regression covers fields not covered by the SDK assertion and verifies metadata survives a follow-up metadata GET and appears in download headers.
+
 ## 2026-05-27 — Issues #232/#233/#234: Storage object copy + GCS list ordering
 
 PR #235 closed the storage-copy reports. They were real simulator-fidelity bugs, not caller limitations. Azure Blob had Put/Get/block coverage, but a blob-level `PUT` with `x-ms-copy-source` still fell through to `handlePutBlob`, so SDK callers using `StartCopyFromURL` could receive a successful-looking response while the destination did not contain a real copy. GCS had compose/upload/download/list coverage but not the JSON API object-copy endpoints used by `ObjectHandle.CopierFrom(...).Run(ctx)`, and its object list response inherited Go map iteration order even though real GCS documents lexicographic ordering by object name.

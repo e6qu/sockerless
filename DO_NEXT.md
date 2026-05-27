@@ -4,11 +4,15 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after the storage copy/list fidelity fixes for issues #232, #233, and #234. Azure Blob now supports Copy Blob through `x-ms-copy-source`; GCS now supports JSON API `rewriteTo` / `copyTo`; GCS object and prefix listings are lexicographically ordered.
+Main is idle after the GCS object metadata persistence fixes for issues #236 and #237. GCS copy/rewrite now honors destination object resource metadata, inherits absent fields from the source object, and upload/resumable upload/compose/copy all persist object bytes and metadata through the same helper.
 
 ## Stage plan
 
 Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
+
+Issue #236 finding: the GCS `rewriteTo` / `copyTo` endpoints were real public JSON API surfaces, and callers can supply a destination object resource body with metadata beyond `contentType`. The fix persists custom metadata plus HTTP metadata fields, applies destination-over-source precedence for supplied fields, inherits absent fields from the source object, and returns the stored fields from metadata reads and download headers.
+
+Issue #237 finding: upload, resumable upload, compose, and copy/rewrite all performed the same object-byte write, checksum, timestamp, and store-update work independently. The fix routes those paths through one persistence helper so future object metadata changes update one real write path.
 
 Issue #232 finding: Azure Blob Copy Blob is a public data-plane `PUT` selected by `x-ms-copy-source`, not a multipart-copy detail. The fix branches before Put Blob, resolves host-style and path-style source URLs with escaped names, copies the real stored source bytes, returns Azure copy ID/status headers, and preserves source metadata unless destination metadata is supplied.
 

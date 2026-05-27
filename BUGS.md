@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1189 filed · 1189 fixed · 2 open · 2 false positives.**
+**1191 filed · 1191 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -15,7 +15,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
 
-PR #235 closes BUG-1187 / issue #232, BUG-1188 / issue #233, and BUG-1189 / issue #234. Azure Blob now implements the public Copy Blob data-plane operation via `x-ms-copy-source`, copies real blob bytes, preserves Azure copy headers/status on the destination, handles host-style and path-style source URLs, and applies destination metadata precedence over copied source metadata. GCS now implements the public JSON API `rewriteTo` and `copyTo` object-copy endpoints backed by real stored object bytes, and `objects.list` returns deterministic lexicographic object and prefix ordering.
+PR #238 closes BUG-1190 / issue #236 and BUG-1191 / issue #237. GCS object copy/rewrite now persists destination object resource metadata (`metadata`, cache-control, content-disposition, content-encoding, content-language, storage-class, custom-time), inherits absent fields from the source object, returns the persisted fields from JSON metadata reads and download headers, and routes upload/resumable upload/compose/copy writes through the shared object-persistence helper.
+
+PR #235 closed BUG-1187 / issue #232, BUG-1188 / issue #233, and BUG-1189 / issue #234. Azure Blob now implements the public Copy Blob data-plane operation via `x-ms-copy-source`, copies real blob bytes, preserves Azure copy headers/status on the destination, handles host-style and path-style source URLs, and applies destination metadata precedence over copied source metadata. GCS now implements the public JSON API `rewriteTo` and `copyTo` object-copy endpoints backed by real stored object bytes, and `objects.list` returns deterministic lexicographic object and prefix ordering.
 
 PR #231 closes BUG-1186 / issue #230. Azure Service Bus now exposes a raw AMQP/TLS listener for the official `azservicebus` default transport, so callers can use the SDK's `CustomEndpoint` and `TLSConfig` knobs without wiring simulator-specific WebSocket adapters. The raw listener reuses the same AMQP parser/session implementation as the WebSocket path, resolves namespace from TLS SNI or the AMQP Open hostname, and is covered by official SDK queue and topic/subscription Send/Receive tests without `NewWebSocketConn`.
 
