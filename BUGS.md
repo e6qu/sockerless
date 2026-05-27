@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1191 filed · 1191 fixed · 2 open · 2 false positives.**
+**1194 filed · 1194 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -15,7 +15,9 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
 
-PR #238 closes BUG-1190 / issue #236 and BUG-1191 / issue #237. GCS object copy/rewrite now persists destination object resource metadata (`metadata`, cache-control, content-disposition, content-encoding, content-language, storage-class, custom-time), inherits absent fields from the source object, returns the persisted fields from JSON metadata reads and download headers, and routes upload/resumable upload/compose/copy writes through the shared object-persistence helper.
+PR #242 closed BUG-1192 / issue #239, BUG-1193 / issue #240, and BUG-1194 / issue #241. GCS object metadata writes now validate the accepted fields with explicit published contracts (`customTime` as RFC 3339 and `contentLanguage` length <= 100 characters), invalid metadata returns `400 INVALID_ARGUMENT` across upload/resumable/compose/copy/rewrite paths, redundant metadata cloning is removed without weakening the store-boundary copy, and a source-level guard prevents future direct GCS object-store writes outside `persistGCSObject`.
+
+PR #238 closed BUG-1190 / issue #236 and BUG-1191 / issue #237. GCS object copy/rewrite now persists destination object resource metadata (`metadata`, cache-control, content-disposition, content-encoding, content-language, storage-class, custom-time), inherits absent fields from the source object, returns the persisted fields from JSON metadata reads and download headers, and routes upload/resumable upload/compose/copy writes through the shared object-persistence helper.
 
 PR #235 closed BUG-1187 / issue #232, BUG-1188 / issue #233, and BUG-1189 / issue #234. Azure Blob now implements the public Copy Blob data-plane operation via `x-ms-copy-source`, copies real blob bytes, preserves Azure copy headers/status on the destination, handles host-style and path-style source URLs, and applies destination metadata precedence over copied source metadata. GCS now implements the public JSON API `rewriteTo` and `copyTo` object-copy endpoints backed by real stored object bytes, and `objects.list` returns deterministic lexicographic object and prefix ordering.
 

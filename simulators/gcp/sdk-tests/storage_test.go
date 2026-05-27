@@ -131,6 +131,27 @@ func TestGCS_CopierFromRewriteTo(t *testing.T) {
 	assert.Equal(t, "copied through rewriteTo", string(got))
 }
 
+func TestGCS_CopierFromRewriteToRejectsInvalidMetadata(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	bucket := client.Bucket("copy-invalid-metadata-bucket")
+	err := bucket.Create(ctx, "test-project", nil)
+	require.NoError(t, err)
+
+	src := bucket.Object("source.txt")
+	w := src.NewWriter(ctx)
+	_, err = w.Write([]byte("copied through rewriteTo"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	copier := bucket.Object("bad-dest.txt").CopierFrom(src)
+	copier.ContentLanguage = strings.Repeat("x", 101)
+	_, err = copier.Run(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contentLanguage")
+}
+
 func TestGCS_DeleteObject(t *testing.T) {
 	client := storageClient(t)
 	defer client.Close()

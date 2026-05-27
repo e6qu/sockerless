@@ -4,11 +4,17 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after the GCS object metadata persistence fixes for issues #236 and #237. GCS copy/rewrite now honors destination object resource metadata, inherits absent fields from the source object, and upload/resumable upload/compose/copy all persist object bytes and metadata through the same helper.
+Main is idle after the GCS metadata validation and persistence-guard fixes for issues #239, #240, and #241. GCS metadata writes now reject invalid `customTime` and overlong `contentLanguage` values, redundant metadata cloning was removed, and a source-level guard prevents future direct GCS object-store writes outside `persistGCSObject`.
 
 ## Stage plan
 
 Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
+
+Issue #239 finding: PR #238 made GCS object metadata durable and observable but did not validate accepted metadata fields. The fix implements validation where the public docs are explicit: `customTime` must parse as RFC 3339 and `contentLanguage` must be at most 100 characters. Invalid metadata now returns `400 INVALID_ARGUMENT` across multipart upload, resumable upload init/finalization, compose, `copyTo`, and `rewriteTo`.
+
+Issue #240 finding: `gcsObjectResource.applyTo` and `persistGCSObject` both cloned custom metadata in the normal write flow. The fix marks metadata that was already cloned from the request resource and leaves `persistGCSObject` as the store-boundary clone for any uncloned map, removing the redundant clone without weakening isolation.
+
+Issue #241 finding: PR #238 centralized GCS object writes through `persistGCSObject`, but future direct `objects.Put` calls could bypass the disk-backed byte write and metadata normalization. The fix adds a source-level guard test that fails if GCS object store writes occur outside `persistGCSObject`.
 
 Issue #236 finding: the GCS `rewriteTo` / `copyTo` endpoints were real public JSON API surfaces, and callers can supply a destination object resource body with metadata beyond `contentType`. The fix persists custom metadata plus HTTP metadata fields, applies destination-over-source precedence for supplied fields, inherits absent fields from the source object, and returns the stored fields from metadata reads and download headers.
 

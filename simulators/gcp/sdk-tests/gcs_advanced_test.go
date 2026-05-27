@@ -308,3 +308,90 @@ func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {
 	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listing))
 	assert.Equal(t, []string{"a-dir/", "b-dir/", "copied/", "z-dir/"}, listing.Prefixes)
 }
+
+func TestGCS_ObjectMetadataValidation(t *testing.T) {
+	bucket := "metadata-validation-bucket"
+	gcsRESTCreate(t, bucket)
+
+	uploadReq, _ := http.NewRequest("POST",
+		baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=media&name=source.txt",
+		strings.NewReader("source payload"))
+	uploadReq.Header.Set("Content-Type", "text/plain")
+	uploadResp, err := http.DefaultClient.Do(uploadReq)
+	require.NoError(t, err)
+	uploadBody, _ := io.ReadAll(uploadResp.Body)
+	uploadResp.Body.Close()
+	require.Equal(t, http.StatusOK, uploadResp.StatusCode, "source upload: %s", uploadBody)
+
+	boundary := "META"
+	multipartBody := strings.Join([]string{
+		"--" + boundary,
+		"Content-Type: application/json",
+		"",
+		`{"name":"bad-multipart","customTime":"not-rfc3339"}`,
+		"--" + boundary,
+		"Content-Type: application/octet-stream",
+		"",
+		"bad",
+		"--" + boundary + "--",
+	}, "\r\n")
+	longLanguage := strings.Repeat("x", 101)
+	cases := []struct {
+		name        string
+		url         string
+		body        string
+		contentType string
+		want        string
+	}{
+		{
+			name:        "multipart upload rejects invalid customTime",
+			url:         baseURL + "/upload/storage/v1/b/" + bucket + "/o?uploadType=multipart",
+			body:        multipartBody,
+			contentType: "multipart/related; boundary=" + boundary,
+			want:        "customTime",
+		},
+		{
+			name:        "resumable init rejects invalid customTime",
+			url:         baseURL + "/upload/storage/v1/b/" + bucket + "/o?uploadType=resumable",
+			body:        `{"name":"bad-resumable","customTime":"not-rfc3339"}`,
+			contentType: "application/json",
+			want:        "customTime",
+		},
+		{
+			name:        "compose rejects invalid customTime",
+			url:         baseURL + "/storage/v1/b/" + bucket + "/o/bad-composed/compose",
+			body:        `{"sourceObjects":[{"name":"source.txt"}],"destination":{"customTime":"not-rfc3339"}}`,
+			contentType: "application/json",
+			want:        "customTime",
+		},
+		{
+			name: "copyTo rejects invalid customTime",
+			url: baseURL + "/storage/v1/b/" + bucket + "/o/" + url.PathEscape("source.txt") +
+				"/copyTo/b/" + bucket + "/o/bad-copy",
+			body:        `{"customTime":"not-rfc3339"}`,
+			contentType: "application/json",
+			want:        "customTime",
+		},
+		{
+			name: "rewriteTo rejects too-long contentLanguage",
+			url: baseURL + "/storage/v1/b/" + bucket + "/o/" + url.PathEscape("source.txt") +
+				"/rewriteTo/b/" + bucket + "/o/bad-rewrite",
+			body:        `{"contentLanguage":"` + longLanguage + `"}`,
+			contentType: "application/json",
+			want:        "contentLanguage",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("POST", tc.url, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", tc.contentType)
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode, "body: %s", body)
+			assert.Contains(t, string(body), tc.want)
+		})
+	}
+}

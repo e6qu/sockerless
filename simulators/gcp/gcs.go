@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -67,6 +70,7 @@ type GCSObject struct {
 	Md5Hash            string            `json:"md5Hash,omitempty"`
 	Etag               string            `json:"etag,omitempty"`
 	data               []byte            // unexported: raw object data
+	metadataCloned     bool
 }
 
 type gcsObjectResource struct {
@@ -114,6 +118,7 @@ func (res gcsObjectResource) applyTo(obj GCSObject) GCSObject {
 	}
 	if res.Metadata != nil {
 		obj.Metadata = cloneStringMap(*res.Metadata)
+		obj.metadataCloned = true
 	}
 	return obj
 }
@@ -129,9 +134,39 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
+type invalidGCSObjectMetadataError struct {
+	field  string
+	reason string
+}
+
+func (e *invalidGCSObjectMetadataError) Error() string {
+	return fmt.Sprintf("%s: %s", e.field, e.reason)
+}
+
+func validateGCSObjectAttrs(attrs GCSObject) error {
+	if attrs.CustomTime != "" {
+		if _, err := time.Parse(time.RFC3339Nano, attrs.CustomTime); err != nil {
+			return &invalidGCSObjectMetadataError{
+				field:  "customTime",
+				reason: "must be an RFC 3339 timestamp",
+			}
+		}
+	}
+	if utf8.RuneCountInString(attrs.ContentLanguage) > 100 {
+		return &invalidGCSObjectMetadataError{
+			field:  "contentLanguage",
+			reason: "must be at most 100 characters",
+		}
+	}
+	return nil
+}
+
 func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
 	if attrs.ContentType == "" {
 		attrs.ContentType = "application/octet-stream"
+	}
+	if err := validateGCSObjectAttrs(attrs); err != nil {
+		return GCSObject{}, err
 	}
 	now := nowTimestamp()
 	hash := md5.Sum(data)
@@ -154,10 +189,22 @@ func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName strin
 	obj.Updated = now
 	obj.Md5Hash = md5Hash
 	obj.Etag = etag
-	obj.Metadata = cloneStringMap(attrs.Metadata)
+	if !attrs.metadataCloned {
+		obj.Metadata = cloneStringMap(attrs.Metadata)
+	}
+	obj.metadataCloned = true
 	obj.data = append([]byte(nil), data...)
 	objects.Put(bucketName+"/"+objectName, obj)
 	return obj, nil
+}
+
+func writeGCSPersistError(w http.ResponseWriter, action string, err error) {
+	var invalid *invalidGCSObjectMetadataError
+	if errors.As(err, &invalid) {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s: %v", action, err)
+		return
+	}
+	sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%s: %v", action, err)
 }
 
 // gcsResumableSession holds the in-flight state of a resumable upload
@@ -251,8 +298,7 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 
 	obj, err := persistGCSObject(objects, sess.Bucket, sess.Object, finalData, sess.Attrs)
 	if err != nil {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
-			"write resumable object: %v", err)
+		writeGCSPersistError(w, "write resumable object", err)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
@@ -606,6 +652,10 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 			objAttrs = meta.applyTo(objAttrs)
+			if err := validateGCSObjectAttrs(objAttrs); err != nil {
+				writeGCSPersistError(w, "init resumable object", err)
+				return
+			}
 			sessionID := generateUUID()
 			gcsResumableSessions.Store(sessionID, &gcsResumableSession{
 				Bucket: bucketName,
@@ -705,7 +755,7 @@ func registerGCS(srv *sim.Server) {
 
 		obj, err := persistGCSObject(objects, bucketName, objectName, data, objAttrs)
 		if err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write object: %v", err)
+			writeGCSPersistError(w, "write object", err)
 			return
 		}
 
@@ -777,7 +827,7 @@ func registerGCS(srv *sim.Server) {
 		}
 		composedObj, err := persistGCSObject(objects, bucketName, destObject, composed, objAttrs)
 		if err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write composed object: %v", err)
+			writeGCSPersistError(w, "write composed object", err)
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, composedObj))
@@ -962,7 +1012,7 @@ func copyGCSObject(w http.ResponseWriter, r *http.Request, srcBucket, srcObject,
 	data := append([]byte(nil), gcsObjectBytes(src, srcBucket, srcObject)...)
 	dst, err := persistGCSObject(objects, dstBucket, dstObject, data, dstAttrs)
 	if err != nil {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write copied object: %v", err)
+		writeGCSPersistError(w, "write copied object", err)
 		return GCSObject{}, false
 	}
 	return dst, true
