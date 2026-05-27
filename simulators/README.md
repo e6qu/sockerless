@@ -119,9 +119,12 @@ cd simulators/aws/bash-tests      && ./test_aws_cli.sh
 Top-level Makefile entry points:
 
 ```sh
-make docker-test          # Docker-based tests for all clouds
-make test-integration     # Simulator-backend integration tests (every Go app + test category)
+make docker-test                  # Docker-based SDK/CLI/Terraform tests for all clouds
+make simulators/aws/docker-test   # Docker-based tests for one cloud
+make test-integration             # Simulator-backend integration tests (every Go app + test category)
 ```
+
+`make docker-test` builds the shared `simulators/Dockerfile.test` image, mounts the repository root plus the host Docker socket, and runs each simulator's existing `test-all` target. The Docker path is a real-client validation harness, not a reduced smoke test.
 
 CI runs all four on every PR — see `.github/workflows/ci.yml` `sim (aws)`, `sim (gcp)`, `sim (azure)` jobs.
 
@@ -131,7 +134,7 @@ CI runs all four on every PR — see `.github/workflows/ci.yml` `sim (aws)`, `si
 |---|---|---|---|---|
 | AWS | 46 | 26 | 61 | `TestStackProductionShape` ≈ 90s end-to-end |
 | GCP | 36 | 21 | 33 | ≈ 5s apply/destroy |
-| Azure | 48 | 19 | 42 | ≈ 1s apply/destroy (Docker-only, TLS) |
+| Azure | 48 | 19 | 42 | ≈ 1s apply/destroy (TLS; macOS delegates to Docker) |
 
 ## Shared framework
 
@@ -195,7 +198,7 @@ The ECS simulator supports `ExecuteCommand` with WebSocket-based session bridgin
 
 ## Known issues
 
-None open. Cross-cloud quirks (Cloud Run lacking `BackingPDEphemeral`, Azure terraform-tests being Docker-only, etc.) are documented in each per-cloud README and in [`PLAN.md`](../PLAN.md). Active bugs land in [`BUGS.md`](../BUGS.md) the moment they surface.
+Active simulator bugs live in [`BUGS.md`](../BUGS.md). Cross-cloud quirks that are not bugs are documented in each per-cloud README and in [`PLAN.md`](../PLAN.md).
 
 ## What's out of scope
 

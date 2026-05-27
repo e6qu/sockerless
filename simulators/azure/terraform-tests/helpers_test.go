@@ -16,6 +16,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -132,6 +134,10 @@ func writePEM(path, blockType string, data []byte) {
 }
 
 func TestMain(m *testing.M) {
+	if runtime.GOOS == "darwin" && os.Getenv("SOCKERLESS_AZURE_TF_IN_DOCKER") != "1" {
+		os.Exit(runTerraformTestsInDocker())
+	}
+
 	binaryPath, _ = filepath.Abs("../simulator-azure")
 
 	simDir, _ := filepath.Abs("..")
@@ -217,6 +223,75 @@ func TestMain(m *testing.M) {
 	simCmd.Wait()
 	os.RemoveAll(certDir)
 	os.Exit(code)
+}
+
+func runTerraformTestsInDocker() int {
+	repoRoot, err := filepath.Abs("../../..")
+	if err != nil {
+		log.Printf("Failed to resolve repository root: %v", err)
+		return 1
+	}
+
+	image := "sockerless-test-azure"
+	dockerfile := filepath.Join(repoRoot, "simulators", "Dockerfile.test")
+	build := exec.Command("docker", "build", "-t", image, "-f", dockerfile, repoRoot)
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		log.Printf("Failed to build Azure simulator test image: %v", err)
+		return 1
+	}
+
+	args := []string{
+		"run", "--rm",
+		"--security-opt", "label=disable",
+		"--group-add", dockerSocketGroup(),
+		"--group-add", "0",
+		"-v", repoRoot + ":/src",
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"-w", "/src/simulators/azure/terraform-tests",
+		"-e", "HOME=/tmp/sockerless-home",
+		"-e", "USER=sockerless",
+		"-e", fmt.Sprintf("SOCKERLESS_DOCKER_TEST_UIDGID=%d:%d", os.Getuid(), os.Getgid()),
+		"-e", "SOCKERLESS_DOCKER_TEST_GROUPS=" + dockerSocketGroup() + ",0",
+		"-e", "SOCKERLESS_AZURE_TF_IN_DOCKER=1",
+		"-e", "GOWORK=off",
+		"-e", "CGO_ENABLED=0",
+		"-e", "TF_IN_AUTOMATION=1",
+		"-e", "CLOUDSDK_CORE_DISABLE_PROMPTS=1",
+		"-e", "AZURE_CORE_NO_COLOR=true",
+	}
+	if v := os.Getenv("TF_LOG"); v != "" {
+		args = append(args, "-e", "TF_LOG="+v)
+	}
+	if v := os.Getenv("TF_LOG_PATH"); v != "" {
+		args = append(args, "-e", "TF_LOG_PATH="+v)
+	}
+	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", "600s", "./...")
+
+	run := exec.Command("docker", args...)
+	run.Stdout = os.Stdout
+	run.Stderr = os.Stderr
+	if err := run.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		log.Printf("Failed to run Azure Terraform tests in Docker: %v", err)
+		return 1
+	}
+	return 0
+}
+
+func dockerSocketGroup() string {
+	info, err := os.Stat("/var/run/docker.sock")
+	if err != nil {
+		return "0"
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "0"
+	}
+	return fmt.Sprintf("%d", stat.Gid)
 }
 
 func waitForHealth(url, caCert string) error {

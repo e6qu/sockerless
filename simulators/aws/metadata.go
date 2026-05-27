@@ -184,8 +184,8 @@ func defaultIMDSRegion(r *http.Request) string {
 	return "eu-west-1"
 }
 
-// simHostMetadataAddr returns "host.docker.internal:<sim-port>" — the
-// address sim workload hosts use to reach the sim's metadata services.
+// simHostMetadataAddr returns the address workload containers use to
+// reach the sim's metadata services.
 var simListenAddr string
 
 func simHostMetadataAddr() string {
@@ -193,7 +193,7 @@ func simHostMetadataAddr() string {
 	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
 		port = simListenAddr[idx+1:]
 	}
-	return "host.docker.internal:" + port
+	return workloadCallbackHost() + ":" + port
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the
