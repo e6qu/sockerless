@@ -8,7 +8,7 @@ This file keeps narrative — *why* each phase, what was surprising, what blocke
 
 ## 2026-05-27 — Issues #243/#244: Azure endpoint hosts + ACA image platforms
 
-The issues #243/#244 fix closed two Azure simulator fidelity bugs. Issue #243 was a real endpoint-host drift: Storage and Key Vault already returned simulator-routable Azure-shaped endpoint fields derived from the ARM request host, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still emitted production Azure suffixes. That forced callers following ARM-returned data-plane fields away from the simulator.
+PR #245 closed issues #243/#244 and two Azure simulator fidelity bugs. Issue #243 was a real endpoint-host drift: Storage and Key Vault already returned simulator-routable Azure-shaped endpoint fields derived from the ARM request host, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still emitted production Azure suffixes. That forced callers following ARM-returned data-plane fields away from the simulator.
 
 The fix added a shared Azure request-host helper and applied it to the audited endpoint fields: Service Bus `serviceBusEndpoint`, Redis `hostName`, APIM gateway/portal/management URLs, PostgreSQL Flexible Server `fullyQualifiedDomainName`, Container Apps managed-environment `defaultDomain`, and Container Apps app/revision FQDNs. Service Bus listKeys connection strings now use the same derived namespace endpoint, and the storage path-style dispatcher recognizes the newly advertised non-storage Azure subdomains so collapsed-port routing does not misclassify those hosts as storage requests.
 
