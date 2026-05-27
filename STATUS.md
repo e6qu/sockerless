@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after issues #243/#244 Azure endpoint host derivation and Container Apps image-platform fixes. |
-| In-flight | None. Ready for the next fresh issue sweep. |
+| Active branch | `audit/foundational-sim-surfaces` - foundational simulator service audit. |
+| In-flight | Audit docs + BUG entries for missing object-storage/data/DNS/queue/event/network/load-balancer-equivalent simulator slices. |
 | Last merged | PR #245 — issues #243/#244 fix — Azure ARM endpoint fields derive simulator-routable Azure-shaped hosts, Service Bus listKeys follows the derived namespace endpoint, and ACA app/job containers derive Docker platform from local image manifests (2026-05-27). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1196 filed · 1196 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1207 filed · 1196 fixed · 13 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1197..1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)

@@ -6,6 +6,12 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Foundational simulator service audit
+
+Audited AWS, GCP, and Azure simulator coverage for foundational service classes: object storage, managed data stores, DNS, queue/message systems, event routing, stream/event ingestion, VM/EC2-like compute, VPC/networking, NAT/egress, gateways, and managed load balancers. The audit result is now recorded in `specs/SIM_FOUNDATIONAL_AUDIT.md`.
+
+The audit found object storage and core queue/message systems already present across the three sims, but filed BUG-1197..1207 for missing or incomplete foundational slices: EventBridge/Eventarc/Event Grid, Kinesis/Event Hubs, BigQuery, Firestore/Datastore, Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers, Azure public DNS, uneven NAT/public-IP parity, and stale surface-table status rows. VM support should expose cloud-compatible public APIs while keeping Firecracker or any other local microVM runtime behind the simulator boundary.
+
 ## 2026-05-27 — Issues #243/#244: Azure endpoint hosts + ACA image platforms
 
 PR #245 closed issues #243/#244 and two Azure simulator fidelity bugs. Issue #243 was a real endpoint-host drift: Storage and Key Vault already returned simulator-routable Azure-shaped endpoint fields derived from the ARM request host, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still emitted production Azure suffixes. That forced callers following ARM-returned data-plane fields away from the simulator.

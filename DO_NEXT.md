@@ -4,11 +4,13 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after the Azure simulator fixes for issues #243 and #244. Azure ARM handlers that advertise Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps endpoint fields now derive Azure-shaped hosts from the incoming simulator ARM request instead of returning production cloud suffixes. Service Bus listKeys connection strings use the same derived namespace endpoint. Container Apps Jobs/Apps derive Docker platform from each resolved local image manifest before starting real containers instead of hardcoding `linux/arm64`.
+Current branch `audit/foundational-sim-surfaces` records the foundational simulator service audit requested after PR #245. The audit lives in `specs/SIM_FOUNDATIONAL_AUDIT.md` and covers object storage, managed data stores, DNS, queues, event routing, stream/event ingestion, VM/EC2-like compute, VPC/networking, NAT/egress, gateways, and managed load balancers across AWS/GCP/Azure.
+
+The audit found core object storage and queue/message systems present across the three sims, with AWS S3/DynamoDB/Route 53/Cloud Map/SQS/SNS, GCP GCS/Pub/Sub/Cloud DNS, and Azure Blob/File/Queue/Table/Service Bus/Private DNS implemented. It also found real missing foundational cloud slices: AWS EventBridge, GCP Eventarc, Azure Event Grid, AWS Kinesis, Azure Event Hubs, GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, Azure public DNS, and uneven public-IP/NAT parity. BUG-1197..1207 track those gaps.
 
 ## Stage plan
 
-Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
+Current phase: audit only. Next implementation pass should start from the audit findings. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery. Event routing is the next cross-cloud service slice after that: AWS EventBridge + GCP Eventarc + Azure Event Grid in one PR, with SDK/CLI/Terraform coverage for every added public operation.
 
 Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
 
