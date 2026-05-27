@@ -8,7 +8,7 @@ PR #246 recorded the foundational simulator service audit requested after PR #24
 
 The audit found core object storage and queue/message systems present across the three sims, with AWS S3/DynamoDB/Route 53/Cloud Map/SQS/SNS, GCP GCS/Pub/Sub/Cloud DNS, and Azure Blob/File/Queue/Table/Service Bus/Private DNS implemented. It also found real missing foundational cloud slices: AWS EventBridge, GCP Eventarc, Azure Event Grid, AWS Kinesis, Azure Event Hubs, GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, Azure public DNS, and uneven public-IP/NAT parity. BUG-1197..1207 track those gaps.
 
-The PR also closed the two CI regressions found while landing the audit. BUG-1208 made the bleephub invalid-JWT test mutate decoded signature bytes before re-encoding, so it cannot accidentally leave the signature valid through base64url tail changes. BUG-1209 made the GCF FaaS smoke harness reuse local Docker tags across its subprocess TestMain run instead of rebuilding Alpine from Public ECR and risking registry 429s.
+The PR also closed the CI/pre-push regressions found while landing the audit. BUG-1208 made the bleephub invalid-JWT test mutate decoded signature bytes before re-encoding, so it cannot accidentally leave the signature valid through base64url tail changes. BUG-1209 made the GCF FaaS smoke harness reuse local Docker tags across its subprocess TestMain run instead of rebuilding Alpine from Public ECR and risking registry 429s. BUG-1210 refreshed the GCP simulator/backend modules to the latest `google.golang.org/api` required by the dependency-freshness hook.
 
 ## Stage plan
 
