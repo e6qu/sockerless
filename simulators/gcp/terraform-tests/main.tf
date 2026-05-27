@@ -20,6 +20,7 @@ provider "google" {
   dns_custom_endpoint               = "${var.endpoint}/dns/v1/"
   artifact_registry_custom_endpoint = "${var.endpoint}/v1/"
   cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
+  eventarc_custom_endpoint          = "${var.endpoint}/v1/"
   storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
@@ -170,6 +171,31 @@ resource "google_cloud_run_v2_job" "tf_crv2_job" {
   depends_on = [google_artifact_registry_repository.tf_ar_docker]
 }
 
+# ---------- Eventarc ----------
+
+resource "google_eventarc_trigger" "tf_eventarc_trigger" {
+  name     = "tf-eventarc-trigger"
+  location = "us-central1"
+
+  matching_criteria {
+    attribute = "type"
+    value     = "google.cloud.pubsub.topic.v1.messagePublished"
+  }
+
+  destination {
+    cloud_run_service {
+      service = google_cloud_run_v2_service.tf_crv2_svc.name
+      region  = "us-central1"
+    }
+  }
+
+  labels = {
+    env = "test"
+  }
+
+  depends_on = [google_cloud_run_v2_service.tf_crv2_svc]
+}
+
 # ---------- Cloud Storage ----------
 
 resource "google_storage_bucket" "tf_bucket" {
@@ -248,6 +274,10 @@ output "cloud_run_v2_service_uri" {
 
 output "cloud_run_v2_job_id" {
   value = google_cloud_run_v2_job.tf_crv2_job.id
+}
+
+output "eventarc_trigger_id" {
+  value = google_eventarc_trigger.tf_eventarc_trigger.id
 }
 
 output "storage_bucket_url" {

@@ -75,6 +75,7 @@ func main() {
 	registerOperations(srv)
 	registerSecretManager(srv)
 	registerPubSub(srv)
+	registerEventarc(srv)
 	registerMemorystoreRedis(srv)
 	registerGCPAPIGateway(srv)
 	registerCloudSQL(srv)

@@ -32,6 +32,7 @@ import (
 //   - Microsoft.ContainerRegistry/registries
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
 //   - Microsoft.Network/privateDnsZones
+//   - Microsoft.EventGrid/topics
 //   - Microsoft.OperationalInsights/workspaces
 //   - Microsoft.Insights/components
 //   - Microsoft.App/managedEnvironments + containerApps + jobs
@@ -118,6 +119,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmDNS := outputs.must(t, "azrm_private_dns_zone_id")
 	require.Contains(t, azrmDNS, "/providers/Microsoft.Network/privateDnsZones/tf-azrm.internal",
 		"azurerm private DNS zone id must include canonical ARM path; got %s", azrmDNS)
+
+	azrmEventGridEndpoint := outputs.must(t, "azrm_eventgrid_topic_endpoint")
+	require.Contains(t, azrmEventGridEndpoint, "/api/events",
+		"azurerm Event Grid topic endpoint must be a publish endpoint; got %s", azrmEventGridEndpoint)
 
 	azrmLAW := outputs.must(t, "azrm_law_id")
 	require.Contains(t, azrmLAW, "/providers/Microsoft.OperationalInsights/workspaces/tf-azrm-law",

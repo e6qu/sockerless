@@ -154,6 +154,17 @@ resource "azurerm_private_dns_zone" "az_pdns" {
   resource_group_name = azurerm_resource_group.az_rg.name
 }
 
+resource "azurerm_eventgrid_topic" "az_eg_topic" {
+  provider            = azurerm
+  name                = "tf-azrm-eg-topic"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  tags = {
+    env = "test"
+  }
+}
+
 # Log Analytics workspace — Container App Environment requires one for
 # log ingestion. PerGB2018 is the canonical SKU.
 resource "azurerm_log_analytics_workspace" "az_law" {
@@ -279,13 +290,13 @@ resource "azurerm_linux_function_app" "az_fa" {
 # retries the PUT. If the sim's challenge format is wrong, apply fails
 # with `index out of range [3]`.
 resource "azurerm_key_vault" "az_kv" {
-  provider                  = azurerm
-  name                      = "tf-azrm-kv"
-  resource_group_name       = azurerm_resource_group.az_rg.name
-  location                  = azurerm_resource_group.az_rg.location
-  tenant_id                 = "11111111-1111-1111-1111-111111111111"
-  sku_name                  = "standard"
-  purge_protection_enabled  = false
+  provider                   = azurerm
+  name                       = "tf-azrm-kv"
+  resource_group_name        = azurerm_resource_group.az_rg.name
+  location                   = azurerm_resource_group.az_rg.location
+  tenant_id                  = "11111111-1111-1111-1111-111111111111"
+  sku_name                   = "standard"
+  purge_protection_enabled   = false
   soft_delete_retention_days = 7
 }
 
@@ -348,6 +359,10 @@ output "azrm_uai_id" {
 
 output "azrm_private_dns_zone_id" {
   value = azurerm_private_dns_zone.az_pdns.id
+}
+
+output "azrm_eventgrid_topic_endpoint" {
+  value = azurerm_eventgrid_topic.az_eg_topic.endpoint
 }
 
 output "azrm_law_id" {
