@@ -140,13 +140,15 @@ func TestMain(m *testing.M) {
 	// overlay Cloud Build path uses for this test run.
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
-	step("docker build " + evalImageName + " (" + overlayPlatform + ")")
-	fmt.Printf("[sim] Building %s (%s)...\n", evalImageName, overlayPlatform)
+	arTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/" + evalImageName
 	// FROM lines pull from public.ecr.aws (no anonymous-pull rate
 	// limit), not docker.io. Docker Hub throttles unauthenticated
 	// pulls aggressively; ECR Public Gallery mirrors the Docker
 	// Library images without that constraint.
-	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
+	if !dockerImageExists(evalImageName) || !dockerImageExists(arTag) {
+		step("docker build " + evalImageName + " (" + overlayPlatform + ")")
+		fmt.Printf("[sim] Building %s (%s)...\n", evalImageName, overlayPlatform)
+		evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
@@ -154,25 +156,27 @@ FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
-	evalImageBuild := exec.Command("docker", "build",
-		"--platform", overlayPlatform,
-		"-t", evalImageName, "-f", "-", evalDir)
-	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
-	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
-		os.Exit(1)
-	}
-	// Also tag the image with the AR-prefixed name the gcf backend's
-	// gcpcommon.ResolveGCPImageURI rewrites unqualified Docker Hub
-	// references to. Cloud Build's `FROM` (executed via the sim's
-	// build executor running real `docker build` against the local
-	// daemon) finds the image in the local cache without pulling
-	// from the AR URL — production deployments would have the image
-	// already in AR; the local tag is the equivalent for tests.
-	arTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/" + evalImageName
-	if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to AR-tag eval-arithmetic image: %v\n%s", err, out)
-		os.Exit(1)
+		evalImageBuild := exec.Command("docker", "build",
+			"--platform", overlayPlatform,
+			"-t", evalImageName, "-f", "-", evalDir)
+		evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
+		if out, err := evalImageBuild.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to build eval-arithmetic image: %v\n%s", err, out)
+			os.Exit(1)
+		}
+		// Also tag the image with the AR-prefixed name the gcf backend's
+		// gcpcommon.ResolveGCPImageURI rewrites unqualified Docker Hub
+		// references to. Cloud Build's `FROM` (executed via the sim's
+		// build executor running real `docker build` against the local
+		// daemon) finds the image in the local cache without pulling
+		// from the AR URL — production deployments would have the image
+		// already in AR; the local tag is the equivalent for tests.
+		if out, err := exec.Command("docker", "tag", evalImageName, arTag).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to AR-tag eval-arithmetic image: %v\n%s", err, out)
+			os.Exit(1)
+		}
+	} else {
+		step("docker image cache hit " + evalImageName + " + AR-tag")
 	}
 
 	// Tests that don't use eval-arithmetic still pass plain
@@ -182,16 +186,20 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	// base instead of assuming the source tag exists.
 	step("tag cached alpine:latest + AR-tag")
 	alpineARTag := "us-central1-docker.pkg.dev/sockerless-test/docker-hub/library/alpine:latest"
-	alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
-	alpineBuild := exec.Command("docker", "build",
-		"--platform", overlayPlatform,
-		"-t", "alpine:latest",
-		"-t", alpineARTag,
-		"-f", "-", repoRoot)
-	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
-	if out, err := alpineBuild.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build alpine local tags: %v\n%s", err, out)
-		os.Exit(1)
+	if !dockerImageExists("alpine:latest") || !dockerImageExists(alpineARTag) {
+		alpineDockerfile := "FROM public.ecr.aws/docker/library/alpine:latest\n"
+		alpineBuild := exec.Command("docker", "build",
+			"--platform", overlayPlatform,
+			"-t", "alpine:latest",
+			"-t", alpineARTag,
+			"-f", "-", repoRoot)
+		alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
+		if out, err := alpineBuild.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to build alpine local tags: %v\n%s", err, out)
+			os.Exit(1)
+		}
+	} else {
+		step("docker image cache hit alpine:latest + AR-tag")
 	}
 
 	// Per-target endpoint + ARM identifiers + auth/bootstrap paths.
@@ -1020,6 +1028,11 @@ func writeFakeServiceAccountJSON(tokenURI string) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+func dockerImageExists(ref string) bool {
+	cmd := exec.Command("docker", "image", "inspect", ref)
+	return cmd.Run() == nil
 }
 
 // createGCSBucket POSTs to the sim's GCS bucket-create endpoint. Real

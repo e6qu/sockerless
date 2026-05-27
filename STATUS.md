@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after issues #243/#244 Azure endpoint host derivation and Container Apps image-platform fixes. |
-| In-flight | None. Ready for the next fresh issue sweep. |
-| Last merged | PR #245 — issues #243/#244 fix — Azure ARM endpoint fields derive simulator-routable Azure-shaped hosts, Service Bus listKeys follows the derived namespace endpoint, and ACA app/job containers derive Docker platform from local image manifests (2026-05-27). |
+| Active branch | `main` - idle after PR #246. |
+| In-flight | None; next implementation pass starts from the foundational simulator audit findings. |
+| Last merged | PR #246 - foundational simulator service audit - documented object-storage/data/DNS/queue/event/network/load-balancer/VM-equivalent coverage across AWS/GCP/Azure, filed BUG-1197..1207 for the real gaps, and fixed the CI/pre-push regressions tracked as BUG-1208..1210 (2026-05-27). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1196 filed · 1196 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1210 filed · 1199 fixed · 13 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1197..1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #246 | foundational simulator audit | Recorded foundational simulator service coverage in `specs/SIM_FOUNDATIONAL_AUDIT.md`; filed BUG-1197..1207 for missing EventBridge/Eventarc/Event Grid, Kinesis/Event Hubs, BigQuery, Firestore/Datastore, Cosmos DB, VM lifecycle APIs, managed load balancers, Azure public DNS, NAT/public-IP parity, and stale surface-table status rows; closed BUG-1208/BUG-1209 by making the bleephub invalid-JWT test deterministic and reusing local Docker image tags across the GCF FaaS smoke subprocess; closed BUG-1210 by refreshing the GCP modules to the latest `google.golang.org/api`. |
 | #245 | issues #243/#244 | Azure ARM handlers for Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps now derive Azure-shaped endpoint fields from the simulator ARM request host; Service Bus listKeys connection strings use the same derived namespace endpoint; Container Apps Jobs/Apps derive Docker platform from each resolved local image manifest instead of hardcoding `linux/arm64`. |
 | #242 | issues #239/#240/#241 | GCS metadata writes now validate `customTime` and `contentLanguage`, invalid metadata returns `400 INVALID_ARGUMENT` across upload/resumable/compose/copy/rewrite, redundant metadata cloning is removed, and direct GCS object-store writes are guarded by a source-level test. |
 | #238 | issues #236/#237 | GCS copy/rewrite now honors destination object resource metadata, inherits absent fields from the source object, returns metadata in JSON reads and download headers, and shares upload/resumable upload/compose/copy persistence through one helper. |
