@@ -74,7 +74,7 @@ All services use REST/JSON routing with Go 1.22+ path patterns. Long-running ope
 | **Cloud Run Jobs** | `/v2/projects/.../jobs` | Create, Get, List, Delete, Run (create execution), Get/List/Cancel Executions |
 | **Cloud Functions v2** | `/v2/projects/.../functions` | Create, Get, List, Delete, Invoke |
 | **Cloud DNS** | `/dns/v1/projects/...` | Managed Zones (CRUD), Record Sets (CRUD) |
-| **GCS** | `/storage/v1/b/...` | Buckets (CRUD, list), Objects (upload, download, list, delete) — JSON + XML APIs |
+| **GCS** | `/storage/v1/b/...` | Buckets (CRUD, list), Objects (upload, download, list, delete, compose, rewrite/copy) — JSON + XML APIs |
 | **Artifact Registry** | `/v1/projects/.../repositories` | Repositories (CRUD), Docker Images (list), [OCI Distribution](https://github.com/opencontainers/distribution-spec) (`/v2/` manifests + blobs) |
 | **Cloud Logging** | `/v2/entries` | Write entries, List entries (with filter) |
 | **Compute Engine** | `/compute/v1/projects/...` | Networks (CRUD), Subnetworks (CRUD), Operations |
@@ -293,6 +293,9 @@ curl -s -X POST 'http://localhost:4567/upload/storage/v1/b/my-bucket/o?name=hell
   -H 'Content-Type: text/plain' -d 'hello world'
 curl -s http://localhost:4567/download/storage/v1/b/my-bucket/o/hello.txt
 # => hello world
+
+curl -s -X POST \
+  'http://localhost:4567/storage/v1/b/my-bucket/o/hello.txt/rewriteTo/b/my-bucket/o/copy.txt'
 ```
 
 Go SDK respects `STORAGE_EMULATOR_HOST`:
@@ -301,6 +304,9 @@ Go SDK respects `STORAGE_EMULATOR_HOST`:
 os.Setenv("STORAGE_EMULATOR_HOST", "localhost:4567")
 client, _ := storage.NewClient(ctx)
 client.Bucket("sdk-bucket").Create(ctx, "my-project", nil)
+client.Bucket("sdk-bucket").Object("copy.txt").
+    CopierFrom(client.Bucket("sdk-bucket").Object("hello.txt")).
+    Run(ctx)
 ```
 
 ### Artifact Registry

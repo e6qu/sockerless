@@ -4,24 +4,17 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after PR #231, the issue #230 Service Bus raw AMQP/TLS transport fix. Azure Service Bus now exposes the official SDK's default AMQP/TLS path in addition to the WebSocket AMQP path from PR #229.
+Main is idle after the storage copy/list fidelity fixes for issues #232, #233, and #234. Azure Blob now supports Copy Blob through `x-ms-copy-source`; GCS now supports JSON API `rewriteTo` / `copyTo`; GCS object and prefix listings are lexicographically ordered.
 
 ## Stage plan
 
 Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
 
-Issue #227 finding: Blob had single-shot Put/Get coverage but no block-list subresource dispatch, so `?comp=block` and `?comp=blocklist` were misrouted. The fix persists committed and uncommitted block state and materializes committed block blobs in list order.
+Issue #232 finding: Azure Blob Copy Blob is a public data-plane `PUT` selected by `x-ms-copy-source`, not a multipart-copy detail. The fix branches before Put Blob, resolves host-style and path-style source URLs with escaped names, copies the real stored source bytes, returns Azure copy ID/status headers, and preserves source metadata unless destination metadata is supplied.
 
-Issue #228 finding: Service Bus REST data-plane coverage did not cover the official Go SDK, which uses AMQP 1.0 over WebSocket. The fix adds the AMQP slice for SASL anonymous, CBS claim RPC, entity sender/receiver links, link credit, accepted dispositions, receive-and-delete transfers, topic fan-out, and subscription receiver paths.
+Issue #233 finding: GCS object copy is a public JSON API surface. The fix implements canonical `rewriteTo` and legacy `copyTo` routes in the existing object POST handler, backed by real object bytes. `rewriteTo` completes synchronously with `done: true` for same-simulator copies and returns SDK-compatible string byte counts.
 
-Issue #230 finding: WebSocket-only AMQP support still leaked simulator transport plumbing into public simulator callers because official SDK users had to provide `NewWebSocketConn`. The fix adds a raw AMQP/TLS listener, derives namespace from protocol-visible host data, and covers queue plus topic/subscription Send/Receive with the official SDK using `CustomEndpoint` and no WebSocket adapter.
-
-Issue #230 plan/contract:
-- Raw AMQP/TLS is a separate Service Bus listener because it is a TCP/TLS transport, not an HTTP path route.
-- Namespace routing prefers AMQP Open `hostname`, with TLS SNI as early metadata/fallback. This matches the SDK `CustomEndpoint` model: redirect the TCP target while preserving the original Service Bus namespace/audience.
-- Queue, topic, subscription, CBS, and management routing use AMQP link source/target addresses: `{queue}`, `{topic}`, `{topic}/Subscriptions/{subscription}`, `$cbs`, and `{entity}/$management`.
-- No simulator-only `/namespace/...` path routing exists for raw AMQP; that would be less cloud-faithful and would leak simulator plumbing into clients.
-- The canonical regressions use the official `azservicebus` SDK default AMQP/TLS path with `ClientOptions.CustomEndpoint` and TLS config, without `NewWebSocketConn`, for both queue and topic/subscription Send/Receive.
+Issue #234 finding: GCS object listing is documented as lexicographic by object name. The fix sorts `items[]` after filtering and also sorts delimiter-produced `prefixes[]` for stable directory-style listings.
 
 ## Standing invariants (full list in STATUS.md)
 

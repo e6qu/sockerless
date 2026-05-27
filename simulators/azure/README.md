@@ -16,6 +16,11 @@ Anything any of these three tools does against the real Azure endpoint, it must 
 
 The simulator is the **upstream** for the [Azure Container Apps](../../backends/aca/README.md) and [Azure Functions](../../backends/azure-functions/README.md) backends during local development and CI.
 
+The Storage data plane includes Blob container/blob CRUD, block staging,
+and Copy Blob via the public `x-ms-copy-source` REST operation. Copy Blob
+accepts simulator host-style and Azurite-style path-style source URLs,
+copies the stored source bytes, and returns Azure copy ID/status headers.
+
 ## Validation
 
 | Test path | What runs | Last green |
