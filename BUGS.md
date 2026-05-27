@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1207 filed · 1196 fixed · 13 open · 2 false positives.**
+**1209 filed · 1198 fixed · 13 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -25,6 +25,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+PR #246 closed BUG-1208 and BUG-1209 while landing the foundational simulator audit. The bleephub JWT invalid-signature regression now mutates decoded signature bytes before re-encoding, so the test cannot accidentally produce a still-valid signature by changing only trailing base64url characters. The GCF FaaS smoke harness now reuses already-built local Docker tags across its subprocess TestMain run instead of rebuilding Alpine tags from Public ECR and risking a registry 429.
 
 PR #245 closed issues #243/#244 and BUG-1195/BUG-1196. Azure ARM handlers for Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps now derive Azure-shaped endpoint fields from the incoming simulator ARM host instead of production cloud suffixes; Service Bus listKeys connection strings use the same derived namespace endpoint. The storage path-style dispatcher also recognizes the newly advertised non-storage Azure subdomains so collapsed-port storage routing does not steal those requests. Container Apps jobs and apps now inspect the resolved local image manifest before starting real containers, including sidecars, instead of hardcoding `linux/arm64`.
 

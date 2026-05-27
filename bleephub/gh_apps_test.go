@@ -265,9 +265,16 @@ func TestJWTInvalidSignature(t *testing.T) {
 		t.Fatalf("signAppJWT: %v", err)
 	}
 
-	// Tamper with the signature
 	parts := strings.SplitN(jwt, ".", 3)
-	tampered := parts[0] + "." + parts[1] + "." + parts[2][:len(parts[2])-2] + "XX"
+	if len(parts) != 3 {
+		t.Fatalf("expected JWT to have 3 parts, got %d", len(parts))
+	}
+	sig, err := base64urlDecode(parts[2])
+	if err != nil {
+		t.Fatalf("decode JWT signature: %v", err)
+	}
+	sig[0] ^= 0xff
+	tampered := parts[0] + "." + parts[1] + "." + base64urlEncode(sig)
 
 	_, err = st.parseAndVerifyAppJWT(tampered)
 	if err == nil {
