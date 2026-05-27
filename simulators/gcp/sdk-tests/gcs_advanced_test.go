@@ -237,7 +237,16 @@ func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, "upload %s: %s", p.name, body)
 	}
 
-	copyBody := strings.NewReader(`{"contentType":"application/x-copy"}`)
+	copyBody := strings.NewReader(`{
+		"contentType":"application/x-copy",
+		"contentEncoding":"identity",
+		"contentLanguage":"fr",
+		"contentDisposition":"attachment; filename=\"result.txt\"",
+		"cacheControl":"private, max-age=30",
+		"storageClass":"NEARLINE",
+		"customTime":"2026-01-02T03:04:05Z",
+		"metadata":{"reviewed":"true","source":"copyTo"}
+	}`)
 	copyURL := baseURL + "/storage/v1/b/" + bucket + "/o/" + url.PathEscape("z-dir/source.txt") +
 		"/copyTo/b/" + bucket + "/o/" + url.PathEscape("copied/result.txt")
 	copyReq, _ := http.NewRequest("POST", copyURL, copyBody)
@@ -252,6 +261,36 @@ func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &meta))
 	assert.Equal(t, "copied/result.txt", meta["name"])
 	assert.Equal(t, "application/x-copy", meta["contentType"])
+	assert.Equal(t, "identity", meta["contentEncoding"])
+	assert.Equal(t, "fr", meta["contentLanguage"])
+	assert.Equal(t, `attachment; filename="result.txt"`, meta["contentDisposition"])
+	assert.Equal(t, "private, max-age=30", meta["cacheControl"])
+	assert.Equal(t, "NEARLINE", meta["storageClass"])
+	assert.Equal(t, "2026-01-02T03:04:05Z", meta["customTime"])
+	assert.Equal(t, map[string]any{"reviewed": "true", "source": "copyTo"}, meta["metadata"])
+
+	getMeta := gcsObjectMetadataRaw(t, bucket, url.PathEscape("copied/result.txt"))
+	assert.Equal(t, "application/x-copy", getMeta["contentType"])
+	assert.Equal(t, "identity", getMeta["contentEncoding"])
+	assert.Equal(t, "fr", getMeta["contentLanguage"])
+	assert.Equal(t, `attachment; filename="result.txt"`, getMeta["contentDisposition"])
+	assert.Equal(t, "private, max-age=30", getMeta["cacheControl"])
+	assert.Equal(t, "NEARLINE", getMeta["storageClass"])
+	assert.Equal(t, "2026-01-02T03:04:05Z", getMeta["customTime"])
+	assert.Equal(t, map[string]any{"reviewed": "true", "source": "copyTo"}, getMeta["metadata"])
+
+	headReq, _ := http.NewRequest("HEAD", baseURL+"/"+bucket+"/copied/result.txt", nil)
+	headReq.Header.Set("Accept-Encoding", "identity")
+	headResp, err := http.DefaultClient.Do(headReq)
+	require.NoError(t, err)
+	headResp.Body.Close()
+	require.Equal(t, http.StatusOK, headResp.StatusCode)
+	assert.Equal(t, "application/x-copy", headResp.Header.Get("Content-Type"))
+	assert.Equal(t, "identity", headResp.Header.Get("Content-Encoding"))
+	assert.Equal(t, "fr", headResp.Header.Get("Content-Language"))
+	assert.Equal(t, `attachment; filename="result.txt"`, headResp.Header.Get("Content-Disposition"))
+	assert.Equal(t, "private, max-age=30", headResp.Header.Get("Cache-Control"))
+	assert.Equal(t, "true", headResp.Header.Get("X-Goog-Meta-Reviewed"))
 
 	xmlResp, err := http.Get(baseURL + "/" + bucket + "/copied/result.txt")
 	require.NoError(t, err)

@@ -51,15 +51,34 @@ type Bucket struct {
 
 // GCSObject represents a Cloud Storage object (metadata).
 type GCSObject struct {
-	Name        string `json:"name"`
-	Bucket      string `json:"bucket"`
-	Size        string `json:"size"`
-	ContentType string `json:"contentType,omitempty"`
-	TimeCreated string `json:"timeCreated"`
-	Updated     string `json:"updated"`
-	Md5Hash     string `json:"md5Hash,omitempty"`
-	Etag        string `json:"etag,omitempty"`
-	data        []byte // unexported: raw object data
+	Name               string            `json:"name"`
+	Bucket             string            `json:"bucket"`
+	Size               string            `json:"size"`
+	ContentType        string            `json:"contentType,omitempty"`
+	ContentEncoding    string            `json:"contentEncoding,omitempty"`
+	ContentLanguage    string            `json:"contentLanguage,omitempty"`
+	ContentDisposition string            `json:"contentDisposition,omitempty"`
+	CacheControl       string            `json:"cacheControl,omitempty"`
+	StorageClass       string            `json:"storageClass,omitempty"`
+	CustomTime         string            `json:"customTime,omitempty"`
+	Metadata           map[string]string `json:"metadata,omitempty"`
+	TimeCreated        string            `json:"timeCreated"`
+	Updated            string            `json:"updated"`
+	Md5Hash            string            `json:"md5Hash,omitempty"`
+	Etag               string            `json:"etag,omitempty"`
+	data               []byte            // unexported: raw object data
+}
+
+type gcsObjectResource struct {
+	Name               string             `json:"name,omitempty"`
+	ContentType        *string            `json:"contentType,omitempty"`
+	ContentEncoding    *string            `json:"contentEncoding,omitempty"`
+	ContentLanguage    *string            `json:"contentLanguage,omitempty"`
+	ContentDisposition *string            `json:"contentDisposition,omitempty"`
+	CacheControl       *string            `json:"cacheControl,omitempty"`
+	StorageClass       *string            `json:"storageClass,omitempty"`
+	CustomTime         *string            `json:"customTime,omitempty"`
+	Metadata           *map[string]string `json:"metadata,omitempty"`
 }
 
 // Package-level stores. gcsBuckets is for dashboard access; gcsObjects
@@ -71,16 +90,86 @@ var (
 	gcsObjects sim.Store[GCSObject]
 )
 
+func (res gcsObjectResource) applyTo(obj GCSObject) GCSObject {
+	if res.ContentType != nil {
+		obj.ContentType = *res.ContentType
+	}
+	if res.ContentEncoding != nil {
+		obj.ContentEncoding = *res.ContentEncoding
+	}
+	if res.ContentLanguage != nil {
+		obj.ContentLanguage = *res.ContentLanguage
+	}
+	if res.ContentDisposition != nil {
+		obj.ContentDisposition = *res.ContentDisposition
+	}
+	if res.CacheControl != nil {
+		obj.CacheControl = *res.CacheControl
+	}
+	if res.StorageClass != nil {
+		obj.StorageClass = *res.StorageClass
+	}
+	if res.CustomTime != nil {
+		obj.CustomTime = *res.CustomTime
+	}
+	if res.Metadata != nil {
+		obj.Metadata = cloneStringMap(*res.Metadata)
+	}
+	return obj
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
+	if attrs.ContentType == "" {
+		attrs.ContentType = "application/octet-stream"
+	}
+	now := nowTimestamp()
+	hash := md5.Sum(data)
+	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
+	etag := fmt.Sprintf("%x", hash)
+
+	objPath := filepath.Join(GCSBucketHostDir(bucketName), objectName)
+	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+		return GCSObject{}, fmt.Errorf("create object dir: %w", err)
+	}
+	if err := os.WriteFile(objPath, data, 0o644); err != nil {
+		return GCSObject{}, fmt.Errorf("write object: %w", err)
+	}
+
+	obj := attrs
+	obj.Name = objectName
+	obj.Bucket = bucketName
+	obj.Size = strconv.Itoa(len(data))
+	obj.TimeCreated = now
+	obj.Updated = now
+	obj.Md5Hash = md5Hash
+	obj.Etag = etag
+	obj.Metadata = cloneStringMap(attrs.Metadata)
+	obj.data = append([]byte(nil), data...)
+	objects.Put(bucketName+"/"+objectName, obj)
+	return obj, nil
+}
+
 // gcsResumableSession holds the in-flight state of a resumable upload
 // between session initiation (POST with metadata) and finalization
 // (the chunk PUT that delivers the last byte). Keyed by upload_id in
 // gcsResumableSessions.
 type gcsResumableSession struct {
-	mu          sync.Mutex
-	Bucket      string
-	Object      string
-	ContentType string
-	Data        []byte
+	mu     sync.Mutex
+	Bucket string
+	Object string
+	Attrs  GCSObject
+	Data   []byte
 }
 
 var gcsResumableSessions sync.Map // upload_id → *gcsResumableSession
@@ -160,39 +249,12 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 	sess.mu.Unlock()
 	gcsResumableSessions.Delete(uploadID)
 
-	objContentType := sess.ContentType
-	if objContentType == "" {
-		objContentType = "application/octet-stream"
-	}
-	now := nowTimestamp()
-	hash := md5.Sum(finalData)
-	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
-	etag := fmt.Sprintf("%x", hash)
-
-	objPath := filepath.Join(GCSBucketHostDir(sess.Bucket), sess.Object)
-	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
-			"create object dir: %v", err)
-		return
-	}
-	if err := os.WriteFile(objPath, finalData, 0o644); err != nil {
+	obj, err := persistGCSObject(objects, sess.Bucket, sess.Object, finalData, sess.Attrs)
+	if err != nil {
 		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
 			"write resumable object: %v", err)
 		return
 	}
-
-	obj := GCSObject{
-		Name:        sess.Object,
-		Bucket:      sess.Bucket,
-		Size:        strconv.FormatInt(total, 10),
-		ContentType: objContentType,
-		TimeCreated: now,
-		Updated:     now,
-		Md5Hash:     md5Hash,
-		Etag:        etag,
-		data:        finalData,
-	}
-	objects.Put(sess.Bucket+"/"+sess.Object, obj)
 	sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
 }
 
@@ -243,7 +305,7 @@ func gcsObjectMetadata(r *http.Request, obj GCSObject) map[string]any {
 	escapedObject := url.PathEscape(obj.Name)
 	selfLink := fmt.Sprintf("https://%s/storage/v1/b/%s/o/%s", r.Host, obj.Bucket, escapedObject)
 	mediaLink := fmt.Sprintf("https://%s/download/storage/v1/b/%s/o/%s?alt=media", r.Host, obj.Bucket, escapedObject)
-	return map[string]any{
+	meta := map[string]any{
 		"kind":        "storage#object",
 		"id":          fmt.Sprintf("%s/%s/1", obj.Bucket, obj.Name),
 		"selfLink":    selfLink,
@@ -258,6 +320,28 @@ func gcsObjectMetadata(r *http.Request, obj GCSObject) map[string]any {
 		"md5Hash":     obj.Md5Hash,
 		"etag":        obj.Etag,
 	}
+	if obj.ContentEncoding != "" {
+		meta["contentEncoding"] = obj.ContentEncoding
+	}
+	if obj.ContentLanguage != "" {
+		meta["contentLanguage"] = obj.ContentLanguage
+	}
+	if obj.ContentDisposition != "" {
+		meta["contentDisposition"] = obj.ContentDisposition
+	}
+	if obj.CacheControl != "" {
+		meta["cacheControl"] = obj.CacheControl
+	}
+	if obj.StorageClass != "" {
+		meta["storageClass"] = obj.StorageClass
+	}
+	if obj.CustomTime != "" {
+		meta["customTime"] = obj.CustomTime
+	}
+	if len(obj.Metadata) > 0 {
+		meta["metadata"] = cloneStringMap(obj.Metadata)
+	}
+	return meta
 }
 
 func registerGCS(srv *sim.Server) {
@@ -379,19 +463,7 @@ func registerGCS(srv *sim.Server) {
 			return true
 		})
 
-		// Build response items (without internal data field)
-		type objectMeta struct {
-			Name        string `json:"name"`
-			Bucket      string `json:"bucket"`
-			Size        string `json:"size"`
-			ContentType string `json:"contentType,omitempty"`
-			TimeCreated string `json:"timeCreated"`
-			Updated     string `json:"updated"`
-			Md5Hash     string `json:"md5Hash,omitempty"`
-			Etag        string `json:"etag,omitempty"`
-		}
-
-		var items []objectMeta
+		var items []map[string]any
 		var prefixes []string
 		seen := make(map[string]bool)
 
@@ -417,23 +489,14 @@ func registerGCS(srv *sim.Server) {
 					continue
 				}
 			}
-			items = append(items, objectMeta{
-				Name:        obj.Name,
-				Bucket:      obj.Bucket,
-				Size:        obj.Size,
-				ContentType: obj.ContentType,
-				TimeCreated: obj.TimeCreated,
-				Updated:     obj.Updated,
-				Md5Hash:     obj.Md5Hash,
-				Etag:        obj.Etag,
-			})
+			items = append(items, gcsObjectMetadata(r, obj))
 		}
 
 		if items == nil {
-			items = []objectMeta{}
+			items = []map[string]any{}
 		}
 		sort.Slice(items, func(i, j int) bool {
-			return items[i].Name < items[j].Name
+			return items[i]["name"].(string) < items[j]["name"].(string)
 		})
 		sort.Strings(prefixes)
 
@@ -502,7 +565,7 @@ func registerGCS(srv *sim.Server) {
 		}
 
 		var data []byte
-		var objContentType string
+		objAttrs := GCSObject{}
 
 		ct := r.Header.Get("Content-Type")
 		mediaType, params, _ := mime.ParseMediaType(ct)
@@ -517,15 +580,10 @@ func registerGCS(srv *sim.Server) {
 		// Incomplete (with a Range header naming the bytes received)
 		// or 200 with the finalized object metadata.
 		if uploadType == "resumable" {
-			var meta struct {
-				Name        string `json:"name"`
-				ContentType string `json:"contentType"`
-			}
-			// Resumable-init body is a small fixed-shape JSON metadata
-			// blob (`{"name":"...","contentType":"..."}`). The Go SDK
-			// does not gzip-encode this — chunk uploads at the
-			// session URL carry the streaming envelope (see
-			// handleGCSResumableChunk which wraps openStreamingBody).
+			var meta gcsObjectResource
+			// Resumable-init body is a JSON object resource. The Go SDK
+			// does not gzip-encode this control-plane request; chunk
+			// uploads at the session URL carry the streaming envelope.
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
@@ -547,12 +605,13 @@ func registerGCS(srv *sim.Server) {
 					"name is required (in query or body)", "INVALID_ARGUMENT")
 				return
 			}
+			objAttrs = meta.applyTo(objAttrs)
 			sessionID := generateUUID()
 			gcsResumableSessions.Store(sessionID, &gcsResumableSession{
-				Bucket:      bucketName,
-				Object:      objectName,
-				ContentType: meta.ContentType,
-				Data:        nil,
+				Bucket: bucketName,
+				Object: objectName,
+				Attrs:  objAttrs,
+				Data:   nil,
 			})
 			location := fmt.Sprintf("https://%s/upload/storage/v1/b/%s/o?uploadType=resumable&upload_id=%s",
 				r.Host, bucketName, sessionID)
@@ -593,9 +652,7 @@ func registerGCS(srv *sim.Server) {
 				return
 			}
 			if len(metaBytes) > 0 {
-				var meta struct {
-					Name string `json:"name"`
-				}
+				var meta gcsObjectResource
 				if jsonErr := json.Unmarshal(metaBytes, &meta); jsonErr != nil {
 					sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
 						"failed to parse multipart metadata: %v", jsonErr)
@@ -604,6 +661,7 @@ func registerGCS(srv *sim.Server) {
 				if objectName == "" {
 					objectName = meta.Name
 				}
+				objAttrs = meta.applyTo(objAttrs)
 			}
 			if objectName == "" {
 				sim.GCPError(w, http.StatusBadRequest,
@@ -616,7 +674,9 @@ func registerGCS(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read data part: %v", err)
 				return
 			}
-			objContentType = dataPart.Header.Get("Content-Type")
+			if objAttrs.ContentType == "" {
+				objAttrs.ContentType = dataPart.Header.Get("Content-Type")
+			}
 			data, err = io.ReadAll(dataPart)
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read data: %v", err)
@@ -640,49 +700,14 @@ func registerGCS(srv *sim.Server) {
 				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
 				return
 			}
-			objContentType = ct
+			objAttrs.ContentType = ct
 		}
 
-		if objContentType == "" {
-			objContentType = "application/octet-stream"
-		}
-
-		now := nowTimestamp()
-		hash := md5.Sum(data)
-		md5Hash := base64.StdEncoding.EncodeToString(hash[:])
-		etag := fmt.Sprintf("%x", hash)
-
-		// Persist the object bytes on disk (real GCS-shape storage —
-		// objects survive sim process restart). Metadata goes through
-		// the SQLite-backed sim.Store; the byte payload doesn't because
-		// the unexported `data` field would be stripped by the JSON
-		// round-trip (sim.Store uses JSON encoding for SQLite). The
-		// on-disk file at `<gcsHostRoot>/<bucket>/<object>` is the
-		// source of truth for object data.
-		objPath := filepath.Join(GCSBucketHostDir(bucketName), objectName)
-		if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create object dir: %v", err)
-			return
-		}
-		if err := os.WriteFile(objPath, data, 0o644); err != nil {
+		obj, err := persistGCSObject(objects, bucketName, objectName, data, objAttrs)
+		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write object: %v", err)
 			return
 		}
-
-		obj := GCSObject{
-			Name:        objectName,
-			Bucket:      bucketName,
-			Size:        strconv.Itoa(len(data)),
-			ContentType: objContentType,
-			TimeCreated: now,
-			Updated:     now,
-			Md5Hash:     md5Hash,
-			Etag:        etag,
-			data:        data,
-		}
-
-		key := bucketName + "/" + objectName
-		objects.Put(key, obj)
 
 		// Real GCS object responses include `kind` + `id` + `selfLink` +
 		// `mediaLink` (https-hard-coded — GCS' JSON API is HTTPS-only).
@@ -720,9 +745,7 @@ func registerGCS(srv *sim.Server) {
 				Name       string `json:"name"`
 				Generation string `json:"generation,omitempty"`
 			} `json:"sourceObjects"`
-			Destination *struct {
-				ContentType string `json:"contentType"`
-			} `json:"destination"`
+			Destination *gcsObjectResource `json:"destination"`
 		}
 		// Compose request body is a fixed-shape JSON document
 		// (sourceObjects + destination); the GCS Go SDK does not
@@ -746,37 +769,17 @@ func registerGCS(srv *sim.Server) {
 					"source object %q not found in bucket %q", src.Name, bucketName)
 				return
 			}
-			composed = append(composed, srcObj.data...)
+			composed = append(composed, gcsObjectBytes(srcObj, bucketName, src.Name)...)
 		}
-		contentType := "application/octet-stream"
-		if req.Destination != nil && req.Destination.ContentType != "" {
-			contentType = req.Destination.ContentType
+		objAttrs := GCSObject{}
+		if req.Destination != nil {
+			objAttrs = req.Destination.applyTo(objAttrs)
 		}
-		now := nowTimestamp()
-		hash := md5.Sum(composed)
-		md5Hash := base64.StdEncoding.EncodeToString(hash[:])
-		etag := fmt.Sprintf("%x", hash)
-		objPath := filepath.Join(GCSBucketHostDir(bucketName), destObject)
-		if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create dest dir: %v", err)
-			return
-		}
-		if err := os.WriteFile(objPath, composed, 0o644); err != nil {
+		composedObj, err := persistGCSObject(objects, bucketName, destObject, composed, objAttrs)
+		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write composed object: %v", err)
 			return
 		}
-		composedObj := GCSObject{
-			Name:        destObject,
-			Bucket:      bucketName,
-			Size:        strconv.Itoa(len(composed)),
-			ContentType: contentType,
-			TimeCreated: now,
-			Updated:     now,
-			Md5Hash:     md5Hash,
-			Etag:        etag,
-			data:        composed,
-		}
-		objects.Put(bucketName+"/"+destObject, composedObj)
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, composedObj))
 	})
 
@@ -814,8 +817,7 @@ func registerGCS(srv *sim.Server) {
 		}
 
 		body := gcsObjectBytes(obj, bucketName, objectName)
-		w.Header().Set("Content-Type", obj.ContentType)
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		setGCSObjectResponseHeaders(w.Header(), obj, len(body))
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
@@ -833,11 +835,30 @@ func registerGCS(srv *sim.Server) {
 		}
 
 		body := gcsObjectBytes(obj, bucketName, objectName)
-		w.Header().Set("Content-Type", obj.ContentType)
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		setGCSObjectResponseHeaders(w.Header(), obj, len(body))
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
+}
+
+func setGCSObjectResponseHeaders(h http.Header, obj GCSObject, size int) {
+	h.Set("Content-Type", obj.ContentType)
+	h.Set("Content-Length", strconv.Itoa(size))
+	if obj.ContentEncoding != "" {
+		h.Set("Content-Encoding", obj.ContentEncoding)
+	}
+	if obj.ContentLanguage != "" {
+		h.Set("Content-Language", obj.ContentLanguage)
+	}
+	if obj.ContentDisposition != "" {
+		h.Set("Content-Disposition", obj.ContentDisposition)
+	}
+	if obj.CacheControl != "" {
+		h.Set("Cache-Control", obj.CacheControl)
+	}
+	for k, v := range obj.Metadata {
+		h.Set("X-Goog-Meta-"+k, v)
+	}
 }
 
 func handleGCSObjectCopyRequest(w http.ResponseWriter, r *http.Request, buckets sim.Store[Bucket], objects sim.Store[GCSObject]) bool {
@@ -927,50 +948,23 @@ func copyGCSObject(w http.ResponseWriter, r *http.Request, srcBucket, srcObject,
 			"source object %q not found in bucket %q", srcObject, srcBucket)
 		return GCSObject{}, false
 	}
-	contentType := src.ContentType
+	dstAttrs := src
 	if r.Body != nil {
 		defer r.Body.Close()
-		var meta struct {
-			ContentType string `json:"contentType"`
-		}
+		var meta gcsObjectResource
 		if err := json.NewDecoder(r.Body).Decode(&meta); err != nil && err != io.EOF {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
 				"failed to parse copy metadata: %v", err)
 			return GCSObject{}, false
 		}
-		if meta.ContentType != "" {
-			contentType = meta.ContentType
-		}
-	}
-	if contentType == "" {
-		contentType = "application/octet-stream"
+		dstAttrs = meta.applyTo(dstAttrs)
 	}
 	data := append([]byte(nil), gcsObjectBytes(src, srcBucket, srcObject)...)
-	now := nowTimestamp()
-	hash := md5.Sum(data)
-	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
-	etag := fmt.Sprintf("%x", hash)
-	objPath := filepath.Join(GCSBucketHostDir(dstBucket), dstObject)
-	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
-		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create dest dir: %v", err)
-		return GCSObject{}, false
-	}
-	if err := os.WriteFile(objPath, data, 0o644); err != nil {
+	dst, err := persistGCSObject(objects, dstBucket, dstObject, data, dstAttrs)
+	if err != nil {
 		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write copied object: %v", err)
 		return GCSObject{}, false
 	}
-	dst := GCSObject{
-		Name:        dstObject,
-		Bucket:      dstBucket,
-		Size:        strconv.Itoa(len(data)),
-		ContentType: contentType,
-		TimeCreated: now,
-		Updated:     now,
-		Md5Hash:     md5Hash,
-		Etag:        etag,
-		data:        data,
-	}
-	objects.Put(dstBucket+"/"+dstObject, dst)
 	return dst, true
 }
 
