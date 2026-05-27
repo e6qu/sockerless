@@ -34,8 +34,10 @@ provider "aws" {
     iam              = var.endpoint
     s3               = var.endpoint
     dynamodb         = var.endpoint
+    events           = var.endpoint
     kms              = var.endpoint
     secretsmanager   = var.endpoint
+    sqs              = var.endpoint
     ssm              = var.endpoint
   }
 }
@@ -237,6 +239,26 @@ resource "aws_wafv2_web_acl" "tf_acl" {
 resource "aws_wafv2_web_acl_association" "tf_assoc" {
   resource_arn = aws_cloudfront_distribution.tf_dist.arn
   web_acl_arn  = aws_wafv2_web_acl.tf_acl.arn
+}
+
+resource "aws_sqs_queue" "tf_eventbridge_queue" {
+  name = "tf-eventbridge-queue"
+}
+
+resource "aws_cloudwatch_event_rule" "tf_eventbridge_rule" {
+  name          = "tf-eventbridge-rule"
+  description   = "tf-test EventBridge rule"
+  event_pattern = jsonencode({ source = ["sockerless.terraform"] })
+
+  tags = {
+    env = "test"
+  }
+}
+
+resource "aws_cloudwatch_event_target" "tf_eventbridge_target" {
+  rule      = aws_cloudwatch_event_rule.tf_eventbridge_rule.name
+  target_id = "tf-eventbridge-queue"
+  arn       = aws_sqs_queue.tf_eventbridge_queue.arn
 }
 
 resource "aws_route53_zone" "tf_zone" {

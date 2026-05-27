@@ -14,6 +14,7 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_container_registry` (Standard)
 - `azurerm_user_assigned_identity`
 - `azurerm_private_dns_zone`
+- `azurerm_eventgrid_topic`
 - `azurerm_log_analytics_workspace`
 - `azurerm_application_insights`
 - `azurerm_container_app_environment` + `azurerm_container_app` + `azurerm_container_app_job` (the ACA runner backend host + workload + job primitives)
@@ -27,11 +28,12 @@ Not yet covered: Key Vault data-plane (keys/secrets). Data-plane requires per-va
 These tests require Docker (Linux only). On macOS, Go 1.20+ uses Security.framework for TLS and ignores `SSL_CERT_FILE`, so the Terraform provider cannot trust the self-signed CA.
 
 ```sh
-# Inside Docker (via Makefile)
-cd simulators/azure/terraform-tests
+# Inside Docker (via the parent simulator Makefile)
+cd simulators/azure
 make docker-test
 
 # Or directly (Linux only)
+cd simulators/azure/terraform-tests
 go test -v ./...
 ```
 

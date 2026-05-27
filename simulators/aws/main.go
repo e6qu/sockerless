@@ -67,6 +67,7 @@ func main() {
 	registerDynamoDB(awsRouter, srv)
 	registerACM(awsRouter, srv)
 	registerWAFv2(awsRouter, srv)
+	registerEventBridge(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()

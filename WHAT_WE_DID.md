@@ -6,6 +6,20 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Foundational event routing
+
+PR #252 was the first implementation pass after the foundational audit and closed BUG-1197..1199 by adding real public event-routing slices for the foundational flows in all three simulators.
+
+AWS now implements the EventBridge `events` JSON protocol for rule lifecycle, tags, targets, and `PutEvents`. The simulator records events, matches basic `source` / `detail-type` event patterns, and delivers matching events to real simulator SQS queues or SNS fanout targets. Coverage uses the official EventBridge SDK, `aws events` CLI commands, and Terraform `aws_cloudwatch_event_rule` / `aws_cloudwatch_event_target` resources.
+
+GCP now implements Eventarc v1 trigger create/get/list/patch/delete routes with regional long-running operations. The wire shape is driven by the public REST/SDK contract, including `eventFilters`, Cloud Run destinations, labels, and provider-compatible trigger reads. Coverage uses the official `cloud.google.com/go/eventarc/apiv1` client, `gcloud eventarc triggers`, and Terraform `google_eventarc_trigger`.
+
+Azure now implements Microsoft.EventGrid topics and event subscriptions through ARM plus a real custom-topic publish endpoint. Webhook event subscriptions receive the subscription-validation event and later published Event Grid events through the endpoint returned by the topic resource. The local simulator allocates a real loopback publish listener for locally addressed topics so Azure CLI/SDK callers can use the returned endpoint directly instead of relying on wildcard `.localhost` DNS. Coverage uses the official Azure Event Grid management SDK, `az rest`, and Terraform `azurerm_eventgrid_topic`.
+
+CI review found two real follow-up defects before merge. The AzureRM Terraform provider calls the Event Grid topic `listKeys` ARM action during `azurerm_eventgrid_topic` creation, so the simulator now implements `POST .../topics/{topic}/listKeys` and returns the real `{key1,key2}` response shape. The Azure ACA/AZF backend modules also now carry the same refreshed OpenTelemetry transitive graph as `backends/core`, so isolated `-tags noui` builds do not fail with missing `go.sum` entries.
+
+Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issue #248 / BUG-1212 tracks the Azure Terraform macOS TLS harness problem where Terraform's Go runtime ignores the generated `SSL_CERT_FILE`; CI/Linux remains the real Terraform validation path until that harness is fixed. Issue #253 / BUG-1216 tracks the broken simulator `docker-test` targets that point at missing `Dockerfile.test` files. Issues #249..#251 / BUG-1213..1215 track remaining advanced/sibling event-service parity: EventBridge buses/policies/advanced resources, Event Grid domains/system topics, and Eventarc channels/providers.
+
 ## 2026-05-27 — Foundational simulator service audit
 
 Audited AWS, GCP, and Azure simulator coverage for foundational service classes: object storage, managed data stores, DNS, queue/message systems, event routing, stream/event ingestion, VM/EC2-like compute, VPC/networking, NAT/egress, gateways, and managed load balancers. The audit result is now recorded in `specs/SIM_FOUNDATIONAL_AUDIT.md`.

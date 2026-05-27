@@ -11,14 +11,16 @@ import (
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
 // (compute network + disk + subnet + firewall, public + private DNS zones,
 // Artifact Registry, Cloud Run v2 Service + Job, Cloud Storage bucket +
-// object, Secret Manager, IAM service account) in a single terraform
-// apply round-trip and asserts the cross-resource references converged.
+// object, Eventarc trigger, Secret Manager, IAM service account) in a
+// single terraform apply round-trip and asserts the cross-resource
+// references converged.
 //
 // Slices exercised against the simulator:
 //   - compute.googleapis.com (networks + disks + subnetworks + firewalls)
 //   - dns.googleapis.com (public + private managedZones)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
+//   - eventarc.googleapis.com (Trigger)
 //   - storage.googleapis.com (bucket + object)
 //   - secretmanager.googleapis.com (secret + version)
 //   - iam.googleapis.com (service account — via iam_beta_custom_endpoint;
@@ -59,6 +61,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	crJobID := outputs.must(t, "cloud_run_v2_job_id")
 	require.Contains(t, crJobID, "projects/test-project/locations/us-central1/jobs/tf-crv2-job",
 		"Cloud Run v2 job id must round-trip the full resource path; got %s", crJobID)
+
+	eventarcID := outputs.must(t, "eventarc_trigger_id")
+	require.Contains(t, eventarcID, "projects/test-project/locations/us-central1/triggers/tf-eventarc-trigger",
+		"Eventarc trigger id must round-trip the full resource path; got %s", eventarcID)
 
 	bucketURL := outputs.must(t, "storage_bucket_url")
 	require.True(t, strings.HasPrefix(bucketURL, "gs://tf-test-bucket-"),

@@ -87,6 +87,7 @@ func generateTLSCerts(dir string) (string, string, string) {
 			"*.dfs.localhost",
 			"*.azurecr.localhost",
 			"*.servicebus.localhost",
+			"*.eventgrid.localhost",
 		},
 	}
 

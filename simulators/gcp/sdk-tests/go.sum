@@ -8,6 +8,8 @@ cloud.google.com/go/auth/oauth2adapt v0.2.8 h1:keo8NaayQZ6wimpNSmW5OPc283g65QNIi
 cloud.google.com/go/auth/oauth2adapt v0.2.8/go.mod h1:XQ9y31RkqZCcwJWNSx2Xvric3RrU88hAYYbjDWYDL+c=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
+cloud.google.com/go/eventarc v1.23.0 h1:/EUAdoBWSlqQRbpQYTV2Msmg4esw3Mum3tEU7zkhLi4=
+cloud.google.com/go/eventarc v1.23.0/go.mod h1:tIJL0hoWtZXVa5MjcAep/4xB+AXz4AbqQV14ogX5VwU=
 cloud.google.com/go/functions v1.24.0 h1:0nb8LMMABq/oChZg+ovRD5bsc/dNm5ti/aoHRZ9MoUs=
 cloud.google.com/go/functions v1.24.0/go.mod h1:t40GeqBAQNuqKlHCxmV/pxhyYJnImLcvRa3GBv4tAy0=
 cloud.google.com/go/iam v1.11.0 h1:KieQ9Pb+LLPak1O3Rv3GgCxhnmkYf7Xyh0P5HfF1jFM=
