@@ -34,6 +34,24 @@ go build -o simulator-azure .
 SIM_LISTEN_ADDR=:4568 ./simulator-azure
 ```
 
+Service Bus raw AMQP/TLS is a second, optional listener because real
+Azure Service Bus exposes AMQP as a TCP/TLS transport in addition to
+HTTP/REST and WebSocket tunneling:
+
+```bash
+SIM_LISTEN_ADDR=:4568 \
+SIM_SERVICEBUS_AMQP_LISTEN_ADDR=:5671 \
+SIM_SERVICEBUS_AMQP_TLS_CERT=server-cert.pem \
+SIM_SERVICEBUS_AMQP_TLS_KEY=server-key.pem \
+./simulator-azure
+```
+
+Official `azservicebus` SDK callers can then keep a normal Service Bus
+connection string and point `ClientOptions.CustomEndpoint` at the raw
+AMQP listener. The listener also accepts the shared `SIM_TLS_CERT` /
+`SIM_TLS_KEY` values when the Service Bus-specific cert variables are
+unset.
+
 ```bash
 # 2. Point Azure clients at it.
 # For az CLI: use az rest with explicit URL.

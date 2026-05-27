@@ -68,6 +68,18 @@ var restartRequired = map[string]ConfigKeyMeta{
 		Name: "SIM_AWS_PORT",
 		Doc:  "AWS sim listen port. Same constraint as SIM_LISTEN_ADDR.",
 	},
+	"SIM_SERVICEBUS_AMQP_LISTEN_ADDR": {
+		Name: "SIM_SERVICEBUS_AMQP_LISTEN_ADDR",
+		Doc:  "Azure Service Bus raw AMQP/TLS bind address. Changing requires re-listening on a new socket.",
+	},
+	"SIM_SERVICEBUS_AMQP_TLS_CERT": {
+		Name: "SIM_SERVICEBUS_AMQP_TLS_CERT",
+		Doc:  "TLS certificate for Azure Service Bus raw AMQP/TLS listener. Loaded once at startup.",
+	},
+	"SIM_SERVICEBUS_AMQP_TLS_KEY": {
+		Name: "SIM_SERVICEBUS_AMQP_TLS_KEY",
+		Doc:  "TLS private key for Azure Service Bus raw AMQP/TLS listener. Loaded once at startup.",
+	},
 	"SOCKERLESS_AWS_REGION": {
 		Name: "SOCKERLESS_AWS_REGION",
 		Doc:  "AWS region. Cloud resource layout assumes one region per backend.",

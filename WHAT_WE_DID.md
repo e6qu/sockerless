@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-26 — Issue #230: Service Bus raw AMQP/TLS transport
+
+PR #231 closed issue #230. The report was real. PR #229 added AMQP-over-WebSocket support, but making `NewWebSocketConn` the only official-SDK path leaked simulator transport plumbing into callers. Real Azure Service Bus exposes raw AMQP/TLS as the SDK's default transport, with WebSocket as an opt-in alternate transport, so the simulator needed the same public boundary.
+
+The fix adds a configurable raw AMQP/TLS listener to the Azure simulator. The listener requires TLS cert/key material when enabled and reuses the same AMQP parser/session implementation as the WebSocket path. Namespace routing prefers the AMQP Open `hostname`, with TLS SNI as early metadata/fallback, because `azservicebus.ClientOptions.CustomEndpoint` redirects the TCP dial target while preserving the original Service Bus namespace/audience. The existing WebSocket endpoint remains available for clients that intentionally select that transport.
+
+The implementation deliberately does not add HTTP-style `/namespace/...` routing for raw AMQP. Real Service Bus AMQP is host-scoped at the TCP/TLS layer and entity-scoped inside AMQP links: queues use `{queue}`, topic sends use `{topic}`, subscription receives use `{topic}/Subscriptions/{subscription}`, claims use `$cbs`, and management links use `{entity}/$management`.
+
+Coverage uses the official `azservicebus` SDK without `NewWebSocketConn`: the tests pass an unchanged Service Bus connection string, configure `CustomEndpoint` to the simulator's raw AMQP listener, provide test TLS config for the self-signed listener certificate, and run both queue Send/Receive and topic/subscription Send/Receive.
+
 ## 2026-05-26 — Issues #227/#228: Azure Blob block staging + Service Bus AMQP data plane
 
 PR #229 closed issues #227 and #228. Both reports were real. Blob block operations were being treated as ordinary `PutBlob` or falling through because the blob data-plane dispatcher did not branch on `?comp=block` and `?comp=blocklist`. The fix adds persistent committed/uncommitted block state, StageBlock, CommitBlockList, and GetBlockList handlers, and official `azblob/blockblob` SDK coverage for staging, listing, committing, and downloading the materialized blob.
