@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Issues #239/#240/#241: GCS metadata validation follow-ups
+
+PR #242 closed the three follow-ups from the PR #238 review. Issue #239 was the public-fidelity gap: the simulator accepted every persisted GCS object metadata value verbatim, even where the published Cloud Storage contract is explicit. Issue #240 was the small implementation cleanup around redundant custom-metadata cloning. Issue #241 was the maintainability guard for the disk/store split behind GCS objects.
+
+The fix validates the accepted fields with documented constraints: `customTime` must parse as RFC 3339, and `contentLanguage` must be at most 100 characters. Invalid metadata now returns a GCS-shaped `400 INVALID_ARGUMENT` from the shared persistence path, covering multipart upload, resumable upload finalization, compose, `copyTo`, and `rewriteTo`; resumable upload initiation also preflights the same validation before creating an upload session.
+
+The custom metadata clone now happens exactly once in the normal request-resource flow: `applyTo` clones request metadata and marks it cloned, while `persistGCSObject` remains the store-boundary defensive copy for uncloned maps. A source-level AST guard test fails if future GCS object writes call `objects.Put` or `gcsObjects.Put` outside `persistGCSObject`, preserving the disk-backed byte source of truth.
+
+Coverage includes the official Go storage SDK rejection path for `ObjectHandle.CopierFrom(...).Run(ctx)` with invalid destination metadata, raw JSON API validation coverage for multipart upload, resumable init, compose, `copyTo`, and `rewriteTo`, and the simulator package guard test.
+
 ## 2026-05-27 — Issues #236/#237: GCS copy metadata + persistence helper
 
 PR #238 closed the two follow-ups from the storage-copy review. Issue #236 was a real public-surface gap: GCS `rewriteTo` and `copyTo` accept a destination object resource, not just `contentType`, so SDK or raw JSON callers setting destination metadata needed those fields persisted and returned like real Cloud Storage. Issue #237 was the corresponding implementation risk: upload, resumable upload, compose, and copy/rewrite had duplicated object persistence logic.
