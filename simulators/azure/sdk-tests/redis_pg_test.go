@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func simHostParts(t *testing.T) (string, string) {
+	t.Helper()
+	u, err := url.Parse(baseURL)
+	require.NoError(t, err)
+	return u.Hostname(), u.Host
+}
 
 func armReq(t *testing.T, method, path string, body string) *http.Response {
 	t.Helper()
@@ -39,7 +47,8 @@ func TestAzureRedisCache_ARMLifecycle(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"provisioningState":"Succeeded"`)
-	assert.Contains(t, string(body), `"hostName":"lifecycle-redis.redis.cache.windows.net"`)
+	host, _ := simHostParts(t)
+	assert.Contains(t, string(body), `"hostName":"lifecycle-redis.redis.cache.`+host+`"`)
 
 	resp = armReq(t, "GET", path, "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -75,7 +84,8 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"state":"Ready"`)
-	assert.Contains(t, string(body), `"fullyQualifiedDomainName":"lifecycle-pg.postgres.database.azure.com"`)
+	host, _ := simHostParts(t)
+	assert.Contains(t, string(body), `"fullyQualifiedDomainName":"lifecycle-pg.postgres.database.`+host+`"`)
 
 	// Create a database.
 	dbPath := armBase + "/databases/appdb"

@@ -98,10 +98,10 @@ Backends: Container Apps (aca), Azure Functions (azure-functions). Sim: `simulat
 |---|---|---|---|---|
 | Container Apps | Jobs.BeginCreateOrUpdate | aca | ✓ | (containerapps.go:240) — full LRO + JobProperties + provisioningState=Succeeded |
 | Container Apps | Jobs.BeginDelete | aca | ✓ | (containerapps.go:325) — cascades execution delete |
-| Container Apps | Jobs.BeginStart | aca | ✓ | (containerapps.go:347) — execution metadata + LRO |
+| Container Apps | Jobs.BeginStart | aca | ✓ | (containerapps.go:347) — execution metadata + LRO; started containers derive Docker platform from the resolved local image manifest. |
 | Container Apps | Jobs.BeginStopExecution | aca | ✓ | (containerapps.go:592) |
 | Container Apps | Jobs.NewListByResourceGroupPager | aca | ✓ | (containerapps.go:310) — pagination |
-| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | ✓ | `registerContainerAppsApps` in `simulators/azure/containerapps_apps.go`. Returns `provisioningState=Succeeded` + `LatestReadyRevisionName` + `LatestRevisionFqdn` so `appContainerState` reads "running" and `cloudServiceRegisterCNAME` can seed Private DNS. |
+| Container Apps | ContainerApps.BeginCreateOrUpdate | aca (UseApp) | ✓ | `registerContainerAppsApps` in `simulators/azure/containerapps_apps.go`. Returns `provisioningState=Succeeded` + `LatestReadyRevisionName` + ARM-host-derived `LatestRevisionFqdn` so `appContainerState` reads "running" and `cloudServiceRegisterCNAME` can seed Private DNS. Started replicas derive Docker platform from the resolved local image manifest. |
 | Container Apps | ContainerApps.BeginDelete | aca (UseApp) | ✓ | `containerapps_apps.go` |
 | Container Apps | ContainerApps.Get | aca (UseApp) | ✓ | `containerapps_apps.go` — backend reads `LatestRevisionFqdn` for CNAME registration |
 | Container Apps | EnvStorages.CreateOrUpdate | aca | ✓ | (containerappsenv.go:210) |

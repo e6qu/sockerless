@@ -308,9 +308,9 @@ func handleAPIMCreateService(w http.ResponseWriter, r *http.Request) {
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState": "Succeeded",
-			"gatewayUrl":        "https://" + name + ".azure-api.net",
-			"portalUrl":         "https://" + name + ".portal.azure-api.net",
-			"managementApiUrl":  "https://" + name + ".management.azure-api.net",
+			"gatewayUrl":        fmt.Sprintf("%s://%s", azureRequestScheme(r), azureEndpointHost(r, name, "azure-api")),
+			"portalUrl":         fmt.Sprintf("%s://%s", azureRequestScheme(r), azureEndpointHost(r, name, "portal", "azure-api")),
+			"managementApiUrl":  fmt.Sprintf("%s://%s", azureRequestScheme(r), azureEndpointHost(r, name, "management", "azure-api")),
 		},
 	}
 	if req.Properties != nil {

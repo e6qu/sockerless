@@ -182,7 +182,7 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 			"redisVersion":      "7.0",
 			"sslPort":           6380,
 			"port":              6379,
-			"hostName":          name + ".redis.cache.windows.net",
+			"hostName":          azureEndpointHostname(r, name, "redis", "cache"),
 		},
 	}
 	// Merge operator-supplied properties (e.g. sku, redisConfiguration).

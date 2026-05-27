@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Issues #243/#244: Azure endpoint hosts + ACA image platforms
+
+PR #245 closed issues #243/#244 and two Azure simulator fidelity bugs. Issue #243 was a real endpoint-host drift: Storage and Key Vault already returned simulator-routable Azure-shaped endpoint fields derived from the ARM request host, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still emitted production Azure suffixes. That forced callers following ARM-returned data-plane fields away from the simulator.
+
+The fix added a shared Azure request-host helper and applied it to the audited endpoint fields: Service Bus `serviceBusEndpoint`, Redis `hostName`, APIM gateway/portal/management URLs, PostgreSQL Flexible Server `fullyQualifiedDomainName`, Container Apps managed-environment `defaultDomain`, and Container Apps app/revision FQDNs. Service Bus listKeys connection strings now use the same derived namespace endpoint, and the storage path-style dispatcher recognizes the newly advertised non-storage Azure subdomains so collapsed-port routing does not misclassify those hosts as storage requests.
+
+Issue #244 was the Container Apps execution bug behind amd64 CI failures. Jobs and Apps hardcoded `Architecture: "linux/arm64"` for main containers and sidecars. The fix resolves each local image and inspects its manifest platform before starting the real container, matching the Cloud Run Services approach and allowing amd64 images on amd64 hosts.
+
+Coverage includes the Azure simulator package test with a source guard against reintroducing the ACA hardcoded platform, the Azure SDK test suite with endpoint-host assertions for Service Bus/listKeys, APIM, Redis, PostgreSQL, and Container Apps app FQDNs, plus the Azure CLI and shared simulator test suites. The Terraform simulator test starts but remains a Darwin harness limitation locally because Terraform cannot validate the simulator's self-signed certificate through Go's cgo SystemCertPool on macOS; it is expected to run through Docker/CI.
+
 ## 2026-05-27 — Issues #239/#240/#241: GCS metadata validation follow-ups
 
 PR #242 closed the three follow-ups from the PR #238 review. Issue #239 was the public-fidelity gap: the simulator accepted every persisted GCS object metadata value verbatim, even where the published Cloud Storage contract is explicit. Issue #240 was the small implementation cleanup around redundant custom-metadata cloning. Issue #241 was the maintainability guard for the disk/store split behind GCS objects.

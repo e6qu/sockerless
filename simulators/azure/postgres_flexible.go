@@ -169,7 +169,7 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 		Properties: map[string]any{
 			"state":                    "Ready",
 			"version":                  "15",
-			"fullyQualifiedDomainName": name + ".postgres.database.azure.com",
+			"fullyQualifiedDomainName": azureEndpointHostname(r, name, "postgres", "database"),
 			"administratorLogin":       "psqladmin",
 			"storage": map[string]any{
 				"storageSizeGB": 32,

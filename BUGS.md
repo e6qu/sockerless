@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1194 filed · 1194 fixed · 2 open · 2 false positives.**
+**1196 filed · 1196 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+PR #245 closed issues #243/#244 and BUG-1195/BUG-1196. Azure ARM handlers for Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps now derive Azure-shaped endpoint fields from the incoming simulator ARM host instead of production cloud suffixes; Service Bus listKeys connection strings use the same derived namespace endpoint. The storage path-style dispatcher also recognizes the newly advertised non-storage Azure subdomains so collapsed-port storage routing does not steal those requests. Container Apps jobs and apps now inspect the resolved local image manifest before starting real containers, including sidecars, instead of hardcoding `linux/arm64`.
 
 PR #242 closed BUG-1192 / issue #239, BUG-1193 / issue #240, and BUG-1194 / issue #241. GCS object metadata writes now validate the accepted fields with explicit published contracts (`customTime` as RFC 3339 and `contentLanguage` length <= 100 characters), invalid metadata returns `400 INVALID_ARGUMENT` across upload/resumable/compose/copy/rewrite paths, redundant metadata cloning is removed without weakening the store-boundary copy, and a source-level guard prevents future direct GCS object-store writes outside `persistGCSObject`.
 

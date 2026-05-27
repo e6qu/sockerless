@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -207,11 +208,18 @@ func registerContainerAppsApps(srv *sim.Server) {
 		// still echoes Succeeded so SDK clients that bypass polling and
 		// read the body directly also see the right state.
 		// The internal FQDN format mirrors real ACA:
-		// <app>.internal.<env-id>.<region>.azurecontainerapps.io.
+		// <app>.internal.<env>.<domain>.
 		// Backend's cloudServiceRegisterCNAME reads LatestRevisionFqdn to
 		// seed the Private DNS A/CNAME record for peer discovery.
 		revName := fmt.Sprintf("%s--00001", name)
-		fqdn := fmt.Sprintf("%s.internal.sim-env.%s.azurecontainerapps.io", name, req.Location)
+		envName := acaEnvironmentName(req.Properties.EnvironmentID)
+		if envName == "" {
+			envName = acaEnvironmentName(req.Properties.ManagedEnvironmentID)
+		}
+		if envName == "" {
+			envName = "sim-env"
+		}
+		fqdn := azureEndpointHostname(r, name, "internal", envName)
 
 		// Real ARM stamps `createdAt` once on resource creation and only
 		// updates `lastModifiedAt` on subsequent PUT/PATCH writes — preserve
@@ -251,7 +259,7 @@ func registerContainerAppsApps(srv *sim.Server) {
 			app.Properties.Configuration.Ingress.Fqdn = fqdn
 		}
 
-		if err := startACAAppReplicas(resourceID, app); err != nil {
+		if err := startACAAppReplicas(r.Context(), resourceID, app); err != nil {
 			sim.AzureErrorf(w, "ContainerAppRevisionFailed", http.StatusInternalServerError,
 				"failed to start container app replica for %s: %v", name, err)
 			return
@@ -335,7 +343,18 @@ func registerContainerAppsApps(srv *sim.Server) {
 	})
 }
 
-func startACAAppReplicas(resourceID string, app ContainerApp) error {
+func acaEnvironmentName(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
+}
+
+func startACAAppReplicas(ctx context.Context, resourceID string, app ContainerApp) error {
 	if app.Properties.Template == nil || len(app.Properties.Template.Containers) == 0 {
 		stopACAAppReplicas(resourceID)
 		return nil
@@ -378,7 +397,7 @@ func startACAAppReplicas(resourceID string, app ContainerApp) error {
 				containerNetName = ""
 				containerAliases = nil
 			}
-			handle, err := startACAAppContainer(resourceID, app, c, replica, envID, containerNetName, containerAliases, networkMode)
+			handle, err := startACAAppContainer(ctx, resourceID, app, c, replica, envID, containerNetName, containerAliases, networkMode)
 			if err != nil {
 				for _, h := range handles {
 					h.Cancel()
@@ -398,7 +417,7 @@ func startACAAppReplicas(resourceID string, app ContainerApp) error {
 	return nil
 }
 
-func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, replica int32, envID, netName string, netAliases []string, networkMode string) (*sim.ContainerHandle, error) {
+func startACAAppContainer(ctx context.Context, resourceID string, app ContainerApp, c JobContainer, replica int32, envID, netName string, netAliases []string, networkMode string) (*sim.ContainerHandle, error) {
 	cmdEnv := make(map[string]string, len(c.Env)+1)
 	for _, ev := range c.Env {
 		cmdEnv[ev.Name] = ev.Value
@@ -439,9 +458,14 @@ func startACAAppContainer(resourceID string, app ContainerApp, c JobContainer, r
 	if networkMode != "" {
 		extraHosts = nil
 	}
+	localImage := sim.ResolveLocalImage(c.Image)
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return nil, err
+	}
 	return sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(c.Image),
-		Architecture: "linux/arm64",
+		Image:        localImage,
+		Architecture: platform,
 		Command:      c.Command,
 		Args:         c.Args,
 		Env:          mergeEnv(cmdEnv, hostMetadataEnv()),

@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after issues #239/#240/#241 GCS metadata validation and persistence guard fixes. |
+| Active branch | `main` — idle after issues #243/#244 Azure endpoint host derivation and Container Apps image-platform fixes. |
 | In-flight | None. Ready for the next fresh issue sweep. |
-| Last merged | PR #242 — GCS metadata validation, clone cleanup, and persistence-helper guard (2026-05-27). |
+| Last merged | PR #245 — issues #243/#244 fix — Azure ARM endpoint fields derive simulator-routable Azure-shaped hosts, Service Bus listKeys follows the derived namespace endpoint, and ACA app/job containers derive Docker platform from local image manifests (2026-05-27). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1194 filed · 1194 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1196 filed · 1196 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #245 | issues #243/#244 | Azure ARM handlers for Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps now derive Azure-shaped endpoint fields from the simulator ARM request host; Service Bus listKeys connection strings use the same derived namespace endpoint; Container Apps Jobs/Apps derive Docker platform from each resolved local image manifest instead of hardcoding `linux/arm64`. |
 | #242 | issues #239/#240/#241 | GCS metadata writes now validate `customTime` and `contentLanguage`, invalid metadata returns `400 INVALID_ARGUMENT` across upload/resumable/compose/copy/rewrite, redundant metadata cloning is removed, and direct GCS object-store writes are guarded by a source-level test. |
 | #238 | issues #236/#237 | GCS copy/rewrite now honors destination object resource metadata, inherits absent fields from the source object, returns metadata in JSON reads and download headers, and shares upload/resumable upload/compose/copy persistence through one helper. |
 | #235 | issues #232/#233/#234 | Azure Blob Copy Blob now handles `x-ms-copy-source` with real stored-byte copies, Azure copy headers/status, host/path-style source URL parsing, escaped blob names, and metadata precedence. GCS now implements JSON API `rewriteTo` / `copyTo` object copy and returns lexicographically sorted object and prefix listings. |

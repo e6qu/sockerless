@@ -4,11 +4,15 @@ Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BU
 
 ## Where we are
 
-Main is idle after the GCS metadata validation and persistence-guard fixes for issues #239, #240, and #241. GCS metadata writes now reject invalid `customTime` and overlong `contentLanguage` values, redundant metadata cloning was removed, and a source-level guard prevents future direct GCS object-store writes outside `persistGCSObject`.
+Main is idle after the Azure simulator fixes for issues #243 and #244. Azure ARM handlers that advertise Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps endpoint fields now derive Azure-shaped hosts from the incoming simulator ARM request instead of returning production cloud suffixes. Service Bus listKeys connection strings use the same derived namespace endpoint. Container Apps Jobs/Apps derive Docker platform from each resolved local image manifest before starting real containers instead of hardcoding `linux/arm64`.
 
 ## Stage plan
 
 Current phase: none. Start the next pass by syncing `main`, listing open GitHub issues, filing each real issue in `BUGS.md`, then creating a fresh branch from `origin/main`.
+
+Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
+
+Issue #244 finding: Container Apps Jobs and Apps passed `Architecture: "linux/arm64"` to Docker for every started container, including sidecars. That made the real container start fail on amd64 hosts when the local image manifest was amd64. The fix resolves each image and inspects its local manifest platform before calling `StartContainerSync`, matching the Cloud Run Services pattern.
 
 Issue #239 finding: PR #238 made GCS object metadata durable and observable but did not validate accepted metadata fields. The fix implements validation where the public docs are explicit: `customTime` must parse as RFC 3339 and `contentLanguage` must be at most 100 characters. Invalid metadata now returns `400 INVALID_ARGUMENT` across multipart upload, resumable upload init/finalization, compose, `copyTo`, and `rewriteTo`.
 

@@ -113,7 +113,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 			Tags:     req.Tags,
 			Properties: EnvProperties{
 				ProvisioningState:      "Succeeded",
-				DefaultDomain:          fmt.Sprintf("%s.%s.azurecontainerapps.io", envName, req.Location),
+				DefaultDomain:          azureEndpointHostname(r, envName),
 				StaticIp:               "10.0.0.100",
 				AppLogsConfiguration:   req.Properties.AppLogsConfiguration,
 				VnetConfiguration:      req.Properties.VnetConfiguration,
