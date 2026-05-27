@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -431,6 +432,10 @@ func registerGCS(srv *sim.Server) {
 		if items == nil {
 			items = []objectMeta{}
 		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Name < items[j].Name
+		})
+		sort.Strings(prefixes)
 
 		resp := map[string]any{
 			"kind":  "storage#objects",
@@ -694,6 +699,9 @@ func registerGCS(srv *sim.Server) {
 	// path uses this for compositing, and any S3-multipart-equivalent
 	// against GCS uses it as the joining primitive.
 	srv.HandleFunc("POST /storage/v1/b/{bucket}/o/{destObject...}", func(w http.ResponseWriter, r *http.Request) {
+		if handled := handleGCSObjectCopyRequest(w, r, buckets, objects); handled {
+			return
+		}
 		// Only dispatch :compose paths — other POSTs at this prefix
 		// should fall through to the upload handler family.
 		destObject := sim.PathParam(r, "destObject")
@@ -830,6 +838,140 @@ func registerGCS(srv *sim.Server) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
+}
+
+func handleGCSObjectCopyRequest(w http.ResponseWriter, r *http.Request, buckets sim.Store[Bucket], objects sim.Store[GCSObject]) bool {
+	srcBucket, srcObject, dstBucket, dstObject, op, ok := parseGCSCopyPath(r)
+	if !ok {
+		return false
+	}
+	if _, ok := buckets.Get(srcBucket); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", srcBucket)
+		return true
+	}
+	if _, ok := buckets.Get(dstBucket); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", dstBucket)
+		return true
+	}
+	copied, ok := copyGCSObject(w, r, srcBucket, srcObject, dstBucket, dstObject, objects)
+	if !ok {
+		return true
+	}
+	switch op {
+	case "rewriteTo":
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":                "storage#rewriteResponse",
+			"totalBytesRewritten": copied.Size,
+			"objectSize":          copied.Size,
+			"done":                true,
+			"resource":            gcsObjectMetadata(r, copied),
+		})
+	case "copyTo":
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, copied))
+	}
+	return true
+}
+
+func parseGCSCopyPath(r *http.Request) (srcBucket, srcObject, dstBucket, dstObject, op string, ok bool) {
+	srcBucket = sim.PathParam(r, "bucket")
+	if srcBucket == "" {
+		return "", "", "", "", "", false
+	}
+	prefix := "/storage/v1/b/" + url.PathEscape(srcBucket) + "/o/"
+	escapedPath := r.URL.EscapedPath()
+	if !strings.HasPrefix(escapedPath, prefix) {
+		return "", "", "", "", "", false
+	}
+	rest := strings.TrimPrefix(escapedPath, prefix)
+	for _, candidate := range []string{"rewriteTo", "copyTo"} {
+		marker := "/" + candidate + "/b/"
+		idx := strings.LastIndex(rest, marker)
+		if idx < 0 {
+			continue
+		}
+		before := rest[:idx]
+		after := rest[idx+len(marker):]
+		dstBucketEsc, dstObjectEsc, found := strings.Cut(after, "/o/")
+		if !found || before == "" || dstBucketEsc == "" || dstObjectEsc == "" {
+			return "", "", "", "", "", false
+		}
+		srcObject, ok = pathUnescape(before)
+		if !ok {
+			return "", "", "", "", "", false
+		}
+		dstBucket, ok = pathUnescape(dstBucketEsc)
+		if !ok {
+			return "", "", "", "", "", false
+		}
+		dstObject, ok = pathUnescape(dstObjectEsc)
+		if !ok {
+			return "", "", "", "", "", false
+		}
+		return srcBucket, srcObject, dstBucket, dstObject, candidate, true
+	}
+	return "", "", "", "", "", false
+}
+
+func pathUnescape(s string) (string, bool) {
+	out, err := url.PathUnescape(s)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+func copyGCSObject(w http.ResponseWriter, r *http.Request, srcBucket, srcObject, dstBucket, dstObject string, objects sim.Store[GCSObject]) (GCSObject, bool) {
+	src, ok := objects.Get(srcBucket + "/" + srcObject)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"source object %q not found in bucket %q", srcObject, srcBucket)
+		return GCSObject{}, false
+	}
+	contentType := src.ContentType
+	if r.Body != nil {
+		defer r.Body.Close()
+		var meta struct {
+			ContentType string `json:"contentType"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&meta); err != nil && err != io.EOF {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"failed to parse copy metadata: %v", err)
+			return GCSObject{}, false
+		}
+		if meta.ContentType != "" {
+			contentType = meta.ContentType
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	data := append([]byte(nil), gcsObjectBytes(src, srcBucket, srcObject)...)
+	now := nowTimestamp()
+	hash := md5.Sum(data)
+	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
+	etag := fmt.Sprintf("%x", hash)
+	objPath := filepath.Join(GCSBucketHostDir(dstBucket), dstObject)
+	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "create dest dir: %v", err)
+		return GCSObject{}, false
+	}
+	if err := os.WriteFile(objPath, data, 0o644); err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "write copied object: %v", err)
+		return GCSObject{}, false
+	}
+	dst := GCSObject{
+		Name:        dstObject,
+		Bucket:      dstBucket,
+		Size:        strconv.Itoa(len(data)),
+		ContentType: contentType,
+		TimeCreated: now,
+		Updated:     now,
+		Md5Hash:     md5Hash,
+		Etag:        etag,
+		data:        data,
+	}
+	objects.Put(dstBucket+"/"+dstObject, dst)
+	return dst, true
 }
 
 // gcsObjectBytes returns the object's payload bytes. Prefers the

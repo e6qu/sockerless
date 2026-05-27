@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-27 — Issues #232/#233/#234: Storage object copy + GCS list ordering
+
+PR #235 closed the storage-copy reports. They were real simulator-fidelity bugs, not caller limitations. Azure Blob had Put/Get/block coverage, but a blob-level `PUT` with `x-ms-copy-source` still fell through to `handlePutBlob`, so SDK callers using `StartCopyFromURL` could receive a successful-looking response while the destination did not contain a real copy. GCS had compose/upload/download/list coverage but not the JSON API object-copy endpoints used by `ObjectHandle.CopierFrom(...).Run(ctx)`, and its object list response inherited Go map iteration order even though real GCS documents lexicographic ordering by object name.
+
+The fix added Azure Copy Blob as the public data-plane operation: source URLs are resolved from host-style and Azurite-style path-style addresses, URL-escaped blob names are decoded, missing sources return `CannotVerifyCopySource`, bytes are copied from the real stored source object, destination metadata wins when supplied and otherwise source metadata is preserved, and the response/destination properties carry Azure copy ID/status/source headers.
+
+GCS gained `rewriteTo` and `copyTo` in the existing object POST surface. Both endpoints share a real byte-copy implementation backed by the simulator's on-disk object store; `rewriteTo` returns a `storage#rewriteResponse` with `done: true` and string byte counts as expected by the official SDK, while `copyTo` returns the destination `storage#object`. `objects.list` now sorts `items[]` by name and `prefixes[]` lexicographically after prefix/delimiter filtering.
+
+Coverage uses the official SDK paths where they exist: Azure `azblob/blob.Client.StartCopyFromURL`, GCS `ObjectHandle.CopierFrom(...).Run(ctx)`, and GCS SDK object iteration. A raw JSON API regression covers `copyTo` plus delimiter-produced prefix ordering.
+
 ## 2026-05-26 — Issue #230: Service Bus raw AMQP/TLS transport
 
 PR #231 closed issue #230. The report was real. PR #229 added AMQP-over-WebSocket support, but making `NewWebSocketConn` the only official-SDK path leaked simulator transport plumbing into callers. Real Azure Service Bus exposes raw AMQP/TLS as the SDK's default transport, with WebSocket as an opt-in alternate transport, so the simulator needed the same public boundary.

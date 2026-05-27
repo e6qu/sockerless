@@ -17,12 +17,12 @@ Surface registered in `simulators/gcp/gcs.go` (and related files grouped under t
 | `GET /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:308::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `DELETE /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:325::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `GET /storage/v1/b` | ✓ `simulators/gcp/gcs.go:345::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:361::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_ListObjects` | ✗ (deferred under BUG-1147 sweep) | ✓ SDK iterator | Returns `items[]` sorted lexicographically by name and delimiter-produced `prefixes[]` sorted lexicographically. |
 | `GET /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:447::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `DELETE /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:461::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `PUT /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:477::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `POST /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:489::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go:696::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_CopierFromRewriteTo`, `TestGCS_ObjectsCompose`, `TestGCS_ObjectsCopyToAndSortedPrefixes` | ✗ (deferred under BUG-1147 sweep) | n/a | Covers `:compose`, JSON API `rewriteTo`, and JSON API `copyTo`; copy/rewrite use real stored object bytes. |
 | `GET /download/storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:816::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward

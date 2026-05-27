@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/file"
 	fileservice "github.com/Azure/azure-sdk-for-go/sdk/storage/azfile/service"
@@ -93,6 +95,84 @@ func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
 
 	_, err = client.DeleteBlob(ctx, container, blobName, nil)
 	require.NoError(t, err)
+}
+
+func TestStorageSDK_BlobStartCopyFromURL(t *testing.T) {
+	account := "sdkcopyblobacct"
+	container := "sdk-copy-container"
+	srcName := "nested/source blob.txt"
+	dstName := "copied/dest blob.txt"
+	payload := []byte("copied through Azure Blob Copy Blob")
+	contentType := "text/plain"
+
+	client, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
+		&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = client.CreateContainer(ctx, container, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = client.DeleteContainer(ctx, container, nil) })
+
+	_, err = client.UploadBuffer(ctx, container, srcName, payload, &azblob.UploadBufferOptions{
+		HTTPHeaders: &blob.HTTPHeaders{BlobContentType: &contentType},
+		Metadata: map[string]*string{
+			"origin": to.Ptr("source"),
+		},
+	})
+	require.NoError(t, err)
+
+	base := storageSDKURL(t, account, "blob")
+	srcURL := base + container + "/" + url.PathEscape(srcName)
+	dstClient, err := blob.NewClientWithNoCredential(base+container+"/"+url.PathEscape(dstName),
+		&blob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	copyResp, err := dstClient.StartCopyFromURL(ctx, srcURL, &blob.StartCopyFromURLOptions{
+		Metadata: map[string]*string{
+			"origin": to.Ptr("dest"),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, copyResp.CopyID)
+	require.NotNil(t, copyResp.CopyStatus)
+	assert.Equal(t, "success", string(*copyResp.CopyStatus))
+
+	download, err := client.DownloadStream(ctx, container, dstName, nil)
+	require.NoError(t, err)
+	got, err := io.ReadAll(download.Body)
+	require.NoError(t, err)
+	require.NoError(t, download.Body.Close())
+	assert.Equal(t, payload, got)
+
+	props, err := dstClient.GetProperties(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, props.CopyStatus)
+	assert.Equal(t, "success", string(*props.CopyStatus))
+	require.NotNil(t, props.Metadata["Origin"])
+	assert.Equal(t, "dest", *props.Metadata["Origin"])
+	require.NotNil(t, props.ContentType)
+	assert.Equal(t, contentType, *props.ContentType)
+
+	pathStyleSrc := strings.TrimRight(baseURL, "/") + "/" + account + "/" + container + "/" + url.PathEscape(srcName)
+	inheritName := "copied/inherit metadata.txt"
+	inheritClient, err := blob.NewClientWithNoCredential(base+container+"/"+url.PathEscape(inheritName),
+		&blob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = inheritClient.StartCopyFromURL(ctx, pathStyleSrc, nil)
+	require.NoError(t, err)
+
+	inheritProps, err := inheritClient.GetProperties(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, inheritProps.Metadata["Origin"])
+	assert.Equal(t, "source", *inheritProps.Metadata["Origin"])
+
+	missingClient, err := blob.NewClientWithNoCredential(base+container+"/"+url.PathEscape("copied/missing.txt"),
+		&blob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+	_, err = missingClient.StartCopyFromURL(ctx, base+container+"/"+url.PathEscape("missing-source.txt"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CannotVerifyCopySource")
 }
 
 func TestStorageSDK_BlobBlockStaging(t *testing.T) {

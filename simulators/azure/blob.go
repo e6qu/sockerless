@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ type BlobObject struct {
 	ETag         string
 	LastModified string
 	Metadata     map[string]string
+	CopyID       string
+	CopyStatus   string
+	CopySource   string
 }
 
 type BlobContainerData struct {
@@ -306,6 +310,10 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 			handleCommitBlockList(w, r, account, container, blob)
 			return
 		}
+		if r.Header.Get("x-ms-copy-source") != "" {
+			handleCopyBlob(w, r, account, container, blob)
+			return
+		}
 		handlePutBlob(w, r, account, container, blob)
 	case http.MethodGet:
 		if q.Get("comp") == "blocklist" {
@@ -465,13 +473,17 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 	}
 	hash := md5.Sum(data)
 	etag := `"` + hex.EncodeToString(hash[:]) + `"`
-	lastMod := time.Now().UTC().Format(time.RFC1123)
+	lastMod := time.Now().UTC().Format(http.TimeFormat)
+	contentType := r.Header.Get("x-ms-blob-content-type")
+	if contentType == "" {
+		contentType = r.Header.Get("Content-Type")
+	}
 	b := BlobObject{
 		Account:      account,
 		Container:    container,
 		Name:         blob,
 		Data:         data,
-		ContentType:  r.Header.Get("Content-Type"),
+		ContentType:  contentType,
 		BlobType:     r.Header.Get("x-ms-blob-type"),
 		ETag:         etag,
 		LastModified: lastMod,
@@ -482,6 +494,119 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 	w.Header().Set("Last-Modified", lastMod)
 	w.Header().Set("Content-MD5", hex.EncodeToString(hash[:]))
 	w.WriteHeader(http.StatusCreated)
+}
+
+func handleCopyBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
+	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
+		sim.AzureError(w, "ContainerNotFound",
+			"The specified container does not exist.", http.StatusNotFound)
+		return
+	}
+	sourceURL := r.Header.Get("x-ms-copy-source")
+	srcAccount, srcContainer, srcBlob, ok := parseBlobCopySource(sourceURL)
+	if !ok {
+		sim.AzureError(w, "CannotVerifyCopySource",
+			"The specified copy source is invalid.", http.StatusNotFound)
+		return
+	}
+	source, ok := blobObjects.Get(blobObjectKey(srcAccount, srcContainer, srcBlob))
+	if !ok {
+		sim.AzureError(w, "CannotVerifyCopySource",
+			"The specified copy source does not exist.", http.StatusNotFound)
+		return
+	}
+
+	data := append([]byte(nil), source.Data...)
+	hash := md5.Sum(data)
+	etag := `"` + hex.EncodeToString(hash[:]) + `"`
+	lastMod := time.Now().UTC().Format(http.TimeFormat)
+	metadata := collectMetadata(r)
+	if len(metadata) == 0 {
+		metadata = cloneBlobMetadata(source.Metadata)
+	}
+	copyID := generateUUID()
+	dst := BlobObject{
+		Account:      account,
+		Container:    container,
+		Name:         blob,
+		Data:         data,
+		ContentType:  source.ContentType,
+		BlobType:     source.BlobType,
+		ETag:         etag,
+		LastModified: lastMod,
+		Metadata:     metadata,
+		CopyID:       copyID,
+		CopyStatus:   "success",
+		CopySource:   sourceURL,
+	}
+	blobObjects.Put(blobObjectKey(account, container, blob), dst)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Last-Modified", lastMod)
+	w.Header().Set("x-ms-copy-id", copyID)
+	w.Header().Set("x-ms-copy-status", "success")
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func parseBlobCopySource(raw string) (account, container, blob string, ok bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", "", "", false
+	}
+	host := u.Hostname()
+	escapedPath := strings.TrimPrefix(u.EscapedPath(), "/")
+	if escapedPath == "" {
+		return "", "", "", false
+	}
+	if parts := strings.SplitN(host, ".blob.", 2); len(parts) == 2 {
+		account, ok = pathUnescape(parts[0])
+		if !ok {
+			return "", "", "", false
+		}
+		container, blob, ok = splitContainerBlobPath(escapedPath)
+		return account, container, blob, ok
+	}
+	accountEsc, rest, found := strings.Cut(escapedPath, "/")
+	if !found {
+		return "", "", "", false
+	}
+	account, ok = pathUnescape(accountEsc)
+	if !ok {
+		return "", "", "", false
+	}
+	container, blob, ok = splitContainerBlobPath(rest)
+	return account, container, blob, ok
+}
+
+func splitContainerBlobPath(escapedPath string) (container, blob string, ok bool) {
+	containerEsc, blobEsc, found := strings.Cut(escapedPath, "/")
+	if !found || blobEsc == "" {
+		return "", "", false
+	}
+	container, ok = pathUnescape(containerEsc)
+	if !ok {
+		return "", "", false
+	}
+	blob, ok = pathUnescape(blobEsc)
+	if !ok {
+		return "", "", false
+	}
+	return container, blob, true
+}
+
+func pathUnescape(s string) (string, bool) {
+	out, err := url.PathUnescape(s)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+func cloneBlobMetadata(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func handleStageBlock(w http.ResponseWriter, r *http.Request, account, container, blob string) {
@@ -614,7 +739,7 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 
 	hash := md5.Sum(data)
 	etag := `"` + hex.EncodeToString(hash[:]) + `"`
-	lastMod := time.Now().UTC().Format(time.RFC1123)
+	lastMod := time.Now().UTC().Format(http.TimeFormat)
 	blobObjects.Put(blobObjectKey(account, container, blob), BlobObject{
 		Account:      account,
 		Container:    container,
@@ -733,6 +858,15 @@ func writeBlobHeaders(w http.ResponseWriter, b BlobObject) {
 	}
 	if b.BlobType != "" {
 		w.Header().Set("x-ms-blob-type", b.BlobType)
+	}
+	if b.CopyID != "" {
+		w.Header().Set("x-ms-copy-id", b.CopyID)
+	}
+	if b.CopyStatus != "" {
+		w.Header().Set("x-ms-copy-status", b.CopyStatus)
+	}
+	if b.CopySource != "" {
+		w.Header().Set("x-ms-copy-source", b.CopySource)
 	}
 	w.Header().Set("ETag", b.ETag)
 	w.Header().Set("Last-Modified", b.LastModified)

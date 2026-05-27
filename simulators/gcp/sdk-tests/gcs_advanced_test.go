@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -214,4 +215,57 @@ func TestGCS_ObjectsCompose(t *testing.T) {
 	defer xmlResp.Body.Close()
 	got, _ := io.ReadAll(xmlResp.Body)
 	assert.Equal(t, "hello world", string(got))
+}
+
+func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {
+	bucket := "copyto-bucket"
+	gcsRESTCreate(t, bucket)
+
+	for _, p := range []struct{ name, body string }{
+		{"z-dir/source.txt", "copyTo payload"},
+		{"b-dir/object.txt", "b"},
+		{"a-dir/object.txt", "a"},
+	} {
+		req, _ := http.NewRequest("POST",
+			baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=media&name="+url.QueryEscape(p.name),
+			strings.NewReader(p.body))
+		req.Header.Set("Content-Type", "text/plain")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "upload %s: %s", p.name, body)
+	}
+
+	copyBody := strings.NewReader(`{"contentType":"application/x-copy"}`)
+	copyURL := baseURL + "/storage/v1/b/" + bucket + "/o/" + url.PathEscape("z-dir/source.txt") +
+		"/copyTo/b/" + bucket + "/o/" + url.PathEscape("copied/result.txt")
+	copyReq, _ := http.NewRequest("POST", copyURL, copyBody)
+	copyReq.Header.Set("Content-Type", "application/json")
+	copyResp, err := http.DefaultClient.Do(copyReq)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(copyResp.Body)
+	copyResp.Body.Close()
+	require.Equal(t, http.StatusOK, copyResp.StatusCode, "copyTo status: %s", body)
+
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(body, &meta))
+	assert.Equal(t, "copied/result.txt", meta["name"])
+	assert.Equal(t, "application/x-copy", meta["contentType"])
+
+	xmlResp, err := http.Get(baseURL + "/" + bucket + "/copied/result.txt")
+	require.NoError(t, err)
+	defer xmlResp.Body.Close()
+	got, _ := io.ReadAll(xmlResp.Body)
+	assert.Equal(t, "copyTo payload", string(got))
+
+	listResp, err := http.Get(baseURL + "/storage/v1/b/" + bucket + "/o?delimiter=/")
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listing struct {
+		Prefixes []string `json:"prefixes"`
+	}
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&listing))
+	assert.Equal(t, []string{"a-dir/", "b-dir/", "copied/", "z-dir/"}, listing.Prefixes)
 }
