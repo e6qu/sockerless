@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` — idle after issues #232/#233/#234 storage copy/list fidelity fixes. |
+| Active branch | `main` — idle after issues #236/#237 GCS object metadata persistence fixes. |
 | In-flight | None. Ready for the next fresh issue sweep. |
-| Last merged | PR #235 — Azure Blob Copy Blob, GCS `rewriteTo`/`copyTo`, and GCS lexicographic object/prefix listing (2026-05-27). |
+| Last merged | PR #238 — GCS copy/rewrite destination metadata and shared object persistence (2026-05-27). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1189 filed · 1189 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
+| Bugs | 1191 filed · 1191 fixed · 2 open · 2 false positives. Open: BUG-1075 + BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| #238 | issues #236/#237 | GCS copy/rewrite now honors destination object resource metadata, inherits absent fields from the source object, returns metadata in JSON reads and download headers, and shares upload/resumable upload/compose/copy persistence through one helper. |
 | #235 | issues #232/#233/#234 | Azure Blob Copy Blob now handles `x-ms-copy-source` with real stored-byte copies, Azure copy headers/status, host/path-style source URL parsing, escaped blob names, and metadata precedence. GCS now implements JSON API `rewriteTo` / `copyTo` object copy and returns lexicographically sorted object and prefix listings. |
 | #231 | issue #230 | Azure Service Bus now exposes raw AMQP/TLS transport for the official `azservicebus` default path, with namespace routing preferring AMQP Open hostname over TLS SNI fallback, entity routing through AMQP link addresses, and SDK queue + topic/subscription Send/Receive tests using `CustomEndpoint` without `NewWebSocketConn`. |
 | #229 | issues #227/#228 | Azure Blob block staging routes now support official `azblob/blockblob` StageBlock, CommitBlockList, and GetBlockList; Azure Service Bus message data plane now supports official `azservicebus` AMQP-over-WebSocket queue and topic/subscription Send/Receive with CBS negotiation and receive-and-delete coverage. |

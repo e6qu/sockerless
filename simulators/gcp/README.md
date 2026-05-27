@@ -295,7 +295,9 @@ curl -s http://localhost:4567/download/storage/v1/b/my-bucket/o/hello.txt
 # => hello world
 
 curl -s -X POST \
-  'http://localhost:4567/storage/v1/b/my-bucket/o/hello.txt/rewriteTo/b/my-bucket/o/copy.txt'
+  'http://localhost:4567/storage/v1/b/my-bucket/o/hello.txt/rewriteTo/b/my-bucket/o/copy.txt' \
+  -H 'Content-Type: application/json' \
+  -d '{"contentType":"text/plain","cacheControl":"no-cache","metadata":{"copied":"true"}}'
 ```
 
 Go SDK respects `STORAGE_EMULATOR_HOST`:
@@ -308,6 +310,8 @@ client.Bucket("sdk-bucket").Object("copy.txt").
     CopierFrom(client.Bucket("sdk-bucket").Object("hello.txt")).
     Run(ctx)
 ```
+
+Copy/rewrite persists the destination object resource metadata that Cloud Storage exposes publicly: custom metadata, cache control, content disposition, content encoding, content language, storage class, and custom time. Destination fields override copied source fields; absent fields inherit from the source object.
 
 ### Artifact Registry
 

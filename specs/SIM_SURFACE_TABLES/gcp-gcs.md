@@ -22,7 +22,7 @@ Surface registered in `simulators/gcp/gcs.go` (and related files grouped under t
 | `DELETE /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:461::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `PUT /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:477::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `POST /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:489::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_CopierFromRewriteTo`, `TestGCS_ObjectsCompose`, `TestGCS_ObjectsCopyToAndSortedPrefixes` | ✗ (deferred under BUG-1147 sweep) | n/a | Covers `:compose`, JSON API `rewriteTo`, and JSON API `copyTo`; copy/rewrite use real stored object bytes. |
+| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_CopierFromRewriteTo`, `TestGCS_ObjectsCompose`, `TestGCS_ObjectsCopyToAndSortedPrefixes` | ✗ (deferred under BUG-1147 sweep) | n/a | Covers `:compose`, JSON API `rewriteTo`, and JSON API `copyTo`; copy/rewrite use real stored object bytes, inherit source metadata when destination fields are absent, and persist destination object resource metadata overrides. |
 | `GET /download/storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:816::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
