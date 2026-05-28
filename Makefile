@@ -161,8 +161,19 @@ _fanout:
 .PHONY: FORCE
 FORCE:
 
-%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/test-faas-smoke %/lint %/clean %/preview %/help: FORCE
+%/install %/build %/build-noui %/embed %/run %/dev %/test %/test-integration %/test-faas-smoke %/lint %/clean %/preview %/help %/docker-test %/docker-test-build: FORCE
 	@$(MAKE) -s -C $* $(notdir $@)
+
+# ── Simulator Docker test harness ───────────────────────────────────
+
+SIMULATOR_APPS := simulators/aws simulators/gcp simulators/azure
+
+.PHONY: docker-test docker-test-build
+docker-test-build: ## build Docker test images for all cloud simulators
+	@$(MAKE) -s _fanout TARGET=docker-test-build APPS="$(SIMULATOR_APPS)"
+
+docker-test: ## run SDK, CLI, and Terraform tests for all cloud simulators inside Docker
+	@$(MAKE) -s _fanout TARGET=docker-test APPS="$(SIMULATOR_APPS)"
 
 # ── Stack orchestration ─────────────────────────────────────────────
 

@@ -2,7 +2,6 @@ package azure_tf_test
 
 import (
 	"encoding/json"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -39,19 +38,6 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
-	// The azurestack + azurerm terraform providers validate the sim's
-	// self-signed HTTPS cert against the OS trust store. On Linux they
-	// honour SSL_CERT_FILE (set by terraformCmd). On darwin, Go's
-	// cgo-backed crypto/x509.SystemCertPool() reads from the Security
-	// framework keychain and ignores SSL_CERT_FILE; GODEBUG=
-	// x509usefallbackroots=1 doesn't bridge it (it only kicks in when
-	// the platform pool comes back empty, not to *supplement* it).
-	// Fail loud so the dev sees the limitation; run via CI or a Linux
-	// container.
-	if runtime.GOOS == "darwin" {
-		t.Fatal("darwin: SSL_CERT_FILE ignored by Go cgo SystemCertPool — terraform azurestack/azurerm cannot validate the sim's self-signed cert. Run via Docker or in CI.")
-	}
-
 	init := terraformCmd("init")
 	init.Stdout = nil
 	init.Stderr = nil

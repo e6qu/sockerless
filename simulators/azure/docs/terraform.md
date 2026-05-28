@@ -19,7 +19,7 @@ Terraform must trust the CA that signed the server certificate:
 export SSL_CERT_FILE=/path/to/ca.pem
 ```
 
-> **macOS limitation:** Go 1.20+ on macOS uses Security.framework for TLS and ignores `SSL_CERT_FILE`. Azure Terraform tests are Docker-only (Linux). On macOS, use the CLI or SDK approach instead.
+> **macOS note:** Go 1.20+ on macOS uses Security.framework for TLS and ignores `SSL_CERT_FILE`. The Azure Terraform test harness delegates direct macOS `go test` runs into the shared Linux Docker image so the real providers can trust the generated simulator CA.
 
 ### Generating self-signed certificates
 
@@ -152,4 +152,4 @@ The automated terraform tests cover both Azure Stack-compatible ARM resources an
 - All state is in-memory and resets when the simulator restarts.
 - The OAuth2 endpoint accepts local-test credentials and returns Azure-shaped token responses.
 - `skip_provider_registration = true` is required to prevent provider registration API calls.
-- Docker-only on macOS due to TLS trust limitations (see TLS requirement section above).
+- On macOS, direct `go test` delegates into the shared Linux Docker image due to TLS trust behavior (see TLS requirement section above).

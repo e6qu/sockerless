@@ -25,14 +25,14 @@ Not yet covered: Key Vault data-plane (keys/secrets). Data-plane requires per-va
 
 ## Running
 
-These tests require Docker (Linux only). On macOS, Go 1.20+ uses Security.framework for TLS and ignores `SSL_CERT_FILE`, so the Terraform provider cannot trust the self-signed CA.
+These tests require Terraform and Docker. On Linux, direct `go test` runs Terraform locally. On macOS, the harness delegates the same test command into the shared Linux Docker test image because Go's Security.framework-backed trust store ignores `SSL_CERT_FILE`.
 
 ```sh
 # Inside Docker (via the parent simulator Makefile)
 cd simulators/azure
 make docker-test
 
-# Or directly (Linux only)
+# Or directly; macOS delegates this command into Linux Docker
 cd simulators/azure/terraform-tests
 go test -v ./...
 ```
@@ -42,8 +42,8 @@ The test harness (`helpers_test.go`) handles simulator binary build, TLS certifi
 ## Prerequisites
 
 - Go 1.23+
-- `terraform` CLI installed and on `PATH`
-- Docker (for running on macOS, which delegates to a Linux container)
+- `terraform` CLI installed and on `PATH` for direct Linux runs; the shared Docker image supplies Terraform for macOS delegation
+- Docker (required for Container Apps resources and for macOS Linux-container delegation)
 - The `simulators/azure/` parent module (built automatically by `TestMain`)
 
 ## TLS requirement

@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after foundational event-routing PR. |
-| In-flight | None; next implementation pass starts from the remaining foundational simulator audit findings. |
-| Last merged | Foundational event routing - implemented AWS EventBridge, GCP Eventarc, and Azure Event Grid simulator slices with SDK/CLI/Terraform coverage; filed follow-up issues #247/#248 for Azure local data-plane DNS and macOS Terraform harness defects (2026-05-27). |
+| Active branch | `main` - idle after simulator Docker test harness PR. |
+| In-flight | None; next implementation pass starts from remaining event parity issues #249..#251, then stream/event ingestion. |
+| Last merged | Simulator Docker test harness - added the shared Docker test image, restored top-level/per-cloud `make docker-test`, and made Azure Terraform tests delegate to Linux Docker on macOS (2026-05-28). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1216 filed · 1202 fixed · 16 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1200..1207, BUG-1211..1216. |
+| Bugs | 1216 filed · 1204 fixed · 14 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1200..1207, BUG-1211, BUG-1213..1215. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,7 +52,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
-| #252 | foundational event routing | Closed BUG-1197..1199 by adding AWS EventBridge rule/target/event delivery, GCP Eventarc trigger lifecycle, and Azure Event Grid topic/subscription/publish flows. Coverage uses official SDKs, vendor CLIs, and Terraform provider resources. Follow-up BUG-1211/#247 and BUG-1212/#248 track Azure local verification defects; BUG-1213/#249, BUG-1214/#250, and BUG-1215/#251 track remaining advanced/sibling event-service parity. |
+| #254 | simulator Docker test harness | Closed BUG-1212/#248 and BUG-1216/#253 by adding one shared Linux Docker test image with Go, Terraform, AWS CLI, gcloud, Azure CLI, Docker CLI, and Make; wiring top-level and per-cloud `make docker-test` targets to run the existing SDK/CLI/Terraform suites from the repository root; and delegating Azure Terraform `go test` on macOS into that Linux image so the real Terraform providers can trust the generated simulator CA via `SSL_CERT_FILE`. |
+| #252 | foundational event routing | Closed BUG-1197..1199 by adding AWS EventBridge rule/target/event delivery, GCP Eventarc trigger lifecycle, and Azure Event Grid topic/subscription/publish flows. Coverage uses official SDKs, vendor CLIs, and Terraform provider resources. Follow-up BUG-1211/#247 tracks Azure local data-plane DNS portability; BUG-1213/#249, BUG-1214/#250, and BUG-1215/#251 track remaining advanced/sibling event-service parity. |
 | #246 | foundational simulator audit | Recorded foundational simulator service coverage in `specs/SIM_FOUNDATIONAL_AUDIT.md`; filed BUG-1197..1207 for missing EventBridge/Eventarc/Event Grid, Kinesis/Event Hubs, BigQuery, Firestore/Datastore, Cosmos DB, VM lifecycle APIs, managed load balancers, Azure public DNS, NAT/public-IP parity, and stale surface-table status rows; closed BUG-1208/BUG-1209 by making the bleephub invalid-JWT test deterministic and reusing local Docker image tags across the GCF FaaS smoke subprocess; closed BUG-1210 by refreshing the GCP modules to the latest `google.golang.org/api`. |
 | #245 | issues #243/#244 | Azure ARM handlers for Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps now derive Azure-shaped endpoint fields from the simulator ARM request host; Service Bus listKeys connection strings use the same derived namespace endpoint; Container Apps Jobs/Apps derive Docker platform from each resolved local image manifest instead of hardcoding `linux/arm64`. |
 | #242 | issues #239/#240/#241 | GCS metadata writes now validate `customTime` and `contentLanguage`, invalid metadata returns `400 INVALID_ARGUMENT` across upload/resumable/compose/copy/rewrite, redundant metadata cloning is removed, and direct GCS object-store writes are guarded by a source-level test. |

@@ -10,7 +10,7 @@ The simulator exposes one HTTP endpoint (default `:4568`) that fronts all Azure 
 |---|---|---|
 | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk) (`armappcontainers`, `armappservice`, `armcontainerregistry`, ...) | v3+ | Wire-level SDK compatibility — ARM REST shape, OData filters, async LRO polling (`Azure-AsyncOperation` / `Location` headers). |
 | [`az` CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) | 2.60+ | Endpoint-override fidelity (the sim accepts `https://management.azure.com` traffic when fronted with TLS). |
-| [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs) | v4+ | Full plan → apply → destroy round-trip across `azurerm_resource_group`, `azurerm_container_app_environment`, `azurerm_container_app_job`, `azurerm_linux_function_app`, `azurerm_log_analytics_workspace`, `azurerm_container_registry`, `azurerm_storage_account`, `azurerm_private_dns_zone`, etc. **Docker-only** (macOS Go 1.20+ ignores `SSL_CERT_FILE`). |
+| [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs) | v4+ | Full plan → apply → destroy round-trip across `azurerm_resource_group`, `azurerm_container_app_environment`, `azurerm_container_app_job`, `azurerm_linux_function_app`, `azurerm_log_analytics_workspace`, `azurerm_container_registry`, `azurerm_storage_account`, `azurerm_private_dns_zone`, etc. macOS direct `go test` delegates to the shared Linux Docker test image so Terraform can honor `SSL_CERT_FILE`. |
 
 Anything any of these three tools does against the real Azure endpoint, it must do against this simulator. Gaps from that contract are real bugs (see [BUGS.md](../../BUGS.md)).
 
@@ -27,7 +27,7 @@ copies the stored source bytes, and returns Azure copy ID/status headers.
 |---|---|---|
 | `sdk-tests/` (31 tests) | Real Azure SDK for Go clients against the sim. Per-op assertions on ARM response shape + error envelopes. | 2026-05-13 |
 | `cli-tests/` (17 tests) | Real `az` CLI invoked via `os/exec` (using `az rest` for raw ARM calls). | 2026-05-13 |
-| `terraform-tests/` (Docker-only, TLS) | Real Terraform `azurerm` provider against the sim. | 2026-05-13 |
+| `terraform-tests/` (TLS; Docker delegation on macOS) | Real Terraform `azurerm` provider against the sim. | 2026-05-28 |
 | `make simulators/azure/test` | Leaf-Makefile unit + integration suite per [`docs/MAKEFILE_STANDARD.md`](../../docs/MAKEFILE_STANDARD.md). | 2026-05-13 |
 
 ## Wiring the adaptor
@@ -151,7 +151,7 @@ These are the load-bearing wire-quirks the sim implements to satisfy the real ad
 - **Double-slash cleanup** — `CleanPathMiddleware` strips leading `//` from paths (the `azurerm` provider appends a trailing slash to the ARM endpoint).
 - **Case-insensitive paths** — `AzurePathNormalizationMiddleware` normalises known segments (e.g., `/resourcegroups/` → `/resourceGroups/`).
 - **Auth outside mux** — OAuth2 token endpoints are handled as outer middleware to avoid conflicts with ACR's `/v2/` catch-all.
-- **TLS for Terraform** — Azure Terraform tests use self-signed certs because the `azurestack` provider hardcodes `https://`. Docker-only (macOS Go 1.20+ ignores `SSL_CERT_FILE`).
+- **TLS for Terraform** — Azure Terraform tests use self-signed certs because the `azurestack` provider hardcodes `https://`. On macOS, direct `go test` delegates into Linux Docker so the providers validate the generated CA through `SSL_CERT_FILE`.
 - **Storage subdomain routing** — Data-plane requests matched by Host header (`{account}.{service}.localhost`); pair with dnsmasq for real lookups.
 - **Sync creates return 200** — `go-azure-sdk` treats 200 as immediate completion for `BeginCreate` LRO; the sim returns 200 instead of 201 for synchronous creates.
 
@@ -208,7 +208,7 @@ azure/
 ├── shared/                 Shared simulator framework
 ├── sdk-tests/              SDK integration tests (31 tests)
 ├── cli-tests/              CLI integration tests (17 tests)
-└── terraform-tests/        Terraform apply/destroy tests (Docker-only, TLS)
+└── terraform-tests/        Terraform apply/destroy tests (TLS; Docker delegation on macOS)
 ```
 
 ## Testing
@@ -220,7 +220,7 @@ cd sdk-tests && go test -v ./...
 # CLI tests (az CLI shell-outs)
 cd cli-tests && go test -v ./...
 
-# Terraform tests (Docker-only, TLS — see Makefile)
+# Terraform tests (TLS; macOS delegates to Docker)
 cd terraform-tests && go test -v ./...
 ```
 
@@ -230,7 +230,7 @@ Container Apps job executions honor the `replicaTimeout` configuration (in secon
 
 ## Known issues
 
-None open. The Azure terraform tests being Docker-only (macOS `SSL_CERT_FILE` quirk) is a permanent platform limitation, not a bug.
+Active Azure simulator bugs live in [BUGS.md](../../BUGS.md). The Terraform macOS TLS harness issue was fixed by delegating direct macOS test runs into the shared Linux Docker test image.
 
 ## What's out of scope
 

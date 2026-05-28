@@ -42,12 +42,12 @@ type lambdaInvocation struct {
 // AWS Lambda Runtime API for one container. Matches real Lambda where
 // each running function container has its own dedicated Runtime API on
 // 127.0.0.1:9001; in the simulator it runs on the host and the
-// container reaches it via host.docker.internal.
+// container reaches it through the runtime's workload callback address.
 type runtimeAPISidecar struct {
 	inv      *lambdaInvocation
 	listener net.Listener
 	server   *http.Server
-	addr     string // "host.docker.internal:<port>" — what the container sees
+	addr     string // host:port address the container sees
 }
 
 // startRuntimeAPISidecar binds a free port on all interfaces, mounts
@@ -59,7 +59,7 @@ type runtimeAPISidecar struct {
 // its address into the container and shut the sidecar down after the
 // invocation completes.
 func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	ln, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		return nil, fmt.Errorf("runtime API listen: %w", err)
 	}
@@ -213,7 +213,7 @@ func runtimeAPIHost() string {
 	if v := os.Getenv("SIM_LAMBDA_RUNTIME_HOST"); v != "" {
 		return v
 	}
-	return "host.docker.internal"
+	return workloadCallbackHost()
 }
 
 // runtimeAPIExtraHosts returns the Docker --add-host entries needed

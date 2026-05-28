@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-28 — Simulator Docker test harness
+
+The simulator Docker test harness phase closed BUG-1216 / issue #253 and BUG-1212 / issue #248.
+
+The broken `docker-test` targets were real harness defects: the AWS, GCP, and Azure simulator Makefiles pointed at nonexistent per-directory `Dockerfile.test` files and mounted only the simulator subdirectory, which excluded the repository-level test fixtures and shared Makefile infrastructure. The fix added one shared `simulators/Dockerfile.test` Linux image with Go, Terraform, AWS CLI, gcloud, Azure CLI, Docker CLI, Make, Git, and supporting tools. The top-level `make docker-test` target and each per-cloud `make docker-test` target now build that image from the repository root, mount the full checkout and host Docker socket, and run the existing SDK/CLI/Terraform categories rather than a parallel test path.
+
+The Azure Terraform macOS problem was also a real local execution bug, not a simulator API limitation. The Terraform providers validate the simulator's self-signed HTTPS CA through Go's OS trust store; Linux honors `SSL_CERT_FILE`, while Darwin's cgo-backed `SystemCertPool` does not. The Azure Terraform test harness now detects direct macOS execution and delegates the same `go test` command into the shared Linux Docker image with `SOCKERLESS_AZURE_TF_IN_DOCKER=1`, so the real `azurestack` and `azurerm` providers run unchanged against the simulator and validate the generated CA through Linux `SSL_CERT_FILE`.
+
 ## 2026-05-27 — Foundational event routing
 
 PR #252 was the first implementation pass after the foundational audit and closed BUG-1197..1199 by adding real public event-routing slices for the foundational flows in all three simulators.
@@ -18,7 +26,7 @@ Azure now implements Microsoft.EventGrid topics and event subscriptions through 
 
 CI review found two real follow-up defects before merge. The AzureRM Terraform provider calls the Event Grid topic `listKeys` ARM action during `azurerm_eventgrid_topic` creation, so the simulator now implements `POST .../topics/{topic}/listKeys` and returns the real `{key1,key2}` response shape. The Azure ACA/AZF backend modules also now carry the same refreshed OpenTelemetry transitive graph as `backends/core`, so isolated `-tags noui` builds do not fail with missing `go.sum` entries.
 
-Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issue #248 / BUG-1212 tracks the Azure Terraform macOS TLS harness problem where Terraform's Go runtime ignores the generated `SSL_CERT_FILE`; CI/Linux remains the real Terraform validation path until that harness is fixed. Issue #253 / BUG-1216 tracks the broken simulator `docker-test` targets that point at missing `Dockerfile.test` files. Issues #249..#251 / BUG-1213..1215 track remaining advanced/sibling event-service parity: EventBridge buses/policies/advanced resources, Event Grid domains/system topics, and Eventarc channels/providers.
+Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issues #248 / BUG-1212 and #253 / BUG-1216 were fixed in the simulator Docker test harness phase. Issues #249..#251 / BUG-1213..1215 track remaining advanced/sibling event-service parity: EventBridge buses/policies/advanced resources, Event Grid domains/system topics, and Eventarc channels/providers.
 
 ## 2026-05-27 — Foundational simulator service audit
 
