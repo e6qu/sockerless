@@ -36,8 +36,11 @@ type AppServicePlanProperties struct {
 	NumberOfSites             int    `json:"numberOfSites"`
 }
 
+var azureAppServicePlans sim.Store[AppServicePlan]
+
 func registerAppServicePlan(srv *sim.Server) {
 	plans := sim.MakeStore[AppServicePlan](srv.DB(), "app_service_plans")
+	azureAppServicePlans = plans
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 

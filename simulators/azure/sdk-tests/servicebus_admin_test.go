@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +17,38 @@ import (
 
 type sbAdminTransport struct {
 	inner *http.Client
+}
+
+func TestServiceBusARM_AdvertisedEndpointAndConnectionStrings(t *testing.T) {
+	rg := "sb-endpoint-rg"
+	ensureRG(t, rg)
+	namespace := "sdkshimns"
+	createReq, _ := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.ServiceBus/namespaces/"+namespace+"?api-version=2022-10-01-preview",
+		strings.NewReader(`{"location":"eastus","sku":{"name":"Standard","tier":"Standard"}}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var ns map[string]any
+	require.NoError(t, json.NewDecoder(createResp.Body).Decode(&ns))
+	props := ns["properties"].(map[string]any)
+	port := strings.TrimPrefix(baseURL, "http://127.0.0.1:")
+	assert.Equal(t, fmt.Sprintf("https://%s.servicebus.shim.localhost:%s/", namespace, port), props["serviceBusEndpoint"])
+
+	keysReq, _ := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.ServiceBus/namespaces/"+namespace+"/authorizationRules/RootManageSharedAccessKey/listKeys?api-version=2022-10-01-preview",
+		nil)
+	keysReq.Header.Set("Authorization", "Bearer fake-token")
+	keysResp, err := http.DefaultClient.Do(keysReq)
+	require.NoError(t, err)
+	defer keysResp.Body.Close()
+	require.Equal(t, http.StatusOK, keysResp.StatusCode)
+	var keys map[string]any
+	require.NoError(t, json.NewDecoder(keysResp.Body).Decode(&keys))
+	assert.Contains(t, keys["primaryConnectionString"], "Endpoint=sb://"+namespace+".servicebus.shim.localhost:"+port+"/")
 }
 
 func (t sbAdminTransport) Do(req *http.Request) (*http.Response, error) {

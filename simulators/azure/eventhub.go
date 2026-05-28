@@ -142,7 +142,7 @@ func handleEHCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			"status":             "Active",
 			"createdAt":          now.Format(time.RFC3339Nano),
 			"updatedAt":          now.Format(time.RFC3339Nano),
-			"serviceBusEndpoint": fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, name, "servicebus")),
+			"serviceBusEndpoint": azureServiceBusEndpointURL(r, name),
 		},
 	}
 	if n.SKU == nil {
@@ -271,7 +271,7 @@ func ehApplyNamespaceDefaults(n *EHNamespace, r *http.Request) {
 		n.Properties["updatedAt"] = n.Properties["createdAt"]
 	}
 	if _, ok := n.Properties["serviceBusEndpoint"]; !ok {
-		n.Properties["serviceBusEndpoint"] = fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, n.Name, "servicebus"))
+		n.Properties["serviceBusEndpoint"] = azureServiceBusEndpointURL(r, n.Name)
 	}
 	if _, ok := n.Properties["isAutoInflateEnabled"]; !ok {
 		n.Properties["isAutoInflateEnabled"] = false
@@ -552,7 +552,7 @@ func ehWriteAuthKeys(w http.ResponseWriter, r *http.Request, scope string) {
 	}
 	namespace := sim.PathParam(r, "name")
 	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	conn := fmt.Sprintf("Endpoint=sb://%s/;SharedAccessKeyName=%s;SharedAccessKey=%s", azureEndpointHost(r, namespace, "servicebus"), ruleName, key)
+	conn := fmt.Sprintf("Endpoint=%s;SharedAccessKeyName=%s;SharedAccessKey=%s", azureServiceBusConnectionEndpoint(r, namespace), ruleName, key)
 	if scope == "eventhubs" {
 		conn += ";EntityPath=" + sim.PathParam(r, "eventhub")
 	}

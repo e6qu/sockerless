@@ -26,6 +26,8 @@ type RoleAssignmentProperties struct {
 	CreatedBy        string `json:"createdBy,omitempty"`
 }
 
+var azureRoleAssignments sim.Store[RoleAssignment]
+
 // parseRoleAssignmentPath extracts the scope and role assignment name from a path like
 // subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments/{name}
 func parseRoleAssignmentPath(path string) (scope, raName string, ok bool) {
@@ -96,6 +98,7 @@ func parseRoleNameFilter(filter string) string {
 
 func registerAuthorization(srv *sim.Server) {
 	roleAssignments := sim.MakeStore[RoleAssignment](srv.DB(), "role_assignments")
+	azureRoleAssignments = roleAssignments
 
 	// Middleware to handle authorization requests at ANY scope level.
 	// Go 1.22 mux doesn't support variable-length wildcards in the middle of

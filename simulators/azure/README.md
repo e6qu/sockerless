@@ -111,6 +111,41 @@ ARM-returned data-plane endpoints such as
 `http://mytopic.eventgrid.sockerless.azure.local:4568/api/events` keep the
 same host-addressed contract and resolve through the simulator DNS server.
 
+### Advertised data-plane endpoints
+
+The ARM control plane can advertise data-plane hosts that are different from
+the ARM request host. This is for deployments where another local component
+fronts the data plane, such as a shim translating Azure-shaped Blob, Key Vault,
+Service Bus, or Event Grid calls to another backing cloud. The public ARM API
+shape does not change; only the normal Azure response fields point at the
+configured host.
+
+Configure the projection with `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON`:
+
+```bash
+SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='{
+  "storage": {
+    "blob": "https://{account}.blob.shim.azure.local/",
+    "file": "https://{account}.file.shim.azure.local/",
+    "queue": "https://{account}.queue.shim.azure.local/",
+    "table": "https://{account}.table.shim.azure.local/",
+    "web": "https://{account}.web.shim.azure.local/",
+    "dfs": "https://{account}.dfs.shim.azure.local/"
+  },
+  "keyVault": "https://{vault}.vault.shim.azure.local/",
+  "serviceBus": "https://{namespace}.servicebus.shim.azure.local/",
+  "eventGrid": "https://{topic}.eventgrid.shim.azure.local/api/events"
+}' ./simulator-azure
+```
+
+Supported template variables are `{name}`, `{account}`, `{vault}`,
+`{namespace}`, `{topic}`, `{service}`, `{scheme}`, `{host}`, `{hostname}`,
+and `{port}`. Storage Account ARM responses fill `properties.primaryEndpoints`,
+Key Vault fills `properties.vaultUri`, Service Bus and Event Hubs fill
+`serviceBusEndpoint` plus listKeys connection strings, Event Grid fills topic
+and domain publish endpoints, and `/metadata/endpoints` emits matching storage
+and Key Vault suffixes for Azure clients that validate custom-cloud metadata.
+
 ```bash
 # 2. Point Azure clients at it.
 # For az CLI: use az rest with explicit URL.

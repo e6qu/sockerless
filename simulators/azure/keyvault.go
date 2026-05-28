@@ -59,6 +59,20 @@ type KeyVault struct {
 	Properties KeyVaultProperties `json:"properties"`
 }
 
+type DeletedKeyVault struct {
+	ID         string                    `json:"id"`
+	Name       string                    `json:"name"`
+	Type       string                    `json:"type"`
+	Properties DeletedKeyVaultProperties `json:"properties"`
+}
+
+type DeletedKeyVaultProperties struct {
+	VaultID            string `json:"vaultId"`
+	Location           string `json:"location"`
+	DeletionDate       string `json:"deletionDate"`
+	ScheduledPurgeDate string `json:"scheduledPurgeDate"`
+}
+
 // KeyVaultProperties holds the per-vault settings.
 type KeyVaultProperties struct {
 	TenantID                     string                 `json:"tenantId"`
@@ -202,12 +216,14 @@ type KeyVaultAttrs struct {
 }
 
 var (
-	keyVaults    sim.Store[KeyVault]
-	keyVaultData sim.Store[kvSecretStored] // key: <vault>/<secretName>
+	keyVaults     sim.Store[KeyVault]
+	deletedVaults sim.Store[DeletedKeyVault]
+	keyVaultData  sim.Store[kvSecretStored] // key: <vault>/<secretName>
 )
 
 func registerKeyVault(srv *sim.Server) {
 	keyVaults = sim.MakeStore[KeyVault](srv.DB(), "keyvaults")
+	deletedVaults = sim.MakeStore[DeletedKeyVault](srv.DB(), "keyvault_deleted_vaults")
 	keyVaultData = sim.MakeStore[kvSecretStored](srv.DB(), "keyvault_secrets")
 	keyVaultKeys = sim.MakeStore[kvKeyStored](srv.DB(), "keyvault_keys")
 	keyVaultCertificates = sim.MakeStore[kvCertStored](srv.DB(), "keyvault_certificates")
@@ -231,28 +247,13 @@ func registerKeyVault(srv *sim.Server) {
 		}
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.KeyVault/vaults/%s",
 			sub, rg, name)
-		// vaultUri uses the same subdomain routing as storage so
-		// SDK callers reach the data plane through the standard URL.
-		// Real Azure ARM `properties.vaultUri` is always `https://`
-		// regardless of TLS termination at the load balancer; the
-		// sim hard-codes it for consistency with the data-plane URL
-		// emitter (buildKVURL), so SDKs that follow vaultUri into
-		// the data plane don't trip on cross-API scheme drift.
-		hostname := r.Host
-		portSuffix := ""
-		if i := strings.LastIndex(hostname, ":"); i >= 0 {
-			portSuffix = hostname[i:]
-			hostname = hostname[:i]
-		}
-		vaultURI := fmt.Sprintf("https://%s.vault.%s%s/", name, hostname, portSuffix)
-
 		if req.Properties.Sku == nil {
 			req.Properties.Sku = &KeyVaultSku{Family: "A", Name: "standard"}
 		}
 		if req.Properties.TenantID == "" {
 			req.Properties.TenantID = "00000000-0000-0000-0000-000000000000"
 		}
-		req.Properties.VaultURI = vaultURI
+		req.Properties.VaultURI = azureKeyVaultEndpointURL(r, name)
 		req.Properties.ProvisioningState = "Succeeded"
 
 		vault := KeyVault{
@@ -264,7 +265,79 @@ func registerKeyVault(srv *sim.Server) {
 			Properties: req.Properties,
 		}
 		keyVaults.Put(resourceID, vault)
+		deleteDeletedVaultsFor(sub, name)
 		sim.WriteJSON(w, http.StatusOK, vault)
+	})
+
+	srv.HandleFunc("PATCH "+armBase+"/vaults/{name}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.KeyVault/vaults/%s",
+			sub, rg, name)
+		v, ok := keyVaults.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Vault %q not found in resource group %q.", name, rg)
+			return
+		}
+		var req struct {
+			Tags       *map[string]string `json:"tags,omitempty"`
+			Properties struct {
+				TenantID                     string                  `json:"tenantId,omitempty"`
+				Sku                          *KeyVaultSku            `json:"sku,omitempty"`
+				AccessPolicies               *[]KeyVaultAccessPolicy `json:"accessPolicies,omitempty"`
+				EnabledForDeployment         *bool                   `json:"enabledForDeployment,omitempty"`
+				EnabledForDiskEncryption     *bool                   `json:"enabledForDiskEncryption,omitempty"`
+				EnabledForTemplateDeployment *bool                   `json:"enabledForTemplateDeployment,omitempty"`
+				EnableSoftDelete             *bool                   `json:"enableSoftDelete,omitempty"`
+				EnablePurgeProtection        *bool                   `json:"enablePurgeProtection,omitempty"`
+				EnableRbacAuthorization      *bool                   `json:"enableRbacAuthorization,omitempty"`
+				NetworkAcls                  *KeyVaultNetworkAcls    `json:"networkAcls,omitempty"`
+			} `json:"properties,omitempty"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent",
+				"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			v.Tags = *req.Tags
+		}
+		if req.Properties.TenantID != "" {
+			v.Properties.TenantID = req.Properties.TenantID
+		}
+		if req.Properties.Sku != nil {
+			v.Properties.Sku = req.Properties.Sku
+		}
+		if req.Properties.AccessPolicies != nil {
+			v.Properties.AccessPolicies = *req.Properties.AccessPolicies
+		}
+		if req.Properties.EnabledForDeployment != nil {
+			v.Properties.EnabledForDeployment = *req.Properties.EnabledForDeployment
+		}
+		if req.Properties.EnabledForDiskEncryption != nil {
+			v.Properties.EnabledForDiskEncryption = *req.Properties.EnabledForDiskEncryption
+		}
+		if req.Properties.EnabledForTemplateDeployment != nil {
+			v.Properties.EnabledForTemplateDeployment = *req.Properties.EnabledForTemplateDeployment
+		}
+		if req.Properties.EnableSoftDelete != nil {
+			v.Properties.EnableSoftDelete = *req.Properties.EnableSoftDelete
+		}
+		if req.Properties.EnablePurgeProtection != nil {
+			v.Properties.EnablePurgeProtection = *req.Properties.EnablePurgeProtection
+		}
+		if req.Properties.EnableRbacAuthorization != nil {
+			v.Properties.EnableRbacAuthorization = *req.Properties.EnableRbacAuthorization
+		}
+		if req.Properties.NetworkAcls != nil {
+			v.Properties.NetworkAcls = req.Properties.NetworkAcls
+		}
+		v.Properties.VaultURI = azureKeyVaultEndpointURL(r, name)
+		v.Properties.ProvisioningState = "Succeeded"
+		keyVaults.Put(resourceID, v)
+		sim.WriteJSON(w, http.StatusOK, v)
 	})
 
 	srv.HandleFunc("GET "+armBase+"/vaults/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +352,7 @@ func registerKeyVault(srv *sim.Server) {
 				"Vault %q not found in resource group %q.", name, rg)
 			return
 		}
+		v.Properties.VaultURI = azureKeyVaultEndpointURL(r, name)
 		sim.WriteJSON(w, http.StatusOK, v)
 	})
 
@@ -288,6 +362,21 @@ func registerKeyVault(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.KeyVault/vaults/%s",
 			sub, rg, name)
+		if v, ok := keyVaults.Get(resourceID); ok {
+			now := time.Now().UTC()
+			purgeAt := now.Add(90 * 24 * time.Hour)
+			deletedVaults.Put(deletedVaultID(sub, v.Location, name), DeletedKeyVault{
+				ID:   deletedVaultID(sub, v.Location, name),
+				Name: name,
+				Type: "Microsoft.KeyVault/deletedVaults",
+				Properties: DeletedKeyVaultProperties{
+					VaultID:            resourceID,
+					Location:           v.Location,
+					DeletionDate:       now.Format(time.RFC3339),
+					ScheduledPurgeDate: purgeAt.Format(time.RFC3339),
+				},
+			})
+		}
 		keyVaults.Delete(resourceID)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -302,6 +391,9 @@ func registerKeyVault(srv *sim.Server) {
 		})
 		if all == nil {
 			all = []KeyVault{}
+		}
+		for i := range all {
+			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
@@ -319,7 +411,79 @@ func registerKeyVault(srv *sim.Server) {
 		if all == nil {
 			all = []KeyVault{}
 		}
+		for i := range all {
+			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+	})
+
+	srv.HandleFunc("PUT "+armBase+"/vaults/{name}/accessPolicies/{operationKind}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "name")
+		operation := sim.PathParam(r, "operationKind")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.KeyVault/vaults/%s",
+			sub, rg, name)
+		v, ok := keyVaults.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Vault %q not found in resource group %q.", name, rg)
+			return
+		}
+		var req struct {
+			Properties struct {
+				AccessPolicies []KeyVaultAccessPolicy `json:"accessPolicies"`
+			} `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent",
+				"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch operation {
+		case "add":
+			for _, incoming := range req.Properties.AccessPolicies {
+				replaced := false
+				for i, existing := range v.Properties.AccessPolicies {
+					if existing.ObjectID == incoming.ObjectID {
+						v.Properties.AccessPolicies[i] = incoming
+						replaced = true
+						break
+					}
+				}
+				if !replaced {
+					v.Properties.AccessPolicies = append(v.Properties.AccessPolicies, incoming)
+				}
+			}
+		case "replace":
+			v.Properties.AccessPolicies = req.Properties.AccessPolicies
+		case "remove":
+			remove := map[string]bool{}
+			for _, p := range req.Properties.AccessPolicies {
+				remove[p.ObjectID] = true
+			}
+			kept := v.Properties.AccessPolicies[:0]
+			for _, p := range v.Properties.AccessPolicies {
+				if !remove[p.ObjectID] {
+					kept = append(kept, p)
+				}
+			}
+			v.Properties.AccessPolicies = kept
+		default:
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest,
+				"access policy operation %q is invalid", operation)
+			return
+		}
+		keyVaults.Put(resourceID, v)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"id":       resourceID + "/accessPolicies/" + operation,
+			"name":     operation,
+			"type":     "Microsoft.KeyVault/vaults/accessPolicies",
+			"location": v.Location,
+			"properties": map[string]any{
+				"accessPolicies": v.Properties.AccessPolicies,
+			},
+		})
 	})
 
 	// GET /subscriptions/{sub}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}
@@ -329,11 +493,16 @@ func registerKeyVault(srv *sim.Server) {
 	// vault-level soft-delete, so the truthful response is 404 in the
 	// Azure envelope (i.e. not the Go default 404 page that breaks the
 	// provider's error parser). Same for the list variant.
-	deletedVaultsNotFound := func(w http.ResponseWriter, r *http.Request) {
-		sim.AzureErrorf(w, "VaultNotFound", http.StatusNotFound,
-			"The vault %q was not found.", sim.PathParam(r, "name"))
-	}
-	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}", deletedVaultsNotFound)
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}", func(w http.ResponseWriter, r *http.Request) {
+		id := deletedVaultID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "location"), sim.PathParam(r, "name"))
+		v, ok := deletedVaults.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "VaultNotFound", http.StatusNotFound,
+				"The vault %q was not found.", sim.PathParam(r, "name"))
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
 
 	// POST .../deletedVaults/{name}/purge — terraform-provider-azurerm
 	// calls this on destroy after a soft-delete-enabled vault is
@@ -345,10 +514,19 @@ func registerKeyVault(srv *sim.Server) {
 	// an operationStatus URL; the sim's clients use the body to
 	// confirm immediate completion.
 	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/locations/{location}/deletedVaults/{name}/purge", func(w http.ResponseWriter, r *http.Request) {
+		deletedVaults.Delete(deletedVaultID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "location"), sim.PathParam(r, "name")))
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/deletedVaults", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.KeyVault/", sub)
+		all := deletedVaults.Filter(func(v DeletedKeyVault) bool {
+			return strings.HasPrefix(v.ID, prefix)
+		})
+		if all == nil {
+			all = []DeletedKeyVault{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
 
 	// Data plane — subdomain routing via WrapHandler. Host pattern:
@@ -400,6 +578,22 @@ func registerKeyVault(srv *sim.Server) {
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+func deletedVaultID(sub, location, name string) string {
+	return fmt.Sprintf("/subscriptions/%s/providers/Microsoft.KeyVault/locations/%s/deletedVaults/%s", sub, location, name)
+}
+
+func deleteDeletedVaultsFor(sub, name string) {
+	if deletedVaults == nil {
+		return
+	}
+	prefix := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.KeyVault/locations/", sub)
+	for _, v := range deletedVaults.List() {
+		if strings.HasPrefix(v.ID, prefix) && v.Name == name {
+			deletedVaults.Delete(v.ID)
+		}
+	}
 }
 
 // handleKeyVaultDataPlane routes requests with `<vault>.vault.*` Host

@@ -158,7 +158,7 @@ func handleSBCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState":  "Succeeded",
-			"serviceBusEndpoint": fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, name, "servicebus")),
+			"serviceBusEndpoint": azureServiceBusEndpointURL(r, name),
 		},
 	}
 	if req.Properties != nil {
@@ -550,7 +550,7 @@ func sbAuthRuleListKeysBody(r *http.Request, ruleID, namespace, ruleName string)
 	secondary := simListKey32(ruleID, "secondary")
 	// Real Azure builds Service Bus connection strings with the namespace
 	// endpoint followed by the SAS rule name and key.
-	endpoint := "Endpoint=sb://" + azureEndpointHost(r, namespace, "servicebus") + "/"
+	endpoint := "Endpoint=" + azureServiceBusConnectionEndpoint(r, namespace)
 	return map[string]any{
 		"primaryKey":                primary,
 		"secondaryKey":              secondary,

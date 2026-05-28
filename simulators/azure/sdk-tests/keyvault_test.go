@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -67,6 +68,89 @@ func TestKeyVault_ARM_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
+}
+
+func TestKeyVault_ARMPatchAccessPolicyAdvertisedEndpointAndDeletedVault(t *testing.T) {
+	rg := "kv-patch-rg"
+	ensureRG(t, rg)
+	vaultName := "sdkpatchvault"
+	vaultURL := baseURL + "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.KeyVault/vaults/" + vaultName + "?api-version=2024-11-01"
+
+	createBody, _ := json.Marshal(map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"tenantId": "00000000-0000-0000-0000-000000000000",
+			"sku": map[string]any{
+				"family": "A",
+				"name":   "standard",
+			},
+		},
+	})
+	createReq, _ := http.NewRequest("PUT", vaultURL, strings.NewReader(string(createBody)))
+	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+
+	patchBody := `{"tags":{"env":"sdk"},"properties":{"enableRbacAuthorization":true}}`
+	patchReq, _ := http.NewRequest("PATCH", vaultURL, strings.NewReader(patchBody))
+	patchReq.Header.Set("Authorization", "Bearer fake-token")
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	defer patchResp.Body.Close()
+	require.Equal(t, http.StatusOK, patchResp.StatusCode)
+	var patched map[string]any
+	require.NoError(t, json.NewDecoder(patchResp.Body).Decode(&patched))
+	props := patched["properties"].(map[string]any)
+	expectedVaultURI := fmt.Sprintf("https://%s.vault.shim.localhost:%s/", vaultName, strings.TrimPrefix(baseURL, "http://127.0.0.1:"))
+	assert.Equal(t, expectedVaultURI, props["vaultUri"])
+	assert.Equal(t, true, props["enableRbacAuthorization"])
+
+	accessPolicyBody := `{"properties":{"accessPolicies":[{"tenantId":"00000000-0000-0000-0000-000000000000","objectId":"11111111-1111-1111-1111-111111111111","permissions":{"secrets":["get","list"]}}]}}`
+	apReq, _ := http.NewRequest("PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.KeyVault/vaults/"+vaultName+"/accessPolicies/add?api-version=2024-11-01",
+		strings.NewReader(accessPolicyBody))
+	apReq.Header.Set("Authorization", "Bearer fake-token")
+	apReq.Header.Set("Content-Type", "application/json")
+	apResp, err := http.DefaultClient.Do(apReq)
+	require.NoError(t, err)
+	defer apResp.Body.Close()
+	require.Equal(t, http.StatusOK, apResp.StatusCode)
+	var ap map[string]any
+	require.NoError(t, json.NewDecoder(apResp.Body).Decode(&ap))
+	apProps := ap["properties"].(map[string]any)
+	require.Len(t, apProps["accessPolicies"].([]any), 1)
+
+	deleteReq, _ := http.NewRequest("DELETE", vaultURL, nil)
+	deleteReq.Header.Set("Authorization", "Bearer fake-token")
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	require.NoError(t, err)
+	deleteResp.Body.Close()
+	require.Equal(t, http.StatusOK, deleteResp.StatusCode)
+
+	deletedReq, _ := http.NewRequest("GET",
+		baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.KeyVault/locations/eastus/deletedVaults/"+vaultName+"?api-version=2024-11-01",
+		nil)
+	deletedReq.Header.Set("Authorization", "Bearer fake-token")
+	deletedResp, err := http.DefaultClient.Do(deletedReq)
+	require.NoError(t, err)
+	defer deletedResp.Body.Close()
+	require.Equal(t, http.StatusOK, deletedResp.StatusCode)
+	var deleted map[string]any
+	require.NoError(t, json.NewDecoder(deletedResp.Body).Decode(&deleted))
+	assert.Equal(t, vaultName, deleted["name"])
+
+	purgeReq, _ := http.NewRequest("POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.KeyVault/locations/eastus/deletedVaults/"+vaultName+"/purge?api-version=2024-11-01",
+		nil)
+	purgeReq.Header.Set("Authorization", "Bearer fake-token")
+	purgeResp, err := http.DefaultClient.Do(purgeReq)
+	require.NoError(t, err)
+	purgeResp.Body.Close()
+	require.Equal(t, http.StatusOK, purgeResp.StatusCode)
 }
 
 // TestKeyVault_DataPlane_SetGetDelete pins the secret data plane:

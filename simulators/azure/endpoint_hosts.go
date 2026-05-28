@@ -1,9 +1,27 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
+	"sync"
+)
+
+type azureAdvertisedEndpointConfig struct {
+	Storage    map[string]string `json:"storage,omitempty"`
+	KeyVault   string            `json:"keyVault,omitempty"`
+	ServiceBus string            `json:"serviceBus,omitempty"`
+	EventGrid  string            `json:"eventGrid,omitempty"`
+}
+
+var (
+	azureAdvertisedEndpointsOnce sync.Once
+	azureAdvertisedEndpoints     azureAdvertisedEndpointConfig
+	azureAdvertisedEndpointsErr  error
 )
 
 func azureRequestScheme(r *http.Request) string {
@@ -34,4 +52,120 @@ func azureEndpointHost(r *http.Request, parts ...string) string {
 func azureEndpointHostname(r *http.Request, parts ...string) string {
 	hostname, _ := azureRequestHostParts(r)
 	return strings.Join(append(parts, hostname), ".")
+}
+
+func azureAdvertisedEndpointConfigFromEnv() (azureAdvertisedEndpointConfig, error) {
+	azureAdvertisedEndpointsOnce.Do(func() {
+		raw := strings.TrimSpace(os.Getenv("SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON"))
+		if raw == "" {
+			return
+		}
+		if err := json.Unmarshal([]byte(raw), &azureAdvertisedEndpoints); err != nil {
+			azureAdvertisedEndpointsErr = fmt.Errorf("parse SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON: %w", err)
+			return
+		}
+	})
+	return azureAdvertisedEndpoints, azureAdvertisedEndpointsErr
+}
+
+func azureEndpointTemplateVars(r *http.Request, name string, extra map[string]string) map[string]string {
+	hostname, portSuffix := azureRequestHostParts(r)
+	vars := map[string]string{
+		"scheme":    azureRequestScheme(r),
+		"host":      r.Host,
+		"hostname":  hostname,
+		"port":      strings.TrimPrefix(portSuffix, ":"),
+		"name":      name,
+		"account":   name,
+		"vault":     name,
+		"namespace": name,
+		"topic":     name,
+	}
+	for k, v := range extra {
+		vars[k] = v
+	}
+	return vars
+}
+
+func azureApplyEndpointTemplate(tmpl string, vars map[string]string) string {
+	out := tmpl
+	for k, v := range vars {
+		out = strings.ReplaceAll(out, "{"+k+"}", v)
+	}
+	return out
+}
+
+func azureEnsureTrailingSlash(endpoint string) string {
+	if endpoint == "" || strings.HasSuffix(endpoint, "/") {
+		return endpoint
+	}
+	return endpoint + "/"
+}
+
+func azureStorageEndpointURL(r *http.Request, account, service string) string {
+	if cfg, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		panic(err)
+	} else if cfg.Storage != nil {
+		if tmpl := strings.TrimSpace(cfg.Storage[service]); tmpl != "" {
+			return azureEnsureTrailingSlash(azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, account, map[string]string{
+				"service": service,
+			})))
+		}
+	}
+	return fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, account, service))
+}
+
+func azureKeyVaultEndpointURL(r *http.Request, vault string) string {
+	if cfg, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		panic(err)
+	} else if tmpl := strings.TrimSpace(cfg.KeyVault); tmpl != "" {
+		return azureEnsureTrailingSlash(azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, vault, nil)))
+	}
+	return fmt.Sprintf("https://%s/", azureEndpointHost(r, vault, "vault"))
+}
+
+func azureServiceBusEndpointURL(r *http.Request, namespace string) string {
+	if cfg, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		panic(err)
+	} else if tmpl := strings.TrimSpace(cfg.ServiceBus); tmpl != "" {
+		return azureEnsureTrailingSlash(azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, namespace, nil)))
+	}
+	return fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, namespace, "servicebus"))
+}
+
+func azureEventGridEndpointURL(r *http.Request, topic string) string {
+	if cfg, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		panic(err)
+	} else if tmpl := strings.TrimSpace(cfg.EventGrid); tmpl != "" {
+		return azureEnsureTrailingSlash(azureApplyEndpointTemplate(tmpl, azureEndpointTemplateVars(r, topic, nil)))
+	}
+	return ""
+}
+
+func azureServiceBusConnectionEndpoint(r *http.Request, namespace string) string {
+	endpoint := azureServiceBusEndpointURL(r, namespace)
+	u, err := url.Parse(endpoint)
+	if err == nil && u.Host != "" {
+		u.Scheme = "sb"
+		u.RawQuery = ""
+		u.Fragment = ""
+		return azureEnsureTrailingSlash(u.String())
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
+	host = strings.TrimPrefix(host, "sb://")
+	return "sb://" + azureEnsureTrailingSlash(host)
+}
+
+func azureEndpointSuffix(endpoint string, labels ...string) string {
+	u, err := url.Parse(endpoint)
+	host := endpoint
+	if err == nil && u.Host != "" {
+		host = u.Host
+	}
+	host = strings.TrimSuffix(host, "/")
+	prefix := strings.Join(labels, ".") + "."
+	if strings.HasPrefix(host, prefix) {
+		return strings.TrimPrefix(host, prefix)
+	}
+	return host
 }

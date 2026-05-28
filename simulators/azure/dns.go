@@ -134,9 +134,17 @@ type VNetLinkVNet struct {
 	ID string `json:"id"`
 }
 
+var (
+	azurePrivateDNSZones      sim.Store[PrivateDnsZone]
+	azurePrivateDNSRecordSets sim.Store[RecordSet]
+	azurePrivateDNSVNetLinks  sim.Store[VNetLink]
+)
+
 func registerPrivateDNS(srv *sim.Server) {
 	zones := sim.MakeStore[PrivateDnsZone](srv.DB(), "dns_zones")
 	recordSets := sim.MakeStore[RecordSet](srv.DB(), "dns_record_sets")
+	azurePrivateDNSZones = zones
+	azurePrivateDNSRecordSets = recordSets
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 
@@ -518,6 +526,7 @@ func registerPrivateDNS(srv *sim.Server) {
 	// --- Virtual Network Links ---
 
 	vnetLinks := sim.MakeStore[VNetLink](srv.DB(), "dns_vnet_links")
+	azurePrivateDNSVNetLinks = vnetLinks
 
 	// PUT - Create or update VNet link
 	srv.HandleFunc("PUT "+armBase+"/privateDnsZones/{zoneName}/virtualNetworkLinks/{linkName}", func(w http.ResponseWriter, r *http.Request) {

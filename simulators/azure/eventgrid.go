@@ -197,6 +197,11 @@ func eventGridTopicWithEndpoint(r *http.Request, topic EventGridTopic) (EventGri
 	if props == nil {
 		props = map[string]any{}
 	}
+	if endpoint := azureEventGridEndpointURL(r, topic.Name); endpoint != "" {
+		props["endpoint"] = endpoint
+		topic.Properties = props
+		return topic, nil
+	}
 	hostname, _ := azureRequestHostParts(r)
 	if isLocalAzureHost(hostname) {
 		endpoint, err := ensureEventGridTopicListener(topic)
@@ -378,7 +383,11 @@ func handleEventGridCreateDomain(w http.ResponseWriter, r *http.Request) {
 	eventGridCreateARMResource(w, r, eventGridDomains, id, sim.PathParam(r, "domainName"), "Microsoft.EventGrid/domains", func(props map[string]any) {
 		props["provisioningState"] = "Succeeded"
 		if _, ok := props["endpoint"]; !ok {
-			props["endpoint"] = fmt.Sprintf("%s://%s/api/events", azureRequestScheme(r), eventGridEndpointHost(r, sim.PathParam(r, "domainName")))
+			if endpoint := azureEventGridEndpointURL(r, sim.PathParam(r, "domainName")); endpoint != "" {
+				props["endpoint"] = endpoint
+			} else {
+				props["endpoint"] = fmt.Sprintf("%s://%s/api/events", azureRequestScheme(r), eventGridEndpointHost(r, sim.PathParam(r, "domainName")))
+			}
 		}
 	})
 }

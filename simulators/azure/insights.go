@@ -26,8 +26,11 @@ type AppInsightsComponentProperties struct {
 	ProvisioningState  string `json:"provisioningState"`
 }
 
+var azureAppInsightsComponents sim.Store[AppInsightsComponent]
+
 func registerApplicationInsights(srv *sim.Server) {
 	components := sim.MakeStore[AppInsightsComponent](srv.DB(), "insights_components")
+	azureAppInsightsComponents = components
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Insights"
 

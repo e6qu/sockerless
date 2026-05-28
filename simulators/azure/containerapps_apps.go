@@ -115,6 +115,7 @@ type AsyncOperationStatus struct {
 // acaOps stores async-operation status keyed by opId. Initialized lazily
 // in registerContainerAppsApps + reused by registerContainerApps (Jobs).
 var acaOps sim.Store[AsyncOperationStatus]
+var acaApps sim.Store[ContainerApp]
 
 var acaAppReplicaHandles sync.Map // map[resourceID][]*sim.ContainerHandle
 
@@ -157,6 +158,7 @@ func acaAsyncOpHeader(r *http.Request, sub, loc, opID string) string {
 
 func registerContainerAppsApps(srv *sim.Server) {
 	apps := sim.MakeStore[ContainerApp](srv.DB(), "aca_apps")
+	acaApps = apps
 	acaOps = sim.MakeStore[AsyncOperationStatus](srv.DB(), "aca_ops")
 
 	const basePath = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App"

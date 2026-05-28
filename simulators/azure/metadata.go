@@ -27,6 +27,8 @@ func registerMetadata(srv *sim.Server) {
 			scheme = strings.ToLower(fp)
 		}
 		baseURL := fmt.Sprintf("%s://%s", scheme, host)
+		storageSuffix := azureEndpointSuffix(azureStorageEndpointURL(r, "metadataacct", "blob"), "metadataacct", "blob")
+		keyVaultSuffix := azureEndpointSuffix(azureKeyVaultEndpointURL(r, "metadatavault"), "metadatavault", "vault")
 
 		env := map[string]any{
 			"name": "AzureCloud",
@@ -50,8 +52,8 @@ func registerMetadata(srv *sim.Server) {
 			"gallery":                  baseURL,
 			"batch":                    baseURL,
 			"suffixes": map[string]any{
-				"keyVaultDns":       "localhost",
-				"storage":           host,
+				"keyVaultDns":       keyVaultSuffix,
+				"storage":           storageSuffix,
 				"acrLoginServer":    "localhost",
 				"sqlServerHostname": "localhost",
 			},
