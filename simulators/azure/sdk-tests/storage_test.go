@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +64,34 @@ func TestStorage_GetAccount(t *testing.T) {
 	data, _ := io.ReadAll(resp.Body)
 	json.Unmarshal(data, &result)
 	assert.Equal(t, "teststorage", result["name"])
+}
+
+func TestStorage_ARMListKeysCanonical512BitPerAccount(t *testing.T) {
+	rg := "storage-keys-rg"
+	ensureRG(t, rg)
+	accountA := "keystoragea"
+	accountB := "keystorageb"
+	createStorageAccount(t, rg, accountA)
+	createStorageAccount(t, rg, accountB)
+
+	keysA := listStorageKeys(t, rg, accountA)
+	keysAAgain := listStorageKeys(t, rg, accountA)
+	keysB := listStorageKeys(t, rg, accountB)
+
+	require.Len(t, keysA, 2)
+	require.Len(t, keysB, 2)
+	require.Equal(t, "key1", keysA[0].KeyName)
+	require.Equal(t, "key2", keysA[1].KeyName)
+	require.NotEqual(t, keysA[0].Value, keysA[1].Value, "key1 and key2 must differ")
+	require.Equal(t, keysA[0].Value, keysAAgain[0].Value, "keys must be deterministic for the same account")
+	require.NotEqual(t, keysA[0].Value, keysB[0].Value, "different accounts must receive different keys")
+
+	for _, key := range append(keysA, keysB...) {
+		raw, err := base64.StdEncoding.DecodeString(key.Value)
+		require.NoError(t, err)
+		assert.Len(t, raw, 64)
+		assert.Equal(t, "FULL", key.Permissions)
+	}
 }
 
 func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T) {
@@ -142,4 +171,43 @@ func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T)
 type StorageSku struct {
 	Name string `json:"name"`
 	Tier string `json:"tier,omitempty"`
+}
+
+type storageListKey struct {
+	KeyName     string `json:"keyName"`
+	Value       string `json:"value"`
+	Permissions string `json:"permissions"`
+}
+
+func createStorageAccount(t *testing.T, rg, accountName string) {
+	t.Helper()
+	createBody := `{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`
+	createReq, err := http.NewRequestWithContext(ctx, "PUT",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Storage/storageAccounts/"+accountName+"?api-version=2023-05-01",
+		strings.NewReader(createBody))
+	require.NoError(t, err)
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer fake-token")
+	createResp, err := http.DefaultClient.Do(createReq)
+	require.NoError(t, err)
+	defer createResp.Body.Close()
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+}
+
+func listStorageKeys(t *testing.T, rg, accountName string) []storageListKey {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		baseURL+"/subscriptions/"+subscriptionID+"/resourceGroups/"+rg+"/providers/Microsoft.Storage/storageAccounts/"+accountName+"/listKeys?api-version=2023-05-01",
+		nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Keys []storageListKey `json:"keys"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body.Keys
 }

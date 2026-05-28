@@ -1,7 +1,8 @@
 package main
 
 import (
-	"crypto/hmac"
+	"crypto"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -12,7 +13,10 @@ import (
 
 func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	tok := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	tok, err := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
 
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
@@ -30,8 +34,8 @@ func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 	if err := json.Unmarshal(header, &h); err != nil {
 		t.Fatalf("header unmarshal: %v", err)
 	}
-	if h["alg"] != "HS256" {
-		t.Errorf("alg = %q, want HS256 — alg:none is auth-bypass", h["alg"])
+	if h["alg"] != "RS256" {
+		t.Errorf("alg = %q, want RS256 — alg:none is auth-bypass", h["alg"])
 	}
 	if h["kid"] == "" {
 		t.Errorf("kid missing — clients that fetch JWKS rely on it")
@@ -61,7 +65,10 @@ func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 
 func TestMintAzureSimJWT_SignatureVerifies(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	tok := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	tok, err := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
 
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
@@ -69,10 +76,35 @@ func TestMintAzureSimJWT_SignatureVerifies(t *testing.T) {
 	}
 	signingInput := parts[0] + "." + parts[1]
 
-	mac := hmac.New(sha256.New, azureSimSignKey())
-	mac.Write([]byte(signingInput))
-	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if parts[2] != want {
-		t.Errorf("signature mismatch:\n got %s\nwant %s", parts[2], want)
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("signature decode: %v", err)
+	}
+	key, err := azureSimSigningKey()
+	if err != nil {
+		t.Fatalf("signing key: %v", err)
+	}
+	digest := sha256.Sum256([]byte(signingInput))
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], sig); err != nil {
+		t.Errorf("signature verify: %v", err)
+	}
+}
+
+func TestAzureSimJWK_PublishesRS256PublicKey(t *testing.T) {
+	jwk, err := azureSimJWK()
+	if err != nil {
+		t.Fatalf("jwk: %v", err)
+	}
+	if jwk["kty"] != "RSA" {
+		t.Errorf("kty = %v, want RSA", jwk["kty"])
+	}
+	if jwk["alg"] != "RS256" {
+		t.Errorf("alg = %v, want RS256", jwk["alg"])
+	}
+	if jwk["kid"] != "sockerless-sim-key-1" {
+		t.Errorf("kid = %v, want sockerless-sim-key-1", jwk["kid"])
+	}
+	if jwk["n"] == "" || jwk["e"] == "" {
+		t.Errorf("n/e missing from RSA JWK: %#v", jwk)
 	}
 }

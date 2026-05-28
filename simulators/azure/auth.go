@@ -1,11 +1,14 @@
 package main
 
 import (
-	"crypto/hmac"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,23 +17,21 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// azureSimSignKey is the per-process HS256 key used to sign Azure AD
-// tokens the sim mints. Generated lazily on first call so tests that
-// don't invoke handleMockToken aren't affected. Real Azure AD signs
-// with rotated RSA keys; HS256 is sufficient here because the sim
-// doesn't verify inbound tokens — the only requirement is that SDKs
-// that parse the token (e.g. azure-identity's confidential-client
-// path) accept the structure.
+// azureSimSigningKey is the per-process RS256 key used to sign Azure AD
+// tokens the sim mints. Real Azure AD publishes public RSA signing keys
+// via JWKS; the simulator does the same so downstream data-plane clients
+// can verify bearer tokens without shared secrets.
 var (
-	azureSimSignKeyOnce sync.Once
-	azureSimSignKeyVal  []byte
+	azureSimSigningKeyOnce sync.Once
+	azureSimSigningKeyVal  *rsa.PrivateKey
+	azureSimSigningKeyErr  error
 )
 
-func azureSimSignKey() []byte {
-	azureSimSignKeyOnce.Do(func() {
-		azureSimSignKeyVal = []byte(fmt.Sprintf("sockerless-sim-azure-%d", time.Now().UnixNano()))
+func azureSimSigningKey() (*rsa.PrivateKey, error) {
+	azureSimSigningKeyOnce.Do(func() {
+		azureSimSigningKeyVal, azureSimSigningKeyErr = rsa.GenerateKey(rand.Reader, 2048)
 	})
-	return azureSimSignKeyVal
+	return azureSimSigningKeyVal, azureSimSigningKeyErr
 }
 
 // CleanPathMiddleware removes double slashes from request paths.
@@ -87,19 +88,15 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// JWKS endpoint — publish the kid the sim stamps into freshly
-		// minted tokens. Body is intentionally minimal: real Azure
-		// publishes RS256 public keys, the sim signs with HS256, so
-		// the kid is the only field clients can usefully cross-check.
+		// JWKS endpoint — publish the public key that verifies freshly
+		// minted RS256 tokens, matching Azure AD's verifier contract.
 		if r.Method == http.MethodGet && (strings.HasSuffix(path, "/discovery/v2.0/keys") || strings.HasSuffix(path, "/discovery/keys")) {
-			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"keys": []map[string]any{{
-					"kid": "sockerless-sim-key-1",
-					"kty": "oct",
-					"alg": "HS256",
-					"use": "sig",
-				}},
-			})
+			jwk, err := azureSimJWK()
+			if err != nil {
+				sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, map[string]any{"keys": []map[string]any{jwk}})
 			return
 		}
 
@@ -119,7 +116,11 @@ func extractTenantFromPath(path string) string {
 func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 	tenantId := extractTenantFromPath(path)
 	now := time.Now()
-	token := mintAzureSimJWT(tenantId, now, now.Add(1*time.Hour))
+	token, err := mintAzureSimJWT(tenantId, now, now.Add(1*time.Hour))
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -131,13 +132,13 @@ func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 // mintAzureSimJWT produces a real-shape Azure AD access token JWT
-// (`header.payload.signature`) signed with HS256 against the sim's
-// per-process key. The claims set matches what azure-identity / the
+// (`header.payload.signature`) signed with RS256 against the sim's
+// per-process private key. The claims set matches what azure-identity / the
 // Azure SDK round-trip on token introspection (tid, oid, sub, aud,
 // iss, iat, exp, nbf, ver, appid).
-func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) string {
+func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) (string, error) {
 	headerJSON, _ := json.Marshal(map[string]string{
-		"alg": "HS256",
+		"alg": "RS256",
 		"typ": "JWT",
 		"kid": "sockerless-sim-key-1",
 	})
@@ -158,8 +159,31 @@ func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) string {
 	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 	signingInput := headerB64 + "." + payloadB64
-	mac := hmac.New(sha256.New, azureSimSignKey())
-	mac.Write([]byte(signingInput))
-	sigB64 := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return signingInput + "." + sigB64
+	digest := sha256.Sum256([]byte(signingInput))
+	key, err := azureSimSigningKey()
+	if err != nil {
+		return "", fmt.Errorf("generate Azure simulator signing key: %w", err)
+	}
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", fmt.Errorf("sign Azure simulator JWT: %w", err)
+	}
+	sigB64 := base64.RawURLEncoding.EncodeToString(sig)
+	return signingInput + "." + sigB64, nil
+}
+
+func azureSimJWK() (map[string]any, error) {
+	key, err := azureSimSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate Azure simulator signing key: %w", err)
+	}
+	pub := key.PublicKey
+	return map[string]any{
+		"kid": "sockerless-sim-key-1",
+		"kty": "RSA",
+		"alg": "RS256",
+		"use": "sig",
+		"n":   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+	}, nil
 }

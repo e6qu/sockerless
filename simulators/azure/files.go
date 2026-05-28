@@ -383,8 +383,8 @@ func registerAzureFiles(srv *sim.Server) {
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"keys": []map[string]any{
-				{"keyName": "key1", "value": "dGVzdGtleTEK", "permissions": "FULL"},
-				{"keyName": "key2", "value": "dGVzdGtleTIK", "permissions": "FULL"},
+				{"keyName": "key1", "value": simListKey64(acctID, "key1"), "permissions": "FULL"},
+				{"keyName": "key2", "value": simListKey64(acctID, "key2"), "permissions": "FULL"},
 			},
 		})
 	})

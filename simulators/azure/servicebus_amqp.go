@@ -64,6 +64,7 @@ type sbAMQPTransport interface {
 type sbAMQPLink struct {
 	name         string
 	address      string
+	channel      uint16
 	clientHandle uint32
 	serverHandle uint32
 	clientRole   bool
@@ -265,6 +266,7 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 	link := &sbAMQPLink{
 		name:         name,
 		address:      strings.Trim(address, "/"),
+		channel:      frame.channel,
 		clientHandle: clientHandle,
 		serverHandle: serverHandle,
 		clientRole:   clientRole,
@@ -353,11 +355,13 @@ func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error 
 			msgID = id
 		}
 	}
-	c.enqueue(link.address, sbMessage{
+	if err := c.enqueue(link.address, sbMessage{
 		MessageID:    msgID,
 		Body:         msg.GetData(),
 		EnqueuedTime: time.Now().UTC(),
-	})
+	}); err != nil {
+		return err
+	}
 	return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescDisposition, []any{
 		true,
 		deliveryID,
@@ -367,7 +371,7 @@ func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error 
 	}))
 }
 
-func (c *sbAMQPConn) enqueue(address string, msg sbMessage) {
+func (c *sbAMQPConn) enqueue(address string, msg sbMessage) error {
 	paths := c.enqueuePaths(address)
 	for _, path := range paths {
 		st := sbQueueStateFor(sbQueueKey(c.namespace, path))
@@ -377,6 +381,7 @@ func (c *sbAMQPConn) enqueue(address string, msg sbMessage) {
 		st.messages = append(st.messages, msg)
 		st.mu.Unlock()
 	}
+	return c.deliverAvailableMessages(paths)
 }
 
 func (c *sbAMQPConn) enqueuePaths(address string) []string {
@@ -469,6 +474,32 @@ func (c *sbAMQPConn) handleFlow(ctx context.Context, frame amqpFrame) error {
 		}
 	}
 	_ = ctx
+	return nil
+}
+
+func (c *sbAMQPConn) deliverAvailableMessages(paths []string) error {
+	pathSet := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		pathSet[path] = struct{}{}
+	}
+	for _, link := range c.links {
+		if !link.clientRole || link.credit == 0 {
+			continue
+		}
+		if _, ok := pathSet[sbAMQPEntityPath(link.address)]; !ok {
+			continue
+		}
+		for link.credit > 0 {
+			msg, ok := c.popMessage(link.address)
+			if !ok {
+				break
+			}
+			link.credit--
+			if err := c.writeTransfer(link.channel, link, msg, link.settledSend); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
