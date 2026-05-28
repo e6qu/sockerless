@@ -129,6 +129,24 @@ az rest --method GET \
   --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Network/privateDnsZones/example.local?api-version=2018-09-01"
 ```
 
+### Public DNS
+
+```sh
+# Create a public DNS zone
+az rest --method PUT \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Network/dnsZones/example.com?api-version=2018-05-01" \
+  --body '{"location":"global"}'
+
+# Create a public A record
+az rest --method PUT \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Network/dnsZones/example.com/A/www?api-version=2018-05-01" \
+  --body '{"properties":{"TTL":300,"ARecords":[{"ipv4Address":"203.0.113.10"}]}}'
+
+# List all record sets in the zone
+az rest --method GET \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Network/dnsZones/example.com/all?api-version=2018-05-01"
+```
+
 ### Networking
 
 ```sh

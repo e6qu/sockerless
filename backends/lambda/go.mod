@@ -3,17 +3,17 @@ module github.com/sockerless/backend-lambda
 go 1.25.0
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.41.7
-	github.com/aws/aws-sdk-go-v2/config v1.32.18
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.17
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.74.0
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.68.16
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.0
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.2
-	github.com/aws/aws-sdk-go-v2/service/efs v1.41.16
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.0
-	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.0
+	github.com/aws/aws-sdk-go-v2 v1.41.8
+	github.com/aws/aws-sdk-go-v2/config v1.32.19
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.18
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.74.1
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.68.17
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.1
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.3
+	github.com/aws/aws-sdk-go-v2/service/efs v1.41.17
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.2
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.35.1
@@ -26,18 +26,18 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.23 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.23 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.25 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.9 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.0.11 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.30.17 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.17 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.24 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.24 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.1.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.30.18 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.42.2 // indirect
 	github.com/aws/smithy-go v1.26.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

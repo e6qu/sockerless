@@ -239,6 +239,24 @@ resp = requests.put(
 )
 print(resp.json()["name"])
 
+# Create a public DNS Zone
+resp = requests.put(
+    f"{ENDPOINT}/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}"
+    f"/providers/Microsoft.Network/dnsZones/example.com?api-version=2018-05-01",
+    headers=headers,
+    json={"location": "global"},
+)
+print(resp.json()["properties"]["zoneType"])
+
+# Create a public A record
+resp = requests.put(
+    f"{ENDPOINT}/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}"
+    f"/providers/Microsoft.Network/dnsZones/example.com/A/www?api-version=2018-05-01",
+    headers=headers,
+    json={"properties": {"TTL": 300, "ARecords": [{"ipv4Address": "203.0.113.10"}]}},
+)
+print(resp.json()["properties"]["fqdn"])
+
 # Create a Function App
 resp = requests.put(
     f"{ENDPOINT}/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}"

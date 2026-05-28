@@ -235,6 +235,12 @@ func azureResourcesInResourceGroup(sub, rg string) []any {
 	values = appendAzureResource(values, azurePrivateDNSVNetLinks, func(v VNetLink) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})
+	values = appendAzureResource(values, azurePublicDNSZones, func(v PublicDnsZone) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
+	values = appendAzureResource(values, azurePublicDNSRecordSets, func(v PublicRecordSet) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
 	values = appendAzureResource(values, acaEnvironments, func(v ContainerAppEnvironment) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})

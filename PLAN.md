@@ -68,17 +68,17 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Active phase
 
-**Idle on `main`.** No phase in flight after PR #221.
+**Idle on `main`.** No phase in flight after Azure public DNS parity.
 
-BUGS.md: **1181 filed · 1181 fixed · 2 open · 2 false positives.** Only BUG-1075 (live-cloud, deprioritized) + BUG-1104 (audit-cadence meta tracker) remain Open.
+BUGS.md: **1216 filed · 1210 fixed · 8 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1201..1204, and BUG-1206..1207.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
 ## Future phases
 
-### Phase 179 — next community-filed batch
+### Foundational simulator parity
 
-Reactive only — fires when a new community-filed issue arrives. Single-branch / one-PR rule; standard routine in [DO_NEXT.md § Reference for next reopen / new issue](DO_NEXT.md).
+Continue the audit-derived missing-service work in issue order unless a new community issue changes priority: managed data stores (BigQuery, Firestore/Datastore, Cosmos DB), VM/instance lifecycle APIs, managed load balancers, NAT/public-IP parity, and surface-table cleanup. Every added public API slice ships with SDK, CLI, and Terraform-provider coverage in the same PR.
 
 ### Track A — Live-cloud validation (deprioritized; one branch per cell)
 

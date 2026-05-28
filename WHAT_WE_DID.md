@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Azure public DNS parity
+
+The Azure public DNS parity phase closed BUG-1205 / issue #265.
+
+The gap was real: Azure Private DNS covered internal service discovery, but public Azure DNS zones use a separate public ARM surface: `Microsoft.Network/dnsZones` with `api-version=2018-05-01`. The simulator now implements that public slice directly rather than aliasing it to Private DNS. Public zones return Azure-shaped `zoneType: Public`, generated name servers, record counts, and default NS/SOA record sets. Record sets support A, AAAA, CAA, CNAME, MX, NS, PTR, SOA, SRV, and TXT create/get/list/delete routes with the public DNS JSON field casing used by the official SDK.
+
+Coverage uses all three external client surfaces: the official Azure DNS Go SDK (`armdns`) creates zones and A records and exercises the DNS-zone pager; Azure CLI coverage uses `az rest` against the public DNS routes; Terraform coverage adds `azurerm_dns_zone` and `azurerm_dns_a_record` to the Azure simulator apply/destroy harness. Provider metadata and resource-group enumeration now include public DNS resources alongside Private DNS.
+
 ## 2026-05-28 — Stream/event ingestion parity
 
 The stream/event ingestion phase closed BUG-1200 by adding the missing AWS and Azure foundational stream services.

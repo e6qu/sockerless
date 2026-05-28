@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after stream/event ingestion parity. |
+| Active branch | `main` - idle after Azure public DNS parity. |
 | In-flight | None; next implementation pass starts from the remaining managed-data and infrastructure simulator audit gaps. |
-| Last merged | AWS Kinesis and Azure Event Hubs stream/event ingestion parity (2026-05-28). |
+| Last merged | Azure public DNS zones and record sets (2026-05-29). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1216 filed · 1209 fixed · 9 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1201..1207. |
+| Bugs | 1216 filed · 1210 fixed · 8 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1201..1204, BUG-1206..1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| issue #265 | Azure public DNS parity | Closed BUG-1205. The Azure simulator now implements `Microsoft.Network/dnsZones` public DNS zones and record sets for `api-version=2018-05-01`, including default NS/SOA records, A/AAAA/CAA/CNAME/MX/NS/PTR/SOA/SRV/TXT record-set CRUD/list routes, provider metadata, resource-group enumeration, and official SDK/CLI/Terraform coverage. |
 | issues #260/#261 | Azure Storage keys + Entra JWKS | Azure Storage account `listKeys` now emits deterministic per-account 512-bit base64 SharedKeys, and Azure Entra simulator tokens are RS256-signed with the public RSA key published through JWKS. Shims and other downstream data-plane verifiers can validate SharedKey and bearer-authenticated requests without simulator-only public API fields or shared-secret side channels. Service Bus AMQP receiver links with outstanding credit are also drained when a later send enqueues matching messages. |
 | issue #257 | Azure ARM shim endpoint composition | Azure ARM responses now advertise operator-configured, shim-routable data-plane endpoints via `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` while keeping public Azure request/response shapes. Storage, Key Vault, Service Bus/Event Hubs, Event Grid, and metadata suffixes share the configured host projection. The phase also added resource group list/resource enumeration, Storage Account PATCH, Key Vault PATCH/access-policy routes, deleted-vault Get/List/Purge state, fuller provider metadata, and SDK/CLI/Terraform coverage for the azurerm composition path. |
 | stream ingestion | AWS Kinesis + Azure Event Hubs | Closed BUG-1200. AWS Kinesis now supports stream lifecycle, shard listing, record put/read flows, tags, retention, enhanced monitoring, encryption state, shard-count updates, and limits with SDK/CLI/Terraform coverage. Azure Event Hubs now supports ARM namespace/event hub/consumer group/auth-rule lifecycle and Event Hubs AMQP send/receive over the raw AMQP/TLS listener, with SDK/CLI/Terraform coverage. The AWS workload callback host was also corrected so Lambda Runtime API containers reach the host sidecar through `host.docker.internal` under Podman. |

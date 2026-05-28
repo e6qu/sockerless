@@ -15,7 +15,7 @@ This is not a license to add simulator-specific APIs. Any missing row below is a
 | Event routing | EventBridge rules/targets plus buses/policies/archives/replays implemented | Eventarc triggers plus channels/providers/channel connections implemented | Event Grid topics/domains/domain topics/system topics/partner topics/subscriptions implemented | Event routing parity is rounded out across the advanced event-service phase. |
 | Stream/event ingestion | Kinesis implemented | Pub/Sub present for basic event bus flows | Event Hubs implemented | Present for the foundational stream-ingestion flows. |
 | Managed NoSQL/data SaaS | DynamoDB implemented | BigQuery missing; Firestore/Datastore missing | Cosmos DB missing | Real gap. Tracked as BUG-1201 and BUG-1202. |
-| DNS | Route 53 and Cloud Map implemented | Cloud DNS implemented | Private DNS implemented; public DNS missing | Azure public DNS gap tracked as BUG-1205. |
+| DNS | Route 53 and Cloud Map implemented | Cloud DNS implemented | Private DNS and public DNS implemented | Present across all three for foundational DNS/discovery flows. |
 | VPC/network primitives | VPC, subnet, IGW, route table, SG, EIP, NAT, ENI describe implemented | Network, subnetwork, firewall, router/NAT, VPC Access implemented | VNet, subnet, NSG, NAT gateway, route table implemented | Present, but NAT/public-IP parity is uneven. Tracked as BUG-1204. |
 | VM/EC2-like compute | EC2 instance lifecycle missing | Compute Engine instance lifecycle missing | Azure VM lifecycle missing | Real gap. Public APIs should be cloud-compatible; Firecracker can be the local microVM runtime substrate. Tracked as BUG-1207. |
 | Managed load balancers | Missing ELBv2/ELB | Missing Cloud Load Balancing resources | Missing Load Balancer/App Gateway/Front Door/Traffic Manager | Real gap. Tracked as BUG-1203. |
@@ -70,7 +70,7 @@ Foundational slices registered today:
 - Queue/message systems: Service Bus ARM/admin/data plane, REST, AMQP-over-WebSocket, and raw AMQP/TLS.
 - Event routing: Event Grid topics, domains, domain topics, system topics, partner topics, event subscriptions, subscription validation, and custom-topic publish/delivery.
 - Stream ingestion: Event Hubs ARM namespace/event hub/consumer group/auth-rule lifecycle plus AMQP send/receive over raw AMQP/TLS.
-- DNS and discovery: Private DNS.
+- DNS and discovery: Private DNS, public DNS zones and record sets.
 - Networking: Virtual Networks, subnets, Network Security Groups, NAT gateways, route tables.
 - Gateways: APIM.
 - Data stores: Cache for Redis, PostgreSQL Flexible Server.
@@ -82,7 +82,6 @@ Missing foundational slices:
 - Cosmos DB managed NoSQL/table/document data store. BUG-1202.
 - Managed load-balancer services: Azure Load Balancer, Application Gateway, Front Door, Traffic Manager. BUG-1203.
 - Public IP/Public IP Prefix resources and full NAT association/list behavior. BUG-1204.
-- Public Azure DNS zones/record sets. BUG-1205.
 
 ## Next Implementation Phase
 
@@ -91,7 +90,6 @@ Recommended order:
 1. Managed data stores: add BigQuery plus Firestore/Datastore and Cosmos DB. Keep analytics and NoSQL separate if the PR becomes too large.
 2. VM/EC2-like compute substrate design: add public EC2/GCE/Azure VM API slices backed by real local execution. Firecracker is a good candidate for the local microVM runtime, but it stays behind the simulator boundary; callers see only cloud public APIs.
 3. Managed load balancing and public network egress: add ELBv2/ELB, GCP load-balancing resources, Azure Load Balancer/Application Gateway/Front Door/Traffic Manager, and the missing public-IP/address pieces.
-4. Azure public DNS: add Microsoft.Network/dnsZones and record-set public API parity.
-5. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
+4. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
 
 Each added service slice must follow the simulator testing contract: official SDK tests, vendor CLI tests, and Terraform provider tests in the same PR unless the public API is not exposed by one of those client surfaces.

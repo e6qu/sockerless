@@ -3,12 +3,12 @@ module github.com/sockerless/aws-common
 go 1.25.0
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.41.7
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.68.16
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.2
-	github.com/aws/aws-sdk-go-v2/service/efs v1.41.16
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.0
-	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.0
+	github.com/aws/aws-sdk-go-v2 v1.41.8
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.68.17
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.3
+	github.com/aws/aws-sdk-go-v2/service/efs v1.41.17
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.1
+	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.1
 	github.com/rs/zerolog v1.35.1
 	github.com/sockerless/api v0.0.0
 	github.com/sockerless/backend-core v0.0.0
@@ -16,13 +16,13 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.23 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.25 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.9 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.17 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.24 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.24 // indirect
 	github.com/aws/smithy-go v1.26.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

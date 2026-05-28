@@ -42,7 +42,7 @@ var azureProviderResourceTypes = map[string][]string{
 	"Microsoft.Insights":            {"components"},
 	"Microsoft.KeyVault":            {"vaults", "vaults/accessPolicies", "deletedVaults"},
 	"Microsoft.ManagedIdentity":     {"userAssignedIdentities"},
-	"Microsoft.Network":             {"virtualNetworks", "virtualNetworks/subnets", "networkSecurityGroups", "networkSecurityGroups/securityRules", "privateDnsZones"},
+	"Microsoft.Network":             {"virtualNetworks", "virtualNetworks/subnets", "networkSecurityGroups", "networkSecurityGroups/securityRules", "privateDnsZones", "dnsZones", "dnsZones/A", "dnsZones/AAAA", "dnsZones/CAA", "dnsZones/CNAME", "dnsZones/MX", "dnsZones/NS", "dnsZones/PTR", "dnsZones/SOA", "dnsZones/SRV", "dnsZones/TXT"},
 	"Microsoft.OperationalInsights": {"workspaces"},
 	"Microsoft.Resources":           {"resourceGroups", "resources", "providers"},
 	"Microsoft.Storage":             {"storageAccounts", "storageAccounts/blobServices", "storageAccounts/blobServices/containers", "storageAccounts/fileServices", "storageAccounts/fileServices/shares"},

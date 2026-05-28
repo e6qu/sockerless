@@ -101,3 +101,66 @@ func TestPrivateDNS_DeleteZone(t *testing.T) {
 	_, err := cmd.CombinedOutput()
 	assert.Error(t, err, "Expected GET to fail after deletion")
 }
+
+func TestPublicDNS_CreateZoneAndRecordSet(t *testing.T) {
+	zoneURL := armURL("Microsoft.Network", "dnsZones/cli-public.example.com", "2018-05-01")
+	out := runCLI(t, azRest("PUT", zoneURL, `{"location":"global","tags":{"env":"cli"}}`))
+
+	var zone struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Type       string `json:"type"`
+		Location   string `json:"location"`
+		Properties struct {
+			ZoneType           string   `json:"zoneType"`
+			NameServers        []string `json:"nameServers"`
+			NumberOfRecordSets int64    `json:"numberOfRecordSets"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &zone)
+	assert.Equal(t, "cli-public.example.com", zone.Name)
+	assert.Equal(t, "Microsoft.Network/dnsZones", zone.Type)
+	assert.Equal(t, "global", zone.Location)
+	assert.Equal(t, "Public", zone.Properties.ZoneType)
+	require.Len(t, zone.Properties.NameServers, 4)
+	assert.Equal(t, int64(2), zone.Properties.NumberOfRecordSets)
+
+	recordURL := armURL("Microsoft.Network", "dnsZones/cli-public.example.com/A/www", "2018-05-01")
+	out = runCLI(t, azRest("PUT", recordURL,
+		`{"properties":{"TTL":300,"ARecords":[{"ipv4Address":"203.0.113.10"}],"metadata":{"owner":"cli"}}}`))
+
+	var record struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Type       string `json:"type"`
+		Properties struct {
+			TTL      int64  `json:"TTL"`
+			Fqdn     string `json:"fqdn"`
+			ARecords []struct {
+				IPv4Address string `json:"ipv4Address"`
+			} `json:"ARecords"`
+			Metadata map[string]string `json:"metadata"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &record)
+	assert.Equal(t, "www", record.Name)
+	assert.Equal(t, "Microsoft.Network/dnsZones/A", record.Type)
+	assert.Equal(t, int64(300), record.Properties.TTL)
+	assert.Equal(t, "www.cli-public.example.com.", record.Properties.Fqdn)
+	require.Len(t, record.Properties.ARecords, 1)
+	assert.Equal(t, "203.0.113.10", record.Properties.ARecords[0].IPv4Address)
+	assert.Equal(t, "cli", record.Properties.Metadata["owner"])
+
+	out = runCLI(t, azRest("GET", armURL("Microsoft.Network", "dnsZones/cli-public.example.com/all", "2018-05-01"), ""))
+	var records struct {
+		Value []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &records)
+	require.Len(t, records.Value, 3)
+
+	runCLI(t, azRest("DELETE", recordURL, ""))
+	runCLI(t, azRest("DELETE", zoneURL, ""))
+}
