@@ -13,6 +13,7 @@ import (
 // logMu protects the read-modify-write cycle on monitorLogs entries.
 // StateStore is individually thread-safe, but Get+append+Put is not atomic.
 var logMu sync.Mutex
+var azureMonitorWorkspaces sim.Store[Workspace]
 
 // Workspace represents an Azure Log Analytics Workspace.
 type Workspace struct {
@@ -133,6 +134,7 @@ func injectAppTrace(appRoleName, message string) {
 func registerAzureMonitor(srv *sim.Server) {
 	monitorLogs = sim.MakeStore[[]monitorLogRow](srv.DB(), "monitor_logs")
 	workspaces := sim.MakeStore[Workspace](srv.DB(), "monitor_workspaces")
+	azureMonitorWorkspaces = workspaces
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.OperationalInsights"
 

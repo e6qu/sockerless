@@ -370,6 +370,15 @@ resource "azurerm_key_vault" "az_kv" {
   soft_delete_retention_days = 7
 }
 
+resource "azurerm_key_vault_access_policy" "az_kv_policy" {
+  provider     = azurerm
+  key_vault_id = azurerm_key_vault.az_kv.id
+  tenant_id    = "11111111-1111-1111-1111-111111111111"
+  object_id    = "22222222-2222-2222-2222-222222222222"
+
+  secret_permissions = ["Get", "List", "Set", "Delete"]
+}
+
 resource "azurerm_key_vault_secret" "az_kv_secret" {
   provider     = azurerm
   name         = "tf-azrm-secret"
@@ -413,6 +422,10 @@ output "key_vault_id" {
 
 output "key_vault_uri" {
   value = azurestack_key_vault.main.vault_uri
+}
+
+output "azrm_key_vault_access_policy_id" {
+  value = azurerm_key_vault_access_policy.az_kv_policy.id
 }
 
 output "azrm_resource_group_id" {

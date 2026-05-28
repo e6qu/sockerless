@@ -110,6 +110,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmEventGridEndpoint, "/api/events",
 		"azurerm Event Grid topic endpoint must be a publish endpoint; got %s", azrmEventGridEndpoint)
 
+	azrmKVPolicy := outputs.must(t, "azrm_key_vault_access_policy_id")
+	require.Contains(t, strings.ToLower(azrmKVPolicy), "/providers/microsoft.keyvault/vaults/tf-azrm-kv",
+		"azurerm Key Vault access policy id must include vault ARM path; got %s", azrmKVPolicy)
+
 	azrmLAW := outputs.must(t, "azrm_law_id")
 	require.Contains(t, azrmLAW, "/providers/Microsoft.OperationalInsights/workspaces/tf-azrm-law",
 		"azurerm Log Analytics workspace id must include canonical ARM path; got %s", azrmLAW)

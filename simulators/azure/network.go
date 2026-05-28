@@ -170,10 +170,21 @@ type RouteEntryProps struct {
 	NextHopIPAddress string `json:"nextHopIpAddress,omitempty"`
 }
 
+var (
+	azureVnets       sim.Store[VirtualNetwork]
+	azureSubnets     sim.Store[Subnet]
+	azureNSGs        sim.Store[NetworkSecurityGroup]
+	azureNatGateways sim.Store[NatGateway]
+	azureRouteTables sim.Store[RouteTable]
+)
+
 func registerNetwork(srv *sim.Server) {
 	vnets := sim.MakeStore[VirtualNetwork](srv.DB(), "network_vnets")
 	subnets := sim.MakeStore[Subnet](srv.DB(), "network_subnets")
 	nsgs := sim.MakeStore[NetworkSecurityGroup](srv.DB(), "network_nsgs")
+	azureVnets = vnets
+	azureSubnets = subnets
+	azureNSGs = nsgs
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 
@@ -569,6 +580,8 @@ func registerNetwork(srv *sim.Server) {
 	// 404. Field set covers what the SDK round-trips on Get/List.
 	natGateways := sim.MakeStore[NatGateway](srv.DB(), "nat_gateways")
 	routeTables := sim.MakeStore[RouteTable](srv.DB(), "route_tables")
+	azureNatGateways = natGateways
+	azureRouteTables = routeTables
 
 	srv.HandleFunc("PUT "+armBase+"/natGateways/{name}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")

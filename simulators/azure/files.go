@@ -157,26 +157,6 @@ func registerAzureFiles(srv *sim.Server) {
 			sku = &StorageSku{Name: "Standard_LRS", Tier: "Standard"}
 		}
 
-		// Derive endpoints that use subdomain format:
-		//   https://{accountName}.blob.localhost:4568/
-		// The azurerm provider parses these URLs to extract the account
-		// name (checking the domain suffix against suffixes.storage from
-		// the metadata endpoint). Data-plane requests are routed to the
-		// simulator via dnsmasq (resolving *.localhost → 127.0.0.1) and
-		// handled by the storage data-plane middleware.
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		host := r.Host
-		// Separate hostname and port
-		hostname := host
-		portSuffix := ""
-		if i := strings.LastIndex(hostname, ":"); i >= 0 {
-			portSuffix = hostname[i:]
-			hostname = hostname[:i]
-		}
-
 		acct := StorageAccount{
 			ID:       resourceID,
 			Name:     name,
@@ -187,21 +167,52 @@ func registerAzureFiles(srv *sim.Server) {
 			Tags:     req.Tags,
 			Properties: StorageAccountProperties{
 				ProvisioningState: "Succeeded",
-				PrimaryEndpoints: &StoragePrimaryEndpoints{
-					File:  fmt.Sprintf("%s://%s.file.%s%s/", scheme, name, hostname, portSuffix),
-					Blob:  fmt.Sprintf("%s://%s.blob.%s%s/", scheme, name, hostname, portSuffix),
-					Table: fmt.Sprintf("%s://%s.table.%s%s/", scheme, name, hostname, portSuffix),
-					Queue: fmt.Sprintf("%s://%s.queue.%s%s/", scheme, name, hostname, portSuffix),
-					Web:   fmt.Sprintf("%s://%s.web.%s%s/", scheme, name, hostname, portSuffix),
-					Dfs:   fmt.Sprintf("%s://%s.dfs.%s%s/", scheme, name, hostname, portSuffix),
-				},
-				CreationTime: time.Now().UTC().Format(time.RFC3339),
+				CreationTime:      time.Now().UTC().Format(time.RFC3339),
 			},
 		}
+		applyStorageAccountEndpoints(r, &acct)
 
 		storageAccounts.Put(resourceID, acct)
 
 		// go-azure-sdk expects 200 for create (it treats this as a sync LRO)
+		sim.WriteJSON(w, http.StatusOK, acct)
+	})
+
+	// PATCH - Update storage account
+	srv.HandleFunc("PATCH "+armBase+"/storageAccounts/{accountName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "accountName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, name)
+
+		var req struct {
+			Sku        *StorageSku        `json:"sku,omitempty"`
+			Kind       string             `json:"kind,omitempty"`
+			Tags       *map[string]string `json:"tags,omitempty"`
+			Properties map[string]any     `json:"properties,omitempty"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		acct, ok := storageAccounts.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		if req.Sku != nil {
+			acct.Sku = req.Sku
+		}
+		if req.Kind != "" {
+			acct.Kind = req.Kind
+		}
+		if req.Tags != nil {
+			acct.Tags = *req.Tags
+		}
+		acct.Properties.ProvisioningState = "Succeeded"
+		applyStorageAccountEndpoints(r, &acct)
+		storageAccounts.Put(resourceID, acct)
 		sim.WriteJSON(w, http.StatusOK, acct)
 	})
 
@@ -381,6 +392,9 @@ func registerAzureFiles(srv *sim.Server) {
 	// GET - List storage accounts at subscription level (azurerm provider checks name uniqueness)
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Storage/storageAccounts", func(w http.ResponseWriter, r *http.Request) {
 		all := storageAccounts.Filter(func(sa StorageAccount) bool { return true })
+		for i := range all {
+			applyStorageAccountEndpoints(r, &all[i])
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"value": all,
 		})
@@ -550,6 +564,17 @@ func registerAzureFiles(srv *sim.Server) {
 
 	// Keep fileData available for potential future file data-plane operations
 	_ = fileData
+}
+
+func applyStorageAccountEndpoints(r *http.Request, acct *StorageAccount) {
+	acct.Properties.PrimaryEndpoints = &StoragePrimaryEndpoints{
+		File:  azureStorageEndpointURL(r, acct.Name, "file"),
+		Blob:  azureStorageEndpointURL(r, acct.Name, "blob"),
+		Table: azureStorageEndpointURL(r, acct.Name, "table"),
+		Queue: azureStorageEndpointURL(r, acct.Name, "queue"),
+		Web:   azureStorageEndpointURL(r, acct.Name, "web"),
+		Dfs:   azureStorageEndpointURL(r, acct.Name, "dfs"),
+	}
 }
 
 // handleStorageDataPlane returns mock XML responses for Azure Storage data plane

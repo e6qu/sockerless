@@ -34,6 +34,9 @@ func main() {
 	if port := os.Getenv("SIM_AZURE_PORT"); port != "" {
 		cfg.ListenAddr = ":" + port
 	}
+	if _, err := azureAdvertisedEndpointConfigFromEnv(); err != nil {
+		log.Fatal(err)
+	}
 
 	// Stash listen addr so cloud-product translators can wire
 	// IDENTITY_ENDPOINT + IMDS env onto workload containers.
