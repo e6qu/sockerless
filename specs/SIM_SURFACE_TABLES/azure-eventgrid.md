@@ -51,11 +51,8 @@ Surface registered in `simulators/azure/eventgrid.go`. Rows below cover the Micr
 | `DELETE {eventGridScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` / `DELETE {systemTopicScope}/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridDeleteEventSubscription` | ✓ cleanup via scope delete | ✓ cleanup via scope delete | n/a | Deletes event subscriptions. |
 | `POST /api/events` on topic endpoint | ✓ `eventgrid.go::publishEventGridTopic` | ✓ direct returned endpoint | ✓ direct returned endpoint | n/a | Publishes Event Grid events and fans out to webhook subscriptions. |
 
-## Open subtasks staged forward
-
-- BUG-1211 / issue #247 tracks the broader Azure host-addressed data-plane DNS assumption for services that still return `*.localhost` data-plane hosts.
-
 ## Closed bugs
 
 - BUG-1199 — foundational Azure Event Grid slice added with SDK, CLI, and Terraform coverage.
 - BUG-1214 / issue #250 — domains, domain topics, system topics, partner topics, and scoped event subscriptions added. Current SDK/provider exposure was checked before marking SDK/Terraform as not applicable for partner-topic direct resources.
+- BUG-1211 / issue #247 — Azure simulator DNS listener added so host-addressed local data-plane endpoints can resolve through configured local zones without rewriting URLs.

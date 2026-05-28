@@ -92,7 +92,6 @@ Recommended order:
 2. Stream/event ingestion: add AWS Kinesis and Azure Event Hubs as one cross-cloud PR if scope allows.
 3. Managed data stores: add BigQuery plus Firestore/Datastore and Cosmos DB in a separate PR. Keep analytics and NoSQL separate if the PR becomes too large.
 4. Managed load balancing and public network egress: add ELBv2/ELB, GCP load-balancing resources, Azure Load Balancer/Application Gateway/Front Door/Traffic Manager, and the missing public-IP/address pieces.
-5. Azure local client infrastructure: resolve BUG-1211/#247 for host-addressed data-plane DNS.
-6. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
+5. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
 
 Each added service slice must follow the simulator testing contract: official SDK tests, vendor CLI tests, and Terraform provider tests in the same PR unless the public API is not exposed by one of those client surfaces.

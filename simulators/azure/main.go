@@ -103,6 +103,11 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if addr, enabled, err := startAzureDNSFromEnv(ctx); err != nil {
+		log.Fatal(err)
+	} else if enabled {
+		log.Printf("Azure simulator DNS listening on %s", addr)
+	}
 	if amqpAddr := os.Getenv("SIM_SERVICEBUS_AMQP_LISTEN_ADDR"); amqpAddr != "" {
 		certFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_CERT", cfg.TLSCert)
 		keyFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_KEY", cfg.TLSKey)

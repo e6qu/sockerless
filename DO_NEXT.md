@@ -12,11 +12,13 @@ Event routing is now present across the three sims for foundational flows: AWS E
 
 The advanced/sibling event-service parity phase closed BUG-1213/#249, BUG-1214/#250, and BUG-1215/#251. AWS EventBridge now has event-bus lifecycle, bus policy permissions, archives, and replays. Azure Event Grid now has domains, domain topics, system topics, partner topics, and event subscriptions on those scopes. GCP Eventarc now has channels, provider discovery, and channel connections. Coverage uses the official SDKs where the current modules expose clients, vendor CLIs, and Terraform provider resources where the providers expose them; the GCP provider schema was checked and does not expose an Eventarc channel-connection resource.
 
-The remaining audit gaps are AWS Kinesis, Azure Event Hubs, GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, Azure public DNS, and uneven public-IP/NAT parity. BUG-1200..1207 track those gaps. BUG-1211/#247 still tracks the Azure host-addressed local DNS portability issue.
+The Azure host-addressed local DNS portability issue is now closed. The Azure simulator has an opt-in DNS listener for local simulator zones, so SDK/CLI/Terraform clients can keep Azure-shaped host-addressed data-plane endpoints and resolve them through normal DNS instead of URL rewrites or Host-header injection.
+
+The remaining audit gaps are AWS Kinesis, Azure Event Hubs, GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, Azure public DNS, and uneven public-IP/NAT parity. BUG-1200..1207 track those gaps.
 
 ## Stage plan
 
-Current phase: idle after advanced event-service parity. The next implementation pass should move to stream/event ingestion: AWS Kinesis + Azure Event Hubs in one PR if scope allows, with SDK/CLI/Terraform coverage for every added public operation. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery.
+Current phase: idle after Azure host-addressed data-plane DNS portability. The next implementation pass should move to stream/event ingestion: AWS Kinesis + Azure Event Hubs in one PR if scope allows, with SDK/CLI/Terraform coverage for every added public operation. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery.
 
 Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
 

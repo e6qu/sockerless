@@ -57,6 +57,60 @@ AMQP listener. The listener also accepts the shared `SIM_TLS_CERT` /
 `SIM_TLS_KEY` values when the Service Bus-specific cert variables are
 unset.
 
+### Local DNS for host-addressed data planes
+
+Azure data planes are host-addressed. Blob Storage uses hosts like
+`<account>.blob.core.windows.net`, Service Bus uses
+`<namespace>.servicebus.windows.net`, and Event Grid topics/domains return
+`*.eventgrid.azure.net` publish endpoints. The simulator preserves that
+shape for local custom-cloud endpoints, so local clients need DNS that can
+resolve the simulator's host-style names.
+
+The Azure simulator can serve those names directly:
+
+```bash
+SIM_LISTEN_ADDR=:4568 \
+SIM_AZURE_DNS_LISTEN_ADDR=127.0.0.1:53 \
+SIM_AZURE_DNS_ZONES=sockerless.azure.local,localhost \
+SIM_AZURE_DNS_TARGET_IPV4=127.0.0.1 \
+./simulator-azure
+```
+
+`SIM_AZURE_DNS_LISTEN_ADDR` enables the DNS listener. It serves DNS over
+UDP and TCP and fails startup if it cannot bind. `SIM_AZURE_DNS_ZONES`
+is a comma-separated list of local zones to answer. `SIM_AZURE_DNS_TTL`
+defaults to `60`. `SIM_AZURE_DNS_TARGET_IPV4` defaults to `127.0.0.1`;
+`SIM_AZURE_DNS_TARGET_IPV6` is optional and is only answered when set.
+
+For macOS, configure a resolver for the local simulator zone after the
+DNS listener is running on port 53:
+
+```bash
+sudo mkdir -p /etc/resolver
+printf 'nameserver 127.0.0.1\n' | sudo tee /etc/resolver/sockerless.azure.local
+```
+
+For systemd-resolved Linux hosts, route the simulator zone to the local
+DNS listener on the active link:
+
+```bash
+sudo resolvectl dns "$(ip route show default | awk '{print $5; exit}')" 127.0.0.1
+sudo resolvectl domain "$(ip route show default | awk '{print $5; exit}')" '~sockerless.azure.local'
+```
+
+Then use the local custom-cloud host as the ARM endpoint:
+
+```bash
+az rest --method GET \
+  --url "http://sockerless.azure.local:4568/subscriptions/00000000-0000-0000-0000-000000000001?api-version=2021-04-01"
+```
+
+ARM-returned data-plane endpoints such as
+`http://myacct.blob.sockerless.azure.local:4568/`,
+`sb://myns.servicebus.sockerless.azure.local:4568/`, and
+`http://mytopic.eventgrid.sockerless.azure.local:4568/api/events` keep the
+same host-addressed contract and resolve through the simulator DNS server.
+
 ```bash
 # 2. Point Azure clients at it.
 # For az CLI: use az rest with explicit URL.
@@ -152,7 +206,7 @@ These are the load-bearing wire-quirks the sim implements to satisfy the real ad
 - **Case-insensitive paths** — `AzurePathNormalizationMiddleware` normalises known segments (e.g., `/resourcegroups/` → `/resourceGroups/`).
 - **Auth outside mux** — OAuth2 token endpoints are handled as outer middleware to avoid conflicts with ACR's `/v2/` catch-all.
 - **TLS for Terraform** — Azure Terraform tests use self-signed certs because the `azurestack` provider hardcodes `https://`. On macOS, direct `go test` delegates into Linux Docker so the providers validate the generated CA through `SSL_CERT_FILE`.
-- **Storage subdomain routing** — Data-plane requests matched by Host header (`{account}.{service}.localhost`); pair with dnsmasq for real lookups.
+- **Host-addressed data-plane DNS** — Data-plane requests are matched by Host header (`{account}.{service}.<zone>`). The optional simulator DNS listener serves the local zones over UDP/TCP so real clients can use returned Azure-shaped hosts directly.
 - **Sync creates return 200** — `go-azure-sdk` treats 200 as immediate completion for `BeginCreate` LRO; the sim returns 200 instead of 201 for synchronous creates.
 
 ## Building
