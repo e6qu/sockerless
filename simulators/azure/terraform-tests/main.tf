@@ -154,6 +154,49 @@ resource "azurerm_private_dns_zone" "az_pdns" {
   resource_group_name = azurerm_resource_group.az_rg.name
 }
 
+resource "azurerm_eventhub_namespace" "az_eh_ns" {
+  provider            = azurerm
+  name                = "tfazrmehns"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  sku                 = "Standard"
+  capacity            = 1
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "azurerm_eventhub" "az_eh" {
+  provider            = azurerm
+  name                = "tfazrmeventhub"
+  namespace_name      = azurerm_eventhub_namespace.az_eh_ns.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+  partition_count     = 1
+  message_retention   = 1
+}
+
+resource "azurerm_eventhub_consumer_group" "az_eh_cg" {
+  provider            = azurerm
+  name                = "tfazrmehcg"
+  namespace_name      = azurerm_eventhub_namespace.az_eh_ns.name
+  eventhub_name       = azurerm_eventhub.az_eh.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+  user_metadata       = "terraform"
+}
+
+resource "azurerm_eventhub_authorization_rule" "az_eh_rule" {
+  provider            = azurerm
+  name                = "tfazrmehrule"
+  namespace_name      = azurerm_eventhub_namespace.az_eh_ns.name
+  eventhub_name       = azurerm_eventhub.az_eh.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+
+  listen = true
+  send   = true
+  manage = false
+}
+
 resource "azurerm_eventgrid_topic" "az_eg_topic" {
   provider            = azurerm
   name                = "tf-azrm-eg-topic"

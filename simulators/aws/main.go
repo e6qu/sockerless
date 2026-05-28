@@ -68,6 +68,7 @@ func main() {
 	registerACM(awsRouter, srv)
 	registerWAFv2(awsRouter, srv)
 	registerEventBridge(awsRouter, srv)
+	registerKinesis(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()

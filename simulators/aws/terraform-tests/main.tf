@@ -35,10 +35,25 @@ provider "aws" {
     s3               = var.endpoint
     dynamodb         = var.endpoint
     events           = var.endpoint
+    kinesis          = var.endpoint
     kms              = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
     ssm              = var.endpoint
+  }
+}
+
+resource "aws_kinesis_stream" "tf_stream" {
+  name             = "tf-kinesis-stream"
+  shard_count      = 1
+  retention_period = 24
+
+  stream_mode_details {
+    stream_mode = "PROVISIONED"
+  }
+
+  tags = {
+    env = "terraform"
   }
 }
 
