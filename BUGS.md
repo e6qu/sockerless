@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1216 filed · 1208 fixed · 10 open · 2 false positives.**
+**1216 filed · 1209 fixed · 9 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -12,7 +12,6 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. The preflight/runbook work is documented, but the cells must not be marked green without a real run against authenticated cloud projects/subscriptions. |
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
-| 1200 | P1 | foundational stream/event ingestion services | 9 (missing cloud slice) | AWS Kinesis and Azure Event Hubs are absent. GCP Pub/Sub covers the basic message/event bus in the GCP sim, but the AWS/Azure stream-ingestion equivalents remain missing and should be added when implementing event-system parity. |
 | 1201 | P0 | GCP simulator managed analytics data plane | 9 (missing cloud slice) | BigQuery is absent from the GCP simulator. Foundational dataset/table/job/query APIs used by official clients and Terraform must be implemented for the basic managed analytics data-store equivalent. |
 | 1202 | P0 | cross-cloud managed NoSQL data-store parity | 9 (missing cloud slice) | AWS DynamoDB exists, but the GCP and Azure simulator equivalents are missing: Firestore/Datastore for GCP document/key-value flows and Cosmos DB for Azure NoSQL/table-style flows. Implement the public API slices rather than documenting the limitation. |
 | 1203 | P0 | cross-cloud managed load balancers | 9 (missing cloud slice) | Managed load-balancer services are missing as first-class simulator slices: AWS ELBv2/ELB, GCP Cloud Load Balancing resources, and Azure Load Balancer/Application Gateway/Front Door/Traffic Manager. API Gateway/APIM/CloudFront coverage is not a substitute for L4/L7 managed load-balancer APIs. |
@@ -22,6 +21,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1200. The AWS simulator now has a real Kinesis JSON-protocol slice for stream lifecycle, shard listing, records, shard iterators, tags, retention, enhanced monitoring, encryption state, shard-count update, and limits. The Azure simulator now has Event Hubs ARM namespace/event hub/consumer group/auth-rule lifecycle plus Event Hubs AMQP send/receive over the existing raw AMQP/TLS listener, including SDK management reads for event hub and partition metadata. Coverage uses the official AWS and Azure SDKs, vendor CLI flows, and Terraform provider resources for the new public API surfaces. The phase also fixed the AWS workload callback host selection that made Lambda Runtime API containers use the Podman network gateway instead of the host callback hostname.
 
 This phase closed BUG-1211 / issue #247. The Azure simulator now has an opt-in DNS listener for host-addressed local Azure data-plane names, so real local clients can resolve simulator endpoints such as `{account}.blob.<zone>`, `{namespace}.servicebus.<zone>`, and `{topic}.eventgrid.<zone>` without rewriting URLs or injecting private Host headers. The listener serves real DNS over UDP and TCP, answers configured local zones to the simulator target IP, fails loudly on invalid configuration or bind failures, and is documented for macOS/Linux resolver setup while preserving Azure's host-addressed public API shape.
 

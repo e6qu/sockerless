@@ -88,6 +88,7 @@ func main() {
 	registerPGFlexibleServer(srv)
 	registerServiceBus(srv)
 	registerServiceBusDataPlane(srv)
+	registerEventHubs(srv)
 	registerEventGrid(srv)
 	registerAPIM(srv)
 	registerAuthorization(srv)

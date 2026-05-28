@@ -69,6 +69,7 @@ type sbAMQPLink struct {
 	clientRole   bool
 	settledSend  bool
 	credit       uint32
+	readIndex    int
 }
 
 type amqpFrame struct {
@@ -251,9 +252,9 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 	if !clientRole {
 		address = targetAddress
 	} else {
-		address = targetAddress
+		address = sourceAddress
 		if address == "" {
-			address = sourceAddress
+			address = targetAddress
 		}
 	}
 	if address == "" || address == "test" {
@@ -336,6 +337,16 @@ func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error 
 		}
 		return c.respondRPC(frame.channel, &msg)
 	}
+	if ehAMQPIsSenderAddress(c.namespace, link.address) {
+		ehAMQPEnqueue(c.namespace, link.address, &msg)
+		return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescDisposition, []any{
+			true,
+			deliveryID,
+			nil,
+			true,
+			amqpDescribed{code: amqpDescAccepted, value: []any{}},
+		}))
+	}
 	msgID := generateUUID()
 	if msg.Properties != nil {
 		if id, ok := msg.Properties.MessageID.(string); ok && id != "" {
@@ -399,6 +410,13 @@ func (c *sbAMQPConn) respondRPC(channel uint16, req *amqp.Message) error {
 	if link == nil {
 		return nil
 	}
+	if resp, ok := ehAMQPHandleRPC(c.namespace, req); ok {
+		body, err := resp.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		return c.writeTransfer(channel, link, body, true)
+	}
 	resp := &amqp.Message{
 		Properties: &amqp.MessageProperties{CorrelationID: corr},
 		ApplicationProperties: map[string]any{
@@ -429,6 +447,18 @@ func (c *sbAMQPConn) handleFlow(ctx context.Context, frame amqpFrame) error {
 	}
 	link.credit += credit
 	for link.credit > 0 {
+		if ehAMQPIsReceiverAddress(c.namespace, link.address) {
+			msg, ok := ehAMQPNextEvent(c.namespace, link.address, link.readIndex)
+			if !ok {
+				return nil
+			}
+			link.readIndex++
+			link.credit--
+			if err := c.writeTransfer(channelOrDefault(frame.channel), link, msg, link.settledSend); err != nil {
+				return err
+			}
+			continue
+		}
 		msg, ok := c.popMessage(link.address)
 		if !ok {
 			return nil
@@ -902,6 +932,12 @@ func encodeAMQPValue(v any) []byte {
 		return append([]byte{0x00, 0x53, byte(t.code)}, encodeAMQPValue(t.value)...)
 	case []any:
 		return encodeList(t)
+	case []string:
+		values := make([]any, 0, len(t))
+		for _, v := range t {
+			values = append(values, v)
+		}
+		return encodeList(values)
 	case map[string]any:
 		m := map[any]any{}
 		for k, v := range t {

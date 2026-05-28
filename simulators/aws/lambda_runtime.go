@@ -240,8 +240,8 @@ func runtimeAPIExtraHosts() []string {
 // Lambda error JSON even when the container itself exits 0.
 func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool, int) {
 	if fn.Code == nil || fn.Code.ImageUri == "" {
-		// Zip-package path: no container, no Runtime API — return the
-		// synthetic "{}" that control-plane-only tests expect plus
+		// Zip-package path: no container, no Runtime API. Return the
+		// empty JSON object that control-plane-only tests expect plus
 		// inject the standard log stream via the existing helper.
 		injectLambdaLogs(fn.FunctionName)
 		return []byte("{}"), false, 0
@@ -328,7 +328,7 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 		Name:       fmt.Sprintf("sockerless-sim-aws-lambda-%s", requestID[:12]),
 		Labels:     map[string]string{"sockerless-sim-lambda": requestID},
 		ExtraHosts: runtimeAPIExtraHosts(),
-		Sandbox:    sim.SandboxLambda, // BUG-1077: real Lambda restrictions.
+		Sandbox:    sim.SandboxLambda,
 	}, collectSink)
 	if err != nil {
 		endMs := time.Now().UnixMilli()

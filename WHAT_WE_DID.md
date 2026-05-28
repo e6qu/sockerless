@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-28 — Stream/event ingestion parity
+
+The stream/event ingestion phase closed BUG-1200 by adding the missing AWS and Azure foundational stream services.
+
+AWS now implements Kinesis through the public JSON protocol: stream create/delete/describe/list, shard listing, `PutRecord`, `PutRecords`, shard iterators, `GetRecords`, stream tags, retention-period changes, enhanced monitoring, encryption state, shard-count update, and limits. Records are stored per shard, sequence numbers advance monotonically, partition keys hash to shards, and reads follow Kinesis shard-iterator semantics rather than returning a canned response.
+
+Azure now implements Event Hubs through both public surfaces needed by real clients. The ARM slice covers namespace, event hub, consumer group, and authorization-rule lifecycle, including `listKeys`, `regenerateKeys`, namespace defaults, and `networkRuleSets/default` reads used by azurerm. The data plane extends the existing raw AMQP/TLS listener so the official Event Hubs SDK can send batches and receive events through Event Hubs link addresses and management reads for event hub and partition metadata.
+
+Verification uses the official AWS SDK, AWS CLI, and Terraform Kinesis resource; the official Azure Event Hubs management/data-plane SDKs, Azure CLI/`az rest`, and azurerm Event Hubs resources. While running the full AWS suites, the Lambda Runtime API tests exposed a real local callback bug under Podman: the simulator injected the Podman network gateway as the host callback address, but the per-invocation Runtime API listener runs in the host process. AWS workload callbacks now consistently use `host.docker.internal`, which Podman resolves to the host callback address and Linux Docker maps through `host-gateway`.
+
 ## 2026-05-28 — Azure data-plane DNS portability
 
 The Azure data-plane DNS portability phase closed BUG-1211 / issue #247.

@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after Azure data-plane DNS portability. |
-| In-flight | None; next implementation pass starts from stream/event ingestion: AWS Kinesis and Azure Event Hubs, then the remaining foundational simulator audit gaps. |
-| Last merged | Azure host-addressed data-plane DNS portability for local simulator clients (2026-05-28). |
+| Active branch | `main` - idle after stream/event ingestion parity. |
+| In-flight | None; next implementation pass starts from the remaining managed-data and infrastructure simulator audit gaps. |
+| Last merged | AWS Kinesis and Azure Event Hubs stream/event ingestion parity (2026-05-28). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1216 filed · 1208 fixed · 10 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1200..1207. |
+| Bugs | 1216 filed · 1209 fixed · 9 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1201..1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| stream ingestion | AWS Kinesis + Azure Event Hubs | Closed BUG-1200. AWS Kinesis now supports stream lifecycle, shard listing, record put/read flows, tags, retention, enhanced monitoring, encryption state, shard-count updates, and limits with SDK/CLI/Terraform coverage. Azure Event Hubs now supports ARM namespace/event hub/consumer group/auth-rule lifecycle and Event Hubs AMQP send/receive over the raw AMQP/TLS listener, with SDK/CLI/Terraform coverage. The AWS workload callback host was also corrected so Lambda Runtime API containers reach the host sidecar through `host.docker.internal` under Podman. |
 | #256 | Azure data-plane DNS portability | Closed BUG-1211/#247. The Azure simulator now has an opt-in DNS listener that serves configured local zones over UDP and TCP for host-addressed simulator endpoints such as Blob Storage, Service Bus, Event Grid, and Key Vault. Real local clients can keep Azure-shaped host URLs and configure their resolver to the simulator DNS listener instead of rewriting URLs or injecting private Host headers. |
 | #255 | advanced event-service parity | Closed BUG-1213/#249, BUG-1214/#250, and BUG-1215/#251. AWS EventBridge now supports event-bus lifecycle, bus policy permissions, archives, and replays with SDK/CLI/Terraform coverage. Azure Event Grid now supports domains, domain topics, system topics, partner topics, and event subscriptions on those scopes, with SDK coverage for current module-exposed clients, CLI coverage for partner-topic routes, and Terraform coverage for provider-exposed resources. GCP Eventarc now supports channels, provider discovery, and channel connections; Terraform coverage uses `google_eventarc_channel`, and provider-schema inspection confirmed no `google_eventarc_channel_connection` resource in current `hashicorp/google` or `hashicorp/google-beta`. |
 | #254 | simulator Docker test harness | Closed BUG-1212/#248 and BUG-1216/#253 by adding one shared Linux Docker test image with Go, Terraform, AWS CLI, gcloud, Azure CLI, Docker CLI, and Make; wiring top-level and per-cloud `make docker-test` targets to run the existing SDK/CLI/Terraform suites from the repository root; and delegating Azure Terraform `go test` on macOS into that Linux image so the real Terraform providers can trust the generated simulator CA via `SSL_CERT_FILE`. |
