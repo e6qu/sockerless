@@ -113,3 +113,134 @@ func TestEventGrid_TopicSubscriptionPublishSDK(t *testing.T) {
 		t.Fatal("timed out waiting for Event Grid event delivery")
 	}
 }
+
+func TestEventGrid_DomainAndSystemTopicSDK(t *testing.T) {
+	rg := "sdk-eventgrid-advanced-rg"
+	ensureRG(t, rg)
+
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(hook.Close)
+
+	cred := &fakeCredential{}
+	domains, err := armeventgrid.NewDomainsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+	domainTopics, err := armeventgrid.NewDomainTopicsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+	systemTopics, err := armeventgrid.NewSystemTopicsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+	systemSubs, err := armeventgrid.NewSystemTopicEventSubscriptionsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	domainPoller, err := domains.BeginCreateOrUpdate(ctx, rg, "sdk-domain", armeventgrid.Domain{
+		Location: to.Ptr("eastus"),
+		Tags: map[string]*string{
+			"env": to.Ptr("test"),
+		},
+		Properties: &armeventgrid.DomainProperties{
+			PublicNetworkAccess: to.Ptr(armeventgrid.PublicNetworkAccessEnabled),
+		},
+	}, nil)
+	require.NoError(t, err)
+	domainResp, err := domainPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, domainResp.Properties)
+	require.NotNil(t, domainResp.Properties.Endpoint)
+	assert.Contains(t, *domainResp.Properties.Endpoint, "/api/events")
+	t.Cleanup(func() {
+		poller, err := domains.BeginDelete(ctx, rg, "sdk-domain", nil)
+		if err == nil {
+			_, _ = poller.PollUntilDone(ctx, nil)
+		}
+	})
+
+	keysResp, err := domains.ListSharedAccessKeys(ctx, rg, "sdk-domain", nil)
+	require.NoError(t, err)
+	require.NotNil(t, keysResp.Key1)
+	require.NotNil(t, keysResp.Key2)
+
+	domainGot, err := domains.Get(ctx, rg, "sdk-domain", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-domain", *domainGot.Name)
+
+	domainPager := domains.NewListByResourceGroupPager(rg, nil)
+	require.True(t, domainPager.More())
+	domainPage, err := domainPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, domainPage.Value)
+
+	domainTopicPoller, err := domainTopics.BeginCreateOrUpdate(ctx, rg, "sdk-domain", "sdk-domain-topic", nil)
+	require.NoError(t, err)
+	domainTopicResp, err := domainTopicPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-domain-topic", *domainTopicResp.Name)
+	t.Cleanup(func() {
+		poller, err := domainTopics.BeginDelete(ctx, rg, "sdk-domain", "sdk-domain-topic", nil)
+		if err == nil {
+			_, _ = poller.PollUntilDone(ctx, nil)
+		}
+	})
+
+	domainTopicGot, err := domainTopics.Get(ctx, rg, "sdk-domain", "sdk-domain-topic", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-domain-topic", *domainTopicGot.Name)
+	domainTopicPager := domainTopics.NewListByDomainPager(rg, "sdk-domain", nil)
+	require.True(t, domainTopicPager.More())
+	domainTopicPage, err := domainTopicPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, domainTopicPage.Value, 1)
+
+	systemTopicPoller, err := systemTopics.BeginCreateOrUpdate(ctx, rg, "sdk-system-topic", armeventgrid.SystemTopic{
+		Location: to.Ptr("eastus"),
+		Properties: &armeventgrid.SystemTopicProperties{
+			Source:    to.Ptr("/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Storage/storageAccounts/sockstorage"),
+			TopicType: to.Ptr("Microsoft.Storage.StorageAccounts"),
+		},
+	}, nil)
+	require.NoError(t, err)
+	systemTopicResp, err := systemTopicPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, systemTopicResp.Properties)
+	assert.Equal(t, "Microsoft.Storage.StorageAccounts", *systemTopicResp.Properties.TopicType)
+	t.Cleanup(func() {
+		poller, err := systemTopics.BeginDelete(ctx, rg, "sdk-system-topic", nil)
+		if err == nil {
+			_, _ = poller.PollUntilDone(ctx, nil)
+		}
+	})
+
+	systemTopicGot, err := systemTopics.Get(ctx, rg, "sdk-system-topic", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-system-topic", *systemTopicGot.Name)
+	systemTopicPager := systemTopics.NewListByResourceGroupPager(rg, nil)
+	require.True(t, systemTopicPager.More())
+	systemTopicPage, err := systemTopicPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, systemTopicPage.Value, 1)
+
+	subPoller, err := systemSubs.BeginCreateOrUpdate(ctx, rg, "sdk-system-topic", "sdk-system-sub", armeventgrid.EventSubscription{
+		Properties: &armeventgrid.EventSubscriptionProperties{
+			Destination: &armeventgrid.WebHookEventSubscriptionDestination{
+				EndpointType: to.Ptr(armeventgrid.EndpointTypeWebHook),
+				Properties: &armeventgrid.WebHookEventSubscriptionDestinationProperties{
+					EndpointURL: to.Ptr(hook.URL),
+				},
+			},
+			EventDeliverySchema: to.Ptr(armeventgrid.EventDeliverySchemaEventGridSchema),
+		},
+	}, nil)
+	require.NoError(t, err)
+	systemSubResp, err := subPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-system-sub", *systemSubResp.Name)
+
+	systemSubGot, err := systemSubs.Get(ctx, rg, "sdk-system-topic", "sdk-system-sub", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-system-sub", *systemSubGot.Name)
+	systemSubPager := systemSubs.NewListBySystemTopicPager(rg, "sdk-system-topic", nil)
+	require.True(t, systemSubPager.More())
+	systemSubPage, err := systemSubPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, systemSubPage.Value, 1)
+}

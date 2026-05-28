@@ -165,6 +165,33 @@ resource "azurerm_eventgrid_topic" "az_eg_topic" {
   }
 }
 
+resource "azurerm_eventgrid_domain" "az_eg_domain" {
+  provider            = azurerm
+  name                = "tf-azrm-eg-domain"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  tags = {
+    env = "test"
+  }
+}
+
+resource "azurerm_eventgrid_domain_topic" "az_eg_domain_topic" {
+  provider            = azurerm
+  name                = "tf-azrm-eg-domain-topic"
+  domain_name         = azurerm_eventgrid_domain.az_eg_domain.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+}
+
+resource "azurerm_eventgrid_system_topic" "az_eg_system_topic" {
+  provider               = azurerm
+  name                   = "tf-azrm-eg-system-topic"
+  resource_group_name    = azurerm_resource_group.az_rg.name
+  location               = azurerm_resource_group.az_rg.location
+  source_arm_resource_id = azurestack_storage_account.main.id
+  topic_type             = "Microsoft.Storage.StorageAccounts"
+}
+
 # Log Analytics workspace — Container App Environment requires one for
 # log ingestion. PerGB2018 is the canonical SKU.
 resource "azurerm_log_analytics_workspace" "az_law" {

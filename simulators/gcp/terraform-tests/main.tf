@@ -196,6 +196,15 @@ resource "google_eventarc_trigger" "tf_eventarc_trigger" {
   depends_on = [google_cloud_run_v2_service.tf_crv2_svc]
 }
 
+resource "google_eventarc_channel" "tf_eventarc_channel" {
+  name     = "tf-eventarc-channel"
+  location = "us-central1"
+
+  labels = {
+    env = "test"
+  }
+}
+
 # ---------- Cloud Storage ----------
 
 resource "google_storage_bucket" "tf_bucket" {
