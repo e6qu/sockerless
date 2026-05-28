@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1216 filed · 1207 fixed · 11 open · 2 false positives.**
+**1216 filed · 1208 fixed · 10 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -20,9 +20,10 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1205 | P1 | Azure DNS parity | 9 (missing cloud slice) | Azure Private DNS is implemented for internal service discovery, but Azure public DNS zones/record sets are not a registered slice. Foundational DNS parity needs the Microsoft.Network/dnsZones public API alongside privateDnsZones. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
-| 1211 | P0 | Azure simulator host-addressed data-plane local DNS | 7 (partial implementation) | Issue #247: Azure simulator host-addressed data-plane endpoints such as `{account}.blob.localhost`, `{namespace}.servicebus.localhost`, and `{topic}.eventgrid.localhost` preserve cloud-style host contracts but do not resolve on at least macOS. The local addressing strategy must be fixed systematically for real SDK/CLI/Terraform clients without test-side URL rewriting or simulator-specific public APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1211 / issue #247. The Azure simulator now has an opt-in DNS listener for host-addressed local Azure data-plane names, so real local clients can resolve simulator endpoints such as `{account}.blob.<zone>`, `{namespace}.servicebus.<zone>`, and `{topic}.eventgrid.<zone>` without rewriting URLs or injecting private Host headers. The listener serves real DNS over UDP and TCP, answers configured local zones to the simulator target IP, fails loudly on invalid configuration or bind failures, and is documented for macOS/Linux resolver setup while preserving Azure's host-addressed public API shape.
 
 This phase closed BUG-1213, BUG-1214, and BUG-1215. AWS EventBridge now includes event-bus lifecycle, bus policy permissions, archive lifecycle, and replay lifecycle/delivery with official SDK, AWS CLI, and Terraform coverage where provider resources exist. Azure Event Grid now includes domains, domain topics, system topics, partner topics, and event subscriptions on each supported Event Grid scope, covered by the Azure management SDK where the current module exposes clients, Azure CLI/`az rest`, and azurerm Terraform resources where the provider exposes them. GCP Eventarc now includes channels, provider discovery, and channel connections with official SDK and gcloud coverage; Terraform coverage uses `google_eventarc_channel`, and schema inspection confirmed the current `hashicorp/google` and `hashicorp/google-beta` providers do not expose a channel-connection resource.
 

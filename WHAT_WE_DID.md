@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-28 — Azure data-plane DNS portability
+
+The Azure data-plane DNS portability phase closed BUG-1211 / issue #247.
+
+The issue was real: Azure Storage, Service Bus, Event Grid, and Key Vault are host-addressed services, and the simulator correctly preserved that shape by returning local hosts such as `{account}.blob.localhost`, `{namespace}.servicebus.localhost`, and `{topic}.eventgrid.localhost`. That still left real macOS-hosted clients unable to resolve wildcard `.localhost` names before their requests reached the simulator.
+
+The fix keeps the Azure public API shape intact and moves the local concern into local infrastructure. The Azure simulator now has an opt-in DNS listener controlled by `SIM_AZURE_DNS_LISTEN_ADDR`. It serves real DNS over UDP and TCP, answers configured local zones such as `localhost` or `sockerless.azure.local` to the simulator target IP, and fails loudly on invalid DNS configuration or bind errors. Clients can point their OS resolver at the simulator DNS listener and continue using the host-addressed endpoint URLs returned by ARM/metadata without URL rewriting or private Host-header injection.
+
 ## 2026-05-28 — Advanced event-service parity
 
 The advanced event-service parity phase closed BUG-1213 / issue #249, BUG-1214 / issue #250, and BUG-1215 / issue #251.
@@ -36,7 +44,7 @@ Azure now implements Microsoft.EventGrid topics and event subscriptions through 
 
 CI review found two real follow-up defects before merge. The AzureRM Terraform provider calls the Event Grid topic `listKeys` ARM action during `azurerm_eventgrid_topic` creation, so the simulator now implements `POST .../topics/{topic}/listKeys` and returns the real `{key1,key2}` response shape. The Azure ACA/AZF backend modules also now carry the same refreshed OpenTelemetry transitive graph as `backends/core`, so isolated `-tags noui` builds do not fail with missing `go.sum` entries.
 
-Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issues #248 / BUG-1212 and #253 / BUG-1216 were fixed in the simulator Docker test harness phase. Issues #249..#251 / BUG-1213..1215 were fixed in the advanced event-service parity phase.
+Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 later closed in the Azure data-plane DNS portability phase. Issues #248 / BUG-1212 and #253 / BUG-1216 were fixed in the simulator Docker test harness phase. Issues #249..#251 / BUG-1213..1215 were fixed in the advanced event-service parity phase.
 
 ## 2026-05-27 — Foundational simulator service audit
 
