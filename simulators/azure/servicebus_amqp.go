@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/Azure/go-amqp"
@@ -47,12 +49,16 @@ var sbAMQPUpgrader = websocket.Upgrader{
 	},
 }
 
+var sbAMQPActiveConns sync.Map
+
 type sbAMQPConn struct {
 	namespace    string
 	transport    sbAMQPTransport
 	nextHandle   uint32
 	nextDelivery uint32
 	links        map[uint64]*sbAMQPLink
+	mu           sync.Mutex
+	writeMu      sync.Mutex
 }
 
 type sbAMQPTransport interface {
@@ -153,8 +159,47 @@ func newSBAMQPConn(namespace string, transport sbAMQPTransport) *sbAMQPConn {
 	}
 }
 
+func (c *sbAMQPConn) setNamespace(namespace string) {
+	c.mu.Lock()
+	c.namespace = namespace
+	c.mu.Unlock()
+}
+
+func (c *sbAMQPConn) currentNamespace() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.namespace
+}
+
+func cloneSBAMQPLink(link *sbAMQPLink) *sbAMQPLink {
+	if link == nil {
+		return nil
+	}
+	out := *link
+	return &out
+}
+
+func sbAMQPDeliverAvailableMessages(namespace string, paths []string) error {
+	var firstErr error
+	sbAMQPActiveConns.Range(func(key, _ any) bool {
+		conn, ok := key.(*sbAMQPConn)
+		if !ok || conn.currentNamespace() != namespace {
+			return true
+		}
+		if err := conn.deliverAvailableMessages(paths); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return true
+	})
+	return firstErr
+}
+
 func (c *sbAMQPConn) serve(ctx context.Context) {
-	defer func() { _ = c.transport.Close() }()
+	sbAMQPActiveConns.Store(c, struct{}{})
+	defer func() {
+		sbAMQPActiveConns.Delete(c)
+		_ = c.transport.Close()
+	}()
 	for {
 		data, err := c.transport.Read(ctx)
 		if err != nil {
@@ -207,7 +252,7 @@ func (c *sbAMQPConn) handleFrame(ctx context.Context, frame amqpFrame) error {
 		return c.writeFrame(amqpFrameTypeSASL, 0, encodeDescribedList(amqpDescSASLOutcome, []any{uint8(0)}))
 	case amqpDescOpen:
 		if namespace := sbAMQPNamespaceFromHost(asString(field(frame.fields, 1))); namespace != "" {
-			c.namespace = namespace
+			c.setNamespace(namespace)
 		}
 		return c.writeFrame(amqpFrameTypeAMQP, 0, encodeDescribedList(amqpDescOpen, []any{
 			"sockerless-servicebus",
@@ -232,7 +277,9 @@ func (c *sbAMQPConn) handleFrame(ctx context.Context, frame amqpFrame) error {
 		return c.handleTransfer(ctx, frame)
 	case amqpDescDetach:
 		handle := asUint32(field(frame.fields, 0))
+		c.mu.Lock()
 		delete(c.links, sbAMQPLinkKey(frame.channel, handle))
+		c.mu.Unlock()
 		return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescDetach, []any{handle, true}))
 	case amqpDescEnd:
 		return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescEnd, nil))
@@ -261,6 +308,7 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 	if address == "" || address == "test" {
 		address = name
 	}
+	c.mu.Lock()
 	serverHandle := c.nextHandle
 	c.nextHandle++
 	link := &sbAMQPLink{
@@ -273,6 +321,7 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 		settledSend:  clientRole && asUint8(field(frame.fields, 3)) == 1,
 	}
 	c.links[sbAMQPLinkKey(frame.channel, clientHandle)] = link
+	c.mu.Unlock()
 
 	if clientRole {
 		return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescAttach, []any{
@@ -319,10 +368,14 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error {
 	handle := asUint32(field(frame.fields, 0))
 	deliveryID := asUint32(field(frame.fields, 1))
+	c.mu.Lock()
 	link := c.links[sbAMQPLinkKey(frame.channel, handle)]
 	if link == nil {
+		c.mu.Unlock()
 		return nil
 	}
+	link = cloneSBAMQPLink(link)
+	c.mu.Unlock()
 	var msg amqp.Message
 	if err := msg.UnmarshalBinary(frame.payload); err != nil {
 		return err
@@ -339,8 +392,9 @@ func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error 
 		}
 		return c.respondRPC(frame.channel, &msg)
 	}
-	if ehAMQPIsSenderAddress(c.namespace, link.address) {
-		ehAMQPEnqueue(c.namespace, link.address, &msg)
+	namespace := c.currentNamespace()
+	if ehAMQPIsSenderAddress(namespace, link.address) {
+		ehAMQPEnqueue(namespace, link.address, &msg)
 		return c.writeFrame(amqpFrameTypeAMQP, frame.channel, encodeDescribedList(amqpDescDisposition, []any{
 			true,
 			deliveryID,
@@ -372,24 +426,25 @@ func (c *sbAMQPConn) handleTransfer(ctx context.Context, frame amqpFrame) error 
 }
 
 func (c *sbAMQPConn) enqueue(address string, msg sbMessage) error {
-	paths := c.enqueuePaths(address)
+	namespace := c.currentNamespace()
+	paths := c.enqueuePaths(namespace, address)
 	for _, path := range paths {
-		st := sbQueueStateFor(sbQueueKey(c.namespace, path))
+		st := sbQueueStateFor(sbQueueKey(namespace, path))
 		st.mu.Lock()
 		st.nextSeq++
 		msg.SequenceNumber = st.nextSeq
 		st.messages = append(st.messages, msg)
 		st.mu.Unlock()
 	}
-	return c.deliverAvailableMessages(paths)
+	return sbAMQPDeliverAvailableMessages(namespace, paths)
 }
 
-func (c *sbAMQPConn) enqueuePaths(address string) []string {
+func (c *sbAMQPConn) enqueuePaths(namespace, address string) []string {
 	path := sbAMQPEntityPath(address)
 	if strings.Contains(path, "/") {
 		return []string{path}
 	}
-	subs := sbAMQPTopicSubscriptions(c.namespace, path)
+	subs := sbAMQPTopicSubscriptions(namespace, path)
 	if len(subs) == 0 {
 		return []string{path}
 	}
@@ -405,7 +460,16 @@ func (c *sbAMQPConn) respondRPC(channel uint16, req *amqp.Message) error {
 		}
 		corr = req.Properties.MessageID
 	}
-	link := c.receiverForAddress(replyTo)
+	link := c.receiverForAddressOnChannel(replyTo, channel)
+	if link == nil {
+		link = c.receiverForAddressOnChannel("$cbs", channel)
+	}
+	if link == nil {
+		link = c.receiverForAddressOnChannel("$management", channel)
+	}
+	if link == nil {
+		link = c.receiverForAddress(replyTo)
+	}
 	if link == nil {
 		link = c.receiverForAddress("$cbs")
 	}
@@ -415,7 +479,7 @@ func (c *sbAMQPConn) respondRPC(channel uint16, req *amqp.Message) error {
 	if link == nil {
 		return nil
 	}
-	if resp, ok := ehAMQPHandleRPC(c.namespace, req); ok {
+	if resp, ok := ehAMQPHandleRPC(c.currentNamespace(), req); ok {
 		body, err := resp.MarshalBinary()
 		if err != nil {
 			return err
@@ -442,39 +506,41 @@ func (c *sbAMQPConn) handleFlow(ctx context.Context, frame amqpFrame) error {
 		return nil
 	}
 	handle := asUint32(handlePtr)
+	namespace := c.currentNamespace()
+	c.mu.Lock()
 	link := c.links[sbAMQPLinkKey(frame.channel, handle)]
 	if link == nil || !link.clientRole {
+		c.mu.Unlock()
 		return nil
 	}
 	credit := asUint32(field(frame.fields, 6))
 	if credit == 0 {
+		c.mu.Unlock()
 		return nil
 	}
 	link.credit += credit
-	for link.credit > 0 {
-		if ehAMQPIsReceiverAddress(c.namespace, link.address) {
-			msg, ok := ehAMQPNextEvent(c.namespace, link.address, link.readIndex)
+	if ehAMQPIsReceiverAddress(namespace, link.address) {
+		for link.credit > 0 {
+			msg, ok := ehAMQPNextEvent(namespace, link.address, link.readIndex)
 			if !ok {
+				c.mu.Unlock()
 				return nil
 			}
 			link.readIndex++
 			link.credit--
 			if err := c.writeTransfer(channelOrDefault(frame.channel), link, msg, link.settledSend); err != nil {
+				c.mu.Unlock()
 				return err
 			}
-			continue
 		}
-		msg, ok := c.popMessage(link.address)
-		if !ok {
-			return nil
-		}
-		link.credit--
-		if err := c.writeTransfer(channelOrDefault(frame.channel), link, msg, link.settledSend); err != nil {
-			return err
-		}
+		c.mu.Unlock()
+		_ = ctx
+		return nil
 	}
+	path := sbAMQPEntityPath(link.address)
+	c.mu.Unlock()
 	_ = ctx
-	return nil
+	return c.deliverAvailableMessages([]string{path})
 }
 
 func (c *sbAMQPConn) deliverAvailableMessages(paths []string) error {
@@ -482,6 +548,9 @@ func (c *sbAMQPConn) deliverAvailableMessages(paths []string) error {
 	for _, path := range paths {
 		pathSet[path] = struct{}{}
 	}
+	namespace := c.currentNamespace()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, link := range c.links {
 		if !link.clientRole || link.credit == 0 {
 			continue
@@ -490,7 +559,7 @@ func (c *sbAMQPConn) deliverAvailableMessages(paths []string) error {
 			continue
 		}
 		for link.credit > 0 {
-			msg, ok := c.popMessage(link.address)
+			msg, ok := c.popMessage(namespace, link.address)
 			if !ok {
 				break
 			}
@@ -503,8 +572,8 @@ func (c *sbAMQPConn) deliverAvailableMessages(paths []string) error {
 	return nil
 }
 
-func (c *sbAMQPConn) popMessage(address string) ([]byte, bool) {
-	st := sbQueueStateFor(sbQueueKey(c.namespace, sbAMQPEntityPath(address)))
+func (c *sbAMQPConn) popMessage(namespace, address string) ([]byte, bool) {
+	st := sbQueueStateFor(sbQueueKey(namespace, sbAMQPEntityPath(address)))
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if len(st.messages) == 0 {
@@ -561,13 +630,26 @@ func sbAMQPTopicSubscriptions(namespace, topic string) []string {
 }
 
 func (c *sbAMQPConn) receiverForAddress(address string) *sbAMQPLink {
+	return c.receiverForAddressMatch(address, nil)
+}
+
+func (c *sbAMQPConn) receiverForAddressOnChannel(address string, channel uint16) *sbAMQPLink {
+	return c.receiverForAddressMatch(address, &channel)
+}
+
+func (c *sbAMQPConn) receiverForAddressMatch(address string, channel *uint16) *sbAMQPLink {
 	address = strings.Trim(address, "/")
 	var links []*sbAMQPLink
+	c.mu.Lock()
 	for _, link := range c.links {
+		if channel != nil && link.channel != *channel {
+			continue
+		}
 		if link.clientRole && (link.address == address || address == "" && (link.address == "$cbs" || link.address == "$management")) {
-			links = append(links, link)
+			links = append(links, cloneSBAMQPLink(link))
 		}
 	}
+	c.mu.Unlock()
 	sort.Slice(links, func(i, j int) bool { return links[i].serverHandle < links[j].serverHandle })
 	if len(links) == 0 {
 		return nil
@@ -576,8 +658,7 @@ func (c *sbAMQPConn) receiverForAddress(address string) *sbAMQPLink {
 }
 
 func (c *sbAMQPConn) writeTransfer(channel uint16, link *sbAMQPLink, payload []byte, settled bool) error {
-	deliveryID := c.nextDelivery
-	c.nextDelivery++
+	deliveryID := atomic.AddUint32(&c.nextDelivery, 1) - 1
 	return c.writeFrame(amqpFrameTypeAMQP, channel, append(encodeDescribedList(amqpDescTransfer, []any{
 		link.serverHandle,
 		deliveryID,
@@ -598,6 +679,8 @@ func (c *sbAMQPConn) writeFrame(frameType byte, channel uint16, body []byte) err
 }
 
 func (c *sbAMQPConn) writeBytes(data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.transport.Write(data)
 }
 
