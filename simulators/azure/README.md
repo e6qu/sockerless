@@ -55,7 +55,9 @@ Official `azservicebus` SDK callers can then keep a normal Service Bus
 connection string and point `ClientOptions.CustomEndpoint` at the raw
 AMQP listener. The listener also accepts the shared `SIM_TLS_CERT` /
 `SIM_TLS_KEY` values when the Service Bus-specific cert variables are
-unset.
+unset. AMQP queue and topic receivers honor outstanding flow credit:
+messages sent after the receiver has issued credit are delivered without
+requiring another flow frame.
 
 ### Local DNS for host-addressed data planes
 
@@ -189,6 +191,11 @@ provider "azurerm" {
 | **Metadata** | `/metadata/endpoints` — cloud metadata (ARM endpoint, suffixes) |
 | **Subscription** | Get subscription, list providers |
 
+OAuth2 access tokens are RS256-signed JWTs. The simulator publishes the
+matching RSA public key at `/{tenantId}/discovery/v2.0/keys`, so clients that
+follow Azure AD's JWKS validation flow can verify simulator-issued bearer
+tokens without shared secrets.
+
 ### Compute & Containers
 
 | Service | Endpoints |
@@ -215,6 +222,10 @@ provider "azurerm" {
 | **Storage Accounts** | CRUD, List keys |
 | **File Shares** | CRUD under storage accounts |
 | **Storage Data-Plane** | Host-based routing (`{account}.blob.localhost:{port}`) for blob/file service properties and ACLs |
+
+Storage account `listKeys` returns Azure-shaped 512-bit base64 SharedKeys that
+are deterministic per resource ID and key name, so downstream SharedKey
+verifiers can validate requests signed with the simulator-emitted account key.
 
 ### Monitoring
 
