@@ -85,6 +85,7 @@ func main() {
 	registerNetwork(srv)
 	registerManagedIdentity(srv)
 	registerKeyVault(srv)
+	registerPublicDNS(srv)
 	registerBlobDataPlane(srv)
 	registerStorageDataPlane(srv)
 	registerCacheRedis(srv)

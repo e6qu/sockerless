@@ -272,6 +272,7 @@ cloud.google.com/go/gkemulticloud v1.10.0/go.mod h1:OtfHtgqOgDrXfcdFw8eUkCUI154Q
 cloud.google.com/go/gkemulticloud v1.11.0/go.mod h1:OtfHtgqOgDrXfcdFw8eUkCUI154Q51vvdqZYZV4c4qM=
 cloud.google.com/go/grafeas v0.3.11/go.mod h1:dcQyG2+T4tBgG0MvJAh7g2wl/xHV2w+RZIqivwuLjNg=
 cloud.google.com/go/grafeas v0.3.16/go.mod h1:I/yrRMOEsLasrmZXQzmDXwrJ3ZPn3dQWLaWt4lXmYvE=
+cloud.google.com/go/grafeas v0.3.17/go.mod h1:MLYFFap01tm1Rbcd0AT6V2NW1ho45dbX+AxNEcprExY=
 cloud.google.com/go/gsuiteaddons v1.7.3/go.mod h1:0rR+LC21v1Sx1Yb6uohHI/F8DF3h2arSJSHvfi3GmyQ=
 cloud.google.com/go/gsuiteaddons v1.7.8/go.mod h1:DBKNHH4YXAdd/rd6zVvtOGAJNGo0ekOh+nIjTUDEJ5U=
 cloud.google.com/go/gsuiteaddons v1.11.0/go.mod h1:rm/XT7wmwOFGn7jmWtVV65QmZCakzTbHLSojIC4Hskg=
@@ -757,6 +758,7 @@ github.com/zeebo/errs v1.4.0/go.mod h1:sgbWHsvVuTPHcqJJGQ1WhI5KbWlHYz+2+2C/LSEtC
 github.com/zeebo/xxh3 v1.0.2/go.mod h1:5NWz9Sef7zIDm2JHfFlcQvNekmcEl9ekUZQQKCYaDcA=
 go.einride.tech/aip v0.68.0/go.mod h1:7y9FF8VtPWqpxuAxl0KQWqaULxW4zFIesD6zF5RIHHg=
 go.einride.tech/aip v0.73.0/go.mod h1:Mj7rFbmXEgw0dq1dqJ7JGMvYCZZVxmGOR3S4ZcV5LvQ=
+go.einride.tech/aip v0.83.0/go.mod h1:E8+wdTApA70odnpFzJgsGogHozC2JCIhFJBKPr8bVig=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
 go.opencensus.io v0.22.0/go.mod h1:+kGneAE2xo2IficOXnaByMWTGM9T73dGwxeWcUqIpI8=
 go.opencensus.io v0.22.2/go.mod h1:yxeiOL68Rb0Xd1ddK5vPZ/oVn4vY4Ynel7k9FzqtOIw=

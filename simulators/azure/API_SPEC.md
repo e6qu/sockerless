@@ -1421,6 +1421,44 @@ DELETE https://management.azure.com/subscriptions/{subscriptionId}/resourceGroup
 
 ---
 
+## 6.5 Public DNS Zones
+
+**Provider:** `Microsoft.Network`
+**api-version:** `2018-05-01`
+
+### 6.5.1 Zones - Create or Update
+
+```
+PUT https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}?api-version=2018-05-01
+```
+
+Creates or updates a public DNS zone. The simulator returns Azure-shaped public zone properties, including `zoneType: "Public"`, generated Azure DNS name servers, `maxNumberOfRecordSets`, `maxNumberOfRecordsPerRecordSet`, and `numberOfRecordSets`. New zones create default `NS/@` and `SOA/@` record sets.
+
+### 6.5.2 Zones - Get/List/Delete
+
+```
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}?api-version=2018-05-01
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones?api-version=2018-05-01
+DELETE https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}?api-version=2018-05-01
+```
+
+Deleting a zone deletes its record sets.
+
+### 6.5.3 Record Sets
+
+```
+PUT    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/{recordType}/{relativeRecordSetName}?api-version=2018-05-01
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/{recordType}/{relativeRecordSetName}?api-version=2018-05-01
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/{recordType}?api-version=2018-05-01
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/recordsets?api-version=2018-05-01
+GET    https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/all?api-version=2018-05-01
+DELETE https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dnsZones/{zoneName}/{recordType}/{relativeRecordSetName}?api-version=2018-05-01
+```
+
+Supported record types: `A`, `AAAA`, `CAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, and `TXT`. Public DNS record-set JSON follows Azure DNS casing such as `TTL`, `ARecords`, `AAAARecords`, `CNAMERecord`, `MXRecords`, `NSRecords`, `SOARecord`, `SRVRecords`, and `TXTRecords`.
+
+---
+
 ## 7. Azure Functions (App Service)
 
 **Provider:** `Microsoft.Web`

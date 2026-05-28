@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1216 filed · 1209 fixed · 9 open · 2 false positives.**
+**1216 filed · 1210 fixed · 8 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -16,11 +16,12 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1202 | P0 | cross-cloud managed NoSQL data-store parity | 9 (missing cloud slice) | AWS DynamoDB exists, but the GCP and Azure simulator equivalents are missing: Firestore/Datastore for GCP document/key-value flows and Cosmos DB for Azure NoSQL/table-style flows. Implement the public API slices rather than documenting the limitation. |
 | 1203 | P0 | cross-cloud managed load balancers | 9 (missing cloud slice) | Managed load-balancer services are missing as first-class simulator slices: AWS ELBv2/ELB, GCP Cloud Load Balancing resources, and Azure Load Balancer/Application Gateway/Front Door/Traffic Manager. API Gateway/APIM/CloudFront coverage is not a substitute for L4/L7 managed load-balancer APIs. |
 | 1204 | P1 | VPC egress and NAT parity | 7 (partial implementation) | VPC/network primitives exist, and NAT is partially modeled (AWS EC2 NAT Gateway, GCP Router NAT, Azure NAT Gateway), but parity is uneven: GCP address/manual-NAT resources, Azure Public IP/Public IP Prefix resources, subnet-NAT attachment/list semantics, and SDK/CLI/Terraform surface tables/tests need a full pass. |
-| 1205 | P1 | Azure DNS parity | 9 (missing cloud slice) | Azure Private DNS is implemented for internal service discovery, but Azure public DNS zones/record sets are not a registered slice. Foundational DNS parity needs the Microsoft.Network/dnsZones public API alongside privateDnsZones. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1205 / issue #265. The Azure simulator now implements public Azure DNS zones and record sets through `Microsoft.Network/dnsZones` with `api-version=2018-05-01`, including zone create/get/list/delete, default NS/SOA records, record-set create/get/list/delete for A/AAAA/CAA/CNAME/MX/NS/PTR/SOA/SRV/TXT, resource-group enumeration, provider metadata, and SDK/CLI/Terraform coverage through the official Azure DNS SDK, `az rest`, and `azurerm_dns_zone` / `azurerm_dns_a_record`.
 
 This phase closed issues #260 and #261. Azure Storage account `listKeys` now returns deterministic per-account, per-key 512-bit base64 SharedKeys instead of hardcoded short literals, matching Azure Storage account access-key shape while preserving stable simulator derivation. Azure Entra token minting now signs simulator-issued access tokens with a per-process RSA-2048 RS256 key and publishes the corresponding public RSA JWK at the discovery keys endpoint, so downstream data-plane shims can validate bearer tokens through the same JWKS flow used for real Azure AD. The phase also fixed Service Bus AMQP delivery for already-credited receiver links, so a send that arrives after receiver flow credit wakes the receiver instead of waiting for another flow frame.
 

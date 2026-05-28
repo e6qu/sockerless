@@ -16,11 +16,11 @@ The Azure host-addressed local DNS portability issue is now closed. The Azure si
 
 The stream/event ingestion gap is now closed. AWS Kinesis is implemented as a real JSON-protocol slice with stream lifecycle, shard listing, records, shard iterators, tags, retention, monitoring, encryption state, shard-count update, and limits. Azure Event Hubs is implemented with ARM namespace/event hub/consumer group/auth-rule lifecycle plus AMQP send/receive over the raw AMQP/TLS listener.
 
-The remaining audit gaps are GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, Azure public DNS, uneven public-IP/NAT parity, and stale surface-table rows. BUG-1201..1207 track those gaps.
+The remaining audit gaps are GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, uneven public-IP/NAT parity, and stale surface-table rows. BUG-1201..1204 and BUG-1206..1207 track those gaps.
 
 ## Stage plan
 
-Current phase: idle after stream/event ingestion parity. The next implementation pass should move to the remaining foundational managed-data gaps: GCP BigQuery, GCP Firestore/Datastore, and Azure Cosmos DB, with SDK/CLI/Terraform coverage for every added public operation. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery.
+Current phase: idle after Azure public DNS parity. The next implementation pass should move to the remaining foundational managed-data gaps: GCP BigQuery, GCP Firestore/Datastore, and Azure Cosmos DB, with SDK/CLI/Terraform coverage for every added public operation. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery.
 
 Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
 

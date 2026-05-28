@@ -154,6 +154,29 @@ resource "azurerm_private_dns_zone" "az_pdns" {
   resource_group_name = azurerm_resource_group.az_rg.name
 }
 
+resource "azurerm_dns_zone" "az_dns" {
+  provider            = azurerm
+  name                = "tf-azrm.example.com"
+  resource_group_name = azurerm_resource_group.az_rg.name
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "azurerm_dns_a_record" "az_dns_a" {
+  provider            = azurerm
+  name                = "www"
+  zone_name           = azurerm_dns_zone.az_dns.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+  ttl                 = 300
+  records             = ["203.0.113.42"]
+
+  tags = {
+    env = "terraform"
+  }
+}
+
 resource "azurerm_eventhub_namespace" "az_eh_ns" {
   provider            = azurerm
   name                = "tfazrmehns"
@@ -442,6 +465,14 @@ output "azrm_uai_id" {
 
 output "azrm_private_dns_zone_id" {
   value = azurerm_private_dns_zone.az_pdns.id
+}
+
+output "azrm_public_dns_zone_id" {
+  value = azurerm_dns_zone.az_dns.id
+}
+
+output "azrm_public_dns_a_record_id" {
+  value = azurerm_dns_a_record.az_dns_a.id
 }
 
 output "azrm_eventgrid_topic_endpoint" {

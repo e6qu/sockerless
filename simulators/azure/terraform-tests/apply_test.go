@@ -31,6 +31,7 @@ import (
 //   - Microsoft.ContainerRegistry/registries
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
 //   - Microsoft.Network/privateDnsZones
+//   - Microsoft.Network/dnsZones + dnsZones/A
 //   - Microsoft.EventGrid/topics
 //   - Microsoft.OperationalInsights/workspaces
 //   - Microsoft.Insights/components
@@ -105,6 +106,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmDNS := outputs.must(t, "azrm_private_dns_zone_id")
 	require.Contains(t, azrmDNS, "/providers/Microsoft.Network/privateDnsZones/tf-azrm.internal",
 		"azurerm private DNS zone id must include canonical ARM path; got %s", azrmDNS)
+
+	azrmPublicDNS := outputs.must(t, "azrm_public_dns_zone_id")
+	require.Contains(t, azrmPublicDNS, "/providers/Microsoft.Network/dnsZones/tf-azrm.example.com",
+		"azurerm public DNS zone id must include canonical ARM path; got %s", azrmPublicDNS)
+
+	azrmPublicDNSA := outputs.must(t, "azrm_public_dns_a_record_id")
+	require.Contains(t, azrmPublicDNSA, "/providers/Microsoft.Network/dnsZones/tf-azrm.example.com/A/www",
+		"azurerm public DNS A record id must include canonical ARM path; got %s", azrmPublicDNSA)
 
 	azrmEventGridEndpoint := outputs.must(t, "azrm_eventgrid_topic_endpoint")
 	require.Contains(t, azrmEventGridEndpoint, "/api/events",
