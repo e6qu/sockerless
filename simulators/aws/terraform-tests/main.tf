@@ -245,6 +245,29 @@ resource "aws_sqs_queue" "tf_eventbridge_queue" {
   name = "tf-eventbridge-queue"
 }
 
+resource "aws_cloudwatch_event_bus" "tf_eventbridge_bus" {
+  name = "tf-eventbridge-bus"
+
+  tags = {
+    env = "test"
+  }
+}
+
+resource "aws_cloudwatch_event_permission" "tf_eventbridge_permission" {
+  principal      = "123456789012"
+  statement_id   = "tf-eventbridge-permission"
+  action         = "events:PutEvents"
+  event_bus_name = aws_cloudwatch_event_bus.tf_eventbridge_bus.name
+}
+
+resource "aws_cloudwatch_event_archive" "tf_eventbridge_archive" {
+  name             = "tf-eventbridge-archive"
+  event_source_arn = aws_cloudwatch_event_bus.tf_eventbridge_bus.arn
+  description      = "tf-test EventBridge archive"
+  event_pattern    = jsonencode({ source = ["sockerless.terraform.archive"] })
+  retention_days   = 1
+}
+
 resource "aws_cloudwatch_event_rule" "tf_eventbridge_rule" {
   name          = "tf-eventbridge-rule"
   description   = "tf-test EventBridge rule"

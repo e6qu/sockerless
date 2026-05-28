@@ -12,7 +12,7 @@ This is not a license to add simulator-specific APIs. Any missing row below is a
 |---|---|---|---|---|
 | Object storage | S3 implemented | GCS implemented | Blob/File/Queue/Table storage implemented | Present across all three. Surface tables still need refresh for stale test-gap markers. |
 | Queue/message systems | SQS and SNS implemented | Pub/Sub implemented | Service Bus and Storage Queue implemented | Present for core queue/pub-sub flows. |
-| Event routing | EventBridge foundational flow implemented | Eventarc trigger lifecycle implemented | Event Grid custom-topic flow implemented | Foundational event routing is present across all three after the event-routing phase. Remaining advanced/sibling parity is tracked as BUG-1213..1215. |
+| Event routing | EventBridge rules/targets plus buses/policies/archives/replays implemented | Eventarc triggers plus channels/providers/channel connections implemented | Event Grid topics/domains/domain topics/system topics/partner topics/subscriptions implemented | Event routing parity is rounded out across the advanced event-service phase. |
 | Stream/event ingestion | Missing Kinesis | Pub/Sub present for basic event bus flows | Missing Event Hubs | Real gap. Tracked as BUG-1200. |
 | Managed NoSQL/data SaaS | DynamoDB implemented | BigQuery missing; Firestore/Datastore missing | Cosmos DB missing | Real gap. Tracked as BUG-1201 and BUG-1202. |
 | DNS | Route 53 and Cloud Map implemented | Cloud DNS implemented | Private DNS implemented; public DNS missing | Azure public DNS gap tracked as BUG-1205. |
@@ -31,7 +31,7 @@ Foundational slices registered today:
 - Data stores: DynamoDB, RDS, ElastiCache.
 - DNS and discovery: Route 53, Cloud Map.
 - Queue and pub-sub: SQS, SNS, including SNS to SQS fanout.
-- Event routing: EventBridge rules, targets, tags, and `PutEvents`, including SQS/SNS target delivery.
+- Event routing: EventBridge rules, targets, tags, event buses, bus policies, archives, replays, and `PutEvents`, including SQS/SNS target delivery.
 - Networking: EC2 VPCs, subnets, internet gateways, elastic IPs, NAT gateways, route tables, security groups, network-interface describe.
 - Gateways and edge: API Gateway v1/v2, CloudFront, WAFv2, ACM.
 - Identity and secrets: IAM, STS, Secrets Manager, SSM Parameter Store, KMS.
@@ -48,7 +48,7 @@ Foundational slices registered today:
 
 - Object storage: GCS.
 - Queue/pub-sub: Pub/Sub.
-- Event routing: Eventarc trigger lifecycle.
+- Event routing: Eventarc trigger lifecycle, channels, provider discovery/listing, and channel connections.
 - DNS and discovery: Cloud DNS.
 - Networking: Compute networks, subnetworks, firewalls, routers/NAT, VPC Access connectors.
 - Gateways: API Gateway.
@@ -68,7 +68,7 @@ Foundational slices registered today:
 
 - Object/storage data planes: Blob, Files, Queues, Tables.
 - Queue/message systems: Service Bus ARM/admin/data plane, REST, AMQP-over-WebSocket, and raw AMQP/TLS.
-- Event routing: Event Grid topics, event subscriptions, subscription validation, and custom-topic publish/delivery.
+- Event routing: Event Grid topics, domains, domain topics, system topics, partner topics, event subscriptions, subscription validation, and custom-topic publish/delivery.
 - DNS and discovery: Private DNS.
 - Networking: Virtual Networks, subnets, Network Security Groups, NAT gateways, route tables.
 - Gateways: APIM.
@@ -92,7 +92,7 @@ Recommended order:
 2. Stream/event ingestion: add AWS Kinesis and Azure Event Hubs as one cross-cloud PR if scope allows.
 3. Managed data stores: add BigQuery plus Firestore/Datastore and Cosmos DB in a separate PR. Keep analytics and NoSQL separate if the PR becomes too large.
 4. Managed load balancing and public network egress: add ELBv2/ELB, GCP load-balancing resources, Azure Load Balancer/Application Gateway/Front Door/Traffic Manager, and the missing public-IP/address pieces.
-5. Azure local client infrastructure: resolve BUG-1211/#247 for host-addressed data-plane DNS and BUG-1212/#248 for macOS Terraform execution.
+5. Azure local client infrastructure: resolve BUG-1211/#247 for host-addressed data-plane DNS.
 6. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
 
 Each added service slice must follow the simulator testing contract: official SDK tests, vendor CLI tests, and Terraform provider tests in the same PR unless the public API is not exposed by one of those client surfaces.

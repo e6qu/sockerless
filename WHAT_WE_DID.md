@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-28 — Advanced event-service parity
+
+The advanced event-service parity phase closed BUG-1213 / issue #249, BUG-1214 / issue #250, and BUG-1215 / issue #251.
+
+AWS EventBridge now implements the remaining public event-service control-plane surfaces needed after the foundational rule/target pass: event-bus lifecycle, bus policy permissions, archive lifecycle, and replay lifecycle/delivery. Replays read the simulator's archived events and deliver them back through the same EventBridge target path, so SQS/SNS targets observe replayed events through the normal cloud-facing APIs. Coverage uses the official AWS SDK, `aws events` CLI commands, and Terraform `aws_cloudwatch_event_bus`, `aws_cloudwatch_event_permission`, and `aws_cloudwatch_event_archive`.
+
+Azure Event Grid now implements domains, domain topics, system topics, partner topics, and event subscriptions scoped to topics, domain topics, system topics, and partner topics. Partner topics were not documented away: the current Azure Go SDK module in this repo no longer exposes partner-topic clients and the current azurerm provider exposes partner namespace/configuration resources but not a partner-topic resource, while Azure CLI does expose partner-topic commands. The simulator therefore implements the public ARM routes and covers them through Azure CLI / `az rest`; SDK and Terraform coverage remain on the current clients/resources the installed providers actually expose.
+
+GCP Eventarc now implements channels, provider discovery/listing, and channel connections through the public Eventarc v1 REST surface. Coverage uses the official `cloud.google.com/go/eventarc/apiv1` client and `gcloud eventarc` for channels, providers, and channel connections. Terraform coverage uses `google_eventarc_channel`; provider-schema inspection against the installed `hashicorp/google` and `hashicorp/google-beta` providers confirmed they do not expose a `google_eventarc_channel_connection` resource.
+
 ## 2026-05-28 — Simulator Docker test harness
 
 The simulator Docker test harness phase closed BUG-1216 / issue #253 and BUG-1212 / issue #248.
@@ -26,7 +36,7 @@ Azure now implements Microsoft.EventGrid topics and event subscriptions through 
 
 CI review found two real follow-up defects before merge. The AzureRM Terraform provider calls the Event Grid topic `listKeys` ARM action during `azurerm_eventgrid_topic` creation, so the simulator now implements `POST .../topics/{topic}/listKeys` and returns the real `{key1,key2}` response shape. The Azure ACA/AZF backend modules also now carry the same refreshed OpenTelemetry transitive graph as `backends/core`, so isolated `-tags noui` builds do not fail with missing `go.sum` entries.
 
-Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issues #248 / BUG-1212 and #253 / BUG-1216 were fixed in the simulator Docker test harness phase. Issues #249..#251 / BUG-1213..1215 track remaining advanced/sibling event-service parity: EventBridge buses/policies/advanced resources, Event Grid domains/system topics, and Eventarc channels/providers.
+Verification found follow-up defects outside the landed foundational flows. Issue #247 / BUG-1211 tracks the broader Azure host-addressed data-plane DNS assumption (`*.localhost` is not portable across local clients). Issues #248 / BUG-1212 and #253 / BUG-1216 were fixed in the simulator Docker test harness phase. Issues #249..#251 / BUG-1213..1215 were fixed in the advanced event-service parity phase.
 
 ## 2026-05-27 — Foundational simulator service audit
 

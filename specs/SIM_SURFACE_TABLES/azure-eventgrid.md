@@ -19,18 +19,43 @@ Surface registered in `simulators/azure/eventgrid.go`. Rows below cover the Micr
 | `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/topics` | ✓ `eventgrid.go::handleEventGridListTopicsByRG` | n/a | n/a | n/a | Resource-group topic list. |
 | `GET /subscriptions/{sub}/providers/Microsoft.EventGrid/topics` | ✓ `eventgrid.go::handleEventGridListTopicsBySubscription` | n/a | n/a | n/a | Subscription topic list. |
 | `DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/topics/{topic}` | ✓ `eventgrid.go::handleEventGridDeleteTopic` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes topic and topic-scoped subscriptions. |
-| `PUT {topicScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridCreateEventSubscription` | ✓ | ✓ | n/a | Creates webhook subscription and delivers validation event. |
-| `GET {topicScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridGetEventSubscription` | ✓ SDK read/list path | ✓ list path | n/a | Returns event subscription. |
-| `GET {topicScope}/providers/Microsoft.EventGrid/eventSubscriptions` | ✓ `eventgrid.go::handleEventGridListEventSubscriptions` | ✓ `NewListByResourcePager` | ✓ `az rest` list | n/a | Lists topic event subscriptions. |
-| `DELETE {topicScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridDeleteEventSubscription` | ✓ cleanup via topic delete | ✓ cleanup via topic delete | n/a | Deletes event subscription. |
+| `PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}` | ✓ `eventgrid.go::handleEventGridCreateDomain` | ✓ `TestEventGrid_DomainAndSystemTopicSDK` | ✓ `TestEventGridCLI_DomainAndSystemTopic` | ✓ `azurerm_eventgrid_domain` | Creates Event Grid domain resources and endpoint metadata. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}` | ✓ `eventgrid.go::handleEventGridGetDomain` | ✓ | ✓ | ✓ Terraform read | Returns domain metadata. |
+| `POST /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}/listKeys` | ✓ `eventgrid.go::handleEventGridListDomainKeys` | ✓ `ListSharedAccessKeys` | ✓ `az rest` listKeys | ✓ `azurerm_eventgrid_domain` | Returns domain access keys. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains` | ✓ `eventgrid.go::handleEventGridListDomainsByRG` | ✓ pager | n/a | n/a | Resource-group domain list. |
+| `GET /subscriptions/{sub}/providers/Microsoft.EventGrid/domains` | ✓ `eventgrid.go::handleEventGridListDomainsBySubscription` | n/a | n/a | n/a | Subscription domain list. |
+| `DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}` | ✓ `eventgrid.go::handleEventGridDeleteDomain` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes domain, domain topics, and scoped subscriptions. |
+| `PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}/topics/{domainTopic}` | ✓ `eventgrid.go::handleEventGridCreateDomainTopic` | ✓ `DomainTopicsClient` | ✓ `az rest` | ✓ `azurerm_eventgrid_domain_topic` | Creates domain topic resources. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}/topics/{domainTopic}` | ✓ `eventgrid.go::handleEventGridGetDomainTopic` | ✓ | ✓ list path | ✓ Terraform read | Returns domain topic metadata. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}/topics` | ✓ `eventgrid.go::handleEventGridListDomainTopics` | ✓ pager | ✓ `az rest` list | n/a | Lists topics under a domain. |
+| `DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/domains/{domain}/topics/{domainTopic}` | ✓ `eventgrid.go::handleEventGridDeleteDomainTopic` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes domain topic and scoped subscriptions. |
+| `PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/systemTopics/{systemTopic}` | ✓ `eventgrid.go::handleEventGridCreateSystemTopic` | ✓ `SystemTopicsClient` | ✓ `az rest` | ✓ `azurerm_eventgrid_system_topic` | Creates system topic resources and metric resource metadata. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/systemTopics/{systemTopic}` | ✓ `eventgrid.go::handleEventGridGetSystemTopic` | ✓ | ✓ list path | ✓ Terraform read | Returns system topic metadata. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/systemTopics` | ✓ `eventgrid.go::handleEventGridListSystemTopicsByRG` | ✓ pager | n/a | n/a | Resource-group system topic list. |
+| `GET /subscriptions/{sub}/providers/Microsoft.EventGrid/systemTopics` | ✓ `eventgrid.go::handleEventGridListSystemTopicsBySubscription` | n/a | n/a | n/a | Subscription system topic list. |
+| `DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/systemTopics/{systemTopic}` | ✓ `eventgrid.go::handleEventGridDeleteSystemTopic` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes system topic and scoped subscriptions. |
+| `PUT /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}` | ✓ `eventgrid.go::handleEventGridCreatePartnerTopic` | n/a current SDK module lacks partner-topic client | ✓ `TestEventGridCLI_PartnerTopicLifecycle` | n/a no `azurerm_eventgrid_partner_topic` resource | Creates partner topic resources through the public ARM route. |
+| `PATCH /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}` | ✓ `eventgrid.go::handleEventGridUpdatePartnerTopic` | n/a | ✓ via same CLI surface route family | n/a | Updates partner topic tags/properties. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}` | ✓ `eventgrid.go::handleEventGridGetPartnerTopic` | n/a | ✓ | n/a | Returns partner topic metadata. |
+| `POST /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}/activate` | ✓ `eventgrid.go::handleEventGridActivatePartnerTopic` | n/a | ✓ | n/a | Transitions partner topic activation/readiness state. |
+| `POST /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}/deactivate` | ✓ `eventgrid.go::handleEventGridDeactivatePartnerTopic` | n/a | ✓ | n/a | Transitions partner topic activation/readiness state. |
+| `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics` | ✓ `eventgrid.go::handleEventGridListPartnerTopicsByRG` | n/a | ✓ | n/a | Resource-group partner topic list. |
+| `GET /subscriptions/{sub}/providers/Microsoft.EventGrid/partnerTopics` | ✓ `eventgrid.go::handleEventGridListPartnerTopicsBySubscription` | n/a | ✓ | n/a | Subscription partner topic list. |
+| `DELETE /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.EventGrid/partnerTopics/{partnerTopic}` | ✓ `eventgrid.go::handleEventGridDeletePartnerTopic` | n/a | ✓ cleanup | n/a | Deletes partner topic and scoped subscriptions. |
+| `PUT {eventGridScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridCreateEventSubscription` | ✓ topic/system-topic SDK clients where exposed | ✓ topic/system/partner/domain-topic `az rest` coverage | n/a | Creates webhook subscription and delivers validation event. |
+| `GET {eventGridScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridGetEventSubscription` | ✓ SDK read/list path where exposed | ✓ list path | n/a | Returns event subscription. |
+| `GET {eventGridScope}/providers/Microsoft.EventGrid/eventSubscriptions` | ✓ `eventgrid.go::handleEventGridListEventSubscriptions` | ✓ pagers where exposed | ✓ `az rest` list | n/a | Lists event subscriptions on topic, domain-topic, and partner-topic scopes. |
+| `PUT {systemTopicScope}/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridCreateEventSubscription` | ✓ `SystemTopicEventSubscriptionsClient` | ✓ `az rest` | n/a | Creates system-topic event subscriptions on the public system-topic path. |
+| `GET {systemTopicScope}/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridGetEventSubscription` | ✓ | ✓ list path | n/a | Returns system-topic event subscription. |
+| `GET {systemTopicScope}/eventSubscriptions` | ✓ `eventgrid.go::handleEventGridListEventSubscriptions` | ✓ pager | ✓ `az rest` list | n/a | Lists system-topic event subscriptions. |
+| `DELETE {eventGridScope}/providers/Microsoft.EventGrid/eventSubscriptions/{name}` / `DELETE {systemTopicScope}/eventSubscriptions/{name}` | ✓ `eventgrid.go::handleEventGridDeleteEventSubscription` | ✓ cleanup via scope delete | ✓ cleanup via scope delete | n/a | Deletes event subscriptions. |
 | `POST /api/events` on topic endpoint | ✓ `eventgrid.go::publishEventGridTopic` | ✓ direct returned endpoint | ✓ direct returned endpoint | n/a | Publishes Event Grid events and fans out to webhook subscriptions. |
 
 ## Open subtasks staged forward
 
 - BUG-1211 / issue #247 tracks the broader Azure host-addressed data-plane DNS assumption for services that still return `*.localhost` data-plane hosts.
-- BUG-1212 / issue #248 tracks local macOS execution for Azure Terraform provider tests.
-- BUG-1214 / issue #250 tracks remaining Event Grid parity for domains, domain topics, system topics, partner topics where relevant, and their event subscriptions.
 
 ## Closed bugs
 
 - BUG-1199 — foundational Azure Event Grid slice added with SDK, CLI, and Terraform coverage.
+- BUG-1214 / issue #250 — domains, domain topics, system topics, partner topics, and scoped event subscriptions added. Current SDK/provider exposure was checked before marking SDK/Terraform as not applicable for partner-topic direct resources.
