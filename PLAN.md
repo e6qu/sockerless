@@ -64,13 +64,14 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #216 | 179 | 2 reopens (#209/#210) + 3 new issues (#213/#214/#215). BUG-1174..1180 closed: GCP Redis upgrade/failover keying, Pub/Sub IAM verbs, Azure real-shape listKeys, Resources Tags API, Service Bus authorizationRules, AWS IAM policy/instance-profile lifecycle, API Gateway method/integration responses. Merged 2026-05-25 at `9620a53`. |
 | #217 | 179 follow-up | README badge refresh from Phase 179 plus hook portability fixes (`lint-changed.sh`, `check-cloud-backend-isolation.sh`). Merged 2026-05-25 at `f0da588`. |
 | #219 | issue #218 | GCP Secret Manager lifecycle endpoints: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata, payload CRC32C; covered by SDK, gcloud CLI, and Terraform tests. Merged 2026-05-25 at `06ee3a5`. |
+| issue #264 | simulator test-contract matrix | `specs/SIM_TEST_COVERAGE_MATRIX.md` now tracks SDK/CLI/Terraform coverage for every canonical simulator surface table, enforced by pre-commit and CI. AWS DynamoDB/SQS/SNS gained direct CLI coverage; GCP Terraform gained Cloud Functions v2, Cloud Build trigger, Pub/Sub, and Cloud Logging sink/metric coverage with the simulator routes needed by the provider. |
 | #221 | issue #220 | Azure Blob `GET /?comp=list` now emits per-container `<Properties>` with `Last-Modified` and quoted `Etag`; container ETags persist from create through get/list. Raw wire + real Azure CLI regressions added. |
 
 ## Active phase
 
-**Idle on `main`.** No phase in flight after Azure azurerm storage endpoint coverage for issue #269.
+**Idle on `main`.** No phase in flight after simulator test-contract matrix backfill for issue #264.
 
-BUGS.md: **1217 filed · 1213 fixed · 6 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, and BUG-1207.
+BUGS.md: **1218 filed · 1214 fixed · 6 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, and BUG-1207.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
@@ -78,7 +79,7 @@ BUGS.md: **1217 filed · 1213 fixed · 6 open · 2 false positives.** Open work 
 
 ### Foundational simulator parity
 
-Continue the audit-derived missing-service work in issue order unless a new community issue changes priority: managed data stores (BigQuery, Firestore/Datastore, Cosmos DB), VM/instance lifecycle APIs, managed load balancers, NAT/public-IP parity, and surface-table cleanup. Every added public API slice ships with SDK, CLI, and Terraform-provider coverage in the same PR.
+Continue the audit-derived missing-service work in issue order unless a new community issue changes priority: VM/instance lifecycle APIs, managed load balancers, NAT/public-IP parity, and surface-table cleanup. Every added public API slice ships with SDK, CLI, and Terraform-provider coverage in the same PR.
 
 ### Track A — Live-cloud validation (deprioritized; one branch per cell)
 

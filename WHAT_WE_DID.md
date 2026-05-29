@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Simulator test-contract matrix backfill
+
+Issue #264 was valid. The project already ran SDK, CLI, and Terraform simulator suites, but the coverage contract was not indexed against the canonical surface tables, so a surface could be added or renamed without a matching client-surface status row. The fix added `specs/SIM_TEST_COVERAGE_MATRIX.md` and wired `scripts/check-simulator-coverage-matrix.sh` into pre-commit and CI. The check fails if the matrix and `specs/SIM_SURFACE_TABLES/*.md` drift, if rows are duplicated, or if tracked rows lack a GitHub issue or BUG reference.
+
+The concrete coverage misses in the report were real and were closed with real external clients. AWS DynamoDB now has a direct `aws dynamodb` CLI create/describe/put/get/query/delete lifecycle test. AWS SQS has a direct queue lifecycle CLI test, and AWS SNS has a direct topic-to-SQS fanout CLI test that verifies the delivered notification envelope.
+
+The GCP Terraform harness now provisions and destroys `google_cloudfunctions2_function`, `google_pubsub_topic`, `google_pubsub_subscription`, `google_cloudbuild_trigger`, `google_logging_project_sink`, and `google_logging_metric`. Making those provider flows real required simulator implementation, not only docs: Cloud Logging now has sink and metric create/list/get/update/delete REST routes, Cloud Build has trigger lifecycle routes, and regional trigger routing distinguishes Cloud Build from Eventarc by the service hostname while preserving the public GCP path shape.
+
+Verification covered fast compile checks, `terraform fmt -check`, the targeted AWS CLI tests for DynamoDB/SQS/SNS, and the Docker-backed GCP Terraform apply/destroy harness.
+
 ## 2026-05-29 — Azure azurerm storage endpoint coverage
 
 Issue #269 was valid as a contract requirement: azurerm's storage-container data-plane resource parses the ARM-returned `primary_blob_endpoint` as an Azure-shaped `{account}.blob.{suffix}` URL and compares that suffix with `/metadata/endpoints`. A literal local URL is not compatible with that public provider path.

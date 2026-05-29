@@ -221,6 +221,8 @@ jobs:
           cache: true
       - name: Check backend api.Backend coverage
         run: cd tools/check-backend-coverage && GOWORK=off go run . --enforce
+      - name: Check simulator SDK/CLI/Terraform coverage matrix
+        run: bash scripts/check-simulator-coverage-matrix.sh
       - name: Build all binaries (amd64)
         env:
           GOWORK: "off"

@@ -87,10 +87,34 @@ type BuildError struct {
 	Message string `json:"message"`
 }
 
+type BuildTrigger struct {
+	ID                    string            `json:"id,omitempty"`
+	Name                  string            `json:"name,omitempty"`
+	ResourceName          string            `json:"resourceName,omitempty"`
+	Description           string            `json:"description,omitempty"`
+	Filename              string            `json:"filename,omitempty"`
+	Location              string            `json:"location,omitempty"`
+	Disabled              bool              `json:"disabled,omitempty"`
+	IgnoredFiles          []string          `json:"ignoredFiles,omitempty"`
+	IncludedFiles         []string          `json:"includedFiles,omitempty"`
+	Substitutions         map[string]string `json:"substitutions,omitempty"`
+	Tags                  []string          `json:"tags,omitempty"`
+	CreateTime            string            `json:"createTime,omitempty"`
+	ApprovalConfig        map[string]any    `json:"approvalConfig,omitempty"`
+	TriggerTemplate       map[string]any    `json:"triggerTemplate,omitempty"`
+	GitFileSource         map[string]any    `json:"gitFileSource,omitempty"`
+	SourceToBuild         map[string]any    `json:"sourceToBuild,omitempty"`
+	RepositoryEventConfig map[string]any    `json:"repositoryEventConfig,omitempty"`
+	Github                map[string]any    `json:"github,omitempty"`
+	Build                 *Build            `json:"build,omitempty"`
+}
+
 var cbBuilds sim.Store[Build]
+var cbTriggers sim.Store[BuildTrigger]
 
 func registerCloudBuild(srv *sim.Server) {
 	cbBuilds = sim.MakeStore[Build](srv.DB(), "cloudbuild_builds")
+	cbTriggers = sim.MakeStore[BuildTrigger](srv.DB(), "cloudbuild_triggers")
 
 	// CreateBuild: POST /v1/projects/{project}/builds
 	srv.HandleFunc("POST /v1/projects/{project}/builds", func(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +156,12 @@ func registerCloudBuild(srv *sim.Server) {
 		}
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/triggers", handleCreateBuildTrigger)
+	srv.HandleFunc("GET /v1/projects/{project}/triggers", handleListBuildTriggers)
+	srv.HandleFunc("GET /v1/projects/{project}/triggers/{trigger}", handleGetBuildTrigger)
+	srv.HandleFunc("PATCH /v1/projects/{project}/triggers/{trigger}", handleUpdateBuildTrigger)
+	srv.HandleFunc("DELETE /v1/projects/{project}/triggers/{trigger}", handleDeleteBuildTrigger)
 
 	// GetBuild: GET /v1/projects/{project}/builds/{id}
 	srv.HandleFunc("GET /v1/projects/{project}/builds/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +224,92 @@ func registerCloudBuild(srv *sim.Server) {
 		}
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
+}
+
+func buildTriggerLocation(r *http.Request) string {
+	if loc := sim.PathParam(r, "location"); loc != "" {
+		return loc
+	}
+	return "global"
+}
+
+func buildTriggerKey(project, location, id string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/triggers/%s", project, location, id)
+}
+
+func normalizeBuildTrigger(project, location string, trigger BuildTrigger) BuildTrigger {
+	if trigger.ID == "" {
+		trigger.ID = generateUUID()
+	}
+	if trigger.Name == "" {
+		trigger.Name = trigger.ID
+	}
+	trigger.Location = location
+	trigger.ResourceName = buildTriggerKey(project, location, trigger.ID)
+	if trigger.CreateTime == "" {
+		trigger.CreateTime = nowTimestamp()
+	}
+	return trigger
+}
+
+func handleCreateBuildTrigger(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := buildTriggerLocation(r)
+	var trigger BuildTrigger
+	if err := sim.ReadJSON(r, &trigger); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid trigger body: %v", err)
+		return
+	}
+	trigger = normalizeBuildTrigger(project, location, trigger)
+	cbTriggers.Put(trigger.ResourceName, trigger)
+	sim.WriteJSON(w, http.StatusOK, trigger)
+}
+
+func handleListBuildTriggers(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := buildTriggerLocation(r)
+	prefix := fmt.Sprintf("projects/%s/locations/%s/triggers/", project, location)
+	triggers := cbTriggers.Filter(func(t BuildTrigger) bool {
+		return strings.HasPrefix(t.ResourceName, prefix)
+	})
+	if triggers == nil {
+		triggers = []BuildTrigger{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"triggers": triggers})
+}
+
+func handleGetBuildTrigger(w http.ResponseWriter, r *http.Request) {
+	key := buildTriggerKey(sim.PathParam(r, "project"), buildTriggerLocation(r), sim.PathParam(r, "trigger"))
+	trigger, ok := cbTriggers.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "trigger %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, trigger)
+}
+
+func handleUpdateBuildTrigger(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := buildTriggerLocation(r)
+	id := sim.PathParam(r, "trigger")
+	key := buildTriggerKey(project, location, id)
+	var trigger BuildTrigger
+	if err := sim.ReadJSON(r, &trigger); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid trigger body: %v", err)
+		return
+	}
+	trigger.ID = id
+	if prior, ok := cbTriggers.Get(key); ok {
+		trigger.CreateTime = prior.CreateTime
+	}
+	trigger = normalizeBuildTrigger(project, location, trigger)
+	cbTriggers.Put(key, trigger)
+	sim.WriteJSON(w, http.StatusOK, trigger)
+}
+
+func handleDeleteBuildTrigger(w http.ResponseWriter, r *http.Request) {
+	cbTriggers.Delete(buildTriggerKey(sim.PathParam(r, "project"), buildTriggerLocation(r), sim.PathParam(r, "trigger")))
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 // executeBuild runs the build steps against the source context and
