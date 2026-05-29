@@ -1499,6 +1499,24 @@ func ec2ParamList(r *http.Request, prefix string) []string {
 	return values
 }
 
+func ec2Filters(r *http.Request) map[string][]string {
+	filters := map[string][]string{}
+	for i := 1; ; i++ {
+		name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
+		if name == "" {
+			break
+		}
+		for j := 1; ; j++ {
+			value := r.FormValue(fmt.Sprintf("Filter.%d.Value.%d", i, j))
+			if value == "" {
+				break
+			}
+			filters[name] = append(filters[name], value)
+		}
+	}
+	return filters
+}
+
 func instanceStateCode(state string) int {
 	switch state {
 	case "pending":
@@ -1808,6 +1826,8 @@ func handleDescribeInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 		body = "<userData><value/></userData>"
 	case "disableApiTermination":
 		body = "<disableApiTermination><value>false</value></disableApiTermination>"
+	case "disableApiStop":
+		body = "<disableApiStop><value>false</value></disableApiStop>"
 	case "instanceInitiatedShutdownBehavior":
 		body = "<instanceInitiatedShutdownBehavior><value>stop</value></instanceInitiatedShutdownBehavior>"
 	case "rootDeviceName":
@@ -1882,17 +1902,52 @@ func handleDeleteTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
+	type tagEntry struct {
+		resourceID   string
+		resourceType string
+		key          string
+		value        string
+	}
+	filters := ec2Filters(r)
+	matches := func(entry tagEntry) bool {
+		for name, values := range filters {
+			matched := false
+			for _, value := range values {
+				switch {
+				case name == "resource-id" && entry.resourceID == value:
+					matched = true
+				case name == "resource-type" && entry.resourceType == value:
+					matched = true
+				case name == "key" && entry.key == value:
+					matched = true
+				case name == "value" && entry.value == value:
+					matched = true
+				case strings.HasPrefix(name, "tag:") && strings.TrimPrefix(name, "tag:") == entry.key && entry.value == value:
+					matched = true
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	}
 	var items strings.Builder
+	writeEntry := func(entry tagEntry) {
+		if !matches(entry) {
+			return
+		}
+		fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>%s</resourceType><key>%s</key><value>%s</value></item>`,
+			entry.resourceID, entry.resourceType, entry.key, entry.value)
+	}
 	for _, inst := range ec2Instances.List() {
 		for _, tag := range inst.Tags {
-			fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>instance</resourceType><key>%s</key><value>%s</value></item>`,
-				inst.InstanceId, tag.Key, tag.Value)
+			writeEntry(tagEntry{resourceID: inst.InstanceId, resourceType: "instance", key: tag.Key, value: tag.Value})
 		}
 	}
 	for _, eni := range ec2NetworkInterfaces.List() {
 		for _, tag := range eni.Tags {
-			fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>network-interface</resourceType><key>%s</key><value>%s</value></item>`,
-				eni.NetworkInterfaceId, tag.Key, tag.Value)
+			writeEntry(tagEntry{resourceID: eni.NetworkInterfaceId, resourceType: "network-interface", key: tag.Key, value: tag.Value})
 		}
 	}
 	w.Header().Set("Content-Type", "text/xml")

@@ -185,6 +185,13 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, attrOut.InstanceType)
 	assert.Equal(t, "t3.micro", *attrOut.InstanceType.Value)
+	stopAttrOut, err := client.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		Attribute:  types.InstanceAttributeNameDisableApiStop,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, stopAttrOut.DisableApiStop)
+	assert.False(t, *stopAttrOut.DisableApiStop.Value)
 	_, err = client.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{
 		InstanceId: aws.String(instanceID),
 		SourceDestCheck: &types.AttributeBooleanValue{

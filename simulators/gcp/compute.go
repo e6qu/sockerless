@@ -49,12 +49,13 @@ func computeNumericID() string {
 
 func newComputeOp(project, scope string, targetLink string) map[string]any {
 	opID := generateUUID()[:8]
+	path := fmt.Sprintf("projects/%s/%s/operations/operation-%s", project, scope, opID)
 	return map[string]any{
 		"kind":       "compute#operation",
 		"id":         computeNumericID(),
 		"name":       "operation-" + opID,
 		"status":     "DONE",
-		"selfLink":   fmt.Sprintf("projects/%s/%s/operations/operation-%s", project, scope, opID),
+		"selfLink":   "https://www.googleapis.com/compute/v1/" + path,
 		"targetLink": targetLink,
 		"progress":   100,
 	}
@@ -678,7 +679,7 @@ func registerCompute(srv *sim.Server) {
 			"id":       computeNumericID(),
 			"name":     name,
 			"status":   "DONE",
-			"selfLink": fmt.Sprintf("projects/%s/global/operations/%s", project, name),
+			"selfLink": fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/global/operations/%s", project, name),
 			"progress": 100,
 		})
 	})
@@ -693,7 +694,7 @@ func registerCompute(srv *sim.Server) {
 			"id":       computeNumericID(),
 			"name":     name,
 			"status":   "DONE",
-			"selfLink": fmt.Sprintf("projects/%s/regions/%s/operations/%s", project, region, name),
+			"selfLink": fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/regions/%s/operations/%s", project, region, name),
 			"progress": 100,
 		})
 	})
@@ -821,13 +822,14 @@ func registerComputeCatalog(srv *sim.Server) {
 func computeZoneOp(project, zone, target, opType string) map[string]any {
 	opID := generateUUID()[:8]
 	now := time.Now().UTC().Format(time.RFC3339)
+	path := fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID)
 	return map[string]any{
 		"kind":          "compute#operation",
 		"id":            computeNumericID(),
 		"name":          "operation-" + opID,
 		"operationType": opType,
 		"status":        "DONE",
-		"selfLink":      fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
+		"selfLink":      "https://www.googleapis.com/compute/v1/" + path,
 		"targetLink":    target,
 		"targetId":      computeNumericID(),
 		"zone":          fmt.Sprintf("projects/%s/zones/%s", project, zone),
@@ -1269,17 +1271,26 @@ func registerComputeDisks(srv *sim.Server) {
 	})
 
 	// Zonal operations endpoint (disks return zonal ops the SDK polls).
-	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/operations/{name}", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		zone := sim.PathParam(r, "zone")
-		name := sim.PathParam(r, "name")
+	writeZonalOperation := func(w http.ResponseWriter, project, zone, name string) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":     "compute#operation",
 			"id":       computeNumericID(),
 			"name":     name,
 			"status":   "DONE",
-			"selfLink": fmt.Sprintf("projects/%s/zones/%s/operations/%s", project, zone, name),
+			"selfLink": fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/zones/%s/operations/%s", project, zone, name),
 			"progress": 100,
 		})
+	}
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/operations/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		writeZonalOperation(w, project, zone, name)
+	})
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/operations/{name}/wait", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		writeZonalOperation(w, project, zone, name)
 	})
 }
