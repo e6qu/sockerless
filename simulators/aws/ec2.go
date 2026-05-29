@@ -143,6 +143,38 @@ type EC2Tag struct {
 	Value string
 }
 
+type EC2Instance struct {
+	InstanceId         string
+	ReservationId      string
+	ImageId            string
+	InstanceType       string
+	SubnetId           string
+	VpcId              string
+	State              string
+	PrivateIpAddress   string
+	PublicIpAddress    string
+	SecurityGroupIds   []string
+	Tags               []EC2Tag
+	LaunchTime         string
+	KeyName            string
+	Architecture       string
+	RootDeviceName     string
+	NetworkInterfaceId string
+}
+
+type EC2NetworkInterface struct {
+	NetworkInterfaceId string
+	SubnetId           string
+	VpcId              string
+	PrivateIpAddress   string
+	Status             string
+	AttachmentId       string
+	InstanceId         string
+	SecurityGroupIds   []string
+	Tags               []EC2Tag
+	OwnerId            string
+}
+
 // State stores
 var (
 	ec2Vpcs               sim.Store[EC2Vpc]
@@ -153,6 +185,8 @@ var (
 	ec2RouteTables        sim.Store[EC2RouteTable]
 	ec2SecurityGroups     sim.Store[EC2SecurityGroup]
 	ec2SecurityGroupRules sim.Store[EC2SecurityGroupRule]
+	ec2Instances          sim.Store[EC2Instance]
+	ec2NetworkInterfaces  sim.Store[EC2NetworkInterface]
 	// ec2SubnetIPCursor tracks the next host octet to hand out per
 	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
 	// allocation pool; we approximate with a monotonic counter that
@@ -251,8 +285,13 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2RouteTables = sim.MakeStore[EC2RouteTable](srv.DB(), "ec2_route_tables")
 	ec2SecurityGroups = sim.MakeStore[EC2SecurityGroup](srv.DB(), "ec2_security_groups")
 	ec2SecurityGroupRules = sim.MakeStore[EC2SecurityGroupRule](srv.DB(), "ec2_security_group_rules")
+	ec2Instances = sim.MakeStore[EC2Instance](srv.DB(), "ec2_instances")
+	ec2NetworkInterfaces = sim.MakeStore[EC2NetworkInterface](srv.DB(), "ec2_network_interfaces")
 
 	// VPC
+	r.Register("DescribeAccountAttributes", handleDescribeAccountAttributes)
+	r.Register("DescribeAvailabilityZones", handleDescribeAvailabilityZones)
+	r.Register("DescribeRegions", handleDescribeRegions)
 	r.Register("CreateVpc", handleCreateVpc)
 	r.Register("DescribeVpcs", handleDescribeVpcs)
 	r.Register("DeleteVpc", handleDeleteVpc)
@@ -302,6 +341,23 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("RevokeSecurityGroupIngress", handleRevokeSecurityGroupIngress)
 	r.Register("RevokeSecurityGroupEgress", handleRevokeSecurityGroupEgress)
 
+	// Instances
+	r.Register("RunInstances", handleRunInstances)
+	r.Register("DescribeInstances", handleDescribeInstances)
+	r.Register("TerminateInstances", handleTerminateInstances)
+	r.Register("StopInstances", handleStopInstances)
+	r.Register("StartInstances", handleStartInstances)
+	r.Register("DescribeInstanceStatus", handleDescribeInstanceStatus)
+	r.Register("DescribeInstanceAttribute", handleDescribeInstanceAttribute)
+	r.Register("ModifyInstanceAttribute", handleModifyInstanceAttribute)
+	r.Register("CreateTags", handleCreateTags)
+	r.Register("DeleteTags", handleDeleteTags)
+	r.Register("DescribeTags", handleDescribeTags)
+	r.Register("DescribeVolumes", handleDescribeVolumes)
+	r.Register("DescribeImages", handleDescribeImages)
+	r.Register("DescribeInstanceTypes", handleDescribeInstanceTypes)
+	r.Register("DescribeKeyPairs", handleDescribeKeyPairs)
+
 	// Pre-register a default `vpc-sim` + `subnet-0123456789abcdef0` so harnesses that
 	// hardcode those IDs (smoke-tests/run.sh, backend config examples)
 	// can call DescribeSubnets / DescribeVpcs without first provisioning.
@@ -349,6 +405,36 @@ func ec2ID(prefix string) string {
 
 func ec2Xmlns() string {
 	return `xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"`
+}
+
+func handleDescribeAccountAttributes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeAccountAttributesResponse %s>
+  <requestId>%s</requestId>
+  <accountAttributeSet>
+    <item><attributeName>supported-platforms</attributeName><attributeValueSet><item><attributeValue>VPC</attributeValue></item></attributeValueSet></item>
+    <item><attributeName>default-vpc</attributeName><attributeValueSet><item><attributeValue>vpc-sim</attributeValue></item></attributeValueSet></item>
+  </accountAttributeSet>
+</DescribeAccountAttributesResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleDescribeAvailabilityZones(w http.ResponseWriter, r *http.Request) {
+	region := awsRegion()
+	zone := awsAvailabilityZone()
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeAvailabilityZonesResponse %s>
+  <requestId>%s</requestId>
+  <availabilityZoneInfo><item><zoneName>%s</zoneName><zoneId>%s-az1</zoneId><zoneType>availability-zone</zoneType><regionName>%s</regionName><zoneState>available</zoneState><groupName>%s</groupName><networkBorderGroup>%s</networkBorderGroup></item></availabilityZoneInfo>
+</DescribeAvailabilityZonesResponse>`, ec2Xmlns(), generateUUID(), zone, region, region, region, region)
+}
+
+func handleDescribeRegions(w http.ResponseWriter, r *http.Request) {
+	region := awsRegion()
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeRegionsResponse %s>
+  <requestId>%s</requestId>
+  <regionInfo><item><regionName>%s</regionName><regionEndpoint>ec2.%s.amazonaws.com</regionEndpoint><optInStatus>opt-in-not-required</optInStatus></item></regionInfo>
+</DescribeRegionsResponse>`, ec2Xmlns(), generateUUID(), region, region)
 }
 
 // ---- VPC ----
@@ -1399,16 +1485,635 @@ func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 </DescribeSecurityGroupRulesResponse>`, ec2Xmlns(), generateUUID(), items.String())
 }
 
+// ---- Instances ----
+
+func ec2ParamList(r *http.Request, prefix string) []string {
+	var values []string
+	for i := 1; ; i++ {
+		v := r.FormValue(fmt.Sprintf("%s.%d", prefix, i))
+		if v == "" {
+			break
+		}
+		values = append(values, v)
+	}
+	return values
+}
+
+func ec2Filters(r *http.Request) map[string][]string {
+	filters := map[string][]string{}
+	for i := 1; ; i++ {
+		name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
+		if name == "" {
+			break
+		}
+		for j := 1; ; j++ {
+			value := r.FormValue(fmt.Sprintf("Filter.%d.Value.%d", i, j))
+			if value == "" {
+				break
+			}
+			filters[name] = append(filters[name], value)
+		}
+	}
+	return filters
+}
+
+func instanceStateCode(state string) int {
+	switch state {
+	case "pending":
+		return 0
+	case "running":
+		return 16
+	case "shutting-down":
+		return 32
+	case "terminated":
+		return 48
+	case "stopping":
+		return 64
+	case "stopped":
+		return 80
+	default:
+		return 0
+	}
+}
+
+func ec2InstanceXML(inst EC2Instance) string {
+	var groups strings.Builder
+	for _, groupID := range inst.SecurityGroupIds {
+		name := groupID
+		if sg, ok := ec2SecurityGroups.Get(groupID); ok {
+			name = sg.GroupName
+		}
+		fmt.Fprintf(&groups, "<item><groupId>%s</groupId><groupName>%s</groupName></item>", groupID, name)
+	}
+	if groups.Len() == 0 {
+		groups.WriteString("")
+	}
+	var ni strings.Builder
+	if inst.NetworkInterfaceId != "" {
+		fmt.Fprintf(&ni, `<networkInterfaceSet><item>
+      <networkInterfaceId>%s</networkInterfaceId>
+      <subnetId>%s</subnetId>
+      <vpcId>%s</vpcId>
+      <description/>
+      <ownerId>%s</ownerId>
+      <status>in-use</status>
+      <macAddress>02:00:00:00:00:01</macAddress>
+      <privateIpAddress>%s</privateIpAddress>
+      <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
+      <sourceDestCheck>true</sourceDestCheck>
+      <groupSet>%s</groupSet>
+      <attachment><attachmentId>eni-attach-%s</attachmentId><deviceIndex>0</deviceIndex><status>attached</status><attachTime>%s</attachTime><deleteOnTermination>true</deleteOnTermination></attachment>
+    </item></networkInterfaceSet>`,
+			inst.NetworkInterfaceId, inst.SubnetId, inst.VpcId, ec2Owner(), inst.PrivateIpAddress,
+			strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), groups.String(), inst.NetworkInterfaceId, inst.LaunchTime)
+	} else {
+		ni.WriteString("<networkInterfaceSet/>")
+	}
+	return fmt.Sprintf(`<item>
+    <instanceId>%s</instanceId>
+    <imageId>%s</imageId>
+    <instanceState><code>%d</code><name>%s</name></instanceState>
+    <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
+    <dnsName/>
+    <reason/>
+    <amiLaunchIndex>0</amiLaunchIndex>
+    <productCodes/>
+    <instanceType>%s</instanceType>
+    <launchTime>%s</launchTime>
+    <placement><availabilityZone>%s</availabilityZone><groupName/><tenancy>default</tenancy></placement>
+    <monitoring><state>disabled</state></monitoring>
+    <subnetId>%s</subnetId>
+    <vpcId>%s</vpcId>
+    <privateIpAddress>%s</privateIpAddress>
+    <sourceDestCheck>true</sourceDestCheck>
+    <groupSet>%s</groupSet>
+    <architecture>%s</architecture>
+    <rootDeviceType>ebs</rootDeviceType>
+    <rootDeviceName>%s</rootDeviceName>
+    <blockDeviceMapping><item><deviceName>%s</deviceName><ebs><volumeId>%s</volumeId><status>attached</status><attachTime>%s</attachTime><deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping>
+    <virtualizationType>hvm</virtualizationType>
+    <clientToken/>
+    %s
+    %s
+  </item>`,
+		inst.InstanceId, inst.ImageId, instanceStateCode(inst.State), inst.State,
+		strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), inst.InstanceType, inst.LaunchTime,
+		awsAvailabilityZone(), inst.SubnetId, inst.VpcId, inst.PrivateIpAddress, groups.String(),
+		inst.Architecture, inst.RootDeviceName, inst.RootDeviceName, "vol-"+strings.TrimPrefix(inst.InstanceId, "i-"), inst.LaunchTime,
+		writeTagSetXML(inst.Tags), ni.String())
+}
+
+func runInstancesSecurityGroups(r *http.Request) []string {
+	var groups []string
+	for i := 1; ; i++ {
+		v := r.FormValue(fmt.Sprintf("SecurityGroupId.%d", i))
+		if v == "" {
+			break
+		}
+		groups = append(groups, v)
+	}
+	for i := 1; ; i++ {
+		v := r.FormValue(fmt.Sprintf("NetworkInterface.1.SecurityGroupId.%d", i))
+		if v == "" {
+			break
+		}
+		groups = append(groups, v)
+	}
+	return groups
+}
+
+func handleRunInstances(w http.ResponseWriter, r *http.Request) {
+	imageID := r.FormValue("ImageId")
+	if imageID == "" {
+		imageID = "ami-simulated"
+	}
+	instanceType := r.FormValue("InstanceType")
+	if instanceType == "" {
+		instanceType = "t3.micro"
+	}
+	subnetID := r.FormValue("SubnetId")
+	if subnetID == "" {
+		subnetID = r.FormValue("NetworkInterface.1.SubnetId")
+	}
+	if subnetID == "" {
+		subnetID = "subnet-0123456789abcdef0"
+	}
+	subnet, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		sim.AWSErrorf(w, "InvalidSubnetID.NotFound", http.StatusBadRequest, "The subnet ID %q does not exist", subnetID)
+		return
+	}
+	privateIP := r.FormValue("PrivateIpAddress")
+	if privateIP == "" {
+		privateIP = r.FormValue("NetworkInterface.1.PrivateIpAddress")
+	}
+	if privateIP == "" {
+		ip, err := AllocateSubnetIP(subnetID)
+		if err != nil {
+			sim.AWSError(w, "InsufficientFreeAddressesInSubnet", err.Error(), http.StatusBadRequest)
+			return
+		}
+		privateIP = ip
+	}
+	instanceID := ec2ID("i")
+	reservationID := ec2ID("r")
+	eniID := ec2ID("eni")
+	sgIDs := runInstancesSecurityGroups(r)
+	if len(sgIDs) == 0 {
+		for _, sg := range ec2SecurityGroups.Filter(func(sg EC2SecurityGroup) bool {
+			return sg.VpcId == subnet.VpcId && sg.GroupName == "default"
+		}) {
+			sgIDs = append(sgIDs, sg.GroupId)
+			break
+		}
+	}
+	launchTime := time.Now().UTC().Format(time.RFC3339)
+	inst := EC2Instance{
+		InstanceId:         instanceID,
+		ReservationId:      reservationID,
+		ImageId:            imageID,
+		InstanceType:       instanceType,
+		SubnetId:           subnetID,
+		VpcId:              subnet.VpcId,
+		State:              "running",
+		PrivateIpAddress:   privateIP,
+		SecurityGroupIds:   sgIDs,
+		Tags:               parseTags(r),
+		LaunchTime:         launchTime,
+		KeyName:            r.FormValue("KeyName"),
+		Architecture:       "x86_64",
+		RootDeviceName:     "/dev/sda1",
+		NetworkInterfaceId: eniID,
+	}
+	ec2Instances.Put(instanceID, inst)
+	ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
+		NetworkInterfaceId: eniID,
+		SubnetId:           subnetID,
+		VpcId:              subnet.VpcId,
+		PrivateIpAddress:   privateIP,
+		Status:             "in-use",
+		AttachmentId:       "eni-attach-" + eniID,
+		InstanceId:         instanceID,
+		SecurityGroupIds:   sgIDs,
+		Tags:               inst.Tags,
+		OwnerId:            ec2Owner(),
+	})
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<RunInstancesResponse %s>
+  <requestId>%s</requestId>
+  <reservationId>%s</reservationId>
+  <ownerId>%s</ownerId>
+  <groupSet/>
+  <instancesSet>%s</instancesSet>
+</RunInstancesResponse>`, ec2Xmlns(), generateUUID(), reservationID, ec2Owner(), ec2InstanceXML(inst))
+}
+
+func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
+	instanceIDs := ec2ParamList(r, "InstanceId")
+	var instances []EC2Instance
+	if len(instanceIDs) > 0 {
+		for _, id := range instanceIDs {
+			inst, ok := ec2Instances.Get(id)
+			if !ok {
+				sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", id)
+				return
+			}
+			instances = append(instances, inst)
+		}
+	} else {
+		instances = ec2Instances.List()
+	}
+	var reservations strings.Builder
+	for _, inst := range instances {
+		fmt.Fprintf(&reservations, `<item><reservationId>%s</reservationId><ownerId>%s</ownerId><groupSet/><instancesSet>%s</instancesSet></item>`,
+			inst.ReservationId, ec2Owner(), ec2InstanceXML(inst))
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeInstancesResponse %s>
+  <requestId>%s</requestId>
+  <reservationSet>%s</reservationSet>
+</DescribeInstancesResponse>`, ec2Xmlns(), generateUUID(), reservations.String())
+}
+
+func handleTerminateInstances(w http.ResponseWriter, r *http.Request) {
+	writeInstanceStateChange(w, r, "terminated", true)
+}
+
+func handleStopInstances(w http.ResponseWriter, r *http.Request) {
+	writeInstanceStateChange(w, r, "stopped", false)
+}
+
+func handleStartInstances(w http.ResponseWriter, r *http.Request) {
+	writeInstanceStateChange(w, r, "running", false)
+}
+
+func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next string, deleteENI bool) {
+	instanceIDs := ec2ParamList(r, "InstanceId")
+	var items strings.Builder
+	for _, id := range instanceIDs {
+		inst, ok := ec2Instances.Get(id)
+		if !ok {
+			sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", id)
+			return
+		}
+		prev := inst.State
+		inst.State = next
+		ec2Instances.Put(id, inst)
+		if deleteENI && inst.NetworkInterfaceId != "" {
+			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+		}
+		fmt.Fprintf(&items, `<item><instanceId>%s</instanceId><currentState><code>%d</code><name>%s</name></currentState><previousState><code>%d</code><name>%s</name></previousState></item>`,
+			id, instanceStateCode(next), next, instanceStateCode(prev), prev)
+	}
+	action := "StopInstances"
+	if next == "running" {
+		action = "StartInstances"
+	} else if next == "terminated" {
+		action = "TerminateInstances"
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<%sResponse %s>
+  <requestId>%s</requestId>
+  <instancesSet>%s</instancesSet>
+</%sResponse>`, action, ec2Xmlns(), generateUUID(), items.String(), action)
+}
+
+func handleDescribeInstanceStatus(w http.ResponseWriter, r *http.Request) {
+	instanceIDs := ec2ParamList(r, "InstanceId")
+	var instances []EC2Instance
+	if len(instanceIDs) > 0 {
+		for _, id := range instanceIDs {
+			if inst, ok := ec2Instances.Get(id); ok && inst.State != "terminated" {
+				instances = append(instances, inst)
+			}
+		}
+	} else {
+		instances = ec2Instances.Filter(func(inst EC2Instance) bool { return inst.State == "running" })
+	}
+	var items strings.Builder
+	for _, inst := range instances {
+		fmt.Fprintf(&items, `<item><instanceId>%s</instanceId><availabilityZone>%s</availabilityZone><instanceState><code>%d</code><name>%s</name></instanceState><systemStatus><status>ok</status><details><item><name>reachability</name><status>passed</status></item></details></systemStatus><instanceStatus><status>ok</status><details><item><name>reachability</name><status>passed</status></item></details></instanceStatus></item>`,
+			inst.InstanceId, awsAvailabilityZone(), instanceStateCode(inst.State), inst.State)
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeInstanceStatusResponse %s>
+  <requestId>%s</requestId>
+  <instanceStatusSet>%s</instanceStatusSet>
+</DescribeInstanceStatusResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func handleDescribeInstanceAttribute(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.FormValue("InstanceId")
+	inst, ok := ec2Instances.Get(instanceID)
+	if !ok {
+		sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", instanceID)
+		return
+	}
+	attribute := r.FormValue("Attribute")
+	if attribute == "" {
+		attribute = "instanceType"
+	}
+	var body string
+	switch attribute {
+	case "instanceType":
+		body = fmt.Sprintf("<instanceType><value>%s</value></instanceType>", inst.InstanceType)
+	case "kernel":
+		body = "<kernel><value/></kernel>"
+	case "ramdisk":
+		body = "<ramdisk><value/></ramdisk>"
+	case "userData":
+		body = "<userData><value/></userData>"
+	case "disableApiTermination":
+		body = "<disableApiTermination><value>false</value></disableApiTermination>"
+	case "disableApiStop":
+		body = "<disableApiStop><value>false</value></disableApiStop>"
+	case "instanceInitiatedShutdownBehavior":
+		body = "<instanceInitiatedShutdownBehavior><value>stop</value></instanceInitiatedShutdownBehavior>"
+	case "rootDeviceName":
+		body = fmt.Sprintf("<rootDeviceName><value>%s</value></rootDeviceName>", inst.RootDeviceName)
+	case "sourceDestCheck":
+		body = "<sourceDestCheck><value>true</value></sourceDestCheck>"
+	default:
+		body = fmt.Sprintf("<%s><value/></%s>", attribute, attribute)
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeInstanceAttributeResponse %s>
+  <requestId>%s</requestId>
+  <instanceId>%s</instanceId>
+  %s
+</DescribeInstanceAttributeResponse>`, ec2Xmlns(), generateUUID(), instanceID, body)
+}
+
+func handleModifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.FormValue("InstanceId")
+	if _, ok := ec2Instances.Get(instanceID); !ok {
+		sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", instanceID)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyInstanceAttributeResponse %s><requestId>%s</requestId><return>true</return></ModifyInstanceAttributeResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleCreateTags(w http.ResponseWriter, r *http.Request) {
+	resources := ec2ParamList(r, "ResourceId")
+	tags := parseIndexedTags(r, "Tag")
+	for _, id := range resources {
+		if strings.HasPrefix(id, "i-") {
+			ec2Instances.Update(id, func(inst *EC2Instance) { inst.Tags = mergeEC2Tags(inst.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "eni-") {
+			ec2NetworkInterfaces.Update(id, func(eni *EC2NetworkInterface) { eni.Tags = mergeEC2Tags(eni.Tags, tags) })
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateTagsResponse %s><requestId>%s</requestId><return>true</return></CreateTagsResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleDeleteTags(w http.ResponseWriter, r *http.Request) {
+	resources := ec2ParamList(r, "ResourceId")
+	keys := map[string]bool{}
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("Tag.%d.Key", i))
+		if key == "" {
+			break
+		}
+		keys[key] = true
+	}
+	filter := func(tags []EC2Tag) []EC2Tag {
+		var out []EC2Tag
+		for _, tag := range tags {
+			if !keys[tag.Key] {
+				out = append(out, tag)
+			}
+		}
+		return out
+	}
+	for _, id := range resources {
+		if strings.HasPrefix(id, "i-") {
+			ec2Instances.Update(id, func(inst *EC2Instance) { inst.Tags = filter(inst.Tags) })
+		}
+		if strings.HasPrefix(id, "eni-") {
+			ec2NetworkInterfaces.Update(id, func(eni *EC2NetworkInterface) { eni.Tags = filter(eni.Tags) })
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DeleteTagsResponse %s><requestId>%s</requestId><return>true</return></DeleteTagsResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
+	type tagEntry struct {
+		resourceID   string
+		resourceType string
+		key          string
+		value        string
+	}
+	filters := ec2Filters(r)
+	matches := func(entry tagEntry) bool {
+		for name, values := range filters {
+			matched := false
+			for _, value := range values {
+				switch {
+				case name == "resource-id" && entry.resourceID == value:
+					matched = true
+				case name == "resource-type" && entry.resourceType == value:
+					matched = true
+				case name == "key" && entry.key == value:
+					matched = true
+				case name == "value" && entry.value == value:
+					matched = true
+				case strings.HasPrefix(name, "tag:") && strings.TrimPrefix(name, "tag:") == entry.key && entry.value == value:
+					matched = true
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	}
+	var items strings.Builder
+	writeEntry := func(entry tagEntry) {
+		if !matches(entry) {
+			return
+		}
+		fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>%s</resourceType><key>%s</key><value>%s</value></item>`,
+			entry.resourceID, entry.resourceType, entry.key, entry.value)
+	}
+	for _, inst := range ec2Instances.List() {
+		for _, tag := range inst.Tags {
+			writeEntry(tagEntry{resourceID: inst.InstanceId, resourceType: "instance", key: tag.Key, value: tag.Value})
+		}
+	}
+	for _, eni := range ec2NetworkInterfaces.List() {
+		for _, tag := range eni.Tags {
+			writeEntry(tagEntry{resourceID: eni.NetworkInterfaceId, resourceType: "network-interface", key: tag.Key, value: tag.Value})
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeTagsResponse %s>
+  <requestId>%s</requestId>
+  <tagSet>%s</tagSet>
+</DescribeTagsResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
+	volumeIDs := ec2ParamList(r, "VolumeId")
+	include := func(volumeID string) bool {
+		if len(volumeIDs) == 0 {
+			return true
+		}
+		for _, id := range volumeIDs {
+			if id == volumeID {
+				return true
+			}
+		}
+		return false
+	}
+	var items strings.Builder
+	for _, inst := range ec2Instances.List() {
+		volumeID := "vol-" + strings.TrimPrefix(inst.InstanceId, "i-")
+		if !include(volumeID) {
+			continue
+		}
+		fmt.Fprintf(&items, `<item>
+    <volumeId>%s</volumeId>
+    <size>8</size>
+    <snapshotId>snap-%s</snapshotId>
+    <availabilityZone>%s</availabilityZone>
+    <status>in-use</status>
+    <createTime>%s</createTime>
+    <attachmentSet><item><volumeId>%s</volumeId><instanceId>%s</instanceId><device>%s</device><status>attached</status><attachTime>%s</attachTime><deleteOnTermination>true</deleteOnTermination></item></attachmentSet>
+    <volumeType>gp3</volumeType>
+    <encrypted>false</encrypted>
+    <multiAttachEnabled>false</multiAttachEnabled>
+    %s
+  </item>`, volumeID, strings.TrimPrefix(inst.ImageId, "ami-"), awsAvailabilityZone(), inst.LaunchTime,
+			volumeID, inst.InstanceId, inst.RootDeviceName, inst.LaunchTime, writeTagSetXML(inst.Tags))
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeVolumesResponse %s>
+  <requestId>%s</requestId>
+  <volumeSet>%s</volumeSet>
+</DescribeVolumesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func parseIndexedTags(r *http.Request, prefix string) []EC2Tag {
+	var tags []EC2Tag
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("%s.%d.Key", prefix, i))
+		if key == "" {
+			break
+		}
+		tags = append(tags, EC2Tag{Key: key, Value: r.FormValue(fmt.Sprintf("%s.%d.Value", prefix, i))})
+	}
+	return tags
+}
+
+func mergeEC2Tags(existing, updates []EC2Tag) []EC2Tag {
+	byKey := map[string]string{}
+	for _, t := range existing {
+		byKey[t.Key] = t.Value
+	}
+	for _, t := range updates {
+		byKey[t.Key] = t.Value
+	}
+	var out []EC2Tag
+	for key, value := range byKey {
+		out = append(out, EC2Tag{Key: key, Value: value})
+	}
+	return out
+}
+
+func handleDescribeImages(w http.ResponseWriter, r *http.Request) {
+	imageIDs := ec2ParamList(r, "ImageId")
+	if len(imageIDs) == 0 {
+		imageIDs = []string{"ami-simulated"}
+	}
+	var items strings.Builder
+	for _, id := range imageIDs {
+		fmt.Fprintf(&items, `<item><imageId>%s</imageId><imageLocation>%s</imageLocation><imageState>available</imageState><imageOwnerId>%s</imageOwnerId><isPublic>true</isPublic><architecture>x86_64</architecture><imageType>machine</imageType><rootDeviceType>ebs</rootDeviceType><rootDeviceName>/dev/sda1</rootDeviceName><blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><snapshotId>snap-%s</snapshotId><volumeSize>8</volumeSize><deleteOnTermination>true</deleteOnTermination><volumeType>gp3</volumeType></ebs></item></blockDeviceMapping><virtualizationType>hvm</virtualizationType><name>%s</name><hypervisor>xen</hypervisor></item>`,
+			id, id, ec2Owner(), strings.TrimPrefix(id, "ami-"), id)
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeImagesResponse %s><requestId>%s</requestId><imagesSet>%s</imagesSet></DescribeImagesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func handleDescribeInstanceTypes(w http.ResponseWriter, r *http.Request) {
+	types := ec2ParamList(r, "InstanceType")
+	if len(types) == 0 {
+		types = []string{"t3.micro", "t3.small", "m6i.large"}
+	}
+	var items strings.Builder
+	for _, name := range types {
+		fmt.Fprintf(&items, `<item><instanceType>%s</instanceType><currentGeneration>true</currentGeneration><freeTierEligible>%t</freeTierEligible><supportedUsageClasses><item>on-demand</item><item>spot</item></supportedUsageClasses><supportedRootDeviceTypes><item>ebs</item></supportedRootDeviceTypes><supportedVirtualizationTypes><item>hvm</item></supportedVirtualizationTypes><vcpuInfo><defaultVCpus>2</defaultVCpus><defaultCores>1</defaultCores><defaultThreadsPerCore>2</defaultThreadsPerCore></vcpuInfo><memoryInfo><sizeInMiB>1024</sizeInMiB></memoryInfo><processorInfo><supportedArchitectures><item>x86_64</item></supportedArchitectures></processorInfo><networkInfo><networkPerformance>Up to 5 Gigabit</networkPerformance><maximumNetworkInterfaces>2</maximumNetworkInterfaces><ipv4AddressesPerInterface>2</ipv4AddressesPerInterface></networkInfo><ebsInfo><ebsOptimizedSupport>default</ebsOptimizedSupport><encryptionSupport>supported</encryptionSupport></ebsInfo></item>`,
+			name, name == "t3.micro")
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeInstanceTypesResponse %s>
+  <requestId>%s</requestId>
+  <instanceTypeSet>%s</instanceTypeSet>
+</DescribeInstanceTypesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func handleDescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeKeyPairsResponse %s><requestId>%s</requestId><keySet/></DescribeKeyPairsResponse>`, ec2Xmlns(), generateUUID())
+}
+
 // ---- Network Interfaces ----
 
 func handleDescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
-	// The simulator doesn't create real ENIs. Return an empty set so
-	// terraform can proceed with deleting security groups and subnets.
+	ids := ec2ParamList(r, "NetworkInterfaceId")
+	var enis []EC2NetworkInterface
+	if len(ids) > 0 {
+		for _, id := range ids {
+			eni, ok := ec2NetworkInterfaces.Get(id)
+			if !ok {
+				sim.AWSErrorf(w, "InvalidNetworkInterfaceID.NotFound", http.StatusBadRequest, "The networkInterface ID %q does not exist", id)
+				return
+			}
+			enis = append(enis, eni)
+		}
+	} else {
+		enis = ec2NetworkInterfaces.List()
+	}
+	var items strings.Builder
+	for _, eni := range enis {
+		var groups strings.Builder
+		for _, groupID := range eni.SecurityGroupIds {
+			name := groupID
+			if sg, ok := ec2SecurityGroups.Get(groupID); ok {
+				name = sg.GroupName
+			}
+			fmt.Fprintf(&groups, "<item><groupId>%s</groupId><groupName>%s</groupName></item>", groupID, name)
+		}
+		fmt.Fprintf(&items, `<item>
+    <networkInterfaceId>%s</networkInterfaceId>
+    <subnetId>%s</subnetId>
+    <vpcId>%s</vpcId>
+    <availabilityZone>%s</availabilityZone>
+    <description/>
+    <ownerId>%s</ownerId>
+    <requesterManaged>false</requesterManaged>
+    <status>%s</status>
+    <macAddress>02:00:00:00:00:01</macAddress>
+    <privateIpAddress>%s</privateIpAddress>
+    <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
+    <sourceDestCheck>true</sourceDestCheck>
+    <groupSet>%s</groupSet>
+    <attachment><attachmentId>%s</attachmentId><instanceId>%s</instanceId><deviceIndex>0</deviceIndex><status>attached</status><deleteOnTermination>true</deleteOnTermination></attachment>
+    %s
+  </item>`,
+			eni.NetworkInterfaceId, eni.SubnetId, eni.VpcId, awsAvailabilityZone(), eni.OwnerId, eni.Status,
+			eni.PrivateIpAddress, strings.ReplaceAll(eni.PrivateIpAddress, ".", "-"), awsRegion(), groups.String(),
+			eni.AttachmentId, eni.InstanceId, writeTagSetXML(eni.Tags))
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeNetworkInterfacesResponse %s>
   <requestId>%s</requestId>
-  <networkInterfaceSet/>
-</DescribeNetworkInterfacesResponse>`, ec2Xmlns(), generateUUID())
+  <networkInterfaceSet>%s</networkInterfaceSet>
+</DescribeNetworkInterfacesResponse>`, ec2Xmlns(), generateUUID(), items.String())
 }
 
 func removePermission(perms []EC2IpPermission, target EC2IpPermission) []EC2IpPermission {

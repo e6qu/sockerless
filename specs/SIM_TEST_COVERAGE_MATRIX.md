@@ -17,7 +17,7 @@ Legend:
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudwatch` | direct | direct | not applicable | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go` |
 | `aws-dynamodb` | direct | direct | direct | `simulators/aws/sdk-tests/dynamodb_test.go`; `simulators/aws/cli-tests/dynamodb_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-ec2` | direct | tracked #266 | tracked #266 | `simulators/aws/sdk-tests/ec2_test.go`; VM instance lifecycle is owned by #266 |
+| `aws-ec2` | direct | direct | direct | `simulators/aws/sdk-tests/ec2_test.go`; `simulators/aws/cli-tests/ec2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ecr` | direct | direct | direct | `simulators/aws/sdk-tests/ecr_test.go`; `simulators/aws/cli-tests/ecr_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ecs` | direct | direct | direct | `simulators/aws/sdk-tests/ecs_test.go`; `simulators/aws/cli-tests/ecs_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-efs` | direct | direct | not applicable | `simulators/aws/sdk-tests/efs_test.go`; `simulators/aws/cli-tests/efs_test.go` |
@@ -39,6 +39,7 @@ Legend:
 | `aws-wafv2` | direct | direct | direct | `simulators/aws/sdk-tests/wafv2_test.go`; `simulators/aws/cli-tests/wafv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cache_redis` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/redis_pg_test.go` |
+| `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-containerapps` | direct | direct | direct | `simulators/azure/sdk-tests/containerapps_test.go`; `simulators/azure/cli-tests/containerapps_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-eventgrid` | direct | direct | direct | `simulators/azure/sdk-tests/eventgrid_test.go`; `simulators/azure/cli-tests/eventgrid_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-eventhubs` | direct | direct | direct | `simulators/azure/sdk-tests/eventhub_test.go`; `simulators/azure/cli-tests/eventhub_test.go`; `simulators/azure/terraform-tests/main.tf` |
@@ -56,7 +57,7 @@ Legend:
 | `gcp-cloudbuild` | direct | not applicable | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudrun` | direct | direct | direct | `simulators/gcp/sdk-tests/run_sdk_test.go`; `simulators/gcp/cli-tests/run_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `gcp-compute` | direct | direct | direct; tracked #266 for VM instances | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-compute` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/cli-tests/compute_instances_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-dns` | direct | direct | direct | `simulators/gcp/sdk-tests/dns_test.go`; `simulators/gcp/cli-tests/dns_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-eventarc` | direct | direct | direct | `simulators/gcp/sdk-tests/eventarc_test.go`; `simulators/gcp/cli-tests/eventarc_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-gcs` | direct | not applicable | direct | `simulators/gcp/sdk-tests/storage_test.go`; `simulators/gcp/terraform-tests/main.tf` |

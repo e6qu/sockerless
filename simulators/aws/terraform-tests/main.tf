@@ -22,6 +22,7 @@ provider "aws" {
   s3_use_path_style = true
 
   endpoints {
+    ec2              = var.endpoint
     ecs              = var.endpoint
     sts              = var.endpoint
     ecr              = var.endpoint
@@ -58,6 +59,34 @@ resource "aws_kinesis_stream" "tf_stream" {
 }
 
 data "aws_caller_identity" "current" {}
+
+resource "aws_vpc" "tf_ec2_vpc" {
+  cidr_block = "10.88.0.0/16"
+}
+
+resource "aws_subnet" "tf_ec2_subnet" {
+  vpc_id     = aws_vpc.tf_ec2_vpc.id
+  cidr_block = "10.88.1.0/24"
+}
+
+resource "aws_security_group" "tf_ec2_sg" {
+  name        = "tf-ec2-sg"
+  description = "terraform ec2 instance coverage"
+  vpc_id      = aws_vpc.tf_ec2_vpc.id
+}
+
+resource "aws_instance" "tf_vm" {
+  ami           = "ami-tf1234"
+  instance_type = "t3.micro"
+  subnet_id     = aws_subnet.tf_ec2_subnet.id
+  vpc_security_group_ids = [
+    aws_security_group.tf_ec2_sg.id,
+  ]
+
+  tags = {
+    Name = "tf-ec2-instance"
+  }
+}
 
 resource "aws_ecs_cluster" "main" {
   name = "tf-test-cluster"

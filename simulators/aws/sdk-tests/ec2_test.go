@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -78,4 +79,158 @@ func TestEC2_InternetGateway(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, descOut.InternetGateways, 1)
+}
+
+func TestEC2_InstanceLifecycle(t *testing.T) {
+	client := ec2Client()
+
+	images, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{
+		ImageIds: []string{"ami-test1234"},
+	})
+	require.NoError(t, err)
+	require.Len(t, images.Images, 1)
+
+	accountAttrs, err := client.DescribeAccountAttributes(ctx, &ec2.DescribeAccountAttributesInput{})
+	require.NoError(t, err)
+	require.NotEmpty(t, accountAttrs.AccountAttributes)
+
+	zones, err := client.DescribeAvailabilityZones(ctx, &ec2.DescribeAvailabilityZonesInput{})
+	require.NoError(t, err)
+	require.NotEmpty(t, zones.AvailabilityZones)
+
+	regions, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
+	require.NoError(t, err)
+	require.NotEmpty(t, regions.Regions)
+
+	instanceTypes, err := client.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{
+		InstanceTypes: []types.InstanceType{types.InstanceTypeT3Micro},
+	})
+	require.NoError(t, err)
+	require.Len(t, instanceTypes.InstanceTypes, 1)
+
+	keys, err := client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{})
+	require.NoError(t, err)
+	assert.Empty(t, keys.KeyPairs)
+
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.66.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            vpcOut.Vpc.VpcId,
+		CidrBlock:        aws.String("10.66.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+
+	sgOut, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("instance-sg"),
+		Description: aws.String("instance lifecycle"),
+		VpcId:       vpcOut.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-test1234"),
+		InstanceType: types.InstanceTypeT3Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		SubnetId:     subnetOut.Subnet.SubnetId,
+		SecurityGroupIds: []string{
+			*sgOut.GroupId,
+		},
+		TagSpecifications: []types.TagSpecification{{
+			ResourceType: types.ResourceTypeInstance,
+			Tags:         []types.Tag{{Key: aws.String("Name"), Value: aws.String("sdk-instance")}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Instances, 1)
+	instanceID := *runOut.Instances[0].InstanceId
+	assert.Equal(t, types.InstanceStateNameRunning, runOut.Instances[0].State.Name)
+
+	descOut, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	require.NoError(t, err)
+	require.Len(t, descOut.Reservations, 1)
+	require.Len(t, descOut.Reservations[0].Instances, 1)
+	assert.Equal(t, instanceID, *descOut.Reservations[0].Instances[0].InstanceId)
+	assert.NotEmpty(t, descOut.Reservations[0].Instances[0].PrivateIpAddress)
+	require.Len(t, descOut.Reservations[0].Instances[0].NetworkInterfaces, 1)
+
+	_, err = client.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []types.Tag{{Key: aws.String("phase"), Value: aws.String("sdk")}},
+	})
+	require.NoError(t, err)
+	_, err = client.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []types.Tag{{Key: aws.String("phase")}},
+	})
+	require.NoError(t, err)
+
+	statusOut, err := client.DescribeInstanceStatus(ctx, &ec2.DescribeInstanceStatusInput{
+		InstanceIds: []string{instanceID},
+	})
+	require.NoError(t, err)
+	require.Len(t, statusOut.InstanceStatuses, 1)
+	assert.Equal(t, instanceID, *statusOut.InstanceStatuses[0].InstanceId)
+
+	attrOut, err := client.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		Attribute:  types.InstanceAttributeNameInstanceType,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, attrOut.InstanceType)
+	assert.Equal(t, "t3.micro", *attrOut.InstanceType.Value)
+	stopAttrOut, err := client.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		Attribute:  types.InstanceAttributeNameDisableApiStop,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, stopAttrOut.DisableApiStop)
+	assert.False(t, *stopAttrOut.DisableApiStop.Value)
+	_, err = client.ModifyInstanceAttribute(ctx, &ec2.ModifyInstanceAttributeInput{
+		InstanceId: aws.String(instanceID),
+		SourceDestCheck: &types.AttributeBooleanValue{
+			Value: aws.Bool(true),
+		},
+	})
+	require.NoError(t, err)
+
+	tagsOut, err := client.DescribeTags(ctx, &ec2.DescribeTagsInput{})
+	require.NoError(t, err)
+	assert.NotNil(t, tagsOut.Tags)
+
+	volumesOut, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{})
+	require.NoError(t, err)
+	require.NotEmpty(t, volumesOut.Volumes)
+
+	eniID := *descOut.Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId
+	eniOut, err := client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
+	require.NoError(t, err)
+	require.Len(t, eniOut.NetworkInterfaces, 1)
+	assert.Equal(t, instanceID, *eniOut.NetworkInterfaces[0].Attachment.InstanceId)
+
+	_, err = client.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	stopped, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	assert.Equal(t, types.InstanceStateNameStopped, stopped.Reservations[0].Instances[0].State.Name)
+
+	_, err = client.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	running, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	assert.Equal(t, types.InstanceStateNameRunning, running.Reservations[0].Instances[0].State.Name)
+
+	_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	terminated, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	require.NoError(t, err)
+	assert.Equal(t, types.InstanceStateNameTerminated, terminated.Reservations[0].Instances[0].State.Name)
 }

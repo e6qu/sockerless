@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1219 filed · 1215 fixed · 6 open · 2 false positives.**
+**1219 filed · 1216 fixed · 5 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -15,9 +15,10 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1203 | P0 | cross-cloud managed load balancers | 9 (missing cloud slice) | Managed load-balancer services are missing as first-class simulator slices: AWS ELBv2/ELB, GCP Cloud Load Balancing resources, and Azure Load Balancer/Application Gateway/Front Door/Traffic Manager. API Gateway/APIM/CloudFront coverage is not a substitute for L4/L7 managed load-balancer APIs. |
 | 1204 | P1 | VPC egress and NAT parity | 7 (partial implementation) | VPC/network primitives exist, and NAT is partially modeled (AWS EC2 NAT Gateway, GCP Router NAT, Azure NAT Gateway), but parity is uneven: GCP address/manual-NAT resources, Azure Public IP/Public IP Prefix resources, subnet-NAT attachment/list semantics, and SDK/CLI/Terraform surface tables/tests need a full pass. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
-| 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1207 / issue #266. The AWS simulator now implements EC2 instance lifecycle control-plane APIs (`RunInstances`, `DescribeInstances`, `StopInstances`, `StartInstances`, `TerminateInstances`, `DescribeInstanceStatus`) with subnet-backed private IPs, ENI attachment state, image/key-pair discovery, and tag mutation. The GCP simulator now implements Compute Engine instance create/get/list/aggregated-list/start/stop/delete, labels/tags, metadata, attached disks, NICs, machine types, disk types, images, and zonal operations. The Azure simulator now implements `Microsoft.Network/networkInterfaces`, `Microsoft.Network/publicIPAddresses`, and `Microsoft.Compute/virtualMachines` with ARM VM create/get/list/delete, instanceView, and power-state operations. All three clouds have official SDK, vendor CLI, and Terraform-provider coverage for the VM lifecycle surfaces.
 
 This phase closed BUG-1219 / issue #272. The Azure Entra simulator token endpoint now derives JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource` requests instead of hardcoding the ARM audience for every token. ARM keeps its historical default audience, Key Vault and Service Bus data-plane scopes receive their resource audiences, Storage keeps Azure's trailing-slash audience shape, and the RS256/JWKS simulator token flow is covered by unit and SDK-harness HTTP tests.
 

@@ -22,11 +22,13 @@ The simulator test-contract matrix backfill is now closed. `specs/SIM_TEST_COVER
 
 The Azure Entra token-resource gap is now closed. The simulator token endpoint derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource`, so ARM keeps the management audience while Key Vault, Service Bus, and Storage data-plane clients can receive the resource-specific audiences their SDKs request.
 
-The remaining audit gaps are EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, and uneven public-IP/NAT parity. BUG-1203, BUG-1204, and BUG-1207 track those gaps; BUG-1206 stays open as the surface-table audit-debt tracker.
+The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage. The remaining audit gaps are managed load balancers across all clouds and uneven public-IP/NAT parity. BUG-1203 and BUG-1204 track those gaps; BUG-1206 stays open as the surface-table audit-debt tracker.
 
 ## Stage plan
 
-Current phase: idle after Azure Entra simulator token audiences for issue #272. The next implementation pass should move to VM/EC2-like support, exposing the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery. After that, managed load balancers and NAT/public-IP parity remain the highest-priority simulator audit gaps.
+Current phase: idle after cross-cloud VM/instance compute parity for issue #266. The next implementation pass should move to managed load balancers across AWS/GCP/Azure, then the remaining NAT/public-IP parity work.
+
+Issue #266 finding: the audit gap was real. AWS EC2 exposed VPC/subnet/security-group/NAT helpers but not EC2 instance lifecycle; GCP Compute exposed networks/subnets/firewalls/routers/NAT/disks/zones but not instances; Azure exposed Network resources but not `Microsoft.Compute/virtualMachines` and the NIC/public-IP wiring VM resources require. The fix added public-cloud-compatible control-plane VM slices for all three clouds with SDK/CLI/Terraform coverage. No Firecracker or local execution substrate is exposed through public simulator APIs.
 
 Issue #272 finding: the report was real. The Azure simulator minted RS256/JWKS-verifiable tokens, but every token had `aud=https://management.azure.com/`, even when real Azure clients requested data-plane audiences through OAuth v2 `scope` such as `https://vault.azure.net/.default` or OAuth v1 `resource` such as `https://servicebus.azure.net`. The fix derives the JWT audience from those public token-request fields, keeps the ARM default for omitted audience fields, and covers the behavior with unit tests plus simulator SDK-harness HTTP tests.
 

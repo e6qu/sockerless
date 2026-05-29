@@ -83,6 +83,7 @@ func main() {
 	registerResourceGroups(srv)
 	registerTags(srv)
 	registerNetwork(srv)
+	registerCompute(srv)
 	registerManagedIdentity(srv)
 	registerKeyVault(srv)
 	registerPublicDNS(srv)
