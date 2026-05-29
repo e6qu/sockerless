@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,13 @@ var (
 	azureSimSigningKeyVal  *rsa.PrivateKey
 	azureSimSigningKeyErr  error
 )
+
+const defaultAzureTokenAudience = "https://management.azure.com/"
+
+var azureScopeAudienceOverrides = map[string]string{
+	"https://management.azure.com": defaultAzureTokenAudience,
+	"https://storage.azure.com":    "https://storage.azure.com/",
+}
 
 func azureSimSigningKey() (*rsa.PrivateKey, error) {
 	azureSimSigningKeyOnce.Do(func() {
@@ -115,8 +123,13 @@ func extractTenantFromPath(path string) string {
 
 func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 	tenantId := extractTenantFromPath(path)
+	audience, err := azureTokenAudienceFromRequest(r)
+	if err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
 	now := time.Now()
-	token, err := mintAzureSimJWT(tenantId, now, now.Add(1*time.Hour))
+	token, err := mintAzureSimJWT(tenantId, audience, now, now.Add(1*time.Hour))
 	if err != nil {
 		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 		return
@@ -131,12 +144,41 @@ func handleMockToken(w http.ResponseWriter, r *http.Request, path string) {
 	})
 }
 
+func azureTokenAudienceFromRequest(r *http.Request) (string, error) {
+	if err := r.ParseForm(); err != nil {
+		return "", fmt.Errorf("parse Azure token request form: %w", err)
+	}
+	return azureTokenAudienceFromForm(r.Form), nil
+}
+
+func azureTokenAudienceFromForm(form url.Values) string {
+	if scope := strings.TrimSpace(form.Get("scope")); scope != "" {
+		return azureAudienceFromScope(scope)
+	}
+	if resource := strings.TrimSpace(form.Get("resource")); resource != "" {
+		return resource
+	}
+	return defaultAzureTokenAudience
+}
+
+func azureAudienceFromScope(scope string) string {
+	fields := strings.Fields(scope)
+	if len(fields) == 0 {
+		return defaultAzureTokenAudience
+	}
+	audience := strings.TrimSuffix(fields[0], "/.default")
+	if override, ok := azureScopeAudienceOverrides[audience]; ok {
+		return override
+	}
+	return audience
+}
+
 // mintAzureSimJWT produces a real-shape Azure AD access token JWT
 // (`header.payload.signature`) signed with RS256 against the sim's
 // per-process private key. The claims set matches what azure-identity / the
 // Azure SDK round-trip on token introspection (tid, oid, sub, aud,
 // iss, iat, exp, nbf, ver, appid).
-func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) (string, error) {
+func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
 	headerJSON, _ := json.Marshal(map[string]string{
 		"alg": "RS256",
 		"typ": "JWT",
@@ -148,7 +190,7 @@ func mintAzureSimJWT(tenantId string, issuedAt, expiresAt time.Time) (string, er
 		"tid":   tenantId,
 		"oid":   "test-oid",
 		"sub":   "test-sub",
-		"aud":   "https://management.azure.com/",
+		"aud":   audience,
 		"iss":   fmt.Sprintf("https://sts.windows.net/%s/", tenantId),
 		"iat":   issuedAt.Unix(),
 		"exp":   expiresAt.Unix(),

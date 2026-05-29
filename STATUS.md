@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after simulator SDK/CLI/Terraform coverage-matrix backfill. |
-| In-flight | None; next implementation pass starts from the remaining VM, managed load-balancer, NAT/public-IP, and Azure AD token-resource gaps. |
-| Last merged | Simulator test-contract matrix and coverage backfill for issue #264 (2026-05-29). |
+| Active branch | `main` - idle after Azure Entra token audience fix. |
+| In-flight | None; next implementation pass starts from the remaining VM, managed load-balancer, and NAT/public-IP gaps. |
+| Last merged | Azure Entra simulator per-resource token audiences for issue #272 (2026-05-29). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1218 filed · 1214 fixed · 6 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, BUG-1207. |
+| Bugs | 1219 filed · 1215 fixed · 6 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, BUG-1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| issue #272 | Azure Entra token audience | Closed BUG-1219/#272. The Azure simulator's OAuth token endpoint now derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource` requests, preserving the ARM default only when no audience parameter is sent. SDK-harness HTTP coverage verifies ARM, Key Vault, Storage, and Service Bus audiences through the simulator token route. |
 | issue #264 | simulator test-contract matrix | Closed BUG-1218/#264. `specs/SIM_TEST_COVERAGE_MATRIX.md` now has one SDK/CLI/Terraform coverage row per canonical simulator surface table, and `scripts/check-simulator-coverage-matrix.sh` runs in pre-commit and CI to prevent surface-table/matrix drift. AWS DynamoDB, SQS, and SNS gained direct AWS CLI lifecycle coverage. The GCP Terraform harness now covers Cloud Functions v2, Cloud Build triggers, Pub/Sub topics/subscriptions, and Cloud Logging sinks/metrics; the GCP simulator implements the Cloud Logging sink/metric and Cloud Build trigger control-plane routes required by the provider. |
 | issue #269 | Azure azurerm storage endpoint coverage | Closed BUG-1217/#269. The Azure simulator's templated storage endpoint emission and metadata storage suffix derivation are now locked by the exact azurerm data-plane resource path: `azurerm_storage_container` with `storage_account_name`. The Terraform harness verifies that the provider accepts the `{account}.blob.{suffix}` endpoint shape, reaches the Blob data plane, returns a Blob URL-shaped container ID, and also reports the canonical ARM `resource_manager_id`. |
 | issue #267 | managed data SaaS parity | Closed BUG-1201/BUG-1202. GCP BigQuery now supports dataset/table/job/query/tabledata flows with persisted rows and equality-filtered queries; GCP Firestore now supports document CRUD, commit, batchGet, batchWrite, and structured equality runQuery; Azure Cosmos DB now supports ARM databaseAccounts, SQL databases/containers/throughput, listKeys/listConnectionStrings, and SQL data-plane document CRUD/query. The AWS DynamoDB audit also fixed Query/filtered Scan to honor equality expressions. |
