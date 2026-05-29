@@ -13,7 +13,8 @@ Surface registered in `simulators/azure/functions.go` (and related files grouped
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /api/function` | ✓ `simulators/azure/functions.go:271::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.Web/checknameavailability` | ✓ `simulators/azure/functions.go:139::checkNameAvailabilityHandler` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /api/function` | ✓ `simulators/azure/functions.go:308::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

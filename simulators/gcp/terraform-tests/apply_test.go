@@ -9,16 +9,18 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
-// (compute network + disk + subnet + firewall, public + private DNS zones,
-// Artifact Registry, Cloud Run v2 Service + Job, Cloud Functions v2,
-// Pub/Sub, Cloud Build trigger, Cloud Storage bucket + object, Cloud Logging
-// sink/metric, BigQuery dataset/table, Firestore document, Eventarc trigger,
-// Secret Manager, IAM service account) in a single terraform apply round-trip
-// and asserts the cross-resource
-// references converged.
+// (compute network + disk + subnet + firewall + global HTTP load balancer,
+// public + private DNS zones, Artifact Registry, Cloud Run v2 Service + Job,
+// Cloud Functions v2, Pub/Sub, Cloud Build trigger, Cloud Storage bucket +
+// object, Cloud Logging sink/metric, BigQuery dataset/table, Firestore
+// document, Eventarc trigger, Secret Manager, IAM service account) in a single
+// terraform apply round-trip and asserts the cross-resource references
+// converged.
 //
 // Slices exercised against the simulator:
-//   - compute.googleapis.com (networks + disks + subnetworks + firewalls)
+//   - compute.googleapis.com (networks + disks + subnetworks + firewalls +
+//     healthChecks + backendServices + urlMaps + targetHttpProxies +
+//     globalForwardingRules)
 //   - dns.googleapis.com (public + private managedZones)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
@@ -117,6 +119,26 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	firewallID := outputs.must(t, "firewall_id")
 	require.Contains(t, firewallID, "projects/test-project/global/firewalls/tf-test-fw-allow-ssh",
 		"firewall id must include the canonical global path; got %s", firewallID)
+
+	lbHCID := outputs.must(t, "lb_health_check_id")
+	require.Contains(t, lbHCID, "projects/test-project/global/healthChecks/tf-lb-hc",
+		"load-balancer health check id must include the canonical global path; got %s", lbHCID)
+
+	lbBackendID := outputs.must(t, "lb_backend_service_id")
+	require.Contains(t, lbBackendID, "projects/test-project/global/backendServices/tf-lb-backend",
+		"load-balancer backend service id must include the canonical global path; got %s", lbBackendID)
+
+	lbURLMapID := outputs.must(t, "lb_url_map_id")
+	require.Contains(t, lbURLMapID, "projects/test-project/global/urlMaps/tf-lb-url-map",
+		"load-balancer URL map id must include the canonical global path; got %s", lbURLMapID)
+
+	lbProxyID := outputs.must(t, "lb_target_http_proxy_id")
+	require.Contains(t, lbProxyID, "projects/test-project/global/targetHttpProxies/tf-lb-http-proxy",
+		"load-balancer target HTTP proxy id must include the canonical global path; got %s", lbProxyID)
+
+	lbForwardingIP := outputs.must(t, "lb_forwarding_rule_ip")
+	require.True(t, strings.HasPrefix(lbForwardingIP, "34."),
+		"load-balancer global forwarding rule must receive an external IPv4 address; got %s", lbForwardingIP)
 
 	gcsObjLink := outputs.must(t, "gcs_object_self_link")
 	require.Contains(t, gcsObjLink, "tf-test-artifact.txt",

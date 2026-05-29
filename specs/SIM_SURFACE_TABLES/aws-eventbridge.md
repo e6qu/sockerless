@@ -1,6 +1,6 @@
 # Sim surface — aws-eventbridge
 
-Surface registered in `simulators/aws/eventbridge.go`. Rows below are the EventBridge operations implemented by the AWS simulator as the `AWSEvents.*` JSON protocol.
+Surface registered in `simulators/aws/eventbridge.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -9,42 +9,41 @@ Surface registered in `simulators/aws/eventbridge.go`. Rows below are the EventB
 - 501 — stubbed NotImplemented (wire-visible gap)
 - n/a — no terraform-provider resource for this op
 
-## Implemented ops
+## Implemented ops (extracted from HandleFunc registrations)
 
-| Op | sim handler | sdk-test | cli-test | tf-test | notes |
+| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| CreateEventBus | ✓ `eventbridge.go::handleEBCreateEventBus` | ✓ `sdk-tests/eventbridge_test.go::TestEventBridge_BusArchiveReplaySDK` | ✓ `cli-tests/eventbridge_test.go::TestEventBridgeCLI_BusArchiveReplay` | ✓ `aws_cloudwatch_event_bus` | Creates custom event buses with tags and ARN. |
-| DescribeEventBus | ✓ `eventbridge.go::handleEBDescribeEventBus` | ✓ | ✓ | ✓ Terraform read | Returns default and custom bus metadata and policy. |
-| ListEventBuses | ✓ `eventbridge.go::handleEBListEventBuses` | ✓ | ✓ | n/a | Lists default and custom buses. |
-| DeleteEventBus | ✓ `eventbridge.go::handleEBDeleteEventBus` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes custom event buses and scoped rules. |
-| PutPermission | ✓ `eventbridge.go::handleEBPutPermission` | ✓ | ✓ | ✓ `aws_cloudwatch_event_permission` | Stores EventBridge bus policy statements. |
-| RemovePermission | ✓ `eventbridge.go::handleEBRemovePermission` | ✓ | ✓ | ✓ destroy | Removes bus policy statements by statement ID. |
-| PutRule | ✓ `eventbridge.go::handleEBPutRule` | ✓ `sdk-tests/eventbridge_test.go::TestEventBridge_RuleTargetPutEventsSDK`; ✓ `TestEventBridge_BusArchiveReplaySDK` | ✓ `cli-tests/eventbridge_test.go::TestEventBridgeCLI_RuleTargetPutEvents`; ✓ `TestEventBridgeCLI_BusArchiveReplay` | ✓ `aws_cloudwatch_event_rule` | Creates/updates rule state, pattern, schedule, tags, and custom-bus scope. |
-| DescribeRule | ✓ `eventbridge.go::handleEBDescribeRule` | ✓ | ✓ via Terraform read | ✓ `aws_cloudwatch_event_rule` read | Returns EventBridge rule shape. |
-| ListRules | ✓ `eventbridge.go::handleEBListRules` | ✓ | n/a | n/a | SDK coverage verifies prefix filtering. |
-| DeleteRule | ✓ `eventbridge.go::handleEBDeleteRule` | ✓ cleanup | ✓ cleanup | ✓ destroy | Enforces target precondition unless forced. |
-| EnableRule | ✓ `eventbridge.go::handleEBEnableRule` | n/a | n/a | n/a | Covered by shared state mutation path with DisableRule. |
-| DisableRule | ✓ `eventbridge.go::handleEBDisableRule` | n/a | n/a | n/a | Covered by shared state mutation path with EnableRule. |
-| PutTargets | ✓ `eventbridge.go::handleEBPutTargets` | ✓ | ✓ | ✓ `aws_cloudwatch_event_target` | Stores target IDs/ARNs for delivery. |
-| ListTargetsByRule | ✓ `eventbridge.go::handleEBListTargetsByRule` | ✓ | ✓ | ✓ Terraform read | Returns rule targets. |
-| RemoveTargets | ✓ `eventbridge.go::handleEBRemoveTargets` | ✓ cleanup | ✓ cleanup | ✓ destroy | Removes target IDs. |
-| PutEvents | ✓ `eventbridge.go::handleEBPutEvents` | ✓ | ✓ | n/a | Records events and delivers matching events to SQS/SNS targets. |
-| TagResource | ✓ `eventbridge.go::handleEBTagResource` | ✓ via PutRule/ListTags | n/a | ✓ rule tags | Persists rule tags. |
-| UntagResource | ✓ `eventbridge.go::handleEBUntagResource` | n/a | n/a | ✓ tag diff/destroy | Removes rule tags. |
-| ListTagsForResource | ✓ `eventbridge.go::handleEBListTagsForResource` | ✓ | n/a | ✓ Terraform read | Returns rule and event-bus tags. |
-| CreateArchive | ✓ `eventbridge.go::handleEBCreateArchive` | ✓ `TestEventBridge_BusArchiveReplaySDK` | ✓ `TestEventBridgeCLI_BusArchiveReplay` | ✓ `aws_cloudwatch_event_archive` | Creates archives for event-bus source ARNs and optional event patterns. |
-| DescribeArchive | ✓ `eventbridge.go::handleEBDescribeArchive` | ✓ | ✓ | ✓ Terraform read | Returns archive state, retention, and counters. |
-| ListArchives | ✓ `eventbridge.go::handleEBListArchives` | ✓ | ✓ | n/a | Lists archives and supports source filtering. |
-| DeleteArchive | ✓ `eventbridge.go::handleEBDeleteArchive` | ✓ cleanup | ✓ cleanup | ✓ destroy | Deletes archived event state. |
-| StartReplay | ✓ `eventbridge.go::handleEBStartReplay` | ✓ | ✓ | n/a | Replays stored archive events through the target event bus. |
-| DescribeReplay | ✓ `eventbridge.go::handleEBDescribeReplay` | ✓ | ✓ | n/a | Returns replay status and destination. |
-| ListReplays | ✓ `eventbridge.go::handleEBListReplays` | ✓ | ✓ | n/a | Lists started replays by archive. |
-
-## Closed bugs
-
-- BUG-1197 — foundational AWS EventBridge slice added with SDK, CLI, and Terraform coverage.
-- BUG-1213 / issue #249 — event buses, bus policies, archives, and replays added with SDK, CLI, and Terraform coverage where provider resources exist.
+| `Action AWSEvents.CreateEventBus` | ✓ `simulators/aws/eventbridge.go:109::handleEBCreateEventBus` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DescribeEventBus` | ✓ `simulators/aws/eventbridge.go:110::handleEBDescribeEventBus` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListEventBuses` | ✓ `simulators/aws/eventbridge.go:111::handleEBListEventBuses` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DeleteEventBus` | ✓ `simulators/aws/eventbridge.go:112::handleEBDeleteEventBus` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.PutPermission` | ✓ `simulators/aws/eventbridge.go:113::handleEBPutPermission` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.RemovePermission` | ✓ `simulators/aws/eventbridge.go:114::handleEBRemovePermission` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.PutRule` | ✓ `simulators/aws/eventbridge.go:115::handleEBPutRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DescribeRule` | ✓ `simulators/aws/eventbridge.go:116::handleEBDescribeRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListRules` | ✓ `simulators/aws/eventbridge.go:117::handleEBListRules` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DeleteRule` | ✓ `simulators/aws/eventbridge.go:118::handleEBDeleteRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.EnableRule` | ✓ `simulators/aws/eventbridge.go:119::handleEBEnableRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DisableRule` | ✓ `simulators/aws/eventbridge.go:120::handleEBDisableRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.PutTargets` | ✓ `simulators/aws/eventbridge.go:121::handleEBPutTargets` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListTargetsByRule` | ✓ `simulators/aws/eventbridge.go:122::handleEBListTargetsByRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.RemoveTargets` | ✓ `simulators/aws/eventbridge.go:123::handleEBRemoveTargets` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.PutEvents` | ✓ `simulators/aws/eventbridge.go:124::handleEBPutEvents` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.TagResource` | ✓ `simulators/aws/eventbridge.go:125::handleEBTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.UntagResource` | ✓ `simulators/aws/eventbridge.go:126::handleEBUntagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListTagsForResource` | ✓ `simulators/aws/eventbridge.go:127::handleEBListTagsForResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.CreateArchive` | ✓ `simulators/aws/eventbridge.go:128::handleEBCreateArchive` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DescribeArchive` | ✓ `simulators/aws/eventbridge.go:129::handleEBDescribeArchive` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListArchives` | ✓ `simulators/aws/eventbridge.go:130::handleEBListArchives` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DeleteArchive` | ✓ `simulators/aws/eventbridge.go:131::handleEBDeleteArchive` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.StartReplay` | ✓ `simulators/aws/eventbridge.go:132::handleEBStartReplay` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.DescribeReplay` | ✓ `simulators/aws/eventbridge.go:133::handleEBDescribeReplay` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AWSEvents.ListReplays` | ✓ `simulators/aws/eventbridge.go:134::handleEBListReplays` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 
-- No EventBridge subtasks remain from issue #249. Stream/event ingestion is tracked separately as BUG-1200 for Kinesis.
+- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
+- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+
+<!-- HAND-WRITTEN BEGIN -->
+<!-- HAND-WRITTEN END -->

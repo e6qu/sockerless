@@ -13,12 +13,12 @@ Surface registered in `simulators/azure/acr.go` (and related files grouped under
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checkNameAvailability` | ✓ `simulators/azure/acr.go:101::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /v2/{path...}` | ✓ `simulators/azure/acr.go:323::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `HEAD /v2/{path...}` | ✓ `simulators/azure/acr.go:423::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /v2/{path...}` | ✓ `simulators/azure/acr.go:455::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /v2/{path...}` | ✓ `simulators/azure/acr.go:538::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PATCH /v2/{path...}` | ✓ `simulators/azure/acr.go:556::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/checknameavailability` | ✓ `simulators/azure/acr.go:103::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v2/{path...}` | ✓ `simulators/azure/acr.go:325::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `HEAD /v2/{path...}` | ✓ `simulators/azure/acr.go:425::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PUT /v2/{path...}` | ✓ `simulators/azure/acr.go:457::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v2/{path...}` | ✓ `simulators/azure/acr.go:540::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PATCH /v2/{path...}` | ✓ `simulators/azure/acr.go:558::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

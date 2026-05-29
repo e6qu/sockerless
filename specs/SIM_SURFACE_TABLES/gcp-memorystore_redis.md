@@ -18,6 +18,7 @@ Surface registered in `simulators/gcp/memorystore_redis.go` (and related files g
 | `GET /v1/projects/{project}/locations/{location}/instances` | ✓ `simulators/gcp/memorystore_redis.go:49::handleMSRedisList` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `PATCH /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:50::handleMSRedisPatch` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `DELETE /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:51::handleMSRedisDelete` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/instances/{idAction}` | ✓ `simulators/gcp/memorystore_redis.go:61::handleMSRedisAction` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1220 filed · 1217 fixed · 5 open · 2 false positives.**
+**1220 filed · 1218 fixed · 4 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -12,11 +12,12 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud cells red for cloudrun Services + ACA Apps + AZF + Lambda service-mesh + ACA/AZF Azure AD | 6 (untested in real cloud) | Lambda is the only backend with a green live-cloud cell. Cloud Run Services + ACA Apps + AZF cloud-DNS + Lambda service-mesh + ACA/AZF Azure AD remain unvalidated against real clouds. The preflight/runbook work is documented, but the cells must not be marked green without a real run against authenticated cloud projects/subscriptions. |
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
-| 1203 | P0 | cross-cloud managed load balancers | 9 (missing cloud slice) | Managed load-balancer services are missing as first-class simulator slices: AWS ELBv2/ELB, GCP Cloud Load Balancing resources, and Azure Load Balancer/Application Gateway/Front Door/Traffic Manager. API Gateway/APIM/CloudFront coverage is not a substitute for L4/L7 managed load-balancer APIs. |
 | 1204 | P1 | VPC egress and NAT parity | 7 (partial implementation) | VPC/network primitives exist, and NAT is partially modeled (AWS EC2 NAT Gateway, GCP Router NAT, Azure NAT Gateway), but parity is uneven: GCP address/manual-NAT resources, Azure Public IP/Public IP Prefix resources, subnet-NAT attachment/list semantics, and SDK/CLI/Terraform surface tables/tests need a full pass. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1203 / issue #263. The simulators now implement managed load-balancer control-plane slices across the three clouds: AWS ELBv2 application/network load balancers, target groups, listeners, target registration/health, attributes, tags, account limits, and provider-read capacity reservation; GCP global external HTTP load-balancing resources through Compute health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules; and Azure `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. Coverage uses the official SDKs, vendor CLIs, and Terraform-provider resources for each implemented public cloud API surface.
 
 This phase closed BUG-1220 / issue #276. The Azure Service Bus ARM simulator now implements the namespace `networkRuleSets/default` get/update path, the network-rule-set list path, empty disaster recovery and migration configuration list paths, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations. The fix keeps Service Bus management on the public Microsoft.ServiceBus ARM surface and adds official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform namespace+queue coverage.
 

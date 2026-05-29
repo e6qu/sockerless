@@ -13,10 +13,10 @@ Surface registered in `simulators/azure/insights.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:140::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:362::queryHandler` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:363::queryHandler` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:366::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:143::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:381::queryHandler` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:382::queryHandler` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /dataCollectionRules/{dcrId}/streams/{streamName}` | ✓ `simulators/azure/monitor.go:385::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

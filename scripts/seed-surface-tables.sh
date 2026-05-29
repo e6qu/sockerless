@@ -66,7 +66,7 @@ for cloud in aws azure gcp; do
     if [[ "$base" =~ ^(main|dashboard|metadata|streaming|awschunked|aws_identity|auth|authorization|managedidentity|oauth2|operations|quota|serviceusage|ui_embed|ui_noembed|lambda_runtime|ssm_proto|logfilter|cloudwatch_metrics|kql)$ ]]; then
       continue
     fi
-    has_handle="$(grep -c 'HandleFunc(\|\.Register("' "$go_file" || true)"
+    has_handle="$(grep -Ec 'HandleFunc\(|\.Register\("|\.RegisterVersioned\(' "$go_file" || true)"
     [[ "$has_handle" == "0" ]] && continue
     table_name="$(table_for_file "$cloud" "$base")"
     is_preserved "$table_name" && continue
@@ -79,9 +79,18 @@ for cloud in aws azure gcp; do
           printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$table_name" "$cloud" "$base" "$line" "$route" "$handler"
         done
 
-    # AWS awsJson1.1 / awsQuery actions: r.Register("Service.Action", handler).
+    # AWS awsJson1.1 / awsQuery actions:
+    #   r.Register("Service.Action", handler)
+    #   r.RegisterVersioned("YYYY-MM-DD", "Action", handler)
     { grep -nE '\.Register\("' "$go_file" || true; } \
       | { sed -E 's/^([0-9]+):.*\.Register\("([^"]+)",[[:space:]]*([a-zA-Z0-9_.]+).*$/\1\t\2\t\3/' || true; } \
+      | { grep -E '^[0-9]+	[A-Za-z]' || true; } \
+      | while IFS=$'\t' read -r line action handler; do
+          printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$table_name" "$cloud" "$base" "$line" "Action $action" "$handler"
+        done
+
+    { grep -nE '\.RegisterVersioned\(' "$go_file" || true; } \
+      | { sed -E 's/^([0-9]+):.*\.RegisterVersioned\([^,]+,[[:space:]]*"([^"]+)",[[:space:]]*([a-zA-Z0-9_.]+).*$/\1\t\2\t\3/' || true; } \
       | { grep -E '^[0-9]+	[A-Za-z]' || true; } \
       | while IFS=$'\t' read -r line action handler; do
           printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$table_name" "$cloud" "$base" "$line" "Action $action" "$handler"

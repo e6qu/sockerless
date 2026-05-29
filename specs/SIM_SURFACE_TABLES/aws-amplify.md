@@ -1,6 +1,6 @@
 # Sim surface — aws-amplify
 
-Surface registered in `simulators/aws/amplify_domains.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
+Surface registered in `simulators/aws/amplify.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
@@ -13,15 +13,6 @@ Surface registered in `simulators/aws/amplify_domains.go` (and related files gro
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:90::handleAmplifyCreateDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:91::handleAmplifyListDomains` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:92::handleAmplifyGetDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:93::handleAmplifyUpdateDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:94::handleAmplifyDeleteDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:96::handleAmplifyCreateBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:97::handleAmplifyListBackends` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:98::handleAmplifyGetBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:99::handleAmplifyDeleteBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `POST /apps` | ✓ `simulators/aws/amplify.go:206::handleAmplifyCreateApp` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `GET /apps` | ✓ `simulators/aws/amplify.go:207::handleAmplifyListApps` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `GET /apps/{appId}` | ✓ `simulators/aws/amplify.go:208::handleAmplifyGetApp` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
@@ -46,6 +37,15 @@ Surface registered in `simulators/aws/amplify_domains.go` (and related files gro
 | `GET /tags/{arn...}` | ✓ `simulators/aws/amplify.go:234::handleAmplifyListTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `POST /tags/{arn...}` | ✓ `simulators/aws/amplify.go:235::handleAmplifyTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `DELETE /tags/{arn...}` | ✓ `simulators/aws/amplify.go:236::handleAmplifyUntagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:90::handleAmplifyCreateDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /apps/{appId}/domains` | ✓ `simulators/aws/amplify_domains.go:91::handleAmplifyListDomains` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:92::handleAmplifyGetDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:93::handleAmplifyUpdateDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /apps/{appId}/domains/{domainName}` | ✓ `simulators/aws/amplify_domains.go:94::handleAmplifyDeleteDomain` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:96::handleAmplifyCreateBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /apps/{appId}/backendenvironments` | ✓ `simulators/aws/amplify_domains.go:97::handleAmplifyListBackends` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:98::handleAmplifyGetBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /apps/{appId}/backendenvironments/{environmentName}` | ✓ `simulators/aws/amplify_domains.go:99::handleAmplifyDeleteBackend` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

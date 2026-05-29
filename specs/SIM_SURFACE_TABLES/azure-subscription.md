@@ -13,8 +13,8 @@ Surface registered in `simulators/azure/subscription.go` (and related files grou
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}` | ✓ `simulators/azure/subscription.go:29::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers` | ✓ `simulators/azure/subscription.go:47::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /subscriptions/{subscriptionId}` | ✓ `simulators/azure/subscription.go:57::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers` | ✓ `simulators/azure/subscription.go:75::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

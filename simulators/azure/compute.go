@@ -26,6 +26,31 @@ type PublicIPAddressProperties struct {
 	ProvisioningState        string `json:"provisioningState,omitempty"`
 }
 
+type LoadBalancer struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Location   string                 `json:"location"`
+	Tags       map[string]string      `json:"tags,omitempty"`
+	Sku        *SkuName               `json:"sku,omitempty"`
+	Properties LoadBalancerProperties `json:"properties"`
+}
+
+type LoadBalancerProperties struct {
+	FrontendIPConfigurations []LoadBalancerChild `json:"frontendIPConfigurations"`
+	BackendAddressPools      []LoadBalancerChild `json:"backendAddressPools"`
+	LoadBalancingRules       []LoadBalancerChild `json:"loadBalancingRules"`
+	Probes                   []LoadBalancerChild `json:"probes"`
+	ProvisioningState        string              `json:"provisioningState,omitempty"`
+}
+
+type LoadBalancerChild struct {
+	ID         string         `json:"id,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Type       string         `json:"type,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 type NetworkInterface struct {
 	ID         string                     `json:"id"`
 	Name       string                     `json:"name"`
@@ -106,6 +131,7 @@ type VMStatus struct {
 
 var (
 	azurePublicIPs sim.Store[PublicIPAddress]
+	azureLBs       sim.Store[LoadBalancer]
 	azureNICs      sim.Store[NetworkInterface]
 	azureVMs       sim.Store[VirtualMachine]
 	azureVMStates  sim.Store[string]
@@ -113,12 +139,14 @@ var (
 
 func registerCompute(srv *sim.Server) {
 	azurePublicIPs = sim.MakeStore[PublicIPAddress](srv.DB(), "network_public_ips")
+	azureLBs = sim.MakeStore[LoadBalancer](srv.DB(), "network_load_balancers")
 	azureNICs = sim.MakeStore[NetworkInterface](srv.DB(), "network_interfaces")
 	azureVMs = sim.MakeStore[VirtualMachine](srv.DB(), "compute_virtual_machines")
 	azureVMStates = sim.MakeStore[string](srv.DB(), "compute_virtual_machine_states")
 
 	registerComputeCatalog(srv)
 	registerPublicIPAddresses(srv)
+	registerLoadBalancers(srv)
 	registerNetworkInterfaces(srv)
 	registerVirtualMachines(srv)
 }
@@ -234,6 +262,170 @@ func registerPublicIPAddresses(srv *sim.Server) {
 		azurePublicIPs.Delete(id)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func registerLoadBalancers(srv *sim.Server) {
+	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
+
+	srv.HandleFunc("PUT "+armBase+"/loadBalancers/{loadBalancerName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "loadBalancerName")
+		var req LoadBalancer
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := azureLoadBalancerID(sub, rg, name)
+		lb := LoadBalancer{
+			ID:       id,
+			Name:     name,
+			Type:     "Microsoft.Network/loadBalancers",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Sku:      req.Sku,
+			Properties: LoadBalancerProperties{
+				FrontendIPConfigurations: normalizeLoadBalancerChildren(id, "frontendIPConfigurations", "Microsoft.Network/loadBalancers/frontendIPConfigurations", req.Properties.FrontendIPConfigurations),
+				BackendAddressPools:      normalizeLoadBalancerChildren(id, "backendAddressPools", "Microsoft.Network/loadBalancers/backendAddressPools", req.Properties.BackendAddressPools),
+				LoadBalancingRules:       normalizeLoadBalancerChildren(id, "loadBalancingRules", "Microsoft.Network/loadBalancers/loadBalancingRules", req.Properties.LoadBalancingRules),
+				Probes:                   normalizeLoadBalancerChildren(id, "probes", "Microsoft.Network/loadBalancers/probes", req.Properties.Probes),
+				ProvisioningState:        "Succeeded",
+			},
+		}
+		azureLBs.Put(id, lb)
+		sim.WriteJSON(w, http.StatusOK, lb)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/loadBalancers/{loadBalancerName}", func(w http.ResponseWriter, r *http.Request) {
+		id := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
+		lb, ok := azureLBs.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, lb)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/loadBalancers", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/loadBalancers/",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+		items := azureLBs.Filter(func(lb LoadBalancer) bool { return strings.HasPrefix(lb.ID, prefix) })
+		if items == nil {
+			items = []LoadBalancer{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
+	})
+
+	srv.HandleFunc("DELETE "+armBase+"/loadBalancers/{loadBalancerName}", func(w http.ResponseWriter, r *http.Request) {
+		id := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
+		azureLBs.Delete(id)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	registerLoadBalancerChild(srv, "backendAddressPools", "backendAddressPoolName", "Microsoft.Network/loadBalancers/backendAddressPools",
+		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.BackendAddressPools })
+	registerLoadBalancerChild(srv, "probes", "probeName", "Microsoft.Network/loadBalancers/probes",
+		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.Probes })
+	registerLoadBalancerChild(srv, "loadBalancingRules", "loadBalancingRuleName", "Microsoft.Network/loadBalancers/loadBalancingRules",
+		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.LoadBalancingRules })
+}
+
+func registerLoadBalancerChild(srv *sim.Server, collection, paramName, resourceType string, children func(*LoadBalancer) *[]LoadBalancerChild) {
+	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
+	pattern := armBase + "/loadBalancers/{loadBalancerName}/" + collection + "/{" + paramName + "}"
+
+	srv.HandleFunc("PUT "+pattern, func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		lbName := sim.PathParam(r, "loadBalancerName")
+		childName := sim.PathParam(r, paramName)
+		lbID := azureLoadBalancerID(sub, rg, lbName)
+		var req LoadBalancerChild
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		child := normalizeLoadBalancerChild(lbID, collection, resourceType, childName, req)
+		if !azureLBs.Update(lbID, func(lb *LoadBalancer) {
+			upsertLoadBalancerChild(children(lb), child)
+		}) {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", lbID)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, child)
+	})
+
+	srv.HandleFunc("GET "+pattern, func(w http.ResponseWriter, r *http.Request) {
+		lbID := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
+		childName := sim.PathParam(r, paramName)
+		lb, ok := azureLBs.Get(lbID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", lbID)
+			return
+		}
+		for _, child := range *children(&lb) {
+			if strings.EqualFold(child.Name, childName) {
+				sim.WriteJSON(w, http.StatusOK, child)
+				return
+			}
+		}
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", lbID+"/"+collection+"/"+childName)
+	})
+
+	srv.HandleFunc("DELETE "+pattern, func(w http.ResponseWriter, r *http.Request) {
+		lbID := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
+		childName := sim.PathParam(r, paramName)
+		azureLBs.Update(lbID, func(lb *LoadBalancer) {
+			removeLoadBalancerChild(children(lb), childName)
+		})
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func azureLoadBalancerID(sub, rg, name string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/loadBalancers/%s", sub, rg, name)
+}
+
+func normalizeLoadBalancerChildren(lbID, collection, resourceType string, children []LoadBalancerChild) []LoadBalancerChild {
+	out := make([]LoadBalancerChild, 0, len(children))
+	for _, child := range children {
+		out = append(out, normalizeLoadBalancerChild(lbID, collection, resourceType, child.Name, child))
+	}
+	return out
+}
+
+func normalizeLoadBalancerChild(lbID, collection, resourceType, name string, child LoadBalancerChild) LoadBalancerChild {
+	if name == "" {
+		name = child.Name
+	}
+	child.ID = lbID + "/" + collection + "/" + name
+	child.Name = name
+	child.Type = resourceType
+	if child.Properties == nil {
+		child.Properties = map[string]any{}
+	}
+	child.Properties["provisioningState"] = "Succeeded"
+	return child
+}
+
+func upsertLoadBalancerChild(children *[]LoadBalancerChild, child LoadBalancerChild) {
+	for i := range *children {
+		if strings.EqualFold((*children)[i].Name, child.Name) {
+			(*children)[i] = child
+			return
+		}
+	}
+	*children = append(*children, child)
+}
+
+func removeLoadBalancerChild(children *[]LoadBalancerChild, name string) {
+	filtered := (*children)[:0]
+	for _, child := range *children {
+		if !strings.EqualFold(child.Name, name) {
+			filtered = append(filtered, child)
+		}
+	}
+	*children = filtered
 }
 
 func registerNetworkInterfaces(srv *sim.Server) {

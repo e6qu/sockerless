@@ -38,6 +38,7 @@ provider "aws" {
     events           = var.endpoint
     kinesis          = var.endpoint
     kms              = var.endpoint
+    elbv2            = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
     ssm              = var.endpoint
@@ -69,10 +70,60 @@ resource "aws_subnet" "tf_ec2_subnet" {
   cidr_block = "10.88.1.0/24"
 }
 
+resource "aws_subnet" "tf_elbv2_subnet" {
+  vpc_id            = aws_vpc.tf_ec2_vpc.id
+  cidr_block        = "10.88.2.0/24"
+  availability_zone = "us-east-1b"
+}
+
 resource "aws_security_group" "tf_ec2_sg" {
   name        = "tf-ec2-sg"
   description = "terraform ec2 instance coverage"
   vpc_id      = aws_vpc.tf_ec2_vpc.id
+}
+
+resource "aws_lb" "tf_alb" {
+  name               = "tf-alb"
+  load_balancer_type = "application"
+  internal           = false
+  security_groups    = [aws_security_group.tf_ec2_sg.id]
+  subnets            = [aws_subnet.tf_ec2_subnet.id, aws_subnet.tf_elbv2_subnet.id]
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_lb_target_group" "tf_alb_tg" {
+  name        = "tf-alb-tg"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.tf_ec2_vpc.id
+  target_type = "ip"
+
+  health_check {
+    path                = "/healthz"
+    protocol            = "HTTP"
+    interval            = 10
+    timeout             = 5
+    healthy_threshold   = 3
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_lb_listener" "tf_alb_listener" {
+  load_balancer_arn = aws_lb.tf_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tf_alb_tg.arn
+  }
 }
 
 resource "aws_instance" "tf_vm" {
@@ -605,6 +656,18 @@ output "route53_alias_target_zone_id" {
 }
 output "amplify_app_arn" {
   value = aws_amplify_app.tf_amplify.arn
+}
+output "elbv2_lb_arn" {
+  value = aws_lb.tf_alb.arn
+}
+output "elbv2_lb_dns_name" {
+  value = aws_lb.tf_alb.dns_name
+}
+output "elbv2_target_group_arn" {
+  value = aws_lb_target_group.tf_alb_tg.arn
+}
+output "elbv2_listener_arn" {
+  value = aws_lb_listener.tf_alb_listener.arn
 }
 output "iam_slr_arn" {
   value = aws_iam_service_linked_role.tf_slr_cloudfront.arn
