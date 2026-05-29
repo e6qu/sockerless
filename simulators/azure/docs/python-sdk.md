@@ -203,7 +203,7 @@ token_resp = requests.post(
         "grant_type": "client_credentials",
         "client_id": "test-client-id",
         "client_secret": "test-client-secret",
-        "scope": f"{ENDPOINT}/.default",
+        "scope": "https://management.azure.com/.default",
     },
 )
 token = token_resp.json()["access_token"]
@@ -295,7 +295,7 @@ print(resp.json()["name"])
 
 ## Notes
 
-- The simulator's OAuth2 endpoint accepts local-test credentials and returns token responses shaped for Azure SDK clients.
+- The simulator's OAuth2 endpoint accepts local-test credentials and returns token responses shaped for Azure SDK clients, including JWT `aud` claims derived from OAuth v2 `scope` or OAuth v1 `resource` requests.
 - All state is in-memory and resets when the simulator restarts.
 - The `api-version` query parameter is required on all ARM requests.
 - Management clients that use `base_url` should work. Clients that hardcode `management.azure.com` may require patching or direct HTTP.

@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Azure Entra per-resource token audiences
+
+Issue #272 was valid. The Azure simulator had already moved its OAuth token endpoint to real-shape RS256 JWTs with a published JWKS, but the payload still hardcoded the ARM audience for every token. That was enough for ARM-only clients and not enough for data-plane SDK paths: Key Vault requests `https://vault.azure.net/.default`, Service Bus requests `https://servicebus.azure.net`, and Storage AAD paths request `https://storage.azure.com/.default`.
+
+The token endpoint now derives JWT `aud` from the same public request fields real Azure clients use. OAuth v2 `scope={resource}/.default` mints a token for that resource, bare resource scopes are accepted, OAuth v1 `resource={resource}` maps directly to `aud`, and omitted audience fields keep the ARM default. ARM and Storage retain Azure's trailing-slash audience shape.
+
+Coverage includes unit tests for the audience derivation table and JWT claim shape, plus simulator SDK-harness HTTP tests that request ARM, Key Vault, Storage, and Service Bus token audiences and decode the returned RS256 JWTs.
+
 ## 2026-05-29 — Simulator test-contract matrix backfill
 
 Issue #264 was valid. The project already ran SDK, CLI, and Terraform simulator suites, but the coverage contract was not indexed against the canonical surface tables, so a surface could be added or renamed without a matching client-surface status row. The fix added `specs/SIM_TEST_COVERAGE_MATRIX.md` and wired `scripts/check-simulator-coverage-matrix.sh` into pre-commit and CI. The check fails if the matrix and `specs/SIM_SURFACE_TABLES/*.md` drift, if rows are duplicated, or if tracked rows lack a GitHub issue or BUG reference.

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	tok, err := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	tok, err := mintAzureSimJWT("tenant-xyz", "https://vault.azure.net", now, now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}
@@ -52,8 +53,8 @@ func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 	if p["tid"] != "tenant-xyz" {
 		t.Errorf("tid = %v, want tenant-xyz", p["tid"])
 	}
-	if p["aud"] != "https://management.azure.com/" {
-		t.Errorf("aud = %v, want management.azure.com", p["aud"])
+	if p["aud"] != "https://vault.azure.net" {
+		t.Errorf("aud = %v, want vault.azure.net", p["aud"])
 	}
 	if p["iss"] != "https://sts.windows.net/tenant-xyz/" {
 		t.Errorf("iss = %v, want sts.windows.net/tenant-xyz/", p["iss"])
@@ -65,7 +66,7 @@ func TestMintAzureSimJWT_StructureAndClaims(t *testing.T) {
 
 func TestMintAzureSimJWT_SignatureVerifies(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	tok, err := mintAzureSimJWT("tenant-xyz", now, now.Add(time.Hour))
+	tok, err := mintAzureSimJWT("tenant-xyz", defaultAzureTokenAudience, now, now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}
@@ -87,6 +88,60 @@ func TestMintAzureSimJWT_SignatureVerifies(t *testing.T) {
 	digest := sha256.Sum256([]byte(signingInput))
 	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], sig); err != nil {
 		t.Errorf("signature verify: %v", err)
+	}
+}
+
+func TestAzureTokenAudienceFromForm(t *testing.T) {
+	tests := []struct {
+		name string
+		form url.Values
+		want string
+	}{
+		{
+			name: "default management audience",
+			form: url.Values{},
+			want: "https://management.azure.com/",
+		},
+		{
+			name: "v2 vault scope strips default suffix",
+			form: url.Values{"scope": {"https://vault.azure.net/.default"}},
+			want: "https://vault.azure.net",
+		},
+		{
+			name: "v2 bare vault scope is accepted",
+			form: url.Values{"scope": {"https://vault.azure.net"}},
+			want: "https://vault.azure.net",
+		},
+		{
+			name: "v2 management scope preserves Azure trailing slash audience",
+			form: url.Values{"scope": {"https://management.azure.com/.default"}},
+			want: "https://management.azure.com/",
+		},
+		{
+			name: "v2 storage scope preserves Azure trailing slash audience",
+			form: url.Values{"scope": {"https://storage.azure.com/.default"}},
+			want: "https://storage.azure.com/",
+		},
+		{
+			name: "v1 resource is audience",
+			form: url.Values{"resource": {"https://servicebus.azure.net"}},
+			want: "https://servicebus.azure.net",
+		},
+		{
+			name: "scope takes precedence when both fields are sent",
+			form: url.Values{
+				"scope":    {"https://vault.azure.net/.default"},
+				"resource": {"https://management.azure.com/"},
+			},
+			want: "https://vault.azure.net",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := azureTokenAudienceFromForm(tt.form); got != tt.want {
+				t.Fatalf("audience = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

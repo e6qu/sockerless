@@ -41,7 +41,7 @@ Authorization: Bearer <access-token>
 Content-Type: application/json
 ```
 
-Token is obtained via OAuth2 from `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token` with scope `https://management.azure.com/.default`.
+Token is obtained via OAuth2 from `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token` with scope `https://management.azure.com/.default`. The simulator also honors data-plane token audiences the same way Azure AD does: OAuth v2 `scope={resource}/.default` mints `aud={resource}`, OAuth v1 `resource={resource}` mints `aud={resource}`, and omitted audience fields default to ARM.
 
 ### 1.3 Common ARM Request Headers
 

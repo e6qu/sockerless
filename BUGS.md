@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1219 filed · 1214 fixed · 7 open · 2 false positives.**
+**1219 filed · 1215 fixed · 6 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -16,9 +16,10 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1204 | P1 | VPC egress and NAT parity | 7 (partial implementation) | VPC/network primitives exist, and NAT is partially modeled (AWS EC2 NAT Gateway, GCP Router NAT, Azure NAT Gateway), but parity is uneven: GCP address/manual-NAT resources, Azure Public IP/Public IP Prefix resources, subnet-NAT attachment/list semantics, and SDK/CLI/Terraform surface tables/tests need a full pass. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
-| 1219 | P0 | Azure Entra simulator token audience | 7 (partial implementation) | Azure OAuth token endpoint mints RS256 JWTs with fixed ARM audience instead of deriving `aud` from OAuth v2 `scope` or OAuth v1 `resource`, blocking realistic Key Vault, Service Bus, and Storage data-plane Bearer validation. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1219 / issue #272. The Azure Entra simulator token endpoint now derives JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource` requests instead of hardcoding the ARM audience for every token. ARM keeps its historical default audience, Key Vault and Service Bus data-plane scopes receive their resource audiences, Storage keeps Azure's trailing-slash audience shape, and the RS256/JWKS simulator token flow is covered by unit and SDK-harness HTTP tests.
 
 This phase closed BUG-1218 / issue #264. The simulator test-contract matrix now has a maintained `specs/SIM_TEST_COVERAGE_MATRIX.md` row for every canonical simulator surface table and CI/pre-commit enforcement through `scripts/check-simulator-coverage-matrix.sh`, so adding/removing surface tables without updating SDK/CLI/Terraform coverage status fails. The concrete reported coverage holes are closed by direct real-client tests: AWS DynamoDB, SQS, and SNS have direct AWS CLI lifecycle coverage; the GCP Terraform harness now covers Cloud Functions v2, Cloud Build triggers, Pub/Sub topics/subscriptions, and Cloud Logging sinks/metrics. The GCP simulator also implements the Cloud Logging sink/metric control plane and Cloud Build trigger lifecycle routes needed by the official Terraform provider.
 

@@ -20,11 +20,15 @@ The managed data SaaS gap is now closed: GCP BigQuery, GCP Firestore, Azure Cosm
 
 The simulator test-contract matrix backfill is now closed. `specs/SIM_TEST_COVERAGE_MATRIX.md` has one row per canonical simulator surface table and CI/pre-commit enforcement through `scripts/check-simulator-coverage-matrix.sh`. The reported concrete holes were fixed with real external clients: AWS DynamoDB/SQS/SNS have direct AWS CLI lifecycle coverage, and the GCP Terraform harness covers Cloud Functions v2, Cloud Build triggers, Pub/Sub topics/subscriptions, and Cloud Logging sinks/metrics against simulator routes implemented for the provider call sequence.
 
+The Azure Entra token-resource gap is now closed. The simulator token endpoint derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource`, so ARM keeps the management audience while Key Vault, Service Bus, and Storage data-plane clients can receive the resource-specific audiences their SDKs request.
+
 The remaining audit gaps are EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, and uneven public-IP/NAT parity. BUG-1203, BUG-1204, and BUG-1207 track those gaps; BUG-1206 stays open as the surface-table audit-debt tracker.
 
 ## Stage plan
 
-Current phase: idle after simulator SDK/CLI/Terraform coverage-matrix backfill for issue #264. The next implementation pass should move to VM/EC2-like support, exposing the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery. After that, managed load balancers and NAT/public-IP parity remain the highest-priority simulator audit gaps.
+Current phase: idle after Azure Entra simulator token audiences for issue #272. The next implementation pass should move to VM/EC2-like support, exposing the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery. After that, managed load balancers and NAT/public-IP parity remain the highest-priority simulator audit gaps.
+
+Issue #272 finding: the report was real. The Azure simulator minted RS256/JWKS-verifiable tokens, but every token had `aud=https://management.azure.com/`, even when real Azure clients requested data-plane audiences through OAuth v2 `scope` such as `https://vault.azure.net/.default` or OAuth v1 `resource` such as `https://servicebus.azure.net`. The fix derives the JWT audience from those public token-request fields, keeps the ARM default for omitted audience fields, and covers the behavior with unit tests plus simulator SDK-harness HTTP tests.
 
 Issue #264 finding: the report was real. The repository had SDK/CLI/Terraform jobs, but no maintained matrix tying those jobs to the canonical simulator surface tables. The concrete examples were also real: AWS DynamoDB/SQS/SNS needed direct AWS CLI lifecycle coverage, and the GCP Terraform harness still missed Cloud Functions v2, Cloud Build triggers, Pub/Sub topic/subscription resources, and Cloud Logging sink/metric resources. The fix added those real-client tests, the missing GCP Cloud Logging and Cloud Build provider routes, and a CI/pre-commit matrix check.
 

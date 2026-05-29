@@ -223,7 +223,7 @@ The script builds the simulator, starts it on a random port, runs 42 tests, and 
 
 ## Notes
 
-- The simulator accepts local-test credentials through its OAuth2 token endpoint and returns a token shape that Azure clients can consume.
+- The simulator accepts local-test credentials through its OAuth2 token endpoint and returns token shapes that Azure clients can consume. ARM uses `https://management.azure.com/.default`; data-plane clients can request their own audience with OAuth v2 `scope` or OAuth v1 `resource`.
 - All state is in-memory and resets when the simulator restarts.
 - The `api-version` query parameter is required on all ARM requests (the simulator validates its presence).
 - Use `az rest` instead of high-level `az` commands to avoid cloud registration and subscription validation issues with HTTP endpoints.

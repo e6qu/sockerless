@@ -65,13 +65,14 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 | #217 | 179 follow-up | README badge refresh from Phase 179 plus hook portability fixes (`lint-changed.sh`, `check-cloud-backend-isolation.sh`). Merged 2026-05-25 at `f0da588`. |
 | #219 | issue #218 | GCP Secret Manager lifecycle endpoints: ListSecretVersions, UpdateSecret labels, DeleteSecret, replication metadata, payload CRC32C; covered by SDK, gcloud CLI, and Terraform tests. Merged 2026-05-25 at `06ee3a5`. |
 | issue #264 | simulator test-contract matrix | `specs/SIM_TEST_COVERAGE_MATRIX.md` now tracks SDK/CLI/Terraform coverage for every canonical simulator surface table, enforced by pre-commit and CI. AWS DynamoDB/SQS/SNS gained direct CLI coverage; GCP Terraform gained Cloud Functions v2, Cloud Build trigger, Pub/Sub, and Cloud Logging sink/metric coverage with the simulator routes needed by the provider. |
+| issue #272 | Azure Entra token audience | The Azure simulator OAuth token endpoint now derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource`, preserving the ARM default only for requests without an audience field and covering ARM plus Key Vault, Storage, and Service Bus audiences through unit and SDK-harness tests. |
 | #221 | issue #220 | Azure Blob `GET /?comp=list` now emits per-container `<Properties>` with `Last-Modified` and quoted `Etag`; container ETags persist from create through get/list. Raw wire + real Azure CLI regressions added. |
 
 ## Active phase
 
-**Idle on `main`.** No phase in flight after simulator test-contract matrix backfill for issue #264.
+**Idle on `main`.** No phase in flight after Azure Entra token audience handling for issue #272.
 
-BUGS.md: **1218 filed · 1214 fixed · 6 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, and BUG-1207.
+BUGS.md: **1219 filed · 1215 fixed · 6 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, and BUG-1207.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
