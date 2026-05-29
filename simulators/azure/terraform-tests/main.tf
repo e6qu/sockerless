@@ -260,6 +260,26 @@ resource "azurerm_eventhub_authorization_rule" "az_eh_rule" {
   manage = false
 }
 
+resource "azurerm_servicebus_namespace" "az_sb_ns" {
+  provider            = azurerm
+  name                = "tfazrmsbns"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  sku                 = "Standard"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "azurerm_servicebus_queue" "az_sb_queue" {
+  provider     = azurerm
+  name         = "tfazrmsbqueue"
+  namespace_id = azurerm_servicebus_namespace.az_sb_ns.id
+
+  max_size_in_megabytes = 1024
+}
+
 resource "azurerm_eventgrid_topic" "az_eg_topic" {
   provider            = azurerm
   name                = "tf-azrm-eg-topic"
@@ -568,6 +588,14 @@ output "azrm_public_dns_zone_id" {
 
 output "azrm_public_dns_a_record_id" {
   value = azurerm_dns_a_record.az_dns_a.id
+}
+
+output "azrm_servicebus_namespace_id" {
+  value = azurerm_servicebus_namespace.az_sb_ns.id
+}
+
+output "azrm_servicebus_queue_id" {
+  value = azurerm_servicebus_queue.az_sb_queue.id
 }
 
 output "azrm_eventgrid_topic_endpoint" {

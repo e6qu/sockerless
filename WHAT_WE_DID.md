@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Azure Service Bus ARM Terraform parity
+
+Issue #276 was valid. The Azure simulator had Service Bus namespace, queue, topic, subscription, and authorization-rule ARM routes, but azurerm reads the namespace child resource `networkRuleSets/default` during `azurerm_servicebus_namespace` refresh. That route was missing, so Terraform aborted before it could prove the namespace+queue lifecycle from the reporter's configuration.
+
+The fix implemented the public Microsoft.ServiceBus ARM child resources the provider and SDK can read in this flow: namespace network rule set get/list/update with persisted properties, empty disaster recovery and migration configuration list reads for namespaces without those features configured, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations such as `$default`. Namespace deletion now also cascades authorization rules and network rule sets.
+
+Coverage uses the official `armservicebus` SDK for namespace, queue, network-rule-set, disaster-recovery, and migration reads; Azure CLI `az rest` for the same ARM paths; and the Azure Terraform harness now provisions `azurerm_servicebus_namespace` plus `azurerm_servicebus_queue` through the simulator. The new `azure-servicebus-arm` surface table tracks this ARM protocol separately from Service Bus admin and message data-plane protocols.
+
 ## 2026-05-29 — VM/instance compute API parity
 
 Issue #266 was valid. The foundational audit found that the simulators had network/storage prerequisites for VM-like workloads but not the VM control planes themselves: AWS EC2 lacked instance lifecycle APIs, GCP Compute lacked `instances`, and Azure lacked `Microsoft.Compute/virtualMachines` plus the NIC/public-IP resources VMs wire through.

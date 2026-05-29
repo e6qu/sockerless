@@ -48,6 +48,7 @@ Legend:
 | `azure-monitor` | direct | direct | direct | `simulators/azure/sdk-tests/monitor_test.go`; `simulators/azure/cli-tests/monitor_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-resourcegroups` | direct | direct | direct | `simulators/azure/sdk-tests/resourcegroup_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-admin` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_admin_test.go` |
+| `azure-servicebus-arm` | direct | direct | direct | `simulators/azure/sdk-tests/servicebus_arm_sdk_test.go`; `simulators/azure/cli-tests/servicebus_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-data-plane` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_dataplane_test.go` |
 | `azure-storage` | direct | direct | direct | `simulators/azure/sdk-tests/storage_test.go`; `simulators/azure/cli-tests/blob_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-storage-data-plane` | direct | direct | direct | `simulators/azure/sdk-tests/storage_dataplanes_test.go`; `simulators/azure/cli-tests/blob_test.go`; `simulators/azure/terraform-tests/main.tf` |

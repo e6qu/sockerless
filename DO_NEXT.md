@@ -24,9 +24,13 @@ The Azure Entra token-resource gap is now closed. The simulator token endpoint d
 
 The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage. The remaining audit gaps are managed load balancers across all clouds and uneven public-IP/NAT parity. BUG-1203 and BUG-1204 track those gaps; BUG-1206 stays open as the surface-table audit-debt tracker.
 
+The Azure Service Bus ARM Terraform parity issue is now closed. `Microsoft.ServiceBus/namespaces/{name}/networkRuleSets/default` supports get/update, network rule sets can be listed, disaster recovery and migration configuration lists return empty Azure-shaped list results when no config exists, and absent aliases/configurations return Azure-shaped 404s. The Azure Terraform harness now creates `azurerm_servicebus_namespace` plus `azurerm_servicebus_queue`, with matching official SDK and Azure CLI coverage.
+
 ## Stage plan
 
-Current phase: idle after cross-cloud VM/instance compute parity for issue #266. The next implementation pass should move to managed load balancers across AWS/GCP/Azure, then the remaining NAT/public-IP parity work.
+Current phase: idle after Azure Service Bus ARM Terraform parity for issue #276. The next implementation pass should move to managed load balancers across AWS/GCP/Azure, then the remaining NAT/public-IP parity work.
+
+Issue #276 finding: the report was real. The azurerm Service Bus namespace resource reads `networkRuleSets/default` immediately after namespace creation, and the simulator had not implemented that public ARM child resource. The fix added persisted network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent configs, then pinned the path with official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform namespace+queue coverage.
 
 Issue #266 finding: the audit gap was real. AWS EC2 exposed VPC/subnet/security-group/NAT helpers but not EC2 instance lifecycle; GCP Compute exposed networks/subnets/firewalls/routers/NAT/disks/zones but not instances; Azure exposed Network resources but not `Microsoft.Compute/virtualMachines` and the NIC/public-IP wiring VM resources require. The fix added public-cloud-compatible control-plane VM slices for all three clouds with SDK/CLI/Terraform coverage. No Firecracker or local execution substrate is exposed through public simulator APIs.
 

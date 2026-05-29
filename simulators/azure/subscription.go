@@ -26,6 +26,7 @@ var resourceProviderNamespaces = []string{
 	"Microsoft.Network",
 	"Microsoft.OperationalInsights",
 	"Microsoft.Resources",
+	"Microsoft.ServiceBus",
 	"Microsoft.Storage",
 	"Microsoft.Web",
 }
@@ -46,6 +47,7 @@ var azureProviderResourceTypes = map[string][]string{
 	"Microsoft.Network":             {"virtualNetworks", "virtualNetworks/subnets", "networkInterfaces", "networkInterfaces/ipConfigurations", "publicIPAddresses", "networkSecurityGroups", "networkSecurityGroups/securityRules", "privateDnsZones", "dnsZones", "dnsZones/A", "dnsZones/AAAA", "dnsZones/CAA", "dnsZones/CNAME", "dnsZones/MX", "dnsZones/NS", "dnsZones/PTR", "dnsZones/SOA", "dnsZones/SRV", "dnsZones/TXT"},
 	"Microsoft.OperationalInsights": {"workspaces"},
 	"Microsoft.Resources":           {"resourceGroups", "resources", "providers"},
+	"Microsoft.ServiceBus":          {"namespaces", "namespaces/queues", "namespaces/topics", "namespaces/topics/subscriptions", "namespaces/networkRuleSets", "namespaces/authorizationRules"},
 	"Microsoft.Storage":             {"storageAccounts", "storageAccounts/blobServices", "storageAccounts/blobServices/containers", "storageAccounts/fileServices", "storageAccounts/fileServices/shares"},
 	"Microsoft.Web":                 {"serverfarms", "sites"},
 }
