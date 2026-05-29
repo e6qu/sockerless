@@ -165,6 +165,16 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmST, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345",
 		"azurerm storage account id must include canonical ARM path; got %s", azrmST)
 
+	azrmStorageContainer := outputs.must(t, "azrm_storage_container_id")
+	require.Contains(t, azrmStorageContainer, "tfazrmst12345.blob.",
+		"azurerm storage container id must be data-plane blob URL-shaped; got %s", azrmStorageContainer)
+	require.Contains(t, azrmStorageContainer, "/tfazrmcontainer",
+		"azurerm storage container id must include container name; got %s", azrmStorageContainer)
+
+	azrmStorageContainerARM := outputs.must(t, "azrm_storage_container_resource_manager_id")
+	require.Contains(t, azrmStorageContainerARM, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/blobServices/default/containers/tfazrmcontainer",
+		"azurerm storage container resource_manager_id must include canonical ARM container path; got %s", azrmStorageContainerARM)
+
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
 		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)

@@ -404,6 +404,18 @@ resource "azurerm_storage_account" "az_st" {
   account_replication_type = "LRS"
 }
 
+# Storage container through the AzureRM data-plane resource path.
+# Using storage_account_name, not storage_account_id, intentionally drives
+# the provider through the storage account's primary_blob_endpoint. That
+# verifies the simulator emits azurerm-parseable {account}.blob.{suffix}
+# endpoints and matching /metadata/endpoints storage suffixes.
+resource "azurerm_storage_container" "az_st_container" {
+  provider              = azurerm
+  name                  = "tfazrmcontainer"
+  storage_account_name  = azurerm_storage_account.az_st.name
+  container_access_type = "private"
+}
+
 # Linux Function App — AZF runner backend's host primitive.
 resource "azurerm_linux_function_app" "az_fa" {
   provider                   = azurerm
@@ -556,6 +568,14 @@ output "azrm_service_plan_id" {
 
 output "azrm_storage_account_id" {
   value = azurerm_storage_account.az_st.id
+}
+
+output "azrm_storage_container_id" {
+  value = azurerm_storage_container.az_st_container.id
+}
+
+output "azrm_storage_container_resource_manager_id" {
+  value = azurerm_storage_container.az_st_container.resource_manager_id
 }
 
 output "azrm_function_app_id" {

@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Azure azurerm storage endpoint coverage
+
+Issue #269 was valid as a contract requirement: azurerm's storage-container data-plane resource parses the ARM-returned `primary_blob_endpoint` as an Azure-shaped `{account}.blob.{suffix}` URL and compares that suffix with `/metadata/endpoints`. A literal local URL is not compatible with that public provider path.
+
+The implementation from the prior Azure endpoint-composition work already supported the necessary behavior: `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` accepts storage templates with `{account}`, and `/metadata/endpoints` derives the storage suffix from the emitted storage endpoint shape. What was missing was the exact regression that proves the realistic azurerm path. The Azure Terraform harness now creates `azurerm_storage_container` with `storage_account_name`, intentionally avoiding `storage_account_id` because that ARM-only form bypasses the Blob data plane. The test asserts that the provider receives a Blob URL-shaped container ID and the canonical ARM `resource_manager_id`.
+
+The Dockerized Azure Terraform apply/destroy harness passed with the new resource, so the simulator's ARM endpoint emission, metadata suffix response, azurerm parser path, and Blob data-plane routing are covered together.
+
 ## 2026-05-29 — Managed data SaaS parity
 
 The managed data SaaS phase closed BUG-1201, BUG-1202, and issue #267.

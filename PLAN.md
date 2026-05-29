@@ -68,9 +68,9 @@ Headline-only. Per-bug detail in [BUGS.md](BUGS.md); narrative in [WHAT_WE_DID.m
 
 ## Active phase
 
-**Idle on `main`.** No phase in flight after Azure public DNS parity.
+**Idle on `main`.** No phase in flight after Azure azurerm storage endpoint coverage for issue #269.
 
-BUGS.md: **1216 filed · 1210 fixed · 8 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1201..1204, and BUG-1206..1207.
+BUGS.md: **1217 filed · 1213 fixed · 6 open · 2 false positives.** Open work is BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, and BUG-1207.
 
 **Live-cloud (Track A / BUG-1075) remains deprioritized** per 2026-05-23 user directive — revisit after operator decides; no near-term phase queued.
 
