@@ -86,11 +86,11 @@ func registerEventarc(srv *sim.Server) {
 	eventarcChannels = sim.MakeStore[EventarcChannel](srv.DB(), "eventarc_channels")
 	eventarcChannelConnections = sim.MakeStore[EventarcChannelConnection](srv.DB(), "eventarc_channel_connections")
 
-	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/triggers", handleEventarcCreateTrigger)
-	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/triggers", handleEventarcListTriggers)
-	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleEventarcGetTrigger)
-	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleEventarcPatchTrigger)
-	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleEventarcDeleteTrigger)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/triggers", handleGCPRegionalTriggerCreate)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/triggers", handleGCPRegionalTriggerList)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleGCPRegionalTriggerGet)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleGCPRegionalTriggerPatch)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/triggers/{trigger}", handleGCPRegionalTriggerDelete)
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/channels", handleEventarcCreateChannel)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/channels", handleEventarcListChannels)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/channels/{channel}", handleEventarcGetChannel)
@@ -102,6 +102,50 @@ func registerEventarc(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/channelConnections", handleEventarcListChannelConnections)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/channelConnections/{connection}", handleEventarcGetChannelConnection)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/channelConnections/{connection}", handleEventarcDeleteChannelConnection)
+}
+
+func isCloudBuildRequest(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Host), "cloudbuild")
+}
+
+func handleGCPRegionalTriggerCreate(w http.ResponseWriter, r *http.Request) {
+	if isCloudBuildRequest(r) {
+		handleCreateBuildTrigger(w, r)
+		return
+	}
+	handleEventarcCreateTrigger(w, r)
+}
+
+func handleGCPRegionalTriggerList(w http.ResponseWriter, r *http.Request) {
+	if isCloudBuildRequest(r) {
+		handleListBuildTriggers(w, r)
+		return
+	}
+	handleEventarcListTriggers(w, r)
+}
+
+func handleGCPRegionalTriggerGet(w http.ResponseWriter, r *http.Request) {
+	if isCloudBuildRequest(r) {
+		handleGetBuildTrigger(w, r)
+		return
+	}
+	handleEventarcGetTrigger(w, r)
+}
+
+func handleGCPRegionalTriggerPatch(w http.ResponseWriter, r *http.Request) {
+	if isCloudBuildRequest(r) {
+		handleUpdateBuildTrigger(w, r)
+		return
+	}
+	handleEventarcPatchTrigger(w, r)
+}
+
+func handleGCPRegionalTriggerDelete(w http.ResponseWriter, r *http.Request) {
+	if isCloudBuildRequest(r) {
+		handleDeleteBuildTrigger(w, r)
+		return
+	}
+	handleEventarcDeleteTrigger(w, r)
 }
 
 func eventarcTriggerName(project, location, trigger string) string {

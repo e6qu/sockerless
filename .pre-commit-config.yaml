@@ -53,6 +53,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: simulator-coverage-matrix
+        name: Simulator SDK/CLI/Terraform coverage matrix
+        entry: bash scripts/check-simulator-coverage-matrix.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: port-defaults
         name: Port defaults (BUG-710 — no :2375 / :9100 in production sources)
         entry: bash scripts/check-port-defaults.sh

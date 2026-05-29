@@ -7,12 +7,19 @@ Resources covered:
 - `google_dns_managed_zone` (public + private)
 - `google_artifact_registry_repository` (Docker)
 - `google_cloud_run_v2_service` + `google_cloud_run_v2_job`
+- `google_cloudfunctions2_function`
 - `google_eventarc_trigger`
+- `google_eventarc_channel`
+- `google_pubsub_topic` + `google_pubsub_subscription`
+- `google_cloudbuild_trigger`
 - `google_storage_bucket` + `google_storage_bucket_object`
+- `google_logging_project_sink` + `google_logging_metric`
+- `google_bigquery_dataset` + `google_bigquery_table`
+- `google_firestore_document`
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
 - `google_service_account` (via `iam_beta_custom_endpoint`)
 
-Resources NOT yet covered (filed as follow-ups): `google_cloudfunctions2_function` (build_config requires a real source archive — multi-resource orchestration); `google_compute_instance` + `_instance_template`; `google_cloudbuild_trigger`; `google_logging_project_sink` + `_metric`; `google_pubsub_topic` + `_subscription`.
+VM instance resources such as `google_compute_instance` and `google_compute_instance_template` are tracked under the cross-cloud VM compute issue rather than as Terraform-only coverage work.
 
 ## Running
 

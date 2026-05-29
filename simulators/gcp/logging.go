@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -35,6 +36,36 @@ type MonitoredResource struct {
 
 // Package-level state store shared between HTTP and gRPC handlers.
 var logEntries sim.Store[[]LogEntry]
+var logSinks sim.Store[LoggingSink]
+var logMetrics sim.Store[LoggingMetric]
+
+type LoggingSink struct {
+	Name                 string             `json:"name"`
+	Destination          string             `json:"destination"`
+	Filter               string             `json:"filter,omitempty"`
+	Description          string             `json:"description,omitempty"`
+	Disabled             bool               `json:"disabled,omitempty"`
+	WriterIdentity       string             `json:"writerIdentity,omitempty"`
+	UniqueWriterIdentity bool               `json:"uniqueWriterIdentity,omitempty"`
+	Exclusions           []LoggingExclusion `json:"exclusions,omitempty"`
+}
+
+type LoggingExclusion struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Filter      string `json:"filter"`
+	Disabled    bool   `json:"disabled,omitempty"`
+}
+
+type LoggingMetric struct {
+	Name             string            `json:"name"`
+	Description      string            `json:"description,omitempty"`
+	Filter           string            `json:"filter"`
+	Disabled         bool              `json:"disabled,omitempty"`
+	LabelExtractors  map[string]string `json:"labelExtractors,omitempty"`
+	MetricDescriptor map[string]any    `json:"metricDescriptor,omitempty"`
+	BucketName       string            `json:"bucketName,omitempty"`
+}
 
 // listLogEntries is the shared implementation for listing log entries,
 // used by both the REST handler and the gRPC server.
@@ -146,6 +177,8 @@ type WriteLogEntriesRESTRequest struct {
 
 func registerCloudLogging(srv *sim.Server) {
 	logEntries = sim.MakeStore[[]LogEntry](srv.DB(), "logging_entries")
+	logSinks = sim.MakeStore[LoggingSink](srv.DB(), "logging_sinks")
+	logMetrics = sim.MakeStore[LoggingMetric](srv.DB(), "logging_metrics")
 
 	// List log entries (REST)
 	srv.HandleFunc("POST /v2/entries:list", func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +203,169 @@ func registerCloudLogging(srv *sim.Server) {
 		writeLogEntries(req.LogName, req.Resource, req.Labels, req.Entries)
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
+
+	srv.HandleFunc("POST /v2/projects/{project}/sinks", handleCreateLoggingSink)
+	srv.HandleFunc("GET /v2/projects/{project}/sinks", handleListLoggingSinks)
+	srv.HandleFunc("GET /v2/projects/{project}/sinks/{sink}", handleGetLoggingSink)
+	srv.HandleFunc("PUT /v2/projects/{project}/sinks/{sink}", handleUpdateLoggingSink)
+	srv.HandleFunc("PATCH /v2/projects/{project}/sinks/{sink}", handleUpdateLoggingSink)
+	srv.HandleFunc("DELETE /v2/projects/{project}/sinks/{sink}", handleDeleteLoggingSink)
+
+	srv.HandleFunc("POST /v2/projects/{project}/metrics", handleCreateLoggingMetric)
+	srv.HandleFunc("GET /v2/projects/{project}/metrics", handleListLoggingMetrics)
+	srv.HandleFunc("GET /v2/projects/{project}/metrics/{metric}", handleGetLoggingMetric)
+	srv.HandleFunc("PUT /v2/projects/{project}/metrics/{metric}", handleUpdateLoggingMetric)
+	srv.HandleFunc("PATCH /v2/projects/{project}/metrics/{metric}", handleUpdateLoggingMetric)
+	srv.HandleFunc("DELETE /v2/projects/{project}/metrics/{metric}", handleDeleteLoggingMetric)
+}
+
+func loggingSinkKey(project, sink string) string {
+	return fmt.Sprintf("projects/%s/sinks/%s", project, sink)
+}
+
+func loggingSinkRequestKey(project, sink string) string {
+	if strings.HasPrefix(sink, "projects/") {
+		return sink
+	}
+	return loggingSinkKey(project, sink)
+}
+
+func loggingMetricKey(project, metric string) string {
+	return fmt.Sprintf("projects/%s/metrics/%s", project, metric)
+}
+
+func loggingMetricRequestKey(project, metric string) string {
+	if strings.HasPrefix(metric, "projects/") {
+		return metric
+	}
+	return loggingMetricKey(project, metric)
+}
+
+func normalizeLoggingSink(project string, sink LoggingSink) LoggingSink {
+	short := strings.TrimPrefix(sink.Name, fmt.Sprintf("projects/%s/sinks/", project))
+	if short == "" {
+		short = generateUUID()
+	}
+	sink.Name = loggingSinkKey(project, short)
+	if sink.WriterIdentity == "" {
+		sink.WriterIdentity = fmt.Sprintf("serviceAccount:cloud-logs@%s.iam.gserviceaccount.com", project)
+	}
+	return sink
+}
+
+func normalizeLoggingMetric(project string, metric LoggingMetric) LoggingMetric {
+	short := strings.TrimPrefix(metric.Name, fmt.Sprintf("projects/%s/metrics/", project))
+	if short == "" {
+		short = generateUUID()
+	}
+	metric.Name = loggingMetricKey(project, short)
+	return metric
+}
+
+func handleCreateLoggingSink(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	var sink LoggingSink
+	if err := sim.ReadJSON(r, &sink); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid sink body: %v", err)
+		return
+	}
+	sink = normalizeLoggingSink(project, sink)
+	logSinks.Put(sink.Name, sink)
+	sim.WriteJSON(w, http.StatusOK, sink)
+}
+
+func handleListLoggingSinks(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	prefix := fmt.Sprintf("projects/%s/sinks/", project)
+	sinks := logSinks.Filter(func(s LoggingSink) bool {
+		return strings.HasPrefix(s.Name, prefix)
+	})
+	if sinks == nil {
+		sinks = []LoggingSink{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"sinks": sinks})
+}
+
+func handleGetLoggingSink(w http.ResponseWriter, r *http.Request) {
+	key := loggingSinkRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "sink"))
+	sink, ok := logSinks.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "sink %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, sink)
+}
+
+func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	key := loggingSinkRequestKey(project, sim.PathParam(r, "sink"))
+	var sink LoggingSink
+	if err := sim.ReadJSON(r, &sink); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid sink body: %v", err)
+		return
+	}
+	sink.Name = key
+	sink = normalizeLoggingSink(project, sink)
+	logSinks.Put(key, sink)
+	sim.WriteJSON(w, http.StatusOK, sink)
+}
+
+func handleDeleteLoggingSink(w http.ResponseWriter, r *http.Request) {
+	logSinks.Delete(loggingSinkRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "sink")))
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleCreateLoggingMetric(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	var metric LoggingMetric
+	if err := sim.ReadJSON(r, &metric); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid metric body: %v", err)
+		return
+	}
+	metric = normalizeLoggingMetric(project, metric)
+	logMetrics.Put(metric.Name, metric)
+	sim.WriteJSON(w, http.StatusOK, metric)
+}
+
+func handleListLoggingMetrics(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	prefix := fmt.Sprintf("projects/%s/metrics/", project)
+	metrics := logMetrics.Filter(func(m LoggingMetric) bool {
+		return strings.HasPrefix(m.Name, prefix)
+	})
+	if metrics == nil {
+		metrics = []LoggingMetric{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"metrics": metrics})
+}
+
+func handleGetLoggingMetric(w http.ResponseWriter, r *http.Request) {
+	key := loggingMetricRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "metric"))
+	metric, ok := logMetrics.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "metric %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, metric)
+}
+
+func handleUpdateLoggingMetric(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	key := loggingMetricRequestKey(project, sim.PathParam(r, "metric"))
+	var metric LoggingMetric
+	if err := sim.ReadJSON(r, &metric); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid metric body: %v", err)
+		return
+	}
+	metric.Name = key
+	metric = normalizeLoggingMetric(project, metric)
+	logMetrics.Put(key, metric)
+	sim.WriteJSON(w, http.StatusOK, metric)
+}
+
+func handleDeleteLoggingMetric(w http.ResponseWriter, r *http.Request) {
+	logMetrics.Delete(loggingMetricRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "metric")))
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 // gRPC Cloud Logging server

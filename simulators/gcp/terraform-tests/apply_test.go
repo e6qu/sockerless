@@ -10,8 +10,9 @@ import (
 
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
 // (compute network + disk + subnet + firewall, public + private DNS zones,
-// Artifact Registry, Cloud Run v2 Service + Job, Cloud Storage bucket +
-// object, BigQuery dataset/table, Firestore document, Eventarc trigger,
+// Artifact Registry, Cloud Run v2 Service + Job, Cloud Functions v2,
+// Pub/Sub, Cloud Build trigger, Cloud Storage bucket + object, Cloud Logging
+// sink/metric, BigQuery dataset/table, Firestore document, Eventarc trigger,
 // Secret Manager, IAM service account) in a single terraform apply round-trip
 // and asserts the cross-resource
 // references converged.
@@ -21,8 +22,12 @@ import (
 //   - dns.googleapis.com (public + private managedZones)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
+//   - cloudfunctions.googleapis.com v2 (Function)
 //   - eventarc.googleapis.com (Trigger)
+//   - pubsub.googleapis.com (Topic + Subscription)
+//   - cloudbuild.googleapis.com (Trigger)
 //   - storage.googleapis.com (bucket + object)
+//   - logging.googleapis.com (project sink + metric)
 //   - bigquery.googleapis.com (dataset + table)
 //   - firestore.googleapis.com (document)
 //   - secretmanager.googleapis.com (secret + version)
@@ -65,13 +70,37 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, crJobID, "projects/test-project/locations/us-central1/jobs/tf-crv2-job",
 		"Cloud Run v2 job id must round-trip the full resource path; got %s", crJobID)
 
+	gcfFunctionID := outputs.must(t, "cloudfunctions2_function_id")
+	require.Contains(t, gcfFunctionID, "projects/test-project/locations/us-central1/functions/tf-gcfv2-function",
+		"Cloud Functions v2 id must round-trip the full resource path; got %s", gcfFunctionID)
+
 	eventarcID := outputs.must(t, "eventarc_trigger_id")
 	require.Contains(t, eventarcID, "projects/test-project/locations/us-central1/triggers/tf-eventarc-trigger",
 		"Eventarc trigger id must round-trip the full resource path; got %s", eventarcID)
 
+	pubsubTopicID := outputs.must(t, "pubsub_topic_id")
+	require.Equal(t, "projects/test-project/topics/tf-pubsub-topic", pubsubTopicID,
+		"Pub/Sub topic id must be the canonical project topic path; got %s", pubsubTopicID)
+
+	pubsubSubscriptionID := outputs.must(t, "pubsub_subscription_id")
+	require.Equal(t, "projects/test-project/subscriptions/tf-pubsub-subscription", pubsubSubscriptionID,
+		"Pub/Sub subscription id must be the canonical project subscription path; got %s", pubsubSubscriptionID)
+
+	cloudBuildTriggerID := outputs.must(t, "cloudbuild_trigger_id")
+	require.Contains(t, cloudBuildTriggerID, "projects/test-project/locations/us-central1/triggers/",
+		"Cloud Build trigger id must include the regional trigger path; got %s", cloudBuildTriggerID)
+
 	bucketURL := outputs.must(t, "storage_bucket_url")
 	require.True(t, strings.HasPrefix(bucketURL, "gs://tf-test-bucket-"),
 		"GCS bucket url must be a gs:// URL; got %s", bucketURL)
+
+	logSinkID := outputs.must(t, "logging_project_sink_id")
+	require.Contains(t, logSinkID, "projects/test-project/sinks/tf-log-sink",
+		"Logging project sink id must include canonical project sink path; got %s", logSinkID)
+
+	logMetricID := outputs.must(t, "logging_metric_id")
+	require.Equal(t, "tf-log-metric", logMetricID,
+		"Logging metric id must match terraform-provider-google's metric resource ID shape; got %s", logMetricID)
 
 	secretVersionID := outputs.must(t, "secret_version_id")
 	require.Contains(t, secretVersionID, "projects/test-project/secrets/tf-test-secret/versions/",

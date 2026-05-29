@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1217 filed · 1213 fixed · 6 open · 2 false positives.**
+**1218 filed · 1214 fixed · 6 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -18,6 +18,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1218 / issue #264. The simulator test-contract matrix now has a maintained `specs/SIM_TEST_COVERAGE_MATRIX.md` row for every canonical simulator surface table and CI/pre-commit enforcement through `scripts/check-simulator-coverage-matrix.sh`, so adding/removing surface tables without updating SDK/CLI/Terraform coverage status fails. The concrete reported coverage holes are closed by direct real-client tests: AWS DynamoDB, SQS, and SNS have direct AWS CLI lifecycle coverage; the GCP Terraform harness now covers Cloud Functions v2, Cloud Build triggers, Pub/Sub topics/subscriptions, and Cloud Logging sinks/metrics. The GCP simulator also implements the Cloud Logging sink/metric control plane and Cloud Build trigger lifecycle routes needed by the official Terraform provider.
 
 This phase closed BUG-1217 / issue #269. The Azure simulator already emitted templated storage endpoints and matching metadata storage suffixes, but the exact azurerm data-plane resource path was not locked by Terraform coverage. The Azure Terraform harness now creates `azurerm_storage_container` with `storage_account_name`, which forces the provider through the `primary_blob_endpoint` parser and Blob data-plane path, and asserts both the data-plane URL-shaped container ID and canonical ARM `resource_manager_id`.
 

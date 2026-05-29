@@ -1,5 +1,8 @@
 terraform {
   required_providers {
+    archive = {
+      source = "hashicorp/archive"
+    }
     google = {
       source = "hashicorp/google"
     }
@@ -18,11 +21,15 @@ provider "google" {
 
   compute_custom_endpoint           = "${var.endpoint}/compute/v1/"
   big_query_custom_endpoint         = "${var.endpoint}/bigquery/v2/"
+  cloud_build_custom_endpoint       = "${replace(var.endpoint, "127.0.0.1", "cloudbuild.localhost")}/v1/"
+  cloudfunctions2_custom_endpoint   = "${var.endpoint}/v2/"
   dns_custom_endpoint               = "${var.endpoint}/dns/v1/"
   artifact_registry_custom_endpoint = "${var.endpoint}/v1/"
   cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
-  eventarc_custom_endpoint          = "${var.endpoint}/v1/"
+  eventarc_custom_endpoint          = "${replace(var.endpoint, "127.0.0.1", "eventarc.localhost")}/v1/"
   firestore_custom_endpoint         = "${var.endpoint}/v1/"
+  logging_custom_endpoint           = "${var.endpoint}/v2/"
+  pubsub_custom_endpoint            = "${var.endpoint}/v1/"
   storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
@@ -173,6 +180,53 @@ resource "google_cloud_run_v2_job" "tf_crv2_job" {
   depends_on = [google_artifact_registry_repository.tf_ar_docker]
 }
 
+# ---------- Cloud Functions v2 ----------
+
+data "archive_file" "tf_function_source" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/function-source.zip"
+
+  source {
+    filename = "index.js"
+    content  = <<-EOT
+      exports.helloHttp = (req, res) => {
+        res.status(200).send("ok");
+      };
+    EOT
+  }
+}
+
+resource "google_storage_bucket_object" "tf_function_source" {
+  name   = "function-source.zip"
+  bucket = google_storage_bucket.tf_bucket.name
+  source = data.archive_file.tf_function_source.output_path
+}
+
+resource "google_cloudfunctions2_function" "tf_gcfv2_function" {
+  name        = "tf-gcfv2-function"
+  location    = "us-central1"
+  description = "Terraform simulator coverage for Cloud Functions v2"
+
+  build_config {
+    runtime     = "nodejs20"
+    entry_point = "helloHttp"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.tf_bucket.name
+        object = google_storage_bucket_object.tf_function_source.name
+      }
+    }
+  }
+
+  service_config {
+    max_instance_count = 1
+    available_memory   = "256M"
+    timeout_seconds    = 60
+  }
+
+  depends_on = [google_storage_bucket_object.tf_function_source]
+}
+
 # ---------- Eventarc ----------
 
 resource "google_eventarc_trigger" "tf_eventarc_trigger" {
@@ -207,6 +261,43 @@ resource "google_eventarc_channel" "tf_eventarc_channel" {
   }
 }
 
+# ---------- Pub/Sub ----------
+
+resource "google_pubsub_topic" "tf_pubsub_topic" {
+  name = "tf-pubsub-topic"
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_pubsub_subscription" "tf_pubsub_subscription" {
+  name                 = "tf-pubsub-subscription"
+  topic                = google_pubsub_topic.tf_pubsub_topic.id
+  ack_deadline_seconds = 20
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+# ---------- Cloud Build ----------
+
+resource "google_cloudbuild_trigger" "tf_cloudbuild_trigger" {
+  name     = "tf-cloudbuild-trigger"
+  location = "us-central1"
+  filename = "cloudbuild.yaml"
+
+  trigger_template {
+    branch_name = "main"
+    repo_name   = "tf-repo"
+  }
+
+  substitutions = {
+    _ENV = "terraform"
+  }
+}
+
 # ---------- Cloud Storage ----------
 
 resource "google_storage_bucket" "tf_bucket" {
@@ -227,6 +318,25 @@ resource "google_storage_bucket_object" "tf_artifact" {
   name    = "tf-test-artifact.txt"
   bucket  = google_storage_bucket.tf_bucket.name
   content = "tf-test-payload"
+}
+
+# ---------- Cloud Logging ----------
+
+resource "google_logging_project_sink" "tf_log_sink" {
+  name                   = "tf-log-sink"
+  destination            = "storage.googleapis.com/${google_storage_bucket.tf_bucket.name}"
+  filter                 = "resource.type=\"global\""
+  unique_writer_identity = true
+}
+
+resource "google_logging_metric" "tf_log_metric" {
+  name   = "tf-log-metric"
+  filter = "resource.type=\"global\" AND severity>=ERROR"
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
 }
 
 # ---------- Data SaaS (BigQuery + Firestore) ----------
@@ -324,12 +434,36 @@ output "cloud_run_v2_job_id" {
   value = google_cloud_run_v2_job.tf_crv2_job.id
 }
 
+output "cloudfunctions2_function_id" {
+  value = google_cloudfunctions2_function.tf_gcfv2_function.id
+}
+
 output "eventarc_trigger_id" {
   value = google_eventarc_trigger.tf_eventarc_trigger.id
 }
 
+output "pubsub_topic_id" {
+  value = google_pubsub_topic.tf_pubsub_topic.id
+}
+
+output "pubsub_subscription_id" {
+  value = google_pubsub_subscription.tf_pubsub_subscription.id
+}
+
+output "cloudbuild_trigger_id" {
+  value = google_cloudbuild_trigger.tf_cloudbuild_trigger.id
+}
+
 output "storage_bucket_url" {
   value = google_storage_bucket.tf_bucket.url
+}
+
+output "logging_project_sink_id" {
+  value = google_logging_project_sink.tf_log_sink.id
+}
+
+output "logging_metric_id" {
+  value = google_logging_metric.tf_log_metric.id
 }
 
 output "secret_version_id" {
