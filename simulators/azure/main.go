@@ -90,6 +90,7 @@ func main() {
 	registerStorageDataPlane(srv)
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
+	registerCosmosDB(srv)
 	registerServiceBus(srv)
 	registerServiceBusDataPlane(srv)
 	registerEventHubs(srv)

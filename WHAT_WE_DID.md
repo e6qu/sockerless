@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Managed data SaaS parity
+
+The managed data SaaS phase closed BUG-1201, BUG-1202, and issue #267.
+
+The gap was real: AWS already had DynamoDB, but the GCP simulator lacked BigQuery and Firestore, and the Azure simulator lacked Cosmos DB. The fix added BigQuery's public REST v2 slice for datasets, tables, jobs, synchronous queries, tabledata listing, and streaming inserts. Rows are persisted in the simulator store, table metadata reflects row counts, and the query path evaluates the foundational `SELECT ... FROM ... WHERE field = value` shape used by local clients and tests instead of returning a canned result.
+
+Firestore now has document CRUD plus commit, batchGet, batchWrite, and structured equality runQuery flows over Firestore typed-value JSON documents. Cosmos DB now has both public surfaces: the `Microsoft.DocumentDB/databaseAccounts` ARM control plane for accounts, SQL databases, SQL containers, throughput settings, `listKeys`, and `listConnectionStrings`, plus the SQL data-plane database/container/document CRUD and query paths under `/dbs/...`.
+
+The AWS DynamoDB re-audit found one real parity bug: `Query` and filtered `Scan` returned every table item even when callers supplied equality expressions. DynamoDB now evaluates the common public `KeyConditionExpression` / `FilterExpression` equality form with `ExpressionAttributeNames` and `ExpressionAttributeValues`, and the SDK regression asserts the filtered result.
+
+Coverage was added across the simulator contract surfaces: official Google SDK coverage for BigQuery and Firestore create/read/write flows, Azure simulator SDK-harness coverage for Cosmos ARM and data-plane flows, vendor CLI-harness coverage for GCP and Azure data SaaS routes, Terraform provider resources for `google_bigquery_dataset`, `google_bigquery_table`, `google_firestore_document`, `azurerm_cosmosdb_account`, `azurerm_cosmosdb_sql_database`, and `azurerm_cosmosdb_sql_container`, plus the DynamoDB SDK query/filter regression.
+
 ## 2026-05-29 — Azure public DNS parity
 
 The Azure public DNS parity phase closed BUG-1205 / issue #265.

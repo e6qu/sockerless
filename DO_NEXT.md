@@ -16,11 +16,13 @@ The Azure host-addressed local DNS portability issue is now closed. The Azure si
 
 The stream/event ingestion gap is now closed. AWS Kinesis is implemented as a real JSON-protocol slice with stream lifecycle, shard listing, records, shard iterators, tags, retention, monitoring, encryption state, shard-count update, and limits. Azure Event Hubs is implemented with ARM namespace/event hub/consumer group/auth-rule lifecycle plus AMQP send/receive over the raw AMQP/TLS listener.
 
-The remaining audit gaps are GCP BigQuery, GCP Firestore/Datastore, Azure Cosmos DB, EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, uneven public-IP/NAT parity, and stale surface-table rows. BUG-1201..1204 and BUG-1206..1207 track those gaps.
+The managed data SaaS gap is now closed: GCP BigQuery, GCP Firestore, Azure Cosmos DB, and the AWS DynamoDB query/filter audit landed with SDK/CLI/Terraform coverage. The remaining audit gaps are EC2/GCE/Azure VM lifecycle APIs, managed load balancers across all clouds, uneven public-IP/NAT parity, and stale surface-table rows. BUG-1203, BUG-1204, BUG-1206, and BUG-1207 track those gaps.
 
 ## Stage plan
 
-Current phase: idle after Azure public DNS parity. The next implementation pass should move to the remaining foundational managed-data gaps: GCP BigQuery, GCP Firestore/Datastore, and Azure Cosmos DB, with SDK/CLI/Terraform coverage for every added public operation. VM/EC2-like support should expose the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery.
+Current phase: idle after managed data SaaS parity. The next implementation pass should move to VM/EC2-like support, exposing the public EC2/GCE/Azure VM APIs while using Firecracker or another real local microVM runtime only as internal simulator machinery. After that, managed load balancers and NAT/public-IP parity remain the highest-priority simulator audit gaps.
+
+Issue #267 finding: the foundational data SaaS gap was real. The fix added GCP BigQuery dataset/table/job/query/tabledata flows, GCP Firestore document CRUD/commit/batch/query flows, and Azure Cosmos DB ARM plus SQL data-plane flows. The AWS DynamoDB audit found Query/filtered Scan returned unfiltered table contents; that now honors equality expressions using `ExpressionAttributeNames` and `ExpressionAttributeValues`.
 
 Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
 

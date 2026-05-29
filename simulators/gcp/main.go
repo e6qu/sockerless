@@ -79,6 +79,8 @@ func main() {
 	registerMemorystoreRedis(srv)
 	registerGCPAPIGateway(srv)
 	registerCloudSQL(srv)
+	registerBigQuery(srv)
+	registerFirestore(srv)
 	registerCloudBuild(srv)
 
 	// Infrastructure services

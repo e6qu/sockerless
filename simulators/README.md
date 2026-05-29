@@ -190,11 +190,12 @@ The ECS simulator supports `ExecuteCommand` with WebSocket-based session bridgin
 
 | Cloud | Protocol | Routing |
 |---|---|---|
-| AWS (ECS, ECR, CloudWatch, Cloud Map, WAFv2, ACM, KMS, SSM, Secrets, DynamoDB) | AWS-JSON 1.1 | `X-Amz-Target` header dispatch |
+| AWS (ECS, ECR, CloudWatch, Cloud Map, WAFv2, ACM, KMS, SSM, Secrets, DynamoDB, Kinesis, EventBridge) | AWS-JSON | `X-Amz-Target` header dispatch |
 | AWS (EC2, IAM, STS) | AWS Query | `Action` form parameter dispatch |
 | AWS (Lambda, S3, EFS, CloudFront, Route 53, Amplify) | REST | Path-based mux (CloudFront / Route 53 use XML bodies, others JSON) |
-| GCP (all services) | REST + gRPC | Path-based mux (HTTP), proto service (gRPC on port+1 for Cloud Logging) |
-| Azure (all services) | ARM REST | Path-based mux with `api-version` validation |
+| GCP (all services including BigQuery and Firestore) | REST + gRPC | Path-based mux (HTTP), proto service (gRPC on port+1 for Cloud Logging) |
+| Azure (ARM services including Cosmos DB) | ARM REST | Path-based mux with `api-version` validation |
+| Azure (data planes including Storage, Key Vault, Service Bus/Event Hubs, Event Grid, Cosmos DB) | REST / AMQP | Host/path-based mux and optional raw AMQP/TLS listeners |
 
 ## Known issues
 

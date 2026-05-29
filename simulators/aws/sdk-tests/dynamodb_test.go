@@ -160,4 +160,29 @@ func TestDynamoDB_QueryAndScan(t *testing.T) {
 	scan, err := c.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(tableName)})
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), scan.Count)
+
+	query, err := c.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(tableName),
+		KeyConditionExpression: aws.String("ID = :id"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":id": &ddbtypes.AttributeValueMemberS{Value: "b"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), query.Count)
+	assert.Equal(t, "b", query.Items[0]["ID"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	filtered, err := c.Scan(ctx, &dynamodb.ScanInput{
+		TableName:        aws.String(tableName),
+		FilterExpression: aws.String("#id = :id"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "ID",
+		},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":id": &ddbtypes.AttributeValueMemberS{Value: "c"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), filtered.Count)
+	assert.Equal(t, "c", filtered.Items[0]["ID"].(*ddbtypes.AttributeValueMemberS).Value)
 }

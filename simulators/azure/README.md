@@ -222,6 +222,7 @@ tokens without shared secrets.
 | **Storage Accounts** | CRUD, List keys |
 | **File Shares** | CRUD under storage accounts |
 | **Storage Data-Plane** | Host-based routing (`{account}.blob.localhost:{port}`) for blob/file service properties and ACLs |
+| **Cosmos DB for NoSQL** | ARM databaseAccounts, SQL databases, containers, throughput settings, listKeys/listConnectionStrings; SQL data-plane database/container/document CRUD and query |
 
 Storage account `listKeys` returns Azure-shaped 512-bit base64 SharedKeys that
 are deterministic per resource ID and key name, so downstream SharedKey
@@ -241,6 +242,7 @@ verifiers can validate requests signed with the simulator-emitted account key.
 | Service | Endpoints |
 |---|---|
 | **Private DNS Zones** | CRUD (auto-creates SOA record) |
+| **Public DNS Zones** | `Microsoft.Network/dnsZones` zone and record-set CRUD |
 | **A Records** | CRUD under zones |
 | **Virtual Network Links** | CRUD |
 

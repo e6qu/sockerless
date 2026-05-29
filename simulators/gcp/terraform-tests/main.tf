@@ -17,10 +17,12 @@ provider "google" {
   user_project_override = false
 
   compute_custom_endpoint           = "${var.endpoint}/compute/v1/"
+  big_query_custom_endpoint         = "${var.endpoint}/bigquery/v2/"
   dns_custom_endpoint               = "${var.endpoint}/dns/v1/"
   artifact_registry_custom_endpoint = "${var.endpoint}/v1/"
   cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
   eventarc_custom_endpoint          = "${var.endpoint}/v1/"
+  firestore_custom_endpoint         = "${var.endpoint}/v1/"
   storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
@@ -227,6 +229,43 @@ resource "google_storage_bucket_object" "tf_artifact" {
   content = "tf-test-payload"
 }
 
+# ---------- Data SaaS (BigQuery + Firestore) ----------
+
+resource "google_bigquery_dataset" "tf_bq_dataset" {
+  dataset_id = "tf_test_dataset"
+  location   = "US"
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_bigquery_table" "tf_bq_table" {
+  dataset_id          = google_bigquery_dataset.tf_bq_dataset.dataset_id
+  table_id            = "events"
+  deletion_protection = false
+
+  schema = jsonencode([
+    {
+      name = "id"
+      type = "STRING"
+      mode = "REQUIRED"
+    },
+    {
+      name = "kind"
+      type = "STRING"
+      mode = "NULLABLE"
+    }
+  ])
+}
+
+resource "google_firestore_document" "tf_firestore_doc" {
+  project     = "test-project"
+  collection  = "tf-users"
+  document_id = "alice"
+  fields      = "{\"team\":{\"stringValue\":\"platform\"},\"role\":{\"stringValue\":\"admin\"}}"
+}
+
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
@@ -319,4 +358,12 @@ output "service_account_email" {
 
 output "service_account_name" {
   value = google_service_account.tf_sa.name
+}
+
+output "bigquery_table_id" {
+  value = google_bigquery_table.tf_bq_table.id
+}
+
+output "firestore_document_name" {
+  value = google_firestore_document.tf_firestore_doc.id
 }

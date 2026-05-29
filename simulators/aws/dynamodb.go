@@ -706,31 +706,34 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 
-// handleDDBQuery returns all items in the table whose hash key matches
-// the request's KeyConditionExpression. The sim's matcher only handles
-// the simple `<attr> = :val` shape Terraform state locks use; complex
-// expressions fall through.
+// handleDDBQuery returns items whose primary-key attributes match the
+// request's KeyConditionExpression. The implemented expression subset is
+// the DynamoDB equality form used by SDK/CLI/Terraform clients:
+// `<hash> = :value` plus optional `AND <range> = :value`.
 func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string `json:"TableName"`
+		TableName                 string            `json:"TableName"`
+		KeyConditionExpression    string            `json:"KeyConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
-	// Sim returns all items in the table for simplicity. Real DynamoDB
-	// applies the KeyConditionExpression first; tests that need that
-	// precision should add the matcher.
 	prefix := req.TableName + "/"
 	var items []map[string]any
 	for _, k := range ddbItemKeys(prefix) {
 		if it, ok := ddbItems.Get(k); ok {
-			items = append(items, it)
+			if ddbMatchesExpression(t, it, req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+				items = append(items, it)
+			}
 		}
 	}
 	if items == nil {
@@ -744,7 +747,10 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 
 func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string `json:"TableName"`
+		TableName                 string            `json:"TableName"`
+		FilterExpression          string            `json:"FilterExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -759,7 +765,9 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	var items []map[string]any
 	for _, k := range ddbItemKeys(prefix) {
 		if it, ok := ddbItems.Get(k); ok {
-			items = append(items, it)
+			if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+				items = append(items, it)
+			}
 		}
 	}
 	if items == nil {
@@ -783,6 +791,61 @@ func ddbItemKeys(prefix string) []string {
 		}
 	}
 	return out
+}
+
+func ddbMatchesExpression(table DDBTable, item map[string]any, expr string, names map[string]string, values map[string]any) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return true
+	}
+	parts := strings.Split(expr, " AND ")
+	if len(parts) == 1 {
+		parts = strings.Split(expr, " and ")
+	}
+	for _, part := range parts {
+		left, right, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			return false
+		}
+		attr := ddbResolveAttrName(strings.TrimSpace(left), names)
+		token := strings.TrimSpace(right)
+		want, ok := values[token]
+		if !ok {
+			return false
+		}
+		if !ddbAttrValuesEqual(item[attr], want) {
+			return false
+		}
+	}
+	_ = table
+	return true
+}
+
+func ddbResolveAttrName(name string, aliases map[string]string) string {
+	name = strings.TrimSpace(name)
+	if strings.HasPrefix(name, "#") {
+		if v := aliases[name]; v != "" {
+			return v
+		}
+	}
+	return name
+}
+
+func ddbAttrValuesEqual(a, b any) bool {
+	av, aok := a.(map[string]any)
+	bv, bok := b.(map[string]any)
+	if !aok || !bok {
+		return fmt.Sprint(a) == fmt.Sprint(b)
+	}
+	for _, key := range []string{"S", "N", "B", "BOOL", "NULL"} {
+		if fmt.Sprint(av[key]) != fmt.Sprint(bv[key]) {
+			return false
+		}
+		if _, ok := av[key]; ok {
+			return true
+		}
+	}
+	return fmt.Sprint(a) == fmt.Sprint(b)
 }
 
 // containsCI is a case-insensitive substring check — Terraform's
