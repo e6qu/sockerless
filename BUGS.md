@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1218 filed · 1214 fixed · 6 open · 2 false positives.**
+**1219 filed · 1214 fixed · 7 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -16,6 +16,7 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1204 | P1 | VPC egress and NAT parity | 7 (partial implementation) | VPC/network primitives exist, and NAT is partially modeled (AWS EC2 NAT Gateway, GCP Router NAT, Azure NAT Gateway), but parity is uneven: GCP address/manual-NAT resources, Azure Public IP/Public IP Prefix resources, subnet-NAT attachment/list semantics, and SDK/CLI/Terraform surface tables/tests need a full pass. |
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
+| 1219 | P0 | Azure Entra simulator token audience | 7 (partial implementation) | Azure OAuth token endpoint mints RS256 JWTs with fixed ARM audience instead of deriving `aud` from OAuth v2 `scope` or OAuth v1 `resource`, blocking realistic Key Vault, Service Bus, and Storage data-plane Bearer validation. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
 
