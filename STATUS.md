@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after managed data SaaS parity. |
+| Active branch | `main` - idle after Azure azurerm storage endpoint coverage. |
 | In-flight | None; next implementation pass starts from the remaining VM, managed load-balancer, NAT/public-IP, and surface-table audit gaps. |
-| Last merged | BigQuery, Firestore, Cosmos DB, and DynamoDB query parity (2026-05-29). |
+| Last merged | Azure azurerm storage data-plane endpoint coverage for issue #269 (2026-05-29). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1216 filed · 1212 fixed · 6 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, BUG-1207. |
+| Bugs | 1217 filed · 1213 fixed · 6 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206, BUG-1207. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| issue #269 | Azure azurerm storage endpoint coverage | Closed BUG-1217/#269. The Azure simulator's templated storage endpoint emission and metadata storage suffix derivation are now locked by the exact azurerm data-plane resource path: `azurerm_storage_container` with `storage_account_name`. The Terraform harness verifies that the provider accepts the `{account}.blob.{suffix}` endpoint shape, reaches the Blob data plane, returns a Blob URL-shaped container ID, and also reports the canonical ARM `resource_manager_id`. |
 | issue #267 | managed data SaaS parity | Closed BUG-1201/BUG-1202. GCP BigQuery now supports dataset/table/job/query/tabledata flows with persisted rows and equality-filtered queries; GCP Firestore now supports document CRUD, commit, batchGet, batchWrite, and structured equality runQuery; Azure Cosmos DB now supports ARM databaseAccounts, SQL databases/containers/throughput, listKeys/listConnectionStrings, and SQL data-plane document CRUD/query. The AWS DynamoDB audit also fixed Query/filtered Scan to honor equality expressions. |
 | issue #265 | Azure public DNS parity | Closed BUG-1205. The Azure simulator now implements `Microsoft.Network/dnsZones` public DNS zones and record sets for `api-version=2018-05-01`, including default NS/SOA records, A/AAAA/CAA/CNAME/MX/NS/PTR/SOA/SRV/TXT record-set CRUD/list routes, provider metadata, resource-group enumeration, and official SDK/CLI/Terraform coverage. |
 | issues #260/#261 | Azure Storage keys + Entra JWKS | Azure Storage account `listKeys` now emits deterministic per-account 512-bit base64 SharedKeys, and Azure Entra simulator tokens are RS256-signed with the public RSA key published through JWKS. Shims and other downstream data-plane verifiers can validate SharedKey and bearer-authenticated requests without simulator-only public API fields or shared-secret side channels. Service Bus AMQP receiver links with outstanding credit are also drained when a later send enqueues matching messages. |

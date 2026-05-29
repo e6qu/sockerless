@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1216 filed · 1212 fixed · 6 open · 2 false positives.**
+**1217 filed · 1213 fixed · 6 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -18,6 +18,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1207 | P0 | cross-cloud VM compute APIs | 9 (missing cloud slice) | The sims do not implement EC2 `RunInstances`/instance lifecycle, GCP Compute Engine instances, or Azure Virtual Machines. These should be public-cloud-compatible VM API slices; Firecracker or another real local microVM runtime can be the implementation substrate, but it must not leak into public simulator APIs. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1217 / issue #269. The Azure simulator already emitted templated storage endpoints and matching metadata storage suffixes, but the exact azurerm data-plane resource path was not locked by Terraform coverage. The Azure Terraform harness now creates `azurerm_storage_container` with `storage_account_name`, which forces the provider through the `primary_blob_endpoint` parser and Blob data-plane path, and asserts both the data-plane URL-shaped container ID and canonical ARM `resource_manager_id`.
 
 This phase closed BUG-1201, BUG-1202, and issue #267. The GCP simulator now implements BigQuery dataset/table/job/query/tabledata REST APIs with persisted rows, streaming inserts, synchronous query jobs, equality filtering, and SDK/CLI/Terraform coverage. The GCP simulator also implements Firestore document CRUD, commit, batchGet, batchWrite, and structured equality runQuery flows against persisted Firestore typed-value documents. The Azure simulator now implements Cosmos DB for NoSQL through `Microsoft.DocumentDB/databaseAccounts`, SQL databases, containers, throughput settings, listKeys/listConnectionStrings, and SQL data-plane database/container/document CRUD plus simple document queries. The AWS DynamoDB audit closed a real parity gap by applying `KeyConditionExpression` and `FilterExpression` equality predicates instead of returning every table item for Query/filtered Scan.
 
