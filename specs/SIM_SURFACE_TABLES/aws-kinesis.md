@@ -1,38 +1,44 @@
 # Sim surface — aws-kinesis
 
-Surface registered in `simulators/aws/kinesis.go` as AWS JSON protocol target `Kinesis_20131202.*`.
+Surface registered in `simulators/aws/kinesis.go` (and related files grouped under this table). Rows below are the ops the sim currently registers — extracted by `scripts/seed-surface-tables.sh` from `mux.HandleFunc(...)` calls. ✗ rows for ops not handled by the sim are added when a community-filed issue or audit surfaces them.
 
 ## Status legend
 
 - ✓ — implemented + tested
-- n/a — not a canonical client surface for this operation in the repo harness
+- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- 501 — stubbed NotImplemented (wire-visible gap)
+- n/a — no terraform-provider resource for this op
 
-## Implemented ops
+## Implemented ops (extracted from HandleFunc registrations)
 
-| Operation | sim handler | sdk-test | cli-test | tf-test | notes |
+| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `CreateStream` | ✓ `handleKinesisCreateStream` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | ✓ `aws_kinesis_stream.tf_stream` | Creates active provisioned streams, shard ranges, tags, ARN, retention, encryption, and monitoring metadata. |
-| `DeleteStream` | ✓ `handleKinesisDeleteStream` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | ✓ `aws_kinesis_stream.tf_stream` | Deletes stream records, iterators, and metadata. |
-| `DescribeStream` | ✓ `handleKinesisDescribeStream` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | ✓ `aws_kinesis_stream.tf_stream` | Returns stream description with shards and status. |
-| `DescribeStreamSummary` | ✓ `handleKinesisDescribeStreamSummary` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | ✓ `aws_kinesis_stream.tf_stream` | Returns open shard count and summary metadata. |
-| `ListStreams` | ✓ `handleKinesisListStreams` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | n/a | Supports stream-name enumeration. |
-| `ListShards` | ✓ `handleKinesisListShards` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | n/a | Returns shard IDs and hash-key ranges. |
-| `PutRecord` | ✓ `handleKinesisPutRecord` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | n/a | Stores real record payload bytes with partition-key shard routing and sequence numbers. |
-| `PutRecords` | ✓ `handleKinesisPutRecords` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | n/a | Stores each record and returns per-entry shard/sequence metadata. |
-| `GetShardIterator` | ✓ `handleKinesisGetShardIterator` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | n/a | Supports iterator-based reads from shard positions. |
-| `GetRecords` | ✓ `handleKinesisGetRecords` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | ✓ `TestKinesisCLI_StreamAndRecords` | n/a | Returns stored record payloads and advances the iterator. |
-| `AddTagsToStream` | ✓ `handleKinesisAddTagsToStream` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | ✓ `aws_kinesis_stream.tf_stream` | Merges stream tags. |
-| `RemoveTagsFromStream` | ✓ `handleKinesisRemoveTagsFromStream` | n/a | n/a | ✓ `aws_kinesis_stream.tf_stream` | Removes named stream tags during provider updates/destroy. |
-| `ListTagsForStream` | ✓ `handleKinesisListTagsForStream` | ✓ `TestKinesisSDK_StreamLifecycleAndRecords` | n/a | ✓ `aws_kinesis_stream.tf_stream` | Returns stream tags. |
-| `IncreaseStreamRetentionPeriod` | ✓ `handleKinesisIncreaseStreamRetentionPeriod` | n/a | n/a | ✓ `aws_kinesis_stream.tf_stream` | Updates retention-period metadata. |
-| `DecreaseStreamRetentionPeriod` | ✓ `handleKinesisDecreaseStreamRetentionPeriod` | n/a | n/a | ✓ `aws_kinesis_stream.tf_stream` | Updates retention-period metadata. |
-| `EnableEnhancedMonitoring` | ✓ `handleKinesisEnableEnhancedMonitoring` | n/a | n/a | n/a | Persists requested shard-level metrics. |
-| `DisableEnhancedMonitoring` | ✓ `handleKinesisDisableEnhancedMonitoring` | n/a | n/a | n/a | Removes requested shard-level metrics. |
-| `StartStreamEncryption` | ✓ `handleKinesisStartStreamEncryption` | n/a | n/a | n/a | Persists encryption type and key ID. |
-| `StopStreamEncryption` | ✓ `handleKinesisStopStreamEncryption` | n/a | n/a | n/a | Clears stream encryption metadata. |
-| `UpdateShardCount` | ✓ `handleKinesisUpdateShardCount` | n/a | n/a | n/a | Rebuilds shard hash ranges for the requested shard count. |
-| `DescribeLimits` | ✓ `handleKinesisDescribeLimits` | n/a | n/a | n/a | Returns account-level stream and shard limits. |
+| `Action Kinesis_20131202.CreateStream` | ✓ `simulators/aws/kinesis.go:67::handleKinesisCreateStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DeleteStream` | ✓ `simulators/aws/kinesis.go:68::handleKinesisDeleteStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DescribeStream` | ✓ `simulators/aws/kinesis.go:69::handleKinesisDescribeStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DescribeStreamSummary` | ✓ `simulators/aws/kinesis.go:70::handleKinesisDescribeStreamSummary` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.ListStreams` | ✓ `simulators/aws/kinesis.go:71::handleKinesisListStreams` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.ListShards` | ✓ `simulators/aws/kinesis.go:72::handleKinesisListShards` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.PutRecord` | ✓ `simulators/aws/kinesis.go:73::handleKinesisPutRecord` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.PutRecords` | ✓ `simulators/aws/kinesis.go:74::handleKinesisPutRecords` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.GetShardIterator` | ✓ `simulators/aws/kinesis.go:75::handleKinesisGetShardIterator` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.GetRecords` | ✓ `simulators/aws/kinesis.go:76::handleKinesisGetRecords` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.AddTagsToStream` | ✓ `simulators/aws/kinesis.go:77::handleKinesisAddTagsToStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.RemoveTagsFromStream` | ✓ `simulators/aws/kinesis.go:78::handleKinesisRemoveTagsFromStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.ListTagsForStream` | ✓ `simulators/aws/kinesis.go:79::handleKinesisListTagsForStream` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.IncreaseStreamRetentionPeriod` | ✓ `simulators/aws/kinesis.go:80::handleKinesisIncreaseStreamRetentionPeriod` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DecreaseStreamRetentionPeriod` | ✓ `simulators/aws/kinesis.go:81::handleKinesisDecreaseStreamRetentionPeriod` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.EnableEnhancedMonitoring` | ✓ `simulators/aws/kinesis.go:82::handleKinesisEnableEnhancedMonitoring` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DisableEnhancedMonitoring` | ✓ `simulators/aws/kinesis.go:83::handleKinesisDisableEnhancedMonitoring` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.StartStreamEncryption` | ✓ `simulators/aws/kinesis.go:84::handleKinesisStartStreamEncryption` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.StopStreamEncryption` | ✓ `simulators/aws/kinesis.go:85::handleKinesisStopStreamEncryption` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.UpdateShardCount` | ✓ `simulators/aws/kinesis.go:86::handleKinesisUpdateShardCount` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action Kinesis_20131202.DescribeLimits` | ✓ `simulators/aws/kinesis.go:87::handleKinesisDescribeLimits` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
-## Follow-up audit note
+## Open subtasks staged forward
 
-This table records the foundational Kinesis slice added for stream-ingestion parity. Future Kinesis expansions should add rows before implementation for any newly required public operations and cover them through the official SDK, AWS CLI, and Terraform provider when those client surfaces expose the operation.
+- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
+- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+
+<!-- HAND-WRITTEN BEGIN -->
+<!-- HAND-WRITTEN END -->

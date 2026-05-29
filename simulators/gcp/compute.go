@@ -49,15 +49,21 @@ func computeNumericID() string {
 
 func newComputeOp(project, scope string, targetLink string) map[string]any {
 	opID := generateUUID()[:8]
+	now := time.Now().UTC().Format(time.RFC3339)
 	path := fmt.Sprintf("projects/%s/%s/operations/operation-%s", project, scope, opID)
 	return map[string]any{
-		"kind":       "compute#operation",
-		"id":         computeNumericID(),
-		"name":       "operation-" + opID,
-		"status":     "DONE",
-		"selfLink":   "https://www.googleapis.com/compute/v1/" + path,
-		"targetLink": targetLink,
-		"progress":   100,
+		"kind":          "compute#operation",
+		"id":            computeNumericID(),
+		"name":          "operation-" + opID,
+		"operationType": "operation",
+		"status":        "DONE",
+		"selfLink":      "https://www.googleapis.com/compute/v1/" + path,
+		"targetLink":    targetLink,
+		"targetId":      computeNumericID(),
+		"progress":      100,
+		"insertTime":    now,
+		"startTime":     now,
+		"endTime":       now,
 	}
 }
 
@@ -283,6 +289,109 @@ type ComputeAccessConfig struct {
 	Type        string `json:"type,omitempty"`
 	NatIP       string `json:"natIP,omitempty"`
 	NetworkTier string `json:"networkTier,omitempty"`
+}
+
+type ComputeHealthCheck struct {
+	Kind               string                  `json:"kind,omitempty"`
+	Id                 string                  `json:"id,omitempty"`
+	Name               string                  `json:"name"`
+	SelfLink           string                  `json:"selfLink,omitempty"`
+	CreationTimestamp  string                  `json:"creationTimestamp,omitempty"`
+	Description        string                  `json:"description,omitempty"`
+	Type               string                  `json:"type,omitempty"`
+	CheckIntervalSec   int64                   `json:"checkIntervalSec,omitempty"`
+	TimeoutSec         int64                   `json:"timeoutSec,omitempty"`
+	HealthyThreshold   int64                   `json:"healthyThreshold,omitempty"`
+	UnhealthyThreshold int64                   `json:"unhealthyThreshold,omitempty"`
+	HttpHealthCheck    *ComputeHTTPHealthCheck `json:"httpHealthCheck,omitempty"`
+	TcpHealthCheck     *ComputeTCPHealthCheck  `json:"tcpHealthCheck,omitempty"`
+}
+
+type ComputeHTTPHealthCheck struct {
+	Port        int64  `json:"port,omitempty"`
+	RequestPath string `json:"requestPath,omitempty"`
+	ProxyHeader string `json:"proxyHeader,omitempty"`
+}
+
+type ComputeTCPHealthCheck struct {
+	Port        int64  `json:"port,omitempty"`
+	ProxyHeader string `json:"proxyHeader,omitempty"`
+}
+
+type ComputeBackendService struct {
+	Kind                string                         `json:"kind,omitempty"`
+	Id                  string                         `json:"id,omitempty"`
+	Name                string                         `json:"name"`
+	SelfLink            string                         `json:"selfLink,omitempty"`
+	CreationTimestamp   string                         `json:"creationTimestamp,omitempty"`
+	Description         string                         `json:"description,omitempty"`
+	Protocol            string                         `json:"protocol,omitempty"`
+	PortName            string                         `json:"portName,omitempty"`
+	TimeoutSec          int64                          `json:"timeoutSec,omitempty"`
+	LoadBalancingScheme string                         `json:"loadBalancingScheme,omitempty"`
+	HealthChecks        []string                       `json:"healthChecks,omitempty"`
+	Backends            []ComputeBackendServiceBackend `json:"backends,omitempty"`
+	Fingerprint         string                         `json:"fingerprint,omitempty"`
+}
+
+type ComputeBackendServiceBackend struct {
+	Group          string  `json:"group,omitempty"`
+	BalancingMode  string  `json:"balancingMode,omitempty"`
+	CapacityScaler float64 `json:"capacityScaler,omitempty"`
+}
+
+type ComputeURLMap struct {
+	Kind              string                     `json:"kind,omitempty"`
+	Id                string                     `json:"id,omitempty"`
+	Name              string                     `json:"name"`
+	SelfLink          string                     `json:"selfLink,omitempty"`
+	CreationTimestamp string                     `json:"creationTimestamp,omitempty"`
+	Description       string                     `json:"description,omitempty"`
+	DefaultService    string                     `json:"defaultService,omitempty"`
+	HostRules         []ComputeURLMapHostRule    `json:"hostRules,omitempty"`
+	PathMatchers      []ComputeURLMapPathMatcher `json:"pathMatchers,omitempty"`
+	Fingerprint       string                     `json:"fingerprint,omitempty"`
+}
+
+type ComputeURLMapHostRule struct {
+	Hosts       []string `json:"hosts,omitempty"`
+	PathMatcher string   `json:"pathMatcher,omitempty"`
+}
+
+type ComputeURLMapPathMatcher struct {
+	Name           string                  `json:"name,omitempty"`
+	DefaultService string                  `json:"defaultService,omitempty"`
+	PathRules      []ComputeURLMapPathRule `json:"pathRules,omitempty"`
+}
+
+type ComputeURLMapPathRule struct {
+	Paths   []string `json:"paths,omitempty"`
+	Service string   `json:"service,omitempty"`
+}
+
+type ComputeTargetHTTPProxy struct {
+	Kind              string `json:"kind,omitempty"`
+	Id                string `json:"id,omitempty"`
+	Name              string `json:"name"`
+	SelfLink          string `json:"selfLink,omitempty"`
+	CreationTimestamp string `json:"creationTimestamp,omitempty"`
+	Description       string `json:"description,omitempty"`
+	UrlMap            string `json:"urlMap,omitempty"`
+}
+
+type ComputeForwardingRule struct {
+	Kind                string `json:"kind,omitempty"`
+	Id                  string `json:"id,omitempty"`
+	Name                string `json:"name"`
+	SelfLink            string `json:"selfLink,omitempty"`
+	CreationTimestamp   string `json:"creationTimestamp,omitempty"`
+	Description         string `json:"description,omitempty"`
+	IPAddress           string `json:"IPAddress,omitempty"`
+	IPProtocol          string `json:"IPProtocol,omitempty"`
+	PortRange           string `json:"portRange,omitempty"`
+	Target              string `json:"target,omitempty"`
+	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
+	NetworkTier         string `json:"networkTier,omitempty"`
 }
 
 func registerCompute(srv *sim.Server) {
@@ -703,6 +812,7 @@ func registerCompute(srv *sim.Server) {
 	registerComputeInstances(srv)
 	registerComputeDisks(srv)
 	registerComputeZones(srv)
+	registerComputeLoadBalancing(srv)
 }
 
 // registerComputeZones serves GET /compute/v1/projects/{project}/zones

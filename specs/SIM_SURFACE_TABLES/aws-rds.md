@@ -13,13 +13,17 @@ Surface registered in `simulators/aws/rds.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:40::handleRDSCreate` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:41::handleRDSDescribe` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:42::handleRDSModify` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:43::handleRDSDelete` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:44::handleRDSAddTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:45::handleRDSListTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:46::handleRDSRemoveTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:75::handleRDSCreate` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:76::handleRDSDescribe` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:77::handleRDSModify` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:78::handleRDSDelete` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:79::handleRDSAddTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:80::handleRDSListTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:81::handleRDSRemoveTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action CreateDBSnapshot` | ✓ `simulators/aws/rds.go:82::handleRDSCreateSnapshot` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action DescribeDBSnapshots` | ✓ `simulators/aws/rds.go:83::handleRDSDescribeSnapshots` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action DeleteDBSnapshot` | ✓ `simulators/aws/rds.go:84::handleRDSDeleteSnapshot` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action RestoreDBInstanceFromDBSnapshot` | ✓ `simulators/aws/rds.go:85::handleRDSRestoreFromSnapshot` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

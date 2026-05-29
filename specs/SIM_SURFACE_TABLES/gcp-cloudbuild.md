@@ -13,10 +13,15 @@ Surface registered in `simulators/gcp/cloudbuild.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/builds` | ✓ `simulators/gcp/cloudbuild.go:96::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /v1/projects/{project}/builds/{id}` | ✓ `simulators/gcp/cloudbuild.go:137::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /v1/projects/{project}/builds/{idAction}` | ✓ `simulators/gcp/cloudbuild.go:150::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /v1/operations/build/{project}/{id}` | ✓ `simulators/gcp/cloudbuild.go:173::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/builds` | ✓ `simulators/gcp/cloudbuild.go:120::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/triggers` | ✓ `simulators/gcp/cloudbuild.go:160::handleCreateBuildTrigger` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/triggers` | ✓ `simulators/gcp/cloudbuild.go:161::handleListBuildTriggers` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/triggers/{trigger}` | ✓ `simulators/gcp/cloudbuild.go:162::handleGetBuildTrigger` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PATCH /v1/projects/{project}/triggers/{trigger}` | ✓ `simulators/gcp/cloudbuild.go:163::handleUpdateBuildTrigger` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /v1/projects/{project}/triggers/{trigger}` | ✓ `simulators/gcp/cloudbuild.go:164::handleDeleteBuildTrigger` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/builds/{id}` | ✓ `simulators/gcp/cloudbuild.go:167::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/builds/{idAction}` | ✓ `simulators/gcp/cloudbuild.go:180::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/operations/build/{project}/{id}` | ✓ `simulators/gcp/cloudbuild.go:203::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

@@ -4,7 +4,8 @@
 # terraform-test coverage. Runs as a pre-commit hook.
 #
 # Contract:
-#   - Any new `r.Register("<operation>", ...)` line added under
+#   - Any new `r.Register("<operation>", ...)` or
+#     `r.RegisterVersioned("<api-version>", "<operation>", ...)` line added under
 #     simulators/<cloud>/ (outside *_test.go / docs / README) must be
 #     referenced in a *test file* within the same commit under
 #     simulators/<cloud>/{sdk-tests,cli-tests,terraform-tests}.
@@ -37,11 +38,15 @@ if [[ -z "$changed_go" ]]; then
 fi
 
 # Collect newly-registered operations from the diff.
-# Matches: r.Register("Service.Operation", handlerName)
+# Matches:
+#   r.Register("Service.Operation", handlerName)
+#   r.RegisterVersioned(apiVersion, "Operation", handlerName)
 # Captures the operation name (between quotes).
 newly_registered=$(git diff "$staged_range" -- 'simulators/*.go' 2>/dev/null \
-    | grep -E '^\+[^+].*r\.Register\s*\(' \
-    | sed -nE 's/.*r\.Register\s*\(\s*"([^"]+)".*/\1/p' \
+    | grep -E '^\+[^+].*r\.Register(Versioned)?\s*\(' \
+    | sed -nE \
+        -e 's/.*r\.Register\s*\(\s*"([^"]+)".*/\1/p' \
+        -e 's/.*r\.RegisterVersioned\s*\(\s*[^,]+\s*,\s*"([^"]+)".*/\1/p' \
     | sort -u || true)
 
 if [[ -z "$newly_registered" ]]; then
@@ -71,8 +76,9 @@ op_to_cloud() {
     local files
     files=$(git diff --name-only "$staged_range" 2>/dev/null | grep -E '^simulators/' || true)
     for f in $files; do
+        escaped_op="$(printf '%s' "$op" | sed 's|[][\\.*^$/]|\\&|g')"
         if git diff "$staged_range" -- "$f" 2>/dev/null \
-                | grep -qE "^\+[^+].*r\.Register\s*\(\s*\"$(printf '%s' "$op" | sed 's|[][\\.*^$/]|\\&|g')\""; then
+                | grep -qE "^\+[^+].*r\.Register\s*\(\s*\"${escaped_op}\"|^\+[^+].*r\.RegisterVersioned\s*\(\s*[^,]+\s*,\s*\"${escaped_op}\""; then
             cloud_of "$f"
             return
         fi

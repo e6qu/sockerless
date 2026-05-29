@@ -3,6 +3,7 @@ package azure_sdk_test
 import (
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/stretchr/testify/assert"
@@ -216,6 +217,91 @@ func TestNetwork_NSGRule_RejectsDuplicatePriority(t *testing.T) {
 	require.NoError(t, err)
 	_, err = p3.PollUntilDone(ctx, nil)
 	require.NoError(t, err, "same priority across different directions must be accepted")
+}
+
+func TestNetwork_LoadBalancerLifecycle(t *testing.T) {
+	rg := "lb-rg"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	pipClient, err := armnetwork.NewPublicIPAddressesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	pipPoller, err := pipClient.BeginCreateOrUpdate(ctx, rg, "lb-pip", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+		SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard)},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			PublicIPAddressVersion:   to.Ptr(armnetwork.IPVersionIPv4),
+		},
+	}, nil)
+	require.NoError(t, err)
+	pipResp, err := pipPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pipResp.ID)
+
+	frontendName := "frontend"
+	backendName := "backend"
+	probeName := "tcp-probe"
+	ruleName := "http-rule"
+	lbID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Network/loadBalancers/sdk-lb"
+	backendID := lbID + "/backendAddressPools/" + backendName
+	frontendID := lbID + "/frontendIPConfigurations/" + frontendName
+	probeID := lbID + "/probes/" + probeName
+
+	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	lbPoller, err := lbClient.BeginCreateOrUpdate(ctx, rg, "sdk-lb", armnetwork.LoadBalancer{
+		Location: to.Ptr("eastus"),
+		SKU:      &armnetwork.LoadBalancerSKU{Name: to.Ptr(armnetwork.LoadBalancerSKUNameStandard)},
+		Properties: &armnetwork.LoadBalancerPropertiesFormat{
+			FrontendIPConfigurations: []*armnetwork.FrontendIPConfiguration{{
+				Name: to.Ptr(frontendName),
+				Properties: &armnetwork.FrontendIPConfigurationPropertiesFormat{
+					PublicIPAddress: &armnetwork.PublicIPAddress{ID: pipResp.ID},
+				},
+			}},
+			BackendAddressPools: []*armnetwork.BackendAddressPool{{Name: to.Ptr(backendName)}},
+			Probes: []*armnetwork.Probe{{
+				Name: to.Ptr(probeName),
+				Properties: &armnetwork.ProbePropertiesFormat{
+					Protocol: to.Ptr(armnetwork.ProbeProtocolTCP),
+					Port:     to.Ptr[int32](80),
+				},
+			}},
+			LoadBalancingRules: []*armnetwork.LoadBalancingRule{{
+				Name: to.Ptr(ruleName),
+				Properties: &armnetwork.LoadBalancingRulePropertiesFormat{
+					Protocol:                to.Ptr(armnetwork.TransportProtocolTCP),
+					FrontendPort:            to.Ptr[int32](80),
+					BackendPort:             to.Ptr[int32](80),
+					FrontendIPConfiguration: &armnetwork.SubResource{ID: to.Ptr(frontendID)},
+					BackendAddressPool:      &armnetwork.SubResource{ID: to.Ptr(backendID)},
+					Probe:                   &armnetwork.SubResource{ID: to.Ptr(probeID)},
+				},
+			}},
+		},
+	}, nil)
+	require.NoError(t, err)
+	lbResp, err := lbPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, lbResp.Properties)
+	require.Len(t, lbResp.Properties.FrontendIPConfigurations, 1)
+	require.Len(t, lbResp.Properties.BackendAddressPools, 1)
+	require.Len(t, lbResp.Properties.Probes, 1)
+	require.Len(t, lbResp.Properties.LoadBalancingRules, 1)
+
+	got, err := lbClient.Get(ctx, rg, "sdk-lb", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-lb", *got.Name)
+	require.NotNil(t, got.Properties)
+	assert.Equal(t, backendName, *got.Properties.BackendAddressPools[0].Name)
+
+	delPoller, err := lbClient.BeginDelete(ctx, rg, "sdk-lb", nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
 }
 
 func ptrProto(p armnetwork.SecurityRuleProtocol) *armnetwork.SecurityRuleProtocol { return &p }

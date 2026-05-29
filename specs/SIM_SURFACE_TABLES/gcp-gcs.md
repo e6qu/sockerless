@@ -13,17 +13,17 @@ Surface registered in `simulators/gcp/gcs.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /storage/v1/b` | ✓ `simulators/gcp/gcs.go:269::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:308::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:325::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /storage/v1/b` | ✓ `simulators/gcp/gcs.go:345::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_ListObjects` | ✗ (deferred under BUG-1147 sweep) | ✓ SDK iterator | Returns `items[]` sorted lexicographically by name and delimiter-produced `prefixes[]` sorted lexicographically. |
-| `GET /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:447::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:461::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:477::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:489::func` | ✓ `TestGCS_ObjectMetadataValidation` | ✗ (deferred under BUG-1147 sweep) | n/a | Multipart and resumable init reject invalid accepted object metadata fields. |
-| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go::func` | ✓ `TestGCS_CopierFromRewriteTo`, `TestGCS_CopierFromRewriteToRejectsInvalidMetadata`, `TestGCS_ObjectsCompose`, `TestGCS_ObjectsCopyToAndSortedPrefixes`, `TestGCS_ObjectMetadataValidation` | ✗ (deferred under BUG-1147 sweep) | n/a | Covers `:compose`, JSON API `rewriteTo`, and JSON API `copyTo`; copy/rewrite use real stored object bytes, inherit source metadata when destination fields are absent, persist destination object resource metadata overrides, and reject invalid accepted metadata values. |
-| `GET /download/storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:816::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /storage/v1/b` | ✓ `simulators/gcp/gcs.go:400::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:439::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /storage/v1/b/{bucket}` | ✓ `simulators/gcp/gcs.go:456::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b` | ✓ `simulators/gcp/gcs.go:476::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:492::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:561::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:575::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PUT /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:591::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /upload/storage/v1/b/{bucket}/o` | ✓ `simulators/gcp/gcs.go:603::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /storage/v1/b/{bucket}/o/{destObject...}` | ✓ `simulators/gcp/gcs.go:776::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /download/storage/v1/b/{bucket}/o/{object...}` | ✓ `simulators/gcp/gcs.go:876::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

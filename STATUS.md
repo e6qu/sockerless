@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after Azure Service Bus ARM Terraform parity. |
-| In-flight | None; next implementation pass starts from managed load balancers or the remaining NAT/public-IP parity gaps. |
-| Last merged | Azure Service Bus ARM network-rule-set/read parity for issue #276 (2026-05-29). |
+| Active branch | `main` - idle after managed load-balancer simulator parity. |
+| In-flight | None; next implementation pass starts from the remaining NAT/public-IP parity gaps. |
+| Last merged | Managed load-balancer simulator parity for issue #263 (2026-05-29). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1220 filed · 1217 fixed · 5 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1203, BUG-1204, BUG-1206. |
+| Bugs | 1220 filed · 1218 fixed · 4 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1204, BUG-1206. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| issue #263 | Managed load-balancer simulator parity | Closed BUG-1203/#263. AWS ELBv2 now supports load balancers, target groups, listeners, target health, attributes, tags, account limits, and provider-read capacity reservation. GCP Compute now supports the global external HTTP load-balancing chain: health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules. Azure now supports `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. SDK, CLI, and Terraform coverage exists for all three clouds. |
 | issue #276 | Azure Service Bus ARM Terraform parity | Closed BUG-1220/#276. Azure Service Bus ARM now supports namespace network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations. Coverage uses the official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform `azurerm_servicebus_namespace` + `azurerm_servicebus_queue`. |
 | issue #266 | VM/instance compute parity | Closed BUG-1207/#266. AWS EC2 now supports instance lifecycle control-plane APIs, ENI attachment state, image/key-pair discovery, instance status, and tags. GCP Compute now supports instances with zonal operations, machine/disk/image catalog reads, NICs, disks, labels, metadata, tags, start/stop/delete, and aggregated listing. Azure now supports NICs, public IPs, and `Microsoft.Compute/virtualMachines` with ARM create/get/list/delete, instanceView, and power-state operations. SDK, CLI, and Terraform coverage exists for all three clouds. |
 | issue #272 | Azure Entra token audience | Closed BUG-1219/#272. The Azure simulator's OAuth token endpoint now derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource` requests, preserving the ARM default only when no audience parameter is sent. SDK-harness HTTP coverage verifies ARM, Key Vault, Storage, and Service Bus audiences through the simulator token route. |

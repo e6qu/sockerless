@@ -22,6 +22,7 @@ Legend:
 | `aws-ecs` | direct | direct | direct | `simulators/aws/sdk-tests/ecs_test.go`; `simulators/aws/cli-tests/ecs_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-efs` | direct | direct | not applicable | `simulators/aws/sdk-tests/efs_test.go`; `simulators/aws/cli-tests/efs_test.go` |
 | `aws-elasticache` | direct | not applicable | not applicable | `simulators/aws/sdk-tests/rds_elasticache_test.go` |
+| `aws-elbv2` | direct | direct | direct | `simulators/aws/sdk-tests/elbv2_test.go`; `simulators/aws/cli-tests/elbv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-eventbridge` | direct | direct | direct | `simulators/aws/sdk-tests/eventbridge_test.go`; `simulators/aws/cli-tests/eventbridge_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-iam` | direct | direct | direct | `simulators/aws/sdk-tests/iam_test.go`; `simulators/aws/cli-tests/iam_slr_oidc_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kinesis` | direct | direct | direct | `simulators/aws/sdk-tests/kinesis_test.go`; `simulators/aws/cli-tests/kinesis_test.go`; `simulators/aws/terraform-tests/main.tf` |
@@ -39,11 +40,13 @@ Legend:
 | `aws-wafv2` | direct | direct | direct | `simulators/aws/sdk-tests/wafv2_test.go`; `simulators/aws/cli-tests/wafv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cache_redis` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/redis_pg_test.go` |
-| `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/sdk-tests/network_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/cli-tests/loadbalancer_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-containerapps` | direct | direct | direct | `simulators/azure/sdk-tests/containerapps_test.go`; `simulators/azure/cli-tests/containerapps_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-cosmos` | direct | direct | direct | `simulators/azure/sdk-tests/cosmos_test.go`; `simulators/azure/cli-tests/cosmos_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-eventgrid` | direct | direct | direct | `simulators/azure/sdk-tests/eventgrid_test.go`; `simulators/azure/cli-tests/eventgrid_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-eventhubs` | direct | direct | direct | `simulators/azure/sdk-tests/eventhub_test.go`; `simulators/azure/cli-tests/eventhub_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-functions` | direct | direct | direct | `simulators/azure/sdk-tests/functions_test.go`; `simulators/azure/cli-tests/functions_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-keyvault` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-kv-data-plane` | direct | not applicable | direct | `simulators/azure/sdk-tests/keyvault_sdk_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-monitor` | direct | direct | direct | `simulators/azure/sdk-tests/monitor_test.go`; `simulators/azure/cli-tests/monitor_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-resourcegroups` | direct | direct | direct | `simulators/azure/sdk-tests/resourcegroup_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
@@ -55,12 +58,15 @@ Legend:
 | `azure-subscription` | direct | direct | not applicable | `simulators/azure/sdk-tests/integration_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go` |
 | `gcp-apigateway` | direct | not applicable | not applicable | `simulators/gcp/sdk-tests/memorystore_apigw_test.go` |
 | `gcp-artifactregistry` | direct | direct | direct | `simulators/gcp/sdk-tests/artifactregistry_oci_test.go`; `simulators/gcp/cli-tests/artifactregistry_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-bigquery` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudbuild` | direct | not applicable | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudrun` | direct | direct | direct | `simulators/gcp/sdk-tests/run_sdk_test.go`; `simulators/gcp/cli-tests/run_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/cli-tests/compute_instances_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-compute_loadbalancing` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_loadbalancing_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-dns` | direct | direct | direct | `simulators/gcp/sdk-tests/dns_test.go`; `simulators/gcp/cli-tests/dns_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-eventarc` | direct | direct | direct | `simulators/gcp/sdk-tests/eventarc_test.go`; `simulators/gcp/cli-tests/eventarc_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-firestore` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-gcs` | direct | not applicable | direct | `simulators/gcp/sdk-tests/storage_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-iam` | direct | not applicable | direct | `simulators/gcp/sdk-tests/iam_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-logging` | direct | direct | direct | `simulators/gcp/sdk-tests/logging_test.go`; `simulators/gcp/cli-tests/logging_test.go`; `simulators/gcp/terraform-tests/main.tf` |

@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — Managed load-balancer simulator parity
+
+Issue #263 was valid. The foundational audit had API Gateway/APIM/CloudFront and network primitives, but those are not substitutes for managed load-balancer control planes. Real clients and Terraform providers use ELBv2, GCP Compute load-balancing resources, and Azure `Microsoft.Network/loadBalancers` directly, so the simulators needed those public APIs.
+
+AWS now implements the ELBv2 Query API slice for application/network load balancer lifecycle, target groups, listeners, target registration and health, mutable attributes, tags, account limits, and provider-read capacity reservation. GCP now implements the global external HTTP load-balancing chain through Compute health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules with global operations. Azure now implements Load Balancer ARM resources with public IP frontends, backend pools, probes, load-balancing rules, and the child-resource paths used by azurerm.
+
+Coverage uses the official Go SDKs, vendor CLIs, and Terraform providers for all three clouds: `elasticloadbalancingv2` / `aws elbv2` / `aws_lb`; Compute SDK / `gcloud compute` / `google_compute_*`; and `armnetwork` / `az rest` / `azurerm_lb` plus related public IP, backend pool, probe, and rule resources. The surface-table seeder now recognizes AWS Query `RegisterVersioned` routes so versioned AWS surfaces such as ELBv2 stay visible to the coverage matrix.
+
 ## 2026-05-29 — Azure Service Bus ARM Terraform parity
 
 Issue #276 was valid. The Azure simulator had Service Bus namespace, queue, topic, subscription, and authorization-rule ARM routes, but azurerm reads the namespace child resource `networkRuleSets/default` during `azurerm_servicebus_namespace` refresh. That route was missing, so Terraform aborted before it could prove the namespace+queue lifecycle from the reporter's configuration.

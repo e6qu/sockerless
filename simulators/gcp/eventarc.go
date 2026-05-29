@@ -105,7 +105,20 @@ func registerEventarc(srv *sim.Server) {
 }
 
 func isCloudBuildRequest(r *http.Request) bool {
-	return strings.Contains(strings.ToLower(r.Host), "cloudbuild")
+	if strings.Contains(strings.ToLower(r.Host), "cloudbuild") {
+		return true
+	}
+	if r.Method == http.MethodPost && r.URL.Query().Get("triggerId") == "" {
+		return true
+	}
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	trigger := sim.PathParam(r, "trigger")
+	if project == "" || location == "" || trigger == "" {
+		return false
+	}
+	_, ok := cbTriggers.Get(buildTriggerKey(project, location, trigger))
+	return ok
 }
 
 func handleGCPRegionalTriggerCreate(w http.ResponseWriter, r *http.Request) {

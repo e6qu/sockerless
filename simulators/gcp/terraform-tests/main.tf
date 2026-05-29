@@ -21,12 +21,12 @@ provider "google" {
 
   compute_custom_endpoint           = "${var.endpoint}/compute/v1/"
   big_query_custom_endpoint         = "${var.endpoint}/bigquery/v2/"
-  cloud_build_custom_endpoint       = "${replace(var.endpoint, "127.0.0.1", "cloudbuild.localhost")}/v1/"
+  cloud_build_custom_endpoint       = "${var.endpoint}/v1/"
   cloudfunctions2_custom_endpoint   = "${var.endpoint}/v2/"
   dns_custom_endpoint               = "${var.endpoint}/dns/v1/"
   artifact_registry_custom_endpoint = "${var.endpoint}/v1/"
   cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
-  eventarc_custom_endpoint          = "${replace(var.endpoint, "127.0.0.1", "eventarc.localhost")}/v1/"
+  eventarc_custom_endpoint          = "${var.endpoint}/v1/"
   firestore_custom_endpoint         = "${var.endpoint}/v1/"
   logging_custom_endpoint           = "${var.endpoint}/v2/"
   pubsub_custom_endpoint            = "${var.endpoint}/v1/"
@@ -99,6 +99,43 @@ resource "google_compute_instance" "tf_vm" {
   labels = {
     env = "terraform"
   }
+}
+
+resource "google_compute_health_check" "tf_lb_hc" {
+  name = "tf-lb-hc"
+
+  timeout_sec        = 5
+  check_interval_sec = 5
+
+  http_health_check {
+    port         = 80
+    request_path = "/healthz"
+  }
+}
+
+resource "google_compute_backend_service" "tf_lb_backend" {
+  name        = "tf-lb-backend"
+  protocol    = "HTTP"
+  port_name   = "http"
+  timeout_sec = 10
+
+  health_checks = [google_compute_health_check.tf_lb_hc.id]
+}
+
+resource "google_compute_url_map" "tf_lb_url_map" {
+  name            = "tf-lb-url-map"
+  default_service = google_compute_backend_service.tf_lb_backend.id
+}
+
+resource "google_compute_target_http_proxy" "tf_lb_http_proxy" {
+  name    = "tf-lb-http-proxy"
+  url_map = google_compute_url_map.tf_lb_url_map.id
+}
+
+resource "google_compute_global_forwarding_rule" "tf_lb_rule" {
+  name       = "tf-lb-rule"
+  target     = google_compute_target_http_proxy.tf_lb_http_proxy.id
+  port_range = "80"
 }
 
 # ---------- DNS (public + private zone) ----------
@@ -501,6 +538,26 @@ output "subnet_id" {
 
 output "firewall_id" {
   value = google_compute_firewall.tf_fw.id
+}
+
+output "lb_health_check_id" {
+  value = google_compute_health_check.tf_lb_hc.id
+}
+
+output "lb_backend_service_id" {
+  value = google_compute_backend_service.tf_lb_backend.id
+}
+
+output "lb_url_map_id" {
+  value = google_compute_url_map.tf_lb_url_map.id
+}
+
+output "lb_target_http_proxy_id" {
+  value = google_compute_target_http_proxy.tf_lb_http_proxy.id
+}
+
+output "lb_forwarding_rule_ip" {
+  value = google_compute_global_forwarding_rule.tf_lb_rule.ip_address
 }
 
 output "gcs_object_self_link" {

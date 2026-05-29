@@ -239,6 +239,97 @@ func TestCompute_Disks_Get_NotFound(t *testing.T) {
 	require.Error(t, err, "get on missing disk must 404")
 }
 
+// TestCompute_GlobalHTTPLoadBalancerChain exercises the public Compute
+// Engine global HTTP load-balancing API surface used by SDKs and
+// Terraform: Insert/Get/List/Delete for HealthChecks, BackendServices,
+// UrlMaps, TargetHttpProxies, and GlobalForwardingRules.
+func TestCompute_GlobalHTTPLoadBalancerChain(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+
+	hc := &compute.HealthCheck{
+		Name:             "sdk-lb-hc",
+		Type:             "HTTP",
+		CheckIntervalSec: 5,
+		TimeoutSec:       5,
+		HttpHealthCheck: &compute.HTTPHealthCheck{
+			Port:        80,
+			RequestPath: "/healthz",
+		},
+	}
+	_, err := svc.HealthChecks.Insert(project, hc).Context(ctx).Do()
+	require.NoError(t, err)
+	gotHC, err := svc.HealthChecks.Get(project, hc.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "HTTP", gotHC.Type)
+	assert.Equal(t, "/healthz", gotHC.HttpHealthCheck.RequestPath)
+
+	bs := &compute.BackendService{
+		Name:         "sdk-lb-backend",
+		Protocol:     "HTTP",
+		PortName:     "http",
+		TimeoutSec:   10,
+		HealthChecks: []string{gotHC.SelfLink},
+	}
+	_, err = svc.BackendServices.Insert(project, bs).Context(ctx).Do()
+	require.NoError(t, err)
+	gotBS, err := svc.BackendServices.Get(project, bs.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, []string{gotHC.SelfLink}, gotBS.HealthChecks)
+
+	um := &compute.UrlMap{
+		Name:           "sdk-lb-url-map",
+		DefaultService: gotBS.SelfLink,
+	}
+	_, err = svc.UrlMaps.Insert(project, um).Context(ctx).Do()
+	require.NoError(t, err)
+	gotUM, err := svc.UrlMaps.Get(project, um.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, gotBS.SelfLink, gotUM.DefaultService)
+
+	proxy := &compute.TargetHttpProxy{
+		Name:   "sdk-lb-http-proxy",
+		UrlMap: gotUM.SelfLink,
+	}
+	_, err = svc.TargetHttpProxies.Insert(project, proxy).Context(ctx).Do()
+	require.NoError(t, err)
+	gotProxy, err := svc.TargetHttpProxies.Get(project, proxy.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, gotUM.SelfLink, gotProxy.UrlMap)
+
+	fr := &compute.ForwardingRule{
+		Name:       "sdk-lb-fr",
+		Target:     gotProxy.SelfLink,
+		PortRange:  "80",
+		IPProtocol: "TCP",
+	}
+	_, err = svc.GlobalForwardingRules.Insert(project, fr).Context(ctx).Do()
+	require.NoError(t, err)
+	gotFR, err := svc.GlobalForwardingRules.Get(project, fr.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, gotProxy.SelfLink, gotFR.Target)
+	assert.Equal(t, "80", gotFR.PortRange)
+	assert.NotEmpty(t, gotFR.IPAddress)
+
+	hcList, err := svc.HealthChecks.List(project).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.NotEmpty(t, hcList.Items)
+	frList, err := svc.GlobalForwardingRules.List(project).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.NotEmpty(t, frList.Items)
+
+	_, err = svc.GlobalForwardingRules.Delete(project, fr.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.TargetHttpProxies.Delete(project, proxy.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.UrlMaps.Delete(project, um.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.BackendServices.Delete(project, bs.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.HealthChecks.Delete(project, hc.Name).Context(ctx).Do()
+	require.NoError(t, err)
+}
+
 func TestCompute_Instances_Lifecycle(t *testing.T) {
 	svc := computeService(t)
 	const project = "test-project"

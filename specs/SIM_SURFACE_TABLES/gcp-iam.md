@@ -21,9 +21,9 @@ Surface registered in `simulators/gcp/iam.go` (and related files grouped under t
 | `POST /v1/projects/{project}/serviceAccounts/{emailAction}` | ✓ `simulators/gcp/iam.go:134::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `GET /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:182::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `POST /v1/projects/{projectAction}` | ✓ `simulators/gcp/iam.go:196::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /v1/{resource...}` | ✓ `simulators/gcp/iam.go:232::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:268::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:283::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/{resource...}` | ✓ `simulators/gcp/iam.go:236::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:254::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PUT /storage/v1/b/{bucket}/iam` | ✓ `simulators/gcp/iam.go:269::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

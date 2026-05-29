@@ -22,13 +22,17 @@ The simulator test-contract matrix backfill is now closed. `specs/SIM_TEST_COVER
 
 The Azure Entra token-resource gap is now closed. The simulator token endpoint derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource`, so ARM keeps the management audience while Key Vault, Service Bus, and Storage data-plane clients can receive the resource-specific audiences their SDKs request.
 
-The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage. The remaining audit gaps are managed load balancers across all clouds and uneven public-IP/NAT parity. BUG-1203 and BUG-1204 track those gaps; BUG-1206 stays open as the surface-table audit-debt tracker.
+The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage.
+
+The managed load-balancer gap is now closed. AWS ELBv2, GCP global external HTTP load balancing, and Azure Load Balancer expose their public control-plane APIs through the simulators with official SDK, vendor CLI, and Terraform coverage. The remaining audit gap is uneven public-IP/NAT parity. BUG-1204 tracks that work; BUG-1206 stays open as the surface-table audit-debt tracker.
 
 The Azure Service Bus ARM Terraform parity issue is now closed. `Microsoft.ServiceBus/namespaces/{name}/networkRuleSets/default` supports get/update, network rule sets can be listed, disaster recovery and migration configuration lists return empty Azure-shaped list results when no config exists, and absent aliases/configurations return Azure-shaped 404s. The Azure Terraform harness now creates `azurerm_servicebus_namespace` plus `azurerm_servicebus_queue`, with matching official SDK and Azure CLI coverage.
 
 ## Stage plan
 
-Current phase: idle after Azure Service Bus ARM Terraform parity for issue #276. The next implementation pass should move to managed load balancers across AWS/GCP/Azure, then the remaining NAT/public-IP parity work.
+Current phase: idle after managed load-balancer simulator parity for issue #263. The next implementation pass should move to the remaining NAT/public-IP parity work.
+
+Issue #263 finding: the audit gap was real. API Gateway, APIM, CloudFront, and existing network primitives did not cover managed L4/L7 load-balancer APIs. The fix added AWS ELBv2 load balancer/target group/listener lifecycle and target-health operations; GCP Compute global health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules; and Azure `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. Each cloud has official SDK, vendor CLI, and Terraform coverage.
 
 Issue #276 finding: the report was real. The azurerm Service Bus namespace resource reads `networkRuleSets/default` immediately after namespace creation, and the simulator had not implemented that public ARM child resource. The fix added persisted network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent configs, then pinned the path with official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform namespace+queue coverage.
 

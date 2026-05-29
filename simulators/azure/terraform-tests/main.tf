@@ -146,6 +146,54 @@ resource "azurerm_user_assigned_identity" "az_uai" {
   location            = azurerm_resource_group.az_rg.location
 }
 
+resource "azurerm_public_ip" "az_lb_pip" {
+  provider            = azurerm
+  name                = "tf-azrm-lb-pip"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_lb" "az_lb" {
+  provider            = azurerm
+  name                = "tf-azrm-lb"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "frontend"
+    public_ip_address_id = azurerm_public_ip.az_lb_pip.id
+  }
+}
+
+resource "azurerm_lb_backend_address_pool" "az_lb_backend" {
+  provider        = azurerm
+  name            = "backend"
+  loadbalancer_id = azurerm_lb.az_lb.id
+}
+
+resource "azurerm_lb_probe" "az_lb_probe" {
+  provider        = azurerm
+  name            = "tcp-probe"
+  loadbalancer_id = azurerm_lb.az_lb.id
+  protocol        = "Tcp"
+  port            = 80
+}
+
+resource "azurerm_lb_rule" "az_lb_rule" {
+  provider                       = azurerm
+  name                           = "http-rule"
+  loadbalancer_id                = azurerm_lb.az_lb.id
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 80
+  frontend_ip_configuration_name = "frontend"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.az_lb_backend.id]
+  probe_id                       = azurerm_lb_probe.az_lb_probe.id
+}
+
 resource "azurerm_network_interface" "az_vm_nic" {
   provider            = azurerm
   name                = "tf-azrm-vm-nic"
@@ -576,6 +624,22 @@ output "azrm_acr_id" {
 
 output "azrm_uai_id" {
   value = azurerm_user_assigned_identity.az_uai.id
+}
+
+output "azrm_lb_id" {
+  value = azurerm_lb.az_lb.id
+}
+
+output "azrm_lb_backend_pool_id" {
+  value = azurerm_lb_backend_address_pool.az_lb_backend.id
+}
+
+output "azrm_lb_probe_id" {
+  value = azurerm_lb_probe.az_lb_probe.id
+}
+
+output "azrm_lb_rule_id" {
+  value = azurerm_lb_rule.az_lb_rule.id
 }
 
 output "azrm_private_dns_zone_id" {

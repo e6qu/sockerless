@@ -24,6 +24,13 @@ import (
 //   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
 //   - Secrets Manager: GetResourcePolicy
 //   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
+//   - ELBv2: CreateLoadBalancer, DescribeLoadBalancers,
+//     ModifyLoadBalancerAttributes, DescribeLoadBalancerAttributes,
+//     DescribeCapacityReservation,
+//     CreateTargetGroup, DescribeTargetGroups,
+//     ModifyTargetGroupAttributes, DescribeTargetGroupAttributes,
+//     CreateListener, DescribeListeners, DescribeListenerAttributes, DeleteListener,
+//     DeleteTargetGroup, DeleteLoadBalancer, AddTags, DescribeTags
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -76,6 +83,22 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.True(t, strings.HasPrefix(amplifyARN, "arn:aws:amplify:"),
 		"Amplify app ARN must have aws_amplify_app prefix; got %s", amplifyARN)
+
+	elbv2LBArn := outputs.must(t, "elbv2_lb_arn")
+	require.Contains(t, elbv2LBArn, ":loadbalancer/app/tf-alb/",
+		"ELBv2 load balancer ARN must use the app load-balancer resource path; got %s", elbv2LBArn)
+
+	elbv2LBDNS := outputs.must(t, "elbv2_lb_dns_name")
+	require.Contains(t, elbv2LBDNS, ".elb.us-east-1.amazonaws.com",
+		"ELBv2 load balancer DNS name must use the regional ELB suffix; got %s", elbv2LBDNS)
+
+	elbv2TGArn := outputs.must(t, "elbv2_target_group_arn")
+	require.Contains(t, elbv2TGArn, ":targetgroup/tf-alb-tg/",
+		"ELBv2 target group ARN must use the targetgroup resource path; got %s", elbv2TGArn)
+
+	elbv2ListenerArn := outputs.must(t, "elbv2_listener_arn")
+	require.Contains(t, elbv2ListenerArn, ":listener/app/tf-alb/",
+		"ELBv2 listener ARN must use the listener/app resource path; got %s", elbv2ListenerArn)
 
 	require.Contains(t, slrARN, "aws-service-role/cloudfront.amazonaws.com/",
 		"CloudFront SLR ARN must include the cloudfront.amazonaws.com service path; got %s", slrARN)

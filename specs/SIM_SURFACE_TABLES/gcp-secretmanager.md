@@ -13,10 +13,13 @@ Surface registered in `simulators/gcp/secretmanager.go` (and related files group
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/secrets` | ✓ `simulators/gcp/secretmanager.go:59::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /v1/projects/{project}/secrets` | ✓ `simulators/gcp/secretmanager.go:95::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /v1/projects/{project}/secrets/{secret}` | ✓ `simulators/gcp/secretmanager.go:110::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /v1/projects/{project}/secrets/{secretAction}` | ✓ `simulators/gcp/secretmanager.go:124::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/secrets` | ✓ `simulators/gcp/secretmanager.go:66::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/secrets` | ✓ `simulators/gcp/secretmanager.go:104::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/secrets/{secret}` | ✓ `simulators/gcp/secretmanager.go:119::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `PATCH /v1/projects/{project}/secrets/{secret}` | ✓ `simulators/gcp/secretmanager.go:131::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `DELETE /v1/projects/{project}/secrets/{secret}` | ✓ `simulators/gcp/secretmanager.go:169::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /v1/projects/{project}/secrets/{secretAction}` | ✓ `simulators/gcp/secretmanager.go:190::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /v1/projects/{project}/secrets/{secret}/versions` | ✓ `simulators/gcp/secretmanager.go:249::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 

@@ -25,6 +25,7 @@ Surface registered in `simulators/aws/sqs.go` (and related files grouped under t
 | `Action AmazonSQS.TagQueue` | ✓ `simulators/aws/sqs.go:94::handleSQSTagQueue` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `Action AmazonSQS.UntagQueue` | ✓ `simulators/aws/sqs.go:95::handleSQSUntagQueue` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 | `Action AmazonSQS.ListQueueTags` | ✓ `simulators/aws/sqs.go:96::handleSQSListQueueTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AmazonSQS.PurgeQueue` | ✓ `simulators/aws/sqs.go:97::handleSQSPurgeQueue` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 
