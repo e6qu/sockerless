@@ -31,7 +31,12 @@ test-integration-cloud: ## run integration tests against the operator-supplied r
 	$(GO_ENV) SOCKERLESS_TEST_TARGET=cloud go test -v -timeout 30m ./...
 
 upgrade-deps: ## bump every direct require in go.mod to its latest (excluding github.com/sockerless/* in-repo modules)
-	@deps=$$(awk '/^require \(/{b=1;next} /^\)/&&b{b=0} b&&!/\/\/ indirect/&&!/github.com\/sockerless\//{sub(/^[ \t]+/,"");sub(/[ \t]*\/\/.*$$/,"");if(NF>=2)print $$1}' go.mod); \
+	@gomod=$$($(GO_ENV) go env GOMOD); \
+	if [ "$$gomod" = "/dev/null" ]; then \
+	  echo "no go.mod found"; \
+	  exit 1; \
+	fi; \
+	deps=$$(awk '/^require \(/{b=1;next} /^\)/&&b{b=0} b&&!/\/\/ indirect/&&!/github.com\/sockerless\//{sub(/^[ \t]+/,"");sub(/[ \t]*\/\/.*$$/,"");if(NF>=2)print $$1}' "$$gomod"); \
 	for d in $$deps; do \
 	  printf "▸ go get -u %s@latest\n" "$$d"; \
 	  $(GO_ENV) go get -u "$$d@latest"; \

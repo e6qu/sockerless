@@ -53,10 +53,11 @@ GO_UI_APPS := \
   simulators/gcp \
   simulators/azure
 
-# Go binaries / libraries without UI (5).
+# Go binaries / libraries without UI (6).
 GO_APPS := \
   cmd/sockerless \
   agent \
+  backends/aws-common \
   github-runner-dispatcher-aws \
   github-runner-dispatcher-gcp \
   github-runner-dispatcher-azure
