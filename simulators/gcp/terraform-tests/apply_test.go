@@ -9,18 +9,18 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
-// (compute network + disk + subnet + firewall + global HTTP load balancer,
-// public + private DNS zones, Artifact Registry, Cloud Run v2 Service + Job,
-// Cloud Functions v2, Pub/Sub, Cloud Build trigger, Cloud Storage bucket +
-// object, Cloud Logging sink/metric, BigQuery dataset/table, Firestore
+// (compute network + disk + subnet + firewall + regional address + Cloud NAT +
+// global HTTP load balancer, public + private DNS zones, Artifact Registry,
+// Cloud Run v2 Service + Job, Cloud Functions v2, Pub/Sub, Cloud Build trigger,
+// Cloud Storage bucket + object, Cloud Logging sink/metric, BigQuery dataset/table, Firestore
 // document, Eventarc trigger, Secret Manager, IAM service account) in a single
 // terraform apply round-trip and asserts the cross-resource references
 // converged.
 //
 // Slices exercised against the simulator:
 //   - compute.googleapis.com (networks + disks + subnetworks + firewalls +
-//     healthChecks + backendServices + urlMaps + targetHttpProxies +
-//     globalForwardingRules)
+//     addresses + routers + router NATs + healthChecks + backendServices +
+//     urlMaps + targetHttpProxies + globalForwardingRules)
 //   - dns.googleapis.com (public + private managedZones)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
@@ -119,6 +119,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	firewallID := outputs.must(t, "firewall_id")
 	require.Contains(t, firewallID, "projects/test-project/global/firewalls/tf-test-fw-allow-ssh",
 		"firewall id must include the canonical global path; got %s", firewallID)
+
+	natAddress := outputs.must(t, "nat_address")
+	require.True(t, strings.HasPrefix(natAddress, "34."),
+		"regional NAT address must receive an external IPv4 address; got %s", natAddress)
+
+	routerNATName := outputs.must(t, "router_nat_name")
+	require.Equal(t, "tf-router-nat", routerNATName,
+		"router NAT name must round-trip through terraform state; got %s", routerNATName)
 
 	lbHCID := outputs.must(t, "lb_health_check_id")
 	require.Contains(t, lbHCID, "projects/test-project/global/healthChecks/tf-lb-hc",

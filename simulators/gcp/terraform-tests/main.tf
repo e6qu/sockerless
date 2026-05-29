@@ -80,6 +80,28 @@ resource "google_compute_firewall" "tf_fw" {
   source_ranges = ["0.0.0.0/0"]
 }
 
+resource "google_compute_address" "tf_nat_ip" {
+  name         = "tf-nat-ip"
+  region       = "us-central1"
+  address_type = "EXTERNAL"
+  network_tier = "PREMIUM"
+}
+
+resource "google_compute_router" "tf_nat_router" {
+  name    = "tf-nat-router"
+  region  = "us-central1"
+  network = google_compute_network.main.id
+}
+
+resource "google_compute_router_nat" "tf_nat" {
+  name                               = "tf-router-nat"
+  router                             = google_compute_router.tf_nat_router.name
+  region                             = google_compute_router.tf_nat_router.region
+  nat_ip_allocate_option             = "MANUAL_ONLY"
+  nat_ips                            = [google_compute_address.tf_nat_ip.self_link]
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
 resource "google_compute_instance" "tf_vm" {
   name         = "tf-test-vm"
   machine_type = "e2-micro"
@@ -538,6 +560,14 @@ output "subnet_id" {
 
 output "firewall_id" {
   value = google_compute_firewall.tf_fw.id
+}
+
+output "nat_address" {
+  value = google_compute_address.tf_nat_ip.address
+}
+
+output "router_nat_name" {
+  value = google_compute_router_nat.tf_nat.name
 }
 
 output "lb_health_check_id" {

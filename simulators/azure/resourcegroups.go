@@ -190,6 +190,9 @@ func azureResourcesInResourceGroup(sub, rg string) []any {
 	values = appendAzureResource(values, azurePublicIPs, func(v PublicIPAddress) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})
+	values = appendAzureResource(values, azurePublicIPPrefixes, func(v PublicIPPrefix) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
 	values = appendAzureResource(values, azureNICs, func(v NetworkInterface) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})
@@ -302,6 +305,8 @@ func azureResourceID(v any) string {
 	case RouteTable:
 		return r.ID
 	case PublicIPAddress:
+		return r.ID
+	case PublicIPPrefix:
 		return r.ID
 	case NetworkInterface:
 		return r.ID

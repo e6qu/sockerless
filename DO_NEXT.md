@@ -24,13 +24,17 @@ The Azure Entra token-resource gap is now closed. The simulator token endpoint d
 
 The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage.
 
-The managed load-balancer gap is now closed. AWS ELBv2, GCP global external HTTP load balancing, and Azure Load Balancer expose their public control-plane APIs through the simulators with official SDK, vendor CLI, and Terraform coverage. The remaining audit gap is uneven public-IP/NAT parity. BUG-1204 tracks that work; BUG-1206 stays open as the surface-table audit-debt tracker.
+The managed load-balancer gap is now closed. AWS ELBv2, GCP global external HTTP load balancing, and Azure Load Balancer expose their public control-plane APIs through the simulators with official SDK, vendor CLI, and Terraform coverage.
+
+The NAT/public-IP parity gap is now closed. AWS EC2 Elastic IP + NAT Gateway + route-table flows, GCP regional addresses + manual Cloud NAT, and Azure Public IP Prefix + NAT Gateway + subnet NAT association flows are implemented through public cloud API surfaces and covered by official SDKs, vendor CLIs, and Terraform providers. BUG-1206 stays open as the remaining broad surface-table audit-debt tracker.
 
 The Azure Service Bus ARM Terraform parity issue is now closed. `Microsoft.ServiceBus/namespaces/{name}/networkRuleSets/default` supports get/update, network rule sets can be listed, disaster recovery and migration configuration lists return empty Azure-shaped list results when no config exists, and absent aliases/configurations return Azure-shaped 404s. The Azure Terraform harness now creates `azurerm_servicebus_namespace` plus `azurerm_servicebus_queue`, with matching official SDK and Azure CLI coverage.
 
 ## Stage plan
 
-Current phase: idle after managed load-balancer simulator parity for issue #263. The next implementation pass should move to the remaining NAT/public-IP parity work.
+Current phase: idle after NAT/public-IP simulator parity for issue #279. The next implementation pass should move to BUG-1206's broad surface-table audit cleanup unless a new community issue arrives first.
+
+Issue #279 finding: the audit gap was real. AWS had EC2 NAT primitives but lacked explicit SDK/CLI/Terraform coverage for the EIP/NAT route path. GCP lacked the regional address and address-label public APIs that manual Cloud NAT and the Terraform provider use. Azure lacked Public IP Prefix resources and NAT Gateway/subnet association list/back-reference behavior. The fix added those public API routes and pinned them with official SDK, vendor CLI, and Terraform coverage across all three simulators.
 
 Issue #263 finding: the audit gap was real. API Gateway, APIM, CloudFront, and existing network primitives did not cover managed L4/L7 load-balancer APIs. The fix added AWS ELBv2 load balancer/target group/listener lifecycle and target-health operations; GCP Compute global health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules; and Azure `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. Each cloud has official SDK, vendor CLI, and Terraform coverage.
 

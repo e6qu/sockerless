@@ -13,8 +13,8 @@ Surface registered in `simulators/azure/compute.go` (and related files grouped u
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/{location}/vmSizes` | ✓ `simulators/azure/compute.go:155::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus` | ✓ `simulators/azure/compute.go:178::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/{location}/vmSizes` | ✓ `simulators/azure/compute.go:177::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `GET /subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus` | ✓ `simulators/azure/compute.go:200::func` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
 
 ## Open subtasks staged forward
 
@@ -25,4 +25,6 @@ Surface registered in `simulators/azure/compute.go` (and related files grouped u
 Issue #266 closed the Azure VM lifecycle gap. `Microsoft.Network/networkInterfaces`, `Microsoft.Network/publicIPAddresses`, and `Microsoft.Compute/virtualMachines` are covered by `simulators/azure/sdk-tests/compute_test.go`, `simulators/azure/cli-tests/compute_test.go`, and `simulators/azure/terraform-tests/main.tf` through `azurerm_network_interface` and `azurerm_linux_virtual_machine`.
 
 Issue #263 closed the Azure managed load-balancer gap for `Microsoft.Network/loadBalancers`. The simulator implements Load Balancer create/get/list/delete plus frontend IP configurations, backend address pools, probes, and load-balancing rules, including the child-resource paths used by the official clients and provider. Coverage uses `armnetwork` Load Balancer SDK coverage in `simulators/azure/sdk-tests/network_test.go`, Azure CLI `az rest` coverage in `simulators/azure/cli-tests/loadbalancer_test.go`, and Terraform `azurerm_public_ip`, `azurerm_lb`, `azurerm_lb_backend_address_pool`, `azurerm_lb_probe`, and `azurerm_lb_rule` resources in `simulators/azure/terraform-tests/main.tf`.
+
+Issue #279 closed the Azure NAT/public-IP parity pass. `Microsoft.Network/publicIPPrefixes`, NAT Gateway list/read behavior, subnet NAT Gateway association persistence, and NAT Gateway subnet back-references are covered by `simulators/azure/sdk-tests/network_test.go`, `simulators/azure/cli-tests/nat_test.go`, and `simulators/azure/terraform-tests/main.tf` through `azurerm_public_ip_prefix`, `azurerm_nat_gateway`, `azurerm_nat_gateway_public_ip_prefix_association`, and `azurerm_subnet_nat_gateway_association`.
 <!-- HAND-WRITTEN END -->

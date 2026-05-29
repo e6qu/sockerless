@@ -304,6 +304,86 @@ func TestNetwork_LoadBalancerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestNetwork_PublicIPPrefixNatGatewaySubnetAssociation(t *testing.T) {
+	rg := "nat-rg"
+	location := "eastus"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: to.Ptr(location)}, nil)
+	require.NoError(t, err)
+
+	prefixClient, err := armnetwork.NewPublicIPPrefixesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	prefixPoller, err := prefixClient.BeginCreateOrUpdate(ctx, rg, "sdk-prefix", armnetwork.PublicIPPrefix{
+		Location: to.Ptr(location),
+		SKU:      &armnetwork.PublicIPPrefixSKU{Name: to.Ptr(armnetwork.PublicIPPrefixSKUNameStandard)},
+		Properties: &armnetwork.PublicIPPrefixPropertiesFormat{
+			PrefixLength:           to.Ptr[int32](28),
+			PublicIPAddressVersion: to.Ptr(armnetwork.IPVersionIPv4),
+		},
+	}, nil)
+	require.NoError(t, err)
+	prefixResp, err := prefixPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, prefixResp.ID)
+	require.NotNil(t, prefixResp.Properties)
+	require.NotEmpty(t, *prefixResp.Properties.IPPrefix)
+
+	natClient, err := armnetwork.NewNatGatewaysClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	natPoller, err := natClient.BeginCreateOrUpdate(ctx, rg, "sdk-nat", armnetwork.NatGateway{
+		Location: to.Ptr(location),
+		SKU:      &armnetwork.NatGatewaySKU{Name: to.Ptr(armnetwork.NatGatewaySKUNameStandard)},
+		Properties: &armnetwork.NatGatewayPropertiesFormat{
+			IdleTimeoutInMinutes: to.Ptr[int32](10),
+			PublicIPPrefixes:     []*armnetwork.SubResource{{ID: prefixResp.ID}},
+		},
+	}, nil)
+	require.NoError(t, err)
+	natResp, err := natPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, natResp.ID)
+
+	vnetClient, err := armnetwork.NewVirtualNetworksClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	vnetPoller, err := vnetClient.BeginCreateOrUpdate(ctx, rg, "sdk-nat-vnet", armnetwork.VirtualNetwork{
+		Location: to.Ptr(location),
+		Properties: &armnetwork.VirtualNetworkPropertiesFormat{
+			AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{to.Ptr("10.91.0.0/16")}},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = vnetPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	subnetClient, err := armnetwork.NewSubnetsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	subnetPoller, err := subnetClient.BeginCreateOrUpdate(ctx, rg, "sdk-nat-vnet", "sdk-nat-subnet", armnetwork.Subnet{
+		Properties: &armnetwork.SubnetPropertiesFormat{
+			AddressPrefix: to.Ptr("10.91.1.0/24"),
+			NatGateway:    &armnetwork.SubResource{ID: natResp.ID},
+		},
+	}, nil)
+	require.NoError(t, err)
+	subnetResp, err := subnetPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, subnetResp.Properties)
+	require.NotNil(t, subnetResp.Properties.NatGateway)
+	assert.Equal(t, *natResp.ID, *subnetResp.Properties.NatGateway.ID)
+
+	gotNat, err := natClient.Get(ctx, rg, "sdk-nat", nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotNat.Properties)
+	require.Len(t, gotNat.Properties.Subnets, 1)
+	assert.Equal(t, *subnetResp.ID, *gotNat.Properties.Subnets[0].ID)
+
+	pager := natClient.NewListPager(rg, nil)
+	require.True(t, pager.More())
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Value)
+}
+
 func ptrProto(p armnetwork.SecurityRuleProtocol) *armnetwork.SecurityRuleProtocol { return &p }
 func ptrAccess(a armnetwork.SecurityRuleAccess) *armnetwork.SecurityRuleAccess    { return &a }
 func ptrDir(d armnetwork.SecurityRuleDirection) *armnetwork.SecurityRuleDirection { return &d }

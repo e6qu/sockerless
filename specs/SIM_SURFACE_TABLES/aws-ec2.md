@@ -76,4 +76,6 @@ Surface registered in `simulators/aws/ec2.go` (and related files grouped under t
 
 <!-- HAND-WRITTEN BEGIN -->
 Issue #266 closed the EC2 VM lifecycle gap. `RunInstances`, `DescribeInstances`, `StopInstances`, `StartInstances`, `TerminateInstances`, `DescribeInstanceStatus`, `DescribeInstanceAttribute`, `ModifyInstanceAttribute`, `DescribeImages`, `DescribeInstanceTypes`, `DescribeKeyPairs`, `DescribeVolumes`, `DescribeTags`, `CreateTags`, `DeleteTags`, account/region/AZ discovery, and instance-created `DescribeNetworkInterfaces` are covered by `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and `simulators/aws/terraform-tests/main.tf` through `aws_instance`.
+
+Issue #279 closed the EC2 NAT/public-IP parity pass. `AllocateAddress`, `DescribeAddresses`, `DescribeAddressesAttribute`, `ReleaseAddress`, `CreateNatGateway`, `DescribeNatGateways`, `DeleteNatGateway`, `CreateRouteTable`, `CreateRoute`, and route-table reads are covered by `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and `simulators/aws/terraform-tests/main.tf` through `aws_eip`, `aws_nat_gateway`, and NAT Gateway routes in `aws_route_table`.
 <!-- HAND-WRITTEN END -->

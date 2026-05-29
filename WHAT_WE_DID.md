@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — NAT/public-IP simulator parity
+
+Issue #279 closed the remaining NAT/public-IP parity gap from the foundational audit.
+
+AWS already had EC2 networking primitives, but the parity contract now pins the complete Elastic IP + NAT Gateway + route-table route path with all three external client surfaces. The SDK test allocates an EIP, creates a NAT Gateway, attaches a route-table default route to it, reads address/NAT/route state, then deletes and releases the resources. The CLI test exercises the same public `aws ec2` commands, and the Terraform harness now provisions `aws_eip`, `aws_nat_gateway`, and an `aws_route_table` route targeting that NAT Gateway.
+
+GCP Compute now implements regional external address resources through the public Compute API, including insert/get/list/delete, address labels via `addresses/{name}/setLabels`, regional operation wait, router status, and manual Cloud NAT validation against referenced regional addresses. `gcloud compute addresses` and `gcloud compute routers nats` work against the simulator, and the Terraform harness now provisions `google_compute_address`, `google_compute_router`, and `google_compute_router_nat` with `MANUAL_ONLY` address assignment.
+
+Azure now implements `Microsoft.Network/publicIPPrefixes` and rounds out NAT Gateway behavior used by official clients and azurerm: NAT Gateway list, subnet NAT Gateway association persistence, and NAT Gateway subnet back-references. Coverage uses the official `armnetwork` SDK, Azure CLI `az rest`, and Terraform resources for `azurerm_public_ip_prefix`, `azurerm_nat_gateway`, `azurerm_nat_gateway_public_ip_prefix_association`, and `azurerm_subnet_nat_gateway_association`.
+
+The simulator surface tables were regenerated so the new GCP Compute address/router-status routes are visible. The broad historical per-row marker cleanup remains tracked separately by BUG-1206; this phase did not claim unrelated stale surface rows.
+
 ## 2026-05-29 — Managed load-balancer simulator parity
 
 Issue #263 was valid. The foundational audit had API Gateway/APIM/CloudFront and network primitives, but those are not substitutes for managed load-balancer control planes. Real clients and Terraform providers use ELBv2, GCP Compute load-balancing resources, and Azure `Microsoft.Network/loadBalancers` directly, so the simulators needed those public APIs.

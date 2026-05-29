@@ -48,14 +48,18 @@ func computeNumericID() string {
 }
 
 func newComputeOp(project, scope string, targetLink string) map[string]any {
+	return newComputeOpWithType(project, scope, targetLink, "operation")
+}
+
+func newComputeOpWithType(project, scope string, targetLink string, operationType string) map[string]any {
 	opID := generateUUID()[:8]
 	now := time.Now().UTC().Format(time.RFC3339)
 	path := fmt.Sprintf("projects/%s/%s/operations/operation-%s", project, scope, opID)
-	return map[string]any{
+	op := map[string]any{
 		"kind":          "compute#operation",
 		"id":            computeNumericID(),
 		"name":          "operation-" + opID,
-		"operationType": "operation",
+		"operationType": operationType,
 		"status":        "DONE",
 		"selfLink":      "https://www.googleapis.com/compute/v1/" + path,
 		"targetLink":    targetLink,
@@ -65,6 +69,13 @@ func newComputeOp(project, scope string, targetLink string) map[string]any {
 		"startTime":     now,
 		"endTime":       now,
 	}
+	if region, ok := strings.CutPrefix(scope, "regions/"); ok {
+		op["region"] = fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/regions/%s", project, region)
+	}
+	if zone, ok := strings.CutPrefix(scope, "zones/"); ok {
+		op["zone"] = fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/zones/%s", project, zone)
+	}
+	return op
 }
 
 // ComputeFirewall mirrors `compute#firewall`. Field set covers what
@@ -162,6 +173,30 @@ type ComputeRouterNATSubnetwork struct {
 type ComputeRouterNATLogConfig struct {
 	Enable bool   `json:"enable"`
 	Filter string `json:"filter,omitempty"`
+}
+
+// ComputeAddress mirrors compute#address for regional external IP
+// reservations. Cloud NAT manual mode references these resources from
+// router.nats[].natIps, and Terraform/gcloud both use the regional
+// addresses collection.
+type ComputeAddress struct {
+	Kind              string            `json:"kind,omitempty"`
+	Id                string            `json:"id,omitempty"`
+	Name              string            `json:"name"`
+	SelfLink          string            `json:"selfLink,omitempty"`
+	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	Address           string            `json:"address,omitempty"`
+	AddressType       string            `json:"addressType,omitempty"`
+	IPVersion         string            `json:"ipVersion,omitempty"`
+	NetworkTier       string            `json:"networkTier,omitempty"`
+	PrefixLength      int64             `json:"prefixLength,omitempty"`
+	Region            string            `json:"region,omitempty"`
+	Status            string            `json:"status,omitempty"`
+	Users             []string          `json:"users,omitempty"`
+	Purpose           string            `json:"purpose,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 }
 
 type ComputeNetwork struct {
@@ -684,7 +719,109 @@ func registerCompute(srv *sim.Server) {
 	// Internet via a VPC connector) provision a Router with a NAT;
 	// without these handlers, terraform's `google_compute_router` and
 	// `google_compute_router_nat` 404.
+	addresses := sim.MakeStore[ComputeAddress](srv.DB(), "compute_addresses")
 	routers := sim.MakeStore[ComputeRouter](srv.DB(), "compute_routers")
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/addresses", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		var addr ComputeAddress
+		if err := sim.ReadJSON(r, &addr); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if addr.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		addr.Kind = "compute#address"
+		addr.Id = computeNumericID()
+		addr.SelfLink = computeRegionalAddressLink(project, region, addr.Name)
+		addr.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
+		addr.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if addr.AddressType == "" {
+			addr.AddressType = "EXTERNAL"
+		}
+		if addr.IPVersion == "" {
+			addr.IPVersion = "IPV4"
+		}
+		if addr.NetworkTier == "" {
+			addr.NetworkTier = "PREMIUM"
+		}
+		if addr.Status == "" {
+			addr.Status = "RESERVED"
+		}
+		if addr.Address == "" && strings.EqualFold(addr.IPVersion, "IPV4") {
+			addr.Address = computeEphemeralIPv4(addr.Id)
+		}
+		if addr.LabelFingerprint == "" {
+			addr.LabelFingerprint = computeFingerprint()
+		}
+		addresses.Put(addr.SelfLink, addr)
+		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, "regions/"+region, addr.SelfLink, "insert"))
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/addresses/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := computeRegionalAddressLink(project, region, name)
+		addr, ok := addresses.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "address %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, addr)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/addresses", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		prefix := fmt.Sprintf("projects/%s/regions/%s/addresses/", project, region)
+		all := addresses.Filter(func(addr ComputeAddress) bool {
+			return strings.HasPrefix(addr.SelfLink, prefix)
+		})
+		if all == nil {
+			all = []ComputeAddress{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#addressList",
+			"items": all,
+		})
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/addresses/{name}/setLabels", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := computeRegionalAddressLink(project, region, name)
+		var req struct {
+			Labels           map[string]string `json:"labels"`
+			LabelFingerprint string            `json:"labelFingerprint"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ok := addresses.Update(selfLink, func(addr *ComputeAddress) {
+			addr.Labels = req.Labels
+			addr.LabelFingerprint = computeFingerprint()
+		})
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "address %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, "regions/"+region, selfLink, "setLabels"))
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/regions/{region}/addresses/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := computeRegionalAddressLink(project, region, name)
+		addresses.Delete(selfLink)
+		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, "regions/"+region, selfLink, "delete"))
+	})
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/routers", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
@@ -698,13 +835,17 @@ func registerCompute(srv *sim.Server) {
 			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
 			return
 		}
+		if err := validateRouterNATAddresses(project, region, rt.Nats, addresses); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err)
+			return
+		}
 		rt.Kind = "compute#router"
 		rt.Id = computeNumericID()
 		rt.SelfLink = fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, rt.Name)
 		rt.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
 		rt.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
 		routers.Put(rt.SelfLink, rt)
-		op := newComputeOp(project, "regions/"+region, rt.SelfLink)
+		op := newComputeOpWithType(project, "regions/"+region, rt.SelfLink, "insert")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
@@ -743,7 +884,7 @@ func registerCompute(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
 		routers.Delete(selfLink)
-		op := newComputeOp(project, "regions/"+region, selfLink)
+		op := newComputeOpWithType(project, "regions/"+region, selfLink, "delete")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
@@ -755,6 +896,10 @@ func registerCompute(srv *sim.Server) {
 		var patch ComputeRouter
 		if err := sim.ReadJSON(r, &patch); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if err := validateRouterNATAddresses(project, region, patch.Nats, addresses); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err)
 			return
 		}
 		ok := routers.Update(selfLink, func(rt *ComputeRouter) {
@@ -775,8 +920,27 @@ func registerCompute(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "router %q not found", name)
 			return
 		}
-		op := newComputeOp(project, "regions/"+region, selfLink)
+		op := newComputeOpWithType(project, "regions/"+region, selfLink, "patch")
 		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/regions/{region}/routers/{name}/getRouterStatus", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
+		rt, ok := routers.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "router %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind": "compute#routerStatusResponse",
+			"result": map[string]any{
+				"network":    rt.Network,
+				"bestRoutes": []map[string]any{},
+			},
+		})
 	})
 
 	// Global operations (for network creates, deletes, etc.)
@@ -807,12 +971,67 @@ func registerCompute(srv *sim.Server) {
 			"progress": 100,
 		})
 	})
+	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/operations/{name}/wait", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		region := sim.PathParam(r, "region")
+		name := sim.PathParam(r, "name")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":     "compute#operation",
+			"id":       computeNumericID(),
+			"name":     name,
+			"status":   "DONE",
+			"selfLink": fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/regions/%s/operations/%s", project, region, name),
+			"region":   fmt.Sprintf("https://www.googleapis.com/compute/v1/projects/%s/regions/%s", project, region),
+			"progress": 100,
+		})
+	})
 
 	registerComputeCatalog(srv)
 	registerComputeInstances(srv)
 	registerComputeDisks(srv)
 	registerComputeZones(srv)
 	registerComputeLoadBalancing(srv)
+}
+
+func computeRegionalAddressLink(project, region, name string) string {
+	return fmt.Sprintf("projects/%s/regions/%s/addresses/%s", project, region, name)
+}
+
+func validateRouterNATAddresses(project, region string, nats []ComputeRouterNAT, addresses sim.Store[ComputeAddress]) error {
+	for _, nat := range nats {
+		if !strings.EqualFold(nat.NatIpAllocateOption, "MANUAL_ONLY") {
+			continue
+		}
+		if len(nat.NatIps) == 0 {
+			return fmt.Errorf("NAT %q uses MANUAL_ONLY but does not reference any regional addresses", nat.Name)
+		}
+		for _, ref := range nat.NatIps {
+			link := normalizeComputeRegionalAddressRef(project, region, ref)
+			if _, ok := addresses.Get(link); !ok {
+				return fmt.Errorf("NAT %q references missing regional address %q", nat.Name, ref)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeComputeRegionalAddressRef(project, region, ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "https://www.googleapis.com/compute/v1/")
+	ref = strings.TrimPrefix(ref, "https://compute.googleapis.com/compute/v1/")
+	if idx := strings.Index(ref, "/projects/"); idx >= 0 {
+		return strings.TrimPrefix(ref[idx:], "/")
+	}
+	if strings.HasPrefix(ref, "projects/") {
+		return ref
+	}
+	if strings.HasPrefix(ref, "regions/") {
+		return "projects/" + project + "/" + ref
+	}
+	if strings.Contains(ref, "/") {
+		return ref
+	}
+	return computeRegionalAddressLink(project, region, ref)
 }
 
 // registerComputeZones serves GET /compute/v1/projects/{project}/zones

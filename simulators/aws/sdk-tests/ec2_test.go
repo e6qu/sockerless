@@ -81,6 +81,99 @@ func TestEC2_InternetGateway(t *testing.T) {
 	require.Len(t, descOut.InternetGateways, 1)
 }
 
+func TestEC2_ElasticIPNatGatewayAndRoute(t *testing.T) {
+	client := ec2Client()
+
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.79.0.0/16"),
+	})
+	require.NoError(t, err)
+
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            vpcOut.Vpc.VpcId,
+		CidrBlock:        aws.String("10.79.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+
+	eipOut, err := client.AllocateAddress(ctx, &ec2.AllocateAddressInput{
+		Domain: types.DomainTypeVpc,
+		TagSpecifications: []types.TagSpecification{{
+			ResourceType: types.ResourceTypeElasticIp,
+			Tags:         []types.Tag{{Key: aws.String("env"), Value: aws.String("sdk")}},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, eipOut.AllocationId)
+	require.NotNil(t, eipOut.PublicIp)
+
+	addrOut, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{
+		AllocationIds: []string{*eipOut.AllocationId},
+	})
+	require.NoError(t, err)
+	require.Len(t, addrOut.Addresses, 1)
+	assert.Equal(t, *eipOut.PublicIp, *addrOut.Addresses[0].PublicIp)
+
+	attrOut, err := client.DescribeAddressesAttribute(ctx, &ec2.DescribeAddressesAttributeInput{
+		AllocationIds: []string{*eipOut.AllocationId},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, attrOut)
+
+	natOut, err := client.CreateNatGateway(ctx, &ec2.CreateNatGatewayInput{
+		AllocationId: eipOut.AllocationId,
+		SubnetId:     subnetOut.Subnet.SubnetId,
+		TagSpecifications: []types.TagSpecification{{
+			ResourceType: types.ResourceTypeNatgateway,
+			Tags:         []types.Tag{{Key: aws.String("env"), Value: aws.String("sdk")}},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, natOut.NatGateway)
+	require.NotNil(t, natOut.NatGateway.NatGatewayId)
+	assert.Equal(t, types.NatGatewayStateAvailable, natOut.NatGateway.State)
+
+	natID := *natOut.NatGateway.NatGatewayId
+	natDesc, err := client.DescribeNatGateways(ctx, &ec2.DescribeNatGatewaysInput{
+		NatGatewayIds: []string{natID},
+	})
+	require.NoError(t, err)
+	require.Len(t, natDesc.NatGateways, 1)
+	require.Len(t, natDesc.NatGateways[0].NatGatewayAddresses, 1)
+	assert.Equal(t, *eipOut.AllocationId, *natDesc.NatGateways[0].NatGatewayAddresses[0].AllocationId)
+
+	rtOut, err := client.CreateRouteTable(ctx, &ec2.CreateRouteTableInput{
+		VpcId: vpcOut.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rtOut.RouteTable.RouteTableId)
+	_, err = client.CreateRoute(ctx, &ec2.CreateRouteInput{
+		RouteTableId:         rtOut.RouteTable.RouteTableId,
+		DestinationCidrBlock: aws.String("0.0.0.0/0"),
+		NatGatewayId:         aws.String(natID),
+	})
+	require.NoError(t, err)
+
+	rtDesc, err := client.DescribeRouteTables(ctx, &ec2.DescribeRouteTablesInput{
+		RouteTableIds: []string{*rtOut.RouteTable.RouteTableId},
+	})
+	require.NoError(t, err)
+	require.Len(t, rtDesc.RouteTables, 1)
+	foundRoute := false
+	for _, route := range rtDesc.RouteTables[0].Routes {
+		if route.NatGatewayId != nil && *route.NatGatewayId == natID {
+			foundRoute = true
+			break
+		}
+	}
+	assert.True(t, foundRoute, "route table must include NAT gateway route")
+
+	_, err = client.DeleteNatGateway(ctx, &ec2.DeleteNatGatewayInput{NatGatewayId: aws.String(natID)})
+	require.NoError(t, err)
+	_, err = client.ReleaseAddress(ctx, &ec2.ReleaseAddressInput{AllocationId: eipOut.AllocationId})
+	require.NoError(t, err)
+}
+
 func TestEC2_InstanceLifecycle(t *testing.T) {
 	client := ec2Client()
 

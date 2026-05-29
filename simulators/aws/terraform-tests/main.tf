@@ -82,6 +82,24 @@ resource "aws_security_group" "tf_ec2_sg" {
   vpc_id      = aws_vpc.tf_ec2_vpc.id
 }
 
+resource "aws_eip" "tf_nat_eip" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "tf_nat" {
+  allocation_id = aws_eip.tf_nat_eip.id
+  subnet_id     = aws_subnet.tf_ec2_subnet.id
+}
+
+resource "aws_route_table" "tf_nat_rt" {
+  vpc_id = aws_vpc.tf_ec2_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.tf_nat.id
+  }
+}
+
 resource "aws_lb" "tf_alb" {
   name               = "tf-alb"
   load_balancer_type = "application"
@@ -668,6 +686,15 @@ output "elbv2_target_group_arn" {
 }
 output "elbv2_listener_arn" {
   value = aws_lb_listener.tf_alb_listener.arn
+}
+output "ec2_nat_gateway_id" {
+  value = aws_nat_gateway.tf_nat.id
+}
+output "ec2_nat_eip_public_ip" {
+  value = aws_eip.tf_nat_eip.public_ip
+}
+output "ec2_nat_route_table_id" {
+  value = aws_route_table.tf_nat_rt.id
 }
 output "iam_slr_arn" {
   value = aws_iam_service_linked_role.tf_slr_cloudfront.arn

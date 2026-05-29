@@ -12,9 +12,9 @@ import (
 // resources against the Azure simulator using both the `azurestack`
 // provider (for network primitives + storage + key vault control plane)
 // and the `azurerm` provider (for ACR, Container Apps, Function App,
-// Application Insights, managed identity, Load Balancer, private DNS —
-// surfaces the azurestack provider catalogue doesn't expose). Then asserts canonical
-// resource-id paths round-trip and terraform destroy cleans up.
+// Application Insights, managed identity, NAT Gateway, Load Balancer,
+// private DNS — surfaces the azurestack provider catalogue doesn't expose).
+// Then asserts canonical resource-id paths round-trip and terraform destroy cleans up.
 //
 // Slices exercised against the simulator (azurestack):
 //   - Microsoft.Resources/resourceGroups
@@ -30,7 +30,8 @@ import (
 // without ever reaching real Azure):
 //   - Microsoft.ContainerRegistry/registries
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
-//   - Microsoft.Network/publicIPAddresses + loadBalancers
+//   - Microsoft.Network/publicIPAddresses + publicIPPrefixes + natGateways +
+//     subnet NAT associations + loadBalancers
 //   - Microsoft.Network/privateDnsZones
 //   - Microsoft.Network/dnsZones + dnsZones/A
 //   - Microsoft.ServiceBus/namespaces + queues
@@ -121,6 +122,18 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmLBRule := outputs.must(t, "azrm_lb_rule_id")
 	require.Contains(t, azrmLBRule, "/loadBalancers/tf-azrm-lb/loadBalancingRules/http-rule",
 		"azurerm Load Balancer rule id must include child ARM path; got %s", azrmLBRule)
+
+	azrmNAT := outputs.must(t, "azrm_nat_gateway_id")
+	require.Contains(t, azrmNAT, "/providers/Microsoft.Network/natGateways/tf-azrm-nat",
+		"azurerm NAT Gateway id must include canonical ARM path; got %s", azrmNAT)
+
+	azrmNATPrefix := outputs.must(t, "azrm_nat_public_ip_prefix_id")
+	require.Contains(t, azrmNATPrefix, "/providers/Microsoft.Network/publicIPPrefixes/tf-azrm-nat-prefix",
+		"azurerm Public IP Prefix id must include canonical ARM path; got %s", azrmNATPrefix)
+
+	azrmNATSubnet := outputs.must(t, "azrm_nat_subnet_id")
+	require.Contains(t, azrmNATSubnet, "/virtualNetworks/tf-azrm-nat-vnet/subnets/tf-azrm-nat-subnet",
+		"azurerm subnet NAT association must keep the associated subnet id; got %s", azrmNATSubnet)
 
 	azrmDNS := outputs.must(t, "azrm_private_dns_zone_id")
 	require.Contains(t, azrmDNS, "/providers/Microsoft.Network/privateDnsZones/tf-azrm.internal",
