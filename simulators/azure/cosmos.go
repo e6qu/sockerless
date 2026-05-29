@@ -1,0 +1,714 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	sim "github.com/sockerless/simulator"
+)
+
+// Azure Cosmos DB for NoSQL. The simulator exposes both the
+// Microsoft.DocumentDB ARM control plane used by Terraform/az and the
+// SQL data plane used by Cosmos clients for database, container, item,
+// and query operations.
+
+type CosmosAccount struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Kind       string            `json:"kind,omitempty"`
+	Properties map[string]any    `json:"properties,omitempty"`
+}
+
+type CosmosSQLDatabase struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+type CosmosSQLContainer struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+type CosmosThroughput struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+type CosmosDocument struct {
+	ID      string         `json:"id"`
+	Account string         `json:"-"`
+	DB      string         `json:"-"`
+	Coll    string         `json:"-"`
+	Body    map[string]any `json:"body"`
+	ETag    string         `json:"_etag,omitempty"`
+	RID     string         `json:"_rid,omitempty"`
+	Self    string         `json:"_self,omitempty"`
+	TS      int64          `json:"_ts,omitempty"`
+}
+
+var (
+	cosmosAccounts    sim.Store[CosmosAccount]
+	cosmosDatabases   sim.Store[CosmosSQLDatabase]
+	cosmosContainers  sim.Store[CosmosSQLContainer]
+	cosmosThroughputs sim.Store[CosmosThroughput]
+	cosmosDocs        sim.Store[CosmosDocument]
+)
+
+func registerCosmosDB(srv *sim.Server) {
+	cosmosAccounts = sim.MakeStore[CosmosAccount](srv.DB(), "cosmos_accounts")
+	cosmosDatabases = sim.MakeStore[CosmosSQLDatabase](srv.DB(), "cosmos_sql_databases")
+	cosmosContainers = sim.MakeStore[CosmosSQLContainer](srv.DB(), "cosmos_sql_containers")
+	cosmosThroughputs = sim.MakeStore[CosmosThroughput](srv.DB(), "cosmos_throughputs")
+	cosmosDocs = sim.MakeStore[CosmosDocument](srv.DB(), "cosmos_documents")
+
+	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts"
+	srv.HandleFunc("PUT "+armBase+"/{account}", handleCosmosCreateAccount)
+	srv.HandleFunc("GET "+armBase+"/{account}", handleCosmosGetAccount)
+	srv.HandleFunc("DELETE "+armBase+"/{account}", handleCosmosDeleteAccount)
+	srv.HandleFunc("GET "+armBase, handleCosmosListAccounts)
+	srv.HandleFunc("POST "+armBase+"/{account}/listKeys", handleCosmosListKeys)
+	srv.HandleFunc("POST "+armBase+"/{account}/listConnectionStrings", handleCosmosListConnectionStrings)
+	srv.HandleFunc("POST "+armBase+"/{account}/readonlykeys", handleCosmosListKeys)
+
+	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}", handleCosmosCreateSQLDatabase)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}", handleCosmosGetSQLDatabase)
+	srv.HandleFunc("DELETE "+armBase+"/{account}/sqlDatabases/{database}", handleCosmosDeleteSQLDatabase)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases", handleCosmosListSQLDatabases)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}/throughputSettings/default", handleCosmosGetThroughput)
+	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}/throughputSettings/default", handleCosmosPutThroughput)
+
+	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}", handleCosmosCreateSQLContainer)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}", handleCosmosGetSQLContainer)
+	srv.HandleFunc("DELETE "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}", handleCosmosDeleteSQLContainer)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}/containers", handleCosmosListSQLContainers)
+	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}/throughputSettings/default", handleCosmosGetThroughput)
+	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}/throughputSettings/default", handleCosmosPutThroughput)
+
+	srv.HandleFunc("POST /dbs", handleCosmosDataCreateDB)
+	srv.HandleFunc("GET /dbs", handleCosmosDataListDBs)
+	srv.HandleFunc("GET /dbs/{database}", handleCosmosDataGetDB)
+	srv.HandleFunc("DELETE /dbs/{database}", handleCosmosDataDeleteDB)
+	srv.HandleFunc("POST /dbs/{database}/colls", handleCosmosDataCreateColl)
+	srv.HandleFunc("GET /dbs/{database}/colls", handleCosmosDataListColls)
+	srv.HandleFunc("GET /dbs/{database}/colls/{container}", handleCosmosDataGetColl)
+	srv.HandleFunc("DELETE /dbs/{database}/colls/{container}", handleCosmosDataDeleteColl)
+	srv.HandleFunc("POST /dbs/{database}/colls/{container}/docs", handleCosmosDataCreateOrQueryDoc)
+	srv.HandleFunc("GET /dbs/{database}/colls/{container}/docs", handleCosmosDataListDocs)
+	srv.HandleFunc("GET /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataGetDoc)
+	srv.HandleFunc("PUT /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataReplaceDoc)
+	srv.HandleFunc("DELETE /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataDeleteDoc)
+}
+
+func cosmosAccountID(sub, rg, account string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.DocumentDB/databaseAccounts/%s", sub, rg, account)
+}
+
+func cosmosSQLDatabaseID(sub, rg, account, database string) string {
+	return cosmosAccountID(sub, rg, account) + "/sqlDatabases/" + database
+}
+
+func cosmosSQLContainerID(sub, rg, account, database, container string) string {
+	return cosmosSQLDatabaseID(sub, rg, account, database) + "/containers/" + container
+}
+
+func cosmosDocKey(account, database, container, doc string) string {
+	return account + "/" + database + "/" + container + "/" + doc
+}
+
+func cosmosDataAccount(r *http.Request) string {
+	host := strings.Split(r.Host, ":")[0]
+	if i := strings.Index(host, ".documents."); i > 0 {
+		return host[:i]
+	}
+	if account := r.Header.Get("x-ms-cosmos-account"); account != "" {
+		return account
+	}
+	for _, a := range cosmosAccounts.List() {
+		return a.Name
+	}
+	return "local-cosmos"
+}
+
+func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	var req CosmosAccount
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid Cosmos account body: %v", err)
+		return
+	}
+	id := cosmosAccountID(sub, rg, name)
+	props := map[string]any{
+		"provisioningState":        "Succeeded",
+		"documentEndpoint":         azureCosmosEndpointURL(r, name),
+		"databaseAccountOfferType": "Standard",
+		"locations": []map[string]any{{
+			"locationName":     req.Location,
+			"failoverPriority": 0,
+		}},
+	}
+	for k, v := range req.Properties {
+		props[k] = v
+	}
+	a := CosmosAccount{
+		ID:         id,
+		Name:       name,
+		Type:       "Microsoft.DocumentDB/databaseAccounts",
+		Location:   req.Location,
+		Tags:       req.Tags,
+		Kind:       defaultString(req.Kind, "GlobalDocumentDB"),
+		Properties: props,
+	}
+	cosmosAccounts.Put(id, a)
+	sim.WriteJSON(w, http.StatusOK, a)
+}
+
+func handleCosmosGetAccount(w http.ResponseWriter, r *http.Request) {
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	a, ok := cosmosAccounts.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, a)
+}
+
+func handleCosmosListAccounts(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.DocumentDB/databaseAccounts/",
+		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+	all := cosmosAccounts.Filter(func(a CosmosAccount) bool { return strings.HasPrefix(a.ID, prefix) })
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	if !cosmosAccounts.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
+		return
+	}
+	for _, db := range cosmosDatabases.List() {
+		if strings.HasPrefix(db.ID, id+"/") {
+			cosmosDatabases.Delete(db.ID)
+		}
+	}
+	for _, c := range cosmosContainers.List() {
+		if strings.HasPrefix(c.ID, id+"/") {
+			cosmosContainers.Delete(c.ID)
+		}
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleCosmosListKeys(w http.ResponseWriter, r *http.Request) {
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	if _, ok := cosmosAccounts.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"primaryMasterKey":           simListKey32(id, "primary"),
+		"secondaryMasterKey":         simListKey32(id, "secondary"),
+		"primaryReadonlyMasterKey":   simListKey32(id, "primary-readonly"),
+		"secondaryReadonlyMasterKey": simListKey32(id, "secondary-readonly"),
+	})
+}
+
+func handleCosmosListConnectionStrings(w http.ResponseWriter, r *http.Request) {
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	a, ok := cosmosAccounts.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
+		return
+	}
+	key := simListKey32(id, "primary")
+	endpoint, _ := a.Properties["documentEndpoint"].(string)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"connectionStrings": []map[string]any{{
+			"description":      "Primary SQL Connection String",
+			"connectionString": "AccountEndpoint=" + endpoint + ";AccountKey=" + key + ";",
+			"keyKind":          "Primary",
+			"type":             "Sql",
+		}},
+	})
+}
+
+func handleCosmosCreateSQLDatabase(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	if _, ok := cosmosAccounts.Get(cosmosAccountID(sub, rg, account)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", account)
+		return
+	}
+	var req CosmosSQLDatabase
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid SQL database body: %v", err)
+		return
+	}
+	id := cosmosSQLDatabaseID(sub, rg, account, database)
+	db := CosmosSQLDatabase{
+		ID:         id,
+		Name:       database,
+		Type:       "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+		Properties: ensureResourceProperty(req.Properties, database),
+	}
+	cosmosDatabases.Put(id, db)
+	sim.WriteJSON(w, http.StatusOK, db)
+}
+
+func handleCosmosGetSQLDatabase(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	db, ok := cosmosDatabases.Get(cosmosSQLDatabaseID(sub, rg, account, database))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL database not found: %s", database)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, db)
+}
+
+func handleCosmosListSQLDatabases(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	prefix := cosmosAccountID(sub, rg, account) + "/sqlDatabases/"
+	all := cosmosDatabases.Filter(func(db CosmosSQLDatabase) bool { return strings.HasPrefix(db.ID, prefix) })
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleCosmosDeleteSQLDatabase(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	id := cosmosSQLDatabaseID(sub, rg, account, database)
+	if !cosmosDatabases.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL database not found: %s", database)
+		return
+	}
+	for _, c := range cosmosContainers.List() {
+		if strings.HasPrefix(c.ID, id+"/") {
+			cosmosContainers.Delete(c.ID)
+		}
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleCosmosCreateSQLContainer(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	container := sim.PathParam(r, "container")
+	if _, ok := cosmosDatabases.Get(cosmosSQLDatabaseID(sub, rg, account, database)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL database not found: %s", database)
+		return
+	}
+	var req CosmosSQLContainer
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid SQL container body: %v", err)
+		return
+	}
+	id := cosmosSQLContainerID(sub, rg, account, database, container)
+	c := CosmosSQLContainer{
+		ID:         id,
+		Name:       container,
+		Type:       "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+		Properties: ensureResourceProperty(req.Properties, container),
+	}
+	if c.Properties["partitionKey"] == nil {
+		c.Properties["partitionKey"] = map[string]any{"paths": []string{"/id"}, "kind": "Hash"}
+	}
+	cosmosContainers.Put(id, c)
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handleCosmosGetSQLContainer(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	container := sim.PathParam(r, "container")
+	c, ok := cosmosContainers.Get(cosmosSQLContainerID(sub, rg, account, database, container))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL container not found: %s", container)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handleCosmosListSQLContainers(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	prefix := cosmosSQLDatabaseID(sub, rg, account, database) + "/containers/"
+	all := cosmosContainers.Filter(func(c CosmosSQLContainer) bool { return strings.HasPrefix(c.ID, prefix) })
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleCosmosDeleteSQLContainer(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account, database := cosmosARMParts(r)
+	container := sim.PathParam(r, "container")
+	if !cosmosContainers.Delete(cosmosSQLContainerID(sub, rg, account, database, container)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL container not found: %s", container)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleCosmosGetThroughput(w http.ResponseWriter, r *http.Request) {
+	id := cosmosThroughputID(r)
+	t, ok := cosmosThroughputs.Get(id)
+	if !ok {
+		t = CosmosThroughput{
+			ID:   id,
+			Name: "default",
+			Type: "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings",
+			Properties: map[string]any{
+				"resource": map[string]any{"throughput": float64(400)},
+			},
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, t)
+}
+
+func handleCosmosPutThroughput(w http.ResponseWriter, r *http.Request) {
+	var req CosmosThroughput
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid throughput body: %v", err)
+		return
+	}
+	id := cosmosThroughputID(r)
+	req.ID = id
+	req.Name = "default"
+	if req.Type == "" {
+		req.Type = "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings"
+	}
+	if req.Properties == nil {
+		req.Properties = map[string]any{"resource": map[string]any{"throughput": float64(400)}}
+	}
+	cosmosThroughputs.Put(id, req)
+	sim.WriteJSON(w, http.StatusOK, req)
+}
+
+func cosmosARMParts(r *http.Request) (string, string, string, string) {
+	return sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"), sim.PathParam(r, "database")
+}
+
+func cosmosThroughputID(r *http.Request) string {
+	sub, rg, account, database := cosmosARMParts(r)
+	if c := sim.PathParam(r, "container"); c != "" {
+		return cosmosSQLContainerID(sub, rg, account, database, c) + "/throughputSettings/default"
+	}
+	return cosmosSQLDatabaseID(sub, rg, account, database) + "/throughputSettings/default"
+}
+
+func ensureResourceProperty(props map[string]any, name string) map[string]any {
+	if props == nil {
+		props = map[string]any{}
+	}
+	resource, _ := props["resource"].(map[string]any)
+	if resource == nil {
+		resource = map[string]any{}
+	}
+	if resource["id"] == nil {
+		resource["id"] = name
+	}
+	props["resource"] = resource
+	return props
+}
+
+func azureCosmosEndpointURL(r *http.Request, account string) string {
+	return fmt.Sprintf("%s://%s/", azureRequestScheme(r), azureEndpointHost(r, account, "documents"))
+}
+
+func defaultString(v, fallback string) string {
+	if v != "" {
+		return v
+	}
+	return fallback
+}
+
+func handleCosmosDataCreateDB(w http.ResponseWriter, r *http.Request) {
+	account := cosmosDataAccount(r)
+	var body map[string]any
+	if err := sim.ReadJSON(r, &body); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid database body", http.StatusBadRequest)
+		return
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		cosmosDataError(w, "BadRequest", "id is required", http.StatusBadRequest)
+		return
+	}
+	db := cosmosDataDB(account, id)
+	cosmosWriteData(w, http.StatusCreated, db)
+}
+
+func handleCosmosDataListDBs(w http.ResponseWriter, r *http.Request) {
+	account := cosmosDataAccount(r)
+	dbs := map[string]map[string]any{}
+	for _, c := range cosmosContainers.List() {
+		if acc, db, _, ok := cosmosARMIDNames(c.ID); ok && acc == account {
+			dbs[db] = cosmosDataDB(account, db)
+		}
+	}
+	for _, d := range cosmosDocs.List() {
+		if d.Account == account {
+			dbs[d.DB] = cosmosDataDB(account, d.DB)
+		}
+	}
+	items := make([]map[string]any, 0, len(dbs))
+	for _, db := range dbs {
+		items = append(items, db)
+	}
+	cosmosWriteData(w, http.StatusOK, map[string]any{"Databases": items, "_count": len(items)})
+}
+
+func handleCosmosDataGetDB(w http.ResponseWriter, r *http.Request) {
+	cosmosWriteData(w, http.StatusOK, cosmosDataDB(cosmosDataAccount(r), sim.PathParam(r, "database")))
+}
+
+func handleCosmosDataDeleteDB(w http.ResponseWriter, r *http.Request) {
+	account, db := cosmosDataAccount(r), sim.PathParam(r, "database")
+	for _, d := range cosmosDocs.List() {
+		if d.Account == account && d.DB == db {
+			cosmosDocs.Delete(cosmosDocKey(account, d.DB, d.Coll, d.ID))
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleCosmosDataCreateColl(w http.ResponseWriter, r *http.Request) {
+	account, db := cosmosDataAccount(r), sim.PathParam(r, "database")
+	var body map[string]any
+	if err := sim.ReadJSON(r, &body); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid collection body", http.StatusBadRequest)
+		return
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		cosmosDataError(w, "BadRequest", "id is required", http.StatusBadRequest)
+		return
+	}
+	cosmosWriteData(w, http.StatusCreated, cosmosDataColl(account, db, id))
+}
+
+func handleCosmosDataListColls(w http.ResponseWriter, r *http.Request) {
+	account, db := cosmosDataAccount(r), sim.PathParam(r, "database")
+	colls := map[string]map[string]any{}
+	for _, d := range cosmosDocs.List() {
+		if d.Account == account && d.DB == db {
+			colls[d.Coll] = cosmosDataColl(account, db, d.Coll)
+		}
+	}
+	items := make([]map[string]any, 0, len(colls))
+	for _, c := range colls {
+		items = append(items, c)
+	}
+	cosmosWriteData(w, http.StatusOK, map[string]any{"DocumentCollections": items, "_count": len(items)})
+}
+
+func handleCosmosDataGetColl(w http.ResponseWriter, r *http.Request) {
+	cosmosWriteData(w, http.StatusOK, cosmosDataColl(cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")))
+}
+
+func handleCosmosDataDeleteColl(w http.ResponseWriter, r *http.Request) {
+	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	for _, d := range cosmosDocs.List() {
+		if d.Account == account && d.DB == db && d.Coll == coll {
+			cosmosDocs.Delete(cosmosDocKey(account, db, coll, d.ID))
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
+	if strings.EqualFold(r.Header.Get("x-ms-documentdb-isquery"), "true") ||
+		strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/query+json") {
+		handleCosmosDataQueryDocs(w, r)
+		return
+	}
+	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	var body map[string]any
+	if err := sim.ReadJSON(r, &body); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid document body", http.StatusBadRequest)
+		return
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		id = generateUUID()
+		body["id"] = id
+	}
+	doc := cosmosStoreDoc(account, db, coll, id, body)
+	cosmosWriteData(w, http.StatusCreated, cosmosDocBody(doc))
+}
+
+func handleCosmosDataListDocs(w http.ResponseWriter, r *http.Request) {
+	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	items := cosmosDocsFor(account, db, coll)
+	docs := make([]map[string]any, 0, len(items))
+	for _, d := range items {
+		docs = append(docs, cosmosDocBody(d))
+	}
+	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": docs, "_count": len(docs)})
+}
+
+func handleCosmosDataGetDoc(w http.ResponseWriter, r *http.Request) {
+	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	doc, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	if !ok {
+		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
+		return
+	}
+	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+}
+
+func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
+	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	var body map[string]any
+	if err := sim.ReadJSON(r, &body); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid document body", http.StatusBadRequest)
+		return
+	}
+	body["id"] = docID
+	doc := cosmosStoreDoc(account, db, coll, docID, body)
+	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+}
+
+func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
+	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	if !cosmosDocs.Delete(cosmosDocKey(account, db, coll, docID)) {
+		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
+	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	var req struct {
+		Query      string           `json:"query"`
+		Parameters []map[string]any `json:"parameters,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid query body", http.StatusBadRequest)
+		return
+	}
+	docs := cosmosDocsFor(account, db, coll)
+	if field, value, ok := cosmosParseEqualityQuery(req.Query, req.Parameters); ok {
+		filtered := docs[:0]
+		for _, d := range docs {
+			if fmt.Sprint(d.Body[field]) == value {
+				filtered = append(filtered, d)
+			}
+		}
+		docs = filtered
+	}
+	out := make([]map[string]any, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, cosmosDocBody(d))
+	}
+	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": out, "_count": len(out)})
+}
+
+func cosmosStoreDoc(account, db, coll, id string, body map[string]any) CosmosDocument {
+	now := time.Now().UTC().Unix()
+	doc := CosmosDocument{
+		ID:      id,
+		Account: account,
+		DB:      db,
+		Coll:    coll,
+		Body:    body,
+		ETag:    fmt.Sprintf(`"%x"`, now),
+		RID:     account + "-" + db + "-" + coll + "-" + id,
+		Self:    "dbs/" + db + "/colls/" + coll + "/docs/" + id + "/",
+		TS:      now,
+	}
+	cosmosDocs.Put(cosmosDocKey(account, db, coll, id), doc)
+	return doc
+}
+
+func cosmosDocBody(doc CosmosDocument) map[string]any {
+	body := make(map[string]any, len(doc.Body)+4)
+	for k, v := range doc.Body {
+		body[k] = v
+	}
+	body["_rid"] = doc.RID
+	body["_self"] = doc.Self
+	body["_etag"] = doc.ETag
+	body["_ts"] = doc.TS
+	return body
+}
+
+func cosmosDocsFor(account, db, coll string) []CosmosDocument {
+	docs := cosmosDocs.Filter(func(d CosmosDocument) bool {
+		return d.Account == account && d.DB == db && d.Coll == coll
+	})
+	sort.Slice(docs, func(i, j int) bool { return docs[i].ID < docs[j].ID })
+	return docs
+}
+
+func cosmosDataDB(account, id string) map[string]any {
+	return map[string]any{"id": id, "_rid": account + "-" + id, "_self": "dbs/" + id + "/", "_etag": `"db"`, "_ts": time.Now().UTC().Unix()}
+}
+
+func cosmosDataColl(account, db, id string) map[string]any {
+	return map[string]any{"id": id, "_rid": account + "-" + db + "-" + id, "_self": "dbs/" + db + "/colls/" + id + "/", "_etag": `"coll"`, "_ts": time.Now().UTC().Unix()}
+}
+
+func cosmosWriteData(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-ms-activity-id", generateUUID())
+	w.Header().Set("x-ms-request-charge", "1")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func cosmosDataError(w http.ResponseWriter, code, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-ms-activity-id", generateUUID())
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message})
+}
+
+func cosmosParseEqualityQuery(query string, params []map[string]any) (string, string, bool) {
+	lower := strings.ToLower(query)
+	idx := strings.Index(lower, "where")
+	if idx < 0 {
+		return "", "", false
+	}
+	cond := strings.TrimSpace(query[idx+len("where"):])
+	parts := strings.Split(cond, "=")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	field := strings.TrimSpace(parts[0])
+	field = strings.TrimPrefix(field, "c.")
+	field = strings.Trim(field, "[]`\" ")
+	value := strings.TrimSpace(parts[1])
+	value = strings.Trim(value, "'\" ")
+	if strings.HasPrefix(value, "@") {
+		for _, p := range params {
+			if p["name"] == value {
+				return field, fmt.Sprint(p["value"]), true
+			}
+		}
+	}
+	return field, value, true
+}
+
+func cosmosARMIDNames(id string) (account, db, coll string, ok bool) {
+	parts := strings.Split(id, "/")
+	for i := 0; i < len(parts); i++ {
+		if parts[i] == "databaseAccounts" && i+1 < len(parts) {
+			account = parts[i+1]
+		}
+		if parts[i] == "sqlDatabases" && i+1 < len(parts) {
+			db = parts[i+1]
+		}
+		if parts[i] == "containers" && i+1 < len(parts) {
+			coll = parts[i+1]
+		}
+	}
+	return account, db, coll, account != ""
+}

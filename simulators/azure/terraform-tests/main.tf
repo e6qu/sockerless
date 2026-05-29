@@ -258,6 +258,49 @@ resource "azurerm_eventgrid_system_topic" "az_eg_system_topic" {
   topic_type             = "Microsoft.Storage.StorageAccounts"
 }
 
+# ---------- Cosmos DB (NoSQL control plane) ----------
+
+resource "azurerm_cosmosdb_account" "az_cosmos" {
+  provider            = azurerm
+  name                = "tfazrmcosmos"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  offer_type          = "Standard"
+  kind                = "GlobalDocumentDB"
+
+  consistency_policy {
+    consistency_level = "Session"
+  }
+
+  geo_location {
+    location          = azurerm_resource_group.az_rg.location
+    failover_priority = 0
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "azurerm_cosmosdb_sql_database" "az_cosmos_db" {
+  provider            = azurerm
+  name                = "tfappdb"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  account_name        = azurerm_cosmosdb_account.az_cosmos.name
+  throughput          = 400
+}
+
+resource "azurerm_cosmosdb_sql_container" "az_cosmos_container" {
+  provider              = azurerm
+  name                  = "users"
+  resource_group_name   = azurerm_resource_group.az_rg.name
+  account_name          = azurerm_cosmosdb_account.az_cosmos.name
+  database_name         = azurerm_cosmosdb_sql_database.az_cosmos_db.name
+  partition_key_paths   = ["/id"]
+  partition_key_version = 1
+  throughput            = 400
+}
+
 # Log Analytics workspace — Container App Environment requires one for
 # log ingestion. PerGB2018 is the canonical SKU.
 resource "azurerm_log_analytics_workspace" "az_law" {
@@ -477,6 +520,14 @@ output "azrm_public_dns_a_record_id" {
 
 output "azrm_eventgrid_topic_endpoint" {
   value = azurerm_eventgrid_topic.az_eg_topic.endpoint
+}
+
+output "azrm_cosmosdb_account_endpoint" {
+  value = azurerm_cosmosdb_account.az_cosmos.endpoint
+}
+
+output "azrm_cosmosdb_sql_container_id" {
+  value = azurerm_cosmosdb_sql_container.az_cosmos_container.id
 }
 
 output "azrm_law_id" {

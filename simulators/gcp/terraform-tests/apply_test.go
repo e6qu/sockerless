@@ -11,8 +11,9 @@ import (
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
 // (compute network + disk + subnet + firewall, public + private DNS zones,
 // Artifact Registry, Cloud Run v2 Service + Job, Cloud Storage bucket +
-// object, Eventarc trigger, Secret Manager, IAM service account) in a
-// single terraform apply round-trip and asserts the cross-resource
+// object, BigQuery dataset/table, Firestore document, Eventarc trigger,
+// Secret Manager, IAM service account) in a single terraform apply round-trip
+// and asserts the cross-resource
 // references converged.
 //
 // Slices exercised against the simulator:
@@ -22,6 +23,8 @@ import (
 //   - run.googleapis.com v2 (Service + Job)
 //   - eventarc.googleapis.com (Trigger)
 //   - storage.googleapis.com (bucket + object)
+//   - bigquery.googleapis.com (dataset + table)
+//   - firestore.googleapis.com (document)
 //   - secretmanager.googleapis.com (secret + version)
 //   - iam.googleapis.com (service account — via iam_beta_custom_endpoint;
 //     terraform-provider-google routes the resource through iambeta.NewClient
@@ -99,6 +102,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	saName := outputs.must(t, "service_account_name")
 	require.Equal(t, "projects/test-project/serviceAccounts/tf-test-runner-sa@test-project.iam.gserviceaccount.com", saName,
 		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
+
+	bqTableID := outputs.must(t, "bigquery_table_id")
+	require.Contains(t, bqTableID, "tf_test_dataset/events",
+		"BigQuery table id must include dataset/table; got %s", bqTableID)
+
+	fsDocName := outputs.must(t, "firestore_document_name")
+	require.Contains(t, fsDocName, "projects/test-project/databases/(default)/documents/tf-users/alice",
+		"Firestore document name must round-trip the canonical document path; got %s", fsDocName)
 
 	destroy := terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev")
 	out, err = destroy.CombinedOutput()

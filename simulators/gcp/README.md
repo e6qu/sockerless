@@ -75,6 +75,8 @@ All services use REST/JSON routing with Go 1.22+ path patterns. Long-running ope
 | **Cloud Functions v2** | `/v2/projects/.../functions` | Create, Get, List, Delete, Invoke |
 | **Cloud DNS** | `/dns/v1/projects/...` | Managed Zones (CRUD), Record Sets (CRUD) |
 | **GCS** | `/storage/v1/b/...` | Buckets (CRUD, list), Objects (upload, download, list, delete, compose, rewrite/copy) — JSON + XML APIs |
+| **BigQuery** | `/bigquery/v2/projects/...` | Datasets, Tables, streaming inserts, tabledata list, query jobs, synchronous queries |
+| **Firestore** | `/v1/projects/.../databases/.../documents` | Document CRUD, Commit, BatchGet, BatchWrite, structured RunQuery |
 | **Artifact Registry** | `/v1/projects/.../repositories` | Repositories (CRUD), Docker Images (list), [OCI Distribution](https://github.com/opencontainers/distribution-spec) (`/v2/` manifests + blobs) |
 | **Cloud Logging** | `/v2/entries` | Write entries, List entries (with filter) |
 | **Compute Engine** | `/compute/v1/projects/...` | Networks (CRUD), Subnetworks (CRUD), Operations |

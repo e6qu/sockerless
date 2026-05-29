@@ -33,6 +33,7 @@ import (
 //   - Microsoft.Network/privateDnsZones
 //   - Microsoft.Network/dnsZones + dnsZones/A
 //   - Microsoft.EventGrid/topics
+//   - Microsoft.DocumentDB/databaseAccounts + sqlDatabases + containers
 //   - Microsoft.OperationalInsights/workspaces
 //   - Microsoft.Insights/components
 //   - Microsoft.App/managedEnvironments + containerApps + jobs
@@ -118,6 +119,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmEventGridEndpoint := outputs.must(t, "azrm_eventgrid_topic_endpoint")
 	require.Contains(t, azrmEventGridEndpoint, "/api/events",
 		"azurerm Event Grid topic endpoint must be a publish endpoint; got %s", azrmEventGridEndpoint)
+
+	azrmCosmosEndpoint := outputs.must(t, "azrm_cosmosdb_account_endpoint")
+	require.Contains(t, azrmCosmosEndpoint, "tfazrmcosmos.documents.",
+		"azurerm Cosmos DB endpoint must include account documents host; got %s", azrmCosmosEndpoint)
+
+	azrmCosmosContainer := outputs.must(t, "azrm_cosmosdb_sql_container_id")
+	require.Contains(t, azrmCosmosContainer, "/providers/Microsoft.DocumentDB/databaseAccounts/tfazrmcosmos/sqlDatabases/tfappdb/containers/users",
+		"azurerm Cosmos SQL container id must include canonical ARM path; got %s", azrmCosmosContainer)
 
 	azrmKVPolicy := outputs.must(t, "azrm_key_vault_access_policy_id")
 	require.Contains(t, strings.ToLower(azrmKVPolicy), "/providers/microsoft.keyvault/vaults/tf-azrm-kv",
