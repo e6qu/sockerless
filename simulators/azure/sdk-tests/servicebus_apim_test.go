@@ -39,6 +39,14 @@ func TestAzureServiceBus_ARMLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
+	deleteQPath := nsPath + "/queues/deletequeue"
+	resp = armReq(t, "PUT", deleteQPath, `{"properties":{"maxSizeInMegabytes":1024}}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+	resp = armReq(t, "DELETE", deleteQPath, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
 	// Create a topic + subscription.
 	tPath := nsPath + "/topics/mytopic"
 	resp = armReq(t, "PUT", tPath, `{"properties":{}}`)

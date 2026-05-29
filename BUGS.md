@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1219 filed · 1216 fixed · 5 open · 2 false positives.**
+**1220 filed · 1217 fixed · 5 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -17,6 +17,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1206 | P1 | simulator surface-table audit debt | 12 (stale docs) | Several foundational surface tables still carry generic "deferred under BUG-1159 / BUG-1147" test-gap markers even though later phases added tests and those BUGs are closed. The tables must be refreshed so implementation/test status is accurate before claiming full simulator coverage. |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1220 / issue #276. The Azure Service Bus ARM simulator now implements the namespace `networkRuleSets/default` get/update path, the network-rule-set list path, empty disaster recovery and migration configuration list paths, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations. The fix keeps Service Bus management on the public Microsoft.ServiceBus ARM surface and adds official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform namespace+queue coverage.
 
 This phase closed BUG-1207 / issue #266. The AWS simulator now implements EC2 instance lifecycle control-plane APIs (`RunInstances`, `DescribeInstances`, `StopInstances`, `StartInstances`, `TerminateInstances`, `DescribeInstanceStatus`) with subnet-backed private IPs, ENI attachment state, image/key-pair discovery, and tag mutation. The GCP simulator now implements Compute Engine instance create/get/list/aggregated-list/start/stop/delete, labels/tags, metadata, attached disks, NICs, machine types, disk types, images, and zonal operations. The Azure simulator now implements `Microsoft.Network/networkInterfaces`, `Microsoft.Network/publicIPAddresses`, and `Microsoft.Compute/virtualMachines` with ARM VM create/get/list/delete, instanceView, and power-state operations. All three clouds have official SDK, vendor CLI, and Terraform-provider coverage for the VM lifecycle surfaces.
 

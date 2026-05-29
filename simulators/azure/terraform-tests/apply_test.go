@@ -32,6 +32,7 @@ import (
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
 //   - Microsoft.Network/privateDnsZones
 //   - Microsoft.Network/dnsZones + dnsZones/A
+//   - Microsoft.ServiceBus/namespaces + queues
 //   - Microsoft.EventGrid/topics
 //   - Microsoft.DocumentDB/databaseAccounts + sqlDatabases + containers
 //   - Microsoft.OperationalInsights/workspaces
@@ -115,6 +116,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmPublicDNSA := outputs.must(t, "azrm_public_dns_a_record_id")
 	require.Contains(t, azrmPublicDNSA, "/providers/Microsoft.Network/dnsZones/tf-azrm.example.com/A/www",
 		"azurerm public DNS A record id must include canonical ARM path; got %s", azrmPublicDNSA)
+
+	azrmServiceBusNamespace := outputs.must(t, "azrm_servicebus_namespace_id")
+	require.Contains(t, azrmServiceBusNamespace, "/providers/Microsoft.ServiceBus/namespaces/tfazrmsbns",
+		"azurerm Service Bus namespace id must include canonical ARM path; got %s", azrmServiceBusNamespace)
+
+	azrmServiceBusQueue := outputs.must(t, "azrm_servicebus_queue_id")
+	require.Contains(t, azrmServiceBusQueue, "/providers/Microsoft.ServiceBus/namespaces/tfazrmsbns/queues/tfazrmsbqueue",
+		"azurerm Service Bus queue id must include canonical ARM path; got %s", azrmServiceBusQueue)
 
 	azrmEventGridEndpoint := outputs.must(t, "azrm_eventgrid_topic_endpoint")
 	require.Contains(t, azrmEventGridEndpoint, "/api/events",
