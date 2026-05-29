@@ -19,7 +19,7 @@ Resources covered:
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
 - `google_service_account` (via `iam_beta_custom_endpoint`)
 
-VM instance resources such as `google_compute_instance` and `google_compute_instance_template` are tracked under the cross-cloud VM compute issue rather than as Terraform-only coverage work.
+`google_compute_instance` is covered by the cross-cloud VM compute parity phase. Instance templates remain out of the foundational slice until a real sockerless flow or provider path requires them.
 
 ## Running
 

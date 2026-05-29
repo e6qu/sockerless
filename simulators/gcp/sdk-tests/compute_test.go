@@ -238,3 +238,59 @@ func TestCompute_Disks_Get_NotFound(t *testing.T) {
 	_, err := svc.Disks.Get("test-project", "us-central1-a", "does-not-exist").Context(ctx).Do()
 	require.Error(t, err, "get on missing disk must 404")
 }
+
+func TestCompute_Instances_Lifecycle(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+	const zone = "us-central1-a"
+
+	inst := &compute.Instance{
+		Name:        "sdk-vm-1",
+		MachineType: "e2-micro",
+		Disks: []*compute.AttachedDisk{{
+			Boot:       true,
+			AutoDelete: true,
+			InitializeParams: &compute.AttachedDiskInitializeParams{
+				SourceImage: "projects/debian-cloud/global/images/debian-12",
+				DiskSizeGb:  10,
+			},
+		}},
+		NetworkInterfaces: []*compute.NetworkInterface{{
+			Network: "projects/test-project/global/networks/default",
+		}},
+		Labels: map[string]string{"env": "sdk"},
+		Tags:   &compute.Tags{Items: []string{"runner"}},
+	}
+
+	op, err := svc.Instances.Insert(project, zone, inst).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", op.Status)
+
+	got, err := svc.Instances.Get(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-vm-1", got.Name)
+	assert.Equal(t, "RUNNING", got.Status)
+	require.Len(t, got.NetworkInterfaces, 1)
+	assert.NotEmpty(t, got.NetworkInterfaces[0].NetworkIP)
+
+	list, err := svc.Instances.List(project, zone).Context(ctx).Do()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(list.Items), 1)
+
+	_, err = svc.Instances.Stop(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	stopped, err := svc.Instances.Get(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "TERMINATED", stopped.Status)
+
+	_, err = svc.Instances.Start(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	running, err := svc.Instances.Get(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "RUNNING", running.Status)
+
+	_, err = svc.Instances.Delete(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.Instances.Get(project, zone, "sdk-vm-1").Context(ctx).Do()
+	require.Error(t, err, "get after delete must fail")
+}

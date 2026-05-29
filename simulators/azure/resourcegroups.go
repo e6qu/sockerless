@@ -187,6 +187,15 @@ func azureResourcesInResourceGroup(sub, rg string) []any {
 	values = appendAzureResource(values, azureRouteTables, func(v RouteTable) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})
+	values = appendAzureResource(values, azurePublicIPs, func(v PublicIPAddress) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
+	values = appendAzureResource(values, azureNICs, func(v NetworkInterface) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
+	values = appendAzureResource(values, azureVMs, func(v VirtualMachine) (any, string, bool) {
+		return v, v.ID, matchID(v.ID)
+	})
 	values = appendAzureResource(values, sbNamespaces, func(v SBNamespace) (any, string, bool) {
 		return v, v.ID, matchID(v.ID)
 	})
@@ -291,6 +300,12 @@ func azureResourceID(v any) string {
 	case NatGateway:
 		return r.ID
 	case RouteTable:
+		return r.ID
+	case PublicIPAddress:
+		return r.ID
+	case NetworkInterface:
+		return r.ID
+	case VirtualMachine:
 		return r.ID
 	case SBNamespace:
 		return r.ID

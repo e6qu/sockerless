@@ -146,6 +146,46 @@ resource "azurerm_user_assigned_identity" "az_uai" {
   location            = azurerm_resource_group.az_rg.location
 }
 
+resource "azurerm_network_interface" "az_vm_nic" {
+  provider            = azurerm
+  name                = "tf-azrm-vm-nic"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurestack_subnet.main.id
+    private_ip_address_allocation = "Dynamic"
+    primary                       = true
+  }
+}
+
+resource "azurerm_linux_virtual_machine" "az_vm" {
+  provider                        = azurerm
+  name                            = "tf-azrm-vm"
+  resource_group_name             = azurerm_resource_group.az_rg.name
+  location                        = azurerm_resource_group.az_rg.location
+  size                            = "Standard_B1s"
+  admin_username                  = "azureuser"
+  admin_password                  = "Str0ng-password-12345!"
+  disable_password_authentication = false
+  network_interface_ids = [
+    azurerm_network_interface.az_vm_nic.id,
+  ]
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+}
+
 # Private DNS zone — sockerless's Azure DNS driver creates one of these
 # per cluster to resolve `<service>.internal` to cloud-internal IPs.
 resource "azurerm_private_dns_zone" "az_pdns" {

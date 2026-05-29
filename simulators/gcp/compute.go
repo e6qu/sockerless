@@ -213,6 +213,77 @@ type ComputeDisk struct {
 	PhysicalBlockSize string            `json:"physicalBlockSizeBytes,omitempty"`
 }
 
+type ComputeInstance struct {
+	Kind              string                    `json:"kind,omitempty"`
+	Id                string                    `json:"id,omitempty"`
+	Name              string                    `json:"name"`
+	SelfLink          string                    `json:"selfLink,omitempty"`
+	CreationTimestamp string                    `json:"creationTimestamp,omitempty"`
+	Description       string                    `json:"description,omitempty"`
+	Zone              string                    `json:"zone,omitempty"`
+	MachineType       string                    `json:"machineType,omitempty"`
+	Status            string                    `json:"status,omitempty"`
+	StatusMessage     string                    `json:"statusMessage,omitempty"`
+	Tags              *ComputeInstanceTags      `json:"tags,omitempty"`
+	Labels            map[string]string         `json:"labels,omitempty"`
+	LabelFingerprint  string                    `json:"labelFingerprint,omitempty"`
+	Metadata          *ComputeInstanceMetadata  `json:"metadata,omitempty"`
+	Disks             []ComputeInstanceDisk     `json:"disks,omitempty"`
+	NetworkInterfaces []ComputeNetworkInterface `json:"networkInterfaces,omitempty"`
+	CanIpForward      bool                      `json:"canIpForward,omitempty"`
+	Scheduling        map[string]any            `json:"scheduling,omitempty"`
+	ServiceAccounts   []map[string]any          `json:"serviceAccounts,omitempty"`
+}
+
+type ComputeInstanceTags struct {
+	Items       []string `json:"items,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"`
+}
+
+type ComputeInstanceMetadata struct {
+	Kind        string                        `json:"kind,omitempty"`
+	Fingerprint string                        `json:"fingerprint,omitempty"`
+	Items       []ComputeInstanceMetadataItem `json:"items,omitempty"`
+}
+
+type ComputeInstanceMetadataItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value,omitempty"`
+}
+
+type ComputeInstanceDisk struct {
+	Kind             string         `json:"kind,omitempty"`
+	Type             string         `json:"type,omitempty"`
+	Mode             string         `json:"mode,omitempty"`
+	Source           string         `json:"source,omitempty"`
+	DeviceName       string         `json:"deviceName,omitempty"`
+	Index            int64          `json:"index,omitempty"`
+	Boot             bool           `json:"boot,omitempty"`
+	AutoDelete       bool           `json:"autoDelete,omitempty"`
+	InitializeParams map[string]any `json:"initializeParams,omitempty"`
+	Interface        string         `json:"interface,omitempty"`
+}
+
+type ComputeNetworkInterface struct {
+	Kind          string                `json:"kind,omitempty"`
+	Name          string                `json:"name,omitempty"`
+	Network       string                `json:"network,omitempty"`
+	Subnetwork    string                `json:"subnetwork,omitempty"`
+	NetworkIP     string                `json:"networkIP,omitempty"`
+	StackType     string                `json:"stackType,omitempty"`
+	AccessConfigs []ComputeAccessConfig `json:"accessConfigs,omitempty"`
+	AliasIpRanges []map[string]string   `json:"aliasIpRanges,omitempty"`
+	Fingerprint   string                `json:"fingerprint,omitempty"`
+}
+
+type ComputeAccessConfig struct {
+	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Type        string `json:"type,omitempty"`
+	NatIP       string `json:"natIP,omitempty"`
+	NetworkTier string `json:"networkTier,omitempty"`
+}
+
 func registerCompute(srv *sim.Server) {
 	networks := sim.MakeStore[ComputeNetwork](srv.DB(), "compute_networks")
 	subnetworks := sim.MakeStore[ComputeSubnetwork](srv.DB(), "compute_subnetworks")
@@ -627,6 +698,8 @@ func registerCompute(srv *sim.Server) {
 		})
 	})
 
+	registerComputeCatalog(srv)
+	registerComputeInstances(srv)
 	registerComputeDisks(srv)
 	registerComputeZones(srv)
 }
@@ -672,6 +745,365 @@ func regionFromZone(zone string) string {
 	return zone
 }
 
+func registerComputeCatalog(srv *sim.Server) {
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/machineTypes/{machineType}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "machineType")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":        "compute#machineType",
+			"id":          computeNumericID(),
+			"name":        name,
+			"description": name,
+			"guestCpus":   2,
+			"memoryMb":    1024,
+			"zone":        fmt.Sprintf("projects/%s/zones/%s", project, zone),
+			"selfLink":    fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, name),
+		})
+	})
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/machineTypes", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		items := []map[string]any{}
+		for _, name := range []string{"e2-micro", "e2-small", "n1-standard-1"} {
+			items = append(items, map[string]any{
+				"kind":      "compute#machineType",
+				"id":        computeNumericID(),
+				"name":      name,
+				"guestCpus": 2,
+				"memoryMb":  1024,
+				"zone":      fmt.Sprintf("projects/%s/zones/%s", project, zone),
+				"selfLink":  fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, name),
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#machineTypeList", "items": items})
+	})
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/diskTypes/{diskType}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "diskType")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":     "compute#diskType",
+			"id":       computeNumericID(),
+			"name":     name,
+			"zone":     fmt.Sprintf("projects/%s/zones/%s", project, zone),
+			"selfLink": fmt.Sprintf("projects/%s/zones/%s/diskTypes/%s", project, zone, name),
+		})
+	})
+	imageJSON := func(project, name string) map[string]any {
+		return map[string]any{
+			"kind":              "compute#image",
+			"id":                computeNumericID(),
+			"name":              name,
+			"selfLink":          fmt.Sprintf("projects/%s/global/images/%s", project, name),
+			"status":            "READY",
+			"family":            strings.TrimSuffix(name, "-12"),
+			"archiveSizeBytes":  "1073741824",
+			"diskSizeGb":        "10",
+			"sourceType":        "RAW",
+			"creationTimestamp": time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/images/{image}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, imageJSON(sim.PathParam(r, "project"), sim.PathParam(r, "image")))
+	})
+	srv.HandleFunc("GET /compute/v1/projects/{project}/global/images/family/{family}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		family := sim.PathParam(r, "family")
+		name := family
+		if !strings.HasSuffix(name, "-12") {
+			name += "-12"
+		}
+		sim.WriteJSON(w, http.StatusOK, imageJSON(project, name))
+	})
+}
+
+func computeZoneOp(project, zone, target, opType string) map[string]any {
+	opID := generateUUID()[:8]
+	now := time.Now().UTC().Format(time.RFC3339)
+	return map[string]any{
+		"kind":          "compute#operation",
+		"id":            computeNumericID(),
+		"name":          "operation-" + opID,
+		"operationType": opType,
+		"status":        "DONE",
+		"selfLink":      fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
+		"targetLink":    target,
+		"targetId":      computeNumericID(),
+		"zone":          fmt.Sprintf("projects/%s/zones/%s", project, zone),
+		"progress":      100,
+		"insertTime":    now,
+		"startTime":     now,
+		"endTime":       now,
+	}
+}
+
+func registerComputeInstances(srv *sim.Server) {
+	instances := sim.MakeStore[ComputeInstance](srv.DB(), "compute_instances")
+
+	instanceSelfLink := func(project, zone, name string) string {
+		return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, name)
+	}
+
+	normalizeInstance := func(project, zone string, inst *ComputeInstance) {
+		inst.Kind = "compute#instance"
+		if inst.Id == "" {
+			inst.Id = computeNumericID()
+		}
+		inst.SelfLink = instanceSelfLink(project, zone, inst.Name)
+		inst.Zone = fmt.Sprintf("projects/%s/zones/%s", project, zone)
+		if inst.CreationTimestamp == "" {
+			inst.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		}
+		if inst.MachineType == "" {
+			inst.MachineType = fmt.Sprintf("projects/%s/zones/%s/machineTypes/e2-micro", project, zone)
+		} else if !strings.Contains(inst.MachineType, "/") {
+			inst.MachineType = fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, inst.MachineType)
+		}
+		inst.Status = "RUNNING"
+		if inst.LabelFingerprint == "" {
+			inst.LabelFingerprint = generateUUID()[:8]
+		}
+		if inst.Tags == nil {
+			inst.Tags = &ComputeInstanceTags{}
+		}
+		if inst.Tags.Fingerprint == "" {
+			inst.Tags.Fingerprint = generateUUID()[:8]
+		}
+		if inst.Metadata == nil {
+			inst.Metadata = &ComputeInstanceMetadata{}
+		}
+		inst.Metadata.Kind = "compute#metadata"
+		if inst.Metadata.Fingerprint == "" {
+			inst.Metadata.Fingerprint = generateUUID()[:8]
+		}
+		for i := range inst.Disks {
+			if inst.Disks[i].Kind == "" {
+				inst.Disks[i].Kind = "compute#attachedDisk"
+			}
+			if inst.Disks[i].Mode == "" {
+				inst.Disks[i].Mode = "READ_WRITE"
+			}
+			if inst.Disks[i].Type == "" {
+				inst.Disks[i].Type = "PERSISTENT"
+			}
+			if inst.Disks[i].Interface == "" {
+				inst.Disks[i].Interface = "SCSI"
+			}
+			if inst.Disks[i].DeviceName == "" {
+				inst.Disks[i].DeviceName = inst.Name
+			}
+			if inst.Disks[i].Source == "" {
+				inst.Disks[i].Source = fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, inst.Disks[i].DeviceName)
+			}
+			inst.Disks[i].Index = int64(i)
+		}
+		if len(inst.Disks) == 0 {
+			inst.Disks = []ComputeInstanceDisk{{
+				Kind:       "compute#attachedDisk",
+				Type:       "PERSISTENT",
+				Mode:       "READ_WRITE",
+				Source:     fmt.Sprintf("projects/%s/zones/%s/disks/%s", project, zone, inst.Name),
+				DeviceName: inst.Name,
+				Index:      0,
+				Boot:       true,
+				AutoDelete: true,
+				Interface:  "SCSI",
+			}}
+		}
+		for i := range inst.NetworkInterfaces {
+			if inst.NetworkInterfaces[i].Kind == "" {
+				inst.NetworkInterfaces[i].Kind = "compute#networkInterface"
+			}
+			if inst.NetworkInterfaces[i].Name == "" {
+				inst.NetworkInterfaces[i].Name = fmt.Sprintf("nic%d", i)
+			}
+			if inst.NetworkInterfaces[i].Network == "" {
+				inst.NetworkInterfaces[i].Network = fmt.Sprintf("projects/%s/global/networks/default", project)
+			}
+			if inst.NetworkInterfaces[i].NetworkIP == "" {
+				inst.NetworkInterfaces[i].NetworkIP = fmt.Sprintf("10.128.0.%d", i+4)
+			}
+			if inst.NetworkInterfaces[i].StackType == "" {
+				inst.NetworkInterfaces[i].StackType = "IPV4_ONLY"
+			}
+			if inst.NetworkInterfaces[i].Fingerprint == "" {
+				inst.NetworkInterfaces[i].Fingerprint = generateUUID()[:8]
+			}
+			for j := range inst.NetworkInterfaces[i].AccessConfigs {
+				if inst.NetworkInterfaces[i].AccessConfigs[j].Kind == "" {
+					inst.NetworkInterfaces[i].AccessConfigs[j].Kind = "compute#accessConfig"
+				}
+				if inst.NetworkInterfaces[i].AccessConfigs[j].Name == "" {
+					inst.NetworkInterfaces[i].AccessConfigs[j].Name = "External NAT"
+				}
+				if inst.NetworkInterfaces[i].AccessConfigs[j].Type == "" {
+					inst.NetworkInterfaces[i].AccessConfigs[j].Type = "ONE_TO_ONE_NAT"
+				}
+				if inst.NetworkInterfaces[i].AccessConfigs[j].NetworkTier == "" {
+					inst.NetworkInterfaces[i].AccessConfigs[j].NetworkTier = "PREMIUM"
+				}
+			}
+		}
+		if len(inst.NetworkInterfaces) == 0 {
+			inst.NetworkInterfaces = []ComputeNetworkInterface{{
+				Kind:        "compute#networkInterface",
+				Name:        "nic0",
+				Network:     fmt.Sprintf("projects/%s/global/networks/default", project),
+				NetworkIP:   "10.128.0.4",
+				StackType:   "IPV4_ONLY",
+				Fingerprint: generateUUID()[:8],
+			}}
+		}
+	}
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		var inst ComputeInstance
+		if err := sim.ReadJSON(r, &inst); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if inst.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		normalizeInstance(project, zone, &inst)
+		instances.Put(inst.SelfLink, inst)
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, inst.SelfLink, "insert"))
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/instances/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		inst, ok := instances.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, inst)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/instances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		prefix := fmt.Sprintf("projects/%s/zones/%s/instances/", project, zone)
+		items := instances.Filter(func(inst ComputeInstance) bool {
+			return strings.HasPrefix(inst.SelfLink, prefix)
+		})
+		if items == nil {
+			items = []ComputeInstance{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceList", "items": items})
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/aggregated/instances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		prefix := fmt.Sprintf("projects/%s/zones/", project)
+		all := instances.Filter(func(inst ComputeInstance) bool {
+			return strings.HasPrefix(inst.SelfLink, prefix)
+		})
+		grouped := map[string]map[string]any{}
+		for _, inst := range all {
+			rest := strings.TrimPrefix(inst.SelfLink, prefix)
+			zone, _, ok := strings.Cut(rest, "/")
+			if !ok {
+				continue
+			}
+			key := "zones/" + zone
+			entry, exists := grouped[key]
+			if !exists {
+				entry = map[string]any{"instances": []ComputeInstance{}}
+				grouped[key] = entry
+			}
+			entry["instances"] = append(entry["instances"].([]ComputeInstance), inst)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceAggregatedList", "items": grouped})
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/zones/{zone}/instances/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		if _, ok := instances.Get(selfLink); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		instances.Delete(selfLink)
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "delete"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = "TERMINATED" }); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "stop"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances/{name}/start", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = "RUNNING" }); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "start"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances/{name}/setLabels", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		var req struct {
+			Labels map[string]string `json:"labels"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+			inst.Labels = req.Labels
+			inst.LabelFingerprint = generateUUID()[:8]
+		}); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setLabels"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances/{name}/setTags", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceSelfLink(project, zone, name)
+		var req ComputeInstanceTags
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+			inst.Tags = &req
+			inst.Tags.Fingerprint = generateUUID()[:8]
+		}); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setTags"))
+	})
+}
+
 // registerComputeDisks wires the zonal Compute Disks REST surface that
 // 's `pd-ephemeral` storage driver provisions against. Real
 // GCP exposes Disks via `compute#disk` at
@@ -681,26 +1113,6 @@ func regionFromZone(zone string) string {
 // aggregated-list, all returning zonal operations the SDK polls.
 func registerComputeDisks(srv *sim.Server) {
 	disks := sim.MakeStore[ComputeDisk](srv.DB(), "compute_disks")
-
-	zoneOp := func(project, zone, target, opType string) map[string]any {
-		opID := generateUUID()[:8]
-		now := time.Now().UTC().Format(time.RFC3339)
-		return map[string]any{
-			"kind":          "compute#operation",
-			"id":            computeNumericID(),
-			"name":          "operation-" + opID,
-			"operationType": opType,
-			"status":        "DONE",
-			"selfLink":      fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID),
-			"targetLink":    target,
-			"targetId":      computeNumericID(),
-			"zone":          fmt.Sprintf("projects/%s/zones/%s", project, zone),
-			"progress":      100,
-			"insertTime":    now,
-			"startTime":     now,
-			"endTime":       now,
-		}
-	}
 
 	// Insert (create disk) — POST .../zones/{zone}/disks
 	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/disks", func(w http.ResponseWriter, r *http.Request) {
@@ -729,7 +1141,7 @@ func registerComputeDisks(srv *sim.Server) {
 		}
 		d.LabelFingerprint = generateUUID()[:8]
 		disks.Put(d.SelfLink, d)
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, d.SelfLink, "insert"))
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, d.SelfLink, "insert"))
 	})
 
 	// Get
@@ -774,7 +1186,7 @@ func registerComputeDisks(srv *sim.Server) {
 			return
 		}
 		disks.Delete(selfLink)
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "delete"))
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "delete"))
 	})
 
 	// Resize — POST .../disks/{name}/resize with body {sizeGb}
@@ -799,7 +1211,7 @@ func registerComputeDisks(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "resize"))
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "resize"))
 	})
 
 	// SetLabels — POST .../disks/{name}/setLabels with body {labels, labelFingerprint}
@@ -824,7 +1236,7 @@ func registerComputeDisks(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, zoneOp(project, zone, selfLink, "setLabels"))
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setLabels"))
 	})
 
 	// Aggregated list — GET /compute/v1/projects/{p}/aggregated/disks.

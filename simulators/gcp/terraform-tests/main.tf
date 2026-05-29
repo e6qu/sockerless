@@ -80,6 +80,27 @@ resource "google_compute_firewall" "tf_fw" {
   source_ranges = ["0.0.0.0/0"]
 }
 
+resource "google_compute_instance" "tf_vm" {
+  name         = "tf-test-vm"
+  machine_type = "e2-micro"
+  zone         = "us-central1-a"
+
+  boot_disk {
+    initialize_params {
+      image = "projects/debian-cloud/global/images/debian-12"
+      size  = 10
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.tf_subnet.id
+  }
+
+  labels = {
+    env = "terraform"
+  }
+}
+
 # ---------- DNS (public + private zone) ----------
 
 resource "google_dns_managed_zone" "main" {

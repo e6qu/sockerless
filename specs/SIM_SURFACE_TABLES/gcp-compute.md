@@ -50,4 +50,5 @@ Surface registered in `simulators/gcp/compute.go` (and related files grouped und
 - Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
 
 <!-- HAND-WRITTEN BEGIN -->
+Issue #266 closed the Compute Engine VM lifecycle gap. Zonal instance insert/get/list/delete/start/stop, aggregated instances, labels/tags, machine types, disk types, images, attached disks, and NIC metadata are covered by `simulators/gcp/sdk-tests/compute_test.go`, `simulators/gcp/cli-tests/compute_instances_test.go`, and `simulators/gcp/terraform-tests/main.tf` through `google_compute_instance`.
 <!-- HAND-WRITTEN END -->

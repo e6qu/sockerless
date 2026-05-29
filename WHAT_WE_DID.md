@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-29 — VM/instance compute API parity
+
+Issue #266 was valid. The foundational audit found that the simulators had network/storage prerequisites for VM-like workloads but not the VM control planes themselves: AWS EC2 lacked instance lifecycle APIs, GCP Compute lacked `instances`, and Azure lacked `Microsoft.Compute/virtualMachines` plus the NIC/public-IP resources VMs wire through.
+
+The fix added public-cloud-compatible VM slices without leaking local execution machinery into public APIs. AWS EC2 now supports `RunInstances`, `DescribeInstances`, `StopInstances`, `StartInstances`, `TerminateInstances`, `DescribeInstanceStatus`, ENI attachment state, subnet-backed private IP allocation, image/key-pair discovery, and tag mutation. GCP Compute now supports instance create/get/list/aggregated-list/start/stop/delete, labels, tags, metadata, attached disks, NICs, machine types, disk types, images, and zonal operations. Azure now supports `Microsoft.Network/networkInterfaces`, `Microsoft.Network/publicIPAddresses`, and `Microsoft.Compute/virtualMachines` with ARM create/get/list/delete, `instanceView`, and power-state operations.
+
+Coverage uses all three required external surfaces: official SDK tests, vendor CLI flows (`aws ec2`, `gcloud compute instances`, and `az rest`), and Terraform resources (`aws_instance`, `google_compute_instance`, `azurerm_network_interface`, `azurerm_linux_virtual_machine`). Direct smoke checks against local simulator processes verified the new AWS/GCP/Azure wire paths; full Docker-backed SDK/CLI/Terraform harness execution remains the CI path.
+
 ## 2026-05-29 — Azure Entra per-resource token audiences
 
 Issue #272 was valid. The Azure simulator had already moved its OAuth token endpoint to real-shape RS256 JWTs with a published JWKS, but the payload still hardcoded the ARM audience for every token. That was enough for ARM-only clients and not enough for data-plane SDK paths: Key Vault requests `https://vault.azure.net/.default`, Service Bus requests `https://servicebus.azure.net`, and Storage AAD paths request `https://storage.azure.com/.default`.
