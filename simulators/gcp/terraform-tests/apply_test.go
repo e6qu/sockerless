@@ -104,7 +104,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
 
 	bqTableID := outputs.must(t, "bigquery_table_id")
-	require.Contains(t, bqTableID, "tf_test_dataset/events",
+	require.Contains(t, bqTableID, "/datasets/tf_test_dataset/tables/events",
 		"BigQuery table id must include dataset/table; got %s", bqTableID)
 
 	fsDocName := outputs.must(t, "firestore_document_name")

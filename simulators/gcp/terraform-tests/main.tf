@@ -241,8 +241,9 @@ resource "google_bigquery_dataset" "tf_bq_dataset" {
 }
 
 resource "google_bigquery_table" "tf_bq_table" {
-  dataset_id = google_bigquery_dataset.tf_bq_dataset.dataset_id
-  table_id   = "events"
+  dataset_id          = google_bigquery_dataset.tf_bq_dataset.dataset_id
+  table_id            = "events"
+  deletion_protection = false
 
   schema = jsonencode([
     {

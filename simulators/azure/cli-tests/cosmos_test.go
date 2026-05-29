@@ -11,7 +11,7 @@ func TestAzureCosmosDB_ARMAndDataPlaneRESTCLIFlows(t *testing.T) {
 	account := "clicosmos"
 	armBase := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account, "2024-05-15")
 	runCLI(t, azRest("PUT", armBase, `{"location":"eastus","kind":"GlobalDocumentDB","properties":{"databaseAccountOfferType":"Standard"}}`))
-	runCLI(t, azRest("POST", armBase+"/listKeys?api-version=2024-05-15", ""))
+	runCLI(t, azRest("POST", strings.Replace(armBase, "?api-version=", "/listKeys?api-version=", 1), ""))
 
 	dbURL := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account+"/sqlDatabases/appdb", "2024-05-15")
 	runCLI(t, azRest("PUT", dbURL, `{"properties":{"resource":{"id":"appdb"}}}`))

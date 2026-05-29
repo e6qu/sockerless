@@ -162,6 +162,7 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Properties {
 		props[k] = v
 	}
+	cosmosEnsureBackupPolicy(props)
 	a := CosmosAccount{
 		ID:         id,
 		Name:       name,
@@ -173,6 +174,23 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	cosmosAccounts.Put(id, a)
 	sim.WriteJSON(w, http.StatusOK, a)
+}
+
+func cosmosEnsureBackupPolicy(props map[string]any) {
+	backupPolicy, _ := props["backupPolicy"].(map[string]any)
+	if backupPolicy == nil {
+		backupPolicy = map[string]any{}
+	}
+	if backupPolicy["type"] == nil || fmt.Sprint(backupPolicy["type"]) == "" {
+		backupPolicy["type"] = "Periodic"
+	}
+	if backupPolicy["type"] == "Periodic" && backupPolicy["periodicModeProperties"] == nil {
+		backupPolicy["periodicModeProperties"] = map[string]any{
+			"backupIntervalInMinutes":        240,
+			"backupRetentionIntervalInHours": 8,
+		}
+	}
+	props["backupPolicy"] = backupPolicy
 }
 
 func handleCosmosGetAccount(w http.ResponseWriter, r *http.Request) {

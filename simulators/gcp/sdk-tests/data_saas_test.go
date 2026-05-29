@@ -58,7 +58,7 @@ func TestBigQuery_DatasetTableQueryLifecycle(t *testing.T) {
 	}).Do()
 	require.NoError(t, err)
 	require.True(t, q.JobComplete)
-	require.Equal(t, int64(1), q.TotalRows)
+	require.Equal(t, uint64(1), q.TotalRows)
 	require.Len(t, q.Rows, 1)
 	assert.Equal(t, "evt-2", q.Rows[0].F[0].V)
 }
