@@ -7,84 +7,89 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing
-- 501 — stubbed with `NotImplemented` envelope (wire-visible gap)
-- n/a — no terraform-provider resource exists for this subresource
+- n/a — no current terraform-provider resource wraps this exact operation
 
 ## Versioning, lifecycle, configuration
 
-| Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
-|---|---|---|---|---|---|
-| PutBucketVersioning | `PUT /{bucket}?versioning` | ✓ `s3_bucket_subresources.go::handleS3PutBucketSubresource` | ✓ `s3_bucket_subresources_test.go::TestS3_Bucket_Versioning_RoundTrip` | ✓ `aws_s3_bucket_versioning` | |
-| GetBucketVersioning | `GET /{bucket}?versioning` | ✓ `s3.go::handleS3GetBucket` | ✓ same | ✓ same | |
-| PutBucketLifecycleConfiguration | `PUT /{bucket}?lifecycle` | ✓ same | ✓ `TestS3_Bucket_Lifecycle_RoundTrip` | ✗ | tf: `aws_s3_bucket_lifecycle_configuration` |
-| GetBucketLifecycleConfiguration | `GET /{bucket}?lifecycle` | ✓ same | ✓ same | ✗ | |
-| DeleteBucketLifecycle | `DELETE /{bucket}?lifecycle` | ✓ `handleS3DeleteBucketSubresource` | ✓ same | ✗ | |
-| PutBucketCors | `PUT /{bucket}?cors` | ✓ same | ✓ `TestS3_Bucket_Cors_RoundTrip` | ✓ `aws_s3_bucket_cors_configuration` | |
-| GetBucketCors | `GET /{bucket}?cors` | ✓ same | ✓ same | ✓ same | |
-| DeleteBucketCors | `DELETE /{bucket}?cors` | ✓ same | ✓ same | ✗ | |
-| PutBucketPolicy | `PUT /{bucket}?policy` | ✓ same | ✓ `TestS3_Bucket_Policy_RoundTrip` | ✗ | tf: `aws_s3_bucket_policy` |
-| GetBucketPolicy | `GET /{bucket}?policy` | ✓ same | ✓ same | ✗ | |
-| DeleteBucketPolicy | `DELETE /{bucket}?policy` | ✓ same | ✓ same | ✗ | |
-| PutBucketEncryption | `PUT /{bucket}?encryption` | ✓ same | ✓ `TestS3_Bucket_Encryption_RoundTrip` | ✓ `aws_s3_bucket_server_side_encryption_configuration` | |
-| GetBucketEncryption | `GET /{bucket}?encryption` | ✓ same | ✓ same | ✓ same | |
-| DeleteBucketEncryption | `DELETE /{bucket}?encryption` | ✓ same | ✓ same | ✗ | |
-| PutBucketReplication | `PUT /{bucket}?replication` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_replication_configuration` — needs Source role + destination bucket; deferred to a later phase. |
-| GetBucketReplication | `GET /{bucket}?replication` | ✓ same | ✗ | ✗ | |
-| DeleteBucketReplication | `DELETE /{bucket}?replication` | ✓ same | ✗ | ✗ | |
-| PutBucketTagging | `PUT /{bucket}?tagging` | ✓ same | ✓ `TestS3_Bucket_Tagging_RoundTrip` | ✗ | tf: managed via `aws_s3_bucket.tags` |
-| GetBucketTagging | `GET /{bucket}?tagging` | ✓ same | ✓ same | ✗ | |
-| DeleteBucketTagging | `DELETE /{bucket}?tagging` | ✓ same | ✓ same | ✗ | |
-| PutBucketWebsite | `PUT /{bucket}?website` | ✓ same | ✓ `TestS3_Bucket_Website_RoundTrip` | ✓ `aws_s3_bucket_website_configuration` | |
-| GetBucketWebsite | `GET /{bucket}?website` | ✓ same | ✓ same | ✓ same | |
-| DeleteBucketWebsite | `DELETE /{bucket}?website` | ✓ same | ✓ same | ✗ | |
-| PutBucketLogging | `PUT /{bucket}?logging` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_logging` |
-| GetBucketLogging | `GET /{bucket}?logging` | ✓ same | ✗ | ✗ | |
-| PutBucketAcl | `PUT /{bucket}?acl` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_acl` |
-| GetBucketAcl | `GET /{bucket}?acl` | ✓ same | ✗ | ✗ | |
-| PutBucketRequestPayment | `PUT /{bucket}?requestPayment` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_request_payment_configuration` |
-| GetBucketRequestPayment | `GET /{bucket}?requestPayment` | ✓ same | ✗ | ✗ | |
-| PutBucketAccelerateConfiguration | `PUT /{bucket}?accelerate` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_accelerate_configuration` |
-| GetBucketAccelerateConfiguration | `GET /{bucket}?accelerate` | ✓ same | ✗ | ✗ | |
-| PutBucketOwnershipControls | `PUT /{bucket}?ownershipControls` | ✓ same | ✗ | ✓ `aws_s3_bucket_ownership_controls` | |
-| GetBucketOwnershipControls | `GET /{bucket}?ownershipControls` | ✓ same | ✗ | ✓ same | |
-| DeleteBucketOwnershipControls | `DELETE /{bucket}?ownershipControls` | ✓ same | ✗ | ✗ | |
-| PutBucketNotificationConfiguration | `PUT /{bucket}?notification` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_notification` |
-| GetBucketNotificationConfiguration | `GET /{bucket}?notification` | ✓ same | ✗ | ✗ | |
-| PutPublicAccessBlock | `PUT /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✓ `aws_s3_bucket_public_access_block` | |
-| GetPublicAccessBlock | `GET /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✓ same | |
-| DeletePublicAccessBlock | `DELETE /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✗ | |
-| PutObjectLockConfiguration | `PUT /{bucket}?object-lock` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_object_lock_configuration` |
-| GetObjectLockConfiguration | `GET /{bucket}?object-lock` | ✓ same | ✗ | ✗ | |
-| PutBucketIntelligentTieringConfiguration | `PUT /{bucket}?intelligent-tiering&id={id}` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_intelligent_tiering_configuration` |
-| ListBucketIntelligentTieringConfigurations | `GET /{bucket}?intelligent-tiering` | ✓ same | ✗ | ✗ | |
-| DeleteBucketIntelligentTieringConfiguration | `DELETE /{bucket}?intelligent-tiering&id={id}` | ✓ same | ✗ | ✗ | |
-| PutBucketInventoryConfiguration | `PUT /{bucket}?inventory&id={id}` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_inventory` |
-| ListBucketInventoryConfigurations | `GET /{bucket}?inventory` | ✓ same | ✗ | ✗ | |
-| DeleteBucketInventoryConfiguration | `DELETE /{bucket}?inventory&id={id}` | ✓ same | ✗ | ✗ | |
-| PutBucketAnalyticsConfiguration | `PUT /{bucket}?analytics&id={id}` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_analytics_configuration` |
-| ListBucketAnalyticsConfigurations | `GET /{bucket}?analytics` | ✓ same | ✗ | ✗ | |
-| DeleteBucketAnalyticsConfiguration | `DELETE /{bucket}?analytics&id={id}` | ✓ same | ✗ | ✗ | |
-| PutBucketMetricsConfiguration | `PUT /{bucket}?metrics&id={id}` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_metric` |
-| ListBucketMetricsConfigurations | `GET /{bucket}?metrics` | ✓ same | ✗ | ✗ | |
-| DeleteBucketMetricsConfiguration | `DELETE /{bucket}?metrics&id={id}` | ✓ same | ✗ | ✗ | |
-| GetBucketLocation | `GET /{bucket}?location` | ✓ same | ✗ | ✗ | |
-| GetBucketPolicyStatus | `GET /{bucket}?policyStatus` | ✓ same | ✗ | ✗ | |
+| Operation | Verb + path | sim handler | sdk-test | cli-test | tf-test | notes |
+|---|---|---|---|---|---|---|
+| PutBucketVersioning | `PUT /{bucket}?versioning` | ✓ `s3_bucket_subresources.go::handleS3PutBucketSubresource` | ✓ `TestS3_Bucket_Versioning_RoundTrip` | ✓ `TestS3API_BucketSubresourceCoverage` | ✓ `aws_s3_bucket_versioning` | |
+| GetBucketVersioning | `GET /{bucket}?versioning` | ✓ `s3.go::handleS3GetBucket` | ✓ same | ✓ same | ✓ same | |
+| PutBucketLifecycleConfiguration | `PUT /{bucket}?lifecycle` | ✓ same | ✓ `TestS3_Bucket_Lifecycle_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_lifecycle_configuration` | Includes `x-amz-transition-default-minimum-object-size` response header. |
+| GetBucketLifecycleConfiguration | `GET /{bucket}?lifecycle` | ✓ same | ✓ same | ✓ same | ✓ same | Includes `x-amz-transition-default-minimum-object-size` response header. |
+| DeleteBucketLifecycle | `DELETE /{bucket}?lifecycle` | ✓ `handleS3DeleteBucketSubresource` | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_lifecycle_configuration` | |
+| PutBucketCors | `PUT /{bucket}?cors` | ✓ same | ✓ `TestS3_Bucket_Cors_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_cors_configuration` | |
+| GetBucketCors | `GET /{bucket}?cors` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketCors | `DELETE /{bucket}?cors` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_cors_configuration` | |
+| PutBucketPolicy | `PUT /{bucket}?policy` | ✓ same | ✓ `TestS3_Bucket_Policy_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_policy` | |
+| GetBucketPolicy | `GET /{bucket}?policy` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketPolicy | `DELETE /{bucket}?policy` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_policy` | |
+| GetBucketPolicyStatus | `GET /{bucket}?policyStatus` | ✓ same | ✓ same | ✓ same | n/a | |
+| PutBucketEncryption | `PUT /{bucket}?encryption` | ✓ same | ✓ `TestS3_Bucket_Encryption_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_server_side_encryption_configuration` | |
+| GetBucketEncryption | `GET /{bucket}?encryption` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketEncryption | `DELETE /{bucket}?encryption` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_server_side_encryption_configuration` | |
+| PutBucketReplication | `PUT /{bucket}?replication` | ✓ same | ✓ `TestS3_Bucket_Replication_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_replication_configuration` | |
+| GetBucketReplication | `GET /{bucket}?replication` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketReplication | `DELETE /{bucket}?replication` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_replication_configuration` | |
+| PutBucketTagging | `PUT /{bucket}?tagging` | ✓ same | ✓ `TestS3_Bucket_Tagging_RoundTrip` | ✓ same | ✓ `aws_s3_bucket.tags` | |
+| GetBucketTagging | `GET /{bucket}?tagging` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketTagging | `DELETE /{bucket}?tagging` | ✓ same | ✓ same | ✓ same | n/a | Provider manages bucket tags through bucket create/update. |
+| PutBucketWebsite | `PUT /{bucket}?website` | ✓ same | ✓ `TestS3_Bucket_Website_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_website_configuration` | |
+| GetBucketWebsite | `GET /{bucket}?website` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketWebsite | `DELETE /{bucket}?website` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_website_configuration` | |
+| PutBucketLogging | `PUT /{bucket}?logging` | ✓ same | ✓ `TestS3_Bucket_LoggingAclRequestPaymentAccelerate_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_logging` | |
+| GetBucketLogging | `GET /{bucket}?logging` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutBucketAcl | `PUT /{bucket}?acl` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_acl` | |
+| GetBucketAcl | `GET /{bucket}?acl` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutBucketRequestPayment | `PUT /{bucket}?requestPayment` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_request_payment_configuration` | |
+| GetBucketRequestPayment | `GET /{bucket}?requestPayment` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutBucketAccelerateConfiguration | `PUT /{bucket}?accelerate` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_accelerate_configuration` | |
+| GetBucketAccelerateConfiguration | `GET /{bucket}?accelerate` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutBucketOwnershipControls | `PUT /{bucket}?ownershipControls` | ✓ same | ✓ `TestS3_Bucket_OwnershipNotificationPublicAccessObjectLock_RoundTrip` | ✓ same | ✓ `aws_s3_bucket_ownership_controls` | |
+| GetBucketOwnershipControls | `GET /{bucket}?ownershipControls` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeleteBucketOwnershipControls | `DELETE /{bucket}?ownershipControls` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_ownership_controls` | |
+| PutBucketNotificationConfiguration | `PUT /{bucket}?notification` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_notification` | |
+| GetBucketNotificationConfiguration | `GET /{bucket}?notification` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutPublicAccessBlock | `PUT /{bucket}?publicAccessBlock` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_public_access_block` | |
+| GetPublicAccessBlock | `GET /{bucket}?publicAccessBlock` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| DeletePublicAccessBlock | `DELETE /{bucket}?publicAccessBlock` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_public_access_block` | |
+| PutObjectLockConfiguration | `PUT /{bucket}?object-lock` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_object_lock_configuration` | |
+| GetObjectLockConfiguration | `GET /{bucket}?object-lock` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| PutBucketIntelligentTieringConfiguration | `PUT /{bucket}?intelligent-tiering&id={id}` | ✓ same | ✓ `TestS3_Bucket_NamedConfiguration_RoundTrips` | ✓ same | ✓ `aws_s3_bucket_intelligent_tiering_configuration` | |
+| GetBucketIntelligentTieringConfiguration | `GET /{bucket}?intelligent-tiering&id={id}` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| ListBucketIntelligentTieringConfigurations | `GET /{bucket}?intelligent-tiering` | ✓ same | ✓ same | ✓ same | n/a | Terraform resource reads by name. |
+| DeleteBucketIntelligentTieringConfiguration | `DELETE /{bucket}?intelligent-tiering&id={id}` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_intelligent_tiering_configuration` | |
+| PutBucketInventoryConfiguration | `PUT /{bucket}?inventory&id={id}` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_inventory` | |
+| GetBucketInventoryConfiguration | `GET /{bucket}?inventory&id={id}` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| ListBucketInventoryConfigurations | `GET /{bucket}?inventory` | ✓ same | ✓ same | ✓ same | n/a | Terraform resource reads by name. |
+| DeleteBucketInventoryConfiguration | `DELETE /{bucket}?inventory&id={id}` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_inventory` | |
+| PutBucketAnalyticsConfiguration | `PUT /{bucket}?analytics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_analytics_configuration` | |
+| GetBucketAnalyticsConfiguration | `GET /{bucket}?analytics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| ListBucketAnalyticsConfigurations | `GET /{bucket}?analytics` | ✓ same | ✓ same | ✓ same | n/a | Terraform resource reads by name. |
+| DeleteBucketAnalyticsConfiguration | `DELETE /{bucket}?analytics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_analytics_configuration` | |
+| PutBucketMetricsConfiguration | `PUT /{bucket}?metrics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ `aws_s3_bucket_metric` | |
+| GetBucketMetricsConfiguration | `GET /{bucket}?metrics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ same | |
+| ListBucketMetricsConfigurations | `GET /{bucket}?metrics` | ✓ same | ✓ same | ✓ same | n/a | Terraform resource reads by name. |
+| DeleteBucketMetricsConfiguration | `DELETE /{bucket}?metrics&id={id}` | ✓ same | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket_metric` | |
+| GetBucketLocation | `GET /{bucket}?location` | ✓ same | ✓ `TestS3_Bucket_LifecycleHeadDeleteListAndLocation` | ✓ same | ✓ `aws_s3_bucket` read | |
 
 ## Bucket lifecycle (Create / Delete / List)
 
-| Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
-|---|---|---|---|---|---|
-| CreateBucket | `PUT /{bucket}` (no subresource) | ✓ `s3.go::handleS3CreateBucket` | ✓ existing | ✓ `aws_s3_bucket` | |
-| HeadBucket | `HEAD /{bucket}` | ✓ same | ✗ | ✗ | |
-| DeleteBucket | `DELETE /{bucket}` (no subresource) | ✓ same | ✗ | ✗ | |
-| ListBuckets | `GET /` | ✓ `s3.go::handleS3ListBuckets` | ✗ | ✗ | |
+| Operation | Verb + path | sim handler | sdk-test | cli-test | tf-test | notes |
+|---|---|---|---|---|---|---|
+| CreateBucket | `PUT /{bucket}` (no subresource) | ✓ `s3.go::handleS3CreateBucket` | ✓ existing + `TestS3_Bucket_LifecycleHeadDeleteListAndLocation` | ✓ `TestS3API_BucketSubresourceCoverage` | ✓ `aws_s3_bucket` | |
+| HeadBucket | `HEAD /{bucket}` | ✓ `s3.go::handleS3HeadBucket` | ✓ `TestS3_Bucket_LifecycleHeadDeleteListAndLocation` | ✓ same | ✓ `aws_s3_bucket` read | |
+| DeleteBucket | `DELETE /{bucket}` (no subresource) | ✓ `s3.go::handleS3DeleteBucket` | ✓ same | ✓ same | ✓ destroy of `aws_s3_bucket` | |
+| ListBuckets | `GET /` | ✓ `s3.go::handleS3ListBuckets` | ✓ same | ✓ same | n/a | Terraform bucket resources read by bucket name. |
 
 ## Coverage status
 
-- Terraform coverage currently exists for the bucket resource plus versioning, CORS, server-side encryption, website, public access block, and ownership controls in `simulators/aws/terraform-tests/main.tf`.
-- Remaining ✗ rows are concrete row-level coverage gaps, not closed historical deferrals. They are tracked by BUG-1226 / issue #285 so follow-up work can add SDK/CLI/Terraform coverage through the public S3 API where those surfaces exist, mark true n/a rows, or split any behavior mismatch into its own implementation bug.
+- SDK coverage for the table lives in `simulators/aws/sdk-tests/s3_bucket_subresources_test.go`.
+- CLI coverage for the table lives in `simulators/aws/cli-tests/s3_test.go::TestS3API_BucketSubresourceCoverage`.
+- Terraform coverage lives in `simulators/aws/terraform-tests/main.tf` and is asserted by `simulators/aws/terraform-tests/apply_test.go`.
+- No silent ✗ rows remained after issue #285 / BUG-1226 closed. Rows marked `n/a` are operations that the current Terraform AWS provider does not expose as an independent resource operation; the SDK and CLI still exercise the public S3 API where available.
 
 ## Reopens that produced this table
 
 - Issue [#201](https://github.com/e6qu/sockerless/issues/201) — bucket-level PUT subresources routed to CreateBucket → 409 BucketAlreadyOwnedByYou. PR #200's `s3_subresources.go` only covered the object-level PUT/POST surface the user named. This table exists so the next reopen of this shape never repeats.
+- Issue [#285](https://github.com/e6qu/sockerless/issues/285) — remaining bucket-subresource row-level client coverage was completed through official SDK, AWS CLI, and Terraform-provider paths where those surfaces exist.

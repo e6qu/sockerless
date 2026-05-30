@@ -122,6 +122,8 @@ func TestStackProductionShape(t *testing.T) {
 	s3ARN := outputs.must(t, "s3_bucket_arn")
 	require.True(t, strings.HasPrefix(s3ARN, "arn:aws:s3:::tf-test-runner-bucket"),
 		"S3 bucket ARN must be the canonical arn:aws:s3:::<bucket> shape; got %s", s3ARN)
+	require.Equal(t, "test", outputs.must(t, "s3_bucket_tags_env"),
+		"aws_s3_bucket.tags must round-trip through bucket tagging")
 
 	ddbARN := outputs.must(t, "dynamodb_table_arn")
 	require.True(t, strings.HasPrefix(ddbARN, "arn:aws:dynamodb:us-east-1:"),
@@ -154,14 +156,40 @@ func TestStackProductionShape(t *testing.T) {
 	// to parse the value and the output is empty / wrong.
 	require.Equal(t, "Enabled", outputs.must(t, "s3_bucket_versioning_status"),
 		"PutBucketVersioning Status must round-trip through GetBucketVersioning")
+	require.Equal(t, "expire-30d", outputs.must(t, "s3_bucket_lifecycle_id"),
+		"PutBucketLifecycleConfiguration rule id must round-trip")
 	require.Equal(t, "https://app.example.com", outputs.must(t, "s3_bucket_cors_origin"),
 		"PutBucketCors allowed_origins[0] must round-trip")
+	require.Equal(t, "tf-test-runner-bucket", outputs.must(t, "s3_bucket_policy_bucket"),
+		"PutBucketPolicy must round-trip through GetBucketPolicy")
 	require.Equal(t, "AES256", outputs.must(t, "s3_bucket_sse_algorithm"),
 		"PutBucketEncryption sse_algorithm must round-trip")
+	require.Equal(t, "replicate-logs", outputs.must(t, "s3_bucket_replication_rule_id"),
+		"PutBucketReplication rule id must round-trip")
+	require.Equal(t, "logs/", outputs.must(t, "s3_bucket_logging_target_prefix"),
+		"PutBucketLogging target_prefix must round-trip")
+	require.Equal(t, "private", outputs.must(t, "s3_bucket_acl_value"),
+		"PutBucketAcl acl must round-trip")
+	require.Equal(t, "Requester", outputs.must(t, "s3_bucket_request_payment_payer"),
+		"PutBucketRequestPayment payer must round-trip")
+	require.Equal(t, "Enabled", outputs.must(t, "s3_bucket_accelerate_status"),
+		"PutBucketAccelerateConfiguration status must round-trip")
 	require.Equal(t, "index.html", outputs.must(t, "s3_bucket_website_index"),
 		"PutBucketWebsite IndexDocument.Suffix must round-trip")
 	require.Equal(t, "BucketOwnerEnforced", outputs.must(t, "s3_bucket_ownership"),
 		"PutBucketOwnershipControls object_ownership must round-trip")
+	require.Equal(t, "queue-created", outputs.must(t, "s3_bucket_notification_queue_id"),
+		"PutBucketNotificationConfiguration queue id must round-trip")
+	require.Equal(t, "GOVERNANCE", outputs.must(t, "s3_bucket_object_lock_mode"),
+		"PutObjectLockConfiguration mode must round-trip")
+	require.Equal(t, "archive-tier", outputs.must(t, "s3_bucket_intelligent_tiering_name"),
+		"PutBucketIntelligentTieringConfiguration name must round-trip")
+	require.Equal(t, "inventory-current", outputs.must(t, "s3_bucket_inventory_name"),
+		"PutBucketInventoryConfiguration name must round-trip")
+	require.Equal(t, "analytics-all", outputs.must(t, "s3_bucket_analytics_name"),
+		"PutBucketAnalyticsConfiguration name must round-trip")
+	require.Equal(t, "metrics-prefix", outputs.must(t, "s3_bucket_metric_name"),
+		"PutBucketMetricsConfiguration name must round-trip")
 
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()

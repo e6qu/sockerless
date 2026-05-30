@@ -534,6 +534,26 @@ resource "aws_cloudfront_distribution" "tf_dist" {
 resource "aws_s3_bucket" "tf_bucket" {
   bucket        = "tf-test-runner-bucket"
   force_destroy = true
+
+  tags = {
+    env = "test"
+  }
+}
+
+resource "aws_s3_bucket" "tf_bucket_replication_dest" {
+  bucket        = "tf-test-replication-dest"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket" "tf_bucket_acl_target" {
+  bucket        = "tf-test-acl-bucket"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket" "tf_bucket_object_lock" {
+  bucket              = "tf-test-object-lock-bucket"
+  force_destroy       = true
+  object_lock_enabled = true
 }
 
 # S3 bucket-subresource fan-out. Every resource here calls a distinct
@@ -551,16 +571,19 @@ resource "aws_s3_bucket_versioning" "tf_bucket_versioning" {
   }
 }
 
-# NB: aws_s3_bucket_lifecycle_configuration covered in
-# `sdk-tests/s3_bucket_subresources_test.go::TestS3_Bucket_Lifecycle_RoundTrip`
-# but NOT here: tf-provider-aws polls GetBucketLifecycleConfiguration for
-# 3 minutes after the PUT, waiting on real-AWS's eventually-consistent
-# replication to surface the rule. The sim's GET returns the PUT body
-# immediately, but the provider's poll-loop comparator doesn't match
-# because it inspects internal fields the sim doesn't reconstruct
-# (LastModified, etc.). Keep this visible in the S3 bucket-subresource
-# surface table until the provider path can be exercised without a
-# perpetual post-apply diff.
+resource "aws_s3_bucket_lifecycle_configuration" "tf_bucket_lifecycle" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  rule {
+    id     = "expire-30d"
+    status = "Enabled"
+    filter {
+      prefix = ""
+    }
+    expiration {
+      days = 30
+    }
+  }
+}
 
 resource "aws_s3_bucket_cors_configuration" "tf_bucket_cors" {
   bucket = aws_s3_bucket.tf_bucket.id
@@ -588,6 +611,64 @@ resource "aws_s3_bucket_website_configuration" "tf_bucket_website" {
   }
 }
 
+resource "aws_s3_bucket_policy" "tf_bucket_policy" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.tf_bucket.arn}/*"
+    }]
+  })
+}
+
+resource "aws_s3_bucket_replication_configuration" "tf_bucket_replication" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  role   = "arn:aws:iam::000000000001:role/s3-replication"
+
+  rule {
+    id     = "replicate-logs"
+    status = "Enabled"
+    filter {
+      prefix = "logs/"
+    }
+    destination {
+      bucket = aws_s3_bucket.tf_bucket_replication_dest.arn
+    }
+  }
+}
+
+resource "aws_s3_bucket_logging" "tf_bucket_logging" {
+  bucket        = aws_s3_bucket.tf_bucket.id
+  target_bucket = aws_s3_bucket.tf_bucket.id
+  target_prefix = "logs/"
+}
+
+resource "aws_s3_bucket_ownership_controls" "tf_bucket_acl_ownership" {
+  bucket = aws_s3_bucket.tf_bucket_acl_target.id
+  rule {
+    object_ownership = "ObjectWriter"
+  }
+}
+
+resource "aws_s3_bucket_acl" "tf_bucket_acl" {
+  depends_on = [aws_s3_bucket_ownership_controls.tf_bucket_acl_ownership]
+  bucket     = aws_s3_bucket.tf_bucket_acl_target.id
+  acl        = "private"
+}
+
+resource "aws_s3_bucket_request_payment_configuration" "tf_bucket_request_payment" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  payer  = "Requester"
+}
+
+resource "aws_s3_bucket_accelerate_configuration" "tf_bucket_accelerate" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  status = "Enabled"
+}
+
 resource "aws_s3_bucket_public_access_block" "tf_bucket_pab" {
   bucket                  = aws_s3_bucket.tf_bucket.id
   block_public_acls       = true
@@ -600,6 +681,75 @@ resource "aws_s3_bucket_ownership_controls" "tf_bucket_ownership" {
   bucket = aws_s3_bucket.tf_bucket.id
   rule {
     object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_notification" "tf_bucket_notification" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  queue {
+    id        = "queue-created"
+    queue_arn = aws_sqs_queue.tf_eventbridge_queue.arn
+    events    = ["s3:ObjectCreated:Put"]
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "tf_bucket_object_lock" {
+  bucket              = aws_s3_bucket.tf_bucket_object_lock.id
+  object_lock_enabled = "Enabled"
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = 1
+    }
+  }
+}
+
+resource "aws_s3_bucket_intelligent_tiering_configuration" "tf_bucket_intelligent_tiering" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  name   = "archive-tier"
+  status = "Enabled"
+  tiering {
+    access_tier = "ARCHIVE_ACCESS"
+    days        = 90
+  }
+}
+
+resource "aws_s3_bucket_inventory" "tf_bucket_inventory" {
+  bucket                   = aws_s3_bucket.tf_bucket.id
+  name                     = "inventory-current"
+  included_object_versions = "Current"
+  destination {
+    bucket {
+      bucket_arn = aws_s3_bucket.tf_bucket.arn
+      format     = "CSV"
+    }
+  }
+  schedule {
+    frequency = "Daily"
+  }
+}
+
+resource "aws_s3_bucket_analytics_configuration" "tf_bucket_analytics" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  name   = "analytics-all"
+  storage_class_analysis {
+    data_export {
+      output_schema_version = "V_1"
+      destination {
+        s3_bucket_destination {
+          bucket_arn = aws_s3_bucket.tf_bucket.arn
+          format     = "CSV"
+        }
+      }
+    }
+  }
+}
+
+resource "aws_s3_bucket_metric" "tf_bucket_metric" {
+  bucket = aws_s3_bucket.tf_bucket.id
+  name   = "metrics-prefix"
+  filter {
+    prefix = "logs/"
   }
 }
 
@@ -702,6 +852,9 @@ output "iam_slr_arn" {
 output "s3_bucket_arn" {
   value = aws_s3_bucket.tf_bucket.arn
 }
+output "s3_bucket_tags_env" {
+  value = aws_s3_bucket.tf_bucket.tags["env"]
+}
 output "dynamodb_table_arn" {
   value = aws_dynamodb_table.tf_table.arn
 }
@@ -720,11 +873,32 @@ output "ssm_parameter_arn" {
 output "s3_bucket_versioning_status" {
   value = aws_s3_bucket_versioning.tf_bucket_versioning.versioning_configuration[0].status
 }
+output "s3_bucket_lifecycle_id" {
+  value = aws_s3_bucket_lifecycle_configuration.tf_bucket_lifecycle.rule[0].id
+}
 output "s3_bucket_cors_origin" {
   value = one([for rule in aws_s3_bucket_cors_configuration.tf_bucket_cors.cors_rule : tolist(rule.allowed_origins)[0]])
 }
+output "s3_bucket_policy_bucket" {
+  value = aws_s3_bucket_policy.tf_bucket_policy.bucket
+}
 output "s3_bucket_sse_algorithm" {
   value = one([for rule in aws_s3_bucket_server_side_encryption_configuration.tf_bucket_sse.rule : rule.apply_server_side_encryption_by_default[0].sse_algorithm])
+}
+output "s3_bucket_replication_rule_id" {
+  value = aws_s3_bucket_replication_configuration.tf_bucket_replication.rule[0].id
+}
+output "s3_bucket_logging_target_prefix" {
+  value = aws_s3_bucket_logging.tf_bucket_logging.target_prefix
+}
+output "s3_bucket_acl_value" {
+  value = aws_s3_bucket_acl.tf_bucket_acl.acl
+}
+output "s3_bucket_request_payment_payer" {
+  value = aws_s3_bucket_request_payment_configuration.tf_bucket_request_payment.payer
+}
+output "s3_bucket_accelerate_status" {
+  value = aws_s3_bucket_accelerate_configuration.tf_bucket_accelerate.status
 }
 output "s3_bucket_website_index" {
   value = aws_s3_bucket_website_configuration.tf_bucket_website.index_document[0].suffix
@@ -734,4 +908,22 @@ output "s3_bucket_pab_block_public_acls" {
 }
 output "s3_bucket_ownership" {
   value = aws_s3_bucket_ownership_controls.tf_bucket_ownership.rule[0].object_ownership
+}
+output "s3_bucket_notification_queue_id" {
+  value = aws_s3_bucket_notification.tf_bucket_notification.queue[0].id
+}
+output "s3_bucket_object_lock_mode" {
+  value = aws_s3_bucket_object_lock_configuration.tf_bucket_object_lock.rule[0].default_retention[0].mode
+}
+output "s3_bucket_intelligent_tiering_name" {
+  value = aws_s3_bucket_intelligent_tiering_configuration.tf_bucket_intelligent_tiering.name
+}
+output "s3_bucket_inventory_name" {
+  value = aws_s3_bucket_inventory.tf_bucket_inventory.name
+}
+output "s3_bucket_analytics_name" {
+  value = aws_s3_bucket_analytics_configuration.tf_bucket_analytics.name
+}
+output "s3_bucket_metric_name" {
+  value = aws_s3_bucket_metric.tf_bucket_metric.name
 }

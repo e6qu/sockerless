@@ -302,7 +302,7 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		// Sim approximation: scan for `"Principal":"*"` or `"AWS":"*"`
 		// substrings — catches the common "public read-bucket" shape
 		// without parsing the full IAM AST.
-		policy, _, ok := getStoredBucketSubresource(bucket, "policy")
+		policy, _, _, ok := getStoredBucketSubresource(bucket, "policy")
 		if !ok {
 			sim.S3ErrorXML(w, "NoSuchBucketPolicy", "The bucket policy does not exist",
 				bucket, sim.RequestID(r.Context()), http.StatusNotFound)
@@ -326,8 +326,36 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	case q.Has("ownershipControls"):
 		emitStoredOr404(w, r, bucket, "ownershipControls", "OwnershipControlsNotFoundError", "The bucket ownership controls were not found")
 		return
+	case q.Has("intelligent-tiering"):
+		if id := q.Get("id"); id != "" {
+			emitStoredIDOr404(w, r, bucket, "intelligent-tiering", id)
+			return
+		}
+		emitBucketConfigurationList(w, bucket, "intelligent-tiering", "ListBucketIntelligentTieringConfigurationsResult")
+		return
+	case q.Has("inventory"):
+		if id := q.Get("id"); id != "" {
+			emitStoredIDOr404(w, r, bucket, "inventory", id)
+			return
+		}
+		emitBucketConfigurationList(w, bucket, "inventory", "ListBucketInventoryConfigurationsResult")
+		return
+	case q.Has("analytics"):
+		if id := q.Get("id"); id != "" {
+			emitStoredIDOr404(w, r, bucket, "analytics", id)
+			return
+		}
+		emitBucketConfigurationList(w, bucket, "analytics", "ListBucketAnalyticsConfigurationsResult")
+		return
+	case q.Has("metrics"):
+		if id := q.Get("id"); id != "" {
+			emitStoredIDOr404(w, r, bucket, "metrics", id)
+			return
+		}
+		emitBucketConfigurationList(w, bucket, "metrics", "ListBucketMetricsConfigurationsResult")
+		return
 	case q.Has("requestPayment"):
-		if body, ct, ok := getStoredBucketSubresource(bucket, "requestPayment"); ok {
+		if body, ct, _, ok := getStoredBucketSubresource(bucket, "requestPayment"); ok {
 			if ct == "" {
 				ct = "application/xml"
 			}
@@ -348,7 +376,7 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		// even on BucketOwnerEnforced buckets (200, not the 400 that
 		// PutBucketAcl returns). terraform-provider-aws's bucket Read
 		// reads the ACL regardless of ownership-controls state.
-		if body, ct, ok := getStoredBucketSubresource(bucket, "acl"); ok {
+		if body, ct, _, ok := getStoredBucketSubresource(bucket, "acl"); ok {
 			if ct == "" {
 				ct = "application/xml"
 			}
