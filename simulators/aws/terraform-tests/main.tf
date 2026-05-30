@@ -37,12 +37,10 @@ provider "aws" {
     iam              = var.endpoint
     s3               = var.endpoint
     dynamodb         = var.endpoint
-    elasticache      = var.endpoint
     events           = var.endpoint
     kinesis          = var.endpoint
     kms              = var.endpoint
     elbv2            = var.endpoint
-    rds              = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
     ssm              = var.endpoint
@@ -175,10 +173,9 @@ resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
 }
 
 # Exercise the Cloud Map namespace + service APIs that BUG-701's fix
-# depends on. Creating the namespace in real AWS also creates an R53
-# hosted zone and the matching Docker user-defined network in the
-# simulator; the service configures the DNS record type used by
-# per-hostname A-record services sockerless creates at runtime.
+# depends on. The namespace and service are Cloud Map control-plane
+# resources; the simulator creates a Docker user-defined network later,
+# only when an ECS task registration needs private DNS at runtime.
 resource "aws_service_discovery_private_dns_namespace" "tf_svc_net" {
   name = "tf-svc-net.local"
   vpc  = "vpc-sim"
@@ -870,56 +867,6 @@ resource "aws_dynamodb_table" "tf_table" {
   }
 }
 
-resource "aws_db_instance" "tf_rds" {
-  identifier          = "tf-rds-db"
-  instance_class      = "db.t3.micro"
-  engine              = "postgres"
-  engine_version      = "17.5"
-  username            = "admin"
-  password            = "password123!"
-  allocated_storage   = 20
-  skip_final_snapshot = true
-  apply_immediately   = true
-
-  tags = {
-    env = "terraform"
-  }
-}
-
-resource "aws_db_snapshot" "tf_rds_snapshot" {
-  db_instance_identifier = aws_db_instance.tf_rds.identifier
-  db_snapshot_identifier = "tf-rds-snapshot"
-
-  tags = {
-    env = "terraform"
-  }
-}
-
-resource "aws_db_instance" "tf_rds_restored" {
-  identifier          = "tf-rds-restored"
-  instance_class      = "db.t3.micro"
-  snapshot_identifier = aws_db_snapshot.tf_rds_snapshot.id
-  skip_final_snapshot = true
-  apply_immediately   = true
-
-  tags = {
-    env = "terraform"
-  }
-}
-
-resource "aws_elasticache_cluster" "tf_cache" {
-  cluster_id      = "tf-cache"
-  engine          = "redis"
-  engine_version  = "7.1"
-  node_type       = "cache.t3.micro"
-  num_cache_nodes = 1
-  port            = 6379
-
-  tags = {
-    env = "terraform"
-  }
-}
-
 # KMS key — encrypts SecretsManager secrets and S3 objects.
 resource "aws_kms_key" "tf_kms" {
   description             = "tf-test runner KMS key"
@@ -1030,48 +977,6 @@ output "s3_bucket_tags_env" {
 }
 output "dynamodb_table_arn" {
   value = aws_dynamodb_table.tf_table.arn
-}
-output "rds_instance_arn" {
-  value = aws_db_instance.tf_rds.arn
-}
-output "rds_instance_engine" {
-  value = aws_db_instance.tf_rds.engine
-}
-output "rds_instance_port" {
-  value = tostring(aws_db_instance.tf_rds.port)
-}
-output "rds_instance_tags_env" {
-  value = aws_db_instance.tf_rds.tags["env"]
-}
-output "rds_snapshot_arn" {
-  value = aws_db_snapshot.tf_rds_snapshot.db_snapshot_arn
-}
-output "rds_snapshot_status" {
-  value = aws_db_snapshot.tf_rds_snapshot.status
-}
-output "rds_snapshot_tags_env" {
-  value = aws_db_snapshot.tf_rds_snapshot.tags["env"]
-}
-output "rds_restored_instance_arn" {
-  value = aws_db_instance.tf_rds_restored.arn
-}
-output "rds_restored_instance_engine" {
-  value = aws_db_instance.tf_rds_restored.engine
-}
-output "rds_restored_instance_tags_env" {
-  value = aws_db_instance.tf_rds_restored.tags["env"]
-}
-output "elasticache_cluster_arn" {
-  value = aws_elasticache_cluster.tf_cache.arn
-}
-output "elasticache_cluster_engine" {
-  value = aws_elasticache_cluster.tf_cache.engine
-}
-output "elasticache_cluster_port" {
-  value = tostring(aws_elasticache_cluster.tf_cache.port)
-}
-output "elasticache_cluster_tags_env" {
-  value = aws_elasticache_cluster.tf_cache.tags["env"]
 }
 output "kms_key_arn" {
   value = aws_kms_key.tf_kms.arn

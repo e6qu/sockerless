@@ -126,11 +126,17 @@ func handleECDescribe(w http.ResponseWriter, r *http.Request) {
 	wanted := r.FormValue("CacheClusterId")
 	var b strings.Builder
 	b.WriteString("<CacheClusters>")
+	matched := false
 	for _, c := range ecClusters.List() {
 		if wanted != "" && c.CacheClusterId != wanted {
 			continue
 		}
+		matched = true
 		b.WriteString(renderECCluster(c))
+	}
+	if wanted != "" && !matched {
+		ecErrorXML(w, "CacheClusterNotFound", fmt.Sprintf("Cache cluster %q not found", wanted), http.StatusNotFound, sim.RequestID(r.Context()))
+		return
 	}
 	b.WriteString("</CacheClusters>")
 	ecXMLResponse(w, "DescribeCacheClusters", b.String(), sim.RequestID(r.Context()))

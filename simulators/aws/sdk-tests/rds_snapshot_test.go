@@ -90,10 +90,14 @@ func TestRDS_Snapshot_Lifecycle(t *testing.T) {
 	assert.Equal(t, "deleted", aws.ToString(delOut.DBSnapshot.Status),
 		"final state-machine transition before removal")
 
-	// Subsequent Describe returns empty.
-	desc2, err := c.DescribeDBSnapshots(ctx, &rds.DescribeDBSnapshotsInput{
+	// Subsequent identifier-addressed Describe returns the real RDS
+	// not-found fault; unfiltered list calls are the empty-list shape.
+	_, err = c.DescribeDBSnapshots(ctx, &rds.DescribeDBSnapshotsInput{
 		DBSnapshotIdentifier: aws.String("snap-1"),
 	})
+	assertAWSAPIErrorCode(t, err, "DBSnapshotNotFound")
+
+	desc2, err := c.DescribeDBSnapshots(ctx, &rds.DescribeDBSnapshotsInput{})
 	require.NoError(t, err)
 	assert.Empty(t, desc2.DBSnapshots)
 }

@@ -184,6 +184,7 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 func handleRDSDescribe(w http.ResponseWriter, r *http.Request) {
 	wanted := r.FormValue("DBInstanceIdentifier")
 	wantedResourceID := rdsFilterValue(r, "dbi-resource-id")
+	matched := false
 	var b strings.Builder
 	b.WriteString("<DBInstances>")
 	for _, i := range rdsInstances.List() {
@@ -193,7 +194,14 @@ func handleRDSDescribe(w http.ResponseWriter, r *http.Request) {
 		if wantedResourceID != "" && i.DbiResourceId != wantedResourceID {
 			continue
 		}
+		matched = true
 		b.WriteString(renderRDSInstance(i))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "DBInstanceNotFound",
+			fmt.Sprintf("DBInstance %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
 	}
 	b.WriteString("</DBInstances>")
 	rdsXMLResponse(w, "DescribeDBInstances", b.String(), sim.RequestID(r.Context()))
@@ -490,6 +498,7 @@ func handleRDSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 func handleRDSDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 	filterID := r.FormValue("DBSnapshotIdentifier")
 	filterInst := r.FormValue("DBInstanceIdentifier")
+	matched := false
 	var b strings.Builder
 	b.WriteString("<DBSnapshots>")
 	for _, s := range rdsSnapshots.List() {
@@ -499,7 +508,14 @@ func handleRDSDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 		if filterInst != "" && s.DBInstanceIdentifier != filterInst {
 			continue
 		}
+		matched = true
 		b.WriteString(renderRDSSnapshot(s))
+	}
+	if filterID != "" && !matched {
+		rdsErrorXML(w, "DBSnapshotNotFound",
+			fmt.Sprintf("DBSnapshot %q not found", filterID),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
 	}
 	b.WriteString("</DBSnapshots>")
 	rdsXMLResponse(w, "DescribeDBSnapshots", b.String(), sim.RequestID(r.Context()))

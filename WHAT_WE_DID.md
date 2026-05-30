@@ -16,6 +16,16 @@ The Terraform coverage exposed real RDS response-shape gaps: terraform-provider-
 
 The coverage matrix and generated surface tables now show direct SDK/CLI/Terraform coverage for AWS RDS and ElastiCache.
 
+The PR #289 AWS Terraform CI follow-up exposed and fixed missing-resource fidelity bugs rather than increasing the test timeout. RDS identifier-addressed `DescribeDBInstances` and `DescribeDBSnapshots` misses now return the real `DBInstanceNotFound` / `DBSnapshotNotFound` faults. ElastiCache identifier-addressed `DescribeCacheClusters` misses return `CacheClusterNotFound`, and SQS missing-queue reads return the AWS Query error shape that terraform-provider-aws keys on: `AWS.SimpleQueueService.NonExistentQueue` / `QueueDoesNotExist`. Unfiltered list calls still return empty-list success where AWS does.
+
+The same CI follow-up fixed Cloud Map namespace lifecycle behavior exposed by Terraform. Private DNS namespace create/delete no longer eagerly creates or removes Docker networks for namespace-only control-plane flows. The simulator creates the Docker network lazily only when a container-backed ECS service registration needs private DNS, and Cloud Map service/namespace deletion now returns AWS-shaped `ResourceInUse` errors while children remain.
+
+The 5-minute Terraform test cap was kept by fixing test packaging instead of weakening the timeout. The actual terraform-provider-aws source has fixed waiters for RDS, ElastiCache, SQS, S3 lifecycle, CloudFront, Route 53, and ELBv2, so one monolithic apply/destroy accumulated too much provider-controlled waiting. RDS instance, RDS snapshot, RDS restore, and ElastiCache provider coverage now lives in focused AWS Terraform packages, while the broader production-shape stack keeps the existing foundational resources. Every package still runs real terraform-provider-aws apply/read/destroy flows against the simulator.
+
+The provider minimum-wait findings were documented per cloud in `docs/terraform_min_timeouts_aws.md`, `docs/terraform_min_timeouts_gcp.md`, and `docs/terraform_min_timeouts_azure.md`. The docs distinguish operation deadline `timeouts {}` from internal provider waiter cadence, and link to the pinned AWS, Google, AzureRM, and Azure Stack provider source used by the simulator Terraform harnesses.
+
+Issue #291 / BUG-1233 remained open after this PR for Route 53 `ListHostedZonesByName`; PR #289 did not implement that separate Route 53 lookup surface.
+
 ## 2026-05-30 — AWS API Gateway client-surface coverage
 
 The BUG-1104 audit found a real stale coverage claim. `aws-apigateway` and `aws-apigatewayv2` were marked as CLI/Terraform not-applicable even though the official AWS CLI exposes `apigateway` / `apigatewayv2` commands and terraform-provider-aws exposes REST API and HTTP API resources.

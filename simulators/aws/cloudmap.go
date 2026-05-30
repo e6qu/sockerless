@@ -19,10 +19,10 @@ type CMNamespace struct {
 	Properties  *CMNamespaceProperties `json:"Properties,omitempty"`
 	CreateDate  int64                  `json:"CreateDate"`
 	// DockerNetworkName is the name of the real Docker user-defined
-	// network backing this namespace. Containers registered in services
-	// under this namespace are connected to this network with the
-	// service name as a DNS alias, so cross-container DNS resolution
-	// works via Docker's embedded resolver.
+	// network created when a container-backed registration needs DNS.
+	// Pure Cloud Map control-plane resources do not create Docker
+	// resources; the network is just the local realization of private
+	// namespace DNS for running ECS task containers.
 	DockerNetworkName string `json:"DockerNetworkName,omitempty"`
 }
 
@@ -127,18 +127,6 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 	nsId := "ns-" + generateUUID()[:16]
 	operationId := generateUUID()
 
-	// Back the namespace with a real Docker network so containers
-	// registered in services under it can reach each other by name via
-	// Docker's embedded DNS. Failures degrade the DNS feature but
-	// don't break namespace creation.
-	dockerNetName := "sim-" + nsId
-	if _, err := sim.EnsureDockerNetwork(dockerNetName); err != nil {
-		// Fall back to no network: CRUD still works but cross-task DNS
-		// is not available for this namespace. This keeps the simulator
-		// usable when Docker isn't available (e.g. in narrow CRUD tests).
-		dockerNetName = ""
-	}
-
 	ns := CMNamespace{
 		Id:          nsId,
 		Arn:         cmArn("namespace", nsId),
@@ -150,8 +138,7 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 				HostedZoneId: "Z" + generateUUID()[:12],
 			},
 		},
-		CreateDate:        time.Now().Unix(),
-		DockerNetworkName: dockerNetName,
+		CreateDate: time.Now().Unix(),
 	}
 	cmNamespaces.Put(nsId, ns)
 
@@ -204,19 +191,18 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ns, ok := cmNamespaces.Get(req.Id)
-	if !ok {
+	if _, ok := cmNamespaces.Get(req.Id); !ok {
 		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
 			"Namespace '%s' not found", req.Id)
 		return
 	}
-	cmNamespaces.Delete(req.Id)
-
-	// Drop the backing Docker network after the namespace is gone.
-	if ns.DockerNetworkName != "" {
-		_ = sim.RemoveDockerNetwork(ns.DockerNetworkName)
+	if cmNamespaceHasServices(req.Id) {
+		sim.AWSErrorf(w, "ResourceInUse", http.StatusBadRequest,
+			"Namespace '%s' contains services and can't be deleted", req.Id)
+		return
 	}
 
+	cmNamespaces.Delete(req.Id)
 	operationId := generateUUID()
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
@@ -316,25 +302,40 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Connect the real Docker container for this task to the
+	// namespace's Docker network with the service name as DNS alias,
+	// so other containers on the same namespace resolve it by name.
+	if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
+		ns, nsOk := cmNamespaces.Get(svc.NamespaceId)
+		if !nsOk {
+			sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
+				"Namespace '%s' not found", svc.NamespaceId)
+			return
+		}
+		networkName, err := ensureCMNamespaceDockerNetwork(ns)
+		if err != nil {
+			sim.AWSErrorf(w, "InternalFailure", http.StatusInternalServerError,
+				"failed to create Cloud Map namespace network: %v", err)
+			return
+		}
+		if err := sim.ConnectContainerToNetwork(containerName, networkName, []string{svc.Name}); err != nil {
+			sim.AWSErrorf(w, "InternalFailure", http.StatusInternalServerError,
+				"failed to connect task container to Cloud Map namespace network: %v", err)
+			return
+		}
+	}
+
 	instance := CMInstance{
 		Id:         req.InstanceId,
 		Attributes: req.Attributes,
 	}
 	key := cmInstanceKey(req.ServiceId, req.InstanceId)
+	_, existed := cmInstances.Get(key)
 	cmInstances.Put(key, instance)
-
-	// Update service instance count
-	cmServices.Update(req.ServiceId, func(svc *CMService) {
-		svc.InstanceCount++
-	})
-
-	// Connect the real Docker container for this task to the
-	// namespace's Docker network with the service name as DNS alias,
-	// so other containers on the same namespace resolve it by name.
-	if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
-		if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
-			_ = sim.ConnectContainerToNetwork(containerName, ns.DockerNetworkName, []string{svc.Name})
-		}
+	if !existed {
+		cmServices.Update(req.ServiceId, func(svc *CMService) {
+			svc.InstanceCount++
+		})
 	}
 
 	operationId := generateUUID()
@@ -540,24 +541,52 @@ func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, ok := cmServices.Get(req.Id)
-	if !ok {
+	if _, ok := cmServices.Get(req.Id); !ok {
 		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
 			"Service '%s' not found", req.Id)
 		return
 	}
-
-	// Delete all instances belonging to this service
-	for _, inst := range cmInstances.List() {
-		key := cmInstanceKey(req.Id, inst.Id)
-		cmInstances.Delete(key)
+	if cmServiceHasInstances(req.Id) {
+		sim.AWSErrorf(w, "ResourceInUse", http.StatusBadRequest,
+			"Service '%s' contains instances and can't be deleted", req.Id)
+		return
 	}
 
 	cmServices.Delete(req.Id)
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Service": svc,
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func ensureCMNamespaceDockerNetwork(ns CMNamespace) (string, error) {
+	if ns.DockerNetworkName != "" {
+		return ns.DockerNetworkName, nil
+	}
+	networkName := "sim-" + ns.Id
+	if _, err := sim.EnsureDockerNetwork(networkName); err != nil {
+		return "", err
+	}
+	cmNamespaces.Update(ns.Id, func(stored *CMNamespace) {
+		stored.DockerNetworkName = networkName
 	})
+	return networkName, nil
+}
+
+func cmNamespaceHasServices(namespaceId string) bool {
+	for _, svc := range cmServices.List() {
+		if svc.NamespaceId == namespaceId {
+			return true
+		}
+	}
+	return false
+}
+
+func cmServiceHasInstances(serviceId string) bool {
+	for _, inst := range cmInstances.List() {
+		if _, ok := cmInstances.Get(cmInstanceKey(serviceId, inst.Id)); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func handleCMGetOperation(w http.ResponseWriter, r *http.Request) {

@@ -228,6 +228,9 @@ func TestCloudMap_RegisterAndDiscoverInstances(t *testing.T) {
 	require.Len(t, discoverOut2.Instances, 1)
 	assert.Equal(t, "10.0.0.2", discoverOut2.Instances[0].Attributes["AWS_INSTANCE_IPV4"])
 
+	_, err = client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(svcID)})
+	assertAWSAPIErrorCode(t, err, "ResourceInUse")
+
 	// Cleanup
 	_, _ = client.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
 		ServiceId:  aws.String(svcID),
@@ -250,7 +253,9 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 	cm := cmClient()
 	ecsCli := ecsClient()
 
-	// Namespace — simulator creates Docker network sim-<nsId>
+	// Namespace control-plane CRUD is independent from local Docker
+	// resources; registering the ECS tasks below creates the namespace's
+	// backing Docker network when DNS is actually needed.
 	createNs, err := cm.CreatePrivateDnsNamespace(ctx, &servicediscovery.CreatePrivateDnsNamespaceInput{
 		Name: aws.String("xtask-dns.local"),
 		Vpc:  aws.String("vpc-sim"),
@@ -425,6 +430,11 @@ func TestCloudMap_DeleteServiceAndNamespace(t *testing.T) {
 	})
 	require.NoError(t, err)
 	svcID := *svcOut.Service.Id
+
+	_, err = client.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{
+		Id: aws.String(nsID),
+	})
+	assertAWSAPIErrorCode(t, err, "ResourceInUse")
 
 	// Delete service
 	delSvcOut, err := client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{
