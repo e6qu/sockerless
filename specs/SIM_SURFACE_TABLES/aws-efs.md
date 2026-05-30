@@ -5,32 +5,32 @@ Surface registered in `simulators/aws/efs.go` (and related files grouped under t
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:141::handleEFSCreateFileSystem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:142::handleEFSDescribeFileSystems` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-02-01/file-systems/{id}` | ✓ `simulators/aws/efs.go:143::handleEFSDeleteFileSystem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:144::handleEFSPutLifecycleConfiguration` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:145::handleEFSDescribeLifecycleConfiguration` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:147::handleEFSCreateMountTarget` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:148::handleEFSDescribeMountTargets` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:149::handleEFSDescribeMountTargetSecurityGroups` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:150::handleEFSModifyMountTargetSecurityGroups` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-02-01/mount-targets/{id}` | ✓ `simulators/aws/efs.go:151::handleEFSDeleteMountTarget` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:153::handleEFSCreateAccessPoint` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:154::handleEFSDescribeAccessPoints` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-02-01/access-points/{id}` | ✓ `simulators/aws/efs.go:155::handleEFSDeleteAccessPoint` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:141::handleEFSCreateFileSystem` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems` | ✓ `simulators/aws/efs.go:142::handleEFSDescribeFileSystems` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/file-systems/{id}` | ✓ `simulators/aws/efs.go:143::handleEFSDeleteFileSystem` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:144::handleEFSPutLifecycleConfiguration` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-02-01/file-systems/{id}/lifecycle-configuration` | ✓ `simulators/aws/efs.go:145::handleEFSDescribeLifecycleConfiguration` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:147::handleEFSCreateMountTarget` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-02-01/mount-targets` | ✓ `simulators/aws/efs.go:148::handleEFSDescribeMountTargets` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:149::handleEFSDescribeMountTargetSecurityGroups` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PUT /2015-02-01/mount-targets/{id}/security-groups` | ✓ `simulators/aws/efs.go:150::handleEFSModifyMountTargetSecurityGroups` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/mount-targets/{id}` | ✓ `simulators/aws/efs.go:151::handleEFSDeleteMountTarget` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:153::handleEFSCreateAccessPoint` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-02-01/access-points` | ✓ `simulators/aws/efs.go:154::handleEFSDescribeAccessPoints` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-02-01/access-points/{id}` | ✓ `simulators/aws/efs.go:155::handleEFSDeleteAccessPoint` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

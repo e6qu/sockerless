@@ -7,9 +7,9 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops
 
@@ -19,8 +19,8 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 | UploadPart | `PUT /{bucket}/{key}?uploadId&partNumber` | ✓ `s3_subresources.go::handleS3UploadPart` | ✓ same | n/a | n/a | aws-chunked streaming-envelope honored via isAWSChunkedRequest helper. |
 | CompleteMultipartUpload | `POST /{bucket}/{key}?uploadId` | ✓ `s3_subresources.go::handleS3CompleteMultipart` | ✓ same | n/a | n/a | Final ETag follows canonical `hex(md5(concat(part_md5_bytes)))-N` convention. |
 | AbortMultipartUpload | `DELETE /{bucket}/{key}?uploadId` | ✓ `s3_subresources.go::handleS3AbortMultipart` | ✓ `TestS3_AbortMultipart` | n/a | n/a | |
-| ListMultipartUploads | `GET /{bucket}?uploads` | ✓ `s3_bucket_subresources.go` dispatcher (PR #200) | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | ✗ (paged iterator: should use `ListMultipartUploadsPaginator`) | |
-| ListParts | `GET /{bucket}/{key}?uploadId` | ✓ `s3_subresources.go::handleS3ListParts` | ✓ `s3_list_parts_test.go::TestS3_Multipart_ListParts` | n/a | ✗ (paged iterator: should use `ListPartsPaginator` — deferred under BUG-1159) | Closes issue #196 reopen (BUG-1148). |
+| ListMultipartUploads | `GET /{bucket}?uploads` | ✓ `s3_subresources.go::handleS3ListMultipartUploads` | ✓ `s3_list_parts_test.go::TestS3_Multipart_ListMultipartUploadsPaginator` + CLI `s3api list-multipart-uploads` | n/a (not exposed by provider; see coverage matrix) | ✓ `ListMultipartUploadsPaginator` with `MaxUploads` pagination | |
+| ListParts | `GET /{bucket}/{key}?uploadId` | ✓ `s3_subresources.go::handleS3ListParts` | ✓ `s3_list_parts_test.go::TestS3_Multipart_ListParts` + CLI `s3api list-parts` | n/a | ✓ `ListPartsPaginator` with `MaxParts` pagination | |
 
 ## Reopens that produced this table
 

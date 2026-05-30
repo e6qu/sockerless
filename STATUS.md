@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `main` - idle after NAT/public-IP simulator parity. |
-| In-flight | None; next implementation pass should start from the remaining surface-table audit debt. |
+| Active branch | `fix/surface-table-audit-debt` - surface-table audit debt cleanup. |
+| In-flight | Surface-table cleanup PR: stale closed-BUG deferral markers were removed, S3 multipart list pagination was fixed, and concrete remaining gaps were split into issue #281 / BUG-1221 and issue #282 / BUG-1222. |
 | Last merged | NAT/public-IP simulator parity for issue #279 (2026-05-29). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1220 filed · 1219 fixed · 3 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1206. |
+| Bugs | 1222 filed · 1220 fixed · 4 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1221, BUG-1222. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,7 +52,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
-| issue #279 | NAT/public-IP simulator parity | Closed BUG-1204/#279. AWS EC2 EIP/NAT Gateway/route-table flows are now covered by SDK, CLI, and Terraform. GCP Compute now supports regional addresses, address labels, manual Cloud NAT address validation, router status, regional operation wait, and SDK/gcloud/Terraform coverage. Azure now supports `Microsoft.Network/publicIPPrefixes`, NAT Gateway list/subnet back-references, subnet NAT Gateway association persistence, and SDK/CLI/Terraform coverage. BUG-1206 remains open for unrelated stale surface-table row markers. |
+| current branch | surface-table audit debt cleanup | Closed BUG-1206. Surface tables no longer carry generic closed-BUG deferral markers, `scripts/seed-surface-tables.sh` now derives SDK/Terraform status from `specs/SIM_TEST_COVERAGE_MATRIX.md`, and AWS S3 multipart `GET /{bucket}?uploads` plus `ListParts` pagination is covered by official AWS SDK paginator tests and AWS CLI `s3api` coverage. Remaining real gaps are tracked by issue #281 / BUG-1221 and issue #282 / BUG-1222. |
+| issue #279 | NAT/public-IP simulator parity | Closed BUG-1204/#279. AWS EC2 EIP/NAT Gateway/route-table flows are now covered by SDK, CLI, and Terraform. GCP Compute now supports regional addresses, address labels, manual Cloud NAT address validation, router status, regional operation wait, and SDK/gcloud/Terraform coverage. Azure now supports `Microsoft.Network/publicIPPrefixes`, NAT Gateway list/subnet back-references, subnet NAT Gateway association persistence, and SDK/CLI/Terraform coverage. |
 | issue #263 | Managed load-balancer simulator parity | Closed BUG-1203/#263. AWS ELBv2 now supports load balancers, target groups, listeners, target health, attributes, tags, account limits, and provider-read capacity reservation. GCP Compute now supports the global external HTTP load-balancing chain: health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules. Azure now supports `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. SDK, CLI, and Terraform coverage exists for all three clouds. |
 | issue #276 | Azure Service Bus ARM Terraform parity | Closed BUG-1220/#276. Azure Service Bus ARM now supports namespace network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations. Coverage uses the official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform `azurerm_servicebus_namespace` + `azurerm_servicebus_queue`. |
 | issue #266 | VM/instance compute parity | Closed BUG-1207/#266. AWS EC2 now supports instance lifecycle control-plane APIs, ENI attachment state, image/key-pair discovery, instance status, and tags. GCP Compute now supports instances with zonal operations, machine/disk/image catalog reads, NICs, disks, labels, metadata, tags, start/stop/delete, and aggregated listing. Azure now supports NICs, public IPs, and `Microsoft.Compute/virtualMachines` with ARM create/get/list/delete, instanceView, and power-state operations. SDK, CLI, and Terraform coverage exists for all three clouds. |

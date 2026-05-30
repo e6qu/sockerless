@@ -558,9 +558,9 @@ resource "aws_s3_bucket_versioning" "tf_bucket_versioning" {
 # replication to surface the rule. The sim's GET returns the PUT body
 # immediately, but the provider's poll-loop comparator doesn't match
 # because it inspects internal fields the sim doesn't reconstruct
-# (LastModified, etc.). Track in BUG-1147; revisit when adding the
-# matching `wait_for_propagation = false` provider knob or modelling
-# the eventually-consistent timestamp the provider compares against.
+# (LastModified, etc.). Keep this visible in the S3 bucket-subresource
+# surface table until the provider path can be exercised without a
+# perpetual post-apply diff.
 
 resource "aws_s3_bucket_cors_configuration" "tf_bucket_cors" {
   bucket = aws_s3_bucket.tf_bucket.id

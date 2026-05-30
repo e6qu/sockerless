@@ -1,6 +1,8 @@
 # Sim surface tables
 
-Per-service canonical-operation enumerations for every sim surface. Each table lists implemented ops (✓ rows) extracted by the seeder + ✗ rows for missing ops added by subsequent PRs. The companion skill `.claude/skills/surface-table-completeness/SKILL.md` enforces "no silent ✗ rows" — every gap is paired with a BUG or deferred-subtask reference.
+Per-service canonical-operation enumerations for every sim surface. Each table lists implemented ops (✓ rows) extracted by the seeder + ✗ rows for missing ops added by subsequent PRs. The companion skill `.claude/skills/surface-table-completeness/SKILL.md` enforces "no silent ✗ rows" — every gap is paired with an open BUG or issue.
+
+The row-level SDK/Terraform cells summarize the maintained coverage index in [`../SIM_TEST_COVERAGE_MATRIX.md`](../SIM_TEST_COVERAGE_MATRIX.md). Use that matrix for the exact SDK, CLI, and Terraform evidence files and for client-family `n/a` decisions.
 
 Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` registrations to refresh the implemented-ops sections (hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved).
 

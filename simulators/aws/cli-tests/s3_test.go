@@ -1,6 +1,7 @@
 package aws_cli_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,4 +68,45 @@ func TestS3_RemoveBucket(t *testing.T) {
 	// Verify it's gone
 	out := runCLI(t, awsCLI("s3", "ls"))
 	assert.NotContains(t, out, "remove-test-bucket")
+}
+
+func TestS3APIMultipartLists(t *testing.T) {
+	bucket := "cli-multipart-list-bucket"
+	key := "object.txt"
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucket))
+
+	createOut := runCLI(t, awsCLI("s3api", "create-multipart-upload", "--bucket", bucket, "--key", key))
+	var created struct {
+		UploadID string `json:"UploadId"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
+	require.NotEmpty(t, created.UploadID)
+
+	partFile := filepath.Join(tmpDir, "multipart-part.txt")
+	require.NoError(t, os.WriteFile(partFile, []byte("part-one"), 0644))
+	runCLI(t, awsCLI("s3api", "upload-part",
+		"--bucket", bucket,
+		"--key", key,
+		"--upload-id", created.UploadID,
+		"--part-number", "1",
+		"--body", partFile,
+	))
+
+	partsOut := runCLI(t, awsCLI("s3api", "list-parts",
+		"--bucket", bucket,
+		"--key", key,
+		"--upload-id", created.UploadID,
+	))
+	assert.Contains(t, partsOut, `"PartNumber": 1`)
+
+	uploadsOut := runCLI(t, awsCLI("s3api", "list-multipart-uploads", "--bucket", bucket))
+	assert.Contains(t, uploadsOut, created.UploadID)
+	assert.Contains(t, uploadsOut, key)
+
+	runCLI(t, awsCLI("s3api", "abort-multipart-upload",
+		"--bucket", bucket,
+		"--key", key,
+		"--upload-id", created.UploadID,
+	))
+	runCLI(t, awsCLI("s3", "rb", "s3://"+bucket))
 }

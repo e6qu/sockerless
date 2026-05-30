@@ -5,32 +5,32 @@ Surface registered in `simulators/azure/cosmos.go` (and related files grouped un
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /dbs` | ✓ `simulators/azure/cosmos.go:100::handleCosmosDataCreateDB` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs` | ✓ `simulators/azure/cosmos.go:101::handleCosmosDataListDBs` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs/{database}` | ✓ `simulators/azure/cosmos.go:102::handleCosmosDataGetDB` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /dbs/{database}` | ✓ `simulators/azure/cosmos.go:103::handleCosmosDataDeleteDB` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /dbs/{database}/colls` | ✓ `simulators/azure/cosmos.go:104::handleCosmosDataCreateColl` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs/{database}/colls` | ✓ `simulators/azure/cosmos.go:105::handleCosmosDataListColls` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs/{database}/colls/{container}` | ✓ `simulators/azure/cosmos.go:106::handleCosmosDataGetColl` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /dbs/{database}/colls/{container}` | ✓ `simulators/azure/cosmos.go:107::handleCosmosDataDeleteColl` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /dbs/{database}/colls/{container}/docs` | ✓ `simulators/azure/cosmos.go:108::handleCosmosDataCreateOrQueryDoc` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs/{database}/colls/{container}/docs` | ✓ `simulators/azure/cosmos.go:109::handleCosmosDataListDocs` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:110::handleCosmosDataGetDoc` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:111::handleCosmosDataReplaceDoc` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:112::handleCosmosDataDeleteDoc` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /dbs` | ✓ `simulators/azure/cosmos.go:100::handleCosmosDataCreateDB` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs` | ✓ `simulators/azure/cosmos.go:101::handleCosmosDataListDBs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs/{database}` | ✓ `simulators/azure/cosmos.go:102::handleCosmosDataGetDB` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /dbs/{database}` | ✓ `simulators/azure/cosmos.go:103::handleCosmosDataDeleteDB` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /dbs/{database}/colls` | ✓ `simulators/azure/cosmos.go:104::handleCosmosDataCreateColl` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs/{database}/colls` | ✓ `simulators/azure/cosmos.go:105::handleCosmosDataListColls` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs/{database}/colls/{container}` | ✓ `simulators/azure/cosmos.go:106::handleCosmosDataGetColl` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /dbs/{database}/colls/{container}` | ✓ `simulators/azure/cosmos.go:107::handleCosmosDataDeleteColl` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /dbs/{database}/colls/{container}/docs` | ✓ `simulators/azure/cosmos.go:108::handleCosmosDataCreateOrQueryDoc` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs/{database}/colls/{container}/docs` | ✓ `simulators/azure/cosmos.go:109::handleCosmosDataListDocs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:110::handleCosmosDataGetDoc` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:111::handleCosmosDataReplaceDoc` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /dbs/{database}/colls/{container}/docs/{doc}` | ✓ `simulators/azure/cosmos.go:112::handleCosmosDataDeleteDoc` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->
