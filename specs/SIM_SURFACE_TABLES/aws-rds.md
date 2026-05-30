@@ -13,17 +13,18 @@ Surface registered in `simulators/aws/rds.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:75::handleRDSCreate` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:76::handleRDSDescribe` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:77::handleRDSModify` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:78::handleRDSDelete` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:79::handleRDSAddTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:80::handleRDSListTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:81::handleRDSRemoveTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action CreateDBSnapshot` | ✓ `simulators/aws/rds.go:82::handleRDSCreateSnapshot` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DescribeDBSnapshots` | ✓ `simulators/aws/rds.go:83::handleRDSDescribeSnapshots` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DeleteDBSnapshot` | ✓ `simulators/aws/rds.go:84::handleRDSDeleteSnapshot` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action RestoreDBInstanceFromDBSnapshot` | ✓ `simulators/aws/rds.go:85::handleRDSRestoreFromSnapshot` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `Action CreateDBInstance` | ✓ `simulators/aws/rds.go:79::handleRDSCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBInstances` | ✓ `simulators/aws/rds.go:80::handleRDSDescribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyDBInstance` | ✓ `simulators/aws/rds.go:81::handleRDSModify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBInstance` | ✓ `simulators/aws/rds.go:82::handleRDSDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddTagsToResource` | ✓ `simulators/aws/rds.go:83::handleRDSAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListTagsForResource` | ✓ `simulators/aws/rds.go:84::handleRDSListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveTagsFromResource` | ✓ `simulators/aws/rds.go:85::handleRDSRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateDBSnapshot` | ✓ `simulators/aws/rds.go:86::handleRDSCreateSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBSnapshots` | ✓ `simulators/aws/rds.go:87::handleRDSDescribeSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeDBSnapshotAttributes` | ✓ `simulators/aws/rds.go:88::handleRDSDescribeSnapshotAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteDBSnapshot` | ✓ `simulators/aws/rds.go:89::handleRDSDeleteSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RestoreDBInstanceFromDBSnapshot` | ✓ `simulators/aws/rds.go:90::handleRDSRestoreFromSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

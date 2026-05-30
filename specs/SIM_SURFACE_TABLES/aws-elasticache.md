@@ -13,13 +13,13 @@ Surface registered in `simulators/aws/elasticache.go` (and related files grouped
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateCacheCluster` | ✓ `simulators/aws/elasticache.go:41::handleECCreate` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DescribeCacheClusters` | ✓ `simulators/aws/elasticache.go:42::handleECDescribe` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action ModifyCacheCluster` | ✓ `simulators/aws/elasticache.go:43::handleECModify` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action DeleteCacheCluster` | ✓ `simulators/aws/elasticache.go:44::handleECDelete` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action AddTagsToResource` | ✓ `simulators/aws/elasticache.go:45::handleECAddTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action ListTagsForResource` | ✓ `simulators/aws/elasticache.go:46::handleECListTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action RemoveTagsFromResource` | ✓ `simulators/aws/elasticache.go:47::handleECRemoveTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `Action CreateCacheCluster` | ✓ `simulators/aws/elasticache.go:41::handleECCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeCacheClusters` | ✓ `simulators/aws/elasticache.go:42::handleECDescribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyCacheCluster` | ✓ `simulators/aws/elasticache.go:43::handleECModify` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteCacheCluster` | ✓ `simulators/aws/elasticache.go:44::handleECDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AddTagsToResource` | ✓ `simulators/aws/elasticache.go:45::handleECAddTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListTagsForResource` | ✓ `simulators/aws/elasticache.go:46::handleECListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action RemoveTagsFromResource` | ✓ `simulators/aws/elasticache.go:47::handleECRemoveTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

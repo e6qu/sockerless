@@ -1,13 +1,14 @@
 package aws_sdk_test
 
 import (
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -137,9 +138,9 @@ func TestSQS_NonExistentQueue(t *testing.T) {
 		QueueUrl: aws.String("https://sqs.us-east-1.amazonaws.com/000000000000/missing"),
 	})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "NonExistentQueue") ||
-		strings.Contains(err.Error(), "queue does not exist"),
-		"expected NonExistentQueue error, got %v", err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "expected AWS API error, got %T: %v", err, err)
+	assert.Equal(t, "AWS.SimpleQueueService.NonExistentQueue", apiErr.ErrorCode())
 }
 
 // TestSQS_VisibilityTimeoutExpiry asserts a message returns to

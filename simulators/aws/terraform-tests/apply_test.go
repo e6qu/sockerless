@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -66,11 +67,11 @@ func TestStackProductionShape(t *testing.T) {
 	init := terraformCmd("init")
 	init.Stdout = nil
 	init.Stderr = nil
-	out, err := init.CombinedOutput()
+	out, err := runTimed(t, "terraform init", init)
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
 	apply := terraformCmd("apply", "-auto-approve")
-	out, err = apply.CombinedOutput()
+	out, err = runTimed(t, "terraform apply", apply)
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
 	// Read outputs and assert cross-resource invariants. Failures here
@@ -218,8 +219,18 @@ func TestStackProductionShape(t *testing.T) {
 		"PutBucketMetricsConfiguration name must round-trip")
 
 	destroy := terraformCmd("destroy", "-auto-approve")
-	out, err = destroy.CombinedOutput()
+	out, err = runTimed(t, "terraform destroy", destroy)
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func runTimed(t *testing.T, label string, cmd interface {
+	CombinedOutput() ([]byte, error)
+}) ([]byte, error) {
+	t.Helper()
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	t.Logf("%s duration=%s", label, time.Since(start).Round(time.Millisecond))
+	return out, err
 }
 
 type tfOutputs map[string]struct {

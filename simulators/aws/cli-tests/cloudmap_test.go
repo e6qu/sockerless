@@ -90,8 +90,10 @@ func TestCloudMap_CreateService(t *testing.T) {
 	parseJSON(t, out, &svcResult)
 	assert.Equal(t, "my-service", svcResult.Service.Name)
 	assert.Equal(t, nsId, svcResult.Service.NamespaceId)
+	require.NotEmpty(t, svcResult.Service.Id)
 
 	// Cleanup
+	runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", svcResult.Service.Id))
 	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
 }
 
@@ -167,6 +169,7 @@ func TestCloudMap_RegisterAndListInstances(t *testing.T) {
 		"--service-id", svcId,
 		"--instance-id", "instance-1",
 	))
+	runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", svcId))
 	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
 }
 
@@ -378,5 +381,6 @@ func TestCloudMap_DeregisterInstance(t *testing.T) {
 	assert.Empty(t, listResult.Instances)
 
 	// Cleanup
+	runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", svcId))
 	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
 }

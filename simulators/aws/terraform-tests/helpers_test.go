@@ -21,13 +21,13 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	binaryPath, _ = filepath.Abs("../simulator-aws")
 	stateDir, err := os.MkdirTemp("", "sockerless-aws-tf-state-*")
 	if err != nil {
 		log.Fatalf("Failed to create terraform state dir: %v", err)
 	}
 	defer os.RemoveAll(stateDir)
 	tfState = filepath.Join(stateDir, "terraform.tfstate")
+	binaryPath = filepath.Join(stateDir, "simulator-aws")
 
 	simDir, _ := filepath.Abs("..")
 	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")

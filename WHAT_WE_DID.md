@@ -6,6 +6,26 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-30 — AWS RDS + ElastiCache client-surface coverage
+
+The BUG-1104 audit found another pair of stale coverage claims. `aws-rds` and `aws-elasticache` were marked as CLI/Terraform not-applicable even though the official AWS CLI exposes `rds create-db-instance` and `elasticache create-cache-cluster`, and terraform-provider-aws exposes `aws_db_instance` and `aws_elasticache_cluster`.
+
+BUG-1228 and BUG-1229 closed that mismatch with real external clients. The AWS CLI harness now runs RDS DB instance, DB snapshot, DB snapshot attribute, and ElastiCache cluster lifecycle flows, including create, describe, modify, tag, list-tags, and delete. The AWS Terraform production-shape harness now provisions `aws_db_instance`, `aws_db_snapshot`, a restored `aws_db_instance`, and `aws_elasticache_cluster`, then asserts ARN, engine, port, status, and tag round-trips after provider refresh.
+
+The Terraform coverage exposed real RDS response-shape gaps: terraform-provider-aws v6 carries DB instance identity through RDS `DbiResourceId`, reads some DB instances by RDS resource id, refreshes DB snapshot attributes with `DescribeDBSnapshotAttributes`, and uses the same public RDS tag APIs for snapshots. RDS instances now have stable real-shaped `DbiResourceId` values in create/describe/restore responses, DB instance reads accept the RDS resource id, DB snapshots expose snapshot attributes, and RDS snapshot tags round-trip through `AddTagsToResource` / `ListTagsForResource` / `RemoveTagsFromResource`. RDS and ElastiCache also now persist tags supplied on the public create Query API calls, so SDK/CLI/Terraform tag refresh sees the same metadata the create request sent.
+
+The coverage matrix and generated surface tables now show direct SDK/CLI/Terraform coverage for AWS RDS and ElastiCache.
+
+The PR #289 AWS Terraform CI follow-up exposed and fixed missing-resource fidelity bugs rather than increasing the test timeout. RDS identifier-addressed `DescribeDBInstances` and `DescribeDBSnapshots` misses now return the real `DBInstanceNotFound` / `DBSnapshotNotFound` faults. ElastiCache identifier-addressed `DescribeCacheClusters` misses return `CacheClusterNotFound`, and SQS missing-queue reads return the AWS Query error shape that terraform-provider-aws keys on: `AWS.SimpleQueueService.NonExistentQueue` / `QueueDoesNotExist`. Unfiltered list calls still return empty-list success where AWS does.
+
+The same CI follow-up fixed Cloud Map namespace lifecycle behavior exposed by Terraform. Private DNS namespace create/delete no longer eagerly creates or removes Docker networks for namespace-only control-plane flows. The simulator creates the Docker network lazily only when a container-backed ECS service registration needs private DNS, and Cloud Map service/namespace deletion now returns AWS-shaped `ResourceInUse` errors while children remain.
+
+The 5-minute Terraform test cap was kept by fixing test packaging instead of weakening the timeout. The actual terraform-provider-aws source has fixed waiters for RDS, ElastiCache, SQS, S3 lifecycle, CloudFront, Route 53, and ELBv2, so one monolithic apply/destroy accumulated too much provider-controlled waiting. RDS instance, RDS snapshot, RDS restore, and ElastiCache provider coverage now lives in focused AWS Terraform packages, while the broader production-shape stack keeps the existing foundational resources. Every package still runs real terraform-provider-aws apply/read/destroy flows against the simulator.
+
+The provider minimum-wait findings were documented per cloud in `docs/terraform_min_timeouts_aws.md`, `docs/terraform_min_timeouts_gcp.md`, and `docs/terraform_min_timeouts_azure.md`. The docs distinguish operation deadline `timeouts {}` from internal provider waiter cadence, and link to the pinned AWS, Google, AzureRM, and Azure Stack provider source used by the simulator Terraform harnesses.
+
+Issue #291 / BUG-1233 remained open after this PR for Route 53 `ListHostedZonesByName`; PR #289 did not implement that separate Route 53 lookup surface.
+
 ## 2026-05-30 — AWS API Gateway client-surface coverage
 
 The BUG-1104 audit found a real stale coverage claim. `aws-apigateway` and `aws-apigatewayv2` were marked as CLI/Terraform not-applicable even though the official AWS CLI exposes `apigateway` / `apigatewayv2` commands and terraform-provider-aws exposes REST API and HTTP API resources.

@@ -173,10 +173,9 @@ resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
 }
 
 # Exercise the Cloud Map namespace + service APIs that BUG-701's fix
-# depends on. Creating the namespace in real AWS also creates an R53
-# hosted zone and the matching Docker user-defined network in the
-# simulator; the service configures the DNS record type used by
-# per-hostname A-record services sockerless creates at runtime.
+# depends on. The namespace and service are Cloud Map control-plane
+# resources; the simulator creates a Docker user-defined network later,
+# only when an ECS task registration needs private DNS at runtime.
 resource "aws_service_discovery_private_dns_namespace" "tf_svc_net" {
   name = "tf-svc-net.local"
   vpc  = "vpc-sim"

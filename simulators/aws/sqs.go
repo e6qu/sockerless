@@ -111,6 +111,11 @@ func sqsErrorJSON(w http.ResponseWriter, code, message string, status int) {
 	sim.AWSError(w, code, message, status)
 }
 
+func sqsQueueDoesNotExist(w http.ResponseWriter) {
+	w.Header().Set("x-amzn-query-error", "AWS.SimpleQueueService.NonExistentQueue;Sender")
+	sqsErrorJSON(w, "QueueDoesNotExist", "The specified queue does not exist.", http.StatusBadRequest)
+}
+
 func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueName  string            `json:"QueueName"`
@@ -167,8 +172,7 @@ func handleSQSDeleteQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !sqsQueues.Delete(queueNameFromURL(req.QueueUrl)) {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
@@ -191,8 +195,7 @@ func handleSQSPurgeQueue(w http.ResponseWriter, r *http.Request) {
 	name := queueNameFromURL(req.QueueUrl)
 	q, ok := sqsQueues.Get(name)
 	if !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	q.Messages = nil
@@ -210,8 +213,7 @@ func handleSQSGetQueueURL(w http.ResponseWriter, r *http.Request) {
 	}
 	q, ok := sqsQueues.Get(req.QueueName)
 	if !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]string{"QueueUrl": q.URL})
@@ -246,8 +248,7 @@ func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	q, ok := sqsQueues.Get(queueNameFromURL(req.QueueUrl))
 	if !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	wanted := map[string]bool{}
@@ -306,8 +307,7 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sqsQueues.Update(name, func(q *SQSQueue) {
@@ -337,8 +337,7 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	if req.MessageBody == "" {
@@ -376,8 +375,7 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	name := queueNameFromURL(req.QueueUrl)
 	q, ok := sqsQueues.Get(name)
 	if !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	// Real SQS caps MaxNumberOfMessages at 10 (silently); requests with
@@ -440,8 +438,7 @@ func handleSQSDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sqsQueues.Update(name, func(qq *SQSQueue) {
@@ -468,8 +465,7 @@ func handleSQSTagQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sqsQueues.Update(name, func(q *SQSQueue) {
@@ -494,8 +490,7 @@ func handleSQSUntagQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	sqsQueues.Update(name, func(q *SQSQueue) {
@@ -516,8 +511,7 @@ func handleSQSListQueueTags(w http.ResponseWriter, r *http.Request) {
 	}
 	q, ok := sqsQueues.Get(queueNameFromURL(req.QueueUrl))
 	if !ok {
-		sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue",
-			"The specified queue does not exist", http.StatusBadRequest)
+		sqsQueueDoesNotExist(w)
 		return
 	}
 	tags := q.Tags

@@ -1,11 +1,13 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,6 +68,25 @@ func TestRDS_DBInstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, desc2.DBInstances, 1)
 	assert.Equal(t, "db.t3.small", aws.ToString(desc2.DBInstances[0].DBInstanceClass))
+
+	_, err = c.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
+		DBInstanceIdentifier: aws.String(id),
+		SkipFinalSnapshot:    aws.Bool(true),
+	})
+	require.NoError(t, err)
+
+	_, err = c.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
+		DBInstanceIdentifier: aws.String(id),
+	})
+	assertAWSAPIErrorCode(t, err, "DBInstanceNotFound")
+}
+
+func assertAWSAPIErrorCode(t *testing.T, err error, code string) {
+	t.Helper()
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "expected smithy.APIError")
+	assert.Equal(t, code, apiErr.ErrorCode())
 }
 
 func TestElastiCache_ClusterLifecycle(t *testing.T) {
@@ -109,4 +130,13 @@ func TestElastiCache_ClusterLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, desc2.CacheClusters, 1)
 	assert.Equal(t, "cache.t3.small", aws.ToString(desc2.CacheClusters[0].CacheNodeType))
+
+	_, err = c.DeleteCacheCluster(ctx, &elasticache.DeleteCacheClusterInput{
+		CacheClusterId: aws.String(id),
+	})
+	require.NoError(t, err)
+	_, err = c.DescribeCacheClusters(ctx, &elasticache.DescribeCacheClustersInput{
+		CacheClusterId: aws.String(id),
+	})
+	assertAWSAPIErrorCode(t, err, "CacheClusterNotFound")
 }

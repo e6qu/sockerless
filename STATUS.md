@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `main` - no issue-driven implementation branch active. |
-| In-flight | None. AWS API Gateway client-surface audit from BUG-1104 / BUG-1227 was completed and merged. |
-| Last merged | AWS API Gateway CLI/Terraform client-surface coverage (2026-05-30). |
+| In-flight | None. PR #289's AWS RDS/ElastiCache client-surface and Terraform CI follow-up was completed and merged. |
+| Last merged | AWS RDS + ElastiCache CLI/Terraform client-surface coverage plus AWS Terraform CI fixes (2026-05-30). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1227 filed · 1227 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
+| Bugs | 1235 filed · 1234 fixed · 3 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1233/#291. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,8 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| PR #289 CI follow-up | AWS missing-resource fidelity + Cloud Map cleanup + Terraform package budget | Closed BUG-1232/#290, BUG-1234/#292, and BUG-1235/#293. Cloud Map private DNS namespace CRUD no longer blocks on eager Docker network cleanup; RDS, ElastiCache, and SQS missing-resource paths now return the AWS not-found error shapes that SDKs and terraform-provider-aws expect; and high-wait RDS/ElastiCache Terraform resources now run in focused real Terraform packages so every AWS Terraform package stays within the required 5-minute timeout without dropping resources or lengthening timeouts. Provider minimum waits are documented per cloud in `docs/terraform_min_timeouts_*.md`. |
+| BUG-1104 audit | AWS RDS + ElastiCache client-surface coverage | Closed BUG-1228 and BUG-1229. AWS RDS and ElastiCache now have direct official AWS CLI and terraform-provider-aws coverage instead of stale not-applicable matrix entries. The simulator persists create-time Query API tags for both services, supports RDS DB snapshot attributes and snapshot tags, restores DB instances from snapshots, returns RDS `DbiResourceId`, and reads DB instances by RDS resource id, matching the public RDS fields terraform-provider-aws v6 uses for DB instance identity. |
 | BUG-1104 audit | AWS API Gateway client-surface coverage | Closed BUG-1227. AWS API Gateway and API Gateway v2 now have direct official AWS CLI and terraform-provider-aws coverage instead of stale not-applicable matrix entries. The simulator implements the public read/delete routes required by client refresh and destroy flows for REST API resources, methods, integrations, deployments, stages, and HTTP API routes, integrations, deployments, and stages. |
 | issue #285 | AWS S3 bucket-subresource row-level coverage | Closed BUG-1226/#285. AWS S3 bucket-subresource rows now have official SDK, AWS CLI `s3api`, and Terraform-provider coverage where those public client surfaces exist. The simulator now supports ID-addressed Get/List/Delete for analytics, inventory, metrics, and intelligent-tiering configurations, returns the documented lifecycle transition-default-minimum-object-size header required by terraform-provider-aws, and the Terraform harness uses isolated per-run state. |
 | post-merge audit | post-merge harness hardening and simulator audit pass | Reset continuity docs to the merged `main` state after PR #284, fixed AWS Docker-harness cleanup through public ECS/Cloud Map APIs, fixed Dockerized workload callback host selection for AWS/GCP/Azure, made the mux-overlap scanner gate actionable, and opened BUG-1226/#285 for the remaining S3 bucket-subresource row-level coverage audit. |
