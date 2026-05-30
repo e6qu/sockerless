@@ -35,6 +35,19 @@ import (
 //     DescribeAddressesAttribute, ReleaseAddress, CreateNatGateway,
 //     DescribeNatGateways, DeleteNatGateway, CreateRouteTable,
 //     CreateRoute, DescribeRouteTables
+//   - API Gateway: CreateRestApi, GetRestApi, DeleteRestApi,
+//     CreateResource, GetResource, DeleteResource, PutMethod,
+//     GetMethod, DeleteMethod, PutIntegration, GetIntegration,
+//     DeleteIntegration, PutMethodResponse, GetMethodResponse,
+//     DeleteMethodResponse, PutIntegrationResponse,
+//     GetIntegrationResponse, DeleteIntegrationResponse,
+//     CreateDeployment, GetDeployment, DeleteDeployment,
+//     CreateStage, GetStage, DeleteStage
+//   - API Gateway v2: CreateApi, GetApi, DeleteApi,
+//     CreateIntegration, GetIntegration, DeleteIntegration,
+//     CreateRoute, GetRoute, DeleteRoute, CreateDeployment,
+//     GetDeployment, DeleteDeployment, CreateStage, GetStage,
+//     DeleteStage
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -81,6 +94,19 @@ func TestStackProductionShape(t *testing.T) {
 	// when comparing back to the CloudFront domain.
 	require.Equal(t, cfDomain, strings.TrimSuffix(r53Alias, "."),
 		"Route 53 ALIAS target name must equal CloudFront distribution domain_name")
+
+	require.NotEmpty(t, outputs.must(t, "apigateway_rest_api_id"),
+		"API Gateway REST API id must round-trip through Terraform state")
+	require.Equal(t, "/tf", outputs.must(t, "apigateway_rest_resource_path"),
+		"API Gateway REST resource path must use AWS's canonical path shape")
+	require.Equal(t, "tf", outputs.must(t, "apigateway_rest_stage_name"),
+		"API Gateway REST stage name must round-trip through provider refresh")
+	require.NotEmpty(t, outputs.must(t, "apigatewayv2_api_id"),
+		"API Gateway v2 API id must round-trip through Terraform state")
+	require.Equal(t, "GET /tf", outputs.must(t, "apigatewayv2_route_key"),
+		"API Gateway v2 route key must round-trip through provider refresh")
+	require.Equal(t, "tf", outputs.must(t, "apigatewayv2_stage_name"),
+		"API Gateway v2 stage name must round-trip through provider refresh")
 
 	require.True(t, strings.HasPrefix(acmARN, "arn:aws:acm:us-east-1:"),
 		"ACM certificate must live in us-east-1 for CloudFront use; got %s", acmARN)

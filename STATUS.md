@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `main` - no issue-driven implementation branch active. |
-| In-flight | None. AWS S3 bucket-subresource row-level coverage from issue #285 was completed and merged. |
-| Last merged | AWS S3 bucket-subresource row-level client coverage (2026-05-30). |
+| In-flight | None. AWS API Gateway client-surface audit from BUG-1104 / BUG-1227 was completed and merged. |
+| Last merged | AWS API Gateway CLI/Terraform client-surface coverage (2026-05-30). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1226 filed · 1226 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
+| Bugs | 1227 filed · 1227 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| BUG-1104 audit | AWS API Gateway client-surface coverage | Closed BUG-1227. AWS API Gateway and API Gateway v2 now have direct official AWS CLI and terraform-provider-aws coverage instead of stale not-applicable matrix entries. The simulator implements the public read/delete routes required by client refresh and destroy flows for REST API resources, methods, integrations, deployments, stages, and HTTP API routes, integrations, deployments, and stages. |
 | issue #285 | AWS S3 bucket-subresource row-level coverage | Closed BUG-1226/#285. AWS S3 bucket-subresource rows now have official SDK, AWS CLI `s3api`, and Terraform-provider coverage where those public client surfaces exist. The simulator now supports ID-addressed Get/List/Delete for analytics, inventory, metrics, and intelligent-tiering configurations, returns the documented lifecycle transition-default-minimum-object-size header required by terraform-provider-aws, and the Terraform harness uses isolated per-run state. |
 | post-merge audit | post-merge harness hardening and simulator audit pass | Reset continuity docs to the merged `main` state after PR #284, fixed AWS Docker-harness cleanup through public ECS/Cloud Map APIs, fixed Dockerized workload callback host selection for AWS/GCP/Azure, made the mux-overlap scanner gate actionable, and opened BUG-1226/#285 for the remaining S3 bucket-subresource row-level coverage audit. |
 | issue #282 | Azure Key Vault data-plane parity | Closed BUG-1222/#282. Azure Key Vault data-plane secrets, keys, and certificates now cover paged lifecycle reads, updates, backup/restore, soft-delete purge, certificate operation/import/merge flows, key import/update/version reads, and real RSA sign/verify/encrypt/decrypt/wrap/unwrap operations. Coverage uses the official Azure SDK and azurerm Terraform `azurerm_key_vault_secret`, `azurerm_key_vault_key`, and `azurerm_key_vault_certificate` resources. |

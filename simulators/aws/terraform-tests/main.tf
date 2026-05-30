@@ -26,6 +26,8 @@ provider "aws" {
     ecs              = var.endpoint
     sts              = var.endpoint
     ecr              = var.endpoint
+    apigateway       = var.endpoint
+    apigatewayv2     = var.endpoint
     servicediscovery = var.endpoint
     cloudfront       = var.endpoint
     acm              = var.endpoint
@@ -395,6 +397,107 @@ resource "aws_cloudwatch_event_target" "tf_eventbridge_target" {
   rule      = aws_cloudwatch_event_rule.tf_eventbridge_rule.name
   target_id = "tf-eventbridge-queue"
   arn       = aws_sqs_queue.tf_eventbridge_queue.arn
+}
+
+resource "aws_api_gateway_rest_api" "tf_rest_api" {
+  name        = "tf-rest-api"
+  description = "terraform API Gateway REST API coverage"
+}
+
+resource "aws_api_gateway_resource" "tf_rest_resource" {
+  rest_api_id = aws_api_gateway_rest_api.tf_rest_api.id
+  parent_id   = aws_api_gateway_rest_api.tf_rest_api.root_resource_id
+  path_part   = "tf"
+}
+
+resource "aws_api_gateway_method" "tf_rest_method" {
+  rest_api_id   = aws_api_gateway_rest_api.tf_rest_api.id
+  resource_id   = aws_api_gateway_resource.tf_rest_resource.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "tf_rest_integration" {
+  rest_api_id          = aws_api_gateway_rest_api.tf_rest_api.id
+  resource_id          = aws_api_gateway_resource.tf_rest_resource.id
+  http_method          = aws_api_gateway_method.tf_rest_method.http_method
+  type                 = "MOCK"
+  passthrough_behavior = "WHEN_NO_MATCH"
+
+  request_templates = {
+    "application/json" = "{\"statusCode\":200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "tf_rest_method_response" {
+  rest_api_id = aws_api_gateway_rest_api.tf_rest_api.id
+  resource_id = aws_api_gateway_resource.tf_rest_resource.id
+  http_method = aws_api_gateway_method.tf_rest_method.http_method
+  status_code = "200"
+
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration_response" "tf_rest_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.tf_rest_api.id
+  resource_id = aws_api_gateway_resource.tf_rest_resource.id
+  http_method = aws_api_gateway_method.tf_rest_method.http_method
+  status_code = aws_api_gateway_method_response.tf_rest_method_response.status_code
+
+  response_templates = {
+    "application/json" = "{\"ok\":true}"
+  }
+}
+
+resource "aws_api_gateway_deployment" "tf_rest_deployment" {
+  rest_api_id = aws_api_gateway_rest_api.tf_rest_api.id
+  description = "terraform API Gateway REST deployment"
+
+  depends_on = [
+    aws_api_gateway_integration.tf_rest_integration,
+    aws_api_gateway_integration_response.tf_rest_integration_response,
+  ]
+}
+
+resource "aws_api_gateway_stage" "tf_rest_stage" {
+  rest_api_id   = aws_api_gateway_rest_api.tf_rest_api.id
+  deployment_id = aws_api_gateway_deployment.tf_rest_deployment.id
+  stage_name    = "tf"
+}
+
+resource "aws_apigatewayv2_api" "tf_http_api" {
+  name          = "tf-http-api"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_integration" "tf_http_integration" {
+  api_id                 = aws_apigatewayv2_api.tf_http_api.id
+  integration_type       = "HTTP_PROXY"
+  integration_uri        = "https://example.com"
+  integration_method     = "GET"
+  payload_format_version = "1.0"
+}
+
+resource "aws_apigatewayv2_route" "tf_http_route" {
+  api_id    = aws_apigatewayv2_api.tf_http_api.id
+  route_key = "GET /tf"
+  target    = "integrations/${aws_apigatewayv2_integration.tf_http_integration.id}"
+}
+
+resource "aws_apigatewayv2_deployment" "tf_http_deployment" {
+  api_id      = aws_apigatewayv2_api.tf_http_api.id
+  description = "terraform API Gateway v2 deployment"
+
+  depends_on = [aws_apigatewayv2_route.tf_http_route]
+}
+
+resource "aws_apigatewayv2_stage" "tf_http_stage" {
+  api_id        = aws_apigatewayv2_api.tf_http_api.id
+  name          = "tf"
+  deployment_id = aws_apigatewayv2_deployment.tf_http_deployment.id
+  auto_deploy   = false
 }
 
 resource "aws_route53_zone" "tf_zone" {
@@ -821,6 +924,24 @@ output "route53_alias_target_name" {
 }
 output "route53_alias_target_zone_id" {
   value = aws_route53_record.tf_alias.alias[0].zone_id
+}
+output "apigateway_rest_api_id" {
+  value = aws_api_gateway_rest_api.tf_rest_api.id
+}
+output "apigateway_rest_resource_path" {
+  value = aws_api_gateway_resource.tf_rest_resource.path
+}
+output "apigateway_rest_stage_name" {
+  value = aws_api_gateway_stage.tf_rest_stage.stage_name
+}
+output "apigatewayv2_api_id" {
+  value = aws_apigatewayv2_api.tf_http_api.id
+}
+output "apigatewayv2_route_key" {
+  value = aws_apigatewayv2_route.tf_http_route.route_key
+}
+output "apigatewayv2_stage_name" {
+  value = aws_apigatewayv2_stage.tf_http_stage.name
 }
 output "amplify_app_arn" {
   value = aws_amplify_app.tf_amplify.arn

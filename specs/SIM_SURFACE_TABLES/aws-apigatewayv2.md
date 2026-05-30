@@ -13,20 +13,26 @@ Surface registered in `simulators/aws/apigatewayv2.go` (and related files groupe
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:82::handleAPIGWv2CreateApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:83::handleAPIGWv2ListApis` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:84::handleAPIGWv2GetApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:85::handleAPIGWv2DeleteApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:86::handleAPIGWv2CreateRoute` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:87::handleAPIGWv2ListRoutes` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:88::handleAPIGWv2CreateIntegration` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:89::handleAPIGWv2ListIntegrations` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:90::handleAPIGWv2CreateStage` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:91::handleAPIGWv2ListStages` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:92::handleAPIGWv2CreateDeployment` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:93::handleAPIGWv2ListDeployments` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:94::handleAPIGWv2GetDeployment` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:95::handleAPIGWv2DeleteDeployment` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:87::handleAPIGWv2CreateApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis` | ✓ `simulators/aws/apigatewayv2.go:88::handleAPIGWv2ListApis` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:89::handleAPIGWv2GetApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}` | ✓ `simulators/aws/apigatewayv2.go:90::handleAPIGWv2DeleteApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:91::handleAPIGWv2CreateRoute` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/routes` | ✓ `simulators/aws/apigatewayv2.go:92::handleAPIGWv2ListRoutes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:93::handleAPIGWv2GetRoute` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/routes/{routeId}` | ✓ `simulators/aws/apigatewayv2.go:94::handleAPIGWv2DeleteRoute` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:95::handleAPIGWv2CreateIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/integrations` | ✓ `simulators/aws/apigatewayv2.go:96::handleAPIGWv2ListIntegrations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:97::handleAPIGWv2GetIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/integrations/{integrationId}` | ✓ `simulators/aws/apigatewayv2.go:98::handleAPIGWv2DeleteIntegration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:99::handleAPIGWv2CreateStage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/stages` | ✓ `simulators/aws/apigatewayv2.go:100::handleAPIGWv2ListStages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:101::handleAPIGWv2GetStage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/stages/{stageName}` | ✓ `simulators/aws/apigatewayv2.go:102::handleAPIGWv2DeleteStage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:103::handleAPIGWv2CreateDeployment` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/deployments` | ✓ `simulators/aws/apigatewayv2.go:104::handleAPIGWv2ListDeployments` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:105::handleAPIGWv2GetDeployment` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/apis/{apiId}/deployments/{deploymentId}` | ✓ `simulators/aws/apigatewayv2.go:106::handleAPIGWv2DeleteDeployment` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
