@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 
 	sim "github.com/sockerless/simulator"
@@ -20,6 +22,7 @@ type S3BucketConfig struct {
 	Subresource string
 	Body        []byte
 	ContentType string
+	Headers     map[string]string
 }
 
 var (
@@ -28,7 +31,14 @@ var (
 	s3BucketConfigs = map[string]S3BucketConfig{}
 )
 
-func s3BucketConfigKey(bucket, sub string) string { return bucket + "/" + sub }
+const s3LifecycleTransitionDefaultMinimumObjectSize = "all_storage_classes_128K"
+
+func s3BucketConfigKeyID(bucket, sub, id string) string {
+	if id == "" {
+		return bucket + "/" + sub
+	}
+	return bucket + "/" + sub + "/" + id
+}
 
 // bucketSubresource enumerates a single bucket-level subresource —
 // each carries the canonical S3 success status code for its PUT and
@@ -152,14 +162,18 @@ func handleS3PutBucketSubresource(w http.ResponseWriter, r *http.Request, sub st
 	if contentType == "" {
 		contentType = "application/xml"
 	}
+	headers := bucketSubresourceResponseHeaders(sub, r)
+	id := r.URL.Query().Get("id")
 	s3BucketConfigsMu.Lock()
-	s3BucketConfigs[s3BucketConfigKey(bucket, sub)] = S3BucketConfig{
+	s3BucketConfigs[s3BucketConfigKeyID(bucket, sub, id)] = S3BucketConfig{
 		Bucket:      bucket,
 		Subresource: sub,
 		Body:        body,
 		ContentType: contentType,
+		Headers:     headers,
 	}
 	s3BucketConfigsMu.Unlock()
+	setResponseHeaders(w, headers)
 	w.WriteHeader(spec.putStatus)
 }
 
@@ -174,7 +188,7 @@ func handleS3DeleteBucketSubresource(w http.ResponseWriter, r *http.Request, sub
 		return
 	}
 	s3BucketConfigsMu.Lock()
-	delete(s3BucketConfigs, s3BucketConfigKey(bucket, sub))
+	delete(s3BucketConfigs, s3BucketConfigKeyID(bucket, sub, r.URL.Query().Get("id")))
 	s3BucketConfigsMu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -182,14 +196,36 @@ func handleS3DeleteBucketSubresource(w http.ResponseWriter, r *http.Request, sub
 // getStoredBucketSubresource looks up the stored config bytes for a
 // (bucket, subresource) pair. Returns the body bytes + content type
 // when set; (nil, "", false) when never PUT.
-func getStoredBucketSubresource(bucket, sub string) ([]byte, string, bool) {
+func getStoredBucketSubresource(bucket, sub string) ([]byte, string, map[string]string, bool) {
+	return getStoredBucketSubresourceID(bucket, sub, "")
+}
+
+func getStoredBucketSubresourceID(bucket, sub, id string) ([]byte, string, map[string]string, bool) {
 	s3BucketConfigsMu.Lock()
 	defer s3BucketConfigsMu.Unlock()
-	cfg, ok := s3BucketConfigs[s3BucketConfigKey(bucket, sub)]
+	cfg, ok := s3BucketConfigs[s3BucketConfigKeyID(bucket, sub, id)]
 	if !ok {
-		return nil, "", false
+		return nil, "", nil, false
 	}
-	return cfg.Body, cfg.ContentType, true
+	return cfg.Body, cfg.ContentType, cfg.Headers, true
+}
+
+func listStoredBucketSubresources(bucket, sub string) [][]byte {
+	prefix := s3BucketConfigKeyID(bucket, sub, "") + "/"
+	s3BucketConfigsMu.Lock()
+	defer s3BucketConfigsMu.Unlock()
+	keys := make([]string, 0)
+	for key := range s3BucketConfigs {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	out := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, append([]byte(nil), s3BucketConfigs[key].Body...))
+	}
+	return out
 }
 
 // emitStoredOrEmptyXML responds with the stored config for the
@@ -199,11 +235,12 @@ func getStoredBucketSubresource(bucket, sub string) ([]byte, string, bool) {
 // Used by GET-side handlers for subresources that don't 404 on
 // empty (e.g. `?versioning`, `?logging`, `?notification`).
 func emitStoredOrEmptyXML(w http.ResponseWriter, bucket, sub, rootElement string) {
-	if body, ct, ok := getStoredBucketSubresource(bucket, sub); ok {
+	if body, ct, headers, ok := getStoredBucketSubresource(bucket, sub); ok {
 		if ct == "" {
 			ct = "application/xml"
 		}
 		w.Header().Set("Content-Type", ct)
+		setResponseHeaders(w, headers)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 		return
@@ -218,14 +255,67 @@ func emitStoredOrEmptyXML(w http.ResponseWriter, bucket, sub, rootElement string
 // otherwise emits the canonical S3 error code for "this subresource
 // has never been set" (`NoSuchBucketPolicy`, `NoSuchTagSet`, etc.).
 func emitStoredOr404(w http.ResponseWriter, r *http.Request, bucket, sub, errorCode, errorMsg string) {
-	if body, ct, ok := getStoredBucketSubresource(bucket, sub); ok {
+	if body, ct, headers, ok := getStoredBucketSubresource(bucket, sub); ok {
 		if ct == "" {
 			ct = "application/xml"
 		}
 		w.Header().Set("Content-Type", ct)
+		setResponseHeaders(w, headers)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 		return
 	}
 	sim.S3ErrorXML(w, errorCode, errorMsg, bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+}
+
+func emitStoredIDOr404(w http.ResponseWriter, r *http.Request, bucket, sub, id string) {
+	if body, ct, headers, ok := getStoredBucketSubresourceID(bucket, sub, id); ok {
+		if ct == "" {
+			ct = "application/xml"
+		}
+		w.Header().Set("Content-Type", ct)
+		setResponseHeaders(w, headers)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+		return
+	}
+	sim.S3ErrorXML(w, "NoSuchConfiguration", "The specified configuration does not exist",
+		bucket, sim.RequestID(r.Context()), http.StatusNotFound)
+}
+
+func emitBucketConfigurationList(w http.ResponseWriter, bucket, sub, rootElement string) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><%s xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>`, rootElement)
+	for _, body := range listStoredBucketSubresources(bucket, sub) {
+		_, _ = w.Write(stripXMLDeclaration(body))
+	}
+	_, _ = fmt.Fprintf(w, `</%s>`, rootElement)
+}
+
+func bucketSubresourceResponseHeaders(sub string, r *http.Request) map[string]string {
+	if sub != "lifecycle" {
+		return nil
+	}
+	value := r.Header.Get("x-amz-transition-default-minimum-object-size")
+	if value == "" {
+		value = s3LifecycleTransitionDefaultMinimumObjectSize
+	}
+	return map[string]string{"x-amz-transition-default-minimum-object-size": value}
+}
+
+func setResponseHeaders(w http.ResponseWriter, headers map[string]string) {
+	for name, value := range headers {
+		w.Header().Set(name, value)
+	}
+}
+
+func stripXMLDeclaration(body []byte) []byte {
+	s := strings.TrimSpace(string(body))
+	if strings.HasPrefix(s, "<?xml") {
+		if idx := strings.Index(s, "?>"); idx >= 0 {
+			s = strings.TrimSpace(s[idx+2:])
+		}
+	}
+	return []byte(s)
 }
