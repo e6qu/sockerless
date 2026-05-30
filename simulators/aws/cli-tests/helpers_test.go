@@ -157,3 +157,14 @@ func parseJSON(t *testing.T, data string, target any) {
 		t.Fatalf("Failed to parse JSON: %v\nData: %s", err, data)
 	}
 }
+
+func cleanupCLIECSTask(t *testing.T, clusterName, taskArn string) {
+	t.Helper()
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("ecs", "stop-task",
+			"--cluster", clusterName,
+			"--task", taskArn,
+			"--reason", "test cleanup",
+		))
+	})
+}

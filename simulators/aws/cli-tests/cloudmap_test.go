@@ -222,6 +222,11 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	}
 	alphaSvc := createService("alpha")
 	betaSvc := createService("beta")
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", alphaSvc))
+		runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", betaSvc))
+		runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
+	})
 
 	// Cluster + task def with awslogs config (sim only spawns Docker
 	// containers when awslogs is configured) + sleep command so the
@@ -263,6 +268,8 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	betaCID := strings.Repeat("b", 64)
 	alphaTask := runTask(alphaCID)
 	betaTask := runTask(betaCID)
+	cleanupCLIECSTask(t, "cli-xtask-dns", alphaTask)
+	cleanupCLIECSTask(t, "cli-xtask-dns", betaTask)
 
 	// Wait for Docker containers to exist
 	alphaName := "sockerless-sim-aws-task-" + alphaTask[strings.LastIndex(alphaTask, "/")+1:][:12]
@@ -283,11 +290,19 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 		"--instance-id", alphaCID[:12],
 		"--attributes", "AWS_INSTANCE_IPV4=10.0.0.10",
 	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("servicediscovery", "deregister-instance",
+			"--service-id", alphaSvc, "--instance-id", alphaCID[:12]))
+	})
 	runCLI(t, awsCLI("servicediscovery", "register-instance",
 		"--service-id", betaSvc,
 		"--instance-id", betaCID[:12],
 		"--attributes", "AWS_INSTANCE_IPV4=10.0.0.20",
 	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("servicediscovery", "deregister-instance",
+			"--service-id", betaSvc, "--instance-id", betaCID[:12]))
+	})
 
 	// Resolve beta from alpha via Docker's embedded DNS
 	var getent []byte
@@ -298,16 +313,6 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud Map DNS; last output: %s", getent)
 	assert.Contains(t, string(getent), "beta", "getent output should mention beta: %s", getent)
 
-	// Cleanup
-	runCLI(t, awsCLI("servicediscovery", "deregister-instance",
-		"--service-id", alphaSvc, "--instance-id", alphaCID[:12]))
-	runCLI(t, awsCLI("servicediscovery", "deregister-instance",
-		"--service-id", betaSvc, "--instance-id", betaCID[:12]))
-	runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", alphaSvc))
-	runCLI(t, awsCLI("servicediscovery", "delete-service", "--id", betaSvc))
-	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
-	runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "cli-xtask-dns", "--task", alphaTask))
-	runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "cli-xtask-dns", "--task", betaTask))
 }
 
 func TestCloudMap_DeregisterInstance(t *testing.T) {

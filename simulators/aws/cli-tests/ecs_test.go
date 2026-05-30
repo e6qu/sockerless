@@ -61,6 +61,7 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 	parseJSON(t, out, &runResult)
 	require.Len(t, runResult.Tasks, 1)
 	taskArn := runResult.Tasks[0].TaskArn
+	cleanupCLIECSTask(t, "cli-ecs-cluster", taskArn)
 
 	// Wait for process to complete
 	time.Sleep(3 * time.Second)
@@ -161,6 +162,7 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 	parseJSON(t, out, &runResult)
 	require.Len(t, runResult.Tasks, 1)
 	taskArn := runResult.Tasks[0].TaskArn
+	cleanupCLIECSTask(t, "cli-ecs-fail-cluster", taskArn)
 
 	// Wait for process to complete
 	time.Sleep(3 * time.Second)

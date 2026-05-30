@@ -83,7 +83,7 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 ## Coverage status
 
 - Terraform coverage currently exists for the bucket resource plus versioning, CORS, server-side encryption, website, public access block, and ownership controls in `simulators/aws/terraform-tests/main.tf`.
-- Remaining ✗ rows are concrete coverage gaps, not closed historical deferrals. They are tracked by BUG-1221 so follow-up work can add SDK/CLI/Terraform coverage or split any operation that needs implementation into its own public-API bug.
+- Remaining ✗ rows are concrete row-level coverage gaps, not closed historical deferrals. They are tracked by BUG-1226 / issue #285 so follow-up work can add SDK/CLI/Terraform coverage through the public S3 API where those surfaces exist, mark true n/a rows, or split any behavior mismatch into its own implementation bug.
 
 ## Reopens that produced this table
 

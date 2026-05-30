@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -161,7 +163,7 @@ func simHostMetadataAddr() string {
 	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
 		port = simListenAddr[idx+1:]
 	}
-	return "host.docker.internal:" + port
+	return workloadCallbackHost() + ":" + port
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the
@@ -172,6 +174,9 @@ func simHostMetadataAddr() string {
 // + IDENTITY_HEADER + AZURE_INSTANCE_METADATA_ENDPOINT for redirection,
 // so SDK-based workloads route via env without needing the link-local.
 func hostMetadataExtraHosts() []string {
+	if workloadCallbackHost() != "host.docker.internal" {
+		return nil
+	}
 	info := strings.ToLower(sim.RuntimeInfo())
 	if strings.Contains(info, "podman") {
 		return nil
@@ -192,6 +197,44 @@ func hostMetadataEnv() map[string]string {
 		// Azure SDK respects this for IMDS instance metadata routing.
 		"AZURE_INSTANCE_METADATA_ENDPOINT": "http://" + addr + "/metadata/instance",
 	}
+}
+
+func workloadCallbackHost() string {
+	if runningInsideContainer() {
+		if host := firstNonLoopbackIPv4(); host != "" {
+			return host
+		}
+	}
+	return "host.docker.internal"
+}
+
+func runningInsideContainer() bool {
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return os.Getenv("container") != ""
+}
+
+func firstNonLoopbackIPv4() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			continue
+		}
+		return ip.String()
+	}
+	return ""
 }
 
 // mergeEnv returns a new map with all keys from `base` and `extra`,

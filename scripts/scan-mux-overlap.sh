@@ -41,16 +41,20 @@ done > "$tmp_routes"
 n_routes="$(wc -l <"$tmp_routes" | tr -d ' ')"
 echo "scanned $n_routes registered routes across simulators/{aws,azure,gcp}/" >&2
 
-# Pass 2 — detect pairs that may shadow each other.
-# Naive heuristic that catches the BUG-1150 class:
-#   - For every route with `{NAME...}` (catch-all wildcard) — flag.
-#   - For every pair (A, B) where A's pattern starts with `{wildcard}` AND
-#     B's pattern has a literal first segment, A would match B unless
-#     Go's specificity tiebreak prefers B. Flag for review.
+# Pass 2 — detect route pairs that may shadow each other.
 #
-# This is intentionally over-eager — the goal is to surface routing risk
-# at PR time, not to claim certainty. The allowlist documents intentional
-# precedence.
+# Go's net/http mux chooses the most specific matching pattern. Literal
+# segments are more specific than wildcard segments, so a root-greedy S3
+# route such as `GET /{bucket}/{key...}` does not steal a registered
+# literal route such as `GET /2015-03-31/functions/{name}`. The scanner
+# only reports root-greedy wildcard pairs that have no literal-first
+# pattern to win by specificity, and it focuses on cross-file service
+# boundaries where the collapsed-port simulator can accidentally mix
+# cloud service slices. Intra-file route families are expected to be
+# handled by their service-specific dispatch tests.
+#
+# The allowlist documents intentional overlap when the scanner cannot
+# prove precedence from the pattern shape alone.
 
 # Group patterns by HTTP method so cross-method registrations don't false-positive.
 declare -a met_keys
@@ -84,9 +88,13 @@ for cloud in aws azure gcp; do
 
       while IFS=$'\t' read -r src2 line2 route2 handler2; do
         [[ "$src/$line/$handler" == "$src2/$line2/$handler2" ]] && continue
+        [[ "$src" == "$src2" ]] && continue
         pat2="${route2#"$method" }"
         first2="$(echo "$pat2" | awk -F'/' '{print $2}')"
-        if [[ -n "$first2" && ! "$first2" =~ ^\{ ]]; then
+        if [[ -z "$first2" || ! "$first2" =~ ^\{ ]]; then
+          continue
+        fi
+        if [[ "$pattern" != "$pat2" ]]; then
           key="$(printf '%s\n%s\n' "$src::$route" "$src2::$route2" | sort | tr '\n' '|')"
           if ! grep -qxF "$key" "$findings_tmp" 2>/dev/null; then
             echo "$key" >>"$findings_tmp"

@@ -72,6 +72,7 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, ecsC, clusterName, taskArn)
 
 	// Wait for container to start (image pull + create + start)
 	time.Sleep(10 * time.Second)
