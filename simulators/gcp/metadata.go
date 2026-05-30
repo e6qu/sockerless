@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -178,7 +180,7 @@ func hostMetadataAddr() string {
 	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
 		port = simListenAddr[idx+1:]
 	}
-	return "host.docker.internal:" + port
+	return workloadCallbackHost() + ":" + port
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the
@@ -187,6 +189,12 @@ func hostMetadataAddr() string {
 // use the explicit address; workloads that hard-code metadata.google.internal
 // will resolve it to host.docker.internal via /etc/hosts.
 func hostMetadataExtraHosts() []string {
+	if host := workloadCallbackHost(); host != "host.docker.internal" {
+		return []string{
+			"metadata.google.internal:" + host,
+			"metadata:" + host,
+		}
+	}
 	info := strings.ToLower(sim.RuntimeInfo())
 	if strings.Contains(info, "podman") {
 		// Podman exposes host.docker.internal natively.
@@ -197,6 +205,44 @@ func hostMetadataExtraHosts() []string {
 		"metadata.google.internal:host-gateway",
 		"metadata:host-gateway",
 	}
+}
+
+func workloadCallbackHost() string {
+	if runningInsideContainer() {
+		if host := firstNonLoopbackIPv4(); host != "" {
+			return host
+		}
+	}
+	return "host.docker.internal"
+}
+
+func runningInsideContainer() bool {
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return os.Getenv("container") != ""
+}
+
+func firstNonLoopbackIPv4() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			continue
+		}
+		return ip.String()
+	}
+	return ""
 }
 
 // hostMetadataEnv returns env vars to inject on every GCP workload host

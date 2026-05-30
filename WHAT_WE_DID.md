@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-30 — Post-merge continuity, harness, and simulator audit pass
+
+After PR #284 merged, the repository had no open GitHub issues. This pass reset the continuity docs from an in-review Key Vault branch back to the merged `main` view, keeping the docs in past tense so fresh sessions do not treat already-merged work as active.
+
+The local harness hardening pass found real failures instead of documenting around them. AWS ECS SDK/CLI tests that start tasks now register cleanup through public `StopTask` / `aws ecs stop-task`, and Cloud Map tests clean up service-discovery resources through the public Service Discovery APIs. The AWS Lambda Runtime API callback path now advertises a sibling-container-reachable host when the simulator itself runs inside Docker; GCP and Azure metadata/workload callback helpers use the same container-visible host selection for Dockerized harness runs.
+
+The simulator audit pass also made the mux-overlap scanner gate actionable. `scripts/scan-mux-overlap.sh --gate` now models Go `net/http` mux literal-over-wildcard specificity and ignores intra-file route-family noise, so S3 catch-all routes do not mask the cross-service shadowing problems the gate is meant to catch.
+
+The audit found one stale doc/tracking problem: `aws-s3-bucket-subresources.md` still attached remaining row-level SDK/CLI/Terraform coverage gaps to closed BUG-1221/#281. That was corrected by opening issue #285 / BUG-1226 for the remaining row-level coverage audit instead of silently treating the rows as done.
+
 ## 2026-05-30 — Azure Key Vault data-plane parity
 
 Issue #282 was valid. The stale surface-table cleanup exposed real Key Vault data-plane gaps beyond documentation drift: key and certificate Terraform resources needed to run through the simulator, certificates needed Azure's operation/pending shape, backup/restore and soft-delete purge flows were incomplete, and key crypto/import/update/version paths were missing.
@@ -16,7 +26,7 @@ Coverage uses official Azure SDK clients for secrets, keys, certificates, pagers
 
 ## 2026-05-30 — AWS S3 bucket-subresource parity
 
-Issue #281 was valid. The stale surface-table cleanup found real AWS S3 bucket-subresource rows that still needed current external-client coverage or public-API fixes instead of inherited historical status text. That follow-up was closed with SDK/CLI/Terraform coverage and behavior fixes for the affected S3 bucket-subresource rows.
+Issue #281 was valid. The stale surface-table cleanup found real AWS S3 bucket-subresource rows that still needed current external-client coverage or public-API fixes instead of inherited historical status text. That follow-up was closed with SDK/CLI/Terraform coverage and behavior fixes for the affected S3 bucket-subresource rows; remaining row-level coverage debt is tracked separately by issue #285 / BUG-1226.
 
 ## 2026-05-30 — Surface-table audit debt cleanup
 
@@ -24,7 +34,7 @@ BUG-1206 closed the broad stale-docs tracker. The generated simulator surface ta
 
 The cleanup found one real implementation mismatch in the AWS S3 multipart table: `ListMultipartUploads` was documented but `GET /{bucket}?uploads` did not route to a handler. AWS S3 now implements that public API and returns paginated multipart upload listings. `ListParts` also honors `part-number-marker` and `max-parts`, so the official AWS SDK paginator exercises real multi-page behavior. Coverage uses AWS SDK paginator tests and AWS CLI `s3api list-multipart-uploads` / `list-parts`.
 
-Two remaining concrete gaps were split into follow-up issues instead of staying hidden in old notes. Issue #281 / BUG-1221 tracked AWS S3 bucket-subresource row-level SDK/CLI/Terraform coverage and any public-API fixes those rows exposed. Issue #282 / BUG-1222 tracked Azure Key Vault data-plane parity for key/certificate Terraform coverage, certificate LRO shape, backup/restore, key import/update/crypto operations, certificate update/import/merge, and pager/lifecycle SDK coverage. Both follow-ups were closed by later implementation PRs.
+Two remaining concrete implementation gaps were split into follow-up issues instead of staying hidden in old notes. Issue #281 / BUG-1221 tracked AWS S3 bucket-subresource public-API fixes and selected row-level SDK/CLI/Terraform coverage. Issue #282 / BUG-1222 tracked Azure Key Vault data-plane parity for key/certificate Terraform coverage, certificate LRO shape, backup/restore, key import/update/crypto operations, certificate update/import/merge, and pager/lifecycle SDK coverage. Both implementation follow-ups were closed by later PRs; the remaining S3 bucket-subresource row-level coverage audit is tracked by issue #285 / BUG-1226.
 
 ## 2026-05-29 — NAT/public-IP simulator parity
 

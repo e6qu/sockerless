@@ -125,6 +125,7 @@ exit 1`},
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
 
 	require.Eventually(t, func() bool {
 		desc, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
@@ -189,6 +190,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
 
 	// Wait briefly for task to transition to RUNNING (500ms in simulator)
 	time.Sleep(800 * time.Millisecond)
@@ -270,6 +272,7 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
 
 	// Wait for RUNNING
 	time.Sleep(800 * time.Millisecond)
@@ -332,7 +335,22 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 
-	return client, clusterName, *runOut.Tasks[0].TaskArn
+	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
+
+	return client, clusterName, taskArn
+}
+
+func cleanupECSTask(t *testing.T, client *ecs.Client, clusterName, taskArn string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, err := client.StopTask(ctx, &ecs.StopTaskInput{
+			Cluster: aws.String(clusterName),
+			Task:    aws.String(taskArn),
+			Reason:  aws.String("test cleanup"),
+		})
+		require.NoError(t, err)
+	})
 }
 
 func TestECS_TaskExecutesCommand(t *testing.T) {

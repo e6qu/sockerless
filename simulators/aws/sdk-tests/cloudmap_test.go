@@ -277,6 +277,19 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	alphaCID := strings.Repeat("a", 64)
+	betaCID := strings.Repeat("b", 64)
+	t.Cleanup(func() {
+		_, _ = cm.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
+			ServiceId: svcAlpha.Service.Id, InstanceId: aws.String(alphaCID[:12]),
+		})
+		_, _ = cm.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
+			ServiceId: svcBeta.Service.Id, InstanceId: aws.String(betaCID[:12]),
+		})
+		_, _ = cm.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: svcAlpha.Service.Id})
+		_, _ = cm.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: svcBeta.Service.Id})
+		_, _ = cm.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
+	})
 
 	// Cluster + task def running `sleep 30`
 	_, err = ecsCli.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String("xtask-dns")})
@@ -321,11 +334,10 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 		return *runOut.Tasks[0].TaskArn
 	}
 
-	alphaCID := strings.Repeat("a", 64)
-	betaCID := strings.Repeat("b", 64)
 	alphaTask := runTask(alphaCID)
 	betaTask := runTask(betaCID)
-	_ = alphaTask
+	cleanupECSTask(t, ecsCli, "xtask-dns", alphaTask)
+	cleanupECSTask(t, ecsCli, "xtask-dns", betaTask)
 
 	// Wait for both to reach RUNNING (sim transitions in ~500ms) and
 	// ensure Docker containers are up before registering instances.
@@ -389,18 +401,6 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 
 	assert.Contains(t, string(getent), "beta", "getent output should mention beta hostname: %s", getent)
 
-	// Cleanup: deregister + delete services + delete namespace (removes Docker network)
-	_, _ = cm.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
-		ServiceId: svcAlpha.Service.Id, InstanceId: aws.String(alphaCID[:12]),
-	})
-	_, _ = cm.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{
-		ServiceId: svcBeta.Service.Id, InstanceId: aws.String(betaCID[:12]),
-	})
-	_, _ = cm.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: svcAlpha.Service.Id})
-	_, _ = cm.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: svcBeta.Service.Id})
-	_, _ = cm.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
-	_, _ = ecsCli.StopTask(ctx, &ecs.StopTaskInput{Cluster: aws.String("xtask-dns"), Task: aws.String(alphaTask)})
-	_, _ = ecsCli.StopTask(ctx, &ecs.StopTaskInput{Cluster: aws.String("xtask-dns"), Task: aws.String(betaTask)})
 }
 
 func TestCloudMap_DeleteServiceAndNamespace(t *testing.T) {

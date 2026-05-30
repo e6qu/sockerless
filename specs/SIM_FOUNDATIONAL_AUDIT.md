@@ -10,7 +10,7 @@ This is not a license to add simulator-specific APIs. Any missing row below is a
 
 | Category | AWS simulator | GCP simulator | Azure simulator | Finding |
 |---|---|---|---|---|
-| Object storage | S3 implemented | GCS implemented | Blob/File/Queue/Table storage implemented | Present across all three. The stale surface-table marker cleanup and its S3 bucket-subresource follow-up were closed. |
+| Object storage | S3 implemented | GCS implemented | Blob/File/Queue/Table storage implemented | Present across all three. The stale surface-table marker cleanup and its S3 bucket-subresource implementation follow-up were closed; remaining AWS S3 bucket-subresource row-level client coverage is tracked by BUG-1226/#285. |
 | Queue/message systems | SQS and SNS implemented | Pub/Sub implemented | Service Bus and Storage Queue implemented | Present for core queue/pub-sub flows. |
 | Event routing | EventBridge rules/targets plus buses/policies/archives/replays implemented | Eventarc triggers plus channels/providers/channel connections implemented | Event Grid topics/domains/domain topics/system topics/partner topics/subscriptions implemented | Event routing parity is rounded out across the advanced event-service phase. |
 | Stream/event ingestion | Kinesis implemented | Pub/Sub present for basic event bus flows | Event Hubs implemented | Present for the foundational stream-ingestion flows. |
@@ -86,7 +86,7 @@ No current missing foundational Azure slices from this audit remain open.
 
 Recommended order:
 
-1. The AWS S3 bucket-subresource row-coverage follow-up from issue #281 / BUG-1221 was closed.
+1. The AWS S3 bucket-subresource implementation follow-up from issue #281 / BUG-1221 was closed, and remaining row-level client coverage debt is tracked by issue #285 / BUG-1226.
 2. The Azure Key Vault data-plane parity follow-up from issue #282 / BUG-1222 was closed.
 3. Continue the standing audit cadence through BUG-1104: when a new community issue or provider/SDK path surfaces a missing public API slice, file the concrete BUG first, then implement the cloud-compatible public API with SDK, CLI, and Terraform coverage in the same PR.
 

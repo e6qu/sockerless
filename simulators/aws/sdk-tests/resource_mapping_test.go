@@ -200,6 +200,7 @@ func TestECS_RunTaskTags(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
 
 	// Describe with TAGS include to get tag data
 	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
@@ -295,6 +296,7 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Tasks, 1)
 	taskArn := *runOut.Tasks[0].TaskArn
+	cleanupECSTask(t, client, clusterName, taskArn)
 
 	// Wait briefly for task to reach RUNNING
 	time.Sleep(800 * time.Millisecond)
