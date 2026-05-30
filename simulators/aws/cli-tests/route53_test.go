@@ -101,3 +101,46 @@ func TestRoute53_ZoneAndRecord(t *testing.T) {
 	))
 	runCLI(t, awsCLI("route53", "delete-hosted-zone", "--id", zoneID))
 }
+
+func TestRoute53_ListHostedZonesByName(t *testing.T) {
+	suffix := strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "-")
+	alphaName := "alpha.cli-r53-by-name-" + suffix + ".example.com"
+	betaName := "beta.cli-r53-by-name-" + suffix + ".example.com"
+
+	createZone := func(name string) string {
+		out := runCLI(t, awsCLI("route53", "create-hosted-zone",
+			"--name", name,
+			"--caller-reference", "cli-r53-by-name-"+name,
+			"--output", "json",
+		))
+		var result struct {
+			HostedZone struct {
+				Id string `json:"Id"`
+			} `json:"HostedZone"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &result))
+		return strings.TrimPrefix(result.HostedZone.Id, "/hostedzone/")
+	}
+
+	alphaID := createZone(alphaName)
+	betaID := createZone(betaName)
+	defer func() {
+		runCLI(t, awsCLI("route53", "delete-hosted-zone", "--id", alphaID))
+		runCLI(t, awsCLI("route53", "delete-hosted-zone", "--id", betaID))
+	}()
+
+	out := runCLI(t, awsCLI("route53", "list-hosted-zones-by-name",
+		"--dns-name", betaName,
+		"--output", "json",
+	))
+	var result struct {
+		HostedZones []struct {
+			Id   string `json:"Id"`
+			Name string `json:"Name"`
+		} `json:"HostedZones"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.NotEmpty(t, result.HostedZones)
+	require.Equal(t, betaName+".", result.HostedZones[0].Name)
+	require.Equal(t, "/hostedzone/"+betaID, result.HostedZones[0].Id)
+}

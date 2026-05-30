@@ -502,6 +502,9 @@ resource "aws_apigatewayv2_stage" "tf_http_stage" {
 resource "aws_route53_zone" "tf_zone" {
   name    = "tf-route53.local"
   comment = "tf-test zone"
+  tags = {
+    Environment = "terraform"
+  }
 }
 
 # A-record + ALIAS record. ALIAS targets the CloudFront distribution

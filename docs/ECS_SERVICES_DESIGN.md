@@ -21,7 +21,7 @@ Nothing at the `api.Backend` boundary. Services remain client-composed: the CI r
 
 ## What still needs live AWS to prove
 
-- End-to-end DNS resolution from inside a Fargate task. Private DNS through Cloud Map requires the target VPC to have DNS hostnames + DNS resolution enabled, and the task's ENI must be in that VPC. The simulator doesn't emulate Route 53 — it can confirm the API calls happen but cannot confirm a container actually resolves `postgres` to the right IP.
+- End-to-end DNS resolution from inside a Fargate task. Private DNS through Cloud Map requires the target VPC to have DNS hostnames + DNS resolution enabled, and the task's ENI must be in that VPC. The simulator now covers the Route 53 public API slice used by sockerless, but this live-mode item still requires a real Fargate task resolving Cloud Map-backed private DNS from inside the target VPC.
 - Security group ingress rules between service tasks. `network_cloud.go` creates a per-network SG and attaches each task to it; the default rule-set must allow task-to-task traffic on the ports the CI job needs. Not changed in this PR; flagged for live-mode verification.
 - Service deletion race on rapid container churn. `DeleteService` returns an error if the service has 0 instances but deletion is already in progress for the next register. The deregister path ignores that error (`_, _ =`); verify behavior under concurrent CI jobs in live mode.
 

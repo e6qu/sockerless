@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `main` - no issue-driven implementation branch active. |
-| In-flight | None. PR #289's AWS RDS/ElastiCache client-surface and Terraform CI follow-up was completed and merged. |
-| Last merged | AWS RDS + ElastiCache CLI/Terraform client-surface coverage plus AWS Terraform CI fixes (2026-05-30). |
+| In-flight | None. The AWS Route 53 `ListHostedZonesByName` issue was completed and merged. |
+| Last merged | AWS Route 53 `ListHostedZonesByName` public API parity for issue #291 / BUG-1233 (2026-05-31). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1235 filed · 1234 fixed · 3 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1233/#291. |
+| Bugs | 1235 filed · 1235 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| issue #291 | AWS Route 53 `ListHostedZonesByName` parity | Closed BUG-1233/#291. The AWS Route 53 simulator implements `GET /2013-04-01/hostedzonesbyname` with Route 53 DNS-name normalization, name-ordered listing, `dnsname`/`hostedzoneid` cursors, `maxitems`, truncation fields, and official AWS SDK + AWS CLI coverage. Terraform-provider-aws v6.47.0 currently uses `ListHostedZones` for Route 53 zone lookups, so the new exact operation has no provider resource path today; Route 53 still has direct Terraform resource coverage through hosted zones, records, aliases, and tags. |
 | PR #289 CI follow-up | AWS missing-resource fidelity + Cloud Map cleanup + Terraform package budget | Closed BUG-1232/#290, BUG-1234/#292, and BUG-1235/#293. Cloud Map private DNS namespace CRUD no longer blocks on eager Docker network cleanup; RDS, ElastiCache, and SQS missing-resource paths now return the AWS not-found error shapes that SDKs and terraform-provider-aws expect; and high-wait RDS/ElastiCache Terraform resources now run in focused real Terraform packages so every AWS Terraform package stays within the required 5-minute timeout without dropping resources or lengthening timeouts. Provider minimum waits are documented per cloud in `docs/terraform_min_timeouts_*.md`. |
 | BUG-1104 audit | AWS RDS + ElastiCache client-surface coverage | Closed BUG-1228 and BUG-1229. AWS RDS and ElastiCache now have direct official AWS CLI and terraform-provider-aws coverage instead of stale not-applicable matrix entries. The simulator persists create-time Query API tags for both services, supports RDS DB snapshot attributes and snapshot tags, restores DB instances from snapshots, returns RDS `DbiResourceId`, and reads DB instances by RDS resource id, matching the public RDS fields terraform-provider-aws v6 uses for DB instance identity. |
 | BUG-1104 audit | AWS API Gateway client-surface coverage | Closed BUG-1227. AWS API Gateway and API Gateway v2 now have direct official AWS CLI and terraform-provider-aws coverage instead of stale not-applicable matrix entries. The simulator implements the public read/delete routes required by client refresh and destroy flows for REST API resources, methods, integrations, deployments, stages, and HTTP API routes, integrations, deployments, and stages. |

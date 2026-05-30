@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,18 @@ type R53HostedZoneList struct {
 	IsTruncated bool            `xml:"IsTruncated"`
 	MaxItems    string          `xml:"MaxItems"`
 	NextMarker  string          `xml:"NextMarker,omitempty"`
+}
+
+type R53HostedZoneByNameList struct {
+	XMLName          xml.Name        `xml:"ListHostedZonesByNameResponse"`
+	Xmlns            string          `xml:"xmlns,attr,omitempty"`
+	HostedZones      []R53HostedZone `xml:"HostedZones>HostedZone"`
+	DNSName          string          `xml:"DNSName,omitempty"`
+	HostedZoneId     string          `xml:"HostedZoneId,omitempty"`
+	IsTruncated      bool            `xml:"IsTruncated"`
+	NextDNSName      string          `xml:"NextDNSName,omitempty"`
+	NextHostedZoneId string          `xml:"NextHostedZoneId,omitempty"`
+	MaxItems         string          `xml:"MaxItems"`
 }
 
 type R53CreateHostedZoneRequest struct {
@@ -247,6 +261,25 @@ func r53ZoneIDFromPath(p string) string {
 	return p
 }
 
+func r53NormalizeName(name string) string {
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+	return name + "."
+}
+
+func r53HostedZoneByNameSortKey(name string) string {
+	trimmed := strings.TrimSuffix(strings.ToLower(r53NormalizeName(name)), ".")
+	if trimmed == "" {
+		return ""
+	}
+	labels := strings.Split(trimmed, ".")
+	for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
+		labels[i], labels[j] = labels[j], labels[i]
+	}
+	return strings.Join(labels, ".") + "."
+}
+
 func r53WriteXML(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
@@ -271,6 +304,7 @@ func registerRoute53(srv *sim.Server) {
 	mux := srv.Mux()
 	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone", handleR53CreateHostedZone)
 	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone", handleR53ListHostedZones)
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzonesbyname", handleR53ListHostedZonesByName)
 	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}", handleR53GetHostedZone)
 	mux.HandleFunc("DELETE /"+r53APIVersion+"/hostedzone/{id}", handleR53DeleteHostedZone)
 	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone/{id}/rrset", handleR53ChangeRRSets)
@@ -382,11 +416,7 @@ func handleR53CreateHostedZone(w http.ResponseWriter, r *http.Request) {
 		r53WriteError(w, http.StatusBadRequest, "InvalidInput", "CallerReference is required")
 		return
 	}
-	// Ensure name has a trailing dot (canonical Route 53 form).
-	name := req.Name
-	if !strings.HasSuffix(name, ".") {
-		name = name + "."
-	}
+	name := r53NormalizeName(req.Name)
 	id := r53RandomID()
 	zone := R53HostedZone{
 		Xmlns:                  r53Namespace,
@@ -493,6 +523,92 @@ func handleR53ListHostedZones(w http.ResponseWriter, r *http.Request) {
 		IsTruncated: false,
 		MaxItems:    "100",
 	})
+}
+
+type r53HostedZoneByNameItem struct {
+	zone R53HostedZone
+	key  string
+	id   string
+}
+
+func handleR53ListHostedZonesByName(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	requestName := q.Get("dnsname")
+	requestID := q.Get("hostedzoneid")
+	startName := r53NormalizeName(requestName)
+	startID := r53ZoneIDFromPath(requestID)
+	if startName == "" && startID != "" {
+		r53WriteError(w, http.StatusBadRequest, "InvalidInput", "hostedzoneid requires dnsname")
+		return
+	}
+
+	maxItems := 100
+	if raw := q.Get("maxitems"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			r53WriteError(w, http.StatusBadRequest, "InvalidInput", "maxitems must be between 1 and 100")
+			return
+		}
+		maxItems = parsed
+	}
+
+	items := make([]r53HostedZoneByNameItem, 0)
+	for _, stored := range r53Zones.List() {
+		items = append(items, r53HostedZoneByNameItem{
+			zone: stored.Zone,
+			key:  r53HostedZoneByNameSortKey(stored.Zone.Name),
+			id:   r53ZoneIDFromPath(stored.Zone.Id),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].key != items[j].key {
+			return items[i].key < items[j].key
+		}
+		return items[i].id < items[j].id
+	})
+
+	if startName != "" {
+		startKey := r53HostedZoneByNameSortKey(startName)
+		filtered := items[:0]
+		for _, item := range items {
+			if item.key < startKey {
+				continue
+			}
+			if item.key == startKey && startID != "" && item.id < startID {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		items = filtered
+	}
+
+	isTruncated := len(items) > maxItems
+	if isTruncated {
+		items = items[:maxItems+1]
+	}
+	pageItems := items
+	if isTruncated {
+		pageItems = items[:maxItems]
+	}
+	hostedZones := make([]R53HostedZone, 0, len(pageItems))
+	for _, item := range pageItems {
+		hostedZones = append(hostedZones, item.zone)
+	}
+
+	resp := R53HostedZoneByNameList{
+		Xmlns:        r53Namespace,
+		HostedZones:  hostedZones,
+		DNSName:      requestName,
+		HostedZoneId: requestID,
+		IsTruncated:  isTruncated,
+		MaxItems:     strconv.Itoa(maxItems),
+	}
+	if isTruncated {
+		next := items[maxItems]
+		resp.NextDNSName = next.zone.Name
+		resp.NextHostedZoneId = next.id
+	}
+	r53WriteXML(w, http.StatusOK, resp)
 }
 
 // ---------- ResourceRecordSet handlers ----------
