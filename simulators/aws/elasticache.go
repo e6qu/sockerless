@@ -116,7 +116,7 @@ func handleECCreate(w http.ResponseWriter, r *http.Request) {
 		ARN:                    ecClusterARN(id),
 		Endpoint:               fmt.Sprintf("%s.%s.cache.amazonaws.com", id, awsRegion()),
 		Port:                   port,
-		Tags:                   map[string]string{},
+		Tags:                   parseAWSQueryTagMap(r, "Tags.Tag"),
 	}
 	ecClusters.Put(id, c)
 	ecXMLResponse(w, "CreateCacheCluster", renderECCluster(c), sim.RequestID(r.Context()))

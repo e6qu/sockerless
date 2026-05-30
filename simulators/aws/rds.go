@@ -13,11 +13,14 @@ import (
 // terraform-provider-aws + SDK lifecycle: CreateDBInstance,
 // DescribeDBInstances (waiter-driven), ModifyDBInstance,
 // DeleteDBInstance, AddTagsToResource, ListTagsForResource,
-// RemoveTagsFromResource. Database engine itself is not simulated;
-// the sim returns Status=available immediately on Create.
+// RemoveTagsFromResource, CreateDBSnapshot, DescribeDBSnapshots,
+// DescribeDBSnapshotAttributes, DeleteDBSnapshot, and
+// RestoreDBInstanceFromDBSnapshot. Database engine itself is not
+// simulated; the sim returns Status=available immediately on Create.
 
 type RDSInstance struct {
 	DBInstanceIdentifier string
+	DbiResourceId        string
 	DBInstanceClass      string
 	Engine               string
 	EngineVersion        string
@@ -48,6 +51,7 @@ type RDSInstance struct {
 type RDSSnapshot struct {
 	DBSnapshotIdentifier string
 	DBInstanceIdentifier string
+	DbiResourceId        string
 	Engine               string
 	EngineVersion        string
 	Status               string // creating | available | deleting | failed
@@ -81,12 +85,17 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(rdsAPIVersion, "RemoveTagsFromResource", handleRDSRemoveTags)
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBSnapshot", handleRDSCreateSnapshot)
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBSnapshots", handleRDSDescribeSnapshots)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBSnapshotAttributes", handleRDSDescribeSnapshotAttributes)
 	r.RegisterVersioned(rdsAPIVersion, "DeleteDBSnapshot", handleRDSDeleteSnapshot)
 	r.RegisterVersioned(rdsAPIVersion, "RestoreDBInstanceFromDBSnapshot", handleRDSRestoreFromSnapshot)
 }
 
 func rdsInstanceARN(id string) string {
 	return fmt.Sprintf("arn:aws:rds:%s:%s:db:%s", awsRegion(), awsAccountID(), id)
+}
+
+func rdsResourceID() string {
+	return "db-" + strings.ToUpper(strings.ReplaceAll(generateUUID(), "-", ""))[:26]
 }
 
 func rdsXMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
@@ -108,6 +117,7 @@ func renderRDSInstance(i RDSInstance) string {
 	var b strings.Builder
 	b.WriteString("<DBInstance>")
 	fmt.Fprintf(&b, "<DBInstanceIdentifier>%s</DBInstanceIdentifier>", xmlEscape(i.DBInstanceIdentifier))
+	fmt.Fprintf(&b, "<DbiResourceId>%s</DbiResourceId>", xmlEscape(i.DbiResourceId))
 	fmt.Fprintf(&b, "<DBInstanceClass>%s</DBInstanceClass>", xmlEscape(i.DBInstanceClass))
 	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(i.Engine))
 	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(i.EngineVersion))
@@ -152,6 +162,7 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	inst := RDSInstance{
 		DBInstanceIdentifier: id,
+		DbiResourceId:        rdsResourceID(),
 		DBInstanceClass:      r.FormValue("DBInstanceClass"),
 		Engine:               engine,
 		EngineVersion:        engineVersion,
@@ -164,7 +175,7 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 		AvailabilityZone:     awsRegion() + "a",
 		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
 		ARN:                  rdsInstanceARN(id),
-		Tags:                 map[string]string{},
+		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),
 	}
 	rdsInstances.Put(id, inst)
 	rdsXMLResponse(w, "CreateDBInstance", renderRDSInstance(inst), sim.RequestID(r.Context()))
@@ -172,10 +183,14 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 
 func handleRDSDescribe(w http.ResponseWriter, r *http.Request) {
 	wanted := r.FormValue("DBInstanceIdentifier")
+	wantedResourceID := rdsFilterValue(r, "dbi-resource-id")
 	var b strings.Builder
 	b.WriteString("<DBInstances>")
 	for _, i := range rdsInstances.List() {
-		if wanted != "" && i.DBInstanceIdentifier != wanted {
+		if wanted != "" && i.DBInstanceIdentifier != wanted && i.DbiResourceId != wanted {
+			continue
+		}
+		if wantedResourceID != "" && i.DbiResourceId != wantedResourceID {
 			continue
 		}
 		b.WriteString(renderRDSInstance(i))
@@ -220,59 +235,68 @@ func handleRDSDelete(w http.ResponseWriter, r *http.Request) {
 func handleRDSAddTags(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceName")
 	inst, ok := findRDSByARN(arn)
-	if !ok {
-		rdsErrorXML(w, "DBInstanceNotFound", "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
+	if ok {
+		rdsInstances.Update(inst.DBInstanceIdentifier, func(i *RDSInstance) {
+			i.Tags = mergeTags(i.Tags, parseAWSQueryTagMap(r, "Tags.Tag"))
+		})
+		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
 		return
 	}
-	rdsInstances.Update(inst.DBInstanceIdentifier, func(i *RDSInstance) {
-		if i.Tags == nil {
-			i.Tags = map[string]string{}
-		}
-		for n := 1; n <= 50; n++ {
-			k := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", n))
-			v := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", n))
-			if k == "" {
-				break
-			}
-			i.Tags[k] = v
-		}
-	})
-	rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
+	snap, ok := findRDSSnapshotByARN(arn)
+	if ok {
+		rdsSnapshots.Update(snap.DBSnapshotIdentifier, func(s *RDSSnapshot) {
+			s.Tags = mergeTags(s.Tags, parseAWSQueryTagMap(r, "Tags.Tag"))
+		})
+		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
 }
 
 func handleRDSListTags(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceName")
 	inst, ok := findRDSByARN(arn)
-	if !ok {
-		rdsErrorXML(w, "DBInstanceNotFound", "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
+	if ok {
+		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(inst.Tags), sim.RequestID(r.Context()))
 		return
 	}
+	snap, ok := findRDSSnapshotByARN(arn)
+	if ok {
+		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(snap.Tags), sim.RequestID(r.Context()))
+		return
+	}
+	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
+}
+
+func renderRDSTagList(tags map[string]string) string {
 	var b strings.Builder
 	b.WriteString("<TagList>")
-	for k, v := range inst.Tags {
+	for k, v := range tags {
 		fmt.Fprintf(&b, "<Tag><Key>%s</Key><Value>%s</Value></Tag>", xmlEscape(k), xmlEscape(v))
 	}
 	b.WriteString("</TagList>")
-	rdsXMLResponse(w, "ListTagsForResource", b.String(), sim.RequestID(r.Context()))
+	return b.String()
 }
 
 func handleRDSRemoveTags(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceName")
 	inst, ok := findRDSByARN(arn)
-	if !ok {
-		rdsErrorXML(w, "DBInstanceNotFound", "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
+	if ok {
+		rdsInstances.Update(inst.DBInstanceIdentifier, func(i *RDSInstance) {
+			removeAWSQueryTags(i.Tags, r)
+		})
+		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
 		return
 	}
-	rdsInstances.Update(inst.DBInstanceIdentifier, func(i *RDSInstance) {
-		for n := 1; n <= 50; n++ {
-			k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", n))
-			if k == "" {
-				break
-			}
-			delete(i.Tags, k)
-		}
-	})
-	rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
+	snap, ok := findRDSSnapshotByARN(arn)
+	if ok {
+		rdsSnapshots.Update(snap.DBSnapshotIdentifier, func(s *RDSSnapshot) {
+			removeAWSQueryTags(s.Tags, r)
+		})
+		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
 }
 
 func findRDSByARN(arn string) (RDSInstance, bool) {
@@ -288,6 +312,25 @@ func findRDSByARN(arn string) (RDSInstance, bool) {
 	return RDSInstance{}, false
 }
 
+func findRDSSnapshotByARN(arn string) (RDSSnapshot, bool) {
+	for _, s := range rdsSnapshots.List() {
+		if s.ARN == arn {
+			return s, true
+		}
+	}
+	if s, ok := rdsSnapshots.Get(arn); ok {
+		return s, true
+	}
+	return RDSSnapshot{}, false
+}
+
+func rdsTagResourceNotFoundCode(arn string) string {
+	if strings.Contains(arn, ":snapshot:") {
+		return "DBSnapshotNotFound"
+	}
+	return "DBInstanceNotFound"
+}
+
 func atoiOrZero(s string) int {
 	n := 0
 	for _, c := range s {
@@ -297,6 +340,54 @@ func atoiOrZero(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+func parseAWSQueryTagMap(r *http.Request, prefix string) map[string]string {
+	tags := map[string]string{}
+	for n := 1; n <= 50; n++ {
+		k := r.FormValue(fmt.Sprintf("%s.%d.Key", prefix, n))
+		v := r.FormValue(fmt.Sprintf("%s.%d.Value", prefix, n))
+		if k == "" {
+			break
+		}
+		tags[k] = v
+	}
+	return tags
+}
+
+func rdsFilterValue(r *http.Request, name string) string {
+	for n := 1; n <= 50; n++ {
+		prefix := fmt.Sprintf("Filters.Filter.%d", n)
+		filterName := r.FormValue(prefix + ".Name")
+		if filterName == "" {
+			break
+		}
+		if filterName != name {
+			continue
+		}
+		return r.FormValue(prefix + ".Values.Value.1")
+	}
+	return ""
+}
+
+func mergeTags(dst map[string]string, src map[string]string) map[string]string {
+	if dst == nil {
+		dst = map[string]string{}
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func removeAWSQueryTags(tags map[string]string, r *http.Request) {
+	for n := 1; n <= 50; n++ {
+		k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", n))
+		if k == "" {
+			break
+		}
+		delete(tags, k)
+	}
 }
 
 // rdsDefaultEngineVersion returns the engine's current GA major
@@ -339,6 +430,7 @@ func renderRDSSnapshot(s RDSSnapshot) string {
 	b.WriteString("<DBSnapshot>")
 	fmt.Fprintf(&b, "<DBSnapshotIdentifier>%s</DBSnapshotIdentifier>", xmlEscape(s.DBSnapshotIdentifier))
 	fmt.Fprintf(&b, "<DBInstanceIdentifier>%s</DBInstanceIdentifier>", xmlEscape(s.DBInstanceIdentifier))
+	fmt.Fprintf(&b, "<DbiResourceId>%s</DbiResourceId>", xmlEscape(s.DbiResourceId))
 	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(s.Engine))
 	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(s.EngineVersion))
 	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(s.Status))
@@ -376,6 +468,7 @@ func handleRDSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	snap := RDSSnapshot{
 		DBSnapshotIdentifier: snapID,
 		DBInstanceIdentifier: instID,
+		DbiResourceId:        inst.DbiResourceId,
 		Engine:               inst.Engine,
 		EngineVersion:        inst.EngineVersion,
 		// Inline-settle: real RDS goes through "creating" briefly; sim
@@ -388,7 +481,7 @@ func handleRDSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		SnapshotCreateTime: time.Now().UTC().Format(time.RFC3339),
 		SnapshotType:       "manual",
 		ARN:                rdsSnapshotARN(snapID),
-		Tags:               map[string]string{},
+		Tags:               parseAWSQueryTagMap(r, "Tags.Tag"),
 	}
 	rdsSnapshots.Put(snapID, snap)
 	rdsXMLResponse(w, "CreateDBSnapshot", renderRDSSnapshot(snap), sim.RequestID(r.Context()))
@@ -412,16 +505,49 @@ func handleRDSDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 	rdsXMLResponse(w, "DescribeDBSnapshots", b.String(), sim.RequestID(r.Context()))
 }
 
+func handleRDSDescribeSnapshotAttributes(w http.ResponseWriter, r *http.Request) {
+	snapID := r.FormValue("DBSnapshotIdentifier")
+	if snapID == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"DBSnapshotIdentifier is required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	snap, ok := rdsSnapshots.Get(snapID)
+	if !ok {
+		snap, ok = findRDSSnapshotByARN(snapID)
+		if !ok {
+			rdsErrorXML(w, "DBSnapshotNotFound",
+				fmt.Sprintf("DBSnapshot %q not found", snapID),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	body := fmt.Sprintf(
+		"<DBSnapshotAttributesResult>"+
+			"<DBSnapshotIdentifier>%s</DBSnapshotIdentifier>"+
+			"<DBSnapshotAttributes>"+
+			"<DBSnapshotAttribute><AttributeName>restore</AttributeName><AttributeValues></AttributeValues></DBSnapshotAttribute>"+
+			"</DBSnapshotAttributes>"+
+			"</DBSnapshotAttributesResult>",
+		xmlEscape(snap.DBSnapshotIdentifier),
+	)
+	rdsXMLResponse(w, "DescribeDBSnapshotAttributes", body, sim.RequestID(r.Context()))
+}
+
 func handleRDSDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	snapID := r.FormValue("DBSnapshotIdentifier")
 	snap, ok := rdsSnapshots.Get(snapID)
 	if !ok {
-		rdsErrorXML(w, "DBSnapshotNotFound",
-			fmt.Sprintf("DBSnapshot %q not found", snapID),
-			http.StatusNotFound, sim.RequestID(r.Context()))
-		return
+		snap, ok = findRDSSnapshotByARN(snapID)
+		if !ok {
+			rdsErrorXML(w, "DBSnapshotNotFound",
+				fmt.Sprintf("DBSnapshot %q not found", snapID),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
 	}
-	rdsSnapshots.Delete(snapID)
+	rdsSnapshots.Delete(snap.DBSnapshotIdentifier)
 	// Real RDS returns the snapshot with Status="deleted" in the
 	// response (it's the final state machine transition before
 	// removal). Match that.
@@ -440,10 +566,13 @@ func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, ok := rdsSnapshots.Get(snapID)
 	if !ok {
-		rdsErrorXML(w, "DBSnapshotNotFound",
-			fmt.Sprintf("DBSnapshot %q not found", snapID),
-			http.StatusNotFound, sim.RequestID(r.Context()))
-		return
+		snap, ok = findRDSSnapshotByARN(snapID)
+		if !ok {
+			rdsErrorXML(w, "DBSnapshotNotFound",
+				fmt.Sprintf("DBSnapshot %q not found", snapID),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
 	}
 	if _, exists := rdsInstances.Get(newInstID); exists {
 		rdsErrorXML(w, "DBInstanceAlreadyExists",
@@ -453,6 +582,7 @@ func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	inst := RDSInstance{
 		DBInstanceIdentifier: newInstID,
+		DbiResourceId:        rdsResourceID(),
 		DBInstanceClass:      r.FormValue("DBInstanceClass"),
 		Engine:               snap.Engine,
 		EngineVersion:        snap.EngineVersion,
@@ -464,7 +594,7 @@ func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
 		AvailabilityZone:     awsRegion() + "a",
 		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
 		ARN:                  rdsInstanceARN(newInstID),
-		Tags:                 map[string]string{},
+		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),
 	}
 	rdsInstances.Put(newInstID, inst)
 	rdsXMLResponse(w, "RestoreDBInstanceFromDBSnapshot", renderRDSInstance(inst), sim.RequestID(r.Context()))

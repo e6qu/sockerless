@@ -21,6 +21,15 @@ import (
 //     DescribeContinuousBackups, UpdateContinuousBackups,
 //     DescribeTimeToLive, UpdateTimeToLive,
 //     ListTagsOfResource, TagResource, UntagResource
+//   - RDS: CreateDBInstance, DescribeDBInstances,
+//     ModifyDBInstance, DeleteDBInstance,
+//     CreateDBSnapshot, DescribeDBSnapshots,
+//     DescribeDBSnapshotAttributes, DeleteDBSnapshot,
+//     RestoreDBInstanceFromDBSnapshot, AddTagsToResource,
+//     ListTagsForResource, RemoveTagsFromResource
+//   - ElastiCache: CreateCacheCluster, DescribeCacheClusters,
+//     ModifyCacheCluster, DeleteCacheCluster,
+//     AddTagsToResource, ListTagsForResource, RemoveTagsFromResource
 //   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
 //   - Secrets Manager: GetResourcePolicy
 //   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
@@ -156,6 +165,50 @@ func TestStackProductionShape(t *testing.T) {
 		"DynamoDB table ARN must include the dynamodb-region prefix; got %s", ddbARN)
 	require.Contains(t, ddbARN, ":table/tf-test-table",
 		"DynamoDB table ARN must end with :table/<name>; got %s", ddbARN)
+
+	rdsARN := outputs.must(t, "rds_instance_arn")
+	require.True(t, strings.HasPrefix(rdsARN, "arn:aws:rds:us-east-1:"),
+		"RDS instance ARN must include the rds-region prefix; got %s", rdsARN)
+	require.Contains(t, rdsARN, ":db:tf-rds-db",
+		"RDS instance ARN must end with :db:<identifier>; got %s", rdsARN)
+	require.Equal(t, "postgres", outputs.must(t, "rds_instance_engine"),
+		"RDS engine must round-trip through terraform-provider-aws refresh")
+	require.Equal(t, "5432", outputs.must(t, "rds_instance_port"),
+		"RDS postgres port must round-trip through provider refresh")
+	require.Equal(t, "terraform", outputs.must(t, "rds_instance_tags_env"),
+		"RDS tags must round-trip through ListTagsForResource")
+
+	rdsSnapshotARN := outputs.must(t, "rds_snapshot_arn")
+	require.True(t, strings.HasPrefix(rdsSnapshotARN, "arn:aws:rds:us-east-1:"),
+		"RDS snapshot ARN must include the rds-region prefix; got %s", rdsSnapshotARN)
+	require.Contains(t, rdsSnapshotARN, ":snapshot:tf-rds-snapshot",
+		"RDS snapshot ARN must end with :snapshot:<identifier>; got %s", rdsSnapshotARN)
+	require.Equal(t, "available", outputs.must(t, "rds_snapshot_status"),
+		"RDS snapshot status must round-trip through terraform-provider-aws refresh")
+	require.Equal(t, "terraform", outputs.must(t, "rds_snapshot_tags_env"),
+		"RDS snapshot tags must round-trip through ListTagsForResource")
+
+	rdsRestoredARN := outputs.must(t, "rds_restored_instance_arn")
+	require.True(t, strings.HasPrefix(rdsRestoredARN, "arn:aws:rds:us-east-1:"),
+		"Restored RDS instance ARN must include the rds-region prefix; got %s", rdsRestoredARN)
+	require.Contains(t, rdsRestoredARN, ":db:tf-rds-restored",
+		"Restored RDS instance ARN must end with :db:<identifier>; got %s", rdsRestoredARN)
+	require.Equal(t, "postgres", outputs.must(t, "rds_restored_instance_engine"),
+		"Restored RDS engine must round-trip through terraform-provider-aws refresh")
+	require.Equal(t, "terraform", outputs.must(t, "rds_restored_instance_tags_env"),
+		"Restored RDS tags must round-trip through ListTagsForResource")
+
+	ecARN := outputs.must(t, "elasticache_cluster_arn")
+	require.True(t, strings.HasPrefix(ecARN, "arn:aws:elasticache:us-east-1:"),
+		"ElastiCache cluster ARN must include the elasticache-region prefix; got %s", ecARN)
+	require.Contains(t, ecARN, ":cluster:tf-cache",
+		"ElastiCache cluster ARN must end with :cluster:<identifier>; got %s", ecARN)
+	require.Equal(t, "redis", outputs.must(t, "elasticache_cluster_engine"),
+		"ElastiCache engine must round-trip through terraform-provider-aws refresh")
+	require.Equal(t, "6379", outputs.must(t, "elasticache_cluster_port"),
+		"ElastiCache redis port must round-trip through provider refresh")
+	require.Equal(t, "terraform", outputs.must(t, "elasticache_cluster_tags_env"),
+		"ElastiCache tags must round-trip through ListTagsForResource")
 
 	kmsKeyARN := outputs.must(t, "kms_key_arn")
 	require.True(t, strings.HasPrefix(kmsKeyARN, "arn:aws:kms:"),

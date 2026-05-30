@@ -58,6 +58,13 @@ func TestRDS_Snapshot_Lifecycle(t *testing.T) {
 	assert.Equal(t, "snap-1", aws.ToString(desc.DBSnapshots[0].DBSnapshotIdentifier))
 	assert.Equal(t, "available", aws.ToString(desc.DBSnapshots[0].Status))
 
+	attrs, err := c.DescribeDBSnapshotAttributes(ctx, &rds.DescribeDBSnapshotAttributesInput{
+		DBSnapshotIdentifier: aws.String("snap-1"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, attrs.DBSnapshotAttributesResult)
+	assert.Equal(t, "snap-1", aws.ToString(attrs.DBSnapshotAttributesResult.DBSnapshotIdentifier))
+
 	// RestoreDBInstanceFromDBSnapshot creates a new instance from the
 	// snapshot; the new instance inherits engine + version + storage.
 	restoreOut, err := c.RestoreDBInstanceFromDBSnapshot(ctx, &rds.RestoreDBInstanceFromDBSnapshotInput{

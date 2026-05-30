@@ -21,14 +21,14 @@ Legend:
 | `aws-ecr` | direct | direct | direct | `simulators/aws/sdk-tests/ecr_test.go`; `simulators/aws/cli-tests/ecr_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ecs` | direct | direct | direct | `simulators/aws/sdk-tests/ecs_test.go`; `simulators/aws/cli-tests/ecs_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-efs` | direct | direct | not applicable | `simulators/aws/sdk-tests/efs_test.go`; `simulators/aws/cli-tests/efs_test.go` |
-| `aws-elasticache` | direct | not applicable | not applicable | `simulators/aws/sdk-tests/rds_elasticache_test.go` |
+| `aws-elasticache` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-elbv2` | direct | direct | direct | `simulators/aws/sdk-tests/elbv2_test.go`; `simulators/aws/cli-tests/elbv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-eventbridge` | direct | direct | direct | `simulators/aws/sdk-tests/eventbridge_test.go`; `simulators/aws/cli-tests/eventbridge_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-iam` | direct | direct | direct | `simulators/aws/sdk-tests/iam_test.go`; `simulators/aws/cli-tests/iam_slr_oidc_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kinesis` | direct | direct | direct | `simulators/aws/sdk-tests/kinesis_test.go`; `simulators/aws/cli-tests/kinesis_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kms` | direct | not applicable | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-lambda` | direct | direct | not applicable | `simulators/aws/sdk-tests/lambda_test.go`; `simulators/aws/cli-tests/lambda_test.go` |
-| `aws-rds` | direct | not applicable | not applicable | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/sdk-tests/rds_snapshot_test.go` |
+| `aws-rds` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/sdk-tests/rds_snapshot_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3` | direct | direct | direct | `simulators/aws/sdk-tests/s3_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-bucket-subresources` | direct | direct | direct | `simulators/aws/sdk-tests/s3_bucket_subresources_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-multipart` | direct | direct | not applicable | `simulators/aws/sdk-tests/s3_list_parts_test.go`; `simulators/aws/cli-tests/s3_test.go` |
