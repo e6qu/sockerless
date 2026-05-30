@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-169.8k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-170.9k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-17.3k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-81.7k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-81.9k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -113,7 +113,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 ![core](https://img.shields.io/badge/core-19.2k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-24.3k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-27.4k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-22.7k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-23.8k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-15.2k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)

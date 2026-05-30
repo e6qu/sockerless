@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | | |
 |---|---|
-| Active branch | `fix/surface-table-audit-debt` - surface-table audit debt cleanup. |
-| In-flight | Surface-table cleanup PR: stale closed-BUG deferral markers were removed, S3 multipart list pagination was fixed, and concrete remaining gaps were split into issue #281 / BUG-1221 and issue #282 / BUG-1222. |
-| Last merged | NAT/public-IP simulator parity for issue #279 (2026-05-29). |
+| Active branch | `fix/azure-keyvault-data-plane-parity` - Azure Key Vault data-plane parity. |
+| In-flight | Azure Key Vault data-plane parity PR: issue #282 / BUG-1222 was closed by implementing key/certificate public data-plane operations, soft-delete purge, backup/restore, real RSA crypto, certificate operation/import/merge flows, and SDK/Terraform coverage. |
+| Last merged | AWS S3 bucket-subresource parity for issue #281 (2026-05-30). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1222 filed · 1220 fixed · 4 open · 2 false positives. Open: BUG-1075, BUG-1104, BUG-1221, BUG-1222. |
+| Bugs | 1222 filed · 1222 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,7 +52,9 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
-| current branch | surface-table audit debt cleanup | Closed BUG-1206. Surface tables no longer carry generic closed-BUG deferral markers, `scripts/seed-surface-tables.sh` now derives SDK/Terraform status from `specs/SIM_TEST_COVERAGE_MATRIX.md`, and AWS S3 multipart `GET /{bucket}?uploads` plus `ListParts` pagination is covered by official AWS SDK paginator tests and AWS CLI `s3api` coverage. Remaining real gaps are tracked by issue #281 / BUG-1221 and issue #282 / BUG-1222. |
+| current branch | Azure Key Vault data-plane parity | Closed BUG-1222/#282. Azure Key Vault data-plane secrets, keys, and certificates now cover paged lifecycle reads, updates, backup/restore, soft-delete purge, certificate operation/import/merge flows, key import/update/version reads, and real RSA sign/verify/encrypt/decrypt/wrap/unwrap operations. Coverage uses the official Azure SDK and azurerm Terraform `azurerm_key_vault_secret`, `azurerm_key_vault_key`, and `azurerm_key_vault_certificate` resources. |
+| issue #281 | AWS S3 bucket-subresource parity | Closed BUG-1221/#281. AWS S3 bucket subresource rows were rounded out with public-API behavior fixes and current SDK/CLI/Terraform coverage, so the stale surface-table audit no longer leaves hidden S3 follow-up rows. |
+| surface-table cleanup | stale surface-table audit debt | Closed BUG-1206. Surface tables no longer carry generic closed-BUG deferral markers, `scripts/seed-surface-tables.sh` now derives SDK/Terraform status from `specs/SIM_TEST_COVERAGE_MATRIX.md`, and AWS S3 multipart `GET /{bucket}?uploads` plus `ListParts` pagination is covered by official AWS SDK paginator tests and AWS CLI `s3api` coverage. Concrete follow-ups were closed by BUG-1221/#281 and BUG-1222/#282. |
 | issue #279 | NAT/public-IP simulator parity | Closed BUG-1204/#279. AWS EC2 EIP/NAT Gateway/route-table flows are now covered by SDK, CLI, and Terraform. GCP Compute now supports regional addresses, address labels, manual Cloud NAT address validation, router status, regional operation wait, and SDK/gcloud/Terraform coverage. Azure now supports `Microsoft.Network/publicIPPrefixes`, NAT Gateway list/subnet back-references, subnet NAT Gateway association persistence, and SDK/CLI/Terraform coverage. |
 | issue #263 | Managed load-balancer simulator parity | Closed BUG-1203/#263. AWS ELBv2 now supports load balancers, target groups, listeners, target health, attributes, tags, account limits, and provider-read capacity reservation. GCP Compute now supports the global external HTTP load-balancing chain: health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules. Azure now supports `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. SDK, CLI, and Terraform coverage exists for all three clouds. |
 | issue #276 | Azure Service Bus ARM Terraform parity | Closed BUG-1220/#276. Azure Service Bus ARM now supports namespace network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent disaster recovery aliases or migration configurations. Coverage uses the official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform `azurerm_servicebus_namespace` + `azurerm_servicebus_queue`. |

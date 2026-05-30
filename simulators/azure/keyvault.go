@@ -1,12 +1,18 @@
 package main
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -608,8 +614,14 @@ func deleteDeletedVaultsFor(sub, name string) {
 // The api-version query param is required by real Azure but ignored
 // by the sim.
 func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault string) {
-	path := strings.TrimPrefix(r.URL.Path, "/")
+	path := strings.TrimLeft(r.URL.Path, "/")
 	switch {
+	case path == "secrets/restore":
+		if r.Method != http.MethodPost {
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			return
+		}
+		handleKVRestoreSecret(w, r, vault)
 	case strings.HasPrefix(path, "secrets/"):
 		segs := strings.Split(path, "/")
 		// segs:
@@ -627,6 +639,14 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 				return
 			}
 			handleKVListSecretVersions(w, r, vault, name)
+			return
+		}
+		if len(segs) == 3 && segs[2] == "backup" {
+			if r.Method != http.MethodPost {
+				sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+				return
+			}
+			handleKVBackupSecret(w, r, vault, name)
 			return
 		}
 		if len(segs) == 3 {
@@ -707,6 +727,46 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 		default:
 			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
+	case path == "deletedkeys" || path == "deletedkeys/":
+		if r.Method != http.MethodGet {
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			return
+		}
+		handleKVListDeletedKeys(w, r, vault)
+	case strings.HasPrefix(path, "deletedkeys/"):
+		segs := strings.Split(path, "/")
+		if len(segs) < 2 {
+			sim.AzureError(w, "BadRequest", "Missing key name", http.StatusBadRequest)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			handleKVGetDeletedKey(w, r, vault, segs[1])
+		case http.MethodDelete:
+			handleKVPurgeDeletedKey(w, r, vault, segs[1])
+		default:
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+		}
+	case path == "deletedcertificates" || path == "deletedcertificates/":
+		if r.Method != http.MethodGet {
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			return
+		}
+		handleKVListDeletedCertificates(w, r, vault)
+	case strings.HasPrefix(path, "deletedcertificates/"):
+		segs := strings.Split(path, "/")
+		if len(segs) < 2 {
+			sim.AzureError(w, "BadRequest", "Missing certificate name", http.StatusBadRequest)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			handleKVGetDeletedCertificate(w, r, vault, segs[1])
+		case http.MethodDelete:
+			handleKVPurgeDeletedCertificate(w, r, vault, segs[1])
+		default:
+			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+		}
 	case strings.HasPrefix(path, "keys/") || path == "keys":
 		handleKVKey(w, r, vault, path)
 	case strings.HasPrefix(path, "certificates/") || path == "certificates":
@@ -717,11 +777,9 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 	}
 }
 
-// KeyVaultKey is a key stored at /keys/{name}. Real KV stores a
-// public + private half via Azure-managed HSM; the sim stores
-// only the operator-supplied JsonWebKey envelope on Create and
-// echoes it on read. Wire shape only; persistence wrapper is
-// kvKeyStored (same shape as kvSecretStored).
+// KeyVaultKey is a key stored at /keys/{name}. The wire shape returns
+// the public JSON Web Key material only; private material used for
+// local cryptographic operations stays on kvKeyStored.
 type KeyVaultKey struct {
 	ID         string            `json:"kid"`
 	JsonWebKey map[string]any    `json:"key,omitempty"`
@@ -729,28 +787,117 @@ type KeyVaultKey struct {
 	Tags       map[string]string `json:"tags,omitempty"`
 }
 
+type kvKeyVersion struct {
+	Version string `json:"version"`
+	KeyVaultKey
+	PrivateKeyPEM string `json:"privateKeyPem,omitempty"`
+}
+
 type kvKeyStored struct {
-	Vault string `json:"vault"`
-	Name  string `json:"name"`
+	Vault            string         `json:"vault"`
+	Name             string         `json:"name"`
+	Versions         []kvKeyVersion `json:"versions,omitempty"`
+	PrivateKeyPEM    string         `json:"privateKeyPem,omitempty"`
+	DeletedAt        int64          `json:"deletedAt,omitempty"`
+	ScheduledPurgeAt int64          `json:"scheduledPurgeAt,omitempty"`
+	RecoveryID       string         `json:"recoveryId,omitempty"`
 	KeyVaultKey
 }
 
+func (k kvKeyStored) isDeleted() bool { return k.DeletedAt > 0 }
+
+func (k kvKeyStored) latest() (kvKeyVersion, bool) {
+	if len(k.Versions) > 0 {
+		return k.Versions[len(k.Versions)-1], true
+	}
+	if k.ID != "" {
+		return kvKeyVersion{Version: kvVersionFromID(k.ID), KeyVaultKey: k.KeyVaultKey, PrivateKeyPEM: k.PrivateKeyPEM}, true
+	}
+	return kvKeyVersion{}, false
+}
+
+func (k kvKeyStored) findVersion(version string) (kvKeyVersion, bool) {
+	if version == "" {
+		return k.latest()
+	}
+	for _, v := range k.Versions {
+		if v.Version == version || kvVersionFromID(v.ID) == version {
+			return v, true
+		}
+	}
+	if k.ID != "" && kvVersionFromID(k.ID) == version {
+		return kvKeyVersion{Version: version, KeyVaultKey: k.KeyVaultKey, PrivateKeyPEM: k.PrivateKeyPEM}, true
+	}
+	return kvKeyVersion{}, false
+}
+
 // KeyVaultCertificate is a certificate at /certificates/{name}.
-// Real KV produces a chain (cert + private key + thumbprint); the
-// sim stores the operator-supplied content + a deterministic
-// thumbprint. Wire shape only; persistence wrapper is kvCertStored.
+// Wire shape only; persistence wrapper is kvCertStored.
 type KeyVaultCertificate struct {
-	ID             string            `json:"id"`
-	X509Thumbprint string            `json:"x5t,omitempty"`
-	Policy         map[string]any    `json:"policy,omitempty"`
-	Attributes     KeyVaultAttrs     `json:"attributes,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	ID                string            `json:"id"`
+	KeyID             string            `json:"kid,omitempty"`
+	SecretID          string            `json:"sid,omitempty"`
+	CER               []byte            `json:"cer,omitempty"`
+	ContentType       string            `json:"contentType,omitempty"`
+	PreserveCertOrder *bool             `json:"preserveCertOrder,omitempty"`
+	X509Thumbprint    string            `json:"x5t,omitempty"`
+	Policy            map[string]any    `json:"policy,omitempty"`
+	Attributes        KeyVaultAttrs     `json:"attributes,omitempty"`
+	Tags              map[string]string `json:"tags,omitempty"`
+}
+
+type kvCertVersion struct {
+	Version string `json:"version"`
+	KeyVaultCertificate
+}
+
+type kvCertOperation struct {
+	ID                    string         `json:"id"`
+	Issuer                map[string]any `json:"issuer,omitempty"`
+	CSR                   []byte         `json:"csr,omitempty"`
+	CancellationRequested bool           `json:"cancellation_requested"`
+	Status                string         `json:"status"`
+	StatusDetails         string         `json:"status_details,omitempty"`
+	Target                string         `json:"target,omitempty"`
+	RequestID             string         `json:"request_id,omitempty"`
 }
 
 type kvCertStored struct {
-	Vault string `json:"vault"`
-	Name  string `json:"name"`
+	Vault            string           `json:"vault"`
+	Name             string           `json:"name"`
+	Versions         []kvCertVersion  `json:"versions,omitempty"`
+	PendingOperation *kvCertOperation `json:"pendingOperation,omitempty"`
+	DeletedAt        int64            `json:"deletedAt,omitempty"`
+	ScheduledPurgeAt int64            `json:"scheduledPurgeAt,omitempty"`
+	RecoveryID       string           `json:"recoveryId,omitempty"`
 	KeyVaultCertificate
+}
+
+func (c kvCertStored) isDeleted() bool { return c.DeletedAt > 0 }
+
+func (c kvCertStored) latest() (kvCertVersion, bool) {
+	if len(c.Versions) > 0 {
+		return c.Versions[len(c.Versions)-1], true
+	}
+	if c.ID != "" {
+		return kvCertVersion{Version: kvVersionFromID(c.ID), KeyVaultCertificate: c.KeyVaultCertificate}, true
+	}
+	return kvCertVersion{}, false
+}
+
+func (c kvCertStored) findVersion(version string) (kvCertVersion, bool) {
+	if version == "" {
+		return c.latest()
+	}
+	for _, v := range c.Versions {
+		if v.Version == version || kvVersionFromID(v.ID) == version {
+			return v, true
+		}
+	}
+	if c.ID != "" && kvVersionFromID(c.ID) == version {
+		return kvCertVersion{Version: version, KeyVaultCertificate: c.KeyVaultCertificate}, true
+	}
+	return kvCertVersion{}, false
 }
 
 var (
@@ -758,20 +905,9 @@ var (
 	keyVaultCertificates sim.Store[kvCertStored]
 )
 
-// handleKVKey routes /keys/* requests.
-//
-//	POST /keys/{name}/create     — generate (stash JsonWebKey on body if present)
-//	PUT  /keys/{name}            — import
-//	GET  /keys/{name}            — get latest
-//	GET  /keys/{name}/{version}  — get specific (sim collapses to latest)
-//	GET  /keys                   — list
-//	DELETE /keys/{name}          — delete
 func handleKVKey(w http.ResponseWriter, r *http.Request, vault, path string) {
 	segs := strings.Split(path, "/")
-	// segs: ["keys"] or ["keys", "<name>"] or ["keys", "<name>", "<version>"]
-	// or ["keys", "<name>", "create"]
 	if len(segs) < 2 {
-		// GET /keys → list
 		if r.Method == http.MethodGet {
 			handleKVListKeys(w, r, vault)
 			return
@@ -780,21 +916,39 @@ func handleKVKey(w http.ResponseWriter, r *http.Request, vault, path string) {
 		return
 	}
 	name := segs[1]
+	if name == "restore" && len(segs) == 2 && r.Method == http.MethodPost {
+		handleKVRestoreKey(w, r, vault)
+		return
+	}
 	verb := ""
 	if len(segs) >= 3 {
 		verb = segs[2]
 	}
 	switch r.Method {
 	case http.MethodPost:
-		if verb == "create" {
+		switch {
+		case verb == "create":
 			handleKVCreateKey(w, r, vault, name)
+			return
+		case verb == "backup":
+			handleKVBackupKey(w, r, vault, name)
+			return
+		case len(segs) == 4:
+			handleKVCryptoKey(w, r, vault, name, verb, segs[3])
 			return
 		}
 	case http.MethodPut:
 		handleKVImportKey(w, r, vault, name)
 		return
 	case http.MethodGet:
-		handleKVGetKey(w, r, vault, name)
+		if verb == "versions" {
+			handleKVListKeyVersions(w, r, vault, name)
+			return
+		}
+		handleKVGetKey(w, r, vault, name, verb)
+		return
+	case http.MethodPatch:
+		handleKVUpdateKey(w, r, vault, name, verb)
 		return
 	case http.MethodDelete:
 		handleKVDeleteKey(w, r, vault, name)
@@ -817,6 +971,11 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
 		return
 	}
+	if rec, exists := keyVaultKeys.Get(keyVaultKeyKey(vault, name)); exists && rec.isDeleted() {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Key %q is currently in a deleted state and must be purged or recovered before re-creating.", name)
+		return
+	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "keys", name, version)
 	kty := defaultKVKty(body.Kty)
@@ -824,11 +983,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		"kid": id,
 		"kty": kty,
 	}
-	// Generate a real RSA modulus when the request asks for RSA, so
-	// consumers parsing the JWK can reconstruct a valid public key
-	// and not get a placeholder string back. Falls back to a
-	// placeholder for non-RSA types since the sim doesn't simulate
-	// EC / oct curves end-to-end.
+	privateKeyPEM := ""
 	switch kty {
 	case "RSA", "RSA-HSM":
 		bits := body.KeySize
@@ -844,6 +999,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		}
 		jwk["n"] = base64.RawURLEncoding.EncodeToString(k.N.Bytes())
 		jwk["e"] = base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.E)).Bytes())
+		privateKeyPEM = string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}))
 	case "EC", "EC-HSM":
 		// Generate a real EC public key on the requested curve so
 		// JWK consumers (go-jose, crypto/ecdsa) can parse the
@@ -870,11 +1026,6 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		jwk["x"] = base64.RawURLEncoding.EncodeToString(k.X.Bytes())
 		jwk["y"] = base64.RawURLEncoding.EncodeToString(k.Y.Bytes())
 	case "oct", "oct-HSM":
-		// Symmetric key: emit a real random `k` field of the
-		// requested size (default 256 bits). Real Azure KV's
-		// symmetric keys never expose the material on the wire,
-		// but the sim does so SDK consumers can decode `kty` +
-		// `k` to a usable key for end-to-end smoke tests.
 		bits := body.KeySize
 		if bits <= 0 {
 			bits = 256
@@ -886,7 +1037,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 				http.StatusInternalServerError)
 			return
 		}
-		jwk["k"] = base64.RawURLEncoding.EncodeToString(keyMaterial)
+		privateKeyPEM = base64.RawURLEncoding.EncodeToString(keyMaterial)
 	default:
 		sim.AzureError(w, "InvalidRequest",
 			"unsupported kty: "+kty, http.StatusBadRequest)
@@ -895,6 +1046,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	if body.Crv != "" {
 		jwk["crv"] = body.Crv
 	}
+	jwk["key_ops"] = []string{"encrypt", "decrypt", "sign", "verify", "wrapKey", "unwrapKey"}
 	now := time.Now().Unix()
 	key := KeyVaultKey{
 		ID: id, JsonWebKey: jwk,
@@ -904,7 +1056,14 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	if body.Attributes != nil {
 		key.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{Vault: vault, Name: name, KeyVaultKey: key})
+	versionRow := kvKeyVersion{Version: version, KeyVaultKey: key, PrivateKeyPEM: privateKeyPEM}
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{
+		Vault:         vault,
+		Name:          name,
+		Versions:      []kvKeyVersion{versionRow},
+		PrivateKeyPEM: privateKeyPEM,
+		KeyVaultKey:   key,
+	})
 	sim.WriteJSON(w, http.StatusOK, key)
 }
 
@@ -918,65 +1077,391 @@ func handleKVImportKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
 		return
 	}
+	if rec, exists := keyVaultKeys.Get(keyVaultKeyKey(vault, name)); exists && rec.isDeleted() {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Key %q is currently in a deleted state and must be purged or recovered before re-creating.", name)
+		return
+	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "keys", name, version)
 	if body.Key == nil {
 		body.Key = map[string]any{}
 	}
 	body.Key["kid"] = id
+	privateKeyPEM := rsaPrivatePEMFromJWK(body.Key)
+	publicKey := publicJWK(body.Key)
 	now := time.Now().Unix()
 	key := KeyVaultKey{
-		ID: id, JsonWebKey: body.Key,
+		ID: id, JsonWebKey: publicKey,
 		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
 		Tags:       body.Tags,
 	}
 	if body.Attributes != nil {
 		key.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{Vault: vault, Name: name, KeyVaultKey: key})
+	versionRow := kvKeyVersion{Version: version, KeyVaultKey: key, PrivateKeyPEM: privateKeyPEM}
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), kvKeyStored{
+		Vault:         vault,
+		Name:          name,
+		Versions:      []kvKeyVersion{versionRow},
+		PrivateKeyPEM: privateKeyPEM,
+		KeyVaultKey:   key,
+	})
 	sim.WriteJSON(w, http.StatusOK, key)
 }
 
-func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name, version string) {
 	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
-	if !ok {
+	if !ok || rec.isDeleted() {
 		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
 			"A key with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultKey)
+	v, ok := rec.findVersion(version)
+	if !ok {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"Version %q of key %q was not found.", version, name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, v.KeyVaultKey)
 }
 
 func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
-	var out []KeyVaultKey
+	type keyItem struct {
+		ID         string            `json:"kid"`
+		Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	var out []keyItem
 	for _, k := range keyVaultKeys.List() {
-		if k.Vault == vault {
-			out = append(out, k.KeyVaultKey)
+		if k.Vault == vault && !k.isDeleted() {
+			v, ok := k.latest()
+			if !ok {
+				continue
+			}
+			out = append(out, keyItem{ID: buildKVURL(r, vault, "keys", k.Name, ""), Attributes: v.Attributes, Tags: v.Tags})
 		}
 	}
 	if out == nil {
-		out = []KeyVaultKey{}
+		out = []keyItem{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 }
 
-func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+func handleKVListKeyVersions(w http.ResponseWriter, r *http.Request, vault, name string) {
 	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
-	if !ok {
+	if !ok || rec.isDeleted() {
 		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
 			"A key with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	keyVaultKeys.Delete(keyVaultKeyKey(vault, name))
+	type keyItem struct {
+		ID         string            `json:"kid"`
+		Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	out := []keyItem{}
+	versions := rec.Versions
+	if len(versions) == 0 {
+		if v, ok := rec.latest(); ok {
+			versions = []kvKeyVersion{v}
+		}
+	}
+	for _, v := range versions {
+		out = append(out, keyItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVUpdateKey(w http.ResponseWriter, r *http.Request, vault, name, version string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	var body struct {
+		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
+		KeyOps     []string          `json:"key_ops,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	found := false
+	for i, v := range rec.Versions {
+		if version != "" && v.Version != version && kvVersionFromID(v.ID) != version {
+			continue
+		}
+		updateKVKeyVersion(&v, body.Attributes, body.KeyOps, body.Tags)
+		rec.Versions[i] = v
+		rec.KeyVaultKey = v.KeyVaultKey
+		rec.PrivateKeyPEM = v.PrivateKeyPEM
+		found = true
+		break
+	}
+	if !found && len(rec.Versions) == 0 && (version == "" || kvVersionFromID(rec.ID) == version) {
+		v := kvKeyVersion{Version: kvVersionFromID(rec.ID), KeyVaultKey: rec.KeyVaultKey, PrivateKeyPEM: rec.PrivateKeyPEM}
+		updateKVKeyVersion(&v, body.Attributes, body.KeyOps, body.Tags)
+		rec.KeyVaultKey = v.KeyVaultKey
+		rec.PrivateKeyPEM = v.PrivateKeyPEM
+		found = true
+	}
+	if !found {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"Version %q of key %q was not found.", version, name)
+		return
+	}
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), rec)
+	latest, _ := rec.findVersion(version)
+	sim.WriteJSON(w, http.StatusOK, latest.KeyVaultKey)
+}
+
+func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	now := time.Now().Unix()
+	rec.DeletedAt = now
+	rec.ScheduledPurgeAt = now + 90*24*60*60
+	rec.RecoveryID = buildKVURL(r, vault, "deletedkeys", name, "")
+	keyVaultKeys.Put(keyVaultKeyKey(vault, name), rec)
 	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultKey)
 }
 
-// handleKVCertificate routes /certificates/* requests.
-//
-//	POST /certificates/{name}/create   — issue cert
-//	GET  /certificates/{name}          — get
-//	GET  /certificates                 — list
-//	DELETE /certificates/{name}        — delete
+func handleKVGetDeletedKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"Deleted key %q was not found.", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, deletedKeyBundle(rec))
+}
+
+func handleKVListDeletedKeys(w http.ResponseWriter, r *http.Request, vault string) {
+	out := []map[string]any{}
+	for _, rec := range keyVaultKeys.List() {
+		if rec.Vault != vault || !rec.isDeleted() {
+			continue
+		}
+		out = append(out, deletedKeyBundle(rec))
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVPurgeDeletedKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"Deleted key %q was not found.", name)
+		return
+	}
+	keyVaultKeys.Delete(keyVaultKeyKey(vault, name))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func deletedKeyBundle(rec kvKeyStored) map[string]any {
+	return map[string]any{
+		"key":                rec.JsonWebKey,
+		"attributes":         rec.Attributes,
+		"tags":               rec.Tags,
+		"recoveryId":         rec.RecoveryID,
+		"deletedDate":        rec.DeletedAt,
+		"scheduledPurgeDate": rec.ScheduledPurgeAt,
+	}
+}
+
+func handleKVBackupKey(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	blob, err := json.Marshal(rec)
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeKVBackupBlob(w, blob)
+}
+
+func handleKVRestoreKey(w http.ResponseWriter, r *http.Request, vault string) {
+	blob, err := readKVBackupBlob(r)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	var rec kvKeyStored
+	if err := json.Unmarshal(blob, &rec); err != nil {
+		sim.AzureError(w, "BadParameter", "invalid key backup blob: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rec.Name == "" {
+		sim.AzureError(w, "BadParameter", "key backup blob is missing key name", http.StatusBadRequest)
+		return
+	}
+	if _, exists := keyVaultKeys.Get(keyVaultKeyKey(vault, rec.Name)); exists {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Key %q already exists in this key vault.", rec.Name)
+		return
+	}
+	rec.Vault = vault
+	keyVaultKeys.Put(keyVaultKeyKey(vault, rec.Name), rec)
+	if latest, ok := rec.latest(); ok {
+		sim.WriteJSON(w, http.StatusOK, latest.KeyVaultKey)
+		return
+	}
+	sim.AzureError(w, "BadParameter", "key backup blob does not contain any key versions", http.StatusBadRequest)
+}
+
+func handleKVCryptoKey(w http.ResponseWriter, r *http.Request, vault, name, version, operation string) {
+	rec, ok := keyVaultKeys.Get(keyVaultKeyKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"A key with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	keyVersion, ok := rec.findVersion(version)
+	if !ok {
+		sim.AzureErrorf(w, "KeyNotFound", http.StatusNotFound,
+			"Version %q of key %q was not found.", version, name)
+		return
+	}
+	privateKey, err := rsaPrivateKeyFromPEM(keyVersion.PrivateKeyPEM)
+	if err != nil {
+		sim.AzureError(w, "NotImplemented",
+			"This key type does not support the requested local cryptographic operation.", http.StatusNotImplemented)
+		return
+	}
+	switch operation {
+	case "sign":
+		handleKVRSAKeySign(w, r, keyVersion, privateKey)
+	case "verify":
+		handleKVRSAKeyVerify(w, r, privateKey)
+	case "encrypt", "wrapkey":
+		handleKVRSAKeyEncrypt(w, r, keyVersion, &privateKey.PublicKey)
+	case "decrypt", "unwrapkey":
+		handleKVRSAKeyDecrypt(w, r, keyVersion, privateKey)
+	default:
+		sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleKVRSAKeySign(w http.ResponseWriter, r *http.Request, version kvKeyVersion, privateKey *rsa.PrivateKey) {
+	var body struct {
+		Algorithm string `json:"alg"`
+		Value     string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	digest, err := decodeKVURLBytes(body.Value)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid value: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	hashAlg, pss, err := signatureHash(body.Algorithm)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	var sig []byte
+	if pss {
+		sig, err = rsa.SignPSS(rand.Reader, privateKey, hashAlg, digest, nil)
+	} else {
+		sig, err = rsa.SignPKCS1v15(rand.Reader, privateKey, hashAlg, digest)
+	}
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeKVOperationResult(w, version.ID, sig)
+}
+
+func handleKVRSAKeyVerify(w http.ResponseWriter, r *http.Request, privateKey *rsa.PrivateKey) {
+	var body struct {
+		Algorithm string `json:"alg"`
+		Digest    string `json:"digest"`
+		Signature string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	digest, err := decodeKVURLBytes(body.Digest)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid digest: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	signature, err := decodeKVURLBytes(body.Signature)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid signature: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	hashAlg, pss, err := signatureHash(body.Algorithm)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if pss {
+		err = rsa.VerifyPSS(&privateKey.PublicKey, hashAlg, digest, signature, nil)
+	} else {
+		err = rsa.VerifyPKCS1v15(&privateKey.PublicKey, hashAlg, digest, signature)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": err == nil})
+}
+
+func handleKVRSAKeyEncrypt(w http.ResponseWriter, r *http.Request, version kvKeyVersion, publicKey *rsa.PublicKey) {
+	var body struct {
+		Algorithm string `json:"alg"`
+		Value     string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	plain, err := decodeKVURLBytes(body.Value)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid value: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	ciphertext, err := rsaEncrypt(body.Algorithm, publicKey, plain)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeKVOperationResult(w, version.ID, ciphertext)
+}
+
+func handleKVRSAKeyDecrypt(w http.ResponseWriter, r *http.Request, version kvKeyVersion, privateKey *rsa.PrivateKey) {
+	var body struct {
+		Algorithm string `json:"alg"`
+		Value     string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	ciphertext, err := decodeKVURLBytes(body.Value)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid value: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	plain, err := rsaDecrypt(body.Algorithm, privateKey, ciphertext)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeKVOperationResult(w, version.ID, plain)
+}
+
 func handleKVCertificate(w http.ResponseWriter, r *http.Request, vault, path string) {
 	segs := strings.Split(path, "/")
 	if len(segs) < 2 {
@@ -988,20 +1473,53 @@ func handleKVCertificate(w http.ResponseWriter, r *http.Request, vault, path str
 		return
 	}
 	name := segs[1]
+	if name == "restore" && len(segs) == 2 && r.Method == http.MethodPost {
+		handleKVRestoreCertificate(w, r, vault)
+		return
+	}
 	verb := ""
 	if len(segs) >= 3 {
 		verb = segs[2]
 	}
 	switch r.Method {
 	case http.MethodPost:
-		if verb == "create" {
+		switch {
+		case verb == "create":
 			handleKVCreateCertificate(w, r, vault, name)
+			return
+		case verb == "import":
+			handleKVImportCertificate(w, r, vault, name)
+			return
+		case verb == "backup":
+			handleKVBackupCertificate(w, r, vault, name)
+			return
+		case verb == "pending" && len(segs) == 4 && segs[3] == "merge":
+			handleKVMergeCertificate(w, r, vault, name)
 			return
 		}
 	case http.MethodGet:
-		handleKVGetCertificate(w, r, vault, name)
+		if verb == "pending" {
+			handleKVGetCertificateOperation(w, r, vault, name)
+			return
+		}
+		if verb == "versions" {
+			handleKVListCertificateVersions(w, r, vault, name)
+			return
+		}
+		handleKVGetCertificate(w, r, vault, name, verb)
+		return
+	case http.MethodPatch:
+		if verb == "pending" {
+			handleKVUpdateCertificateOperation(w, r, vault, name)
+			return
+		}
+		handleKVUpdateCertificate(w, r, vault, name, verb)
 		return
 	case http.MethodDelete:
+		if verb == "pending" {
+			handleKVDeleteCertificateOperation(w, r, vault, name)
+			return
+		}
 		handleKVDeleteCertificate(w, r, vault, name)
 		return
 	}
@@ -1012,64 +1530,375 @@ func keyVaultCertKey(vault, name string) string { return vault + "/" + name }
 
 func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
 	var body struct {
-		Policy     map[string]any    `json:"policy,omitempty"`
-		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
-		Tags       map[string]string `json:"tags,omitempty"`
+		Policy            map[string]any    `json:"policy,omitempty"`
+		Attributes        *KeyVaultAttrs    `json:"attributes,omitempty"`
+		PreserveCertOrder *bool             `json:"preserveCertOrder,omitempty"`
+		Tags              map[string]string `json:"tags,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		sim.AzureError(w, "InvalidRequest",
 			"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if rec, exists := keyVaultCertificates.Get(keyVaultCertKey(vault, name)); exists && rec.isDeleted() {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Certificate %q is currently in a deleted state and must be purged or recovered before re-creating.", name)
+		return
+	}
 	version := generateUUID()
 	id := buildKVURL(r, vault, "certificates", name, version)
+	keyID := buildKVURL(r, vault, "keys", name, version)
+	secretID := buildKVURL(r, vault, "secrets", name, version)
 	now := time.Now().Unix()
-	thumbprint := strings.ToUpper(generateUUID()[:8])
+	certDER, thumbprint, err := makeSelfSignedCertificateDER(name)
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
 	c := KeyVaultCertificate{
-		ID: id, X509Thumbprint: thumbprint,
-		Policy:     body.Policy,
-		Attributes: KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
-		Tags:       body.Tags,
+		ID:                id,
+		KeyID:             keyID,
+		SecretID:          secretID,
+		CER:               certDER,
+		ContentType:       certificateContentType(body.Policy),
+		PreserveCertOrder: body.PreserveCertOrder,
+		X509Thumbprint:    thumbprint,
+		Policy:            body.Policy,
+		Attributes:        KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
+		Tags:              body.Tags,
 	}
 	if body.Attributes != nil {
 		c.Attributes.Enabled = body.Attributes.Enabled
 	}
-	keyVaultCertificates.Put(keyVaultCertKey(vault, name), kvCertStored{Vault: vault, Name: name, KeyVaultCertificate: c})
+	op := certificateOperation(r, vault, name, c.ID, body.Policy, "completed")
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), kvCertStored{
+		Vault:               vault,
+		Name:                name,
+		Versions:            []kvCertVersion{{Version: version, KeyVaultCertificate: c}},
+		PendingOperation:    &op,
+		KeyVaultCertificate: c,
+	})
+	w.Header().Set("Location", op.ID)
+	sim.WriteJSON(w, http.StatusAccepted, op)
+}
+
+func handleKVImportCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	var body struct {
+		Base64EncodedCertificate string            `json:"value"`
+		Policy                   map[string]any    `json:"policy,omitempty"`
+		Attributes               *KeyVaultAttrs    `json:"attributes,omitempty"`
+		PreserveCertOrder        *bool             `json:"preserveCertOrder,omitempty"`
+		Tags                     map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rec, exists := keyVaultCertificates.Get(keyVaultCertKey(vault, name)); exists && rec.isDeleted() {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Certificate %q is currently in a deleted state and must be purged or recovered before re-creating.", name)
+		return
+	}
+	certDER, err := base64.StdEncoding.DecodeString(body.Base64EncodedCertificate)
+	if err != nil {
+		certDER, err = base64.RawStdEncoding.DecodeString(body.Base64EncodedCertificate)
+	}
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid certificate value: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	c := newKVCertificate(r, vault, name, certDER, body.Policy, body.Attributes, body.Tags, body.PreserveCertOrder)
+	putKVCertificate(vault, name, c, nil)
 	sim.WriteJSON(w, http.StatusOK, c)
 }
 
-func handleKVGetCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+func handleKVMergeCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	var body struct {
+		X509Certificates []string          `json:"x5c"`
+		Attributes       *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags             map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body.X509Certificates) == 0 {
+		sim.AzureError(w, "BadParameter", "x5c must contain at least one certificate", http.StatusBadRequest)
+		return
+	}
+	certDER, err := base64.StdEncoding.DecodeString(body.X509Certificates[0])
+	if err != nil {
+		certDER, err = base64.RawStdEncoding.DecodeString(body.X509Certificates[0])
+	}
+	if err != nil {
+		sim.AzureError(w, "BadParameter", "invalid x5c certificate: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	policy := map[string]any{"issuer": map[string]any{"name": "Unknown"}}
+	if rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name)); ok {
+		if v, ok := rec.latest(); ok && v.Policy != nil {
+			policy = v.Policy
+		}
+	}
+	c := newKVCertificate(r, vault, name, certDER, policy, body.Attributes, body.Tags, nil)
+	putKVCertificate(vault, name, c, nil)
+	sim.WriteJSON(w, http.StatusCreated, c)
+}
+
+func handleKVGetCertificate(w http.ResponseWriter, r *http.Request, vault, name, version string) {
 	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
-	if !ok {
+	if !ok || rec.isDeleted() {
 		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
 			"A certificate with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
+	v, ok := rec.findVersion(version)
+	if !ok {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"Version %q of certificate %q was not found.", version, name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, v.KeyVaultCertificate)
 }
 
 func handleKVListCertificates(w http.ResponseWriter, r *http.Request, vault string) {
-	var out []KeyVaultCertificate
+	type certItem struct {
+		ID             string            `json:"id"`
+		Attributes     KeyVaultAttrs     `json:"attributes,omitempty"`
+		Tags           map[string]string `json:"tags,omitempty"`
+		X509Thumbprint string            `json:"x5t,omitempty"`
+	}
+	var out []certItem
 	for _, c := range keyVaultCertificates.List() {
-		if c.Vault == vault {
-			out = append(out, c.KeyVaultCertificate)
+		if c.Vault == vault && !c.isDeleted() {
+			v, ok := c.latest()
+			if !ok {
+				continue
+			}
+			out = append(out, certItem{ID: buildKVURL(r, vault, "certificates", c.Name, ""), Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
 		}
 	}
 	if out == nil {
-		out = []KeyVaultCertificate{}
+		out = []certItem{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 }
 
-func handleKVDeleteCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+func handleKVListCertificateVersions(w http.ResponseWriter, r *http.Request, vault, name string) {
 	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
-	if !ok {
+	if !ok || rec.isDeleted() {
 		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
 			"A certificate with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	keyVaultCertificates.Delete(keyVaultCertKey(vault, name))
+	type certItem struct {
+		ID             string            `json:"id"`
+		Attributes     KeyVaultAttrs     `json:"attributes,omitempty"`
+		Tags           map[string]string `json:"tags,omitempty"`
+		X509Thumbprint string            `json:"x5t,omitempty"`
+	}
+	out := []certItem{}
+	versions := rec.Versions
+	if len(versions) == 0 {
+		if v, ok := rec.latest(); ok {
+			versions = []kvCertVersion{v}
+		}
+	}
+	for _, v := range versions {
+		out = append(out, certItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVUpdateCertificate(w http.ResponseWriter, r *http.Request, vault, name, version string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"A certificate with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	var body struct {
+		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	for i, v := range rec.Versions {
+		if version != "" && v.Version != version && kvVersionFromID(v.ID) != version {
+			continue
+		}
+		updateCertificateFields(&v.KeyVaultCertificate, body.Attributes, body.Tags)
+		rec.Versions[i] = v
+		rec.KeyVaultCertificate = v.KeyVaultCertificate
+		keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
+		sim.WriteJSON(w, http.StatusOK, v.KeyVaultCertificate)
+		return
+	}
+	if len(rec.Versions) == 0 && (version == "" || kvVersionFromID(rec.ID) == version) {
+		updateCertificateFields(&rec.KeyVaultCertificate, body.Attributes, body.Tags)
+		keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
+		sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
+		return
+	}
+	sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+		"Version %q of certificate %q was not found.", version, name)
+}
+
+func handleKVGetCertificateOperation(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() || rec.PendingOperation == nil {
+		sim.AzureErrorf(w, "CertificateOperationNotFound", http.StatusNotFound,
+			"Certificate operation for %q was not found.", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, rec.PendingOperation)
+}
+
+func handleKVUpdateCertificateOperation(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() || rec.PendingOperation == nil {
+		sim.AzureErrorf(w, "CertificateOperationNotFound", http.StatusNotFound,
+			"Certificate operation for %q was not found.", name)
+		return
+	}
+	var body struct {
+		CancellationRequested *bool `json:"cancellation_requested,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		sim.AzureError(w, "InvalidRequest", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.CancellationRequested != nil {
+		rec.PendingOperation.CancellationRequested = *body.CancellationRequested
+		if *body.CancellationRequested {
+			rec.PendingOperation.Status = "cancelled"
+			rec.PendingOperation.StatusDetails = "Cancellation requested."
+		}
+	}
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
+	sim.WriteJSON(w, http.StatusOK, rec.PendingOperation)
+}
+
+func handleKVDeleteCertificateOperation(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() || rec.PendingOperation == nil {
+		sim.AzureErrorf(w, "CertificateOperationNotFound", http.StatusNotFound,
+			"Certificate operation for %q was not found.", name)
+		return
+	}
+	op := rec.PendingOperation
+	rec.PendingOperation = nil
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleKVDeleteCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"A certificate with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	now := time.Now().Unix()
+	rec.DeletedAt = now
+	rec.ScheduledPurgeAt = now + 90*24*60*60
+	rec.RecoveryID = buildKVURL(r, vault, "deletedcertificates", name, "")
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
 	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
+}
+
+func handleKVGetDeletedCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"Deleted certificate %q was not found.", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, deletedCertificateBundle(rec))
+}
+
+func handleKVListDeletedCertificates(w http.ResponseWriter, r *http.Request, vault string) {
+	out := []map[string]any{}
+	for _, rec := range keyVaultCertificates.List() {
+		if rec.Vault != vault || !rec.isDeleted() {
+			continue
+		}
+		out = append(out, deletedCertificateBundle(rec))
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleKVPurgeDeletedCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || !rec.isDeleted() {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"Deleted certificate %q was not found.", name)
+		return
+	}
+	keyVaultCertificates.Delete(keyVaultCertKey(vault, name))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func deletedCertificateBundle(rec kvCertStored) map[string]any {
+	return map[string]any{
+		"id":                 rec.ID,
+		"kid":                rec.KeyID,
+		"sid":                rec.SecretID,
+		"cer":                rec.CER,
+		"x5t":                rec.X509Thumbprint,
+		"policy":             rec.Policy,
+		"attributes":         rec.Attributes,
+		"tags":               rec.Tags,
+		"recoveryId":         rec.RecoveryID,
+		"deletedDate":        rec.DeletedAt,
+		"scheduledPurgeDate": rec.ScheduledPurgeAt,
+	}
+}
+
+func handleKVBackupCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "CertificateNotFound", http.StatusNotFound,
+			"A certificate with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	blob, err := json.Marshal(rec)
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeKVBackupBlob(w, blob)
+}
+
+func handleKVRestoreCertificate(w http.ResponseWriter, r *http.Request, vault string) {
+	blob, err := readKVBackupBlob(r)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	var rec kvCertStored
+	if err := json.Unmarshal(blob, &rec); err != nil {
+		sim.AzureError(w, "BadParameter", "invalid certificate backup blob: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rec.Name == "" {
+		sim.AzureError(w, "BadParameter", "certificate backup blob is missing certificate name", http.StatusBadRequest)
+		return
+	}
+	if _, exists := keyVaultCertificates.Get(keyVaultCertKey(vault, rec.Name)); exists {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Certificate %q already exists in this key vault.", rec.Name)
+		return
+	}
+	rec.Vault = vault
+	keyVaultCertificates.Put(keyVaultCertKey(vault, rec.Name), rec)
+	if latest, ok := rec.latest(); ok {
+		sim.WriteJSON(w, http.StatusOK, latest.KeyVaultCertificate)
+		return
+	}
+	sim.AzureError(w, "BadParameter", "certificate backup blob does not contain any certificate versions", http.StatusBadRequest)
 }
 
 func defaultKVKty(s string) string {
@@ -1077,6 +1906,294 @@ func defaultKVKty(s string) string {
 		return "RSA"
 	}
 	return s
+}
+
+func kvVersionFromID(id string) string {
+	id = strings.TrimRight(id, "/")
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		return id[i+1:]
+	}
+	return ""
+}
+
+func publicJWK(in map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range in {
+		switch k {
+		case "d", "p", "q", "dp", "dq", "qi", "oth", "k":
+			continue
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func rsaPrivatePEMFromJWK(jwk map[string]any) string {
+	nBytes, nOK := jwkBytes(jwk, "n")
+	dBytes, dOK := jwkBytes(jwk, "d")
+	pBytes, pOK := jwkBytes(jwk, "p")
+	qBytes, qOK := jwkBytes(jwk, "q")
+	if !nOK || !dOK || !pOK || !qOK {
+		return ""
+	}
+	eBytes, eOK := jwkBytes(jwk, "e")
+	if !eOK {
+		return ""
+	}
+	e := int(new(big.Int).SetBytes(eBytes).Int64())
+	if e == 0 {
+		e = 65537
+	}
+	key := &rsa.PrivateKey{
+		PublicKey: rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e},
+		D:         new(big.Int).SetBytes(dBytes),
+		Primes:    []*big.Int{new(big.Int).SetBytes(pBytes), new(big.Int).SetBytes(qBytes)},
+	}
+	if err := key.Validate(); err != nil {
+		return ""
+	}
+	key.Precompute()
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
+
+func jwkBytes(jwk map[string]any, name string) ([]byte, bool) {
+	v, ok := jwk[name]
+	if !ok {
+		return nil, false
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil, false
+	}
+	b, err := decodeKVURLBytes(s)
+	return b, err == nil
+}
+
+func rsaPrivateKeyFromPEM(privateKeyPEM string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return nil, errors.New("missing RSA private key")
+	}
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+func decodeKVURLBytes(s string) ([]byte, error) {
+	if s == "" {
+		return nil, nil
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("invalid base64url data")
+}
+
+func writeKVOperationResult(w http.ResponseWriter, kid string, value []byte) {
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"kid":   kid,
+		"value": base64.RawURLEncoding.EncodeToString(value),
+	})
+}
+
+func signatureHash(alg string) (crypto.Hash, bool, error) {
+	switch alg {
+	case "RS256":
+		return crypto.SHA256, false, nil
+	case "RS384":
+		return crypto.SHA384, false, nil
+	case "RS512":
+		return crypto.SHA512, false, nil
+	case "PS256":
+		return crypto.SHA256, true, nil
+	case "PS384":
+		return crypto.SHA384, true, nil
+	case "PS512":
+		return crypto.SHA512, true, nil
+	default:
+		return 0, false, fmt.Errorf("unsupported signature algorithm %q", alg)
+	}
+}
+
+func rsaEncrypt(alg string, publicKey *rsa.PublicKey, value []byte) ([]byte, error) {
+	switch alg {
+	case "RSA-OAEP":
+		return rsa.EncryptOAEP(sha1.New(), rand.Reader, publicKey, value, nil)
+	case "RSA-OAEP-256":
+		return rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, value, nil)
+	case "RSA1_5":
+		return rsa.EncryptPKCS1v15(rand.Reader, publicKey, value)
+	default:
+		return nil, fmt.Errorf("unsupported encryption algorithm %q", alg)
+	}
+}
+
+func rsaDecrypt(alg string, privateKey *rsa.PrivateKey, value []byte) ([]byte, error) {
+	switch alg {
+	case "RSA-OAEP":
+		return rsa.DecryptOAEP(sha1.New(), rand.Reader, privateKey, value, nil)
+	case "RSA-OAEP-256":
+		return rsa.DecryptOAEP(sha256.New(), rand.Reader, privateKey, value, nil)
+	case "RSA1_5":
+		return rsa.DecryptPKCS1v15(rand.Reader, privateKey, value)
+	default:
+		return nil, fmt.Errorf("unsupported encryption algorithm %q", alg)
+	}
+}
+
+func updateKVKeyVersion(v *kvKeyVersion, attrs *KeyVaultAttrs, keyOps []string, tags map[string]string) {
+	if attrs != nil {
+		v.Attributes.Enabled = attrs.Enabled
+		v.Attributes.NotBefore = attrs.NotBefore
+		v.Attributes.Expires = attrs.Expires
+		v.Attributes.Updated = time.Now().Unix()
+	}
+	if tags != nil {
+		v.Tags = tags
+	}
+	if len(keyOps) > 0 {
+		if v.JsonWebKey == nil {
+			v.JsonWebKey = map[string]any{}
+		}
+		v.JsonWebKey["key_ops"] = keyOps
+	}
+}
+
+func writeKVBackupBlob(w http.ResponseWriter, blob []byte) {
+	sim.WriteJSON(w, http.StatusOK, map[string]string{
+		"value": base64.RawURLEncoding.EncodeToString(blob),
+	})
+}
+
+func readKVBackupBlob(r *http.Request) ([]byte, error) {
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	if body.Value == "" {
+		return nil, errors.New("backup value is required")
+	}
+	return decodeKVURLBytes(body.Value)
+}
+
+func makeSelfSignedCertificateDER(name string) ([]byte, string, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, "", err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, "", err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{name},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha1.Sum(der)
+	return der, base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
+
+func certificateContentType(policy map[string]any) string {
+	if policy == nil {
+		return "application/x-pkcs12"
+	}
+	secretProps, _ := policy["secret_props"].(map[string]any)
+	if secretProps == nil {
+		secretProps, _ = policy["secretProperties"].(map[string]any)
+	}
+	if secretProps != nil {
+		if v, ok := secretProps["contentType"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "application/x-pkcs12"
+}
+
+func certificateOperation(r *http.Request, vault, name, target string, policy map[string]any, status string) kvCertOperation {
+	if status == "" {
+		status = "completed"
+	}
+	issuer := map[string]any{"name": "Self"}
+	if policy != nil {
+		if v, ok := policy["issuer"].(map[string]any); ok && v != nil {
+			issuer = v
+		}
+	}
+	return kvCertOperation{
+		ID:                    buildKVURL(r, vault, "certificates", name, "pending"),
+		Issuer:                issuer,
+		CSR:                   []byte("sockerless-keyvault-csr-" + name),
+		CancellationRequested: false,
+		Status:                status,
+		StatusDetails:         "Certificate operation completed.",
+		Target:                target,
+		RequestID:             generateUUID(),
+	}
+}
+
+func newKVCertificate(r *http.Request, vault, name string, certDER []byte, policy map[string]any, attrs *KeyVaultAttrs, tags map[string]string, preserve *bool) KeyVaultCertificate {
+	version := generateUUID()
+	sum := sha1.Sum(certDER)
+	now := time.Now().Unix()
+	c := KeyVaultCertificate{
+		ID:                buildKVURL(r, vault, "certificates", name, version),
+		KeyID:             buildKVURL(r, vault, "keys", name, version),
+		SecretID:          buildKVURL(r, vault, "secrets", name, version),
+		CER:               certDER,
+		ContentType:       certificateContentType(policy),
+		PreserveCertOrder: preserve,
+		X509Thumbprint:    base64.RawURLEncoding.EncodeToString(sum[:]),
+		Policy:            policy,
+		Attributes:        KeyVaultAttrs{Enabled: true, Created: now, Updated: now},
+		Tags:              tags,
+	}
+	if attrs != nil {
+		c.Attributes.Enabled = attrs.Enabled
+		c.Attributes.NotBefore = attrs.NotBefore
+		c.Attributes.Expires = attrs.Expires
+	}
+	return c
+}
+
+func putKVCertificate(vault, name string, cert KeyVaultCertificate, op *kvCertOperation) {
+	version := kvVersionFromID(cert.ID)
+	rec, _ := keyVaultCertificates.Get(keyVaultCertKey(vault, name))
+	rec.Vault = vault
+	rec.Name = name
+	rec.Versions = append(rec.Versions, kvCertVersion{Version: version, KeyVaultCertificate: cert})
+	if op != nil {
+		rec.PendingOperation = op
+	}
+	rec.KeyVaultCertificate = cert
+	keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
+}
+
+func updateCertificateFields(c *KeyVaultCertificate, attrs *KeyVaultAttrs, tags map[string]string) {
+	if attrs != nil {
+		c.Attributes.Enabled = attrs.Enabled
+		c.Attributes.NotBefore = attrs.NotBefore
+		c.Attributes.Expires = attrs.Expires
+		c.Attributes.Updated = time.Now().Unix()
+	}
+	if tags != nil {
+		c.Tags = tags
+	}
 }
 
 // buildKVURL constructs the canonical KV data-plane resource ID
@@ -1396,6 +2513,53 @@ func handleKVListDeletedSecrets(w http.ResponseWriter, r *http.Request, vault st
 		})
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+func handleKVBackupSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
+	rec, ok := keyVaultData.Get(keyVaultSecretKey(vault, name))
+	if !ok || rec.isDeleted() {
+		sim.AzureErrorf(w, "SecretNotFound", http.StatusNotFound,
+			"A secret with (name/id) %q was not found in this key vault.", name)
+		return
+	}
+	blob, err := json.Marshal(rec)
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeKVBackupBlob(w, blob)
+}
+
+func handleKVRestoreSecret(w http.ResponseWriter, r *http.Request, vault string) {
+	blob, err := readKVBackupBlob(r)
+	if err != nil {
+		sim.AzureError(w, "BadParameter", err.Error(), http.StatusBadRequest)
+		return
+	}
+	var rec kvSecretStored
+	if err := json.Unmarshal(blob, &rec); err != nil {
+		sim.AzureError(w, "BadParameter", "invalid secret backup blob: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rec.Name == "" {
+		sim.AzureError(w, "BadParameter", "secret backup blob is missing secret name", http.StatusBadRequest)
+		return
+	}
+	if _, exists := keyVaultData.Get(keyVaultSecretKey(vault, rec.Name)); exists {
+		sim.AzureErrorf(w, "Conflict", http.StatusConflict,
+			"Secret %q already exists in this key vault.", rec.Name)
+		return
+	}
+	rec.Vault = vault
+	rec.DeletedAt = 0
+	rec.ScheduledPurgeAt = 0
+	rec.RecoveryID = ""
+	keyVaultData.Put(keyVaultSecretKey(vault, rec.Name), rec)
+	if len(rec.Versions) == 0 {
+		sim.AzureError(w, "BadParameter", "secret backup blob does not contain any secret versions", http.StatusBadRequest)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, rec.Name, rec.latest()))
 }
 
 // handleKVRecoverDeletedSecret transitions a soft-deleted secret

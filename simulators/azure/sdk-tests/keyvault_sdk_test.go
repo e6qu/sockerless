@@ -1,10 +1,18 @@
 package azure_sdk_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azcertificates"
@@ -155,8 +163,42 @@ func TestKeyVault_SDK_Secrets_ChallengeRoundTrip(t *testing.T) {
 	require.NotNil(t, getResp.Value)
 	assert.Equal(t, "hunter2", *getResp.Value)
 
+	version := getResp.ID.Version()
+	updated, err := client.UpdateSecretProperties(ctx, "db-password", version,
+		azsecrets.UpdateSecretPropertiesParameters{
+			ContentType: stringPtr("text/plain"),
+			Tags:        map[string]*string{"scope": stringPtr("sdk")},
+		}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.ContentType)
+	assert.Equal(t, "text/plain", *updated.ContentType)
+
+	pager := client.NewListSecretPropertiesPager(nil)
+	var listed bool
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, item := range page.Value {
+			if item.ID != nil && item.ID.Name() == "db-password" {
+				listed = true
+			}
+		}
+	}
+	require.True(t, listed, "ListSecretProperties must include the SDK-created secret")
+
+	backup, err := client.BackupSecret(ctx, "db-password", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, backup.Value)
+
 	_, err = client.DeleteSecret(ctx, "db-password", nil)
 	require.NoError(t, err)
+	_, err = client.PurgeDeletedSecret(ctx, "db-password", nil)
+	require.NoError(t, err)
+
+	restored, err := client.RestoreSecret(ctx, azsecrets.RestoreSecretParameters{SecretBackup: backup.Value}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, restored.Value)
+	assert.Equal(t, "hunter2", *restored.Value)
 }
 
 // TestKeyVault_SDK_Keys_ChallengeRoundTrip covers the same
@@ -181,21 +223,68 @@ func TestKeyVault_SDK_Keys_ChallengeRoundTrip(t *testing.T) {
 	require.NoError(t, err, "CreateKey over SDK must succeed")
 	require.NotNil(t, createResp.Key)
 	require.NotNil(t, createResp.Key.KID)
+	version := createResp.Key.KID.Version()
 
 	getResp, err := client.GetKey(ctx, "signing-key", "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, getResp.Key.KID)
 	assert.Equal(t, *createResp.Key.KID, *getResp.Key.KID,
 		"GetKey must return the same KID emitted by CreateKey")
+
+	updated, err := client.UpdateKey(ctx, "signing-key", version,
+		azkeys.UpdateKeyParameters{Tags: map[string]*string{"scope": stringPtr("sdk")}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.Key.KID)
+
+	versionPager := client.NewListKeyPropertiesVersionsPager("signing-key", nil)
+	require.True(t, versionPager.More())
+	versionPage, err := versionPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, versionPage.Value)
+
+	digest := sha256.Sum256([]byte("payload"))
+	signResp, err := client.Sign(ctx, "signing-key", version,
+		azkeys.SignParameters{Algorithm: signatureAlgPtr(azkeys.SignatureAlgorithmRS256), Value: digest[:]}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, signResp.Result)
+	verifyResp, err := client.Verify(ctx, "signing-key", version,
+		azkeys.VerifyParameters{Algorithm: signatureAlgPtr(azkeys.SignatureAlgorithmRS256), Digest: digest[:], Signature: signResp.Result}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, verifyResp.Value)
+	assert.True(t, *verifyResp.Value)
+
+	encryptResp, err := client.Encrypt(ctx, "signing-key", version,
+		azkeys.KeyOperationParameters{Algorithm: encryptionAlgPtr(azkeys.EncryptionAlgorithmRSAOAEP256), Value: []byte("secret")}, nil)
+	require.NoError(t, err)
+	decryptResp, err := client.Decrypt(ctx, "signing-key", version,
+		azkeys.KeyOperationParameters{Algorithm: encryptionAlgPtr(azkeys.EncryptionAlgorithmRSAOAEP256), Value: encryptResp.Result}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("secret"), decryptResp.Result)
+
+	wrapResp, err := client.WrapKey(ctx, "signing-key", version,
+		azkeys.KeyOperationParameters{Algorithm: encryptionAlgPtr(azkeys.EncryptionAlgorithmRSAOAEP256), Value: []byte("wrapme")}, nil)
+	require.NoError(t, err)
+	unwrapResp, err := client.UnwrapKey(ctx, "signing-key", version,
+		azkeys.KeyOperationParameters{Algorithm: encryptionAlgPtr(azkeys.EncryptionAlgorithmRSAOAEP256), Value: wrapResp.Result}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("wrapme"), unwrapResp.Result)
+
+	backup, err := client.BackupKey(ctx, "signing-key", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, backup.Value)
+	_, err = client.DeleteKey(ctx, "signing-key", nil)
+	require.NoError(t, err)
+	_, err = client.PurgeDeletedKey(ctx, "signing-key", nil)
+	require.NoError(t, err)
+	restored, err := client.RestoreKey(ctx, azkeys.RestoreKeyParameters{KeyBackup: backup.Value}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, restored.Key.KID)
 }
 
 // TestKeyVault_SDK_Certificates_ChallengeRoundTrip covers the
-// challenge-then-retry handshake for the certificates client. The
-// test exercises GetCertificate (not CreateCertificate, which is a
-// real Long-Running Operation on real Azure and a separate sim
-// surface tracked elsewhere) — that's still enough to put the
-// challenge policy through its paces; the surface that's load-
-// bearing here is the challenge handshake, not the cert lifecycle.
+// challenge-then-retry handshake and the certificate lifecycle routes
+// the official Azure SDK uses for create, pending operation polling,
+// update, import, merge, backup, restore, and list pagers.
 func TestKeyVault_SDK_Certificates_ChallengeRoundTrip(t *testing.T) {
 	rg := "kv-sdk-certs-rg"
 	vault := "kv-sdk-certs"
@@ -208,14 +297,80 @@ func TestKeyVault_SDK_Certificates_ChallengeRoundTrip(t *testing.T) {
 		})
 	require.NoError(t, err)
 
-	// GetCertificate on a non-existent cert: the canonical error is
-	// 404 + `CertificateNotFound`; the SDK surfaces it as a non-nil
-	// error. The challenge handshake fires regardless of the
-	// downstream 404, which is what we're locking in.
-	_, err = client.GetCertificate(ctx, "missing-cert", "", nil)
-	require.Error(t, err, "GetCertificate must surface the 404 (challenge still fired)")
-	assert.Contains(t, err.Error(), "CertificateNotFound",
-		"sim must emit the canonical CertificateNotFound error code")
+	createResp, err := client.CreateCertificate(ctx, "tls-cert",
+		azcertificates.CreateCertificateParameters{
+			CertificatePolicy: selfSignedCertPolicy(),
+			Tags:              map[string]*string{"scope": stringPtr("sdk")},
+		}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, createResp.Status)
+	assert.Equal(t, "completed", *createResp.Status)
+	require.NotNil(t, createResp.Target)
+
+	op, err := client.GetCertificateOperation(ctx, "tls-cert", nil)
+	require.NoError(t, err)
+	require.NotNil(t, op.Status)
+	assert.Equal(t, "completed", *op.Status)
+
+	cert, err := client.GetCertificate(ctx, "tls-cert", "", nil)
+	require.NoError(t, err)
+	require.NotNil(t, cert.ID)
+	version := cert.ID.Version()
+	require.NotEmpty(t, cert.CER)
+	require.NotEmpty(t, cert.X509Thumbprint)
+
+	updated, err := client.UpdateCertificate(ctx, "tls-cert", version,
+		azcertificates.UpdateCertificateParameters{Tags: map[string]*string{"scope": stringPtr("updated")}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.ID)
+
+	pager := client.NewListCertificatePropertiesPager(nil)
+	var listed bool
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, item := range page.Value {
+			if item.ID != nil && item.ID.Name() == "tls-cert" {
+				listed = true
+			}
+		}
+	}
+	require.True(t, listed, "ListCertificateProperties must include the SDK-created certificate")
+
+	versionPager := client.NewListCertificatePropertiesVersionsPager("tls-cert", nil)
+	require.True(t, versionPager.More())
+	versionPage, err := versionPager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, versionPage.Value)
+
+	certDER := testCertificateDER(t, "imported-cert")
+	imported, err := client.ImportCertificate(ctx, "imported-cert",
+		azcertificates.ImportCertificateParameters{
+			Base64EncodedCertificate: stringPtr(base64.StdEncoding.EncodeToString(certDER)),
+			CertificatePolicy:        selfSignedCertPolicy(),
+		}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, imported.ID)
+
+	_, err = client.CreateCertificate(ctx, "merged-cert",
+		azcertificates.CreateCertificateParameters{CertificatePolicy: unknownIssuerCertPolicy()}, nil)
+	require.NoError(t, err)
+	merged, err := client.MergeCertificate(ctx, "merged-cert",
+		azcertificates.MergeCertificateParameters{X509Certificates: [][]byte{testCertificateDER(t, "merged-cert")}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, merged.ID)
+
+	backup, err := client.BackupCertificate(ctx, "tls-cert", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, backup.Value)
+	_, err = client.DeleteCertificate(ctx, "tls-cert", nil)
+	require.NoError(t, err)
+	_, err = client.PurgeDeletedCertificate(ctx, "tls-cert", nil)
+	require.NoError(t, err)
+	restored, err := client.RestoreCertificate(ctx,
+		azcertificates.RestoreCertificateParameters{CertificateBackup: backup.Value}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, restored.ID)
 }
 
 // Helper to express &"..." inline — Azure SDKs take *string everywhere.
@@ -223,3 +378,52 @@ func stringPtr(s string) *string { return &s }
 
 // Helper to express &keyType inline for azkeys.CreateKeyParameters.
 func keyTypePtr(k azkeys.KeyType) *azkeys.KeyType { return &k }
+
+func signatureAlgPtr(a azkeys.SignatureAlgorithm) *azkeys.SignatureAlgorithm { return &a }
+
+func encryptionAlgPtr(a azkeys.EncryptionAlgorithm) *azkeys.EncryptionAlgorithm { return &a }
+
+func certKeyTypePtr(k azcertificates.KeyType) *azcertificates.KeyType { return &k }
+
+func int32Ptr(v int32) *int32 { return &v }
+
+func selfSignedCertPolicy() *azcertificates.CertificatePolicy {
+	return &azcertificates.CertificatePolicy{
+		IssuerParameters: &azcertificates.IssuerParameters{Name: stringPtr("Self")},
+		KeyProperties: &azcertificates.KeyProperties{
+			KeyType: certKeyTypePtr(azcertificates.KeyTypeRSA),
+			KeySize: int32Ptr(2048),
+		},
+		SecretProperties: &azcertificates.SecretProperties{ContentType: stringPtr("application/x-pkcs12")},
+		X509CertificateProperties: &azcertificates.X509CertificateProperties{
+			Subject:          stringPtr("CN=sockerless.local"),
+			ValidityInMonths: int32Ptr(12),
+		},
+	}
+}
+
+func unknownIssuerCertPolicy() *azcertificates.CertificatePolicy {
+	p := selfSignedCertPolicy()
+	p.IssuerParameters.Name = stringPtr("Unknown")
+	return p
+}
+
+func testCertificateDER(t *testing.T, commonName string) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{commonName},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	return der
+}

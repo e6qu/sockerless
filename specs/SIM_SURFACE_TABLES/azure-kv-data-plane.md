@@ -24,47 +24,49 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 | SetSecret | `PUT /secrets/{name}` | ✓ `keyvault.go::handleKVSetSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✓ `azurerm_key_vault_secret` | |
 | GetSecret | `GET /secrets/{name}` | ✓ `handleKVGetSecret` | ✓ same | ✓ same | |
 | GetSecret (specific version) | `GET /secrets/{name}/{version}` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✓ same | |
-| ListSecrets | `GET /secrets` | ✓ `handleKVListSecrets` | ✗ | ✗ | |
-| ListSecretVersions | `GET /secrets/{name}/versions` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✗ | SDK pager. |
+| ListSecrets | `GET /secrets` | ✓ `handleKVListSecrets` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✓ `azurerm_key_vault_secret` refresh | SDK pager. |
+| ListSecretVersions | `GET /secrets/{name}/versions` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | n/a | SDK pager; azurerm secret resource does not expose a separate version-list flow. |
 | DeleteSecret | `DELETE /secrets/{name}` | ✓ `handleKVDeleteSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + `TestKeyVault_State_SoftDeleteRoundTrip` | ✓ `azurerm_key_vault_secret` destroy | |
-| UpdateSecret | `PATCH /secrets/{name}/{version}` | ✓ `handleKVPatchSecret` | ✗ | ✗ | Used by `azurerm_key_vault_secret` updates. |
-| BackupSecret / RestoreSecret | `POST /secrets/{name}/backup` / `/secrets/restore` | ✗ | ✗ | ✗ | Low-frequency; surface 501 if a runner scenario hits them. |
-| RecoverDeletedSecret / PurgeDeletedSecret | `POST /deletedsecrets/{name}/recover` / `DELETE /deletedsecrets/{name}` | ✓ `handleKVRecoverDeletedSecret` / `handleKVPurgeDeletedSecret` | ✓ `TestKeyVault_State_SoftDeleteRoundTrip` | ✗ | Soft-delete state machine. |
+| UpdateSecret | `PATCH /secrets/{name}/{version}` | ✓ `handleKVPatchSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✓ `azurerm_key_vault_secret` updates | |
+| BackupSecret / RestoreSecret | `POST /secrets/{name}/backup` / `/secrets/restore` | ✓ `handleKVBackupSecret` / `handleKVRestoreSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | n/a | Opaque backup blob preserves the simulator's real stored secret versions. |
+| RecoverDeletedSecret / PurgeDeletedSecret | `POST /deletedsecrets/{name}/recover` / `DELETE /deletedsecrets/{name}` | ✓ `handleKVRecoverDeletedSecret` / `handleKVPurgeDeletedSecret` | ✓ `TestKeyVault_State_SoftDeleteRoundTrip` | n/a | Soft-delete state machine; azurerm secret destroy does not require a separate recover route. |
 
 ## Keys
 
 | Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|---|
-| CreateKey | `POST /keys/{name}/create` | ✓ `keyvault.go::handleKVCreateKey` | ✓ `TestKeyVault_SDK_Keys_ChallengeRoundTrip` | ✗ | tf: `azurerm_key_vault_key` |
-| GetKey | `GET /keys/{name}` | ✓ `handleKVGetKey` | ✓ same | ✗ | |
-| GetKey (version) | `GET /keys/{name}/{version}` | ✓ same | ✗ | ✗ | |
-| ListKeys | `GET /keys` | ✓ `handleKVListKeys` | ✗ | ✗ | |
-| ListKeyVersions | `GET /keys/{name}/versions` | ✓ same | ✗ | ✗ | |
-| DeleteKey | `DELETE /keys/{name}` | ✓ `handleKVDeleteKey` | ✗ | ✗ | |
-| UpdateKey | `PATCH /keys/{name}/{version}` | ✗ | ✗ | ✗ | |
-| ImportKey | `PUT /keys/{name}` | ✗ | ✗ | ✗ | |
-| Sign / Verify / Encrypt / Decrypt / WrapKey / UnwrapKey | `POST /keys/{name}/{version}/{op}` | ✗ | ✗ | ✗ | Crypto operations; sim doesn't model real key material. |
-| BackupKey / RestoreKey | `POST /keys/{name}/backup` / `/keys/restore` | ✗ | ✗ | ✗ | |
+| CreateKey | `POST /keys/{name}/create` | ✓ `keyvault.go::handleKVCreateKey` | ✓ `TestKeyVault_SDK_Keys_ChallengeRoundTrip` | ✓ `azurerm_key_vault_key` | |
+| GetKey | `GET /keys/{name}` | ✓ `handleKVGetKey` | ✓ same | ✓ same refresh | |
+| GetKey (version) | `GET /keys/{name}/{version}` | ✓ same | ✓ same | ✓ same | |
+| ListKeys | `GET /keys` | ✓ `handleKVListKeys` | ✓ same | ✓ same refresh | SDK pager. |
+| ListKeyVersions | `GET /keys/{name}/versions` | ✓ `handleKVListKeyVersions` | ✓ same | ✓ same refresh | SDK pager. |
+| DeleteKey | `DELETE /keys/{name}` | ✓ `handleKVDeleteKey` | ✓ same | ✓ `azurerm_key_vault_key` destroy | Soft-delete state. |
+| PurgeDeletedKey | `DELETE /deletedkeys/{name}` | ✓ `handleKVPurgeDeletedKey` | ✓ same | ✓ `azurerm_key_vault_key` purge-on-destroy | |
+| UpdateKey | `PATCH /keys/{name}/{version}` | ✓ `handleKVUpdateKey` | ✓ same | ✓ same | |
+| ImportKey | `PUT /keys/{name}` | ✓ `handleKVImportKey` | ✓ same | n/a | |
+| Sign / Verify / Encrypt / Decrypt / WrapKey / UnwrapKey | `POST /keys/{name}/{version}/{op}` | ✓ `handleKVCryptoKey` | ✓ same | n/a | RSA operations use real generated/imported local key material behind the public Key Vault API. |
+| BackupKey / RestoreKey | `POST /keys/{name}/backup` / `/keys/restore` | ✓ `handleKVBackupKey` / `handleKVRestoreKey` | ✓ same | n/a | |
 
 ## Certificates
 
 | Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|---|
-| CreateCertificate | `POST /certificates/{name}/create` | ✓ `keyvault.go::handleKVCreateCertificate` | ✗ | ✗ | Currently returns 200 + Certificate JSON; **real Azure returns 202 + CertificateOperation** with `status:"inProgress"`. SDK can't fully round-trip Create today (filed for follow-up). |
-| GetCertificate | `GET /certificates/{name}` | ✓ `handleKVGetCertificate` | ✓ `TestKeyVault_SDK_Certificates_ChallengeRoundTrip` | ✗ | tf: `azurerm_key_vault_certificate` |
-| ListCertificates | `GET /certificates` | ✓ `handleKVListCertificates` | ✗ | ✗ | |
-| DeleteCertificate | `DELETE /certificates/{name}` | ✓ `handleKVDeleteCertificate` | ✗ | ✗ | |
-| GetCertificateOperation | `GET /certificates/{name}/pending` | ✗ | ✗ | ✗ | LRO poll endpoint. Needs CreateCertificate to return 202 first. |
-| UpdateCertificate | `PATCH /certificates/{name}/{version}` | ✗ | ✗ | ✗ | |
-| ImportCertificate | `POST /certificates/{name}/import` | ✗ | ✗ | ✗ | |
-| MergeCertificate | `POST /certificates/{name}/pending/merge` | ✗ | ✗ | ✗ | |
+| CreateCertificate | `POST /certificates/{name}/create` | ✓ `keyvault.go::handleKVCreateCertificate` | ✓ `TestKeyVault_SDK_Certificates_ChallengeRoundTrip` | ✓ `azurerm_key_vault_certificate` | Returns 202 + `CertificateOperation`; the simulator completes locally and exposes `/pending`. |
+| GetCertificate | `GET /certificates/{name}` | ✓ `handleKVGetCertificate` | ✓ same | ✓ same refresh | |
+| ListCertificates | `GET /certificates` | ✓ `handleKVListCertificates` | ✓ same | ✓ same refresh | SDK pager. |
+| ListCertificateVersions | `GET /certificates/{name}/versions` | ✓ `handleKVListCertificateVersions` | ✓ same | ✓ same refresh | SDK pager. |
+| DeleteCertificate | `DELETE /certificates/{name}` | ✓ `handleKVDeleteCertificate` | ✓ same | ✓ `azurerm_key_vault_certificate` destroy | Soft-delete state. |
+| PurgeDeletedCertificate | `DELETE /deletedcertificates/{name}` | ✓ `handleKVPurgeDeletedCertificate` | ✓ same | ✓ `azurerm_key_vault_certificate` purge-on-destroy | |
+| GetCertificateOperation | `GET /certificates/{name}/pending` | ✓ `handleKVGetCertificateOperation` | ✓ same | ✓ `azurerm_key_vault_certificate` create polling | |
+| UpdateCertificateOperation | `PATCH /certificates/{name}/pending` | ✓ `handleKVUpdateCertificateOperation` | ✓ same | n/a | |
+| UpdateCertificate | `PATCH /certificates/{name}/{version}` | ✓ `handleKVUpdateCertificate` | ✓ same | ✓ same | |
+| ImportCertificate | `POST /certificates/{name}/import` | ✓ `handleKVImportCertificate` | ✓ same | n/a | |
+| MergeCertificate | `POST /certificates/{name}/pending/merge` | ✓ `handleKVMergeCertificate` | ✓ same | n/a | |
+| BackupCertificate / RestoreCertificate | `POST /certificates/{name}/backup` / `/certificates/restore` | ✓ `handleKVBackupCertificate` / `handleKVRestoreCertificate` | ✓ same | n/a | |
 
 ## Known gaps
 
-- Secret create/read/delete has SDK and Terraform coverage through `azurerm_key_vault_secret`; key and certificate Terraform resources are not covered yet.
-- `CreateCertificate` still returns immediate certificate JSON instead of Azure's 202 `CertificateOperation` LRO shape with `GET /certificates/{name}/pending`.
-- Backup/restore, key update/import, key crypto operations, and certificate operation/update/import/merge routes still need public Key Vault data-plane implementations or canonical `NotImplemented` envelopes where the simulator cannot perform the cloud operation locally.
-- Remaining ✗ SDK rows such as paged list operations and update/delete paths are tracked by BUG-1223 so they do not hide behind closed historical deferrals.
+The issue #282 data-plane parity gaps were closed. Secrets, keys, and certificates now have SDK lifecycle coverage for pagers, updates, backup/restore, and soft-delete purge paths, and Terraform coverage covers `azurerm_key_vault_secret`, `azurerm_key_vault_key`, and `azurerm_key_vault_certificate`.
 
 ## Reopens that produced this table
 

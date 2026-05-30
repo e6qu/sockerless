@@ -2,6 +2,8 @@ package azure_tf_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +45,7 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
+	cleanTerraformWorkspace(t)
 	init := terraformCmd("init")
 	init.Stdout = nil
 	init.Stderr = nil
@@ -171,6 +174,18 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, strings.ToLower(azrmKVPolicy), "/providers/microsoft.keyvault/vaults/tf-azrm-kv",
 		"azurerm Key Vault access policy id must include vault ARM path; got %s", azrmKVPolicy)
 
+	azrmKVKey := outputs.must(t, "azrm_key_vault_key_id")
+	require.Contains(t, azrmKVKey, "tf-azrm-kv.vault.",
+		"azurerm Key Vault key id must be data-plane URL-shaped; got %s", azrmKVKey)
+	require.Contains(t, azrmKVKey, "/keys/tf-azrm-key/",
+		"azurerm Key Vault key id must include key name and version; got %s", azrmKVKey)
+
+	azrmKVCert := outputs.must(t, "azrm_key_vault_certificate_id")
+	require.Contains(t, azrmKVCert, "tf-azrm-kv.vault.",
+		"azurerm Key Vault certificate id must be data-plane URL-shaped; got %s", azrmKVCert)
+	require.Contains(t, azrmKVCert, "/certificates/tf-azrm-cert/",
+		"azurerm Key Vault certificate id must include certificate name and version; got %s", azrmKVCert)
+
 	azrmLAW := outputs.must(t, "azrm_law_id")
 	require.Contains(t, azrmLAW, "/providers/Microsoft.OperationalInsights/workspaces/tf-azrm-law",
 		"azurerm Log Analytics workspace id must include canonical ARM path; got %s", azrmLAW)
@@ -221,6 +236,21 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	destroy := terraformCmd("destroy", "-auto-approve")
 	out, err = destroy.CombinedOutput()
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func cleanTerraformWorkspace(t *testing.T) {
+	t.Helper()
+	dir := filepath.Dir(mustAbs("main.tf"))
+	for _, name := range []string{
+		".terraform",
+		".terraform.lock.hcl",
+		"terraform.tfstate",
+		"terraform.tfstate.backup",
+		"crash.log",
+	} {
+		err := os.RemoveAll(filepath.Join(dir, name))
+		require.NoError(t, err, "clean terraform workspace artifact %s", name)
+	}
 }
 
 type tfOutputs map[string]struct {

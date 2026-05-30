@@ -10,7 +10,7 @@ This is not a license to add simulator-specific APIs. Any missing row below is a
 
 | Category | AWS simulator | GCP simulator | Azure simulator | Finding |
 |---|---|---|---|---|
-| Object storage | S3 implemented | GCS implemented | Blob/File/Queue/Table storage implemented | Present across all three. Stale surface-table markers were refreshed; remaining S3 bucket-subresource row gaps are tracked by issue #281 / BUG-1221. |
+| Object storage | S3 implemented | GCS implemented | Blob/File/Queue/Table storage implemented | Present across all three. The stale surface-table marker cleanup and its S3 bucket-subresource follow-up were closed. |
 | Queue/message systems | SQS and SNS implemented | Pub/Sub implemented | Service Bus and Storage Queue implemented | Present for core queue/pub-sub flows. |
 | Event routing | EventBridge rules/targets plus buses/policies/archives/replays implemented | Eventarc triggers plus channels/providers/channel connections implemented | Event Grid topics/domains/domain topics/system topics/partner topics/subscriptions implemented | Event routing parity is rounded out across the advanced event-service phase. |
 | Stream/event ingestion | Kinesis implemented | Pub/Sub present for basic event bus flows | Event Hubs implemented | Present for the foundational stream-ingestion flows. |
@@ -86,8 +86,8 @@ No current missing foundational Azure slices from this audit remain open.
 
 Recommended order:
 
-1. AWS S3 bucket-subresource row coverage: issue #281 / BUG-1221 tracks the remaining object-storage rows that still need SDK/CLI/Terraform coverage or public-API behavior fixes.
-2. Azure Key Vault data-plane parity: issue #282 / BUG-1222 tracks the remaining key/certificate data-plane operations, certificate LRO shape, and pager/lifecycle coverage.
+1. The AWS S3 bucket-subresource row-coverage follow-up from issue #281 / BUG-1221 was closed.
+2. The Azure Key Vault data-plane parity follow-up from issue #282 / BUG-1222 was closed.
 3. Continue the standing audit cadence through BUG-1104: when a new community issue or provider/SDK path surfaces a missing public API slice, file the concrete BUG first, then implement the cloud-compatible public API with SDK, CLI, and Terraform coverage in the same PR.
 
 Each added service slice must follow the simulator testing contract: official SDK tests, vendor CLI tests, and Terraform provider tests in the same PR unless the public API is not exposed by one of those client surfaces.

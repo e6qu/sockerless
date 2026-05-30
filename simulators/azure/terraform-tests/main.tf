@@ -608,7 +608,9 @@ resource "azurerm_key_vault_access_policy" "az_kv_policy" {
   tenant_id    = "11111111-1111-1111-1111-111111111111"
   object_id    = "22222222-2222-2222-2222-222222222222"
 
-  secret_permissions = ["Get", "List", "Set", "Delete"]
+  key_permissions         = ["Get", "List", "Create", "Update", "Delete", "Backup", "Restore", "Import", "Sign", "Verify", "Encrypt", "Decrypt", "WrapKey", "UnwrapKey"]
+  secret_permissions      = ["Get", "List", "Set", "Delete", "Backup", "Restore"]
+  certificate_permissions = ["Get", "List", "Create", "Update", "Delete", "Import", "Backup", "Restore"]
 }
 
 resource "azurerm_key_vault_secret" "az_kv_secret" {
@@ -616,6 +618,50 @@ resource "azurerm_key_vault_secret" "az_kv_secret" {
   name         = "tf-azrm-secret"
   value        = "hunter2"
   key_vault_id = azurerm_key_vault.az_kv.id
+
+  depends_on = [azurerm_key_vault_access_policy.az_kv_policy]
+}
+
+resource "azurerm_key_vault_key" "az_kv_key" {
+  provider     = azurerm
+  name         = "tf-azrm-key"
+  key_vault_id = azurerm_key_vault.az_kv.id
+  key_type     = "RSA"
+  key_size     = 2048
+  key_opts     = ["decrypt", "encrypt", "sign", "unwrapKey", "verify", "wrapKey"]
+
+  depends_on = [azurerm_key_vault_access_policy.az_kv_policy]
+}
+
+resource "azurerm_key_vault_certificate" "az_kv_cert" {
+  provider     = azurerm
+  name         = "tf-azrm-cert"
+  key_vault_id = azurerm_key_vault.az_kv.id
+
+  certificate_policy {
+    issuer_parameters {
+      name = "Self"
+    }
+
+    key_properties {
+      exportable = true
+      key_size   = 2048
+      key_type   = "RSA"
+      reuse_key  = false
+    }
+
+    secret_properties {
+      content_type = "application/x-pkcs12"
+    }
+
+    x509_certificate_properties {
+      subject            = "CN=tf-azrm-cert"
+      validity_in_months = 12
+      key_usage          = ["digitalSignature", "keyEncipherment"]
+    }
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.az_kv_policy]
 }
 
 # ---------- Outputs (cross-resource invariants) ----------
@@ -658,6 +704,14 @@ output "key_vault_uri" {
 
 output "azrm_key_vault_access_policy_id" {
   value = azurerm_key_vault_access_policy.az_kv_policy.id
+}
+
+output "azrm_key_vault_key_id" {
+  value = azurerm_key_vault_key.az_kv_key.id
+}
+
+output "azrm_key_vault_certificate_id" {
+  value = azurerm_key_vault_certificate.az_kv_cert.id
 }
 
 output "azrm_resource_group_id" {
