@@ -13,30 +13,30 @@ Surface registered in `simulators/aws/lambda.go` (and related files grouped unde
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:91::handleLambdaCreateFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:92::handleLambdaGetFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:93::handleLambdaDeleteFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:94::handleLambdaUpdateFunctionConfiguration` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:95::handleLambdaInvoke` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:96::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:97::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:98::handleLambdaListTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:99::handleLambdaTagResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:100::handleLambdaUntagResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:103::handleLambdaPublishVersion` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:104::handleLambdaListVersions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:105::handleLambdaCreateAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:106::handleLambdaListAliases` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:107::handleLambdaGetAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:108::handleLambdaUpdateAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:109::handleLambdaDeleteAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:110::handleLambdaAddPermission` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:111::handleLambdaGetPolicy` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:112::handleLambdaRemovePermission` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:113::handleLambdaCreateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:114::handleLambdaGetFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:115::handleLambdaUpdateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:116::handleLambdaDeleteFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:96::handleLambdaCreateFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:97::handleLambdaGetFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:98::handleLambdaDeleteFunction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:99::handleLambdaUpdateFunctionConfiguration` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:100::handleLambdaInvoke` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:101::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:102::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:103::handleLambdaListTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:104::handleLambdaTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:105::handleLambdaUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:108::handleLambdaPublishVersion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:109::handleLambdaListVersions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:110::handleLambdaCreateAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:111::handleLambdaListAliases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:112::handleLambdaGetAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:113::handleLambdaUpdateAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:114::handleLambdaDeleteAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:115::handleLambdaAddPermission` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:116::handleLambdaGetPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:117::handleLambdaRemovePermission` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:118::handleLambdaCreateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:119::handleLambdaGetFunctionUrlConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:120::handleLambdaUpdateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:121::handleLambdaDeleteFunctionUrlConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

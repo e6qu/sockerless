@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1235 filed · 1235 fixed · 2 open · 2 false positives.**
+**1237 filed · 1237 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,10 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1237. PR #295 CI exposed one stale SDK assertion after BUG-1236 corrected Lambda `ListVersionsByFunction` fidelity. AWS Lambda's public list-versions response includes `$LATEST` alongside published versions, and the simulator now returns that real shape. The SDK test now asserts `$LATEST` first and the three published versions afterward instead of expecting only published versions.
+
+This phase closed BUG-1236. The `aws-lambda` coverage row no longer incorrectly marks Terraform as not applicable. The AWS Terraform production-shape harness now provisions Lambda through terraform-provider-aws v6.47.0 using `aws_lambda_function`, `aws_lambda_alias`, `aws_lambda_permission`, `aws_lambda_function_url`, and `aws_lambda_invocation`. The provider path exposed real public-API response-shape gaps that are now fixed: Lambda create/read responses include provider-required lifecycle fields such as `LastUpdateStatus`, image code metadata, and create-time `Publish` handling, and `ListVersionsByFunction` includes `$LATEST` plus published versions so provider refresh can resolve the latest function version. The invocation data source runs against a real local Runtime API handler image, so Terraform exercises the same Lambda Invoke route as SDK/CLI clients instead of relying on a synthetic response.
 
 This phase closed BUG-1233 / issue #291. The AWS Route 53 simulator now implements the public REST XML `GET /2013-04-01/hostedzonesbyname` operation with Route 53 hosted-zone name normalization, DNS-name ordering, `dnsname`/`hostedzoneid` start cursors, `maxitems` validation, `IsTruncated`, `NextDNSName`, and `NextHostedZoneId`. Official AWS SDK and AWS CLI tests cover the lookup and pagination behavior. The pinned terraform-provider-aws v6.47.0 Route 53 zone lookup source was checked and currently uses `ListHostedZones` rather than `ListHostedZonesByName`, so the exact new operation has no Terraform provider call path today; the Route 53 surface still has direct Terraform resource coverage through hosted zones, records, aliases, and tags.
 

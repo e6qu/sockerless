@@ -40,6 +40,7 @@ provider "aws" {
     events           = var.endpoint
     kinesis          = var.endpoint
     kms              = var.endpoint
+    lambda           = var.endpoint
     elbv2            = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
@@ -499,6 +500,47 @@ resource "aws_apigatewayv2_stage" "tf_http_stage" {
   auto_deploy   = false
 }
 
+resource "aws_lambda_function" "tf_lambda" {
+  function_name = "tf-lambda-image"
+  role          = "arn:aws:iam::123456789012:role/tf-lambda"
+  package_type  = "Image"
+  image_uri     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/sockerless-lambda-runtime-handler:test"
+  memory_size   = 128
+  timeout       = 3
+  publish       = true
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_lambda_alias" "tf_lambda_live" {
+  name             = "live"
+  function_name    = aws_lambda_function.tf_lambda.function_name
+  function_version = aws_lambda_function.tf_lambda.version
+}
+
+resource "aws_lambda_permission" "tf_lambda_events" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.tf_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.tf_eventbridge_rule.arn
+}
+
+resource "aws_lambda_function_url" "tf_lambda_url" {
+  function_name      = aws_lambda_function.tf_lambda.function_name
+  authorization_type = "NONE"
+}
+
+data "aws_lambda_invocation" "tf_lambda_echo" {
+  function_name = aws_lambda_function.tf_lambda.function_name
+
+  input = jsonencode({
+    source = "terraform"
+  })
+}
+
 resource "aws_route53_zone" "tf_zone" {
   name    = "tf-route53.local"
   comment = "tf-test zone"
@@ -944,6 +986,21 @@ output "apigatewayv2_route_key" {
 }
 output "apigatewayv2_stage_name" {
   value = aws_apigatewayv2_stage.tf_http_stage.name
+}
+output "lambda_function_arn" {
+  value = aws_lambda_function.tf_lambda.arn
+}
+output "lambda_function_version" {
+  value = aws_lambda_function.tf_lambda.version
+}
+output "lambda_alias_arn" {
+  value = aws_lambda_alias.tf_lambda_live.arn
+}
+output "lambda_function_url" {
+  value = aws_lambda_function_url.tf_lambda_url.function_url
+}
+output "lambda_invocation_result" {
+  value = data.aws_lambda_invocation.tf_lambda_echo.result
 }
 output "amplify_app_arn" {
   value = aws_amplify_app.tf_amplify.arn

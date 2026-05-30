@@ -49,6 +49,12 @@ import (
 //     CreateRoute, GetRoute, DeleteRoute, CreateDeployment,
 //     GetDeployment, DeleteDeployment, CreateStage, GetStage,
 //     DeleteStage
+//   - Lambda: CreateFunction, GetFunction, DeleteFunction,
+//     ListVersionsByFunction, ListTags, TagResource, UntagResource,
+//     CreateAlias, GetAlias, DeleteAlias,
+//     AddPermission, GetPolicy, RemovePermission,
+//     CreateFunctionUrlConfig, GetFunctionUrlConfig, DeleteFunctionUrlConfig,
+//     Invoke
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -108,6 +114,18 @@ func TestStackProductionShape(t *testing.T) {
 		"API Gateway v2 route key must round-trip through provider refresh")
 	require.Equal(t, "tf", outputs.must(t, "apigatewayv2_stage_name"),
 		"API Gateway v2 stage name must round-trip through provider refresh")
+
+	lambdaARN := outputs.must(t, "lambda_function_arn")
+	require.True(t, strings.HasPrefix(lambdaARN, "arn:aws:lambda:us-east-1:"),
+		"Lambda function ARN must include region/account prefix; got %s", lambdaARN)
+	require.Equal(t, "1", outputs.must(t, "lambda_function_version"),
+		"Lambda function publish=true must expose the first published version through provider refresh")
+	require.Contains(t, outputs.must(t, "lambda_alias_arn"), ":function:tf-lambda-image:live",
+		"Lambda alias ARN must point at the function alias")
+	require.Contains(t, outputs.must(t, "lambda_function_url"), ".lambda-url.us-east-1.on.aws/",
+		"Lambda function URL must use AWS's regional lambda-url host shape")
+	require.JSONEq(t, `{"source":"terraform"}`, outputs.must(t, "lambda_invocation_result"),
+		"Lambda Terraform invocation must round-trip through the Runtime API handler")
 
 	require.True(t, strings.HasPrefix(acmARN, "arn:aws:acm:us-east-1:"),
 		"ACM certificate must live in us-east-1 for CloudFront use; got %s", acmARN)
