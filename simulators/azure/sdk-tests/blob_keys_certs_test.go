@@ -233,11 +233,15 @@ func TestKeyVault_KeysAndCertificates(t *testing.T) {
 	// Create a certificate.
 	certBody := `{"policy":{"x509_props":{"subject":"CN=test"}}}`
 	resp = kvReq(t, "POST", vault, "/certificates/mycert/create", []byte(certBody))
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"id"`, "cert response should carry an id")
-	assert.Contains(t, string(body), `"x5t"`, "cert response should include thumbprint")
+	assert.Contains(t, string(body), `"status"`, "cert create should return a CertificateOperation")
+
+	resp = kvReq(t, "GET", vault, "/certificates/mycert/pending", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
 
 	resp = kvReq(t, "GET", vault, "/certificates/mycert", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
