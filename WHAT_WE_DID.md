@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-31 — AWS Route 53 ListHostedZonesByName parity
+
+Issue #291 / BUG-1233 was valid. The AWS Route 53 simulator already handled hosted-zone lifecycle, record-set lifecycle, changes, and tags, but it did not register the public `GET /2013-04-01/hostedzonesbyname` operation used by real Route 53 clients for name-based hosted-zone lookup.
+
+The simulator now implements `ListHostedZonesByName` with Route 53 REST XML response shape, DNS-name normalization, hosted-zone ordering by Route 53's reversed-label DNS-name sort key, `dnsname` and `hostedzoneid` start cursors, `maxitems` validation, and the documented truncation fields: `IsTruncated`, `NextDNSName`, and `NextHostedZoneId`. The next cursor identifies the first hosted zone in the next page, and the simulator includes that zone when the cursor is supplied on the following request.
+
+Official AWS SDK coverage exercises name-based lookup and paged cursor behavior. Official AWS CLI coverage exercises `aws route53 list-hosted-zones-by-name` through the simulator. The pinned terraform-provider-aws v6.47.0 source was checked: current `aws_route53_zone` and `aws_route53_zones` lookup flows call `ListHostedZones`, not `ListHostedZonesByName`, so this exact operation has no Terraform provider call path today. The broader Route 53 surface remains covered by Terraform hosted-zone, record, alias, and tag resources.
+
 ## 2026-05-30 — AWS RDS + ElastiCache client-surface coverage
 
 The BUG-1104 audit found another pair of stale coverage claims. `aws-rds` and `aws-elasticache` were marked as CLI/Terraform not-applicable even though the official AWS CLI exposes `rds create-db-instance` and `elasticache create-cache-cluster`, and terraform-provider-aws exposes `aws_db_instance` and `aws_elasticache_cluster`.
@@ -24,7 +32,7 @@ The 5-minute Terraform test cap was kept by fixing test packaging instead of wea
 
 The provider minimum-wait findings were documented per cloud in `docs/terraform_min_timeouts_aws.md`, `docs/terraform_min_timeouts_gcp.md`, and `docs/terraform_min_timeouts_azure.md`. The docs distinguish operation deadline `timeouts {}` from internal provider waiter cadence, and link to the pinned AWS, Google, AzureRM, and Azure Stack provider source used by the simulator Terraform harnesses.
 
-Issue #291 / BUG-1233 remained open after this PR for Route 53 `ListHostedZonesByName`; PR #289 did not implement that separate Route 53 lookup surface.
+Issue #291 / BUG-1233 remained open after PR #289 and was later closed by the Route 53 `ListHostedZonesByName` parity phase.
 
 ## 2026-05-30 — AWS API Gateway client-surface coverage
 

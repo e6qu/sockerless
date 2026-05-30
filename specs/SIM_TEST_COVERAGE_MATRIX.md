@@ -29,6 +29,7 @@ Legend:
 | `aws-kms` | direct | not applicable | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-lambda` | direct | direct | not applicable | `simulators/aws/sdk-tests/lambda_test.go`; `simulators/aws/cli-tests/lambda_test.go` |
 | `aws-rds` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/sdk-tests/rds_snapshot_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-route53` | direct | direct | direct | `simulators/aws/sdk-tests/route53_test.go`; `simulators/aws/cli-tests/route53_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3` | direct | direct | direct | `simulators/aws/sdk-tests/s3_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-bucket-subresources` | direct | direct | direct | `simulators/aws/sdk-tests/s3_bucket_subresources_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-multipart` | direct | direct | not applicable | `simulators/aws/sdk-tests/s3_list_parts_test.go`; `simulators/aws/cli-tests/s3_test.go` |

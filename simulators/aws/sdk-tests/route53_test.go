@@ -72,6 +72,61 @@ func TestRoute53HostedZoneLifecycle(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRoute53ListHostedZonesByName(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	suffix := strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "-")
+	alphaName := "alpha.r53-by-name-" + suffix + ".example.com"
+	betaName := "beta.r53-by-name-" + suffix + ".example.com"
+
+	createZone := func(name string) string {
+		out, err := c.CreateHostedZone(ctx, &route53.CreateHostedZoneInput{
+			Name:            aws.String(name),
+			CallerReference: aws.String("sdk-list-by-name-" + name),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, out.HostedZone)
+		return strings.TrimPrefix(aws.ToString(out.HostedZone.Id), "/hostedzone/")
+	}
+
+	alphaID := createZone(alphaName)
+	betaID := createZone(betaName)
+	defer func() {
+		_, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(alphaID)})
+		_, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(betaID)})
+	}()
+
+	startAtBeta, err := c.ListHostedZonesByName(ctx, &route53.ListHostedZonesByNameInput{
+		DNSName:  aws.String(betaName),
+		MaxItems: aws.Int32(10),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, startAtBeta.HostedZones)
+	assert.Equal(t, betaName+".", aws.ToString(startAtBeta.HostedZones[0].Name))
+
+	firstPage, err := c.ListHostedZonesByName(ctx, &route53.ListHostedZonesByNameInput{
+		DNSName:  aws.String(alphaName),
+		MaxItems: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage.HostedZones, 1)
+	assert.Equal(t, alphaName+".", aws.ToString(firstPage.HostedZones[0].Name))
+	require.True(t, firstPage.IsTruncated)
+	require.Equal(t, betaName+".", aws.ToString(firstPage.NextDNSName))
+	require.Equal(t, betaID, aws.ToString(firstPage.NextHostedZoneId))
+
+	secondPage, err := c.ListHostedZonesByName(ctx, &route53.ListHostedZonesByNameInput{
+		DNSName:      firstPage.NextDNSName,
+		HostedZoneId: firstPage.NextHostedZoneId,
+		MaxItems:     aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage.HostedZones, 1)
+	assert.Equal(t, betaName+".", aws.ToString(secondPage.HostedZones[0].Name))
+}
+
 func TestRoute53RecordCRUD(t *testing.T) {
 	c := r53Client()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
