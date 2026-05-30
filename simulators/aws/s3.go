@@ -259,6 +259,9 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	case q.Has("policy"):
 		emitStoredOr404(w, r, bucket, "policy", "NoSuchBucketPolicy", "The bucket policy does not exist")
 		return
+	case q.Has("uploads"):
+		handleS3ListMultipartUploads(w, r)
+		return
 	case q.Has("versioning"):
 		emitStoredOrEmptyXML(w, bucket, "versioning", "VersioningConfiguration")
 		return

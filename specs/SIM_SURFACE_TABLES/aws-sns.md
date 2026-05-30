@@ -5,32 +5,32 @@ Surface registered in `simulators/aws/sns.go` (and related files grouped under t
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action CreateTopic` | ✓ `simulators/aws/sns.go:77::handleSNSCreateTopic` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DeleteTopic` | ✓ `simulators/aws/sns.go:78::handleSNSDeleteTopic` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ListTopics` | ✓ `simulators/aws/sns.go:79::handleSNSListTopics` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action GetTopicAttributes` | ✓ `simulators/aws/sns.go:80::handleSNSGetTopicAttributes` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action SetTopicAttributes` | ✓ `simulators/aws/sns.go:81::handleSNSSetTopicAttributes` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action Subscribe` | ✓ `simulators/aws/sns.go:82::handleSNSSubscribe` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action Unsubscribe` | ✓ `simulators/aws/sns.go:83::handleSNSUnsubscribe` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ListSubscriptions` | ✓ `simulators/aws/sns.go:84::handleSNSListSubscriptions` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ListSubscriptionsByTopic` | ✓ `simulators/aws/sns.go:85::handleSNSListSubscriptionsByTopic` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action Publish` | ✓ `simulators/aws/sns.go:86::handleSNSPublish` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action TagResource` | ✓ `simulators/aws/sns.go:87::handleSNSTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action UntagResource` | ✓ `simulators/aws/sns.go:88::handleSNSUntagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action ListTagsForResource` | ✓ `simulators/aws/sns.go:89::handleSNSListTagsForResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action CreateTopic` | ✓ `simulators/aws/sns.go:77::handleSNSCreateTopic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteTopic` | ✓ `simulators/aws/sns.go:78::handleSNSDeleteTopic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListTopics` | ✓ `simulators/aws/sns.go:79::handleSNSListTopics` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action GetTopicAttributes` | ✓ `simulators/aws/sns.go:80::handleSNSGetTopicAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action SetTopicAttributes` | ✓ `simulators/aws/sns.go:81::handleSNSSetTopicAttributes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action Subscribe` | ✓ `simulators/aws/sns.go:82::handleSNSSubscribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action Unsubscribe` | ✓ `simulators/aws/sns.go:83::handleSNSUnsubscribe` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListSubscriptions` | ✓ `simulators/aws/sns.go:84::handleSNSListSubscriptions` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListSubscriptionsByTopic` | ✓ `simulators/aws/sns.go:85::handleSNSListSubscriptionsByTopic` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action Publish` | ✓ `simulators/aws/sns.go:86::handleSNSPublish` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TagResource` | ✓ `simulators/aws/sns.go:87::handleSNSTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action UntagResource` | ✓ `simulators/aws/sns.go:88::handleSNSUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ListTagsForResource` | ✓ `simulators/aws/sns.go:89::handleSNSListTagsForResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

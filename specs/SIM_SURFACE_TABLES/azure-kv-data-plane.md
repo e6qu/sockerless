@@ -7,9 +7,9 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing
+- ✗ — missing or missing real-client coverage; paired with an open BUG
 - 501 — stubbed with `NotImplemented` envelope
-- n/a — no terraform-provider resource exists
+- n/a — no meaningful client/provider surface exists
 
 ## Common (every data-plane request)
 
@@ -21,12 +21,12 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 
 | Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|---|
-| SetSecret | `PUT /secrets/{name}` | ✓ `keyvault.go::handleKVSetSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✗ | tf: `azurerm_key_vault_secret` |
-| GetSecret | `GET /secrets/{name}` | ✓ `handleKVGetSecret` | ✓ same | ✗ | |
-| GetSecret (specific version) | `GET /secrets/{name}/{version}` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✗ | |
+| SetSecret | `PUT /secrets/{name}` | ✓ `keyvault.go::handleKVSetSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` | ✓ `azurerm_key_vault_secret` | |
+| GetSecret | `GET /secrets/{name}` | ✓ `handleKVGetSecret` | ✓ same | ✓ same | |
+| GetSecret (specific version) | `GET /secrets/{name}/{version}` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✓ same | |
 | ListSecrets | `GET /secrets` | ✓ `handleKVListSecrets` | ✗ | ✗ | |
 | ListSecretVersions | `GET /secrets/{name}/versions` | ✓ same | ✓ `TestKeyVault_State_FullVersionChain` | ✗ | SDK pager. |
-| DeleteSecret | `DELETE /secrets/{name}` | ✓ `handleKVDeleteSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + `TestKeyVault_State_SoftDeleteRoundTrip` | ✗ | |
+| DeleteSecret | `DELETE /secrets/{name}` | ✓ `handleKVDeleteSecret` | ✓ `TestKeyVault_SDK_Secrets_ChallengeRoundTrip` + `TestKeyVault_State_SoftDeleteRoundTrip` | ✓ `azurerm_key_vault_secret` destroy | |
 | UpdateSecret | `PATCH /secrets/{name}/{version}` | ✓ `handleKVPatchSecret` | ✗ | ✗ | Used by `azurerm_key_vault_secret` updates. |
 | BackupSecret / RestoreSecret | `POST /secrets/{name}/backup` / `/secrets/restore` | ✗ | ✗ | ✗ | Low-frequency; surface 501 if a runner scenario hits them. |
 | RecoverDeletedSecret / PurgeDeletedSecret | `POST /deletedsecrets/{name}/recover` / `DELETE /deletedsecrets/{name}` | ✓ `handleKVRecoverDeletedSecret` / `handleKVPurgeDeletedSecret` | ✓ `TestKeyVault_State_SoftDeleteRoundTrip` | ✗ | Soft-delete state machine. |
@@ -59,13 +59,12 @@ Canonical reference: <https://learn.microsoft.com/en-us/rest/api/keyvault/>
 | ImportCertificate | `POST /certificates/{name}/import` | ✗ | ✗ | ✗ | |
 | MergeCertificate | `POST /certificates/{name}/pending/merge` | ✗ | ✗ | ✗ | |
 
-## Open subtasks staged forward
+## Known gaps
 
-- CreateCertificate response shape: switch to canonical 202 + CertificateOperation + add `GET /certificates/{name}/pending` polling endpoint so the full SDK LRO contract round-trips. File as follow-up BUG when a runner scenario lands.
-- Cryptographic operations (Sign/Verify/Encrypt/Decrypt/WrapKey/UnwrapKey): out of scope for the simulator (no real key material), but should surface as canonical 501 NotImplemented envelopes rather than 404 fall-throughs.
-- tf-tests for `azurerm_key_vault_secret` covered under BUG-1147 in Phase 177; `azurerm_key_vault_key` + `azurerm_key_vault_certificate` deferred until a runner scenario lands.
-- **All remaining ✗ sim-handler rows** (BackupSecret/RestoreSecret, UpdateKey, ImportKey, crypto ops, BackupKey/RestoreKey, GetCertificateOperation, UpdateCertificate, ImportCertificate, MergeCertificate) are deferred under this entry. Backup/Restore and crypto operations are big surfaces requiring their own persistence or key-material model; UpdateKey / UpdateCertificate are the most likely next requests from a community-filed issue and land first when one arrives.
-- **All remaining ✗ sdk-test rows** (ListSecrets, ListKeys, ListKeyVersions, DeleteKey, ListCertificates, DeleteCertificate, UpdateSecret) are deferred under this entry. The sim handlers exist for several of these rows; the remaining gap is canonical-SDK-driven test coverage. Sweep lands when a community-filed issue or scheduled audit surfaces a regression.
+- Secret create/read/delete has SDK and Terraform coverage through `azurerm_key_vault_secret`; key and certificate Terraform resources are not covered yet.
+- `CreateCertificate` still returns immediate certificate JSON instead of Azure's 202 `CertificateOperation` LRO shape with `GET /certificates/{name}/pending`.
+- Backup/restore, key update/import, key crypto operations, and certificate operation/update/import/merge routes still need public Key Vault data-plane implementations or canonical `NotImplemented` envelopes where the simulator cannot perform the cloud operation locally.
+- Remaining ✗ SDK rows such as paged list operations and update/delete paths are tracked by BUG-1223 so they do not hide behind closed historical deferrals.
 
 ## Reopens that produced this table
 

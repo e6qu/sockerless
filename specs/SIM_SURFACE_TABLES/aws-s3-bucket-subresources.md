@@ -15,19 +15,19 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 
 | Operation | Verb + path | sim handler | sdk-test | tf-test | notes |
 |---|---|---|---|---|---|
-| PutBucketVersioning | `PUT /{bucket}?versioning` | ✓ `s3_bucket_subresources.go::handleS3PutBucketSubresource` | ✓ `s3_bucket_subresources_test.go::TestS3_Bucket_Versioning_RoundTrip` | ✗ | tf: `aws_s3_bucket_versioning` |
-| GetBucketVersioning | `GET /{bucket}?versioning` | ✓ `s3.go::handleS3GetBucket` | ✓ same | ✗ | |
+| PutBucketVersioning | `PUT /{bucket}?versioning` | ✓ `s3_bucket_subresources.go::handleS3PutBucketSubresource` | ✓ `s3_bucket_subresources_test.go::TestS3_Bucket_Versioning_RoundTrip` | ✓ `aws_s3_bucket_versioning` | |
+| GetBucketVersioning | `GET /{bucket}?versioning` | ✓ `s3.go::handleS3GetBucket` | ✓ same | ✓ same | |
 | PutBucketLifecycleConfiguration | `PUT /{bucket}?lifecycle` | ✓ same | ✓ `TestS3_Bucket_Lifecycle_RoundTrip` | ✗ | tf: `aws_s3_bucket_lifecycle_configuration` |
 | GetBucketLifecycleConfiguration | `GET /{bucket}?lifecycle` | ✓ same | ✓ same | ✗ | |
 | DeleteBucketLifecycle | `DELETE /{bucket}?lifecycle` | ✓ `handleS3DeleteBucketSubresource` | ✓ same | ✗ | |
-| PutBucketCors | `PUT /{bucket}?cors` | ✓ same | ✓ `TestS3_Bucket_Cors_RoundTrip` | ✗ | tf: `aws_s3_bucket_cors_configuration` |
-| GetBucketCors | `GET /{bucket}?cors` | ✓ same | ✓ same | ✗ | |
+| PutBucketCors | `PUT /{bucket}?cors` | ✓ same | ✓ `TestS3_Bucket_Cors_RoundTrip` | ✓ `aws_s3_bucket_cors_configuration` | |
+| GetBucketCors | `GET /{bucket}?cors` | ✓ same | ✓ same | ✓ same | |
 | DeleteBucketCors | `DELETE /{bucket}?cors` | ✓ same | ✓ same | ✗ | |
 | PutBucketPolicy | `PUT /{bucket}?policy` | ✓ same | ✓ `TestS3_Bucket_Policy_RoundTrip` | ✗ | tf: `aws_s3_bucket_policy` |
 | GetBucketPolicy | `GET /{bucket}?policy` | ✓ same | ✓ same | ✗ | |
 | DeleteBucketPolicy | `DELETE /{bucket}?policy` | ✓ same | ✓ same | ✗ | |
-| PutBucketEncryption | `PUT /{bucket}?encryption` | ✓ same | ✓ `TestS3_Bucket_Encryption_RoundTrip` | ✗ | tf: `aws_s3_bucket_server_side_encryption_configuration` |
-| GetBucketEncryption | `GET /{bucket}?encryption` | ✓ same | ✓ same | ✗ | |
+| PutBucketEncryption | `PUT /{bucket}?encryption` | ✓ same | ✓ `TestS3_Bucket_Encryption_RoundTrip` | ✓ `aws_s3_bucket_server_side_encryption_configuration` | |
+| GetBucketEncryption | `GET /{bucket}?encryption` | ✓ same | ✓ same | ✓ same | |
 | DeleteBucketEncryption | `DELETE /{bucket}?encryption` | ✓ same | ✓ same | ✗ | |
 | PutBucketReplication | `PUT /{bucket}?replication` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_replication_configuration` — needs Source role + destination bucket; deferred to a later phase. |
 | GetBucketReplication | `GET /{bucket}?replication` | ✓ same | ✗ | ✗ | |
@@ -35,8 +35,8 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 | PutBucketTagging | `PUT /{bucket}?tagging` | ✓ same | ✓ `TestS3_Bucket_Tagging_RoundTrip` | ✗ | tf: managed via `aws_s3_bucket.tags` |
 | GetBucketTagging | `GET /{bucket}?tagging` | ✓ same | ✓ same | ✗ | |
 | DeleteBucketTagging | `DELETE /{bucket}?tagging` | ✓ same | ✓ same | ✗ | |
-| PutBucketWebsite | `PUT /{bucket}?website` | ✓ same | ✓ `TestS3_Bucket_Website_RoundTrip` | ✗ | tf: `aws_s3_bucket_website_configuration` |
-| GetBucketWebsite | `GET /{bucket}?website` | ✓ same | ✓ same | ✗ | |
+| PutBucketWebsite | `PUT /{bucket}?website` | ✓ same | ✓ `TestS3_Bucket_Website_RoundTrip` | ✓ `aws_s3_bucket_website_configuration` | |
+| GetBucketWebsite | `GET /{bucket}?website` | ✓ same | ✓ same | ✓ same | |
 | DeleteBucketWebsite | `DELETE /{bucket}?website` | ✓ same | ✓ same | ✗ | |
 | PutBucketLogging | `PUT /{bucket}?logging` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_logging` |
 | GetBucketLogging | `GET /{bucket}?logging` | ✓ same | ✗ | ✗ | |
@@ -46,13 +46,13 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 | GetBucketRequestPayment | `GET /{bucket}?requestPayment` | ✓ same | ✗ | ✗ | |
 | PutBucketAccelerateConfiguration | `PUT /{bucket}?accelerate` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_accelerate_configuration` |
 | GetBucketAccelerateConfiguration | `GET /{bucket}?accelerate` | ✓ same | ✗ | ✗ | |
-| PutBucketOwnershipControls | `PUT /{bucket}?ownershipControls` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_ownership_controls` |
-| GetBucketOwnershipControls | `GET /{bucket}?ownershipControls` | ✓ same | ✗ | ✗ | |
+| PutBucketOwnershipControls | `PUT /{bucket}?ownershipControls` | ✓ same | ✗ | ✓ `aws_s3_bucket_ownership_controls` | |
+| GetBucketOwnershipControls | `GET /{bucket}?ownershipControls` | ✓ same | ✗ | ✓ same | |
 | DeleteBucketOwnershipControls | `DELETE /{bucket}?ownershipControls` | ✓ same | ✗ | ✗ | |
 | PutBucketNotificationConfiguration | `PUT /{bucket}?notification` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_notification` |
 | GetBucketNotificationConfiguration | `GET /{bucket}?notification` | ✓ same | ✗ | ✗ | |
-| PutPublicAccessBlock | `PUT /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_public_access_block` |
-| GetPublicAccessBlock | `GET /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✗ | |
+| PutPublicAccessBlock | `PUT /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✓ `aws_s3_bucket_public_access_block` | |
+| GetPublicAccessBlock | `GET /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✓ same | |
 | DeletePublicAccessBlock | `DELETE /{bucket}?publicAccessBlock` | ✓ same | ✗ | ✗ | |
 | PutObjectLockConfiguration | `PUT /{bucket}?object-lock` | ✓ same | ✗ | ✗ | tf: `aws_s3_bucket_object_lock_configuration` |
 | GetObjectLockConfiguration | `GET /{bucket}?object-lock` | ✓ same | ✗ | ✗ | |
@@ -80,11 +80,10 @@ Canonical reference: <https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operat
 | DeleteBucket | `DELETE /{bucket}` (no subresource) | ✓ same | ✗ | ✗ | |
 | ListBuckets | `GET /` | ✓ `s3.go::handleS3ListBuckets` | ✗ | ✗ | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- Add tf-tests for at least the high-fanout subresources (`?versioning`, `?lifecycle`, `?cors`, `?policy`, `?encryption`, `?tagging`, `?website`) — tracked under BUG-1147 in the same PR.
-- Replication round-trip test — needs source-bucket + destination-bucket fixture + IAM role; deferred until a runner scenario exercises it.
-- **All remaining ✗ sdk-test / tf-test rows in the tables above** (logging, acl, requestPayment, accelerate, ownershipControls, notification, publicAccessBlock, object-lock, intelligent-tiering, inventory, analytics, metrics, location, policyStatus + HeadBucket / DeleteBucket / ListBuckets) are deferred under this entry. The sim handlers route correctly today (Phase 177's table-driven dispatcher covers them); the gap is *test coverage*. New sdk-tests + tf-tests land when (a) a runner scenario exercises the surface, (b) a community-filed issue surfaces it, or (c) a periodic audit lands a sweep. Until then, regressions in those rows surface only through the dispatcher invariant: the `bucketSubresourceHandlers` map is the canonical enumeration; deletion of an entry without an accompanying table update is a finding for `surface-table-completeness`.
+- Terraform coverage currently exists for the bucket resource plus versioning, CORS, server-side encryption, website, public access block, and ownership controls in `simulators/aws/terraform-tests/main.tf`.
+- Remaining ✗ rows are concrete coverage gaps, not closed historical deferrals. They are tracked by BUG-1221 so follow-up work can add SDK/CLI/Terraform coverage or split any operation that needs implementation into its own public-API bug.
 
 ## Reopens that produced this table
 

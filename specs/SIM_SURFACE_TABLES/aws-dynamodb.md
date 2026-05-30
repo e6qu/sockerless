@@ -5,36 +5,36 @@ Surface registered in `simulators/aws/dynamodb.go` (and related files grouped un
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action DynamoDB_20120810.CreateTable` | ✓ `simulators/aws/dynamodb.go:169::handleDDBCreateTable` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.DescribeTable` | ✓ `simulators/aws/dynamodb.go:170::handleDDBDescribeTable` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.DeleteTable` | ✓ `simulators/aws/dynamodb.go:171::handleDDBDeleteTable` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.ListTables` | ✓ `simulators/aws/dynamodb.go:172::handleDDBListTables` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.PutItem` | ✓ `simulators/aws/dynamodb.go:173::handleDDBPutItem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.GetItem` | ✓ `simulators/aws/dynamodb.go:174::handleDDBGetItem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.UpdateItem` | ✓ `simulators/aws/dynamodb.go:175::handleDDBUpdateItem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.DeleteItem` | ✓ `simulators/aws/dynamodb.go:176::handleDDBDeleteItem` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.Query` | ✓ `simulators/aws/dynamodb.go:177::handleDDBQuery` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.Scan` | ✓ `simulators/aws/dynamodb.go:178::handleDDBScan` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.DescribeContinuousBackups` | ✓ `simulators/aws/dynamodb.go:179::handleDDBDescribeContinuousBackups` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.UpdateContinuousBackups` | ✓ `simulators/aws/dynamodb.go:180::handleDDBUpdateContinuousBackups` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.DescribeTimeToLive` | ✓ `simulators/aws/dynamodb.go:181::handleDDBDescribeTimeToLive` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.UpdateTimeToLive` | ✓ `simulators/aws/dynamodb.go:182::handleDDBUpdateTimeToLive` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.ListTagsOfResource` | ✓ `simulators/aws/dynamodb.go:183::handleDDBListTagsOfResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.TagResource` | ✓ `simulators/aws/dynamodb.go:184::handleDDBTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action DynamoDB_20120810.UntagResource` | ✓ `simulators/aws/dynamodb.go:185::handleDDBUntagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action DynamoDB_20120810.CreateTable` | ✓ `simulators/aws/dynamodb.go:169::handleDDBCreateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeTable` | ✓ `simulators/aws/dynamodb.go:170::handleDDBDescribeTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DeleteTable` | ✓ `simulators/aws/dynamodb.go:171::handleDDBDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.ListTables` | ✓ `simulators/aws/dynamodb.go:172::handleDDBListTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.PutItem` | ✓ `simulators/aws/dynamodb.go:173::handleDDBPutItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.GetItem` | ✓ `simulators/aws/dynamodb.go:174::handleDDBGetItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateItem` | ✓ `simulators/aws/dynamodb.go:175::handleDDBUpdateItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DeleteItem` | ✓ `simulators/aws/dynamodb.go:176::handleDDBDeleteItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.Query` | ✓ `simulators/aws/dynamodb.go:177::handleDDBQuery` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.Scan` | ✓ `simulators/aws/dynamodb.go:178::handleDDBScan` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeContinuousBackups` | ✓ `simulators/aws/dynamodb.go:179::handleDDBDescribeContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateContinuousBackups` | ✓ `simulators/aws/dynamodb.go:180::handleDDBUpdateContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeTimeToLive` | ✓ `simulators/aws/dynamodb.go:181::handleDDBDescribeTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateTimeToLive` | ✓ `simulators/aws/dynamodb.go:182::handleDDBUpdateTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.ListTagsOfResource` | ✓ `simulators/aws/dynamodb.go:183::handleDDBListTagsOfResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.TagResource` | ✓ `simulators/aws/dynamodb.go:184::handleDDBTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UntagResource` | ✓ `simulators/aws/dynamodb.go:185::handleDDBUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

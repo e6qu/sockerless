@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-30 — Surface-table audit debt cleanup
+
+BUG-1206 closed the broad stale-docs tracker. The generated simulator surface tables no longer carry blanket closed-BUG deferral markers for SDK and Terraform coverage. `scripts/seed-surface-tables.sh` now reads `specs/SIM_TEST_COVERAGE_MATRIX.md`, so regenerated rows inherit the maintained SDK/Terraform status instead of reintroducing historical `BUG-1159` / `BUG-1147` language.
+
+The cleanup found one real implementation mismatch in the AWS S3 multipart table: `ListMultipartUploads` was documented but `GET /{bucket}?uploads` did not route to a handler. AWS S3 now implements that public API and returns paginated multipart upload listings. `ListParts` also honors `part-number-marker` and `max-parts`, so the official AWS SDK paginator exercises real multi-page behavior. Coverage uses AWS SDK paginator tests and AWS CLI `s3api list-multipart-uploads` / `list-parts`.
+
+Two remaining concrete gaps were split into current follow-up issues instead of staying hidden in old notes. Issue #281 / BUG-1221 tracks AWS S3 bucket-subresource row-level SDK/CLI/Terraform coverage and any public-API fixes those rows expose. Issue #282 / BUG-1222 tracks Azure Key Vault data-plane parity for key/certificate Terraform coverage, certificate LRO shape, backup/restore, key import/update/crypto operations, certificate update/import/merge, and pager/lifecycle SDK coverage.
+
 ## 2026-05-29 — NAT/public-IP simulator parity
 
 Issue #279 closed the remaining NAT/public-IP parity gap from the foundational audit.

@@ -14,6 +14,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/specs/SIM_SURFACE_TABLES"
+MATRIX="$REPO_ROOT/specs/SIM_TEST_COVERAGE_MATRIX.md"
 mkdir -p "$OUT_DIR"
 
 # Tables Phase 175-177 wrote by hand. The seeder leaves these alone.
@@ -28,6 +29,28 @@ is_preserved() {
     [[ "$name" == "$p" ]] && return 0
   done
   return 1
+}
+
+matrix_cell() {
+  local table="$1"
+  local column="$2"
+  local value
+  value="$(awk -v table="$table" -v column="$column" -F'|' '
+    $2 ~ "`" table "`" {
+      gsub(/^ +| +$/, "", $3)
+      gsub(/^ +| +$/, "", $4)
+      gsub(/^ +| +$/, "", $5)
+      if (column == "sdk") print $3
+      if (column == "tf") print $5
+      exit
+    }
+  ' "$MATRIX")"
+  case "$value" in
+    direct) printf "✓ (direct; see coverage matrix)" ;;
+    "not applicable") printf "n/a (not exposed by provider; see coverage matrix)" ;;
+    tracked*) printf "✗ (%s; see coverage matrix)" "$value" ;;
+    *) printf "✗ (coverage matrix row missing)" ;;
+  esac
 }
 
 # Infra / runtime files that don't represent a sim service surface.
@@ -128,20 +151,22 @@ for table_name in "${tables[@]}"; do
     echo "## Status legend"
     echo
     echo "- ✓ — implemented + tested"
-    echo "- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)"
+    echo "- ✗ — missing (paired with an open BUG or issue; never silent)"
     echo "- 501 — stubbed NotImplemented (wire-visible gap)"
-    echo "- n/a — no terraform-provider resource for this op"
+    echo "- n/a — no meaningful client/provider surface for this op"
     echo
     echo "## Implemented ops (extracted from HandleFunc registrations)"
     echo
     echo "| Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |"
     echo "|---|---|---|---|---|---|"
-    awk -v t="$table_name" -F'\t' '$1==t {printf "| `%s` | ✓ `simulators/%s/%s.go:%s::%s` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |\n", $5, $2, $3, $4, $6}' "$tmp_rows"
+    sdk_cell="$(matrix_cell "$table_name" sdk)"
+    tf_cell="$(matrix_cell "$table_name" tf)"
+    awk -v t="$table_name" -v sdk="$sdk_cell" -v tf="$tf_cell" -F'\t' '$1==t {printf "| `%s` | ✓ `simulators/%s/%s.go:%s::%s` | %s | %s | n/a | |\n", $5, $2, $3, $4, $6, sdk, tf}' "$tmp_rows"
     echo
-    echo "## Open subtasks staged forward"
+    echo "## Coverage status"
     echo
-    echo "- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep)."
-    echo "- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep."
+    echo "- Row-level SDK/Terraform cells summarize the maintained coverage matrix in \`specs/SIM_TEST_COVERAGE_MATRIX.md\`; detailed client files and client-family \`n/a\` decisions live there."
+    echo "- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit."
     echo
     echo "$hand_block"
   } > "$out_md"
@@ -153,7 +178,9 @@ done
 {
   echo "# Sim surface tables"
   echo
-  echo "Per-service canonical-operation enumerations for every sim surface. Each table lists implemented ops (✓ rows) extracted by the seeder + ✗ rows for missing ops added by subsequent PRs. The companion skill \`.claude/skills/surface-table-completeness/SKILL.md\` enforces \"no silent ✗ rows\" — every gap is paired with a BUG or deferred-subtask reference."
+  echo "Per-service canonical-operation enumerations for every sim surface. Each table lists implemented ops (✓ rows) extracted by the seeder + ✗ rows for missing ops added by subsequent PRs. The companion skill \`.claude/skills/surface-table-completeness/SKILL.md\` enforces \"no silent ✗ rows\" — every gap is paired with an open BUG or issue."
+  echo
+  echo "The row-level SDK/Terraform cells summarize the maintained coverage index in [\`../SIM_TEST_COVERAGE_MATRIX.md\`](../SIM_TEST_COVERAGE_MATRIX.md). Use that matrix for the exact SDK, CLI, and Terraform evidence files and for client-family \`n/a\` decisions."
   echo
   echo "Re-run \`bash scripts/seed-surface-tables.sh\` after adding new \`HandleFunc\` registrations to refresh the implemented-ops sections (hand-written sections inside \`<!-- HAND-WRITTEN BEGIN/END -->\` are preserved)."
   echo

@@ -5,43 +5,43 @@ Surface registered in `simulators/aws/lambda.go` (and related files grouped unde
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:91::handleLambdaCreateFunction` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:92::handleLambdaGetFunction` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:93::handleLambdaDeleteFunction` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:94::handleLambdaUpdateFunctionConfiguration` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:95::handleLambdaInvoke` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:96::handleLambdaListFunctions` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:97::handleLambdaListFunctions` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:98::handleLambdaListTags` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:99::handleLambdaTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:100::handleLambdaUntagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:103::handleLambdaPublishVersion` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:104::handleLambdaListVersions` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:105::handleLambdaCreateAlias` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:106::handleLambdaListAliases` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:107::handleLambdaGetAlias` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:108::handleLambdaUpdateAlias` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:109::handleLambdaDeleteAlias` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:110::handleLambdaAddPermission` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:111::handleLambdaGetPolicy` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:112::handleLambdaRemovePermission` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:113::handleLambdaCreateFunctionUrlConfig` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:114::handleLambdaGetFunctionUrlConfig` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:115::handleLambdaUpdateFunctionUrlConfig` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:116::handleLambdaDeleteFunctionUrlConfig` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `POST /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:91::handleLambdaCreateFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:92::handleLambdaGetFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}` | ✓ `simulators/aws/lambda.go:93::handleLambdaDeleteFunction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/configuration` | ✓ `simulators/aws/lambda.go:94::handleLambdaUpdateFunctionConfiguration` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/invocations` | ✓ `simulators/aws/lambda.go:95::handleLambdaInvoke` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions` | ✓ `simulators/aws/lambda.go:96::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/` | ✓ `simulators/aws/lambda.go:97::handleLambdaListFunctions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:98::handleLambdaListTags` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:99::handleLambdaTagResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2017-03-31/tags/{arn...}` | ✓ `simulators/aws/lambda.go:100::handleLambdaUntagResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:103::handleLambdaPublishVersion` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/versions` | ✓ `simulators/aws/lambda.go:104::handleLambdaListVersions` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:105::handleLambdaCreateAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases` | ✓ `simulators/aws/lambda.go:106::handleLambdaListAliases` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:107::handleLambdaGetAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PUT /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:108::handleLambdaUpdateAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/aliases/{alias}` | ✓ `simulators/aws/lambda.go:109::handleLambdaDeleteAlias` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:110::handleLambdaAddPermission` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2015-03-31/functions/{name}/policy` | ✓ `simulators/aws/lambda.go:111::handleLambdaGetPolicy` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2015-03-31/functions/{name}/policy/{statement}` | ✓ `simulators/aws/lambda.go:112::handleLambdaRemovePermission` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:113::handleLambdaCreateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `GET /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:114::handleLambdaGetFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `PUT /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:115::handleLambdaUpdateFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `DELETE /2021-10-31/functions/{name}/url` | ✓ `simulators/aws/lambda.go:116::handleLambdaDeleteFunctionUrlConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

@@ -5,35 +5,35 @@ Surface registered in `simulators/aws/ecr.go` (and related files grouped under t
 ## Status legend
 
 - ✓ — implemented + tested
-- ✗ — missing (paired with a BUG / deferred-subtask reference; never silent)
+- ✗ — missing (paired with an open BUG or issue; never silent)
 - 501 — stubbed NotImplemented (wire-visible gap)
-- n/a — no terraform-provider resource for this op
+- n/a — no meaningful client/provider surface for this op
 
 ## Implemented ops (extracted from HandleFunc registrations)
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action AmazonEC2ContainerRegistry_V20150921.CreateRepository` | ✓ `simulators/aws/ecr.go:96::handleECRCreateRepository` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.DescribeRepositories` | ✓ `simulators/aws/ecr.go:97::handleECRDescribeRepositories` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.DeleteRepository` | ✓ `simulators/aws/ecr.go:98::handleECRDeleteRepository` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken` | ✓ `simulators/aws/ecr.go:99::handleECRGetAuthorizationToken` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.BatchGetImage` | ✓ `simulators/aws/ecr.go:100::handleECRBatchGetImage` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.PutImage` | ✓ `simulators/aws/ecr.go:101::handleECRPutImage` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.BatchDeleteImage` | ✓ `simulators/aws/ecr.go:102::handleECRBatchDeleteImage` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.BatchCheckLayerAvailability` | ✓ `simulators/aws/ecr.go:103::handleECRBatchCheckLayerAvailability` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.PutLifecyclePolicy` | ✓ `simulators/aws/ecr.go:104::handleECRPutLifecyclePolicy` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.GetLifecyclePolicy` | ✓ `simulators/aws/ecr.go:105::handleECRGetLifecyclePolicy` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.DeleteLifecyclePolicy` | ✓ `simulators/aws/ecr.go:106::handleECRDeleteLifecyclePolicy` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.ListTagsForResource` | ✓ `simulators/aws/ecr.go:107::handleECRListTagsForResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.TagResource` | ✓ `simulators/aws/ecr.go:108::handleECRTagResource` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.CreatePullThroughCacheRule` | ✓ `simulators/aws/ecr.go:116::handleECRCreatePullThroughCacheRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.DescribePullThroughCacheRules` | ✓ `simulators/aws/ecr.go:117::handleECRDescribePullThroughCacheRules` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
-| `Action AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule` | ✓ `simulators/aws/ecr.go:118::handleECRDeletePullThroughCacheRule` | ✗ (deferred under BUG-1159 sweep) | ✗ (deferred under BUG-1147 sweep) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.CreateRepository` | ✓ `simulators/aws/ecr.go:96::handleECRCreateRepository` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.DescribeRepositories` | ✓ `simulators/aws/ecr.go:97::handleECRDescribeRepositories` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.DeleteRepository` | ✓ `simulators/aws/ecr.go:98::handleECRDeleteRepository` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken` | ✓ `simulators/aws/ecr.go:99::handleECRGetAuthorizationToken` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.BatchGetImage` | ✓ `simulators/aws/ecr.go:100::handleECRBatchGetImage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.PutImage` | ✓ `simulators/aws/ecr.go:101::handleECRPutImage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.BatchDeleteImage` | ✓ `simulators/aws/ecr.go:102::handleECRBatchDeleteImage` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.BatchCheckLayerAvailability` | ✓ `simulators/aws/ecr.go:103::handleECRBatchCheckLayerAvailability` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.PutLifecyclePolicy` | ✓ `simulators/aws/ecr.go:104::handleECRPutLifecyclePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.GetLifecyclePolicy` | ✓ `simulators/aws/ecr.go:105::handleECRGetLifecyclePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.DeleteLifecyclePolicy` | ✓ `simulators/aws/ecr.go:106::handleECRDeleteLifecyclePolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.ListTagsForResource` | ✓ `simulators/aws/ecr.go:107::handleECRListTagsForResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.TagResource` | ✓ `simulators/aws/ecr.go:108::handleECRTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.CreatePullThroughCacheRule` | ✓ `simulators/aws/ecr.go:116::handleECRCreatePullThroughCacheRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.DescribePullThroughCacheRules` | ✓ `simulators/aws/ecr.go:117::handleECRDescribePullThroughCacheRules` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule` | ✓ `simulators/aws/ecr.go:118::handleECRDeletePullThroughCacheRule` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
-## Open subtasks staged forward
+## Coverage status
 
-- sdk-test / tf-test columns are ✗-with-deferral for every row above. Each subsequent surface-touching PR fills in the column for the rows it covers; remaining ✗s are tracked under BUG-1159 (paged-iterator sweep) + BUG-1147 (tf-test parity sweep).
-- Missing ops (not in HandleFunc but documented by the cloud provider) get ✗ rows added when a community-filed issue surfaces them or a periodic audit lands a sweep.
+- Row-level SDK/Terraform cells summarize the maintained coverage matrix in `specs/SIM_TEST_COVERAGE_MATRIX.md`; detailed client files and client-family `n/a` decisions live there.
+- Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
 <!-- HAND-WRITTEN END -->

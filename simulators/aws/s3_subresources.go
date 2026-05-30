@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -367,6 +369,101 @@ func handleS3AbortMultipart(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func handleS3ListMultipartUploads(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	q := r.URL.Query()
+	prefix := q.Get("prefix")
+	keyMarker := q.Get("key-marker")
+	uploadIDMarker := q.Get("upload-id-marker")
+	maxUploads := parsePositiveQueryInt(q.Get("max-uploads"), 1000)
+
+	type uploadXML struct {
+		Key          string  `xml:"Key"`
+		UploadID     string  `xml:"UploadId"`
+		Initiator    s3Owner `xml:"Initiator"`
+		Owner        s3Owner `xml:"Owner"`
+		StorageClass string  `xml:"StorageClass"`
+		Initiated    string  `xml:"Initiated"`
+	}
+	type uploadEntry struct {
+		key       string
+		uploadID  string
+		initiated time.Time
+	}
+
+	s3MultipartUploadsMu.Lock()
+	var entries []uploadEntry
+	for _, upload := range s3MultipartUploads {
+		if upload.Bucket != bucket {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(upload.Key, prefix) {
+			continue
+		}
+		if keyMarker != "" {
+			switch {
+			case upload.Key < keyMarker:
+				continue
+			case upload.Key == keyMarker && upload.UploadID <= uploadIDMarker:
+				continue
+			}
+		}
+		entries = append(entries, uploadEntry{
+			key:       upload.Key,
+			uploadID:  upload.UploadID,
+			initiated: upload.Initiated,
+		})
+	}
+	s3MultipartUploadsMu.Unlock()
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].key == entries[j].key {
+			return entries[i].initiated.Before(entries[j].initiated)
+		}
+		return entries[i].key < entries[j].key
+	})
+
+	result := struct {
+		XMLName            xml.Name    `xml:"ListMultipartUploadsResult"`
+		Xmlns              string      `xml:"xmlns,attr"`
+		Bucket             string      `xml:"Bucket"`
+		KeyMarker          string      `xml:"KeyMarker,omitempty"`
+		UploadIDMarker     string      `xml:"UploadIdMarker,omitempty"`
+		NextKeyMarker      string      `xml:"NextKeyMarker,omitempty"`
+		NextUploadIDMarker string      `xml:"NextUploadIdMarker,omitempty"`
+		MaxUploads         int         `xml:"MaxUploads"`
+		IsTruncated        bool        `xml:"IsTruncated"`
+		Uploads            []uploadXML `xml:"Upload"`
+	}{
+		Xmlns:          "http://s3.amazonaws.com/doc/2006-03-01/",
+		Bucket:         bucket,
+		KeyMarker:      keyMarker,
+		UploadIDMarker: uploadIDMarker,
+		MaxUploads:     maxUploads,
+	}
+
+	limit := len(entries)
+	if maxUploads > 0 && limit > maxUploads {
+		limit = maxUploads
+		result.IsTruncated = true
+		result.NextKeyMarker = entries[limit-1].key
+		result.NextUploadIDMarker = entries[limit-1].uploadID
+	}
+	owner := s3Owner{ID: awsAccountID(), DisplayName: "simulator"}
+	for _, entry := range entries[:limit] {
+		result.Uploads = append(result.Uploads, uploadXML{
+			Key:          entry.key,
+			UploadID:     entry.uploadID,
+			Initiator:    owner,
+			Owner:        owner,
+			StorageClass: "STANDARD",
+			Initiated:    entry.initiated.UTC().Format(time.RFC3339),
+		})
+	}
+
+	sim.WriteXML(w, http.StatusOK, result)
+}
+
 // handleS3ListParts returns the set of uploaded parts for an in-flight
 // multipart upload. aws-sdk-go-v2's `manager.Uploader` calls
 // `ListParts` on every retry path to learn which part numbers have
@@ -377,6 +474,8 @@ func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
 	bucket := sim.PathParam(r, "bucket")
 	key := sim.PathParam(r, "key")
 	uploadID := r.URL.Query().Get("uploadId")
+	partNumberMarker := parsePositiveQueryInt(r.URL.Query().Get("part-number-marker"), 0)
+	maxParts := parsePositiveQueryInt(r.URL.Query().Get("max-parts"), 1000)
 
 	s3MultipartUploadsMu.Lock()
 	mp, ok := s3MultipartUploads[uploadID]
@@ -420,9 +519,9 @@ func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
 		Key:                  key,
 		UploadID:             uploadID,
 		StorageClass:         "STANDARD",
-		PartNumberMarker:     0,
 		NextPartNumberMarker: 0,
-		MaxParts:             1000,
+		PartNumberMarker:     partNumberMarker,
+		MaxParts:             maxParts,
 		IsTruncated:          false,
 	}
 	result.Initiator.ID = awsAccountID()
@@ -430,13 +529,19 @@ func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
 	result.Owner.ID = awsAccountID()
 	result.Owner.DisplayName = "simulator"
 
-	// Emit parts in PartNumber order; aws-sdk-go-v2's pagination iterator
-	// assumes monotonic ordering.
-	for n := 1; n <= 10000; n++ {
-		part, ok := mp.Parts[n]
-		if !ok {
-			continue
+	partNumbers := make([]int, 0, len(mp.Parts))
+	for n := range mp.Parts {
+		if n > partNumberMarker {
+			partNumbers = append(partNumbers, n)
 		}
+	}
+	sort.Ints(partNumbers)
+	if maxParts > 0 && len(partNumbers) > maxParts {
+		result.IsTruncated = true
+		partNumbers = partNumbers[:maxParts]
+	}
+	for _, n := range partNumbers {
+		part := mp.Parts[n]
 		result.Parts = append(result.Parts, partXML{
 			PartNumber:   n,
 			LastModified: mp.Initiated.UTC().Format(time.RFC3339),
@@ -449,6 +554,17 @@ func handleS3ListParts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sim.WriteXML(w, http.StatusOK, result)
+}
+
+func parsePositiveQueryInt(raw string, fallback int) int {
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // ── Object tagging ───────────────────────────────────────────────────
