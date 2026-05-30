@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1226 filed · 1226 fixed · 2 open · 2 false positives.**
+**1227 filed · 1227 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,8 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1227. AWS API Gateway and API Gateway v2 no longer claim CLI/Terraform as not-applicable: the AWS CLI harness now exercises `aws apigateway` and `aws apigatewayv2` lifecycle flows, and the AWS Terraform harness provisions REST API and HTTP API resources through terraform-provider-aws. The simulator now implements the public read/delete routes those adapters require for resources, methods, integrations, deployments, and stages, and the API Gateway surface tables reflect direct SDK/CLI/Terraform coverage.
 
 This phase closed BUG-1226 / issue #285. AWS S3 bucket-subresource row-level coverage now uses official AWS SDK, AWS CLI `s3api`, and Terraform-provider paths across the remaining bucket configuration families. The work also fixed real public-API fidelity gaps exposed by the coverage audit: ID-addressed bucket analytics/inventory/metrics/intelligent-tiering configurations now support Get/List/Delete semantics, lifecycle configuration now round-trips the documented `x-amz-transition-default-minimum-object-size` response header required by terraform-provider-aws, and the Terraform harness uses isolated per-run state so failed local applies cannot poison later simulator runs.
 

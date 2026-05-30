@@ -12,8 +12,8 @@ Legend:
 |---|---|---|---|---|
 | `aws-acm` | direct | direct | direct | `simulators/aws/sdk-tests/acm_test.go`; `simulators/aws/cli-tests/acm_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-amplify` | direct | direct | direct | `simulators/aws/sdk-tests/amplify_test.go`; `simulators/aws/cli-tests/amplify_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-apigateway` | direct | not applicable | not applicable | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go` |
-| `aws-apigatewayv2` | direct | not applicable | not applicable | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go` |
+| `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudwatch` | direct | direct | not applicable | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go` |
 | `aws-dynamodb` | direct | direct | direct | `simulators/aws/sdk-tests/dynamodb_test.go`; `simulators/aws/cli-tests/dynamodb_test.go`; `simulators/aws/terraform-tests/main.tf` |

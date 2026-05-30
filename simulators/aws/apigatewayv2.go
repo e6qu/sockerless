@@ -25,21 +25,26 @@ type APIGWv2Api struct {
 // Inner fields whose JSON tag is `apiIdRef` (custom, non-public)
 // hold the parent reference for cascade-delete + per-api filtering.
 // The SDK ignores unknown fields, so leaking the parent ID on the
-// response is harmless and avoids the BUG-1098-shape pitfall of
-// `json:"-"` stripping the field during Store persistence.
+// response is harmless and avoids stripping the field during Store
+// persistence.
 type APIGWv2Route struct {
 	RouteId           string `json:"routeId"`
 	ApiId             string `json:"apiIdRef,omitempty"`
 	RouteKey          string `json:"routeKey"`
 	Target            string `json:"target,omitempty"`
 	AuthorizationType string `json:"authorizationType,omitempty"`
+	ApiKeyRequired    bool   `json:"apiKeyRequired,omitempty"`
+	OperationName     string `json:"operationName,omitempty"`
 }
 
 type APIGWv2Integration struct {
-	IntegrationId   string `json:"integrationId"`
-	ApiId           string `json:"apiIdRef,omitempty"`
-	IntegrationType string `json:"integrationType"`
-	IntegrationUri  string `json:"integrationUri,omitempty"` // external (operator-supplied): integration target — Lambda ARN, HTTP backend, or VPC link target
+	IntegrationId        string `json:"integrationId"`
+	ApiId                string `json:"apiIdRef,omitempty"`
+	IntegrationType      string `json:"integrationType"`
+	IntegrationUri       string `json:"integrationUri,omitempty"` // external (operator-supplied): integration target — Lambda ARN, HTTP backend, or VPC link target
+	IntegrationMethod    string `json:"integrationMethod,omitempty"`
+	PayloadFormatVersion string `json:"payloadFormatVersion,omitempty"`
+	TimeoutInMillis      int    `json:"timeoutInMillis,omitempty"`
 }
 
 type APIGWv2Stage struct {
@@ -85,10 +90,16 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	mux.HandleFunc("DELETE /v2/apis/{apiId}", handleAPIGWv2DeleteApi)
 	mux.HandleFunc("POST /v2/apis/{apiId}/routes", handleAPIGWv2CreateRoute)
 	mux.HandleFunc("GET /v2/apis/{apiId}/routes", handleAPIGWv2ListRoutes)
+	mux.HandleFunc("GET /v2/apis/{apiId}/routes/{routeId}", handleAPIGWv2GetRoute)
+	mux.HandleFunc("DELETE /v2/apis/{apiId}/routes/{routeId}", handleAPIGWv2DeleteRoute)
 	mux.HandleFunc("POST /v2/apis/{apiId}/integrations", handleAPIGWv2CreateIntegration)
 	mux.HandleFunc("GET /v2/apis/{apiId}/integrations", handleAPIGWv2ListIntegrations)
+	mux.HandleFunc("GET /v2/apis/{apiId}/integrations/{integrationId}", handleAPIGWv2GetIntegration)
+	mux.HandleFunc("DELETE /v2/apis/{apiId}/integrations/{integrationId}", handleAPIGWv2DeleteIntegration)
 	mux.HandleFunc("POST /v2/apis/{apiId}/stages", handleAPIGWv2CreateStage)
 	mux.HandleFunc("GET /v2/apis/{apiId}/stages", handleAPIGWv2ListStages)
+	mux.HandleFunc("GET /v2/apis/{apiId}/stages/{stageName}", handleAPIGWv2GetStage)
+	mux.HandleFunc("DELETE /v2/apis/{apiId}/stages/{stageName}", handleAPIGWv2DeleteStage)
 	mux.HandleFunc("POST /v2/apis/{apiId}/deployments", handleAPIGWv2CreateDeployment)
 	mux.HandleFunc("GET /v2/apis/{apiId}/deployments", handleAPIGWv2ListDeployments)
 	mux.HandleFunc("GET /v2/apis/{apiId}/deployments/{deploymentId}", handleAPIGWv2GetDeployment)
@@ -160,6 +171,11 @@ func handleAPIGWv2DeleteApi(w http.ResponseWriter, r *http.Request) {
 			apigwv2Stages.Delete(apigwv2StoreKey(apiId, s.StageName))
 		}
 	}
+	for _, d := range apigwv2Deployments.List() {
+		if d.ApiId == apiId {
+			apigwv2Deployments.Delete(apigwv2StoreKey(apiId, d.DeploymentId))
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -173,6 +189,8 @@ func handleAPIGWv2CreateRoute(w http.ResponseWriter, r *http.Request) {
 		RouteKey          string `json:"RouteKey"`
 		Target            string `json:"Target"`
 		AuthorizationType string `json:"AuthorizationType"`
+		ApiKeyRequired    bool   `json:"ApiKeyRequired"`
+		OperationName     string `json:"OperationName"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
@@ -184,6 +202,8 @@ func handleAPIGWv2CreateRoute(w http.ResponseWriter, r *http.Request) {
 		RouteKey:          req.RouteKey,
 		Target:            req.Target,
 		AuthorizationType: req.AuthorizationType,
+		ApiKeyRequired:    req.ApiKeyRequired,
+		OperationName:     req.OperationName,
 	}
 	apigwv2Routes.Put(apigwv2StoreKey(apiId, route.RouteId), route)
 	sim.WriteJSON(w, http.StatusCreated, route)
@@ -203,6 +223,29 @@ func handleAPIGWv2ListRoutes(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+func handleAPIGWv2GetRoute(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	routeId := sim.PathParam(r, "routeId")
+	route, ok := apigwv2Routes.Get(apigwv2StoreKey(apiId, routeId))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Route identifier specified %s", routeId)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, route)
+}
+
+func handleAPIGWv2DeleteRoute(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	routeId := sim.PathParam(r, "routeId")
+	if !apigwv2Routes.Delete(apigwv2StoreKey(apiId, routeId)) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Route identifier specified %s", routeId)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
 	apiId := sim.PathParam(r, "apiId")
 	if _, ok := apigwv2Apis.Get(apiId); !ok {
@@ -210,18 +253,24 @@ func handleAPIGWv2CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		IntegrationType string `json:"IntegrationType"`
-		IntegrationUri  string `json:"IntegrationUri"`
+		IntegrationType      string `json:"IntegrationType"`
+		IntegrationUri       string `json:"IntegrationUri"`
+		IntegrationMethod    string `json:"IntegrationMethod"`
+		PayloadFormatVersion string `json:"PayloadFormatVersion"`
+		TimeoutInMillis      int    `json:"TimeoutInMillis"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
 		return
 	}
 	in := APIGWv2Integration{
-		IntegrationId:   generateUUID()[:10],
-		ApiId:           apiId,
-		IntegrationType: req.IntegrationType,
-		IntegrationUri:  req.IntegrationUri,
+		IntegrationId:        generateUUID()[:10],
+		ApiId:                apiId,
+		IntegrationType:      req.IntegrationType,
+		IntegrationUri:       req.IntegrationUri,
+		IntegrationMethod:    req.IntegrationMethod,
+		PayloadFormatVersion: req.PayloadFormatVersion,
+		TimeoutInMillis:      req.TimeoutInMillis,
 	}
 	apigwv2Integrations.Put(apigwv2StoreKey(apiId, in.IntegrationId), in)
 	sim.WriteJSON(w, http.StatusCreated, in)
@@ -239,6 +288,29 @@ func handleAPIGWv2ListIntegrations(w http.ResponseWriter, r *http.Request) {
 		out = []APIGWv2Integration{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func handleAPIGWv2GetIntegration(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	integrationId := sim.PathParam(r, "integrationId")
+	in, ok := apigwv2Integrations.Get(apigwv2StoreKey(apiId, integrationId))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Integration identifier specified %s", integrationId)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, in)
+}
+
+func handleAPIGWv2DeleteIntegration(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	integrationId := sim.PathParam(r, "integrationId")
+	if !apigwv2Integrations.Delete(apigwv2StoreKey(apiId, integrationId)) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Integration identifier specified %s", integrationId)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleAPIGWv2CreateStage(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +351,29 @@ func handleAPIGWv2ListStages(w http.ResponseWriter, r *http.Request) {
 		out = []APIGWv2Stage{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func handleAPIGWv2GetStage(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	stageName := sim.PathParam(r, "stageName")
+	stage, ok := apigwv2Stages.Get(apigwv2StoreKey(apiId, stageName))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Stage identifier specified %s", stageName)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, stage)
+}
+
+func handleAPIGWv2DeleteStage(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	stageName := sim.PathParam(r, "stageName")
+	if !apigwv2Stages.Delete(apigwv2StoreKey(apiId, stageName)) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Stage identifier specified %s", stageName)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleAPIGWv2CreateDeployment(w http.ResponseWriter, r *http.Request) {

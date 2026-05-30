@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-30 — AWS API Gateway client-surface coverage
+
+The BUG-1104 audit found a real stale coverage claim. `aws-apigateway` and `aws-apigatewayv2` were marked as CLI/Terraform not-applicable even though the official AWS CLI exposes `apigateway` / `apigatewayv2` commands and terraform-provider-aws exposes REST API and HTTP API resources.
+
+BUG-1227 closed that mismatch with real external clients. The AWS CLI harness now runs `aws apigateway` and `aws apigatewayv2` lifecycle flows through the simulator. The AWS Terraform production-shape harness now provisions REST API resources, methods, integrations, responses, deployments, stages, plus API Gateway v2 APIs, integrations, routes, deployments, and stages.
+
+The new coverage exposed missing public refresh/destroy routes, so the simulator now implements Get/Delete for API Gateway v1 resources, methods, integrations, deployments, and stages, plus Get/Delete for API Gateway v2 routes, integrations, and stages. The surface tables and coverage matrix now show SDK/CLI/Terraform as direct for both surfaces.
+
 ## 2026-05-30 — Post-merge continuity, harness, and simulator audit pass
 
 After PR #284 merged, the repository had no open GitHub issues. This pass reset the continuity docs from an in-review Key Vault branch back to the merged `main` view, keeping the docs in past tense so fresh sessions do not treat already-merged work as active.
