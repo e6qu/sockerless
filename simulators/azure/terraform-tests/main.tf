@@ -155,6 +155,52 @@ resource "azurerm_public_ip" "az_lb_pip" {
   sku                 = "Standard"
 }
 
+resource "azurerm_virtual_network" "az_nat_vnet" {
+  provider            = azurerm
+  name                = "tf-azrm-nat-vnet"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  address_space       = ["10.93.0.0/16"]
+}
+
+resource "azurerm_subnet" "az_nat_subnet" {
+  provider             = azurerm
+  name                 = "tf-azrm-nat-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_nat_vnet.name
+  address_prefixes     = ["10.93.1.0/24"]
+}
+
+resource "azurerm_public_ip_prefix" "az_nat_prefix" {
+  provider            = azurerm
+  name                = "tf-azrm-nat-prefix"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  prefix_length       = 28
+  sku                 = "Standard"
+}
+
+resource "azurerm_nat_gateway" "az_nat" {
+  provider                = azurerm
+  name                    = "tf-azrm-nat"
+  resource_group_name     = azurerm_resource_group.az_rg.name
+  location                = azurerm_resource_group.az_rg.location
+  sku_name                = "Standard"
+  idle_timeout_in_minutes = 10
+}
+
+resource "azurerm_nat_gateway_public_ip_prefix_association" "az_nat_prefix" {
+  provider            = azurerm
+  nat_gateway_id      = azurerm_nat_gateway.az_nat.id
+  public_ip_prefix_id = azurerm_public_ip_prefix.az_nat_prefix.id
+}
+
+resource "azurerm_subnet_nat_gateway_association" "az_nat_subnet" {
+  provider       = azurerm
+  subnet_id      = azurerm_subnet.az_nat_subnet.id
+  nat_gateway_id = azurerm_nat_gateway.az_nat.id
+}
+
 resource "azurerm_lb" "az_lb" {
   provider            = azurerm
   name                = "tf-azrm-lb"
@@ -640,6 +686,18 @@ output "azrm_lb_probe_id" {
 
 output "azrm_lb_rule_id" {
   value = azurerm_lb_rule.az_lb_rule.id
+}
+
+output "azrm_nat_gateway_id" {
+  value = azurerm_nat_gateway.az_nat.id
+}
+
+output "azrm_nat_public_ip_prefix_id" {
+  value = azurerm_public_ip_prefix.az_nat_prefix.id
+}
+
+output "azrm_nat_subnet_id" {
+  value = azurerm_subnet_nat_gateway_association.az_nat_subnet.subnet_id
 }
 
 output "azrm_private_dns_zone_id" {

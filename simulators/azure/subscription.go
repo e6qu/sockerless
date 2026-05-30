@@ -44,7 +44,7 @@ var azureProviderResourceTypes = map[string][]string{
 	"Microsoft.Insights":            {"components"},
 	"Microsoft.KeyVault":            {"vaults", "vaults/accessPolicies", "deletedVaults"},
 	"Microsoft.ManagedIdentity":     {"userAssignedIdentities"},
-	"Microsoft.Network":             {"virtualNetworks", "virtualNetworks/subnets", "networkInterfaces", "networkInterfaces/ipConfigurations", "publicIPAddresses", "networkSecurityGroups", "networkSecurityGroups/securityRules", "privateDnsZones", "dnsZones", "dnsZones/A", "dnsZones/AAAA", "dnsZones/CAA", "dnsZones/CNAME", "dnsZones/MX", "dnsZones/NS", "dnsZones/PTR", "dnsZones/SOA", "dnsZones/SRV", "dnsZones/TXT"},
+	"Microsoft.Network":             {"virtualNetworks", "virtualNetworks/subnets", "networkInterfaces", "networkInterfaces/ipConfigurations", "publicIPAddresses", "publicIPPrefixes", "natGateways", "loadBalancers", "loadBalancers/frontendIPConfigurations", "loadBalancers/backendAddressPools", "loadBalancers/loadBalancingRules", "loadBalancers/probes", "networkSecurityGroups", "networkSecurityGroups/securityRules", "privateDnsZones", "dnsZones", "dnsZones/A", "dnsZones/AAAA", "dnsZones/CAA", "dnsZones/CNAME", "dnsZones/MX", "dnsZones/NS", "dnsZones/PTR", "dnsZones/SOA", "dnsZones/SRV", "dnsZones/TXT"},
 	"Microsoft.OperationalInsights": {"workspaces"},
 	"Microsoft.Resources":           {"resourceGroups", "resources", "providers"},
 	"Microsoft.ServiceBus":          {"namespaces", "namespaces/queues", "namespaces/topics", "namespaces/topics/subscriptions", "namespaces/networkRuleSets", "namespaces/authorizationRules"},

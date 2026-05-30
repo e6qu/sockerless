@@ -74,6 +74,66 @@ func TestCompute_ListNetworks(t *testing.T) {
 	assert.GreaterOrEqual(t, len(resp.Items), 1)
 }
 
+func TestCompute_RegionalAddressAndManualRouterNAT(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+	const region = "us-central1"
+
+	network := &compute.Network{
+		Name:                  "sdk-nat-network",
+		AutoCreateSubnetworks: false,
+	}
+	_, err := svc.Networks.Insert(project, network).Context(ctx).Do()
+	require.NoError(t, err)
+
+	addr := &compute.Address{
+		Name:        "sdk-nat-address",
+		AddressType: "EXTERNAL",
+		IpVersion:   "IPV4",
+		NetworkTier: "PREMIUM",
+	}
+	_, err = svc.Addresses.Insert(project, region, addr).Context(ctx).Do()
+	require.NoError(t, err)
+
+	gotAddr, err := svc.Addresses.Get(project, region, addr.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, addr.Name, gotAddr.Name)
+	assert.Equal(t, "RESERVED", gotAddr.Status)
+	assert.NotEmpty(t, gotAddr.Address)
+
+	addrList, err := svc.Addresses.List(project, region).Context(ctx).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, addrList.Items)
+
+	router := &compute.Router{
+		Name:    "sdk-nat-router",
+		Network: "projects/test-project/global/networks/sdk-nat-network",
+		Nats: []*compute.RouterNat{{
+			Name:                          "sdk-manual-nat",
+			NatIpAllocateOption:           "MANUAL_ONLY",
+			NatIps:                        []string{gotAddr.SelfLink},
+			SourceSubnetworkIpRangesToNat: "ALL_SUBNETWORKS_ALL_IP_RANGES",
+		}},
+	}
+	_, err = svc.Routers.Insert(project, region, router).Context(ctx).Do()
+	require.NoError(t, err)
+
+	gotRouter, err := svc.Routers.Get(project, region, router.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, gotRouter.Nats, 1)
+	assert.Equal(t, "MANUAL_ONLY", gotRouter.Nats[0].NatIpAllocateOption)
+	assert.Equal(t, gotAddr.SelfLink, gotRouter.Nats[0].NatIps[0])
+
+	status, err := svc.Routers.GetRouterStatus(project, region, router.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	require.NotNil(t, status.Result)
+
+	_, err = svc.Routers.Delete(project, region, router.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	_, err = svc.Addresses.Delete(project, region, addr.Name).Context(ctx).Do()
+	require.NoError(t, err)
+}
+
 // TestCompute_Firewall_CreateGetListDelete pins the firewall rule
 // surface that runner setup flows hit. Real GCP rejects unknown
 // directions / negative priorities; the sim defaults to INGRESS +

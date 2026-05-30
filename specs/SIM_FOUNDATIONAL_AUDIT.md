@@ -16,9 +16,9 @@ This is not a license to add simulator-specific APIs. Any missing row below is a
 | Stream/event ingestion | Kinesis implemented | Pub/Sub present for basic event bus flows | Event Hubs implemented | Present for the foundational stream-ingestion flows. |
 | Managed NoSQL/data SaaS | DynamoDB implemented with query/filter equality predicates | BigQuery and Firestore implemented | Cosmos DB implemented | Present for the foundational managed analytics/document data flows. |
 | DNS | Route 53 and Cloud Map implemented | Cloud DNS implemented | Private DNS and public DNS implemented | Present across all three for foundational DNS/discovery flows. |
-| VPC/network primitives | VPC, subnet, IGW, route table, SG, EIP, NAT, ENI describe implemented | Network, subnetwork, firewall, router/NAT, VPC Access implemented | VNet, subnet, NSG, NAT gateway, route table implemented | Present, but NAT/public-IP parity is uneven. Tracked as BUG-1204. |
-| VM/EC2-like compute | EC2 instance lifecycle missing | Compute Engine instance lifecycle missing | Azure VM lifecycle missing | Real gap. Public APIs should be cloud-compatible; Firecracker can be the local microVM runtime substrate. Tracked as BUG-1207. |
-| Managed load balancers | Missing ELBv2/ELB | Missing Cloud Load Balancing resources | Missing Load Balancer/App Gateway/Front Door/Traffic Manager | Real gap. Tracked as BUG-1203. |
+| VPC/network primitives | VPC, subnet, IGW, route table, SG, EIP, NAT, ENI describe implemented and covered | Network, subnetwork, firewall, router/NAT, regional addresses, and VPC Access implemented and covered | VNet, subnet, NSG, public IP/prefix, NAT gateway, route table implemented and covered | Present across foundational egress and NAT/public-IP flows. |
+| VM/EC2-like compute | EC2 instance lifecycle implemented | Compute Engine instance lifecycle implemented | Azure VM lifecycle implemented | Present across all three through public cloud APIs; any local execution substrate stays behind the simulator boundary. |
+| Managed load balancers | ELBv2 implemented | Cloud Load Balancing resources implemented | Azure Load Balancer implemented | Present for foundational managed load-balancer flows. |
 | Gateway/proxy APIs | API Gateway, API Gateway v2, CloudFront implemented | API Gateway implemented | APIM implemented | Present, but not a substitute for managed load-balancer APIs. |
 
 ## Current Implemented Slices
@@ -33,14 +33,15 @@ Foundational slices registered today:
 - Queue and pub-sub: SQS, SNS, including SNS to SQS fanout.
 - Event routing: EventBridge rules, targets, tags, event buses, bus policies, archives, replays, and `PutEvents`, including SQS/SNS target delivery.
 - Networking: EC2 VPCs, subnets, internet gateways, elastic IPs, NAT gateways, route tables, security groups, network-interface describe.
+- VM/compute: EC2 instance lifecycle APIs, instance status, image/key-pair/type discovery, tags, volumes, and ENI attachment state.
+- Managed load balancers: ELBv2 load balancers, target groups, listeners, target registration/health, attributes, tags, and account limits.
 - Gateways and edge: API Gateway v1/v2, CloudFront, WAFv2, ACM.
 - Identity and secrets: IAM, STS, Secrets Manager, SSM Parameter Store, KMS.
 - Stream ingestion: Kinesis stream lifecycle, shards, records, iterators, tags, retention, monitoring, encryption state, shard-count updates, and limits.
 
 Missing foundational slices:
 
-- EC2 instance lifecycle APIs such as `RunInstances`, `DescribeInstances`, `StartInstances`, `StopInstances`, `TerminateInstances`, and related instance metadata/volume/network attachment flows. BUG-1207.
-- ELBv2/classic ELB managed load balancers. BUG-1203.
+No current missing foundational AWS slices from this audit remain open.
 
 ### GCP
 
@@ -50,15 +51,16 @@ Foundational slices registered today:
 - Queue/pub-sub: Pub/Sub.
 - Event routing: Eventarc trigger lifecycle, channels, provider discovery/listing, and channel connections.
 - DNS and discovery: Cloud DNS.
-- Networking: Compute networks, subnetworks, firewalls, routers/NAT, VPC Access connectors.
+- Networking: Compute networks, subnetworks, firewalls, routers/NAT, regional addresses, and VPC Access connectors.
+- VM/compute: Compute Engine instance lifecycle, zonal operations, machine/disk/image catalog reads, labels/tags, attached disks, and NIC metadata.
+- Managed load balancers: Compute health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules.
 - Gateways: API Gateway.
 - Data stores: Cloud SQL, Memorystore Redis, Secret Manager, BigQuery, Firestore.
 - Identity/logging/build: IAM, OAuth2 token endpoint, Cloud Logging, Cloud Build, Service Usage.
 
 Missing foundational slices:
 
-- Compute Engine instance lifecycle APIs, including instance create/get/list/delete/start/stop and network/disk attachment behavior. BUG-1207.
-- Cloud Load Balancing resources such as forwarding rules, target proxies, URL maps, backend services, health checks, and addresses. BUG-1203/BUG-1204.
+No current missing foundational GCP slices from this audit remain open.
 
 ### Azure
 
@@ -69,23 +71,22 @@ Foundational slices registered today:
 - Event routing: Event Grid topics, domains, domain topics, system topics, partner topics, event subscriptions, subscription validation, and custom-topic publish/delivery.
 - Stream ingestion: Event Hubs ARM namespace/event hub/consumer group/auth-rule lifecycle plus AMQP send/receive over raw AMQP/TLS.
 - DNS and discovery: Private DNS, public DNS zones and record sets.
-- Networking: Virtual Networks, subnets, Network Security Groups, NAT gateways, route tables.
+- Networking: Virtual Networks, subnets, Network Security Groups, public IP addresses/prefixes, NAT gateways, subnet NAT association, and route tables.
+- VM/compute: Network interfaces, public IPs, and `Microsoft.Compute/virtualMachines` lifecycle with instanceView and power-state operations.
+- Managed load balancers: `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, load-balancing rules, and child-resource paths.
 - Gateways: APIM.
 - Data stores: Cache for Redis, PostgreSQL Flexible Server, Cosmos DB for NoSQL.
 - Identity/secrets/logging: Managed Identity, Key Vault, Monitor, Application Insights, authorization/resources/tags.
 
 Missing foundational slices:
 
-- Azure Virtual Machines lifecycle APIs, including VM create/get/list/delete/start/deallocate and NIC/disk/public-IP attachment behavior. BUG-1207.
-- Managed load-balancer services: Azure Load Balancer, Application Gateway, Front Door, Traffic Manager. BUG-1203.
-- Public IP/Public IP Prefix resources and full NAT association/list behavior. BUG-1204.
+No current missing foundational Azure slices from this audit remain open.
 
 ## Next Implementation Phase
 
 Recommended order:
 
-1. VM/EC2-like compute substrate design: add public EC2/GCE/Azure VM API slices backed by real local execution. Firecracker is a good candidate for the local microVM runtime, but it stays behind the simulator boundary; callers see only cloud public APIs.
-2. Managed load balancing and public network egress: add ELBv2/ELB, GCP load-balancing resources, Azure Load Balancer/Application Gateway/Front Door/Traffic Manager, and the missing public-IP/address pieces.
-3. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo.
+1. Surface-table cleanup: refresh stale surface-table status rows so implemented/tested coverage matches the current repo. This is tracked by BUG-1206.
+2. Continue the standing audit cadence through BUG-1104: when a new community issue or provider/SDK path surfaces a missing public API slice, file the concrete BUG first, then implement the cloud-compatible public API with SDK, CLI, and Terraform coverage in the same PR.
 
 Each added service slice must follow the simulator testing contract: official SDK tests, vendor CLI tests, and Terraform provider tests in the same PR unless the public API is not exposed by one of those client surfaces.

@@ -31,6 +31,10 @@ import (
 //     ModifyTargetGroupAttributes, DescribeTargetGroupAttributes,
 //     CreateListener, DescribeListeners, DescribeListenerAttributes, DeleteListener,
 //     DeleteTargetGroup, DeleteLoadBalancer, AddTags, DescribeTags
+//   - EC2 NAT/EIP: AllocateAddress, DescribeAddresses,
+//     DescribeAddressesAttribute, ReleaseAddress, CreateNatGateway,
+//     DescribeNatGateways, DeleteNatGateway, CreateRouteTable,
+//     CreateRoute, DescribeRouteTables
 //
 // What this proves end-to-end:
 //   - WAFv2 association resource_arn == CloudFront distribution ARN
@@ -99,6 +103,18 @@ func TestStackProductionShape(t *testing.T) {
 	elbv2ListenerArn := outputs.must(t, "elbv2_listener_arn")
 	require.Contains(t, elbv2ListenerArn, ":listener/app/tf-alb/",
 		"ELBv2 listener ARN must use the listener/app resource path; got %s", elbv2ListenerArn)
+
+	natGatewayID := outputs.must(t, "ec2_nat_gateway_id")
+	require.True(t, strings.HasPrefix(natGatewayID, "nat-"),
+		"EC2 NAT gateway id must use nat-* shape; got %s", natGatewayID)
+
+	natEIP := outputs.must(t, "ec2_nat_eip_public_ip")
+	require.True(t, strings.HasPrefix(natEIP, "203.0.113."),
+		"EC2 NAT Elastic IP must round-trip the allocated public IP; got %s", natEIP)
+
+	natRouteTableID := outputs.must(t, "ec2_nat_route_table_id")
+	require.True(t, strings.HasPrefix(natRouteTableID, "rtb-"),
+		"EC2 route table id must use rtb-* shape; got %s", natRouteTableID)
 
 	require.Contains(t, slrARN, "aws-service-role/cloudfront.amazonaws.com/",
 		"CloudFront SLR ARN must include the cloudfront.amazonaws.com service path; got %s", slrARN)

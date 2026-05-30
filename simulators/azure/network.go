@@ -46,6 +46,7 @@ type Subnet struct {
 type SubnetProperties struct {
 	AddressPrefix                     string             `json:"addressPrefix"`
 	NetworkSecurityGroup              *NSGReference      `json:"networkSecurityGroup,omitempty"`
+	NatGateway                        *SubResource       `json:"natGateway,omitempty"`
 	Delegations                       []SubnetDelegation `json:"delegations,omitempty"`
 	ProvisioningState                 string             `json:"provisioningState"`
 	PrivateEndpointNetworkPolicies    string             `json:"privateEndpointNetworkPolicies,omitempty"`
@@ -307,6 +308,7 @@ func registerNetwork(srv *sim.Server) {
 			Properties: SubnetProperties{
 				AddressPrefix:                     req.Properties.AddressPrefix,
 				NetworkSecurityGroup:              req.Properties.NetworkSecurityGroup,
+				NatGateway:                        req.Properties.NatGateway,
 				Delegations:                       req.Properties.Delegations,
 				ProvisioningState:                 "Succeeded",
 				PrivateEndpointNetworkPolicies:    privateEndpointPolicies,
@@ -633,7 +635,23 @@ func registerNetwork(srv *sim.Server) {
 				"NAT gateway %q not found.", name)
 			return
 		}
+		gw.Properties.Subnets = azureSubnetsForNatGateway(gw.ID)
 		sim.WriteJSON(w, http.StatusOK, gw)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/natGateways", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/natGateways/",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+		items := natGateways.Filter(func(gw NatGateway) bool {
+			return strings.HasPrefix(gw.ID, prefix)
+		})
+		if items == nil {
+			items = []NatGateway{}
+		}
+		for i := range items {
+			items[i].Properties.Subnets = azureSubnetsForNatGateway(items[i].ID)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
 	})
 
 	srv.HandleFunc("DELETE "+armBase+"/natGateways/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -701,4 +719,18 @@ func registerNetwork(srv *sim.Server) {
 		routeTables.Delete(resourceID)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func azureSubnetsForNatGateway(natGatewayID string) []SubResource {
+	subnets := azureSubnets.Filter(func(sn Subnet) bool {
+		return sn.Properties.NatGateway != nil && strings.EqualFold(sn.Properties.NatGateway.ID, natGatewayID)
+	})
+	if len(subnets) == 0 {
+		return nil
+	}
+	refs := make([]SubResource, 0, len(subnets))
+	for _, sn := range subnets {
+		refs = append(refs, SubResource{ID: sn.ID})
+	}
+	return refs
 }

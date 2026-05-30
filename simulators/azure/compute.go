@@ -26,6 +26,25 @@ type PublicIPAddressProperties struct {
 	ProvisioningState        string `json:"provisioningState,omitempty"`
 }
 
+type PublicIPPrefix struct {
+	ID         string                   `json:"id"`
+	Name       string                   `json:"name"`
+	Type       string                   `json:"type"`
+	Location   string                   `json:"location"`
+	Tags       map[string]string        `json:"tags,omitempty"`
+	Sku        *SkuName                 `json:"sku,omitempty"`
+	Zones      []string                 `json:"zones,omitempty"`
+	Properties PublicIPPrefixProperties `json:"properties"`
+}
+
+type PublicIPPrefixProperties struct {
+	IPPrefix               string `json:"ipPrefix,omitempty"`
+	PrefixLength           int32  `json:"prefixLength,omitempty"`
+	PublicIPAddressVersion string `json:"publicIPAddressVersion,omitempty"`
+	ProvisioningState      string `json:"provisioningState,omitempty"`
+	ResourceGUID           string `json:"resourceGuid,omitempty"`
+}
+
 type LoadBalancer struct {
 	ID         string                 `json:"id"`
 	Name       string                 `json:"name"`
@@ -130,15 +149,17 @@ type VMStatus struct {
 }
 
 var (
-	azurePublicIPs sim.Store[PublicIPAddress]
-	azureLBs       sim.Store[LoadBalancer]
-	azureNICs      sim.Store[NetworkInterface]
-	azureVMs       sim.Store[VirtualMachine]
-	azureVMStates  sim.Store[string]
+	azurePublicIPs        sim.Store[PublicIPAddress]
+	azurePublicIPPrefixes sim.Store[PublicIPPrefix]
+	azureLBs              sim.Store[LoadBalancer]
+	azureNICs             sim.Store[NetworkInterface]
+	azureVMs              sim.Store[VirtualMachine]
+	azureVMStates         sim.Store[string]
 )
 
 func registerCompute(srv *sim.Server) {
 	azurePublicIPs = sim.MakeStore[PublicIPAddress](srv.DB(), "network_public_ips")
+	azurePublicIPPrefixes = sim.MakeStore[PublicIPPrefix](srv.DB(), "network_public_ip_prefixes")
 	azureLBs = sim.MakeStore[LoadBalancer](srv.DB(), "network_load_balancers")
 	azureNICs = sim.MakeStore[NetworkInterface](srv.DB(), "network_interfaces")
 	azureVMs = sim.MakeStore[VirtualMachine](srv.DB(), "compute_virtual_machines")
@@ -146,6 +167,7 @@ func registerCompute(srv *sim.Server) {
 
 	registerComputeCatalog(srv)
 	registerPublicIPAddresses(srv)
+	registerPublicIPPrefixes(srv)
 	registerLoadBalancers(srv)
 	registerNetworkInterfaces(srv)
 	registerVirtualMachines(srv)
@@ -262,6 +284,94 @@ func registerPublicIPAddresses(srv *sim.Server) {
 		azurePublicIPs.Delete(id)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+func registerPublicIPPrefixes(srv *sim.Server) {
+	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
+
+	srv.HandleFunc("PUT "+armBase+"/publicIPPrefixes/{publicIPPrefixName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "publicIPPrefixName")
+		var req PublicIPPrefix
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := azurePublicIPPrefixID(sub, rg, name)
+		prefix := PublicIPPrefix{
+			ID:       id,
+			Name:     name,
+			Type:     "Microsoft.Network/publicIPPrefixes",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Sku:      req.Sku,
+			Zones:    req.Zones,
+			Properties: PublicIPPrefixProperties{
+				IPPrefix:               req.Properties.IPPrefix,
+				PrefixLength:           req.Properties.PrefixLength,
+				PublicIPAddressVersion: req.Properties.PublicIPAddressVersion,
+				ProvisioningState:      "Succeeded",
+				ResourceGUID:           generateUUID(),
+			},
+		}
+		if prefix.Sku == nil {
+			prefix.Sku = &SkuName{Name: "Standard"}
+		}
+		if prefix.Properties.PublicIPAddressVersion == "" {
+			prefix.Properties.PublicIPAddressVersion = "IPv4"
+		}
+		if prefix.Properties.PrefixLength == 0 {
+			prefix.Properties.PrefixLength = 28
+		}
+		if prefix.Properties.IPPrefix == "" && strings.EqualFold(prefix.Properties.PublicIPAddressVersion, "IPv4") {
+			prefix.Properties.IPPrefix = azurePublicIPPrefixCIDR(prefix.Properties.PrefixLength, len(azurePublicIPPrefixes.List()))
+		}
+		azurePublicIPPrefixes.Put(id, prefix)
+		sim.WriteJSON(w, http.StatusOK, prefix)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/publicIPPrefixes/{publicIPPrefixName}", func(w http.ResponseWriter, r *http.Request) {
+		id := azurePublicIPPrefixID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "publicIPPrefixName"))
+		prefix, ok := azurePublicIPPrefixes.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, prefix)
+	})
+
+	srv.HandleFunc("GET "+armBase+"/publicIPPrefixes", func(w http.ResponseWriter, r *http.Request) {
+		prefixPath := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPPrefixes/",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+		items := azurePublicIPPrefixes.Filter(func(p PublicIPPrefix) bool { return strings.HasPrefix(p.ID, prefixPath) })
+		if items == nil {
+			items = []PublicIPPrefix{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
+	})
+
+	srv.HandleFunc("DELETE "+armBase+"/publicIPPrefixes/{publicIPPrefixName}", func(w http.ResponseWriter, r *http.Request) {
+		id := azurePublicIPPrefixID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "publicIPPrefixName"))
+		azurePublicIPPrefixes.Delete(id)
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func azurePublicIPPrefixID(sub, rg, name string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPPrefixes/%s", sub, rg, name)
+}
+
+func azurePublicIPPrefixCIDR(prefixLength int32, index int) string {
+	if prefixLength <= 0 || prefixLength > 32 {
+		prefixLength = 28
+	}
+	blockSize := 1
+	if prefixLength < 32 {
+		blockSize = 1 << (32 - prefixLength)
+	}
+	offset := (index * blockSize) % 256
+	return fmt.Sprintf("203.0.113.%d/%d", offset, prefixLength)
 }
 
 func registerLoadBalancers(srv *sim.Server) {
