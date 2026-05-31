@@ -2,6 +2,7 @@ package gcp_cli_test
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,6 +74,59 @@ func TestDNS_CreateAndListRecordSets(t *testing.T) {
 
 	// Cleanup
 	runCLI(t, gcloudCLI("dns", "managed-zones", "delete", "record-test-zone"))
+}
+
+func TestDNS_RecordSetTransactionAndUpdateCLI(t *testing.T) {
+	zone := "cli-change-zone"
+	recordName := "www.cli-change.example.com."
+	transactionFile := filepath.Join(tmpDir, "dns-change-transaction.yaml")
+
+	runCLI(t, gcloudCLI("dns", "managed-zones", "create", zone,
+		"--dns-name=cli-change.example.com.",
+		"--description=Change API test zone",
+		"--visibility=public",
+	))
+	t.Cleanup(func() {
+		_ = gcloudCLI("dns", "managed-zones", "delete", zone, "--quiet").Run()
+	})
+
+	runCLI(t, gcloudCLI("dns", "record-sets", "transaction", "start",
+		"--zone", zone,
+		"--transaction-file", transactionFile,
+		"--skip-soa-update",
+	))
+	runCLI(t, gcloudCLI("dns", "record-sets", "transaction", "add",
+		"203.0.113.20",
+		"--name", recordName,
+		"--ttl", "300",
+		"--type", "A",
+		"--zone", zone,
+		"--transaction-file", transactionFile,
+	))
+	runCLI(t, gcloudCLI("dns", "record-sets", "transaction", "execute",
+		"--zone", zone,
+		"--transaction-file", transactionFile,
+		"--format=json",
+	))
+
+	updateOut := runCLI(t, gcloudCLI("dns", "record-sets", "update", recordName,
+		"--zone", zone,
+		"--type", "A",
+		"--ttl", "600",
+		"--rrdatas", "203.0.113.21",
+		"--format=json",
+	))
+	var updated struct {
+		Name    string   `json:"name"`
+		Type    string   `json:"type"`
+		TTL     int      `json:"ttl"`
+		Rrdatas []string `json:"rrdatas"`
+	}
+	parseJSON(t, updateOut, &updated)
+	require.Equal(t, recordName, updated.Name)
+	require.Equal(t, "A", updated.Type)
+	require.Equal(t, 600, updated.TTL)
+	require.Equal(t, []string{"203.0.113.21"}, updated.Rrdatas)
 }
 
 func TestDNS_DeleteZone(t *testing.T) {

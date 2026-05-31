@@ -20,6 +20,7 @@ type RedisCache struct {
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location,omitempty"`
+	SKU        map[string]any    `json:"sku,omitempty"`
 	Properties map[string]any    `json:"properties,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 }
@@ -47,6 +48,7 @@ func registerCacheRedis(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Cache/Redis"
 
 	srv.HandleFunc("PUT "+armBase+"/{name}", handleRedisCacheCreate)
+	srv.HandleFunc("PATCH "+armBase+"/{name}", handleRedisCachePatch)
 	srv.HandleFunc("GET "+armBase+"/{name}", handleRedisCacheGet)
 	srv.HandleFunc("DELETE "+armBase+"/{name}", handleRedisCacheDelete)
 	srv.HandleFunc("GET "+armBase, handleRedisCacheListByRG)
@@ -176,6 +178,7 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		Name:     name,
 		Type:     "Microsoft.Cache/Redis",
 		Location: req.Location,
+		SKU:      req.SKU,
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState": "Succeeded",
@@ -193,6 +196,45 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		cache.Properties["provisioningState"] = "Succeeded"
 	}
 	redisCaches.Put(id, cache)
+	sim.WriteJSON(w, http.StatusOK, cache)
+}
+
+func handleRedisCachePatch(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	id := redisCacheID(sub, rg, name)
+	if _, ok := redisCaches.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"The Resource 'Microsoft.Cache/Redis/%s' under resource group '%s' was not found.", name, rg)
+		return
+	}
+	var req RedisCache
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	redisCaches.Update(id, func(cache *RedisCache) {
+		if req.Location != "" {
+			cache.Location = req.Location
+		}
+		if req.SKU != nil {
+			cache.SKU = req.SKU
+		}
+		if req.Tags != nil {
+			cache.Tags = req.Tags
+		}
+		if req.Properties != nil {
+			if cache.Properties == nil {
+				cache.Properties = map[string]any{}
+			}
+			for k, v := range req.Properties {
+				cache.Properties[k] = v
+			}
+			cache.Properties["provisioningState"] = "Succeeded"
+		}
+	})
+	cache, _ := redisCaches.Get(id)
 	sim.WriteJSON(w, http.StatusOK, cache)
 }
 

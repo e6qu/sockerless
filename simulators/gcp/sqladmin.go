@@ -93,6 +93,7 @@ var (
 	sqlDatabases  sim.Store[SQLDatabase]
 	sqlUsers      sim.Store[SQLUser]
 	sqlBackupRuns sim.Store[SQLBackupRun]
+	sqlOperations sim.Store[SQLOperation]
 )
 
 func registerCloudSQL(srv *sim.Server) {
@@ -100,25 +101,38 @@ func registerCloudSQL(srv *sim.Server) {
 	sqlDatabases = sim.MakeStore[SQLDatabase](srv.DB(), "sql_databases")
 	sqlUsers = sim.MakeStore[SQLUser](srv.DB(), "sql_users")
 	sqlBackupRuns = sim.MakeStore[SQLBackupRun](srv.DB(), "sql_backup_runs")
+	sqlOperations = sim.MakeStore[SQLOperation](srv.DB(), "sql_operations")
 
-	srv.HandleFunc("POST /v1/projects/{project}/instances", handleSQLInsertInstance)
-	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}", handleSQLGetInstance)
-	srv.HandleFunc("GET /v1/projects/{project}/instances", handleSQLListInstances)
-	srv.HandleFunc("PATCH /v1/projects/{project}/instances/{instance}", handleSQLPatchInstance)
-	srv.HandleFunc("DELETE /v1/projects/{project}/instances/{instance}", handleSQLDeleteInstance)
+	registerCloudSQLPrefix(srv, "/v1")
+	registerCloudSQLPrefix(srv, "/sql/v1beta4")
+}
 
-	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/databases", handleSQLInsertDatabase)
-	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/databases", handleSQLListDatabases)
-	srv.HandleFunc("DELETE /v1/projects/{project}/instances/{instance}/databases/{database}", handleSQLDeleteDatabase)
+func registerCloudSQLPrefix(srv *sim.Server, prefix string) {
+	srv.HandleFunc("POST "+prefix+"/projects/{project}/instances", handleSQLInsertInstance)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}", handleSQLGetInstance)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances", handleSQLListInstances)
+	srv.HandleFunc("PATCH "+prefix+"/projects/{project}/instances/{instance}", handleSQLPatchInstance)
+	srv.HandleFunc("DELETE "+prefix+"/projects/{project}/instances/{instance}", handleSQLDeleteInstance)
 
-	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/users", handleSQLInsertUser)
-	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/users", handleSQLListUsers)
+	srv.HandleFunc("POST "+prefix+"/projects/{project}/instances/{instance}/databases", handleSQLInsertDatabase)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/databases/{database}", handleSQLGetDatabase)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/databases", handleSQLListDatabases)
+	srv.HandleFunc("DELETE "+prefix+"/projects/{project}/instances/{instance}/databases/{database}", handleSQLDeleteDatabase)
 
-	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/backupRuns", handleSQLInsertBackupRun)
-	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/backupRuns", handleSQLListBackupRuns)
-	srv.HandleFunc("GET /v1/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLGetBackupRun)
-	srv.HandleFunc("DELETE /v1/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLDeleteBackupRun)
-	srv.HandleFunc("POST /v1/projects/{project}/instances/{instance}/clone", handleSQLCloneInstance)
+	srv.HandleFunc("POST "+prefix+"/projects/{project}/instances/{instance}/users", handleSQLInsertUser)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/users/{name}", handleSQLGetUser)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/users", handleSQLListUsers)
+	srv.HandleFunc("PUT "+prefix+"/projects/{project}/instances/{instance}/users", handleSQLUpdateUser)
+	srv.HandleFunc("DELETE "+prefix+"/projects/{project}/instances/{instance}/users", handleSQLDeleteUser)
+
+	srv.HandleFunc("POST "+prefix+"/projects/{project}/instances/{instance}/backupRuns", handleSQLInsertBackupRun)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/backupRuns", handleSQLListBackupRuns)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLGetBackupRun)
+	srv.HandleFunc("DELETE "+prefix+"/projects/{project}/instances/{instance}/backupRuns/{id}", handleSQLDeleteBackupRun)
+	srv.HandleFunc("POST "+prefix+"/projects/{project}/instances/{instance}/clone", handleSQLCloneInstance)
+
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/operations/{operation}", handleSQLGetOperation)
+	srv.HandleFunc("GET "+prefix+"/projects/{project}/operations", handleSQLListOperations)
 }
 
 func sqlBackupRunKey(project, instance, id string) string {
@@ -143,7 +157,7 @@ func handleSQLInsertBackupRun(w http.ResponseWriter, r *http.Request) {
 		StartTime:    now,
 		EndTime:      now,
 		Type:         "ON_DEMAND",
-		SelfLink:     gcpSelfLink(r, "/sql/v1/projects/"+project+"/instances/"+instance+"/backupRuns/"+id),
+		SelfLink:     gcpSelfLink(r, sqlAPIPrefix(r)+"/projects/"+project+"/instances/"+instance+"/backupRuns/"+id),
 	}
 	sqlBackupRuns.Put(sqlBackupRunKey(project, instance, id), br)
 	sim.WriteJSON(w, http.StatusOK, br)
@@ -224,25 +238,33 @@ func handleSQLCloneInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	cloned := src
 	cloned.Name = dest
-	cloned.SelfLink = gcpSelfLink(r, "/sql/v1/projects/"+project+"/instances/"+dest)
+	cloned.SelfLink = gcpSelfLink(r, sqlAPIPrefix(r)+"/projects/"+project+"/instances/"+dest)
 	sqlInstances.Put(sqlInstanceKey(project, dest), cloned)
-	now := nowTimestamp()
-	op := map[string]any{
-		"kind":          "sql#operation",
-		"operationType": "CLONE",
-		"status":        "DONE",
-		"name":          "clone-" + generateUUID(),
-		"targetProject": project,
-		"targetId":      dest,
-		"insertTime":    now,
-		"endTime":       now,
-		"selfLink":      gcpSelfLink(r, "/sql/v1/operations/clone-"+generateUUID()),
-	}
+	op := newSQLOperation(project, "CLONE", dest)
 	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func sqlInstanceKey(project, instance string) string {
 	return fmt.Sprintf("%s/%s", project, instance)
+}
+
+func sqlDatabaseKey(project, instance, database string) string {
+	return fmt.Sprintf("%s/%s/%s", project, instance, database)
+}
+
+func sqlUserKey(project, instance, host, name string) string {
+	return fmt.Sprintf("%s/%s/%s/%s", project, instance, host, name)
+}
+
+func sqlOperationKey(project, operation string) string {
+	return project + "/" + operation
+}
+
+func sqlAPIPrefix(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/sql/v1beta4/") {
+		return "/sql/v1beta4"
+	}
+	return "/v1"
 }
 
 // gcpSelfLink builds a fully-qualified selfLink rooted at the host
@@ -263,7 +285,7 @@ func gcpSelfLink(r *http.Request, path string) string {
 
 func newSQLOperation(project, opType, targetID string) SQLOperation {
 	now := nowTimestamp()
-	return SQLOperation{
+	op := SQLOperation{
 		Kind:          "sql#operation",
 		Name:          generateUUID(),
 		OperationType: opType,
@@ -273,6 +295,47 @@ func newSQLOperation(project, opType, targetID string) SQLOperation {
 		InsertTime:    now,
 		EndTime:       now,
 	}
+	if sqlOperations != nil {
+		sqlOperations.Put(sqlOperationKey(project, op.Name), op)
+	}
+	return op
+}
+
+func handleSQLGetOperation(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	name := sim.PathParam(r, "operation")
+	op, ok := sqlOperations.Get(sqlOperationKey(project, name))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSQLListOperations(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	var out []SQLOperation
+	for _, op := range sqlOperations.List() {
+		if op.TargetProject == project {
+			out = append(out, op)
+		}
+	}
+	if out == nil {
+		out = []SQLOperation{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "sql#operationsList", "items": out})
+}
+
+func firstSQLUser(project, instance, name, host string) (SQLUser, bool) {
+	if host != "" {
+		return sqlUsers.Get(sqlUserKey(project, instance, host, name))
+	}
+	for _, u := range sqlUsers.List() {
+		if u.Project == project && u.Instance == instance && u.Name == name {
+			return u, true
+		}
+	}
+	return SQLUser{}, false
 }
 
 func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +363,7 @@ func handleSQLInsertInstance(w http.ResponseWriter, r *http.Request) {
 		IpAddresses: []map[string]any{
 			{"type": "PRIMARY", "ipAddress": "10.0.0.1"},
 		},
-		SelfLink: gcpSelfLink(r, fmt.Sprintf("/v1/projects/%s/instances/%s", project, req.Name)),
+		SelfLink: gcpSelfLink(r, fmt.Sprintf("%s/projects/%s/instances/%s", sqlAPIPrefix(r), project, req.Name)),
 	}
 	sqlInstances.Put(sqlInstanceKey(project, req.Name), inst)
 	op := newSQLOperation(project, "CREATE", req.Name)
@@ -365,15 +428,14 @@ func handleSQLDeleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Cascade-clear databases + users.
-	prefix := fmt.Sprintf("%s/%s/", project, name)
 	for _, d := range sqlDatabases.List() {
-		if strings.HasPrefix(d.Instance, name) && d.Project == project {
-			sqlDatabases.Delete(prefix + d.Name)
+		if d.Instance == name && d.Project == project {
+			sqlDatabases.Delete(sqlDatabaseKey(project, name, d.Name))
 		}
 	}
 	for _, u := range sqlUsers.List() {
 		if u.Instance == name && u.Project == project {
-			sqlUsers.Delete(prefix + u.Name)
+			sqlUsers.Delete(sqlUserKey(project, name, u.Host, u.Name))
 		}
 	}
 	op := newSQLOperation(project, "DELETE", name)
@@ -401,11 +463,23 @@ func handleSQLInsertDatabase(w http.ResponseWriter, r *http.Request) {
 		Instance: instance,
 		Project:  project,
 		Charset:  defaultStr(req.Charset, "UTF8"),
-		SelfLink: gcpSelfLink(r, fmt.Sprintf("/v1/projects/%s/instances/%s/databases/%s", project, instance, req.Name)),
+		SelfLink: gcpSelfLink(r, fmt.Sprintf("%s/projects/%s/instances/%s/databases/%s", sqlAPIPrefix(r), project, instance, req.Name)),
 	}
-	sqlDatabases.Put(fmt.Sprintf("%s/%s/%s", project, instance, req.Name), db)
+	sqlDatabases.Put(sqlDatabaseKey(project, instance, req.Name), db)
 	op := newSQLOperation(project, "CREATE_DATABASE", req.Name)
 	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSQLGetDatabase(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	name := sim.PathParam(r, "database")
+	db, ok := sqlDatabases.Get(sqlDatabaseKey(project, instance, name))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "database not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, db)
 }
 
 func handleSQLListDatabases(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +501,7 @@ func handleSQLDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	instance := sim.PathParam(r, "instance")
 	name := sim.PathParam(r, "database")
-	key := fmt.Sprintf("%s/%s/%s", project, instance, name)
+	key := sqlDatabaseKey(project, instance, name)
 	if !sqlDatabases.Delete(key) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "database not found: %s", name)
 		return
@@ -459,9 +533,22 @@ func handleSQLInsertUser(w http.ResponseWriter, r *http.Request) {
 		Host:     req.Host,
 		Type:     defaultStr(req.Type, "BUILT_IN"),
 	}
-	sqlUsers.Put(fmt.Sprintf("%s/%s/%s", project, instance, req.Name), u)
+	sqlUsers.Put(sqlUserKey(project, instance, req.Host, req.Name), u)
 	op := newSQLOperation(project, "CREATE_USER", req.Name)
 	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSQLGetUser(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	name := sim.PathParam(r, "name")
+	host := r.URL.Query().Get("host")
+	u, ok := firstSQLUser(project, instance, name, host)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "user not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, u)
 }
 
 func handleSQLListUsers(w http.ResponseWriter, r *http.Request) {
@@ -477,4 +564,54 @@ func handleSQLListUsers(w http.ResponseWriter, r *http.Request) {
 		out = []SQLUser{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "sql#usersList", "items": out})
+}
+
+func handleSQLUpdateUser(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	name := r.URL.Query().Get("name")
+	host := r.URL.Query().Get("host")
+	if name == "" {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "name query parameter is required")
+		return
+	}
+	current, ok := firstSQLUser(project, instance, name, host)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "user not found: %s", name)
+		return
+	}
+	var req SQLUser
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
+	if req.Host != "" && req.Host != current.Host {
+		sqlUsers.Delete(sqlUserKey(project, instance, current.Host, current.Name))
+		current.Host = req.Host
+	}
+	if req.Type != "" {
+		current.Type = req.Type
+	}
+	sqlUsers.Put(sqlUserKey(project, instance, current.Host, current.Name), current)
+	op := newSQLOperation(project, "UPDATE_USER", name)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSQLDeleteUser(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	instance := sim.PathParam(r, "instance")
+	name := r.URL.Query().Get("name")
+	host := r.URL.Query().Get("host")
+	if name == "" {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "name query parameter is required")
+		return
+	}
+	u, ok := firstSQLUser(project, instance, name, host)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "user not found: %s", name)
+		return
+	}
+	sqlUsers.Delete(sqlUserKey(project, instance, u.Host, u.Name))
+	op := newSQLOperation(project, "DELETE_USER", name)
+	sim.WriteJSON(w, http.StatusOK, op)
 }

@@ -31,6 +31,7 @@ import (
 // token endpoint + JWKS so azurerm can bootstrap its cloud config + auth
 // without ever reaching real Azure):
 //   - Microsoft.ContainerRegistry/registries
+//   - Microsoft.Cache/Redis + firewallRules
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
 //   - Microsoft.Network/publicIPAddresses + publicIPPrefixes + natGateways +
 //     subnet NAT associations + loadBalancers
@@ -105,6 +106,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmACR := outputs.must(t, "azrm_acr_id")
 	require.Contains(t, azrmACR, "/providers/Microsoft.ContainerRegistry/registries/tfazrmacr",
 		"azurerm ACR id must include canonical ARM path; got %s", azrmACR)
+
+	azrmRedisHost := outputs.must(t, "azrm_redis_cache_hostname")
+	require.Contains(t, azrmRedisHost, "tfazrmredis.redis.cache.",
+		"azurerm Redis hostname must include Azure Cache for Redis host shape; got %s", azrmRedisHost)
+
+	azrmRedisFW := outputs.must(t, "azrm_redis_firewall_rule_id")
+	require.Contains(t, strings.ToLower(azrmRedisFW), "/providers/microsoft.cache/redis/tfazrmredis/firewallrules/allow_ci",
+		"azurerm Redis firewall rule id must include canonical ARM path; got %s", azrmRedisFW)
 
 	azrmUAI := outputs.must(t, "azrm_uai_id")
 	require.Contains(t, azrmUAI, "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/tf-azrm-uai",

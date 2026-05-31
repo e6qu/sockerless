@@ -15,6 +15,7 @@ Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token en
 - `azurerm_user_assigned_identity`
 - `azurerm_private_dns_zone`
 - `azurerm_eventgrid_topic`
+- `azurerm_redis_cache` + `azurerm_redis_firewall_rule`
 - `azurerm_log_analytics_workspace`
 - `azurerm_application_insights`
 - `azurerm_container_app_environment` + `azurerm_container_app` + `azurerm_container_app_job` (the ACA runner backend host + workload + job primitives)

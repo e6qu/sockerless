@@ -36,6 +36,8 @@ provider "google" {
   service_usage_custom_endpoint         = "http://localhost:4567/"
   iam_custom_endpoint                   = "http://localhost:4567/"
   vpc_access_custom_endpoint            = "http://localhost:4567/"
+  redis_custom_endpoint                 = "http://localhost:4567/v1/"
+  sql_custom_endpoint                   = "http://localhost:4567/sql/v1beta4/"
 }
 ```
 
@@ -67,6 +69,34 @@ resource "google_dns_record_set" "a" {
   type         = "A"
   ttl          = 300
   rrdatas      = ["10.0.0.1"]
+}
+
+resource "google_redis_instance" "cache" {
+  name           = "my-redis"
+  tier           = "BASIC"
+  memory_size_gb = 1
+  region         = "us-central1"
+}
+
+resource "google_sql_database_instance" "db" {
+  name             = "my-sql"
+  database_version = "POSTGRES_15"
+  region           = "us-central1"
+
+  settings {
+    tier = "db-custom-1-3840"
+  }
+}
+
+resource "google_sql_database" "app" {
+  name     = "appdb"
+  instance = google_sql_database_instance.db.name
+}
+
+resource "google_sql_user" "app" {
+  name     = "appuser"
+  instance = google_sql_database_instance.db.name
+  password = "local-password"
 }
 
 resource "google_service_account" "main" {
@@ -118,6 +148,8 @@ Then use `var.endpoint` as the base for custom endpoint URLs in the provider blo
 ```hcl
 compute_custom_endpoint = "${var.endpoint}/compute/v1/"
 dns_custom_endpoint     = "${var.endpoint}/dns/v1/"
+redis_custom_endpoint   = "${var.endpoint}/v1/"
+sql_custom_endpoint     = "${var.endpoint}/sql/v1beta4/"
 ```
 
 ## Supported resources
@@ -126,6 +158,8 @@ dns_custom_endpoint     = "${var.endpoint}/dns/v1/"
 |----------|-----------|
 | Compute | `google_compute_network`, `google_compute_subnetwork` |
 | DNS | `google_dns_managed_zone`, `google_dns_record_set` |
+| Memorystore Redis | `google_redis_instance` |
+| Cloud SQL | `google_sql_database_instance`, `google_sql_database`, `google_sql_user` |
 | IAM | `google_service_account`, `google_project_iam_member` |
 | Cloud Run | `google_cloud_run_v2_job` |
 | Cloud Functions | `google_cloudfunctions2_function` |

@@ -13,12 +13,12 @@ Surface registered in `simulators/gcp/memorystore_redis.go` (and related files g
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/locations/{location}/instances` | ✓ `simulators/gcp/memorystore_redis.go:47::handleMSRedisCreate` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:48::handleMSRedisGet` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/instances` | ✓ `simulators/gcp/memorystore_redis.go:49::handleMSRedisList` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PATCH /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:50::handleMSRedisPatch` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:51::handleMSRedisDelete` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/locations/{location}/instances/{idAction}` | ✓ `simulators/gcp/memorystore_redis.go:61::handleMSRedisAction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/instances` | ✓ `simulators/gcp/memorystore_redis.go:47::handleMSRedisCreate` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:48::handleMSRedisGet` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/instances` | ✓ `simulators/gcp/memorystore_redis.go:49::handleMSRedisList` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:50::handleMSRedisPatch` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/locations/{location}/instances/{id}` | ✓ `simulators/gcp/memorystore_redis.go:51::handleMSRedisDelete` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/instances/{idAction}` | ✓ `simulators/gcp/memorystore_redis.go:61::handleMSRedisAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

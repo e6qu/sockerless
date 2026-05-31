@@ -112,6 +112,23 @@ resource "azurestack_dns_zone" "main" {
   name                = "example.local"
   resource_group_name = azurestack_resource_group.main.name
 }
+
+resource "azurerm_redis_cache" "cache" {
+  name                = "myredis"
+  location            = "eastus"
+  resource_group_name = "my-rg"
+  capacity            = 1
+  family              = "C"
+  sku_name            = "Basic"
+}
+
+resource "azurerm_redis_firewall_rule" "ci" {
+  name                = "allow-ci"
+  redis_cache_name    = azurerm_redis_cache.cache.name
+  resource_group_name = "my-rg"
+  start_ip            = "203.0.113.10"
+  end_ip              = "203.0.113.10"
+}
 ```
 
 ## Running
@@ -143,8 +160,9 @@ The simulator supports the Azure API operations that these Terraform resources u
 | Networking | `azurestack_virtual_network`, `azurestack_subnet`, `azurestack_network_security_group` |
 | DNS | `azurestack_dns_zone` |
 | Storage | `azurestack_storage_account` |
+| Azure Cache for Redis | `azurerm_redis_cache`, `azurerm_redis_firewall_rule` |
 
-The automated terraform tests cover both Azure Stack-compatible ARM resources and AzureRM resources that sockerless depends on: ACA managed environments, ACA Jobs/Apps, ACR, managed identity, Private DNS, Log Analytics, Application Insights, App Service plans, Linux Function Apps, and Storage Accounts.
+The automated terraform tests cover both Azure Stack-compatible ARM resources and AzureRM resources that sockerless depends on: ACA managed environments, ACA Jobs/Apps, ACR, Azure Cache for Redis, managed identity, Private DNS, Log Analytics, Application Insights, App Service plans, Linux Function Apps, and Storage Accounts.
 
 ## Notes
 

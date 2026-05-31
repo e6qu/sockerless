@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 | | |
 |---|---|
 | Active branch | `main` - no issue-driven implementation branch active. |
-| In-flight | None. The AWS client-surface audit and Route 53 record-list ordering follow-up were completed and merged. |
-| Last merged | AWS Route 53 `ListResourceRecordSets` fidelity plus AWS CloudWatch/EFS Terraform and KMS/SecretsManager/SSM CLI coverage for BUG-1238..BUG-1241 (2026-05-31). |
+| In-flight | None. The Redis / Cloud SQL / Cloud DNS client-surface audit was completed and merged. |
+| Last merged | Azure Redis, GCP Memorystore Redis, GCP Cloud SQL, and GCP Cloud DNS Changes client-surface coverage for BUG-1242..BUG-1245 / issue #298 (2026-05-31). |
 | Standing merge auth | **None.** User merges every PR. |
 | Cells | 8/8 runner-integration cells GREEN since 2026-05-07. |
-| Bugs | 1241 filed · 1241 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
+| Bugs | 1245 filed · 1245 fixed · 2 open · 2 false positives. Open: BUG-1075, BUG-1104. |
 | Live infra | None up. |
 
 ## Invariants (carry across compactions / fresh sessions)
@@ -52,6 +52,7 @@ Roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md](DO_NEXT.md) · bugs [BUGS.md](
 
 | PR | Phase | Headline |
 |---|---|---|
+| BUG-1104 audit + issue #298 | Redis, Cloud SQL, and Cloud DNS client-surface coverage | Closed BUG-1242..BUG-1245/#298. Azure Cache for Redis now has Azure CLI and azurerm Terraform coverage, GCP Memorystore Redis and Cloud SQL now have gcloud and terraform-provider-google coverage, and GCP Cloud DNS now implements Changes.Create/Get/List plus ResourceRecordSets.Get/Patch with SDK, gcloud transaction/update, and Terraform `google_dns_record_set` coverage. |
 | BUG-1104 audit + issue #296 | AWS Route 53 record-list fidelity and AWS client-surface coverage | Closed BUG-1238/#296 and BUG-1239..BUG-1241. Route 53 `ListResourceRecordSets` now sorts by Route 53's reversed-label DNS-name order, then type and set identifier, and honors `maxitems` with continuation cursors. AWS CloudWatch Logs and EFS now have direct terraform-provider-aws coverage, and AWS KMS, Secrets Manager, and SSM Parameter Store now have direct AWS CLI coverage. |
 | PR #295 CI follow-up | AWS Lambda SDK version-list assertion | Closed BUG-1237. The AWS Lambda SDK subresource test now matches the public `ListVersionsByFunction` shape by expecting `$LATEST` plus published versions, preserving the Lambda simulator fidelity added by BUG-1236. |
 | BUG-1104 audit | AWS Lambda Terraform client-surface coverage | Closed BUG-1236. AWS Lambda now has direct terraform-provider-aws coverage through `aws_lambda_function`, `aws_lambda_alias`, `aws_lambda_permission`, `aws_lambda_function_url`, and `aws_lambda_invocation`. The simulator returns provider-required Lambda lifecycle/read fields, honors create-time `Publish`, includes `$LATEST` in `ListVersionsByFunction`, and the Terraform invocation data source runs a real local Runtime API handler image through Lambda Invoke. |

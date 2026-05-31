@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/http"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -36,9 +39,32 @@ type ResourceRecordSet struct {
 	Rrdatas []string `json:"rrdatas"`
 }
 
+type storedResourceRecordSet struct {
+	Project string `json:"project"`
+	Zone    string `json:"zone"`
+	Record  ResourceRecordSet
+}
+
+type DNSChange struct {
+	Additions []ResourceRecordSet `json:"additions,omitempty"`
+	Deletions []ResourceRecordSet `json:"deletions,omitempty"`
+	StartTime string              `json:"startTime,omitempty"`
+	ID        string              `json:"id,omitempty"`
+	Status    string              `json:"status,omitempty"`
+	IsServing bool                `json:"isServing,omitempty"`
+	Kind      string              `json:"kind,omitempty"`
+}
+
+type storedDNSChange struct {
+	Project string    `json:"project"`
+	Zone    string    `json:"zone"`
+	Change  DNSChange `json:"change"`
+}
+
 func registerCloudDNS(srv *sim.Server) {
 	zones := sim.MakeStore[ManagedZone](srv.DB(), "dns_zones")
-	recordSets := sim.MakeStore[ResourceRecordSet](srv.DB(), "dns_record_sets")
+	recordSets := sim.MakeStore[storedResourceRecordSet](srv.DB(), "dns_record_sets")
+	changes := sim.MakeStore[storedDNSChange](srv.DB(), "dns_changes")
 
 	// Create managed zone
 	srv.HandleFunc("POST /dns/v1/projects/{project}/managedZones", func(w http.ResponseWriter, r *http.Request) {
@@ -138,13 +164,10 @@ func registerCloudDNS(srv *sim.Server) {
 		zones.Delete(key)
 
 		// Delete associated record sets for this zone.
-		// Record set keys are formatted as "project/zone:name:type".
-		// We try deleting every record set with a key prefixed by this zone.
-		allRRS := recordSets.List()
-		for _, rs := range allRRS {
-			rsKey := fmt.Sprintf("%s:%s:%s", key, rs.Name, rs.Type)
-			// This will be a no-op if the key doesn't exist (wrong zone)
-			recordSets.Delete(rsKey)
+		for _, stored := range recordSets.List() {
+			if stored.Project == project && stored.Zone == zoneName {
+				recordSets.Delete(dnsRecordSetKey(project, zoneName, stored.Record.Name, stored.Record.Type))
+			}
 		}
 
 		// Drop the Docker network backing the private zone.
@@ -166,15 +189,10 @@ func registerCloudDNS(srv *sim.Server) {
 			return
 		}
 
-		prefix := zoneKey + ":"
-
-		// Filter record sets belonging to this zone by reconstructing the key
 		var filtered []ResourceRecordSet
-		all := recordSets.List()
-		for _, rs := range all {
-			rsKey := zoneKey + ":" + rs.Name + ":" + rs.Type
-			if strings.HasPrefix(rsKey, prefix) {
-				filtered = append(filtered, rs)
+		for _, stored := range recordSets.List() {
+			if stored.Project == project && stored.Zone == zoneName {
+				filtered = append(filtered, stored.Record)
 			}
 		}
 		if filtered == nil {
@@ -209,13 +227,13 @@ func registerCloudDNS(srv *sim.Server) {
 			return
 		}
 
-		key := fmt.Sprintf("%s:%s:%s", zoneKey, rs.Name, rs.Type)
+		key := dnsRecordSetKey(project, zoneName, rs.Name, rs.Type)
 		if _, exists := recordSets.Get(key); exists {
 			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "record set %s/%s already exists", rs.Name, rs.Type)
 			return
 		}
 
-		recordSets.Put(key, rs)
+		recordSets.Put(key, storedResourceRecordSet{Project: project, Zone: zoneName, Record: rs})
 
 		// For A records on a private zone, connect the container
 		// identified by Rrdatas[0] (its bridge-network IP) to the
@@ -232,16 +250,33 @@ func registerCloudDNS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, rs)
 	})
 
-	// Delete record set
+	// Get record set
+	srv.HandleFunc("GET /dns/v1/projects/{project}/managedZones/{zone}/rrsets/{name}/{type}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zoneName := sim.PathParam(r, "zone")
+		rrName := sim.PathParam(r, "name")
+		rrType := sim.PathParam(r, "type")
+		if _, ok := zones.Get(project + "/" + zoneName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
+			return
+		}
+		stored, ok := recordSets.Get(dnsRecordSetKey(project, zoneName, rrName, rrType))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "record set %s/%s not found", rrName, rrType)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, stored.Record)
+	})
+
 	srv.HandleFunc("DELETE /dns/v1/projects/{project}/managedZones/{zone}/rrsets/{name}/{type}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		zoneName := sim.PathParam(r, "zone")
 		rrName := sim.PathParam(r, "name")
 		rrType := sim.PathParam(r, "type")
 		zoneKey := project + "/" + zoneName
-		key := fmt.Sprintf("%s:%s:%s", zoneKey, rrName, rrType)
+		key := dnsRecordSetKey(project, zoneName, rrName, rrType)
 
-		rs, rsOk := recordSets.Get(key)
+		stored, rsOk := recordSets.Get(key)
 		if !recordSets.Delete(key) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "record set %s/%s not found", rrName, rrType)
 			return
@@ -250,9 +285,9 @@ func registerCloudDNS(srv *sim.Server) {
 		// Disconnect the container that was connected when the
 		// record was created. Best-effort — container shutdown
 		// already cleans up Docker-side network memberships.
-		if rsOk && rs.Type == "A" && len(rs.Rrdatas) > 0 {
+		if rsOk && stored.Record.Type == "A" && len(stored.Record.Rrdatas) > 0 {
 			if zone, ok := zones.Get(zoneKey); ok && zone.DockerNetworkName != "" {
-				if containerName := sim.FindContainerByIP(rs.Rrdatas[0]); containerName != "" {
+				if containerName := sim.FindContainerByIP(stored.Record.Rrdatas[0]); containerName != "" {
 					_ = sim.DisconnectContainerFromNetwork(containerName, zone.DockerNetworkName)
 				}
 			}
@@ -260,6 +295,208 @@ func registerCloudDNS(srv *sim.Server) {
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
+
+	srv.HandleFunc("PATCH /dns/v1/projects/{project}/managedZones/{zone}/rrsets/{name}/{type}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zoneName := sim.PathParam(r, "zone")
+		rrName := sim.PathParam(r, "name")
+		rrType := sim.PathParam(r, "type")
+		zoneKey := project + "/" + zoneName
+		if _, ok := zones.Get(zoneKey); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
+			return
+		}
+
+		var patch ResourceRecordSet
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		key := dnsRecordSetKey(project, zoneName, rrName, rrType)
+		stored, ok := recordSets.Get(key)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "record set %s/%s not found", rrName, rrType)
+			return
+		}
+		updated := stored.Record
+		if patch.Name != "" {
+			updated.Name = patch.Name
+		}
+		if patch.Type != "" {
+			updated.Type = patch.Type
+		}
+		if patch.TTL != 0 {
+			updated.TTL = patch.TTL
+		}
+		if patch.Rrdatas != nil {
+			updated.Rrdatas = patch.Rrdatas
+		}
+		recordSets.Delete(key)
+		recordSets.Put(dnsRecordSetKey(project, zoneName, updated.Name, updated.Type),
+			storedResourceRecordSet{Project: project, Zone: zoneName, Record: updated})
+		sim.WriteJSON(w, http.StatusOK, updated)
+	})
+
+	srv.HandleFunc("POST /dns/v1/projects/{project}/managedZones/{zone}/changes", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zoneName := sim.PathParam(r, "zone")
+		zoneKey := project + "/" + zoneName
+		zone, ok := zones.Get(zoneKey)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
+			return
+		}
+
+		var change DNSChange
+		if err := sim.ReadJSON(r, &change); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		for _, deletion := range change.Deletions {
+			key := dnsRecordSetKey(project, zoneName, deletion.Name, deletion.Type)
+			stored, ok := recordSets.Get(key)
+			if !ok {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "record set %s/%s not found", deletion.Name, deletion.Type)
+				return
+			}
+			if !dnsRecordSetsEqual(stored.Record, deletion) {
+				sim.GCPErrorf(w, http.StatusPreconditionFailed, "PRECONDITION_FAILED",
+					"record set %s/%s does not match existing data", deletion.Name, deletion.Type)
+				return
+			}
+		}
+		for _, addition := range change.Additions {
+			if addition.Name == "" || addition.Type == "" {
+				sim.GCPError(w, http.StatusBadRequest, "name and type are required", "INVALID_ARGUMENT")
+				return
+			}
+			if _, exists := recordSets.Get(dnsRecordSetKey(project, zoneName, addition.Name, addition.Type)); exists &&
+				!dnsChangeDeletesRecord(change, addition) {
+				sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "record set %s/%s already exists", addition.Name, addition.Type)
+				return
+			}
+		}
+
+		for _, deletion := range change.Deletions {
+			key := dnsRecordSetKey(project, zoneName, deletion.Name, deletion.Type)
+			recordSets.Delete(key)
+			disconnectDNSRecordFromZone(zone, deletion)
+		}
+		for _, addition := range change.Additions {
+			recordSets.Put(dnsRecordSetKey(project, zoneName, addition.Name, addition.Type),
+				storedResourceRecordSet{Project: project, Zone: zoneName, Record: addition})
+			connectDNSRecordToZone(zone, addition)
+		}
+
+		change.ID = nextDNSChangeID(changes, project, zoneName)
+		change.StartTime = nowTimestamp()
+		change.Status = "done"
+		change.IsServing = true
+		change.Kind = "dns#change"
+		changes.Put(dnsChangeKey(project, zoneName, change.ID),
+			storedDNSChange{Project: project, Zone: zoneName, Change: change})
+		sim.WriteJSON(w, http.StatusOK, change)
+	})
+
+	srv.HandleFunc("GET /dns/v1/projects/{project}/managedZones/{zone}/changes/{change}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zoneName := sim.PathParam(r, "zone")
+		id := sim.PathParam(r, "change")
+		if _, ok := zones.Get(project + "/" + zoneName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
+			return
+		}
+		stored, ok := changes.Get(dnsChangeKey(project, zoneName, id))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "change %q not found", id)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, stored.Change)
+	})
+
+	srv.HandleFunc("GET /dns/v1/projects/{project}/managedZones/{zone}/changes", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zoneName := sim.PathParam(r, "zone")
+		if _, ok := zones.Get(project + "/" + zoneName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
+			return
+		}
+		var out []DNSChange
+		for _, stored := range changes.List() {
+			if stored.Project == project && stored.Zone == zoneName {
+				out = append(out, stored.Change)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool {
+			left, _ := strconv.Atoi(out[i].ID)
+			right, _ := strconv.Atoi(out[j].ID)
+			return left < right
+		})
+		if out == nil {
+			out = []DNSChange{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":    "dns#changesListResponse",
+			"changes": out,
+		})
+	})
+}
+
+func dnsRecordSetKey(project, zone, name, typ string) string {
+	return fmt.Sprintf("%s/%s:%s:%s", project, zone, name, typ)
+}
+
+func dnsChangeKey(project, zone, id string) string {
+	return fmt.Sprintf("%s/%s:%s", project, zone, id)
+}
+
+func nextDNSChangeID(changes sim.Store[storedDNSChange], project, zone string) string {
+	maxID := 0
+	for _, stored := range changes.List() {
+		if stored.Project != project || stored.Zone != zone {
+			continue
+		}
+		id, err := strconv.Atoi(stored.Change.ID)
+		if err == nil && id > maxID {
+			maxID = id
+		}
+	}
+	return strconv.Itoa(maxID + 1)
+}
+
+func dnsChangeDeletesRecord(change DNSChange, addition ResourceRecordSet) bool {
+	for _, deletion := range change.Deletions {
+		if deletion.Name == addition.Name && deletion.Type == addition.Type {
+			return true
+		}
+	}
+	return false
+}
+
+func dnsRecordSetsEqual(a, b ResourceRecordSet) bool {
+	return a.Name == b.Name &&
+		a.Type == b.Type &&
+		a.TTL == b.TTL &&
+		reflect.DeepEqual(a.Rrdatas, b.Rrdatas)
+}
+
+func connectDNSRecordToZone(zone ManagedZone, rs ResourceRecordSet) {
+	if zone.DockerNetworkName == "" || rs.Type != "A" || len(rs.Rrdatas) == 0 {
+		return
+	}
+	if containerName := sim.FindContainerByIP(rs.Rrdatas[0]); containerName != "" {
+		alias := shortHostnameFromDNS(rs.Name, zone.DNSName)
+		_ = sim.ConnectContainerToNetwork(containerName, zone.DockerNetworkName, []string{alias})
+	}
+}
+
+func disconnectDNSRecordFromZone(zone ManagedZone, rs ResourceRecordSet) {
+	if zone.DockerNetworkName == "" || rs.Type != "A" || len(rs.Rrdatas) == 0 {
+		return
+	}
+	if containerName := sim.FindContainerByIP(rs.Rrdatas[0]); containerName != "" {
+		_ = sim.DisconnectContainerFromNetwork(containerName, zone.DockerNetworkName)
+	}
 }
 
 // shortHostnameFromDNS strips the zone's DNS suffix from a record name
