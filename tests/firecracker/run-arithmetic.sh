@@ -42,7 +42,10 @@ cleanup() {
 trap cleanup EXIT
 
 [ "$(uname -s)" = "Linux" ] || fail "Firecracker CI test requires Linux"
-[ -r /dev/kvm ] && [ -w /dev/kvm ] || fail "Firecracker CI test requires read/write access to /dev/kvm"
+[ -e /dev/kvm ] || fail "Firecracker CI test requires /dev/kvm"
+if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+  sudo test -r /dev/kvm && sudo test -w /dev/kvm || fail "Firecracker CI test requires read/write access to /dev/kvm"
+fi
 
 need_cmd curl
 need_cmd firecracker
