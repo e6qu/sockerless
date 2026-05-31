@@ -61,6 +61,25 @@ func CleanPathMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// AzureARMAPIVersionMiddleware enforces the ARM control-plane api-version
+// contract. Azure data planes and metadata endpoints have their own versioning
+// rules, so only ARM resource paths are checked here.
+func AzureARMAPIVersionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAzureARMPath(r.URL.Path) && r.URL.Query().Get("api-version") == "" {
+			sim.AzureError(w, "InvalidApiVersionParameter",
+				"The api-version query parameter (?api-version=) is required for all requests.",
+				http.StatusBadRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isAzureARMPath(path string) bool {
+	return strings.HasPrefix(path, "/subscriptions/") || strings.HasPrefix(path, "/providers/")
+}
+
 // AzureAuthMiddleware intercepts OAuth2 and OpenID discovery requests needed
 // by the Azure SDK for authentication. This is implemented as middleware
 // rather than registered routes to avoid conflicts with ACR's /v2/{path...}.

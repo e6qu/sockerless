@@ -84,6 +84,10 @@ func TestStoreDelete(t *testing.T) {
 func TestStoreList(t *testing.T) {
 	for name, store := range makeStores(t) {
 		t.Run(name, func(t *testing.T) {
+			empty := store.List()
+			if empty == nil {
+				t.Fatal("expected empty List to return a non-nil slice")
+			}
 			store.Put("x", testItem{Name: "x"})
 			store.Put("y", testItem{Name: "y"})
 			items := store.List()
@@ -97,6 +101,10 @@ func TestStoreList(t *testing.T) {
 func TestStoreFilter(t *testing.T) {
 	for name, store := range makeStores(t) {
 		t.Run(name, func(t *testing.T) {
+			empty := store.Filter(func(item testItem) bool { return true })
+			if empty == nil {
+				t.Fatal("expected empty Filter to return a non-nil slice")
+			}
 			store.Put("a", testItem{Name: "a", Value: 10})
 			store.Put("b", testItem{Name: "b", Value: 20})
 			store.Put("c", testItem{Name: "c", Value: 30})

@@ -69,6 +69,16 @@ The missing Amplify artifact and access-log operations were added on the AWS SDK
 
 The fixes shipped with real AWS SDK and AWS CLI coverage. Terraform coverage was not added because the official Terraform AWS provider does not expose these Amplify job artifact or access-log operations.
 
+## 2026-05-31 - Azure ARM and Private DNS Fidelity Sweep
+
+Issues #313, #314, and #340 were fixed in one Azure simulator PR.
+
+Azure ARM control-plane paths now enforce the public `api-version` query parameter contract and return `InvalidApiVersionParameter` when it is absent. The unused `AzureRouter` validator was removed so the live middleware is the only ARM validation path.
+
+Store-backed Azure ARM list responses now serialize empty lists as `{"value":[]}` instead of `{"value":null}`. This fixes the common ARM `*ListResult` shape at the state-store boundary instead of patching one handler at a time.
+
+Azure Private DNS now implements `GET .../privateDnsZones` for list-by-resource-group, matching `armprivatedns.PrivateZonesClient.NewListByResourceGroupPager`. Private DNS virtual network links now implement `GET .../privateDnsZones/{zoneName}/virtualNetworkLinks`, matching the public list-by-zone route. Both route families are covered by real Azure SDK and Azure CLI tests.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -111,7 +121,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered during the latest audit pass.
 - BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
-- BUG-1264: Azure API-shape issues #312-#315 and #326-#329 remain open.
+- BUG-1264: Azure API-shape issues #312, #315, and #326-#329 remain open.
 - BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. It needs staged architecture work before Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs.
 
 ## Continuity Rules

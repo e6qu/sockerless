@@ -70,10 +70,10 @@ func (s *SQLiteStore[T]) Delete(id string) bool {
 func (s *SQLiteStore[T]) List() []T {
 	rows, err := s.db.Query(fmt.Sprintf(`SELECT value FROM %q`, s.table))
 	if err != nil {
-		return nil
+		return []T{}
 	}
 	defer func() { _ = rows.Close() }()
-	var result []T
+	result := make([]T, 0)
 	for rows.Next() {
 		var data []byte
 		if err := rows.Scan(&data); err != nil {
@@ -90,7 +90,7 @@ func (s *SQLiteStore[T]) List() []T {
 
 func (s *SQLiteStore[T]) Filter(fn func(T) bool) []T {
 	all := s.List()
-	var result []T
+	result := make([]T, 0)
 	for _, v := range all {
 		if fn(v) {
 			result = append(result, v)

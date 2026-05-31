@@ -26,6 +26,13 @@ func armReq(t *testing.T, method, path string, body string) *http.Response {
 	if body != "" {
 		br = bytes.NewReader([]byte(body))
 	}
+	if !strings.Contains(path, "api-version=") {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		path += sep + "api-version=2025-01-01"
+	}
 	req, err := http.NewRequest(method, baseURL+path, br)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")

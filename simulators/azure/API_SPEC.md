@@ -86,7 +86,7 @@ All ARM APIs use this standard error envelope:
 | `Conflict` | 409 | Resource already exists (with If-None-Match: *) |
 | `InvalidRequestContent` | 400 | Malformed request body |
 | `MissingSubscription` | 400 | Missing subscription in path |
-| `InvalidApiVersionParameter` | 400 | Unknown api-version value |
+| `InvalidApiVersionParameter` | 400 | Missing or unknown api-version value |
 | `OperationNotAllowed` | 409 | Operation conflicts with current state |
 | `ResourceProviderNotRegistered` | 409 | Provider not registered for subscription |
 
@@ -1411,7 +1411,15 @@ PUT https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{
 GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/privateDnsZones/{privateZoneName}/virtualNetworkLinks/{virtualNetworkLinkName}?api-version=2018-09-01
 ```
 
-### 6.12 Virtual Network Links - Delete
+### 6.12 Virtual Network Links - List
+
+```
+GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/privateDnsZones/{privateZoneName}/virtualNetworkLinks?api-version=2018-09-01
+```
+
+Returns `{"value":[...]}` with an empty array when no virtual network links exist for the zone.
+
+### 6.13 Virtual Network Links - Delete
 
 ```
 DELETE https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/privateDnsZones/{privateZoneName}/virtualNetworkLinks/{virtualNetworkLinkName}?api-version=2018-09-01

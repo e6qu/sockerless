@@ -241,10 +241,10 @@ verifiers can validate requests signed with the simulator-emitted account key.
 
 | Service | Endpoints |
 |---|---|
-| **Private DNS Zones** | CRUD (auto-creates SOA record) |
-| **Public DNS Zones** | `Microsoft.Network/dnsZones` zone and record-set CRUD |
+| **Private DNS Zones** | `Microsoft.Network/privateDnsZones` zone CRUD, list-by-resource-group, and auto-created SOA record |
+| **Public DNS Zones** | `Microsoft.Network/dnsZones` zone CRUD, list-by-resource-group, and record-set CRUD |
 | **A Records** | CRUD under zones |
-| **Virtual Network Links** | CRUD |
+| **Virtual Network Links** | CRUD and list-by-zone |
 
 ## Special handling
 
