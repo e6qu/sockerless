@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the GCP fidelity PR merged.
+- Branch: `main`, synced with `origin/main` after the Azure API-shape PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #312, #315, #326-#329, and #332-#338.
-- Open BUG trackers: BUG-1075, BUG-1104, BUG-1264, and BUG-1267.
-- Last completed work: GCP issue #304 and issues #309-#311 and #321-#325 were fixed.
+- Open GitHub issues at last check: #332-#338.
+- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
+- Last completed work: Azure issues #312, #315, and #326-#329 were fixed.
 
 ## Next Task
 
-Address the Azure issue group next: BUG-1264 / issues #312, #315, and #326-#329, unless a higher-priority issue appears.
+Stage the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
-The GCP fidelity PR closed the stale GCP client-surface and API-shape group. The next highest-value work is the Azure backlog because it contains public API shape and LRO issues across Storage XML errors/listing shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes.
+Start with the architecture and Linux capability substrate before changing public VM, VPC, load balancer, or firewall behavior. The implementation must not add fakes, metadata-only data planes, or simulator-only public API knobs.
 
 ## Provider Facts To Preserve
 
@@ -65,17 +65,22 @@ The GCP fidelity PR closed the stale GCP client-surface and API-shape group. The
    - API Gateway, Cloud Build, IAM, and Pub/Sub stale public-client rows now have real gcloud coverage; API Gateway also has `google-beta` Terraform coverage.
    - Cloud Run/Functions list pagination, empty-list shape, LRO metadata types, and timestamps match public client expectations.
    - Logging severity ordering, GCS metadata/IAM, Cloud SQL backup operations, and DNS precondition errors were corrected.
+- Azure issues #312, #315, and #326-#329 were fixed:
+   - Blob/File/Queue storage data-plane errors return XML error envelopes with `x-ms-error-code`.
+   - Blob list XML responses include the XML declaration, `EnumerationResults` attributes, and `NextMarker`; Queue service properties support the Terraform provider availability check.
+   - Service Bus admin missing entity reads return 404 Atom/XML errors.
+   - Event Grid publish validates the Event Grid event envelope before delivery.
+   - Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers and converge from in-progress to final states.
+   - Key Vault secret/key/certificate attributes include default recovery metadata.
 
 ## Remaining Stages
 
-1. Address Azure issues #312, #315, and #326-#329.
-2. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
+1. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1264: Azure API-shape backlog from issues #312, #315, and #326-#329 remains open.
 - BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks.
 
 ## Start Checklist

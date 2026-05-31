@@ -1,6 +1,7 @@
 package azure_cli_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,11 +28,17 @@ func TestEventHubsCLI_ARMResources(t *testing.T) {
 	}
 	parseJSON(t, nsOut, &createdNS)
 	assert.Equal(t, ns, createdNS.Name)
-	assert.Equal(t, "Succeeded", createdNS.Properties.ProvisioningState)
+	assert.Equal(t, "Creating", createdNS.Properties.ProvisioningState)
 	assert.Contains(t, createdNS.Properties.ServiceBusEndpoint, ns+".servicebus.")
 	t.Cleanup(func() {
 		_ = azRest("DELETE", nsURL, "").Run()
 	})
+
+	nsOut = waitForCLIJSON(t, nsURL, func(data string) bool {
+		return strings.Contains(data, `"provisioningState": "Succeeded"`)
+	})
+	parseJSON(t, nsOut, &createdNS)
+	assert.Equal(t, "Succeeded", createdNS.Properties.ProvisioningState)
 
 	hubURL := armURL("Microsoft.EventHub", "namespaces/"+ns+"/eventhubs/"+hub, "2024-01-01")
 	hubOut := runCLI(t, azRest("PUT", hubURL, `{

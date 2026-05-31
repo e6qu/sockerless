@@ -8,11 +8,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Azure issue group: #312, #315, and #326-#329, unless a higher-priority issue appears. |
-| Last merged | GCP fidelity and client-surface fixes for #304, #309-#311, and #321-#325. |
-| Open GitHub issues | #312, #315, #326-#329, and #332-#338. |
-| Bugs | 1269 filed - 1268 fixed - 4 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1264 Azure API-shape backlog; BUG-1267 compute/networking real execution. |
+| Planned next | Compute/networking real-execution staging from BUG-1267 / issues #332-#336, unless a higher-priority issue appears. |
+| Last merged | Azure API-shape and LRO fixes for #312, #315, and #326-#329. |
+| Open GitHub issues | #332-#338 at last check. |
+| Bugs | 1269 filed - 1269 fixed - 3 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
@@ -26,6 +26,8 @@ The AWS Amplify fidelity PR fixed issues #330 and #331. Amplify `StopJob` and `D
 The Azure ARM/DNS fidelity PR fixed issues #313, #314, and #340. ARM control-plane requests now required `api-version` and returned Azure's `InvalidApiVersionParameter` error when it was missing. Empty store-backed ARM list responses serialized as `{"value":[]}` instead of `{"value":null}`. Azure Private DNS implemented the public `GET .../privateDnsZones` list-by-resource-group route used by `armprivatedns.PrivateZonesClient.NewListByResourceGroupPager`, and virtual network links implemented `GET .../privateDnsZones/{zoneName}/virtualNetworkLinks`. The fixes shipped with real Azure SDK and Azure CLI coverage.
 
 The GCP fidelity PR fixed issue #304 and issues #309-#311 and #321-#325. API Gateway, Cloud Build, IAM, and Pub/Sub stale client-surface rows now have real gcloud coverage, and API Gateway has `google-beta` Terraform coverage. Cloud Run and Cloud Functions list/LRO/timestamp wire shapes were corrected; Cloud Logging severity filters use Google severity ranks; GCS metadata and IAM policy responses match public client expectations; Cloud SQL backup operations return SQL Admin operation shapes; and Cloud DNS precondition failures return canonical `FAILED_PRECONDITION` details.
+
+The Azure API-shape PR fixed issues #312, #315, and #326-#329. Storage Blob/File/Queue data-plane errors now return XML error envelopes with `x-ms-error-code`, Blob list XML responses include the public XML declaration, `EnumerationResults` attributes, and `NextMarker`, and Queue service properties support the Terraform provider availability probe. Service Bus admin missing entity reads return 404 Atom/XML errors. Event Grid publish validates JSON arrays and required Event Grid envelope fields before delivery. Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers plus in-progress states before converging to final states. Key Vault secret/key/certificate attributes include default recovery metadata.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -81,7 +83,6 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
-- BUG-1264: Azure API-shape issues #312, #315, and #326-#329 remain open.
 - BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure.
 
 ## Recent Merged Work
@@ -93,6 +94,7 @@ Implemented gateway surface:
 - AWS Amplify fidelity sweep: issues #330 and #331 were fixed with real AWS SDK and AWS CLI coverage.
 - Azure ARM/DNS fidelity sweep: issues #313, #314, and #340 were fixed with real Azure SDK and Azure CLI coverage.
 - GCP fidelity sweep: issue #304 and issues #309-#311 and #321-#325 were fixed with real Google SDK, gcloud, and Terraform provider coverage where those public client surfaces exist.
+- Azure API-shape and LRO sweep: issues #312, #315, and #326-#329 were fixed with real Azure SDK coverage and focused HTTP assertions where the SDK deliberately normalizes 404 data-plane reads.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

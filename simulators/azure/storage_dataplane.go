@@ -270,7 +270,7 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 		case http.MethodGet, http.MethodHead:
 			handleFilesGetShareProperties(w, r, account, path)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
@@ -293,17 +293,17 @@ func handleFilesDataPlane(w http.ResponseWriter, r *http.Request, account string
 		case http.MethodDelete:
 			handleFilesDeleteFile(w, r, account, share, filePath)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
-	sim.AzureError(w, "InvalidUri", "Unrecognized Files data-plane path", http.StatusBadRequest)
+	writeStorageError(w, "InvalidUri", "Unrecognized Files data-plane path", http.StatusBadRequest)
 }
 
 func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, share string) {
 	key := fileShareKey(account, share)
 	if _, ok := fileShareData.Get(key); ok {
-		sim.AzureError(w, "ShareAlreadyExists", "The specified share already exists.", http.StatusConflict)
+		writeStorageError(w, "ShareAlreadyExists", "The specified share already exists.", http.StatusConflict)
 		return
 	}
 	s := FileShareData{
@@ -321,7 +321,7 @@ func handleFilesCreateShare(w http.ResponseWriter, r *http.Request, account, sha
 func handleFilesDeleteShare(w http.ResponseWriter, r *http.Request, account, share string) {
 	key := fileShareKey(account, share)
 	if !fileShareData.Delete(key) {
-		sim.AzureError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
 	prefix := account + "/" + share + "/"
@@ -336,7 +336,7 @@ func handleFilesDeleteShare(w http.ResponseWriter, r *http.Request, account, sha
 func handleFilesGetShareProperties(w http.ResponseWriter, r *http.Request, account, share string) {
 	s, ok := fileShareData.Get(fileShareKey(account, share))
 	if !ok {
-		sim.AzureError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Last-Modified", s.Created)
@@ -376,14 +376,12 @@ func handleFilesListShares(w http.ResponseWriter, r *http.Request, account strin
 			})
 		}
 	}
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share string) {
 	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
-		sim.AzureError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
 	type fileEntry struct {
@@ -405,25 +403,23 @@ func handleFilesListFiles(w http.ResponseWriter, r *http.Request, account, share
 			out.Files = append(out.Files, fe)
 		}
 	}
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleFilesPutFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
 	if _, ok := fileShareData.Get(fileShareKey(account, share)); !ok {
-		sim.AzureError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ShareNotFound", "The specified share does not exist.", http.StatusNotFound)
 		return
 	}
 	defer r.Body.Close()
 	body, err := openStreamingBody(r)
 	if err != nil {
-		sim.AzureError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
+		writeStorageError(w, "UnsupportedHeader", err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
 	data, err := io.ReadAll(body)
 	if err != nil {
-		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC1123)
@@ -445,7 +441,7 @@ func handleFilesPutFile(w http.ResponseWriter, r *http.Request, account, share, 
 func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
 	f, ok := fileObjects.Get(fileObjectKey(account, share, filePath))
 	if !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
 		return
 	}
 	writeFileHeaders(w, f)
@@ -455,7 +451,7 @@ func handleFilesGetFile(w http.ResponseWriter, r *http.Request, account, share, 
 func handleFilesHeadFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
 	f, ok := fileObjects.Get(fileObjectKey(account, share, filePath))
 	if !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
 		return
 	}
 	writeFileHeaders(w, f)
@@ -463,7 +459,7 @@ func handleFilesHeadFile(w http.ResponseWriter, r *http.Request, account, share,
 
 func handleFilesDeleteFile(w http.ResponseWriter, r *http.Request, account, share, filePath string) {
 	if !fileObjects.Delete(fileObjectKey(account, share, filePath)) {
-		sim.AzureError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
+		writeStorageError(w, "ResourceNotFound", "The specified file does not exist.", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -494,10 +490,14 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		handleQueuesList(w, r, account)
 		return
 	}
+	if path == "" && q.Get("restype") == "service" && q.Get("comp") == "properties" {
+		writeStorageXML(w, http.StatusOK, defaultStorageServiceProperties())
+		return
+	}
 
 	segs := strings.Split(path, "/")
 	if len(segs) == 0 || segs[0] == "" {
-		sim.AzureError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
+		writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
 		return
 	}
 	queue := segs[0]
@@ -511,14 +511,14 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodGet, http.MethodHead:
 			handleQueueGetMetadata(w, r, account, queue)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
 
 	// Messages: /{queue}/messages or /{queue}/messages/{messageid}
 	if segs[1] != "messages" {
-		sim.AzureError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
+		writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
 		return
 	}
 	if len(segs) == 2 {
@@ -534,7 +534,7 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodDelete:
 			handleQueueClearMessages(w, r, account, queue)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
@@ -544,11 +544,11 @@ func handleQueuesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodDelete:
 			handleQueueDeleteMessage(w, r, account, queue, messageID)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
-	sim.AzureError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
+	writeStorageError(w, "InvalidUri", "Unrecognized Queues data-plane path", http.StatusBadRequest)
 }
 
 func handleQueueCreate(w http.ResponseWriter, r *http.Request, account, queue string) {
@@ -569,7 +569,7 @@ func handleQueueCreate(w http.ResponseWriter, r *http.Request, account, queue st
 
 func handleQueueDelete(w http.ResponseWriter, r *http.Request, account, queue string) {
 	if !queueData.Delete(queueKey(account, queue)) {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -578,7 +578,7 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request, account, queue st
 func handleQueueGetMetadata(w http.ResponseWriter, r *http.Request, account, queue string) {
 	q, ok := queueData.Get(queueKey(account, queue))
 	if !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	for k, v := range q.Metadata {
@@ -610,9 +610,7 @@ func handleQueuesList(w http.ResponseWriter, r *http.Request, account string) {
 			out.Queues = append(out.Queues, qEntry{Name: q.Name})
 		}
 	}
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 // QueueMessageRequest is the XML request body for Put Message.
@@ -636,19 +634,19 @@ type QueueMessageResponse struct {
 func handleQueuePutMessage(w http.ResponseWriter, r *http.Request, account, queue string) {
 	key := queueKey(account, queue)
 	if _, ok := queueData.Get(key); !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	defer r.Body.Close()
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		sim.AzureError(w, "RequestBodyInvalid",
+		writeStorageError(w, "RequestBodyInvalid",
 			"Failed to read request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var req QueueMessageRequest
 	if err := xml.Unmarshal(data, &req); err != nil {
-		sim.AzureError(w, "InvalidXmlDocument",
+		writeStorageError(w, "InvalidXmlDocument",
 			"The specified XML is not syntactically valid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -673,17 +671,14 @@ func handleQueuePutMessage(w http.ResponseWriter, r *http.Request, account, queu
 		XMLName  xml.Name               `xml:"QueueMessagesList"`
 		Messages []QueueMessageResponse `xml:"QueueMessage"`
 	}
-	body, _ := xml.Marshal(wrap{Messages: []QueueMessageResponse{resp}})
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusCreated, wrap{Messages: []QueueMessageResponse{resp}})
 }
 
 func handleQueueGetMessages(w http.ResponseWriter, r *http.Request, account, queue string) {
 	key := queueKey(account, queue)
 	q, ok := queueData.Get(key)
 	if !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	now := time.Now().Unix()
@@ -734,15 +729,13 @@ func handleQueueGetMessages(w http.ResponseWriter, r *http.Request, account, que
 			MessageText:     m.MessageText,
 		})
 	}
-	body, _ := xml.Marshal(out)
-	w.Header().Set("Content-Type", "application/xml")
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleQueuePeekMessages(w http.ResponseWriter, r *http.Request, account, queue string) {
 	q, ok := queueData.Get(queueKey(account, queue))
 	if !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	type wrap struct {
@@ -763,15 +756,13 @@ func handleQueuePeekMessages(w http.ResponseWriter, r *http.Request, account, qu
 			MessageText:    m.MessageText,
 		})
 	}
-	body, _ := xml.Marshal(out)
-	w.Header().Set("Content-Type", "application/xml")
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleQueueDeleteMessage(w http.ResponseWriter, r *http.Request, account, queue, messageID string) {
 	key := queueKey(account, queue)
 	if _, ok := queueData.Get(key); !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	popReceipt := r.URL.Query().Get("popreceipt")
@@ -791,7 +782,7 @@ func handleQueueDeleteMessage(w http.ResponseWriter, r *http.Request, account, q
 func handleQueueClearMessages(w http.ResponseWriter, r *http.Request, account, queue string) {
 	key := queueKey(account, queue)
 	if _, ok := queueData.Get(key); !ok {
-		sim.AzureError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
+		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
 	queueData.Update(key, func(qq *QueueData) {

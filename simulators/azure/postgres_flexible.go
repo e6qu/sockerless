@@ -167,7 +167,7 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 		Location: req.Location,
 		Tags:     req.Tags,
 		Properties: map[string]any{
-			"state":                    "Ready",
+			"state":                    "Starting",
 			"version":                  "15",
 			"fullyQualifiedDomainName": azureEndpointHostname(r, name, "postgres", "database"),
 			"administratorLogin":       "psqladmin",
@@ -184,10 +184,20 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 		for k, v := range req.Properties {
 			s.Properties[k] = v
 		}
-		s.Properties["state"] = "Ready"
+		s.Properties["state"] = "Starting"
 	}
 	pgServers.Put(id, s)
-	sim.WriteJSON(w, http.StatusOK, s)
+	opID := issueAzureAsyncOperation(func() {
+		pgServers.Update(id, func(stored *PGFlexibleServer) {
+			if stored.Properties == nil {
+				stored.Properties = map[string]any{}
+			}
+			stored.Properties["state"] = "Ready"
+		})
+	})
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.DBforPostgreSQL", s.Location, "operationStatuses", opID, r.URL.Query().Get("api-version"))
+	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
+	sim.WriteJSON(w, http.StatusCreated, s)
 }
 
 func handlePGGetServer(w http.ResponseWriter, r *http.Request) {

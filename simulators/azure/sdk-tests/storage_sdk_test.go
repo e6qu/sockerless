@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -54,6 +55,28 @@ func storageSDKOptions() azcore.ClientOptions {
 	return azcore.ClientOptions{Transport: storageSDKTransport{}}
 }
 
+func storageAdvertisedEndpoint(t *testing.T, account, service string) string {
+	t.Helper()
+	hostPort := strings.TrimPrefix(baseURL, "http://")
+	_, port, ok := strings.Cut(hostPort, ":")
+	require.True(t, ok, "baseURL must include a port: %s", baseURL)
+	return fmt.Sprintf("http://%s.%s.shim.localhost:%s/", account, service, port)
+}
+
+func storageRawRequest(t *testing.T, method, account, service, target string) *http.Response {
+	t.Helper()
+	u, err := url.Parse(baseURL)
+	require.NoError(t, err)
+	_, port, ok := strings.Cut(u.Host, ":")
+	require.True(t, ok, "baseURL must include a port: %s", baseURL)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(baseURL, "/")+target, nil)
+	require.NoError(t, err)
+	req.Host = fmt.Sprintf("%s.%s.localhost:%s", account, service, port)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
 func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
 	account := "sdkblobacct"
 	container := "sdk-blob-container"
@@ -86,6 +109,15 @@ func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
 	require.NotNil(t, blobPage.Segment.BlobItems[0].Name)
 	assert.Equal(t, blobName, *blobPage.Segment.BlobItems[0].Name)
 
+	rawBlobList := storageRawRequest(t, http.MethodGet, account, "blob", "/"+container+"?restype=container&comp=list&maxresults=1")
+	require.Equal(t, http.StatusOK, rawBlobList.StatusCode)
+	rawBlobListBody, _ := io.ReadAll(rawBlobList.Body)
+	rawBlobList.Body.Close()
+	assert.True(t, strings.HasPrefix(string(rawBlobListBody), "<?xml"), string(rawBlobListBody))
+	assert.Contains(t, string(rawBlobListBody), `ServiceEndpoint="`+storageAdvertisedEndpoint(t, account, "blob")+`"`)
+	assert.Contains(t, string(rawBlobListBody), `ContainerName="`+container+`"`)
+	assert.Contains(t, string(rawBlobListBody), "<NextMarker>")
+
 	containerPager := client.NewListContainersPager(&azblob.ListContainersOptions{MaxResults: to.Ptr(int32(1))})
 	containerPage, err := containerPager.NextPage(ctx)
 	require.NoError(t, err)
@@ -93,8 +125,42 @@ func TestStorageSDK_BlobLifecycleAndPagedLists(t *testing.T) {
 	require.NotNil(t, containerPage.ContainerItems[0].Name)
 	assert.Equal(t, container, *containerPage.ContainerItems[0].Name)
 
+	rawContainerList := storageRawRequest(t, http.MethodGet, account, "blob", "/?comp=list&maxresults=1")
+	require.Equal(t, http.StatusOK, rawContainerList.StatusCode)
+	rawContainerListBody, _ := io.ReadAll(rawContainerList.Body)
+	rawContainerList.Body.Close()
+	assert.True(t, strings.HasPrefix(string(rawContainerListBody), "<?xml"), string(rawContainerListBody))
+	assert.Contains(t, string(rawContainerListBody), `ServiceEndpoint="`+storageAdvertisedEndpoint(t, account, "blob")+`"`)
+	assert.Contains(t, string(rawContainerListBody), "<NextMarker>")
+
 	_, err = client.DeleteBlob(ctx, container, blobName, nil)
 	require.NoError(t, err)
+}
+
+func TestStorageDataPlane_XMLErrors(t *testing.T) {
+	account := "sdkstorageerrors"
+
+	blobResp := storageRawRequest(t, http.MethodGet, account, "blob", "/missing-container/missing-blob.txt")
+	assertStorageXMLError(t, blobResp, http.StatusNotFound, "BlobNotFound")
+
+	fileResp := storageRawRequest(t, http.MethodGet, account, "file", "/missing-share?restype=share")
+	assertStorageXMLError(t, fileResp, http.StatusNotFound, "ShareNotFound")
+
+	queueResp := storageRawRequest(t, http.MethodGet, account, "queue", "/missingqueue/messages")
+	assertStorageXMLError(t, queueResp, http.StatusNotFound, "QueueNotFound")
+}
+
+func assertStorageXMLError(t *testing.T, resp *http.Response, status int, code string) {
+	t.Helper()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, status, resp.StatusCode, string(body))
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/xml")
+	assert.Equal(t, code, resp.Header.Get("x-ms-error-code"))
+	assert.True(t, strings.HasPrefix(string(body), "<?xml"), string(body))
+	assert.Contains(t, string(body), "<Error>")
+	assert.Contains(t, string(body), "<Code>"+code+"</Code>")
 }
 
 func TestStorageSDK_BlobStartCopyFromURL(t *testing.T) {
@@ -294,6 +360,16 @@ func TestStorageSDK_QueueLifecycleAndPagedLists(t *testing.T) {
 	queueClient := serviceClient.NewQueueClient(queueName)
 	_, err = queueClient.EnqueueMessage(ctx, message, nil)
 	require.NoError(t, err)
+
+	propsResp := storageRawRequest(t, http.MethodGet, account, "queue", "/?restype=service&comp=properties")
+	require.Equal(t, http.StatusOK, propsResp.StatusCode)
+	propsBody, err := io.ReadAll(propsResp.Body)
+	require.NoError(t, err)
+	propsResp.Body.Close()
+	assert.Contains(t, propsResp.Header.Get("Content-Type"), "application/xml")
+	assert.True(t, strings.HasPrefix(string(propsBody), "<?xml"), string(propsBody))
+	assert.Contains(t, string(propsBody), "<StorageServiceProperties>")
+	assert.Contains(t, string(propsBody), "<HourMetrics>")
 
 	dequeued, err := queueClient.DequeueMessage(ctx, nil)
 	require.NoError(t, err)

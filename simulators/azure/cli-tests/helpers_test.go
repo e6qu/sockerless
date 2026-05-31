@@ -165,3 +165,20 @@ func parseJSON(t *testing.T, data string, target any) {
 		t.Fatalf("Failed to parse JSON: %v\nData: %s", err, data)
 	}
 }
+
+func waitForCLIJSON(t *testing.T, url string, ready func(string) bool) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var last string
+	for {
+		out, err := azRest("GET", url, "").CombinedOutput()
+		last = string(out)
+		if err == nil && ready(last) {
+			return last
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for CLI resource state at %s; last output: %s", url, last)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

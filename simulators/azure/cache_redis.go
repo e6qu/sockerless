@@ -181,7 +181,7 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		SKU:      req.SKU,
 		Tags:     req.Tags,
 		Properties: map[string]any{
-			"provisioningState": "Succeeded",
+			"provisioningState": "Creating",
 			"redisVersion":      "7.0",
 			"sslPort":           6380,
 			"port":              6379,
@@ -193,10 +193,20 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		for k, v := range req.Properties {
 			cache.Properties[k] = v
 		}
-		cache.Properties["provisioningState"] = "Succeeded"
+		cache.Properties["provisioningState"] = "Creating"
 	}
 	redisCaches.Put(id, cache)
-	sim.WriteJSON(w, http.StatusOK, cache)
+	opID := issueAzureAsyncOperation(func() {
+		redisCaches.Update(id, func(stored *RedisCache) {
+			if stored.Properties == nil {
+				stored.Properties = map[string]any{}
+			}
+			stored.Properties["provisioningState"] = "Succeeded"
+		})
+	})
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.Cache", cache.Location, "operationResults", opID, r.URL.Query().Get("api-version"))
+	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
+	sim.WriteJSON(w, http.StatusCreated, cache)
 }
 
 func handleRedisCachePatch(w http.ResponseWriter, r *http.Request) {

@@ -157,11 +157,13 @@ func TestKeyVault_SDK_Secrets_ChallengeRoundTrip(t *testing.T) {
 	require.NoError(t, err, "SetSecret over SDK must succeed (challenge round-trip)")
 	require.NotNil(t, setResp.Value)
 	assert.Equal(t, "hunter2", *setResp.Value)
+	assertSecretRecoveryAttrs(t, setResp.Attributes)
 
 	getResp, err := client.GetSecret(ctx, "db-password", "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, getResp.Value)
 	assert.Equal(t, "hunter2", *getResp.Value)
+	assertSecretRecoveryAttrs(t, getResp.Attributes)
 
 	version := getResp.ID.Version()
 	updated, err := client.UpdateSecretProperties(ctx, "db-password", version,
@@ -223,11 +225,13 @@ func TestKeyVault_SDK_Keys_ChallengeRoundTrip(t *testing.T) {
 	require.NoError(t, err, "CreateKey over SDK must succeed")
 	require.NotNil(t, createResp.Key)
 	require.NotNil(t, createResp.Key.KID)
+	assertKeyRecoveryAttrs(t, createResp.Attributes)
 	version := createResp.Key.KID.Version()
 
 	getResp, err := client.GetKey(ctx, "signing-key", "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, getResp.Key.KID)
+	assertKeyRecoveryAttrs(t, getResp.Attributes)
 	assert.Equal(t, *createResp.Key.KID, *getResp.Key.KID,
 		"GetKey must return the same KID emitted by CreateKey")
 
@@ -315,6 +319,7 @@ func TestKeyVault_SDK_Certificates_ChallengeRoundTrip(t *testing.T) {
 	cert, err := client.GetCertificate(ctx, "tls-cert", "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, cert.ID)
+	assertCertificateRecoveryAttrs(t, cert.Attributes)
 	version := cert.ID.Version()
 	require.NotEmpty(t, cert.CER)
 	require.NotEmpty(t, cert.X509Thumbprint)
@@ -351,6 +356,7 @@ func TestKeyVault_SDK_Certificates_ChallengeRoundTrip(t *testing.T) {
 		}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, imported.ID)
+	assertCertificateRecoveryAttrs(t, imported.Attributes)
 
 	_, err = client.CreateCertificate(ctx, "merged-cert",
 		azcertificates.CreateCertificateParameters{CertificatePolicy: unknownIssuerCertPolicy()}, nil)
@@ -359,6 +365,7 @@ func TestKeyVault_SDK_Certificates_ChallengeRoundTrip(t *testing.T) {
 		azcertificates.MergeCertificateParameters{X509Certificates: [][]byte{testCertificateDER(t, "merged-cert")}}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, merged.ID)
+	assertCertificateRecoveryAttrs(t, merged.Attributes)
 
 	backup, err := client.BackupCertificate(ctx, "tls-cert", nil)
 	require.NoError(t, err)
@@ -386,6 +393,33 @@ func encryptionAlgPtr(a azkeys.EncryptionAlgorithm) *azkeys.EncryptionAlgorithm 
 func certKeyTypePtr(k azcertificates.KeyType) *azcertificates.KeyType { return &k }
 
 func int32Ptr(v int32) *int32 { return &v }
+
+func assertSecretRecoveryAttrs(t *testing.T, attrs *azsecrets.SecretAttributes) {
+	t.Helper()
+	require.NotNil(t, attrs)
+	require.NotNil(t, attrs.RecoveryLevel)
+	assert.Equal(t, "Recoverable+Purgeable", *attrs.RecoveryLevel)
+	require.NotNil(t, attrs.RecoverableDays)
+	assert.Equal(t, int32(90), *attrs.RecoverableDays)
+}
+
+func assertKeyRecoveryAttrs(t *testing.T, attrs *azkeys.KeyAttributes) {
+	t.Helper()
+	require.NotNil(t, attrs)
+	require.NotNil(t, attrs.RecoveryLevel)
+	assert.Equal(t, "Recoverable+Purgeable", *attrs.RecoveryLevel)
+	require.NotNil(t, attrs.RecoverableDays)
+	assert.Equal(t, int32(90), *attrs.RecoverableDays)
+}
+
+func assertCertificateRecoveryAttrs(t *testing.T, attrs *azcertificates.CertificateAttributes) {
+	t.Helper()
+	require.NotNil(t, attrs)
+	require.NotNil(t, attrs.RecoveryLevel)
+	assert.Equal(t, "Recoverable+Purgeable", *attrs.RecoveryLevel)
+	require.NotNil(t, attrs.RecoverableDays)
+	assert.Equal(t, int32(90), *attrs.RecoverableDays)
+}
 
 func selfSignedCertPolicy() *azcertificates.CertificatePolicy {
 	return &azcertificates.CertificatePolicy{

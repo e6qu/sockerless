@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -78,8 +79,34 @@ func sbAdminClient(t *testing.T, namespace string) *admin.Client {
 	return client
 }
 
+func sbAdminRawGet(t *testing.T, namespace, target string) *http.Response {
+	t.Helper()
+	hostPort := strings.TrimPrefix(baseURL, "http://")
+	_, port, ok := strings.Cut(hostPort, ":")
+	require.True(t, ok, "baseURL must include a port: %s", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+target, nil)
+	require.NoError(t, err)
+	req.Host = fmt.Sprintf("%s.servicebus.localhost:%s", namespace, port)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+func assertSBAdminRawMissing(t *testing.T, namespace, target string) {
+	t.Helper()
+	resp := sbAdminRawGet(t, namespace, target)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, string(body))
+	assert.Contains(t, resp.Header.Get("Content-Type"), "application/xml")
+	assert.Contains(t, string(body), "<Error>")
+	assert.Contains(t, string(body), "<Code>404</Code>")
+}
+
 func TestServiceBusAdmin_QueueSDKLifecycle(t *testing.T) {
-	client := sbAdminClient(t, "sdk-admin-queue")
+	namespace := "sdk-admin-queue"
+	client := sbAdminClient(t, namespace)
 	ctx := context.Background()
 	queueName := "q1"
 	userMetadata := "queue metadata"
@@ -112,6 +139,7 @@ func TestServiceBusAdmin_QueueSDKLifecycle(t *testing.T) {
 
 	_, err = client.DeleteQueue(ctx, queueName, nil)
 	require.NoError(t, err)
+	assertSBAdminRawMissing(t, namespace, "/"+queueName)
 	got, err = client.GetQueue(ctx, queueName, nil)
 	require.NoError(t, err)
 	assert.Nil(t, got)
@@ -137,7 +165,8 @@ func TestServiceBusAdmin_QueueListPagingIsNamespaceScoped(t *testing.T) {
 }
 
 func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
-	client := sbAdminClient(t, "sdk-admin-topic")
+	namespace := "sdk-admin-topic"
+	client := sbAdminClient(t, namespace)
 	ctx := context.Background()
 	topicName := "topic1"
 	subName := "sub1"
@@ -193,18 +222,21 @@ func TestServiceBusAdmin_TopicSubscriptionRuleSDKLifecycle(t *testing.T) {
 
 	_, err = client.DeleteRule(ctx, topicName, subName, ruleName, nil)
 	require.NoError(t, err)
+	assertSBAdminRawMissing(t, namespace, "/"+topicName+"/Subscriptions/"+subName+"/Rules/"+ruleName)
 	gotRule, err = client.GetRule(ctx, topicName, subName, ruleName, nil)
 	require.NoError(t, err)
 	assert.Nil(t, gotRule)
 
 	_, err = client.DeleteSubscription(ctx, topicName, subName, nil)
 	require.NoError(t, err)
+	assertSBAdminRawMissing(t, namespace, "/"+topicName+"/Subscriptions/"+subName)
 	gotSub, err = client.GetSubscription(ctx, topicName, subName, nil)
 	require.NoError(t, err)
 	assert.Nil(t, gotSub)
 
 	_, err = client.DeleteTopic(ctx, topicName, nil)
 	require.NoError(t, err)
+	assertSBAdminRawMissing(t, namespace, "/"+topicName)
 	gotTopic, err = client.GetTopic(ctx, topicName, nil)
 	require.NoError(t, err)
 	assert.Nil(t, gotTopic)
