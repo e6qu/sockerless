@@ -86,6 +86,29 @@ function routeFetch(url: string) {
   if (url === "/api/v1/topology") {
     return jsonResponse(sampleTopology);
   }
+  if (url === "/api/v1/topology/file") {
+    return jsonResponse({ path: "sockerless.yaml", exists: true });
+  }
+  if (url === "/api/v1/https-gateway") {
+    return jsonResponse({
+      running: false,
+      pid: 0,
+      port: 8443,
+      admin_port: 28443,
+      ca_path: ".sockerless-state/https-gateway/data/caddy/pki/authorities/local/root.crt",
+      ca_present: false,
+      endpoints: {
+        aws: "https://aws.sockerless.localhost:8443",
+        gcp: "https://gcp.sockerless.localhost:8443",
+        azure: "https://azure.sockerless.localhost:8443",
+      },
+      commands: [
+        "make stack-https-up",
+        "make stack-https-status",
+        "make stack-https-down",
+      ],
+    });
+  }
   // /api/v1/topology/projects/{p}/instances/{i}/status
   const m = url.match(
     /^\/api\/v1\/topology\/projects\/([^/]+)\/instances\/([^/]+)\/status$/,
@@ -123,6 +146,18 @@ describe("TopologyPage", () => {
       // Claimed ports render as ":<port>".
       expect(screen.getByText(":4566")).toBeInTheDocument();
       expect(screen.getByText(":3300")).toBeInTheDocument();
+    });
+  });
+
+  it("renders HTTPS gateway endpoints and make commands", async () => {
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(routeFetch(url)),
+    );
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("HTTPS gateway")).toBeInTheDocument();
+      expect(screen.getByText("https://azure.sockerless.localhost:8443")).toBeInTheDocument();
+      expect(screen.getByText("make stack-https-up")).toBeInTheDocument();
     });
   });
 

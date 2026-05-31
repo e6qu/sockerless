@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-172.5k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-17.3k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-84k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-172.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-17.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-84.1k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -106,6 +106,8 @@ specs/                        Specification documents
 
 Each backend, the agent, and the test suite are separate Go modules connected via `go.work`. Major components embed React dashboards at `/ui/`.
 
+Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for clients that require trusted HTTPS, especially Azure Terraform provider metadata discovery. See [`docs/LOCAL_HTTPS_GATEWAY.md`](docs/LOCAL_HTTPS_GATEWAY.md).
+
 ### Module Sizes
 
 **Go**
@@ -129,7 +131,7 @@ Each backend, the agent, and the test suite are separate Go modules connected vi
 
 **TypeScript**
 
-![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.3k-3178C6)
+![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.4k-3178C6)
 ![ui/core](https://img.shields.io/badge/ui%2Fcore-3.6k-3178C6)
 ![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-3.3k-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)

@@ -98,6 +98,7 @@ func main() {
 	mux := http.NewServeMux()
 	registerAPI(mux, reg, procMgr, projectMgr)
 	registerTopologyAPI(mux, topologyMgr, NewInstanceLifecycle("", 0))
+	registerHTTPSGatewayAPI(mux)
 	obsCfg := loadObservabilityConfig()
 	mux.HandleFunc("GET /api/v1/observability", handleObservabilityConfig(obsCfg))
 	registerUI(mux)

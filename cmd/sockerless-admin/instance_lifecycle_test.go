@@ -80,3 +80,17 @@ func TestMergeConfigEmptyInputs(t *testing.T) {
 		t.Errorf("operator-only path: %+v", got)
 	}
 }
+
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"":          "''",
+		"simple":    "'simple'",
+		`{"a":"b"}`: `'{"a":"b"}'`,
+		"has'quote": `'has'"'"'quote'`,
+	}
+	for in, want := range cases {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -8,8 +8,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Optional local HTTPS gateway for simulator APIs, starting with Azure Terraform/provider compatibility. |
-| Last merged | PR #299 / issue #298: Azure Redis, GCP Memorystore Redis, GCP Cloud SQL, and GCP Cloud DNS Changes client-surface coverage (2026-05-31). |
+| Planned next | Azure Terraform harness over the local HTTPS gateway. |
+| Last merged | Local HTTPS gateway Stage 1: Caddy gateway make targets, routing, docs, and admin UI visibility. |
 | Open GitHub issues | None at last check. |
 | Bugs | 1245 filed - 1245 fixed - 2 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker. |
@@ -17,9 +17,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 ## Current Next Task
 
-Build an optional Caddy/local-HTTPS gateway for simulator APIs.
+Wire Azure Terraform through the local Caddy HTTPS gateway.
 
-The gateway is local transport infrastructure. It must not add simulator-only public API endpoints, request fields, headers, or response shapes.
+The gateway itself now exists as local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
 Provider facts:
 
@@ -28,6 +28,13 @@ Provider facts:
 - AzAPI exposes full endpoint URLs and defaults to HTTPS Azure endpoints.
 - AWS and GCP Terraform providers accept full custom endpoint URLs; current HTTP localhost simulator endpoints remain valid and must keep working.
 - Existing direct simulator TLS via `SIM_TLS_CERT` / `SIM_TLS_KEY` remains supported.
+
+Implemented gateway surface:
+
+- `make stack-https-up`, `make stack-https-status`, `make stack-https-ca`, `make stack-https-down`.
+- Caddy routes for AWS, GCP, Azure ARM/metadata, and Azure host-addressed data-plane wildcards.
+- `STACK_HTTPS=1` stack integration for local dev stacks.
+- Admin UI topology card for gateway status, endpoints, CA path, and recovery commands.
 
 ## Invariants
 
@@ -58,6 +65,7 @@ Provider facts:
 ## Recent Merged Work
 
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
+- Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.
 - Prior foundational simulator phases: object storage, queues, event systems, streams, managed data SaaS, DNS, VM/instance control planes, managed load balancers, NAT/public-IP, and VPC/networking parity across AWS/GCP/Azure.
 

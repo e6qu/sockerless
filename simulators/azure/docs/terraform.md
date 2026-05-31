@@ -21,6 +21,16 @@ export SSL_CERT_FILE=/path/to/ca.pem
 
 > **macOS note:** Go 1.20+ on macOS uses Security.framework for TLS and ignores `SSL_CERT_FILE`. The Azure Terraform test harness delegates direct macOS `go test` runs into the shared Linux Docker image so the real providers can trust the generated simulator CA.
 
+### Optional Caddy gateway
+
+For local operator workflows, the repository also ships an optional Caddy HTTPS gateway:
+
+```sh
+make stack-https-up
+```
+
+The gateway fronts the Azure simulator at `https://azure.sockerless.localhost:8443` and preserves Azure host-addressed data-plane names such as `{account}.blob.azure.sockerless.localhost`. It is local transport infrastructure; the simulator's public ARM, metadata, and data-plane API shapes remain unchanged. See [`docs/LOCAL_HTTPS_GATEWAY.md`](../../../docs/LOCAL_HTTPS_GATEWAY.md).
+
 ### Generating self-signed certificates
 
 For local testing, generate a CA and server certificate:

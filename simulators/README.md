@@ -69,6 +69,23 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_SERVICEBUS_AMQP_LISTEN_ADDR` | unset | Azure-only raw Service Bus AMQP/TLS listener; requires `SIM_SERVICEBUS_AMQP_TLS_CERT` / `SIM_SERVICEBUS_AMQP_TLS_KEY` or the shared TLS cert/key |
 | `SIM_LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
 
+## Optional local HTTPS gateway
+
+The simulators keep their direct HTTP and `SIM_TLS_CERT` / `SIM_TLS_KEY`
+entry points. For clients that expect cloud-like HTTPS URLs, run the
+local Caddy gateway from the repository root:
+
+```sh
+make stack-https-up
+make stack-https-status
+```
+
+Default endpoints are `https://aws.sockerless.localhost:8443`,
+`https://gcp.sockerless.localhost:8443`, and
+`https://azure.sockerless.localhost:8443`, plus Azure host-addressed
+data-plane wildcards. Details and CA trust setup live in
+[`docs/LOCAL_HTTPS_GATEWAY.md`](../docs/LOCAL_HTTPS_GATEWAY.md).
+
 ## End-to-end showcase
 
 The canonical multi-cloud workflow combines simulators across all three clouds in one CI run:

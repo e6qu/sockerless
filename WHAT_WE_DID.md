@@ -4,6 +4,21 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-05-31 - Local HTTPS Gateway Stage 1
+
+The local HTTPS gateway was implemented as optional transport infrastructure for simulator APIs. It did not change simulator public cloud API shapes.
+
+The stage added `make stack-https-up`, `make stack-https-status`, `make stack-https-ca`, and `make stack-https-down`. The gateway runs Caddy under the repo's existing `.stack-pids` and `.sockerless-state` conventions, fronting the normal simulator HTTP ports with HTTPS names:
+
+- `https://aws.sockerless.localhost:8443`
+- `https://gcp.sockerless.localhost:8443`
+- `https://azure.sockerless.localhost:8443`
+- Azure host-addressed data-plane wildcards such as `{account}.blob.azure.sockerless.localhost`, `{vault}.vault.azure.sockerless.localhost`, and `{namespace}.servicebus.azure.sockerless.localhost`.
+
+`STACK_HTTPS=1 make stack-azure-aca` now starts the gateway with the local stack and configures Azure ARM-advertised data-plane endpoint projection under the gateway hostnames. Direct HTTP and direct simulator TLS through `SIM_TLS_CERT` / `SIM_TLS_KEY` remain supported.
+
+The admin UI topology page now shows gateway status, endpoints, CA path, and the equivalent recovery `make` commands. The next stage is to run the Azure Terraform harness through this gateway, using `metadata_host`, ARM-advertised data-plane URLs, and `SSL_CERT_FILE` CA trust in the Linux test container.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
