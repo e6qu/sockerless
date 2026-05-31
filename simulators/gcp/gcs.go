@@ -186,6 +186,10 @@ func gcsLocationType(location string) string {
 	return "region"
 }
 
+func gcsTimestamp() string {
+	return time.Now().UTC().Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z")
+}
+
 func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
 	if attrs.ContentType == "" {
 		attrs.ContentType = "application/octet-stream"
@@ -193,7 +197,7 @@ func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName strin
 	if err := validateGCSObjectAttrs(attrs); err != nil {
 		return GCSObject{}, err
 	}
-	now := nowTimestamp()
+	now := gcsTimestamp()
 	hash := md5.Sum(data)
 	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
 	etag := fmt.Sprintf("%x", hash)
@@ -440,7 +444,7 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
-		now := nowTimestamp()
+		now := gcsTimestamp()
 		data["id"] = name
 		data["kind"] = "storage#bucket"
 		data["selfLink"] = gcpSelfLink(r, fmt.Sprintf("/storage/v1/b/%s", name))

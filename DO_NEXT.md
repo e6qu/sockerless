@@ -39,7 +39,7 @@ Azure Terraform was the hard proof point because AzureRM requires trusted HTTPS 
 - Shared simulator Docker test image with Caddy installed from the official package repository.
 - BUG-1246 fixed Azure Storage data-plane middleware overmatching non-storage `*.localhost` hosts.
 - SDK/CLI guidance documents real endpoint and CA knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
-- BUG-1250 fixed stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, current gcloud multipart uploads work, and GCS `buckets.getStorageLayout` returns the public response shape.
+- BUG-1250/BUG-1251 fixed stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, current gcloud multipart uploads work, GCS `buckets.getStorageLayout` returns the public response shape, and GCS timestamps use Cloud Storage-style millisecond precision.
 
 ## Remaining Stages
 

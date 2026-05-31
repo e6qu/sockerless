@@ -11,7 +11,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Planned next | Optional AWS/GCP Terraform HTTPS examples, while preserving direct HTTP endpoint overrides. |
 | Last merged | SDK/CLI HTTPS gateway guidance plus BUG-1104 GCS CLI coverage audit. |
 | Open GitHub issues | None at last check. |
-| Bugs | 1250 filed - 1250 fixed - 2 open - 2 false positives. |
+| Bugs | 1251 filed - 1251 fixed - 2 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker. |
 | Live infra | None up. |
 
@@ -39,7 +39,7 @@ Implemented gateway surface:
 - The shared simulator Docker test image included Caddy, installed from the official Caddy package repository.
 - Azure Terraform CI installed Caddy on the runner for the direct `make terraform-test` path, the Azure Terraform harness failed loudly when Caddy or HTTPS was missing, and GCP arithmetic SDK coverage asserted the actual `"Result: 30"` Cloud Logging payload.
 - SDK/CLI gateway guidance documented real client knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs without disabling TLS verification.
-- BUG-1104 audit corrected stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, the simulator accepts current gcloud multipart upload boundaries, and GCS `buckets.getStorageLayout` returns the public response shape.
+- BUG-1104 audit corrected stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, the simulator accepts current gcloud multipart upload boundaries, GCS `buckets.getStorageLayout` returns the public response shape, and GCS timestamps use Cloud Storage-style millisecond precision.
 
 ## Invariants
 

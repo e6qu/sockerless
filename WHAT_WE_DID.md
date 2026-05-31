@@ -35,7 +35,7 @@ The full Azure Terraform apply/destroy test passed through the gateway under the
 
 The gateway docs were expanded with SDK/CLI-specific endpoint and CA trust knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs. The guidance kept TLS verification enabled: local clients trust the Caddy CA instead of disabling certificate checks.
 
-BUG-1104 audit found stale GCP GCS CLI coverage. Current gcloud supports Cloud Storage endpoint overrides, so `gcp-gcs` was no longer a CLI "not applicable" surface. BUG-1250 added real `gcloud storage` bucket/object lifecycle coverage, fixed the simulator to accept current gcloud multipart upload boundaries, and implemented the public GCS `buckets.getStorageLayout` response used by gcloud's upload path.
+BUG-1104 audit found stale GCP GCS CLI coverage. Current gcloud supports Cloud Storage endpoint overrides, so `gcp-gcs` was no longer a CLI "not applicable" surface. BUG-1250 added real `gcloud storage` bucket/object lifecycle coverage, fixed the simulator to accept current gcloud multipart upload boundaries, and implemented the public GCS `buckets.getStorageLayout` response used by gcloud's upload path. BUG-1251 corrected GCS timestamp precision to Cloud Storage-style milliseconds so current Linux gcloud did not inject timestamp truncation warnings into command output.
 
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
