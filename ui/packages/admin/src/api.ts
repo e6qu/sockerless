@@ -149,6 +149,17 @@ export interface InstanceStatus {
   crashed_since_start?: boolean;
 }
 
+export interface HTTPSGatewayInfo {
+  running: boolean;
+  pid: number;
+  port: number;
+  admin_port: number;
+  ca_path: string;
+  ca_present: boolean;
+  endpoints: Record<string, string>;
+  commands: string[];
+}
+
 export interface InstanceDiagnostics {
   status: InstanceStatus;
   log_lines: string[];
@@ -468,6 +479,10 @@ export class AdminApiClient {
 
   observability(): Promise<ObservabilityConfig> {
     return this.request("/api/v1/observability");
+  }
+
+  httpsGateway(): Promise<HTTPSGatewayInfo> {
+    return this.request("/api/v1/https-gateway");
   }
 }
 

@@ -108,12 +108,13 @@ start-component:
 	  printf "$(COLOR_RED)$(NAME): binary $$bin missing — run rebuild-component first$(COLOR_RESET)\n"; \
 	  exit 1; \
 	fi; \
-	envline=""; \
+	envfile=""; \
+	sim_endpoint=""; \
 	if [ -n "$(SIM_PORT)" ] && [ "$(KIND)" = "backend" ]; then \
-	  envline="$$envline SOCKERLESS_ENDPOINT_URL=http://localhost:$(SIM_PORT)"; \
+	  sim_endpoint="http://localhost:$(SIM_PORT)"; \
 	fi; \
 	if [ -n "$(ENV_FILE)" ] && [ -f "$(ENV_FILE)" ]; then \
-	  envline="$$envline $$(grep -v '^#' $(ENV_FILE) | xargs)"; \
+	  envfile="$(ENV_FILE)"; \
 	fi; \
 	pidfile=$(COMPONENTS_PID_DIR)/$(NAME).pid; \
 	exitfile=$(COMPONENTS_PID_DIR)/$(NAME).exit; \
@@ -121,7 +122,10 @@ start-component:
 	( cd $$dir && \
 	    ( trap '' HUP ; \
 	      trap 'kill $$child 2>/dev/null || true' TERM INT ; \
-	      nohup env $$envline ./$$(basename $$bin) $$flag :$(PORT) \
+	      nohup env SOCKERLESS_COMPONENT_ENV_FILE="$$envfile" \
+	        SOCKERLESS_COMPONENT_SIM_ENDPOINT="$$sim_endpoint" \
+	        sh -c 'envfile=$$SOCKERLESS_COMPONENT_ENV_FILE; endpoint=$$SOCKERLESS_COMPONENT_SIM_ENDPOINT; unset SOCKERLESS_COMPONENT_ENV_FILE SOCKERLESS_COMPONENT_SIM_ENDPOINT; if [ -n "$$envfile" ] && [ -f "$$envfile" ]; then set -a; . "$$envfile" || exit $$?; set +a; fi; if [ -n "$$endpoint" ]; then export SOCKERLESS_ENDPOINT_URL="$$endpoint"; fi; exec "$$@"' \
+	        sh ./$$(basename $$bin) $$flag :$(PORT) \
 	        > $$logfile 2>&1 < /dev/null & \
 	      child=$$! ; \
 	      wait $$child ; \

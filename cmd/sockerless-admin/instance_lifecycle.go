@@ -246,10 +246,17 @@ func writeEnvFile(path string, cfg map[string]string) error {
 	for _, k := range keys {
 		b.WriteString(k)
 		b.WriteByte('=')
-		b.WriteString(cfg[k])
+		b.WriteString(shellQuote(cfg[k]))
 		b.WriteByte('\n')
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 func sortedConfigKeys(m map[string]string) []string {

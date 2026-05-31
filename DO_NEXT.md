@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after PR #299 merged.
+- Branch: `main`, synced with `origin/main` after the local HTTPS gateway Stage 1 PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: issue #298 / BUG-1242..BUG-1245, covering Azure Redis, GCP Memorystore Redis, GCP Cloud SQL, and GCP Cloud DNS Changes client-surface fidelity.
+- Last completed work: optional Caddy HTTPS gateway Stage 1 for simulator APIs.
 
 ## Next Task
 
-Implement the optional local HTTPS gateway for simulator APIs.
+Wire Azure Terraform through the optional local HTTPS gateway.
 
-The goal is a realistic local HTTPS front door for clients that require or naturally expect HTTPS, without changing simulator public cloud API shapes. Caddy is the current preferred implementation because it can terminate local TLS, manage a local CA, and reverse-proxy cleanly to existing simulator HTTP ports.
+The gateway already provides a realistic local HTTPS front door without changing simulator public cloud API shapes. The next proof point is Azure Terraform, because AzureRM requires trusted HTTPS for custom metadata discovery.
 
 ## Provider Facts To Preserve
 
@@ -25,18 +25,22 @@ The goal is a realistic local HTTPS front door for clients that require or natur
 - AWS Terraform provider custom endpoints are full URLs; official docs explicitly support `http://localhost` service endpoints. HTTPS is optional for realism and CA-bundle coverage.
 - Existing simulator direct TLS support via `SIM_TLS_CERT` / `SIM_TLS_KEY` stays. The gateway is an operator/developer front door, not a replacement for direct simulator TLS.
 
-## Staged Plan
+## Completed Gateway Stage
 
-1. Add Caddy gateway config plus `make` targets to start/stop/status it.
-2. Route HTTPS hostnames to current simulator ports:
+- Caddy config plus `make stack-https-{up,status,ca,down}` targets.
+- HTTPS routes to current simulator ports:
    - `aws.sockerless.localhost` -> `127.0.0.1:4566`
    - `gcp.sockerless.localhost` -> `127.0.0.1:4567`
    - `azure.sockerless.localhost` -> `127.0.0.1:4568`
    - Azure data-plane wildcards -> Azure simulator, preserving host-addressed routing.
-3. Wire Azure Terraform first: `metadata_host`, ARM-advertised data-plane URLs, gateway CA export to Linux test containers through `SSL_CERT_FILE`.
-4. Document AWS/GCP HTTPS usage while preserving direct HTTP configs.
-5. Add admin UI visibility for gateway status, endpoints, CA path, and equivalent recovery `make` commands.
-6. Decide after local proof whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs.
+- `STACK_HTTPS=1` local stack integration, including Azure ARM-advertised data-plane URL projection.
+- Admin UI visibility for gateway status, endpoints, CA path, and equivalent recovery `make` commands.
+
+## Remaining Stages
+
+1. Wire Azure Terraform first: `metadata_host`, ARM-advertised data-plane URLs, gateway CA export to Linux test containers through `SSL_CERT_FILE`.
+2. Document AWS/GCP HTTPS Terraform examples while preserving direct HTTP configs.
+3. Decide after local proof whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs.
 
 ## Deferred Trackers
 

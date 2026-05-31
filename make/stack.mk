@@ -27,6 +27,7 @@ STACK_BLEEPHUB_PORT := 5555
         stack-gcp-cloudrun stack-gcp-gcf \
         stack-azure-aca stack-azure-azf \
         stack-up stack-down stack-status \
+        stack-https-up stack-https-down stack-https-status stack-https-ca \
         stack-bleephub-up \
         stack-observability-up stack-observability-down \
         stack-observability-status stack-observability-validate
@@ -50,6 +51,19 @@ STACK_OBS_OTLP_HTTP := 4318
 STACK_OBS_VICTORIALOGS_UI := 9428
 STACK_OBS_JAEGER_UI := 16686
 STACK_OBS_JAEGER_OTLP := 4319
+
+# Optional local HTTPS gateway (Caddy). This fronts the existing sim
+# HTTP ports; it does not change simulator public API routes.
+STACK_HTTPS ?= 0
+STACK_HTTPS_NAME := https-gateway
+STACK_HTTPS_PORT ?= 8443
+STACK_HTTPS_ADMIN_PORT ?= 28443
+STACK_HTTPS_STATE_DIR := $(CURDIR)/.sockerless-state/https-gateway
+STACK_HTTPS_XDG_DATA_HOME := $(STACK_HTTPS_STATE_DIR)/data
+STACK_HTTPS_XDG_CONFIG_HOME := $(STACK_HTTPS_STATE_DIR)/config
+STACK_HTTPS_CA_CERT := $(STACK_HTTPS_XDG_DATA_HOME)/caddy/pki/authorities/local/root.crt
+STACK_HTTPS_CADDYFILE := $(CURDIR)/make/https-gateway/Caddyfile
+CADDY ?= caddy
 
 stack-aws-ecs: ## start sim-aws + backend-ecs + admin
 	@$(MAKE) -s stack-up STACK_SIM=aws STACK_BE=ecs STACK_BE_DIR=backends/ecs
@@ -93,7 +107,16 @@ stack-up:
 	@printf "$(COLOR_CYAN)▸ Building admin$(COLOR_RESET)\n"
 	@$(MAKE) -s -C cmd/sockerless-admin build
 	@mkdir -p $(STACK_PID_DIR)
+	@rm -f $(STACK_PID_DIR)/sim.env
 	@rm -f $(STACK_PID_DIR)/backend.env
+	@if [ "$(STACK_HTTPS)" = "1" ]; then \
+	  $(MAKE) -s stack-https-up STACK_HTTPS_PORT=$(STACK_HTTPS_PORT); \
+	  if [ "$(STACK_SIM)" = "azure" ]; then \
+	    { \
+	      printf "SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='%s'\n" '{"storage":{"blob":"https://{account}.blob.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","file":"https://{account}.file.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","queue":"https://{account}.queue.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","table":"https://{account}.table.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","web":"https://{account}.web.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","dfs":"https://{account}.dfs.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/"},"keyVault":"https://{vault}.vault.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","serviceBus":"https://{namespace}.servicebus.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/","eventGrid":"https://{topic}.eventgrid.azure.sockerless.localhost:$(STACK_HTTPS_PORT)/api/events"}'; \
+	    } > $(STACK_PID_DIR)/sim.env; \
+	  fi; \
+	fi
 	@if [ "$(STACK_BE)" = "aca" ]; then \
 	  { \
 	    printf 'SOCKERLESS_ACA_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000000\n'; \
@@ -123,7 +146,7 @@ stack-up:
 	    printf 'SOCKERLESS_CALLBACK_URL=ws://localhost:$(STACK_BE_PORT)/v1/lambda/reverse\n'; \
 	  } > $(STACK_PID_DIR)/backend.env; \
 	fi
-	@$(MAKE) -s start-component KIND=sim CLOUD=$(STACK_SIM) NAME=sim PORT=$(STACK_SIM_PORT_$(STACK_SIM))
+	@$(MAKE) -s start-component KIND=sim CLOUD=$(STACK_SIM) NAME=sim PORT=$(STACK_SIM_PORT_$(STACK_SIM)) ENV_FILE=$(STACK_PID_DIR)/sim.env
 	@sleep 1
 	@$(MAKE) -s start-component KIND=backend CLOUD=$(STACK_SIM_CLOUD_$(STACK_BE)) BACKEND=$(STACK_BE) \
 	  NAME=backend PORT=$(STACK_BE_PORT) SIM_PORT=$(STACK_SIM_PORT_$(STACK_SIM)) ENV_FILE=$(STACK_PID_DIR)/backend.env
@@ -140,6 +163,9 @@ stack-up:
 	@printf "  $(COLOR_BOLD)admin UI:$(COLOR_RESET)        http://localhost:$(STACK_ADMIN_PORT)/ui/\n"
 	@printf "  $(COLOR_BOLD)backend-$(STACK_BE):$(COLOR_RESET)   http://localhost:$(STACK_BE_PORT)\n"
 	@printf "  $(COLOR_BOLD)sim-$(STACK_SIM):$(COLOR_RESET)        http://localhost:$(STACK_SIM_PORT_$(STACK_SIM))\n"
+	@if [ "$(STACK_HTTPS)" = "1" ]; then \
+	  printf "  $(COLOR_BOLD)HTTPS gateway:$(COLOR_RESET) https://$(STACK_SIM).sockerless.localhost:$(STACK_HTTPS_PORT)\n"; \
+	fi
 	@printf "  Logs in $(STACK_PID_DIR)/*.log · stop with $(COLOR_BOLD)make stack-down$(COLOR_RESET)\n"
 
 stack-bleephub-up: ## also start bleephub on :5555 after a stack target is running
@@ -158,6 +184,85 @@ stack-bleephub-up: ## also start bleephub on :5555 after a stack target is runni
 
 stack-status: ## show running stack components
 	@$(MAKE) -s status-components
+
+stack-https-up: ## start optional Caddy HTTPS gateway for simulator APIs
+	@case "$(CADDY)" in \
+	  */*) [ -x "$(CADDY)" ] ;; \
+	  *) command -v $(CADDY) > /dev/null 2>&1 ;; \
+	esac || { \
+	  printf "$(COLOR_RED)Caddy binary not found — install Caddy or set CADDY=/path/to/caddy$(COLOR_RESET)\n"; \
+	  exit 1; \
+	}
+	@if [ ! -f $(STACK_HTTPS_CADDYFILE) ]; then \
+	  printf "$(COLOR_RED)missing $(STACK_HTTPS_CADDYFILE)$(COLOR_RESET)\n"; \
+	  exit 1; \
+	fi
+	@mkdir -p $(STACK_PID_DIR) $(STACK_HTTPS_XDG_DATA_HOME) $(STACK_HTTPS_XDG_CONFIG_HOME)
+	@if [ -f $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid ] && \
+	    pid=$$(cat $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid 2>/dev/null) && \
+	    ps -p $$pid > /dev/null 2>&1; then \
+	  printf "$(COLOR_DIM)$(STACK_HTTPS_NAME): already running (pid=$$pid)$(COLOR_RESET)\n"; \
+	  $(MAKE) -s stack-https-status; \
+	  exit 0; \
+	fi
+	@{ \
+	  printf 'SOCKERLESS_HTTPS_GATEWAY_PORT=%s\n' "$(STACK_HTTPS_PORT)"; \
+	  printf 'SOCKERLESS_HTTPS_GATEWAY_ADMIN_PORT=%s\n' "$(STACK_HTTPS_ADMIN_PORT)"; \
+	  printf 'SOCKERLESS_HTTPS_GATEWAY_CA_CERT=%s\n' "$(STACK_HTTPS_CA_CERT)"; \
+	  printf 'SOCKERLESS_AWS_SIM_PORT=%s\n' "$(STACK_SIM_PORT_aws)"; \
+	  printf 'SOCKERLESS_GCP_SIM_PORT=%s\n' "$(STACK_SIM_PORT_gcp)"; \
+	  printf 'SOCKERLESS_AZURE_SIM_PORT=%s\n' "$(STACK_SIM_PORT_azure)"; \
+	} > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).env
+	@rm -f $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).exit
+	@printf "$(COLOR_CYAN)▸ Starting Caddy HTTPS gateway on :$(STACK_HTTPS_PORT)$(COLOR_RESET)\n"
+	@( XDG_DATA_HOME=$(STACK_HTTPS_XDG_DATA_HOME) \
+	   XDG_CONFIG_HOME=$(STACK_HTTPS_XDG_CONFIG_HOME) \
+	   SOCKERLESS_HTTPS_GATEWAY_PORT=$(STACK_HTTPS_PORT) \
+	   SOCKERLESS_HTTPS_GATEWAY_ADMIN_PORT=$(STACK_HTTPS_ADMIN_PORT) \
+	   SOCKERLESS_AWS_SIM_PORT=$(STACK_SIM_PORT_aws) \
+	   SOCKERLESS_GCP_SIM_PORT=$(STACK_SIM_PORT_gcp) \
+	   SOCKERLESS_AZURE_SIM_PORT=$(STACK_SIM_PORT_azure) \
+	   $(CADDY) run --config $(STACK_HTTPS_CADDYFILE) --adapter caddyfile \
+	     > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).log 2>&1 < /dev/null & \
+	   echo $$! > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid )
+	@sleep 1
+	@pid=$$(cat $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid); \
+	if ! ps -p $$pid > /dev/null 2>&1; then \
+	  printf "$(COLOR_RED)$(STACK_HTTPS_NAME) failed to start. Log:$(COLOR_RESET)\n"; \
+	  tail -n 80 $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).log 2>/dev/null || true; \
+	  rm -f $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid; \
+	  exit 1; \
+	fi
+	@$(MAKE) -s stack-https-status
+
+stack-https-status: ## show local HTTPS gateway status and endpoints
+	@if [ -f $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid ]; then \
+	  pid=$$(cat $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid); \
+	  if ps -p $$pid > /dev/null 2>&1; then \
+	    printf "  $(COLOR_GREEN)● %-30s$(COLOR_RESET) pid=%s\n" "$(STACK_HTTPS_NAME)" "$$pid"; \
+	  else \
+	    printf "  $(COLOR_RED)○ %-30s$(COLOR_RESET) pid=%s (dead)\n" "$(STACK_HTTPS_NAME)" "$$pid"; \
+	  fi; \
+	else \
+	  printf "  $(COLOR_DIM)$(STACK_HTTPS_NAME): not running$(COLOR_RESET)\n"; \
+	fi
+	@printf "  $(COLOR_BOLD)AWS:$(COLOR_RESET)   https://aws.sockerless.localhost:$(STACK_HTTPS_PORT)\n"
+	@printf "  $(COLOR_BOLD)GCP:$(COLOR_RESET)   https://gcp.sockerless.localhost:$(STACK_HTTPS_PORT)\n"
+	@printf "  $(COLOR_BOLD)Azure:$(COLOR_RESET) https://azure.sockerless.localhost:$(STACK_HTTPS_PORT)\n"
+	@printf "  $(COLOR_BOLD)CA:$(COLOR_RESET)    $(STACK_HTTPS_CA_CERT)\n"
+	@if [ ! -f $(STACK_HTTPS_CA_CERT) ]; then \
+	  printf "  $(COLOR_DIM)CA file is created by Caddy after local cert issuance.$(COLOR_RESET)\n"; \
+	fi
+
+stack-https-ca: ## print the Caddy local CA certificate path
+	@if [ ! -f $(STACK_HTTPS_CA_CERT) ]; then \
+	  printf "$(COLOR_RED)CA certificate not found at $(STACK_HTTPS_CA_CERT). Run make stack-https-up first.$(COLOR_RESET)\n"; \
+	  exit 1; \
+	fi
+	@printf "%s\n" "$(STACK_HTTPS_CA_CERT)"
+
+stack-https-down: ## stop optional Caddy HTTPS gateway
+	@$(MAKE) -s stop-component NAME=$(STACK_HTTPS_NAME)
 
 # stack-observability-up brings up the OTel collector + VictoriaLogs
 # + Jaeger as background processes. PIDs land in

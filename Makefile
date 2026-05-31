@@ -20,6 +20,7 @@
 #   make cmd/sockerless-admin/run        # run a single app via path
 #
 #   make stack-aws-ecs     # bring up sim+backend+admin for AWS-ECS
+#   make stack-https-up    # optional Caddy HTTPS gateway for sims
 #   make stack-status      # show running stack
 #   make stack-down        # stop running stack
 #

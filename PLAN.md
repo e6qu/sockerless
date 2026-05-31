@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: optional local HTTPS gateway for simulator APIs.
+Next planned phase: Azure Terraform over the local HTTPS gateway.
 
 ## Guiding Principles
 
@@ -23,9 +23,9 @@ Next planned phase: optional local HTTPS gateway for simulator APIs.
 7. User merges PRs. Agents create branches, commits, and PRs only.
 8. Continuity docs are updated in every PR and written so they are correct after the PR merges.
 
-## Next Planned Phase: Local HTTPS Gateway
+## Local HTTPS Gateway
 
-Add an optional Caddy/local-HTTPS front door for simulator APIs.
+The optional Caddy/local-HTTPS front door for simulator APIs was added.
 
 This is local transport infrastructure, not a simulator public API change. Public simulator routes, headers, request bodies, and response shapes must remain cloud-compatible.
 
@@ -38,14 +38,19 @@ This is local transport infrastructure, not a simulator public API change. Publi
 - AWS provider custom endpoints are full URLs and official docs explicitly support `http://localhost` service endpoints.
 - Existing direct simulator TLS via `SIM_TLS_CERT` / `SIM_TLS_KEY` remains supported.
 
-### Stages
+Implemented:
 
-1. **Gateway config and Make targets.** Add Caddy config plus start/stop/status targets.
-2. **Routing.** Proxy `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards to the existing simulator ports.
-3. **Azure Terraform wiring.** Use the gateway for `metadata_host`, ARM-advertised data-plane URLs, and gateway CA trust through `SSL_CERT_FILE` in Linux test containers.
-4. **AWS/GCP docs and examples.** Document optional HTTPS configs while keeping direct HTTP endpoint overrides.
-5. **Admin UI.** Show gateway status, endpoints, CA path, and equivalent recovery `make` commands.
-6. **CI decision.** After local proof, decide whether Azure Terraform CI should use Caddy by default or keep generated direct simulator certs.
+- Caddy config and `make stack-https-{up,status,ca,down}` targets.
+- HTTPS routing for `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards.
+- `STACK_HTTPS=1 make stack-azure-aca` style stack integration, including Azure ARM-advertised data-plane URL projection.
+- Admin API/UI visibility for gateway status, endpoints, CA path, and recovery make commands.
+- Docs for local CA trust and provider-specific HTTPS behavior.
+
+Remaining staged work:
+
+1. **Azure Terraform harness.** Run Azure Terraform through the gateway for `metadata_host`, ARM-advertised data-plane URLs, and gateway CA trust through `SSL_CERT_FILE` in Linux test containers.
+2. **AWS/GCP examples.** Add optional HTTPS Terraform examples while keeping direct HTTP endpoint overrides.
+3. **CI decision.** After local proof, decide whether Azure Terraform CI should use Caddy by default or keep generated direct simulator certs.
 
 ## Deferred Work
 

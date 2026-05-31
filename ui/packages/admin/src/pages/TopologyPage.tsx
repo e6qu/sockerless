@@ -17,6 +17,7 @@ import {
 import {
   AdminApiClient,
   type InstanceKind,
+  type HTTPSGatewayInfo,
   type Topology,
   type TopologyInstance,
   type TopologyProject,
@@ -218,6 +219,12 @@ export function TopologyPage() {
     queryKey: ["topology-file"],
     queryFn: () => api.topologyFile(),
     staleTime: 60_000,
+  });
+
+  const { data: httpsGateway } = useQuery({
+    queryKey: ["https-gateway"],
+    queryFn: () => api.httpsGateway(),
+    refetchInterval: 5000,
   });
 
   const invalidate = () => {
@@ -474,6 +481,7 @@ export function TopologyPage() {
       )}
 
       <TopologyFileCard path={topologyFile?.path ?? "sockerless.yaml"} />
+      <HTTPSGatewayCard gateway={httpsGateway} />
 
       {projects.length === 0 ? (
         <QuickStartCard
@@ -664,6 +672,103 @@ function TopologyFileCard({ path }: { path: string }) {
             {cmd}
           </code>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function HTTPSGatewayCard({ gateway }: { gateway?: HTTPSGatewayInfo }) {
+  const commands = gateway?.commands ?? [
+    "make stack-https-up",
+    "make stack-https-status",
+    "make stack-https-down",
+  ];
+  const endpoints = gateway?.endpoints ?? {
+    aws: "https://aws.sockerless.localhost:8443",
+    gcp: "https://gcp.sockerless.localhost:8443",
+    azure: "https://azure.sockerless.localhost:8443",
+  };
+  return (
+    <section style={cardStyle}>
+      <header
+        className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <div>
+          <div
+            className="font-display"
+            style={{
+              fontStyle: "italic",
+              fontWeight: 600,
+              fontSize: "1rem",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            HTTPS gateway
+          </div>
+          <div
+            className="mt-0.5 font-mono uppercase tracking-[0.18em]"
+            style={{ color: "var(--color-fg-subtle)", fontSize: "0.62rem" }}
+          >
+            Caddy front door for simulator APIs
+          </div>
+        </div>
+        <StatusBadge
+          status={
+            gateway?.running ? "ok" : gateway ? "stopped" : "unknown"
+          }
+        />
+      </header>
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,auto)]">
+        <div className="grid gap-2 md:grid-cols-3">
+          {(["aws", "gcp", "azure"] as const).map((key) => (
+            <div
+              key={key}
+              className="p-3"
+              style={{
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <div
+                className="font-mono uppercase tracking-[0.16em]"
+                style={{ color: "var(--color-fg-subtle)", fontSize: "0.62rem" }}
+              >
+                {key}
+              </div>
+              <div
+                className="mt-1 break-all font-mono"
+                style={{ color: "var(--color-fg)", fontSize: "0.76rem" }}
+              >
+                {endpoints[key]}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-col gap-2">
+          <div
+            className="font-mono"
+            style={{ color: "var(--color-fg-muted)", fontSize: "0.72rem" }}
+          >
+            CA: {gateway?.ca_path ?? ".sockerless-state/https-gateway/.../root.crt"}
+            {gateway && !gateway.ca_present ? " (not generated yet)" : ""}
+          </div>
+          {commands.map((cmd) => (
+            <code
+              key={cmd}
+              style={{
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-xs)",
+                color: "var(--color-fg-muted)",
+                fontSize: "0.72rem",
+                padding: "0.25rem 0.45rem",
+              }}
+            >
+              {cmd}
+            </code>
+          ))}
+        </div>
       </div>
     </section>
   );
