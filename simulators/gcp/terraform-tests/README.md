@@ -13,6 +13,7 @@ Resources covered:
 - `google_pubsub_topic` + `google_pubsub_subscription`
 - `google_cloudbuild_trigger`
 - `google_storage_bucket` + `google_storage_bucket_object`
+- `google_vpc_access_connector`
 - `google_logging_project_sink` + `google_logging_metric`
 - `google_bigquery_dataset` + `google_bigquery_table`
 - `google_firestore_document`
@@ -30,6 +31,15 @@ cd simulators/gcp/terraform-tests
 go test -v ./...
 ```
 
+To run the same provider flow through the optional Caddy HTTPS gateway:
+
+```sh
+cd simulators/gcp
+make terraform-https-test
+```
+
+The HTTPS target uses Caddy's `https://localhost:<ephemeral-port>` single-simulator route so the test does not depend on wildcard `.localhost` DNS support. It still uses Caddy TLS and passes the generated root CA to Terraform through `SSL_CERT_FILE`. On macOS the Make target runs the same test inside the shared Linux simulator test image so the real provider honors that CA file.
+
 The test harness (`helpers_test.go`) handles simulator binary build, port allocation, server startup, Terraform init/apply/destroy, and shutdown. No external services required.
 
 ## Prerequisites
@@ -37,6 +47,7 @@ The test harness (`helpers_test.go`) handles simulator binary build, port alloca
 - Go 1.23+
 - `terraform` CLI installed and on `PATH`
 - The `simulators/gcp/` parent module (built automatically by `TestMain`)
+- `caddy` installed and on `PATH` for `make terraform-https-test`
 
 ## How it works
 

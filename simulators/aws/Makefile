@@ -22,7 +22,7 @@ include $(REPO_ROOT_REL)/make/go-app.mk
 # Each sub-tree (sdk-tests, cli-tests, terraform-tests, shared) is a
 # separate Go module; the CI calls these directly.
 
-.PHONY: shared-test sdk-test cli-test terraform-test
+.PHONY: shared-test sdk-test cli-test terraform-test terraform-https-test terraform-https-test-docker
 
 shared-test: ## go test the shared/ helper module
 	cd shared && $(GO_ENV) go test -v -count=1 ./...
@@ -35,6 +35,14 @@ cli-test: build ## go test the CLI-driven sim tests
 
 terraform-test: build ## go test the terraform-driven sim tests
 	cd terraform-tests && $(GO_ENV) go test -v -count=1 -timeout 300s ./...
+
+terraform-https-test: ## go test terraform via the optional Caddy HTTPS gateway
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+	  $(MAKE) terraform-https-test-docker; \
+	else \
+	  $(MAKE) build; \
+	  cd terraform-tests && SOCKERLESS_TF_HTTPS_GATEWAY=1 $(GO_ENV) go test -v -count=1 -timeout 300s ./...; \
+	fi
 
 # Aggregate that runs all four legacy test categories.
 .PHONY: test-all
@@ -72,3 +80,15 @@ docker-test: docker-test-build ## run all tests inside docker
 		-w /src/simulators/aws \
 		$(DOCKER_TEST_ENV) \
 		$(DOCKER_TEST_IMAGE) make test-all
+
+terraform-https-test-docker: docker-test-build ## run terraform HTTPS tests inside docker
+	docker run --rm --network host \
+		--security-opt label=disable \
+		--group-add $(DOCKER_SOCK_GID) \
+		--group-add 0 \
+		-v $(REPO_ROOT):/src \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-w /src/simulators/aws/terraform-tests \
+		$(DOCKER_TEST_ENV) \
+		-e SOCKERLESS_TF_HTTPS_GATEWAY=1 \
+		$(DOCKER_TEST_IMAGE) go test -v -count=1 -timeout 300s ./...

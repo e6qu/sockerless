@@ -19,6 +19,14 @@ https://gcp.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
 	}
 }
 
+https://localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
+	tls internal
+	reverse_proxy 127.0.0.1:{$SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT:4566} {
+		header_up Host {http.request.hostport}
+		header_up X-Forwarded-Proto https
+	}
+}
+
 https://azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.blob.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.file.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},

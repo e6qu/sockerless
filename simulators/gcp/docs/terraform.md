@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Terraform installed (`terraform version`)
-- Simulator running on `http://localhost:4567`
+- Simulator running on `http://localhost:4567`, or the optional Caddy HTTPS gateway running at `https://gcp.sockerless.localhost:8443`
 
 ## Provider configuration
 
@@ -42,6 +42,47 @@ provider "google" {
 ```
 
 Note the trailing `/` on endpoint URLs — the Google provider appends API paths directly.
+
+## Optional HTTPS gateway
+
+The Google provider accepts full custom endpoint URLs, so the direct HTTP endpoint remains valid. To run through the local HTTPS gateway instead, start the simulator and Caddy, trust Caddy's local CA, and use the gateway URL as the same base endpoint:
+
+```sh
+make stack-https-up
+export SSL_CERT_FILE="$(make -s stack-https-ca)"
+terraform apply -auto-approve -var="endpoint=https://gcp.sockerless.localhost:8443"
+```
+
+Then compose service-specific endpoint URLs from `var.endpoint` exactly as with the direct HTTP path:
+
+```hcl
+provider "google" {
+  project = "my-project"
+  region  = "us-central1"
+
+  access_token          = "test-token"
+  user_project_override = false
+
+  compute_custom_endpoint           = "${var.endpoint}/compute/v1/"
+  dns_custom_endpoint               = "${var.endpoint}/dns/v1/"
+  cloud_run_v2_custom_endpoint      = "${var.endpoint}/v2/"
+  cloudfunctions2_custom_endpoint   = "${var.endpoint}/v2/"
+  storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
+  artifact_registry_custom_endpoint = "${var.endpoint}/v1/"
+  pubsub_custom_endpoint            = "${var.endpoint}/v1/"
+  cloud_build_custom_endpoint       = "${var.endpoint}/v1/"
+  vpc_access_custom_endpoint        = "${var.endpoint}/v1/"
+}
+```
+
+The test harness exposes this path with:
+
+```sh
+cd simulators/gcp
+make terraform-https-test
+```
+
+The harness uses the same Caddyfile and CA flow, but points Terraform at Caddy's `https://localhost:<ephemeral-port>` single-simulator route. On macOS the target runs inside the shared Linux simulator test image so the real provider honors `SSL_CERT_FILE`. The route is explicit test transport and avoids relying on wildcard `.localhost` DNS on developer machines or CI runners; the simulator API paths and Google provider endpoint settings are otherwise identical.
 
 ## Example resources
 

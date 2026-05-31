@@ -17,7 +17,7 @@ Terraform provider endpoint behavior differs by cloud:
 
 The gateway is therefore most important for Azure Terraform and SDK paths that validate HTTPS endpoint URLs. AWS and GCP can use it for parity with public cloud URLs, but do not require it for the current simulator Terraform paths.
 
-The Azure Terraform harness runs through this gateway. It starts Caddy with isolated per-test state, trusts Caddy's local CA through `SSL_CERT_FILE` in the Linux test container, and uses the gateway host for AzureRM metadata and ARM endpoint discovery.
+The Terraform CI path keeps Azure on this gateway because AzureRM metadata discovery requires trusted HTTPS. AWS and GCP also have HTTPS gateway harness targets so their providers are periodically exercised against public-cloud-shaped HTTPS URLs while their direct HTTP endpoint overrides remain available for local development.
 
 ## Commands
 
@@ -45,6 +45,7 @@ Default HTTPS port: `8443`.
 |---|---|
 | AWS | `https://aws.sockerless.localhost:8443` |
 | GCP | `https://gcp.sockerless.localhost:8443` |
+| Single-simulator localhost route | `https://localhost:8443` |
 | Azure ARM/metadata | `https://azure.sockerless.localhost:8443` |
 | Azure Blob | `https://{account}.blob.azure.sockerless.localhost:8443` |
 | Azure Files | `https://{account}.file.azure.sockerless.localhost:8443` |
@@ -61,6 +62,8 @@ Override the port with:
 ```sh
 make stack-https-up STACK_HTTPS_PORT=9443
 ```
+
+The `localhost` route is for resolver-independent single-simulator tests and points to `SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT`, which the normal stack sets to the AWS simulator port. Public, cloud-shaped gateway names remain the named `*.sockerless.localhost` endpoints above.
 
 ## CA Trust
 
@@ -99,6 +102,22 @@ For Azure CLI `az rest`, pass full gateway URLs. Use a trusted CA path such as `
 For Azure SDKs, use the same per-client endpoint/base URL override used for the direct simulator. HTTPS gateway clients must trust the Caddy CA through the runtime trust store or the SDK transport's root CA configuration.
 
 Reference docs: [AWS CLI endpoint overrides](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-endpoints.html), [AWS CLI CA bundle](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-options.html), [gcloud endpoint overrides](https://docs.cloud.google.com/sdk/gcloud/reference/topic/endpoint-override), [gcloud custom CA property](https://docs.cloud.google.com/sdk/gcloud/reference/topic/configurations), [Azure CLI `az rest`](https://learn.microsoft.com/en-us/cli/azure/reference-index?view=azure-cli-latest#az-rest).
+
+## Terraform Providers
+
+Azure Terraform uses Caddy HTTPS as the canonical test path. The AzureRM and Azure Stack providers build HTTPS metadata URLs from a host-only `metadata_host`, so tests fail loudly when Caddy or HTTPS is missing.
+
+AWS and GCP Terraform providers accept full custom endpoint URLs. Their direct HTTP configs stay valid, and the optional HTTPS configs use the same provider endpoint fields with the gateway base URL:
+
+```sh
+cd simulators/aws
+make terraform-https-test
+
+cd simulators/gcp
+make terraform-https-test
+```
+
+Those targets start the simulator on HTTP loopback, put Caddy in front of it, set `SSL_CERT_FILE` to Caddy's local CA, and run the real Terraform provider apply/destroy harness through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS they run inside the shared Linux simulator test image, matching the Azure Terraform pattern, because the real providers use Go's macOS trust integration and do not reliably honor `SSL_CERT_FILE` from the shell. That keeps the test independent of workstation or CI wildcard `.localhost` resolver behavior while still exercising real HTTPS, Caddy, CA validation, and the official providers.
 
 ## Stack Integration
 

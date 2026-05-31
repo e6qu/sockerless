@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Terraform installed (`terraform version`)
-- Simulator running on `http://localhost:4566`
+- Simulator running on `http://localhost:4566`, or the optional Caddy HTTPS gateway running at `https://aws.sockerless.localhost:8443`
 
 ## Provider configuration
 
@@ -31,7 +31,7 @@ provider "aws" {
     ecr            = "http://localhost:4566"
     lambda         = "http://localhost:4566"
     cloudwatchlogs = "http://localhost:4566"
-    s3             = "http://localhost:4566/s3"
+    s3             = "http://localhost:4566"
     iam            = "http://localhost:4566"
     sts            = "http://localhost:4566"
     ec2            = "http://localhost:4566"
@@ -42,6 +42,51 @@ provider "aws" {
 ```
 
 The `skip_*` flags prevent the provider from making calls that the simulator doesn't need to handle (metadata API, credential validation, account ID lookup).
+
+## Optional HTTPS gateway
+
+The AWS provider accepts full endpoint URLs, so the direct HTTP endpoint remains valid. To run through the local HTTPS gateway instead, start the simulator and Caddy, trust Caddy's local CA, and point each provider endpoint at the gateway URL:
+
+```sh
+make stack-https-up
+export SSL_CERT_FILE="$(make -s stack-https-ca)"
+terraform apply -auto-approve -var="endpoint=https://aws.sockerless.localhost:8443"
+```
+
+The provider block is otherwise the same as the direct HTTP example:
+
+```hcl
+provider "aws" {
+  region                      = "us-east-1"
+  access_key                  = "test"
+  secret_key                  = "test"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+  s3_use_path_style           = true
+
+  endpoints {
+    ec2              = var.endpoint
+    ecs              = var.endpoint
+    ecr              = var.endpoint
+    lambda           = var.endpoint
+    cloudwatchlogs   = var.endpoint
+    s3               = var.endpoint
+    iam              = var.endpoint
+    sts              = var.endpoint
+    servicediscovery = var.endpoint
+  }
+}
+```
+
+The test harness exposes this path with:
+
+```sh
+cd simulators/aws
+make terraform-https-test
+```
+
+The harness uses the same Caddyfile and CA flow, but points Terraform at Caddy's `https://localhost:<ephemeral-port>` single-simulator route. On macOS the target runs inside the shared Linux simulator test image so the real provider honors `SSL_CERT_FILE`. The route is explicit test transport and avoids relying on wildcard `.localhost` DNS on developer machines or CI runners; the simulator API paths and AWS provider endpoint settings are otherwise identical.
 
 ## Example resources
 
@@ -116,5 +161,5 @@ The simulator supports the AWS API operations that these Terraform resources use
 ## Notes
 
 - All state is in-memory and resets when the simulator restarts. Terraform state files will become stale after a restart.
-- S3 endpoints use a `/s3` prefix (`http://localhost:4566/s3`).
+- S3 uses path-style addressing via `s3_use_path_style = true`, so bucket names stay in the URL path under the configured endpoint.
 - Authentication is not validated — any access key and secret will work.

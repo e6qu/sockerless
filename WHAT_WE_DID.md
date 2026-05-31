@@ -37,6 +37,16 @@ The gateway docs were expanded with SDK/CLI-specific endpoint and CA trust knobs
 
 BUG-1104 audit found stale GCP GCS CLI coverage. Current gcloud supports Cloud Storage endpoint overrides, so `gcp-gcs` was no longer a CLI "not applicable" surface. BUG-1250 added real `gcloud storage` bucket/object lifecycle coverage, fixed the simulator to accept current gcloud multipart upload boundaries, and implemented the public GCS `buckets.getStorageLayout` response used by gcloud's upload path. BUG-1251 corrected GCS timestamp precision to Cloud Storage-style milliseconds so current Linux gcloud did not inject timestamp truncation warnings into command output.
 
+## 2026-05-31 - Terraform HTTPS Gateway and Coverage Audit
+
+AWS and GCP gained optional Terraform HTTPS gateway harnesses without removing the direct HTTP Terraform path. `make terraform-https-test` starts each simulator on HTTP loopback, starts Caddy with isolated state, trusts Caddy's local CA with `SSL_CERT_FILE`, and runs the real provider apply/destroy suite through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI. The public named gateway hosts remained available for normal stack use; the harness route avoided wildcard `.localhost` resolver differences.
+
+Terraform CI kept Caddy HTTPS for provider validation. Azure remained mandatory through the gateway because AzureRM metadata discovery requires trusted HTTPS; AWS/GCP used their new HTTPS gateway targets in CI while `make terraform-test` stayed available for direct HTTP.
+
+BUG-1104 audit found stale GCP VPC Access Terraform coverage. BUG-1253 added `vpc_access_custom_endpoint`, provisioned `google_vpc_access_connector` in the GCP Terraform stack, asserted the canonical connector ID, and marked `gcp-vpcaccess` Terraform coverage direct.
+
+The same audit found larger stale GCP client-surface rows for API Gateway, Cloud Build, IAM, and Pub/Sub. BUG-1254 / issue #304 was opened so those public gcloud/Terraform coverage gaps were explicit and tracked.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -76,7 +86,8 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 ## Deferred Work
 
 - BUG-1075: live-cloud validation remains intentionally deferred. Do not mark live cloud cells green without authenticated real-cloud runs.
-- BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI audit closed one stale "not applicable" row.
+- BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
+- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered during the latest audit pass.
 
 ## Continuity Rules
 

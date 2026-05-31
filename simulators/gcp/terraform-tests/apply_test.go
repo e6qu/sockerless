@@ -11,12 +11,13 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions the full GCP-sim coverage stack
-// (compute network + disk + subnet + firewall + regional address + Cloud NAT +
-// global HTTP load balancer, public + private DNS zones, Artifact Registry,
-// Cloud Run v2 Service + Job, Cloud Functions v2, Pub/Sub, Cloud Build trigger,
-// Cloud Storage bucket + object, Cloud Logging sink/metric, BigQuery dataset/table,
-// Firestore document, Memorystore Redis, Cloud SQL instance/database/user,
-// Eventarc trigger, Secret Manager, IAM service account) in a single
+// (compute network + disk + subnet + VPC Access connector + firewall +
+// regional address + Cloud NAT + global HTTP load balancer, public + private
+// DNS zones, Artifact Registry, Cloud Run v2 Service + Job, Cloud Functions v2,
+// Pub/Sub, Cloud Build trigger, Cloud Storage bucket + object, Cloud Logging
+// sink/metric, BigQuery dataset/table, Firestore document, Memorystore Redis,
+// Cloud SQL instance/database/user, Eventarc trigger, Secret Manager, IAM service
+// account) in a single
 // terraform apply round-trip and asserts the cross-resource references
 // converged.
 //
@@ -24,6 +25,7 @@ import (
 //   - compute.googleapis.com (networks + disks + subnetworks + firewalls +
 //     addresses + routers + router NATs + healthChecks + backendServices +
 //     urlMaps + targetHttpProxies + globalForwardingRules)
+//   - vpcaccess.googleapis.com (connectors)
 //   - dns.googleapis.com (public + private managedZones + record sets via Changes)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
@@ -125,6 +127,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	subnetID := outputs.must(t, "subnet_id")
 	require.Contains(t, subnetID, "projects/test-project/regions/us-central1/subnetworks/tf-test-subnet",
 		"subnet id must include the canonical region+name path; got %s", subnetID)
+
+	vpcConnectorID := outputs.must(t, "vpc_access_connector_id")
+	require.Contains(t, vpcConnectorID, "projects/test-project/locations/us-central1/connectors/tf-vpc-connector",
+		"VPC Access connector id must include the canonical location+name path; got %s", vpcConnectorID)
 
 	firewallID := outputs.must(t, "firewall_id")
 	require.Contains(t, firewallID, "projects/test-project/global/firewalls/tf-test-fw-allow-ssh",

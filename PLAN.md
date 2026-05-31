@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: optional AWS/GCP Terraform HTTPS examples, then a CI policy decision for Azure Terraform's gateway path.
+Next planned phase: BUG-1254 / issue #304 GCP client-surface coverage gaps, unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -49,16 +49,19 @@ Implemented:
 - Shared simulator Docker test image with Caddy installed from the official package repository.
 - SDK/CLI gateway guidance for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
 - BUG-1104 GCS CLI audit: current `gcloud storage` endpoint overrides were documented and covered by real CLI tests; the simulator accepted current gcloud multipart upload boundaries and implemented `buckets.getStorageLayout`.
+- AWS/GCP Terraform HTTPS examples and harnesses: `make terraform-https-test` starts the simulator on HTTP loopback, starts Caddy with isolated state, trusts Caddy's local CA through `SSL_CERT_FILE`, and runs the real provider apply/destroy path against the gateway's resolver-independent `https://localhost:<ephemeral-port>` single-simulator route.
+- Terraform CI kept Caddy HTTPS for provider validation: Azure remained mandatory through the gateway, and AWS/GCP used their optional HTTPS gateway targets in CI while direct HTTP `make terraform-test` stayed available locally.
+- BUG-1253 fixed stale GCP VPC Access Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and updating the coverage matrix.
 
 Remaining staged work:
 
-1. **AWS/GCP examples.** Add optional HTTPS Terraform examples while keeping direct HTTP endpoint overrides.
-2. **CI decision.** Decide whether Azure Terraform CI should use Caddy by default now that the local proof passed under the 5-minute cap.
+1. **BUG-1254 / issue #304.** Add real public-client coverage for larger stale GCP not-applicable rows: API Gateway, Cloud Build, IAM, and Pub/Sub.
 
 ## Deferred Work
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
+- BUG-1254: GCP client-surface coverage gaps from the latest audit pass. Issue #304 tracks the remaining work.
 
 ## Current Capability Summary
 
