@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,16 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "darwin" && os.Getenv("SOCKERLESS_AZURE_TF_IN_DOCKER") != "1" {
 		os.Exit(runTerraformTestsInDocker())
 	}
+
+	repoRoot, err := filepath.Abs("../../..")
+	if err != nil {
+		log.Fatalf("Failed to resolve repository root: %v", err)
+	}
+	caddyBin := os.Getenv("CADDY")
+	if caddyBin == "" {
+		caddyBin = "caddy"
+	}
+	caddyBin = requireExecutable(caddyBin, "Azure Terraform HTTPS gateway tests")
 
 	binaryPath, _ = filepath.Abs("../simulator-azure")
 
@@ -118,15 +129,6 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Simulator metadata did not become healthy: %v", err)
 	}
 
-	repoRoot, err := filepath.Abs("../../..")
-	if err != nil {
-		simCmd.Process.Kill()
-		log.Fatalf("Failed to resolve repository root: %v", err)
-	}
-	caddyBin := os.Getenv("CADDY")
-	if caddyBin == "" {
-		caddyBin = "caddy"
-	}
 	gatewayCmd = exec.Command(caddyBin, "run", "--config", filepath.Join(repoRoot, "make", "https-gateway", "Caddyfile"), "--adapter", "caddyfile")
 	gatewayCmd.Env = append(os.Environ(),
 		fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(gatewayDir, "data")),
@@ -145,6 +147,7 @@ func TestMain(m *testing.M) {
 	}
 
 	baseURL = fmt.Sprintf("https://azure.sockerless.localhost:%d", gatewayPort)
+	requireHTTPSURL(baseURL, "Azure Terraform endpoint")
 	if err := waitForFile(caCertFile, 10*time.Second); err != nil {
 		gatewayCmd.Process.Kill()
 		simCmd.Process.Kill()
@@ -270,6 +273,37 @@ func freeTCPPort() int {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func requireExecutable(name, purpose string) string {
+	if strings.ContainsRune(name, rune(os.PathSeparator)) {
+		info, err := os.Stat(name)
+		if err != nil {
+			log.Fatalf("%s requires executable %q: %v", purpose, name, err)
+		}
+		if info.IsDir() {
+			log.Fatalf("%s requires executable %q, but it is a directory", purpose, name)
+		}
+		if info.Mode()&0111 == 0 {
+			log.Fatalf("%s requires executable %q, but it is not executable", purpose, name)
+		}
+		return name
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		log.Fatalf("%s requires %q in PATH or CADDY=/path/to/caddy; install Caddy before running these tests: %v", purpose, name, err)
+	}
+	return path
+}
+
+func requireHTTPSURL(raw, purpose string) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		log.Fatalf("%s must be a valid HTTPS URL, got %q: %v", purpose, raw, err)
+	}
+	if u.Scheme != "https" {
+		log.Fatalf("%s must use HTTPS because AzureRM metadata discovery requires trusted HTTPS, got %q", purpose, raw)
+	}
 }
 
 func azureGatewayDataPlaneEndpoints(port int) string {
@@ -438,6 +472,7 @@ func trustedHTTPClient(caCert string) (*http.Client, error) {
 }
 
 func terraformCmd(args ...string) *exec.Cmd {
+	requireHTTPSURL(baseURL, "Azure Terraform endpoint")
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = filepath.Dir(mustAbs("main.tf"))
 	cmd.Env = append(os.Environ(),
