@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: BUG-1254 / issue #304 GCP client-surface coverage gaps, unless a higher-priority issue appears.
+Next planned phase: the GCP issue group (#304, #309-#311, and #321-#325), unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -55,13 +55,28 @@ Implemented:
 
 Remaining staged work:
 
-1. **BUG-1254 / issue #304.** Add real public-client coverage for larger stale GCP not-applicable rows: API Gateway, Cloud Build, IAM, and Pub/Sub.
+1. **BUG-1254 / issue #304 plus BUG-1263.** Add real public-client coverage for larger stale GCP not-applicable rows and fix the GCP API-shape bugs in issues #309-#311 and #321-#325.
+2. **BUG-1264.** Fix Azure API-shape and LRO bugs in issues #312-#315 and #326-#329.
+
+## AWS Fidelity Sweep
+
+The AWS simulator fidelity sweep fixed issues #305-#308 and #317-#320:
+
+- S3 `ListObjectsV2` returned lexicographically sorted keys, honored cursors, emitted continuation tokens, and supported delimiter common prefixes.
+- Lambda `FunctionConfiguration` responses omitted request-only `Code`/`Tags`, while `GetFunction` kept `Code` and `Tags` only as top-level members.
+- SNS returned `pending confirmation` for confirmation-required protocols unless `ReturnSubscriptionArn=true`.
+- SQS rejected invalid `MaxNumberOfMessages` values instead of silently clamping them.
+- EC2 `RunInstances` honored `MinCount`/`MaxCount`, returned `pending`, transitioned to `running`, and `DescribeInstances` applied supported filters.
+- ECR `PutImage` used content-addressed SHA-256 manifest digests.
+- KMS `GenerateDataKey` used fresh crypto-random key material.
 
 ## Deferred Work
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
 - BUG-1254: GCP client-surface coverage gaps from the latest audit pass. Issue #304 tracks the remaining work.
+- BUG-1263: GCP API-shape backlog. Issues #309-#311 and #321-#325 remain open.
+- BUG-1264: Azure API-shape backlog. Issues #312-#315 and #326-#329 remain open.
 
 ## Current Capability Summary
 

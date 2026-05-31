@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -449,8 +450,9 @@ func handleKMSGenerateDataKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	plaintext := make([]byte, size)
-	for i := range plaintext {
-		plaintext[i] = byte(i)
+	if _, err := rand.Read(plaintext); err != nil {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to generate random data key", http.StatusInternalServerError)
+		return
 	}
 	envelope := []byte("kms-sim:" + keyId + ":" + base64.StdEncoding.EncodeToString(plaintext))
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

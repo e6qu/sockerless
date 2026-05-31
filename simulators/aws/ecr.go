@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"net/http"
 	"time"
 
@@ -427,7 +429,8 @@ func handleECRPutImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	digest := "sha256:" + generateUUID()
+	sum := sha256.Sum256([]byte(req.ImageManifest))
+	digest := "sha256:" + hex.EncodeToString(sum[:])
 	img := ECRImageDetail{
 		RegistryId:     ecrRegistryId(),
 		RepositoryName: req.RepositoryName,

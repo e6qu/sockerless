@@ -143,6 +143,26 @@ func TestSQS_NonExistentQueue(t *testing.T) {
 	assert.Equal(t, "AWS.SimpleQueueService.NonExistentQueue", apiErr.ErrorCode())
 }
 
+func TestSQS_ReceiveMessageRejectsInvalidMaxNumberOfMessages(t *testing.T) {
+	client := sqsClient()
+	out, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("max-invalid-q")})
+	require.NoError(t, err)
+	queueURL := aws.ToString(out.QueueUrl)
+	t.Cleanup(func() {
+		_, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(queueURL)})
+	})
+
+	_, err = client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String(queueURL),
+		MaxNumberOfMessages: 25,
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "expected AWS API error, got %T: %v", err, err)
+	assert.Equal(t, "InvalidParameterValue", apiErr.ErrorCode())
+	assert.Contains(t, apiErr.ErrorMessage(), "must be between 1 and 10")
+}
+
 // TestSQS_VisibilityTimeoutExpiry asserts a message returns to
 // visible state after the per-receive timeout elapses.
 func TestSQS_VisibilityTimeoutExpiry(t *testing.T) {

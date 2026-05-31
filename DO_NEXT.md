@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Terraform HTTPS gateway audit PR merged.
+- Branch: `main`, synced with `origin/main` after the AWS simulator fidelity PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #304.
-- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1254.
-- Last completed work: AWS/GCP gained optional Terraform HTTPS gateway harnesses, CI kept Terraform provider validation on Caddy HTTPS where intended, and stale GCP VPC Access Terraform coverage was fixed.
+- Open GitHub issues at last check: #304, #309-#315, and #321-#329.
+- Open BUG trackers: BUG-1075, BUG-1104, BUG-1254, BUG-1263, and BUG-1264.
+- Last completed work: AWS simulator fidelity issues #305-#308 and #317-#320 were fixed.
 
 ## Next Task
 
-Address issue #304 / BUG-1254 unless a higher-priority issue appears.
+Address the GCP issue group next: issue #304 / BUG-1254 plus GCP fidelity issues #309-#311 and #321-#325, unless a higher-priority issue appears.
 
-The current PR added optional AWS/GCP Terraform HTTPS gateway examples while preserving the existing direct HTTP Terraform paths. Azure Terraform remained the hard proof point because AzureRM requires trusted HTTPS for custom metadata discovery.
+The AWS simulator fidelity PR closed the immediate synthetic-value bugs and API-shape gaps in the AWS issue group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
 
 ## Provider Facts To Preserve
 
@@ -43,16 +43,27 @@ The current PR added optional AWS/GCP Terraform HTTPS gateway examples while pre
 - AWS/GCP now had `make terraform-https-test` targets. They start the simulator on HTTP loopback, put Caddy in front of it, trust Caddy's CA through `SSL_CERT_FILE`, and run the real Terraform provider apply/destroy harness against the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI.
 - Terraform CI installed Caddy for the Terraform matrix and ran AWS/GCP via the HTTPS gateway targets; Azure continued using its mandatory Caddy-backed Terraform harness.
 - BUG-1253 fixed stale `gcp-vpcaccess` Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and marking the matrix row direct.
+- AWS simulator fidelity issues #305-#308 and #317-#320 were fixed:
+   - S3 `ListObjectsV2` sorted keys, honored `start-after` / `continuation-token`, emitted `NextContinuationToken`, and returned delimiter `CommonPrefixes`.
+   - Lambda `FunctionConfiguration` responses no longer leaked request `Code`, uploaded `ZipFile`, or `Tags`; `GetFunction` kept `Code` and `Tags` only as top-level response members.
+   - SNS returned `pending confirmation` for confirmation-required protocols unless `ReturnSubscriptionArn=true`, and topic attributes counted confirmed vs pending subscriptions.
+   - SQS rejected invalid `MaxNumberOfMessages` values with `InvalidParameterValue` instead of silently clamping them.
+   - EC2 `RunInstances` honored `MinCount`/`MaxCount`, returned `pending` instances, transitioned them to `running`, and `DescribeInstances` applied supported filters while rejecting unsupported filter names.
+   - ECR `PutImage` generated deterministic content-addressed `sha256:<64-hex>` digests from image manifests.
+   - KMS `GenerateDataKey` returned fresh crypto-random plaintext key material and ciphertext that decrypted back to it.
 
 ## Remaining Stages
 
-1. Address BUG-1254 / issue #304: add real public-client coverage for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows that still have stale not-applicable claims.
+1. Address BUG-1254 / issue #304 plus GCP issues #309-#311 and #321-#325.
+2. Address Azure issues #312-#315 and #326-#329.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered by the latest audit pass.
+- BUG-1263: GCP API-shape backlog from issues #309-#311 and #321-#325 remains open.
+- BUG-1264: Azure API-shape backlog from issues #312-#315 and #326-#329 remains open.
 
 ## Start Checklist
 

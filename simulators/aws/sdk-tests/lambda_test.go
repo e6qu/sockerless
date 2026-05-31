@@ -1,6 +1,10 @@
 package aws_sdk_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -24,6 +28,81 @@ func cwLogsClient() *cloudwatchlogs.Client {
 	return cloudwatchlogs.NewFromConfig(sdkConfig(), func(o *cloudwatchlogs.Options) {
 		o.BaseEndpoint = aws.String(baseURL)
 	})
+}
+
+func TestLambda_FunctionConfigurationOmitsCodeAndTags(t *testing.T) {
+	lc := lambdaClient()
+	fnName := "shape-fn"
+
+	createOut, err := lc.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		Runtime:      lambdatypes.RuntimeNodejs20x,
+		Handler:      aws.String("index.handler"),
+		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("zip-bytes")},
+		Tags:         map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	defer lc.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+	assert.NotEmpty(t, aws.ToString(createOut.FunctionArn))
+
+	rawCreate, err := json.Marshal(createOut)
+	require.NoError(t, err)
+	assert.NotContains(t, string(rawCreate), `"Code"`)
+	assert.NotContains(t, string(rawCreate), `"Tags"`)
+	assert.NotContains(t, string(rawCreate), "zip-bytes")
+
+	getOut, err := lc.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fnName)})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.Configuration)
+	assert.Equal(t, "sdk", getOut.Tags["env"])
+	rawConfig, err := json.Marshal(getOut.Configuration)
+	require.NoError(t, err)
+	assert.NotContains(t, string(rawConfig), `"Code"`)
+	assert.NotContains(t, string(rawConfig), `"Tags"`)
+	assert.NotContains(t, string(rawConfig), `"SubnetIPv4Allocations"`)
+	assert.NotContains(t, string(rawConfig), "zip-bytes")
+
+	listOut, err := lc.ListFunctions(ctx, &lambda.ListFunctionsInput{})
+	require.NoError(t, err)
+	for _, fn := range listOut.Functions {
+		if aws.ToString(fn.FunctionName) != fnName {
+			continue
+		}
+		rawList, err := json.Marshal(fn)
+		require.NoError(t, err)
+		assert.NotContains(t, string(rawList), `"Code"`)
+		assert.NotContains(t, string(rawList), `"Tags"`)
+		assert.NotContains(t, string(rawList), `"SubnetIPv4Allocations"`)
+	}
+
+	rawReq := []byte(`{"FunctionName":"raw-shape-fn","Role":"arn:aws:iam::123456789012:role/test-role","Runtime":"nodejs20.x","Handler":"index.handler","Code":{"ZipFile":"zip-bytes"},"Tags":{"env":"raw"}}`)
+	resp, err := http.Post(baseURL+"/2015-03-31/functions", "application/json", bytes.NewReader(rawReq))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, string(body))
+	assert.NotContains(t, string(body), `"Code"`)
+	assert.NotContains(t, string(body), `"Tags"`)
+	assert.NotContains(t, string(body), "zip-bytes")
+
+	getResp, err := http.Get(baseURL + "/2015-03-31/functions/raw-shape-fn")
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	getBody, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, getResp.StatusCode, string(getBody))
+	var rawGet struct {
+		Configuration json.RawMessage
+		Tags          map[string]string
+	}
+	require.NoError(t, json.Unmarshal(getBody, &rawGet))
+	assert.NotContains(t, string(rawGet.Configuration), `"Code"`)
+	assert.NotContains(t, string(rawGet.Configuration), `"Tags"`)
+	assert.NotContains(t, string(rawGet.Configuration), `"SubnetIPv4Allocations"`)
+	assert.NotContains(t, string(rawGet.Configuration), "zip-bytes")
+	assert.Equal(t, "raw", rawGet.Tags["env"])
 }
 
 func TestLambda_InvokeCreatesLogStream(t *testing.T) {
@@ -357,13 +436,15 @@ func TestLambda_VpcConfig_AllocatesENIPerSubnet(t *testing.T) {
 	require.NotNil(t, createOut.VpcConfig, "VpcConfig must round-trip on CreateFunction")
 	require.Len(t, createOut.VpcConfig.SubnetIds, 2)
 
-	// Sim's response carries the allocated IPs so backend code that
-	// verifies ENI provisioning has them without a separate API call.
 	getOut, err := lc.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fnName)})
 	require.NoError(t, err)
 	require.NotNil(t, getOut.Configuration)
 	require.NotNil(t, getOut.Configuration.VpcConfig)
 	assert.Equal(t, *vpcOut.Vpc.VpcId, *getOut.Configuration.VpcConfig.VpcId, "VpcConfig.VpcId must echo back from the subnet's stored VpcId")
+	rawConfig, err := json.Marshal(getOut.Configuration)
+	require.NoError(t, err)
+	assert.NotContains(t, string(rawConfig), `"SubnetIPv4Allocations"`,
+		"internal IP allocation state must not leak through the public Lambda FunctionConfiguration shape")
 }
 
 // TestLambda_VpcConfig_RejectsUnknownSubnet matches real Lambda's

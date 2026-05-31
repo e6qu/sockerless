@@ -115,6 +115,14 @@ func TestKMS_GenerateDataKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, out.Plaintext, decOut.Plaintext)
+
+	out2, err := c.GenerateDataKey(ctx, &kms.GenerateDataKeyInput{
+		KeyId:         aws.String(keyId),
+		NumberOfBytes: aws.Int32(32),
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, out.Plaintext, out2.Plaintext,
+		"GenerateDataKey must return fresh key material on each call")
 }
 
 func TestKMS_DescribeAndScheduleDeletion(t *testing.T) {

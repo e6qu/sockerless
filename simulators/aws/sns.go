@@ -44,10 +44,11 @@ type SNSTopic struct {
 }
 
 type SNSSubscription struct {
-	ARN      string
-	TopicARN string
-	Protocol string // "sqs", "http", "https", "email", "sms", "lambda"
-	Endpoint string // queue ARN for sqs, URL for http(s), email addr, etc.
+	ARN       string
+	TopicARN  string
+	Protocol  string // "sqs", "http", "https", "email", "sms", "lambda"
+	Endpoint  string // queue ARN for sqs, URL for http(s), email addr, etc.
+	Confirmed bool
 }
 
 var (
@@ -163,9 +164,14 @@ func handleSNSGetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	// Subscription counts are the load-bearing attribute for
 	// real-world consumers (CloudWatch alarms on confirmed-vs-pending).
 	confirmed := 0
+	pending := 0
 	for _, sub := range snsSubscriptions.List() {
 		if sub.TopicARN == t.ARN {
-			confirmed++
+			if sub.Confirmed {
+				confirmed++
+			} else {
+				pending++
+			}
 		}
 	}
 	attrs := map[string]string{
@@ -173,7 +179,7 @@ func handleSNSGetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		"DisplayName":            t.Name,
 		"Owner":                  awsAccountID(),
 		"SubscriptionsConfirmed": fmt.Sprintf("%d", confirmed),
-		"SubscriptionsPending":   "0",
+		"SubscriptionsPending":   fmt.Sprintf("%d", pending),
 		"SubscriptionsDeleted":   "0",
 	}
 	// Mutable attributes set via SetTopicAttributes override the
@@ -240,14 +246,32 @@ func handleSNSSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sub := SNSSubscription{
-		ARN:      snsSubscriptionARN(name),
-		TopicARN: topicARN,
-		Protocol: protocol,
-		Endpoint: endpoint,
+		ARN:       snsSubscriptionARN(name),
+		TopicARN:  topicARN,
+		Protocol:  protocol,
+		Endpoint:  endpoint,
+		Confirmed: !snsProtocolRequiresConfirmation(protocol),
 	}
 	snsSubscriptions.Put(sub.ARN, sub)
-	body := fmt.Sprintf("<SubscribeResult><SubscriptionArn>%s</SubscriptionArn></SubscribeResult>", xmlEscape(sub.ARN))
+	returnedARN := sub.ARN
+	if !sub.Confirmed && !snsReturnSubscriptionARN(r) {
+		returnedARN = "pending confirmation"
+	}
+	body := fmt.Sprintf("<SubscribeResult><SubscriptionArn>%s</SubscriptionArn></SubscribeResult>", xmlEscape(returnedARN))
 	snsXMLResponse(w, "Subscribe", body, sim.RequestID(r.Context()))
+}
+
+func snsProtocolRequiresConfirmation(protocol string) bool {
+	switch strings.ToLower(protocol) {
+	case "sqs", "lambda", "application", "firehose":
+		return false
+	default:
+		return true
+	}
+}
+
+func snsReturnSubscriptionARN(r *http.Request) bool {
+	return strings.EqualFold(r.FormValue("ReturnSubscriptionArn"), "true")
 }
 
 func handleSNSUnsubscribe(w http.ResponseWriter, r *http.Request) {

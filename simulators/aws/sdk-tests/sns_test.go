@@ -109,6 +109,37 @@ func TestSNS_SubscribeAndUnsubscribe(t *testing.T) {
 	assert.Empty(t, listAfter.Subscriptions)
 }
 
+func TestSNS_SubscribeConfirmationRequiredProtocols(t *testing.T) {
+	snsC := snsClient()
+	tpc, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("confirm-t")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: tpc.TopicArn})
+	})
+
+	emailSub, err := snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: aws.String(aws.ToString(tpc.TopicArn)),
+		Protocol: aws.String("email"),
+		Endpoint: aws.String("ops@example.com"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pending confirmation", aws.ToString(emailSub.SubscriptionArn))
+
+	returnedSub, err := snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn:              tpc.TopicArn,
+		Protocol:              aws.String("https"),
+		Endpoint:              aws.String("https://example.com/hook"),
+		ReturnSubscriptionArn: true,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, aws.ToString(returnedSub.SubscriptionArn), ":confirm-t:")
+
+	attrs, err := snsC.GetTopicAttributes(ctx, &sns.GetTopicAttributesInput{TopicArn: tpc.TopicArn})
+	require.NoError(t, err)
+	assert.Equal(t, "0", attrs.Attributes["SubscriptionsConfirmed"])
+	assert.Equal(t, "2", attrs.Attributes["SubscriptionsPending"])
+}
+
 // TestSNS_PublishFanoutToSQS asserts the load-bearing real-world
 // pattern: SNS topic with SQS subscriber, Publish message lands in
 // the subscriber queue's Messages.

@@ -1499,6 +1499,13 @@ func ec2ParamList(r *http.Request, prefix string) []string {
 	return values
 }
 
+func ec2ErrorXML(w http.ResponseWriter, code, message string, status int) {
+	w.Header().Set("Content-Type", "text/xml")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<Response><Errors><Error><Code>%s</Code><Message>%s</Message></Error></Errors><RequestID>%s</RequestID></Response>`,
+		code, message, generateUUID())
+}
+
 func ec2Filters(r *http.Request) map[string][]string {
 	filters := map[string][]string{}
 	for i := 1; ; i++ {
@@ -1623,6 +1630,10 @@ func runInstancesSecurityGroups(r *http.Request) []string {
 }
 
 func handleRunInstances(w http.ResponseWriter, r *http.Request) {
+	minCount, maxCount, ok := runInstancesCounts(w, r)
+	if !ok {
+		return
+	}
 	imageID := r.FormValue("ImageId")
 	if imageID == "" {
 		imageID = "ami-simulated"
@@ -1643,21 +1654,7 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "InvalidSubnetID.NotFound", http.StatusBadRequest, "The subnet ID %q does not exist", subnetID)
 		return
 	}
-	privateIP := r.FormValue("PrivateIpAddress")
-	if privateIP == "" {
-		privateIP = r.FormValue("NetworkInterface.1.PrivateIpAddress")
-	}
-	if privateIP == "" {
-		ip, err := AllocateSubnetIP(subnetID)
-		if err != nil {
-			sim.AWSError(w, "InsufficientFreeAddressesInSubnet", err.Error(), http.StatusBadRequest)
-			return
-		}
-		privateIP = ip
-	}
-	instanceID := ec2ID("i")
 	reservationID := ec2ID("r")
-	eniID := ec2ID("eni")
 	sgIDs := runInstancesSecurityGroups(r)
 	if len(sgIDs) == 0 {
 		for _, sg := range ec2SecurityGroups.Filter(func(sg EC2SecurityGroup) bool {
@@ -1668,36 +1665,67 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	launchTime := time.Now().UTC().Format(time.RFC3339)
-	inst := EC2Instance{
-		InstanceId:         instanceID,
-		ReservationId:      reservationID,
-		ImageId:            imageID,
-		InstanceType:       instanceType,
-		SubnetId:           subnetID,
-		VpcId:              subnet.VpcId,
-		State:              "running",
-		PrivateIpAddress:   privateIP,
-		SecurityGroupIds:   sgIDs,
-		Tags:               parseTags(r),
-		LaunchTime:         launchTime,
-		KeyName:            r.FormValue("KeyName"),
-		Architecture:       "x86_64",
-		RootDeviceName:     "/dev/sda1",
-		NetworkInterfaceId: eniID,
+	tags := parseTags(r)
+	var instances []EC2Instance
+	for i := 0; i < maxCount; i++ {
+		privateIP := ""
+		if i == 0 {
+			privateIP = r.FormValue("PrivateIpAddress")
+			if privateIP == "" {
+				privateIP = r.FormValue("NetworkInterface.1.PrivateIpAddress")
+			}
+		}
+		if privateIP == "" {
+			ip, err := AllocateSubnetIP(subnetID)
+			if err != nil {
+				if i < minCount {
+					sim.AWSError(w, "InsufficientFreeAddressesInSubnet", err.Error(), http.StatusBadRequest)
+					return
+				}
+				break
+			}
+			privateIP = ip
+		}
+		instanceID := ec2ID("i")
+		eniID := ec2ID("eni")
+		inst := EC2Instance{
+			InstanceId:         instanceID,
+			ReservationId:      reservationID,
+			ImageId:            imageID,
+			InstanceType:       instanceType,
+			SubnetId:           subnetID,
+			VpcId:              subnet.VpcId,
+			State:              "pending",
+			PrivateIpAddress:   privateIP,
+			SecurityGroupIds:   sgIDs,
+			Tags:               tags,
+			LaunchTime:         launchTime,
+			KeyName:            r.FormValue("KeyName"),
+			Architecture:       "x86_64",
+			RootDeviceName:     "/dev/sda1",
+			NetworkInterfaceId: eniID,
+		}
+		ec2Instances.Put(instanceID, inst)
+		ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
+			NetworkInterfaceId: eniID,
+			SubnetId:           subnetID,
+			VpcId:              subnet.VpcId,
+			PrivateIpAddress:   privateIP,
+			Status:             "in-use",
+			AttachmentId:       "eni-attach-" + eniID,
+			InstanceId:         instanceID,
+			SecurityGroupIds:   sgIDs,
+			Tags:               inst.Tags,
+			OwnerId:            ec2Owner(),
+		})
+		instances = append(instances, inst)
+		go ec2TransitionInstanceToRunning(instanceID)
 	}
-	ec2Instances.Put(instanceID, inst)
-	ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
-		NetworkInterfaceId: eniID,
-		SubnetId:           subnetID,
-		VpcId:              subnet.VpcId,
-		PrivateIpAddress:   privateIP,
-		Status:             "in-use",
-		AttachmentId:       "eni-attach-" + eniID,
-		InstanceId:         instanceID,
-		SecurityGroupIds:   sgIDs,
-		Tags:               inst.Tags,
-		OwnerId:            ec2Owner(),
-	})
+
+	var instanceItems strings.Builder
+	for _, inst := range instances {
+		instanceItems.WriteString(ec2InstanceXML(inst))
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<RunInstancesResponse %s>
@@ -1706,7 +1734,37 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
   <ownerId>%s</ownerId>
   <groupSet/>
   <instancesSet>%s</instancesSet>
-</RunInstancesResponse>`, ec2Xmlns(), generateUUID(), reservationID, ec2Owner(), ec2InstanceXML(inst))
+</RunInstancesResponse>`, ec2Xmlns(), generateUUID(), reservationID, ec2Owner(), instanceItems.String())
+}
+
+func runInstancesCounts(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	minCount, maxCount := 1, 1
+	if v := r.FormValue("MinCount"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &minCount); err != nil || minCount < 1 {
+			ec2ErrorXML(w, "InvalidParameterValue", "MinCount must be greater than 0", http.StatusBadRequest)
+			return 0, 0, false
+		}
+	}
+	if v := r.FormValue("MaxCount"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &maxCount); err != nil || maxCount < 1 {
+			ec2ErrorXML(w, "InvalidParameterValue", "MaxCount must be greater than 0", http.StatusBadRequest)
+			return 0, 0, false
+		}
+	}
+	if minCount > maxCount {
+		ec2ErrorXML(w, "InvalidParameterCombination", "MinCount cannot be greater than MaxCount", http.StatusBadRequest)
+		return 0, 0, false
+	}
+	return minCount, maxCount, true
+}
+
+func ec2TransitionInstanceToRunning(instanceID string) {
+	time.Sleep(100 * time.Millisecond)
+	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+		if inst.State == "pending" {
+			inst.State = "running"
+		}
+	})
 }
 
 func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
@@ -1724,6 +1782,15 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 	} else {
 		instances = ec2Instances.List()
 	}
+	filters := ec2Filters(r)
+	if len(filters) > 0 {
+		var err error
+		instances, err = filterEC2Instances(instances, filters)
+		if err != nil {
+			ec2ErrorXML(w, "InvalidParameterValue", err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	var reservations strings.Builder
 	for _, inst := range instances {
 		fmt.Fprintf(&reservations, `<item><reservationId>%s</reservationId><ownerId>%s</ownerId><groupSet/><instancesSet>%s</instancesSet></item>`,
@@ -1734,6 +1801,92 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <reservationSet>%s</reservationSet>
 </DescribeInstancesResponse>`, ec2Xmlns(), generateUUID(), reservations.String())
+}
+
+func filterEC2Instances(instances []EC2Instance, filters map[string][]string) ([]EC2Instance, error) {
+	out := make([]EC2Instance, 0, len(instances))
+	for _, inst := range instances {
+		matches, err := ec2InstanceMatchesFilters(inst, filters)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
+			out = append(out, inst)
+		}
+	}
+	return out, nil
+}
+
+func ec2InstanceMatchesFilters(inst EC2Instance, filters map[string][]string) (bool, error) {
+	for name, values := range filters {
+		matched := false
+		for _, value := range values {
+			switch {
+			case name == "instance-id":
+				matched = inst.InstanceId == value
+			case name == "instance-state-name":
+				matched = inst.State == value
+			case name == "image-id":
+				matched = inst.ImageId == value
+			case name == "vpc-id":
+				matched = inst.VpcId == value
+			case name == "subnet-id":
+				matched = inst.SubnetId == value
+			case name == "private-ip-address":
+				matched = inst.PrivateIpAddress == value
+			case name == "network-interface.network-interface-id":
+				matched = inst.NetworkInterfaceId == value
+			case name == "instance-type":
+				matched = inst.InstanceType == value
+			case name == "key-name":
+				matched = inst.KeyName == value
+			case name == "availability-zone":
+				matched = awsAvailabilityZone() == value
+			case name == "group-id":
+				matched = stringInSlice(value, inst.SecurityGroupIds)
+			case name == "tag-key":
+				matched = ec2HasTagKey(inst.Tags, value)
+			case strings.HasPrefix(name, "tag:"):
+				matched = ec2HasTagValue(inst.Tags, strings.TrimPrefix(name, "tag:"), value)
+			default:
+				return false, fmt.Errorf("the filter %q is invalid", name)
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func stringInSlice(needle string, values []string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func ec2HasTagKey(tags []EC2Tag, key string) bool {
+	for _, tag := range tags {
+		if tag.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func ec2HasTagValue(tags []EC2Tag, key, value string) bool {
+	for _, tag := range tags {
+		if tag.Key == key && tag.Value == value {
+			return true
+		}
+	}
+	return false
 }
 
 func handleTerminateInstances(w http.ResponseWriter, r *http.Request) {

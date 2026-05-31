@@ -62,6 +62,25 @@ type LambdaVpcConfig struct {
 	SubnetIPv4Allocations []string `json:"SubnetIPv4Allocations,omitempty"`
 }
 
+type lambdaVpcConfigConfiguration struct {
+	SubnetIds               []string `json:"SubnetIds,omitempty"`
+	SecurityGroupIds        []string `json:"SecurityGroupIds,omitempty"`
+	VpcId                   string   `json:"VpcId,omitempty"`
+	Ipv6AllowedForDualStack bool     `json:"Ipv6AllowedForDualStack,omitempty"`
+}
+
+func lambdaVpcConfiguration(vpc *LambdaVpcConfig) *lambdaVpcConfigConfiguration {
+	if vpc == nil {
+		return nil
+	}
+	return &lambdaVpcConfigConfiguration{
+		SubnetIds:               vpc.SubnetIds,
+		SecurityGroupIds:        vpc.SecurityGroupIds,
+		VpcId:                   vpc.VpcId,
+		Ipv6AllowedForDualStack: vpc.Ipv6AllowedForDualStack,
+	}
+}
+
 type LambdaFunctionCode struct {
 	S3Bucket        string `json:"S3Bucket,omitempty"`
 	S3Key           string `json:"S3Key,omitempty"`
@@ -79,6 +98,54 @@ type LambdaImageConfig struct {
 	EntryPoint       []string `json:"EntryPoint,omitempty"`
 	Command          []string `json:"Command,omitempty"`
 	WorkingDirectory string   `json:"WorkingDirectory,omitempty"`
+}
+
+type lambdaFunctionConfiguration struct {
+	FunctionName     string                        `json:"FunctionName"`
+	FunctionArn      string                        `json:"FunctionArn"`
+	Runtime          string                        `json:"Runtime,omitempty"`
+	Role             string                        `json:"Role"`
+	Handler          string                        `json:"Handler,omitempty"`
+	CodeSha256       string                        `json:"CodeSha256,omitempty"`
+	CodeSize         int64                         `json:"CodeSize"`
+	Description      string                        `json:"Description,omitempty"`
+	MemorySize       int                           `json:"MemorySize"`
+	Timeout          int                           `json:"Timeout"`
+	Environment      *LambdaEnvironment            `json:"Environment,omitempty"`
+	State            string                        `json:"State"`
+	LastUpdateStatus string                        `json:"LastUpdateStatus,omitempty"`
+	LastModified     string                        `json:"LastModified"`
+	RevisionId       string                        `json:"RevisionId"`
+	Version          string                        `json:"Version"`
+	PackageType      string                        `json:"PackageType,omitempty"`
+	Architectures    []string                      `json:"Architectures,omitempty"`
+	ImageConfig      *LambdaImageConfig            `json:"ImageConfig,omitempty"`
+	VpcConfig        *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
+}
+
+func lambdaConfiguration(fn LambdaFunction) lambdaFunctionConfiguration {
+	return lambdaFunctionConfiguration{
+		FunctionName:     fn.FunctionName,
+		FunctionArn:      fn.FunctionArn,
+		Runtime:          fn.Runtime,
+		Role:             fn.Role,
+		Handler:          fn.Handler,
+		CodeSha256:       fn.CodeSha256,
+		CodeSize:         fn.CodeSize,
+		Description:      fn.Description,
+		MemorySize:       fn.MemorySize,
+		Timeout:          fn.Timeout,
+		Environment:      fn.Environment,
+		State:            fn.State,
+		LastUpdateStatus: fn.LastUpdateStatus,
+		LastModified:     fn.LastModified,
+		RevisionId:       fn.RevisionId,
+		Version:          fn.Version,
+		PackageType:      fn.PackageType,
+		Architectures:    fn.Architectures,
+		ImageConfig:      fn.ImageConfig,
+		VpcConfig:        lambdaVpcConfiguration(fn.VpcConfig),
+	}
 }
 
 // State store
@@ -224,7 +291,7 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 		publishLambdaVersion(req.FunctionName, "", fn)
 	}
 
-	sim.WriteJSON(w, http.StatusCreated, fn)
+	sim.WriteJSON(w, http.StatusCreated, lambdaConfiguration(fn))
 }
 
 func lambdaCodeSha256(code *LambdaFunctionCode) string {
@@ -274,9 +341,14 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 			code["SourceKMSKeyArn"] = fn.Code.SourceKMSKeyArn
 		}
 	}
+	tags := fn.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Configuration": fn,
+		"Configuration": lambdaConfiguration(fn),
 		"Code":          code,
+		"Tags":          tags,
 	})
 }
 
@@ -379,7 +451,7 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 
 	fn, _ := lambdaFunctions.Get(name)
-	sim.WriteJSON(w, http.StatusOK, fn)
+	sim.WriteJSON(w, http.StatusOK, lambdaConfiguration(fn))
 }
 
 // handleLambdaInvoke implements the AWS Lambda Invoke API. For Image
@@ -451,9 +523,10 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
-	functions := lambdaFunctions.List()
-	if functions == nil {
-		functions = []LambdaFunction{}
+	stored := lambdaFunctions.List()
+	functions := make([]lambdaFunctionConfiguration, 0, len(stored))
+	for _, fn := range stored {
+		functions = append(functions, lambdaConfiguration(fn))
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
