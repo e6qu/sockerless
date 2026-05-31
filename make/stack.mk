@@ -212,6 +212,7 @@ stack-https-up: ## start optional Caddy HTTPS gateway for simulator APIs
 	  printf 'SOCKERLESS_AWS_SIM_PORT=%s\n' "$(STACK_SIM_PORT_aws)"; \
 	  printf 'SOCKERLESS_GCP_SIM_PORT=%s\n' "$(STACK_SIM_PORT_gcp)"; \
 	  printf 'SOCKERLESS_AZURE_SIM_PORT=%s\n' "$(STACK_SIM_PORT_azure)"; \
+	  printf 'SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT=%s\n' "$(STACK_SIM_PORT_aws)"; \
 	} > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).env
 	@rm -f $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).exit
 	@printf "$(COLOR_CYAN)▸ Starting Caddy HTTPS gateway on :$(STACK_HTTPS_PORT)$(COLOR_RESET)\n"
@@ -222,6 +223,7 @@ stack-https-up: ## start optional Caddy HTTPS gateway for simulator APIs
 	   SOCKERLESS_AWS_SIM_PORT=$(STACK_SIM_PORT_aws) \
 	   SOCKERLESS_GCP_SIM_PORT=$(STACK_SIM_PORT_gcp) \
 	   SOCKERLESS_AZURE_SIM_PORT=$(STACK_SIM_PORT_azure) \
+	   SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT=$(STACK_SIM_PORT_aws) \
 	   $(CADDY) run --config $(STACK_HTTPS_CADDYFILE) --adapter caddyfile \
 	     > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).log 2>&1 < /dev/null & \
 	   echo $$! > $(STACK_PID_DIR)/$(STACK_HTTPS_NAME).pid )

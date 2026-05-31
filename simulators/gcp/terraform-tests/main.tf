@@ -34,6 +34,7 @@ provider "google" {
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
   redis_custom_endpoint             = "${var.endpoint}/v1/"
   sql_custom_endpoint               = "${var.endpoint}/sql/v1beta4/"
+  vpc_access_custom_endpoint        = "${var.endpoint}/v1/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
@@ -65,6 +66,13 @@ resource "google_compute_subnetwork" "tf_subnet" {
   region        = "us-central1"
   network       = google_compute_network.main.id
   ip_cidr_range = "10.42.0.0/16"
+}
+
+resource "google_vpc_access_connector" "tf_connector" {
+  name          = "tf-vpc-connector"
+  region        = "us-central1"
+  network       = google_compute_network.main.name
+  ip_cidr_range = "10.43.0.0/28"
 }
 
 # Global firewall rule attached to the network. Runner backends create
@@ -598,6 +606,10 @@ output "secret_label_env" {
 
 output "subnet_id" {
   value = google_compute_subnetwork.tf_subnet.id
+}
+
+output "vpc_access_connector_id" {
+  value = google_vpc_access_connector.tf_connector.id
 }
 
 output "firewall_id" {

@@ -90,7 +90,7 @@ jobs:
         run: |
           uname -a
           cat /proc/version || true
-          ls -1 /proc/sys/kernel/ | head -20 || true
+          find /proc/sys/kernel -mindepth 1 -maxdepth 1 -printf '%f\n' | head -20 || true
       - name: probe-env
         run: |
           env | sort | grep -vE '^(SOCKERLESS_|GCP_|GITHUB_|GITLAB_|CI_|HOME|PATH|HOSTNAME)' | head -50

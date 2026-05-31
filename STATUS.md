@@ -8,16 +8,16 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Optional AWS/GCP Terraform HTTPS examples, while preserving direct HTTP endpoint overrides. |
-| Last merged | SDK/CLI HTTPS gateway guidance plus BUG-1104 GCS CLI coverage audit. |
-| Open GitHub issues | None at last check. |
-| Bugs | 1251 filed - 1251 fixed - 2 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker. |
+| Planned next | Issue #304 / BUG-1254 GCP client-surface gaps, unless a higher-priority issue appears. |
+| Last merged | Terraform HTTPS gateway audit plus GCP VPC Access Terraform coverage. |
+| Open GitHub issues | #304 tracks larger stale GCP client-surface not-applicable rows. |
+| Bugs | 1254 filed - 1253 fixed - 3 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker; BUG-1254 GCP client-surface gaps. |
 | Live infra | None up. |
 
-## Current Next Task
+## Current State
 
-Add optional AWS/GCP Terraform HTTPS gateway examples, then decide whether CI should keep Azure Terraform on the gateway by default.
+The AWS/GCP Terraform HTTPS gateway examples were added, and CI kept Terraform provider validation on the Caddy HTTPS path where gateway fidelity matters.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -32,7 +32,7 @@ Provider facts:
 Implemented gateway surface:
 
 - `make stack-https-up`, `make stack-https-status`, `make stack-https-ca`, `make stack-https-down`.
-- Caddy routes for AWS, GCP, Azure ARM/metadata, and Azure host-addressed data-plane wildcards, including Cosmos DB documents.
+- Caddy routes for AWS, GCP, Azure ARM/metadata, Azure host-addressed data-plane wildcards including Cosmos DB documents, and an explicit `https://localhost:<port>` single-simulator route used by AWS/GCP Terraform HTTPS harnesses.
 - `STACK_HTTPS=1` stack integration for local dev stacks.
 - Admin UI topology card for gateway status, endpoints, CA path, and recovery commands.
 - Azure Terraform tests started the simulator on HTTP loopback, started Caddy with per-test state and CA, used `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, and passed the Caddy root CA through `SSL_CERT_FILE`.
@@ -40,6 +40,10 @@ Implemented gateway surface:
 - Azure Terraform CI installed Caddy on the runner for the direct `make terraform-test` path, the Azure Terraform harness failed loudly when Caddy or HTTPS was missing, and GCP arithmetic SDK coverage asserted the actual `"Result: 30"` Cloud Logging payload.
 - SDK/CLI gateway guidance documented real client knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs without disabling TLS verification.
 - BUG-1104 audit corrected stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, the simulator accepts current gcloud multipart upload boundaries, GCS `buckets.getStorageLayout` returns the public response shape, and GCS timestamps use Cloud Storage-style millisecond precision.
+- AWS/GCP Terraform now had optional `make terraform-https-test` targets that started the simulator on HTTP loopback, put Caddy in front of it, set `SSL_CERT_FILE` to Caddy's local CA, and ran the real Terraform provider apply/destroy harness through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets delegated to the shared Linux simulator test image, matching Azure's CA-trust pattern.
+- Terraform CI installed Caddy for the Terraform matrix and ran AWS/GCP via those HTTPS targets while Azure continued its mandatory gateway-backed harness.
+- BUG-1253 corrected stale `gcp-vpcaccess` Terraform coverage: the GCP Terraform stack now used `vpc_access_custom_endpoint`, provisioned `google_vpc_access_connector`, asserted the canonical connector ID, and marked the matrix row direct.
+- BUG-1254 / issue #304 was opened for larger GCP audit gaps: API Gateway, Cloud Build, IAM, and Pub/Sub have public client surfaces where some matrix rows still need real gcloud/Terraform coverage.
 
 ## Invariants
 
@@ -66,11 +70,13 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
+- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps found during the latest BUG-1104 pass.
 
 ## Recent Merged Work
 
 - Azure Terraform HTTPS gateway stage: the Azure Terraform harness used the local Caddy gateway end to end, and BUG-1246 fixed Azure Storage data-plane host dispatch so `azure.sockerless.localhost` metadata requests were no longer swallowed by the storage wrapper.
 - SDK/CLI HTTPS gateway audit: documented real CA/endpoint knobs for SDK and CLI clients, and fixed GCP GCS CLI coverage discovered by BUG-1104.
+- Terraform HTTPS gateway audit: AWS/GCP got optional HTTPS provider harnesses and GCP VPC Access Terraform coverage; issue #304 was opened for larger GCP client-surface gaps.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

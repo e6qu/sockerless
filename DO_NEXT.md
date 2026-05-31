@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the SDK/CLI HTTPS gateway and GCS CLI audit PR merged.
+- Branch: `main`, synced with `origin/main` after the Terraform HTTPS gateway audit PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: none.
-- Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: SDK/CLI HTTPS gateway guidance was documented, and BUG-1104 found/fixed stale GCP GCS CLI coverage.
+- Open GitHub issues at last check: #304.
+- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1254.
+- Last completed work: AWS/GCP gained optional Terraform HTTPS gateway harnesses, CI kept Terraform provider validation on Caddy HTTPS where intended, and stale GCP VPC Access Terraform coverage was fixed.
 
 ## Next Task
 
-Add optional AWS/GCP Terraform HTTPS gateway examples, preserving the existing direct HTTP Terraform paths.
+Address issue #304 / BUG-1254 unless a higher-priority issue appears.
 
-Azure Terraform was the hard proof point because AzureRM requires trusted HTTPS for custom metadata discovery. It now starts Caddy in the Linux test harness, trusts the Caddy local CA with `SSL_CERT_FILE`, and uses `https://azure.sockerless.localhost:<port>` for `metadata_host` and ARM endpoint flows.
+The current PR added optional AWS/GCP Terraform HTTPS gateway examples while preserving the existing direct HTTP Terraform paths. Azure Terraform remained the hard proof point because AzureRM requires trusted HTTPS for custom metadata discovery.
 
 ## Provider Facts To Preserve
 
@@ -40,16 +40,19 @@ Azure Terraform was the hard proof point because AzureRM requires trusted HTTPS 
 - BUG-1246 fixed Azure Storage data-plane middleware overmatching non-storage `*.localhost` hosts.
 - SDK/CLI guidance documents real endpoint and CA knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
 - BUG-1250/BUG-1251 fixed stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, current gcloud multipart uploads work, GCS `buckets.getStorageLayout` returns the public response shape, and GCS timestamps use Cloud Storage-style millisecond precision.
+- AWS/GCP now had `make terraform-https-test` targets. They start the simulator on HTTP loopback, put Caddy in front of it, trust Caddy's CA through `SSL_CERT_FILE`, and run the real Terraform provider apply/destroy harness against the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI.
+- Terraform CI installed Caddy for the Terraform matrix and ran AWS/GCP via the HTTPS gateway targets; Azure continued using its mandatory Caddy-backed Terraform harness.
+- BUG-1253 fixed stale `gcp-vpcaccess` Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and marking the matrix row direct.
 
 ## Remaining Stages
 
-1. Document AWS/GCP HTTPS Terraform examples while preserving direct HTTP configs.
-2. Decide whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs/direct HTTP where those are the tested public-client paths.
+1. Address BUG-1254 / issue #304: add real public-client coverage for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows that still have stale not-applicable claims.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
+- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered by the latest audit pass.
 
 ## Start Checklist
 
