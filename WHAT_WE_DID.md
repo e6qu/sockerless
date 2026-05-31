@@ -27,6 +27,8 @@ The shared simulator Docker test image now includes Caddy from the official pack
 
 The gateway also preserved high-port Host headers and routed `*.documents.azure.sockerless.localhost` for Cosmos DB document endpoints. BUG-1246 fixed an Azure Storage data-plane middleware bug where the storage wrapper overmatched non-storage `*.localhost` hosts and swallowed `azure.sockerless.localhost` metadata requests.
 
+BUG-1247 fixed the direct GitHub Actions Azure Terraform job by installing Caddy before `make terraform-test`; the Docker test image already had Caddy for containerized runs. BUG-1248 fixed GCP arithmetic SDK coverage to assert the actual Cloud Logging output line, `"Result: 30"`.
+
 The full Azure Terraform apply/destroy test passed through the gateway under the 300-second cap.
 
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
