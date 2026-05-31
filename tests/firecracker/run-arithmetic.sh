@@ -35,9 +35,9 @@ cleanup() {
   sudo rm -f "$api_socket" >/dev/null 2>&1 || true
   if [ "$status" -ne 0 ] && [ -d "$workdir" ]; then
     for log in "$workdir/firecracker-api-response.txt" "$workdir/firecracker.log" "$workdir/firecracker-console.log"; do
-      if [ -s "$log" ]; then
+      if sudo test -s "$log"; then
         echo "----- $log -----" >&2
-        tail -200 "$log" >&2 || true
+        sudo tail -200 "$log" >&2 || true
       fi
     done
     echo "Firecracker workdir retained for inspection: $workdir" >&2
@@ -167,8 +167,8 @@ fc_put() {
   response="$workdir/firecracker-api-response.txt"
   http_status="$(sudo curl -sS -X PUT --unix-socket "$api_socket" --data "$payload" -o "$response" -w "%{http_code}" "http://localhost${path}")" || {
     echo "Firecracker API PUT $path failed before receiving an HTTP response" >&2
-    if [ -s "$response" ]; then
-      cat "$response" >&2
+    if sudo test -s "$response"; then
+      sudo cat "$response" >&2
     fi
     return 1
   }
@@ -176,13 +176,13 @@ fc_put() {
     2*) ;;
     *)
       echo "Firecracker API PUT $path returned HTTP $http_status" >&2
-      if [ -s "$response" ]; then
-        cat "$response" >&2
+      if sudo test -s "$response"; then
+        sudo cat "$response" >&2
       fi
       return 1
       ;;
   esac
-  if [ -s "$response" ]; then
+  if sudo test -s "$response"; then
     :
   fi
 }
