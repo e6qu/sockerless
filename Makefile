@@ -170,12 +170,15 @@ FORCE:
 
 SIMULATOR_APPS := simulators/aws simulators/gcp simulators/azure
 
-.PHONY: docker-test docker-test-build
+.PHONY: docker-test docker-test-build firecracker-test
 docker-test-build: ## build Docker test images for all cloud simulators
 	@$(MAKE) -s _fanout TARGET=docker-test-build APPS="$(SIMULATOR_APPS)"
 
 docker-test: ## run SDK, CLI, and Terraform tests for all cloud simulators inside Docker
 	@$(MAKE) -s _fanout TARGET=docker-test APPS="$(SIMULATOR_APPS)"
+
+firecracker-test: ## boot a real Firecracker microVM and run Go arithmetic build/execution inside it
+	@bash tests/firecracker/run-arithmetic.sh
 
 # ── Stack orchestration ─────────────────────────────────────────────
 

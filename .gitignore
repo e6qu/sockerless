@@ -10,6 +10,7 @@
 *.test
 *.out
 __debug_bin*
+.gocache/
 
 # Simulator binaries (built by `go build` in simulators/)
 simulators/aws/simulator-aws
@@ -55,6 +56,7 @@ tests/upstream/act/results/
 tests/upstream/gitlab-ci-local/results/
 tests/e2e-live-tests/logs/*
 !tests/e2e-live-tests/logs/.gitignore
+.firecracker-ci/
 coverage.out
 coverage.html
 

@@ -107,6 +107,18 @@ Key Vault secret, key, and certificate attributes now include default soft-delet
 
 The fixes were covered through real Azure SDK integration tests plus raw HTTP assertions for wire details that official SDKs normalize.
 
+## 2026-06-01 - Real-Execution Substrate Contract
+
+The first BUG-1267 stage established the host-model contract for issues #332-#336 without pretending the VM/VPC/LB data plane was already implemented.
+
+`specs/SIMULATOR_EXECUTION.md` now describes the current Docker/Podman-backed container/FaaS execution model and the narrow VM-level exception for the future real-execution substrate. `specs/SIMULATOR_REAL_EXECUTION.md` defines the substrate objects and rules for Firecracker guests, Linux netns/bridge/tap/veth routing, nftables security/NAT, real load-balancer listeners, active health checks, per-instance metadata, and loud capability failures. `feedback_sim_host_model.md` records which host process paths are allowed.
+
+The AWS/GCP/Azure host-dispatch tests were updated to keep rejecting broad host-process workload execution while pointing at the explicit Firecracker/Linux-networking substrate exception.
+
+CI now includes a mandatory `firecracker (microVM arithmetic)` job. It installs pinned Firecracker v1.15.1, requires `/dev/kvm`, boots a real Firecracker Linux guest, copies the repo's `simulators/testdata/eval-arithmetic` source and configured Go toolchain into the guest rootfs, then runs `go test`, `go build`, and multiple arithmetic executions inside the microVM. This is a real substrate smoke test, not a mock or metadata-only probe.
+
+Issues #332-#336 remained open because this stage did not yet change EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public behavior.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -149,7 +161,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. It needs staged architecture work before Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs.
+- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. The substrate contract and Firecracker guest arithmetic CI guard landed; Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs remain.
 
 ## Continuity Rules
 

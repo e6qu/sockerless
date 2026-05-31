@@ -8,8 +8,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Compute/networking real-execution staging from BUG-1267 / issues #332-#336, unless a higher-priority issue appears. |
-| Last merged | Azure API-shape and LRO fixes for #312, #315, and #326-#329. |
+| Planned next | Real-execution host capability scaffolding for BUG-1267 / issues #332-#336, unless a higher-priority issue appears. |
+| Last merged | Real-execution architecture/substrate contract for BUG-1267. |
 | Open GitHub issues | #332-#338 at last check. |
 | Bugs | 1269 filed - 1269 fixed - 3 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
@@ -28,6 +28,8 @@ The Azure ARM/DNS fidelity PR fixed issues #313, #314, and #340. ARM control-pla
 The GCP fidelity PR fixed issue #304 and issues #309-#311 and #321-#325. API Gateway, Cloud Build, IAM, and Pub/Sub stale client-surface rows now have real gcloud coverage, and API Gateway has `google-beta` Terraform coverage. Cloud Run and Cloud Functions list/LRO/timestamp wire shapes were corrected; Cloud Logging severity filters use Google severity ranks; GCS metadata and IAM policy responses match public client expectations; Cloud SQL backup operations return SQL Admin operation shapes; and Cloud DNS precondition failures return canonical `FAILED_PRECONDITION` details.
 
 The Azure API-shape PR fixed issues #312, #315, and #326-#329. Storage Blob/File/Queue data-plane errors now return XML error envelopes with `x-ms-error-code`, Blob list XML responses include the public XML declaration, `EnumerationResults` attributes, and `NextMarker`, and Queue service properties support the Terraform provider availability probe. Service Bus admin missing entity reads return 404 Atom/XML errors. Event Grid publish validates JSON arrays and required Event Grid envelope fields before delivery. Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers plus in-progress states before converging to final states. Key Vault secret/key/certificate attributes include default recovery metadata.
+
+The first BUG-1267 real-execution stage landed the architecture/substrate contract for issues #332-#336. `specs/SIMULATOR_EXECUTION.md` now documents the current Docker/Podman-backed container/FaaS model, `specs/SIMULATOR_REAL_EXECUTION.md` defines the Firecracker/Linux-networking substrate contract, and `feedback_sim_host_model.md` records the allowed host execution paths. The AWS/GCP/Azure host-dispatch tests now reference the explicit real-execution exception while continuing to reject broad host-process workload execution. CI now has a mandatory `firecracker (microVM arithmetic)` job that installs a pinned official Firecracker release, requires `/dev/kvm`, boots a real guest, and runs `go test`, `go build`, and multiple `eval-arithmetic` executions inside that microVM. Issues #332-#336 remained open because no real VM, VPC, nftables, NAT, or load-balancer behavior had been implemented yet.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -83,7 +85,7 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
-- BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure.
+- BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure. The architecture/substrate contract was staged; implementation remains open.
 
 ## Recent Merged Work
 
@@ -95,6 +97,7 @@ Implemented gateway surface:
 - Azure ARM/DNS fidelity sweep: issues #313, #314, and #340 were fixed with real Azure SDK and Azure CLI coverage.
 - GCP fidelity sweep: issue #304 and issues #309-#311 and #321-#325 were fixed with real Google SDK, gcloud, and Terraform provider coverage where those public client surfaces exist.
 - Azure API-shape and LRO sweep: issues #312, #315, and #326-#329 were fixed with real Azure SDK coverage and focused HTTP assertions where the SDK deliberately normalizes 404 data-plane reads.
+- Real-execution substrate stage: the simulator execution docs, host-dispatch guardrails, and mandatory Firecracker microVM arithmetic CI job were updated for the Firecracker/Linux-networking program. Issues #332-#336 remained open for implementation.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

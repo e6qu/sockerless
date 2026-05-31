@@ -1,173 +1,84 @@
 # Simulator Execution Model
 
-How simulators execute workloads. Current state: bare OS processes. Target state: real containers via Docker/Podman.
+This file describes how simulator workloads may execute. It is a guardrail for
+implementation work, not a public cloud API surface.
 
-## Problem
+## Current Container/FaaS Contract
 
-Simulators currently use `os/exec` to run commands as local processes. When a Cloud Run Job or ECS Task "starts," the simulator extracts the command from the container spec and runs it with `exec.CommandContext`. The container image is never pulled or executed.
+Container and FaaS workloads in the AWS, GCP, and Azure simulators run through
+real Docker/Podman containers, not as host processes.
 
-This breaks:
-- **docker exec**: No real container to exec into — there's just a PID on the host.
-- **docker cp / archive**: No container filesystem — files live in the host's working directory.
-- **Image behavior**: The command runs on the host, not inside the image. If the image has `/usr/local/bin/myapp`, the host must also have it.
-- **Networking**: The process uses host networking, not container networking.
-- **Isolation**: No cgroups, no namespaces, no resource limits.
-- **Smoke tests**: `act` needs exec and archive to function. Without real containers, the smoke test can't copy files or run commands inside the "container."
+The shared simulator module exposes:
 
-## Solution
+- `StartContainer` / `StartContainerSync` for Docker-backed execution.
+- `ContainerConfig.Architecture`, which every workload caller must set from the
+  cloud-native resource shape.
+- `InitDocker`, which fails loudly when Docker/Podman is unavailable.
 
-Replace `sim.StartProcess` with `sim.StartContainer` that runs the actual container image via the Docker/Podman API.
+The simulators must not silently fall back to host processes or in-memory
+execution. A workload without a usable image/runtime path is an implementation
+gap, not a reason to synthesize success.
 
-### Shared Layer: `simulators/*/shared/container.go`
+### Host Dispatch Invariant
 
-```go
-type ContainerConfig struct {
-    Image   string            // container image (e.g., "alpine:latest")
-    Command []string          // entrypoint override
-    Args    []string          // command/args override
-    Env     map[string]string // environment variables
-    Timeout time.Duration     // max execution time (0 = no limit)
-    Labels  map[string]string // container labels for tracking
-    Network string            // Docker network to join (optional)
-}
+Production simulator handlers must not import `os/exec` or call `exec.Command`
+for user workloads. Each cloud's SDK test suite includes
+`host_dispatch_test.go` to enforce this for root simulator handlers.
 
-type ContainerHandle struct {
-    ContainerID string        // Docker container ID
-    // same interface as ProcessHandle: Wait(), Kill(), Pid()
-}
+Allowed process use is narrow:
 
-type ContainerResult struct {
-    ExitCode  int
-    StartedAt time.Time
-    StoppedAt time.Time
-    Error     error
-}
+- Test harnesses may run real CLIs (`aws`, `gcloud`, `az`, `terraform`,
+  `docker`) through `os/exec`.
+- Simulator infrastructure may invoke a required host tool only when the tool is
+  part of the real implementation and the caller fails loudly if it is missing.
+- GCP Cloud Build may run the Docker CLI for build-step execution because Cloud
+  Build is itself a build service; this is an explicit allowlist entry.
+- VM-level real execution may launch Firecracker and program Linux networking
+  through the dedicated real-execution substrate described in
+  [SIMULATOR_REAL_EXECUTION.md](SIMULATOR_REAL_EXECUTION.md).
 
-// StartContainer pulls the image (if needed), creates and starts a container.
-// Returns a ContainerHandle immediately. Call handle.Wait() to block until exit.
-// Stdout/stderr are captured via the LogSink, same as StartProcess.
-func StartContainer(cfg ContainerConfig, sink LogSink) *ContainerHandle
-```
+No other simulator code may use host process execution.
 
-### Docker Client
+## VM/Network Real-Execution Extension
 
-Use the Docker Engine API (via `github.com/docker/docker/client`) or shell out to `docker`/`podman`. The Docker SDK is preferred because:
-- Programmatic access to container ID, exit code, logs
-- No path/shell dependency issues
-- Works with both Docker and Podman (Podman serves the same API)
+The VM-level compute and networking surfaces are different from container/FaaS
+workloads. EC2, GCE, and Azure VM instances must eventually boot real guests,
+and VPC, load balancer, security, and NAT resources must eventually affect a
+real packet path.
 
-The client connects to the default Docker socket (`/var/run/docker.sock` or `DOCKER_HOST`). This is the host's Docker daemon — the same one the user has running.
+That work is tracked by issues #332-#336 and specified in
+[SIMULATOR_REAL_EXECUTION.md](SIMULATOR_REAL_EXECUTION.md). The extension uses:
 
-### Per-Simulator Changes
+- Firecracker microVMs for VM instances.
+- Linux network namespaces, bridges, tap/veth devices, and netlink-programmed
+  routes for the cloud network fabric.
+- `nftables` for security group, firewall, NSG, NAT, DNAT, and SNAT behavior.
+- Real L4/L7 proxy processes or in-process listeners with active health checks
+  for load balancers.
 
-#### ECS (`simulators/aws/ecs.go`)
-- `RunTask` → `StartContainer` with image from task definition
-- Container ID stored alongside task metadata
-- `StopTask` → `docker stop` the container
-- `ExecuteCommand` → `docker exec` on the real container
-- Logs: attach to container stdout/stderr, write to CloudWatch
+This is a narrow exception to the container/FaaS Docker-dispatch invariant. It
+does not permit running VM user payloads as host processes, and it does not
+permit metadata-only success.
 
-#### Lambda (`simulators/aws/lambda.go`)
-- `Invoke` → `StartContainer` with function image + handler command
-- Short-lived: start, wait for exit, capture stdout as response
-- Container removed after invocation (or pooled for warm starts)
-- Timeout enforced via Docker's `--stop-timeout`
+## Failure Semantics
 
-#### Cloud Run Jobs (`simulators/gcp/cloudrunjobs.go`)
-- `RunJob` → `StartContainer` for each task in the execution
-- Multi-container support: start all containers in the job template
-- Execution state driven by container exit codes
-- Logs: attach to container stdout/stderr, write to Cloud Logging
+Real-execution dependencies are required when a resource has been migrated to
+the real-execution substrate. Missing dependencies must fail loudly:
 
-#### Cloud Functions (`simulators/gcp/cloudfunctions.go`)
-- Same as Lambda: start, invoke, capture output, remove
+- no Firecracker binary or jailer,
+- no `/dev/kvm`,
+- no permission to create netns/bridges/tap devices,
+- no permission to install `nftables` rules,
+- no ability to bind the required load-balancer listener.
 
-#### Azure Container Apps (`simulators/azure/containerapps.go`)
-- `StartExecution` → `StartContainer` with job template image
-- `ReplicaTimeout` enforced via Docker's timeout
-- Multi-container: start all containers in the template
+The simulator must return the public cloud's error shape for the affected API
+request where the cloud API has one. It must not return a successful resource
+with fabricated state.
 
-#### Azure Functions (`simulators/azure/functions.go`)
-- Same as Lambda/GCF: start, invoke, capture output, remove
+## Not In Scope For This Contract
 
-### No Fallback
-
-Docker or Podman must be available. If the container runtime is not reachable at simulator startup, the simulator exits with a fatal error. There is no process-mode fallback.
-
-```go
-func init() {
-    if !dockerAvailable() {
-        log.Fatal().Msg("Docker/Podman not available — simulators require a container runtime")
-    }
-}
-```
-
-### Configuration
-
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `SIM_RUNTIME` | `docker` | Container runtime: `docker`, `podman`, or `process` (bare exec) |
-| `SIM_DOCKER_HOST` | (system default) | Docker daemon socket override |
-| `SIM_PULL_POLICY` | `if-not-present` | Image pull policy: `always`, `if-not-present`, `never` |
-
-### Container Lifecycle
-
-```
-1. Image pull (if needed, respecting pull policy)
-2. Container create (with env, command, labels, network)
-3. Container start
-4. Attach stdout/stderr → LogSink
-5. Wait for exit (or timeout)
-6. Capture exit code
-7. Container remove (cleanup)
-```
-
-For long-running containers (ECS tasks, ACA jobs), step 7 happens on stop/kill, not on exit. For invocation-style workloads (Lambda, GCF, AZF), the container is removed after each invocation.
-
-### Container Naming
-
-Containers created by simulators use a naming convention for easy identification and cleanup:
-
-```
-sockerless-sim-{cloud}-{resource-type}-{id[:12]}
-```
-
-Examples:
-- `sockerless-sim-aws-task-0e96a74d6534`
-- `sockerless-sim-gcp-job-ab312bff4213`
-- `sockerless-sim-azure-execution-31f08e627e39`
-
-### Cleanup
-
-On simulator shutdown (SIGTERM/SIGINT), all simulator-managed containers are stopped and removed. Use Docker labels for discovery:
-
-```
-docker ps -a --filter "label=sockerless-sim=true" -q | xargs docker rm -f
-```
-
-### Impact on Smoke Tests
-
-With real containers:
-- `act` can exec into the container and run commands
-- `act` can copy files into the container via archive API
-- Smoke tests exercise the same bootstrap/reverse-agent or cloud exec path used by the backend
-- Cloud backends do not use `SOCKERLESS_AUTO_AGENT_BIN`; missing cloud agent/bootstrap sessions fail explicitly
-
-### Impact on Backend CloudState
-
-No impact. The backend queries the simulator's cloud API (ListJobs, DescribeTasks, etc.), not Docker directly. The simulator translates between its cloud API and Docker internally.
-
-### Implementation Priority
-
-1. **Shared container execution layer** (`shared/container.go`) — Docker client, StartContainer, ContainerHandle
-2. **ECS simulator** — highest usage in tests
-3. **Cloud Run Jobs simulator** — smoke test uses this
-4. **ACA simulator** — parity with Cloud Run
-5. **Lambda, GCF, AZF** — invocation model (shorter containers)
-
-## Not In Scope
-
-- Kubernetes-style pod networking between containers (use Docker networks instead)
-- GPU passthrough
-- Volume mounts beyond what Docker supports natively
-- Custom OCI runtimes
+- Changing public cloud API paths, headers, or response shapes.
+- Adding simulator-specific request fields, headers, or environment variables to
+  cloud API surfaces.
+- Marking issues #332-#336 closed before real guests, packet forwarding,
+  enforcement, and health checks exist and are covered by public clients.
