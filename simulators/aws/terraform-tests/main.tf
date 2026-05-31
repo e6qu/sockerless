@@ -37,10 +37,12 @@ provider "aws" {
     iam              = var.endpoint
     s3               = var.endpoint
     dynamodb         = var.endpoint
+    efs              = var.endpoint
     events           = var.endpoint
     kinesis          = var.endpoint
     kms              = var.endpoint
     lambda           = var.endpoint
+    cloudwatchlogs   = var.endpoint
     elbv2            = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
@@ -83,6 +85,36 @@ resource "aws_security_group" "tf_ec2_sg" {
   name        = "tf-ec2-sg"
   description = "terraform ec2 instance coverage"
   vpc_id      = aws_vpc.tf_ec2_vpc.id
+}
+
+resource "aws_efs_file_system" "tf_efs" {
+  creation_token   = "tf-efs-file-system"
+  performance_mode = "generalPurpose"
+  throughput_mode  = "bursting"
+}
+
+resource "aws_efs_mount_target" "tf_efs_mount" {
+  file_system_id  = aws_efs_file_system.tf_efs.id
+  subnet_id       = aws_subnet.tf_ec2_subnet.id
+  security_groups = [aws_security_group.tf_ec2_sg.id]
+}
+
+resource "aws_efs_access_point" "tf_efs_ap" {
+  file_system_id = aws_efs_file_system.tf_efs.id
+
+  posix_user {
+    uid = 1000
+    gid = 1000
+  }
+
+  root_directory {
+    path = "/terraform"
+    creation_info {
+      owner_uid   = 1000
+      owner_gid   = 1000
+      permissions = "755"
+    }
+  }
 }
 
 resource "aws_eip" "tf_nat_eip" {
@@ -397,6 +429,11 @@ resource "aws_cloudwatch_event_target" "tf_eventbridge_target" {
   rule      = aws_cloudwatch_event_rule.tf_eventbridge_rule.name
   target_id = "tf-eventbridge-queue"
   arn       = aws_sqs_queue.tf_eventbridge_queue.arn
+}
+
+resource "aws_cloudwatch_log_group" "tf_log_group" {
+  name              = "/aws/sockerless/tf-log-group"
+  retention_in_days = 7
 }
 
 resource "aws_api_gateway_rest_api" "tf_rest_api" {
@@ -1025,6 +1062,18 @@ output "ec2_nat_eip_public_ip" {
 }
 output "ec2_nat_route_table_id" {
   value = aws_route_table.tf_nat_rt.id
+}
+output "efs_file_system_arn" {
+  value = aws_efs_file_system.tf_efs.arn
+}
+output "efs_mount_target_id" {
+  value = aws_efs_mount_target.tf_efs_mount.id
+}
+output "efs_access_point_arn" {
+  value = aws_efs_access_point.tf_efs_ap.arn
+}
+output "cloudwatch_log_group_arn" {
+  value = aws_cloudwatch_log_group.tf_log_group.arn
 }
 output "iam_slr_arn" {
   value = aws_iam_service_linked_role.tf_slr_cloudfront.arn

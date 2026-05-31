@@ -25,6 +25,12 @@ import (
 //   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
 //   - Secrets Manager: GetResourcePolicy
 //   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
+//   - CloudWatch Logs: CreateLogGroup, DescribeLogGroups,
+//     PutRetentionPolicy, DeleteLogGroup
+//   - EFS: CreateFileSystem, DescribeFileSystems, DeleteFileSystem,
+//     CreateMountTarget, DescribeMountTargets,
+//     DescribeMountTargetSecurityGroups, DeleteMountTarget,
+//     CreateAccessPoint, DescribeAccessPoints, DeleteAccessPoint
 //   - ELBv2: CreateLoadBalancer, DescribeLoadBalancers,
 //     ModifyLoadBalancerAttributes, DescribeLoadBalancerAttributes,
 //     DescribeCapacityReservation,
@@ -160,6 +166,22 @@ func TestStackProductionShape(t *testing.T) {
 	natRouteTableID := outputs.must(t, "ec2_nat_route_table_id")
 	require.True(t, strings.HasPrefix(natRouteTableID, "rtb-"),
 		"EC2 route table id must use rtb-* shape; got %s", natRouteTableID)
+
+	efsFSArn := outputs.must(t, "efs_file_system_arn")
+	require.Contains(t, efsFSArn, ":file-system/fs-",
+		"EFS file system ARN must use the file-system resource path; got %s", efsFSArn)
+
+	efsMountTargetID := outputs.must(t, "efs_mount_target_id")
+	require.True(t, strings.HasPrefix(efsMountTargetID, "fsmt-"),
+		"EFS mount target id must use fsmt-* shape; got %s", efsMountTargetID)
+
+	efsAPArn := outputs.must(t, "efs_access_point_arn")
+	require.Contains(t, efsAPArn, ":access-point/fsap-",
+		"EFS access point ARN must use the access-point resource path; got %s", efsAPArn)
+
+	cwLogGroupARN := outputs.must(t, "cloudwatch_log_group_arn")
+	require.Contains(t, cwLogGroupARN, ":log-group:/aws/sockerless/tf-log-group",
+		"CloudWatch Logs log group ARN must include the log-group resource path; got %s", cwLogGroupARN)
 
 	require.Contains(t, slrARN, "aws-service-role/cloudfront.amazonaws.com/",
 		"CloudFront SLR ARN must include the cloudfront.amazonaws.com service path; got %s", slrARN)

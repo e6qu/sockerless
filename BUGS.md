@@ -1,6 +1,6 @@
 # Known Bugs
 
-**1237 filed · 1237 fixed · 2 open · 2 false positives.**
+**1241 filed · 1241 fixed · 2 open · 2 false positives.**
 
 Standing rule: every CI / live-cloud failure lands here with a one-liner *before* any fix attempt. Workarounds, fakes, placeholders, silent fallbacks, skips, and incomplete implementations are all bugs and get the same treatment. Per-bug fix detail beyond the one-liner: `git log <commit>` or the linked PR.
 
@@ -14,6 +14,12 @@ Live status (cells, branch, milestone) lives in [STATUS.md](STATUS.md). Vibe-pat
 | 1104 | P0 | Audit-cadence meta tracker — perpetual | meta | Every major phase runs the specialist-skill pass against the diff. This BUG stays Open as the audit-cadence reminder; it closes when there's no meaningful new sim work for ≥ 6 phases (i.e., simulator surface is genuinely complete + matches every active SDK contract). |
 
 ## Recently closed (last phase only — older history lives in PR descriptions + `git log`)
+
+This phase closed BUG-1238 / issue #296. AWS Route 53 `ListResourceRecordSets` now sorts record sets using Route 53's public reversed-label DNS-name order, then record type, then set identifier before applying `StartRecordName`, `StartRecordType`, and `StartRecordIdentifier`. The route also honors `maxitems` up to Route 53's 300-item cap and returns `IsTruncated`, `NextRecordName`, `NextRecordType`, and `NextRecordIdentifier` when more record sets remain. Official AWS SDK coverage verifies the sorted cursor and truncation behavior; AWS CLI coverage verifies the reported out-of-insert-order cursor lookup returns the requested record first.
+
+This phase closed BUG-1239 and BUG-1240. The AWS CloudWatch Logs and EFS rows no longer incorrectly mark Terraform as not applicable. The AWS Terraform production-shape harness now provisions `aws_cloudwatch_log_group` plus EFS `aws_efs_file_system`, `aws_efs_mount_target`, and `aws_efs_access_point`, proving the real terraform-provider-aws create/read/destroy paths against the simulator.
+
+This phase closed BUG-1241. AWS KMS, Secrets Manager, and SSM Parameter Store no longer incorrectly mark AWS CLI as not applicable. The AWS CLI harness now covers `aws kms` key/alias/encrypt/decrypt, `aws secretsmanager` secret create/get/put/delete, and `aws ssm` parameter put/get/overwrite/delete flows through the simulator's public AWS JSON protocols.
 
 This phase closed BUG-1237. PR #295 CI exposed one stale SDK assertion after BUG-1236 corrected Lambda `ListVersionsByFunction` fidelity. AWS Lambda's public list-versions response includes `$LATEST` alongside published versions, and the simulator now returns that real shape. The SDK test now asserts `$LATEST` first and the three published versions afterward instead of expecting only published versions.
 

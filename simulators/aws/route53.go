@@ -182,13 +182,14 @@ type R53ChangeResourceRecordSetsResponse struct {
 }
 
 type R53ListResourceRecordSetsResponse struct {
-	XMLName            xml.Name               `xml:"ListResourceRecordSetsResponse"`
-	Xmlns              string                 `xml:"xmlns,attr,omitempty"`
-	ResourceRecordSets []R53ResourceRecordSet `xml:"ResourceRecordSets>ResourceRecordSet"`
-	IsTruncated        bool                   `xml:"IsTruncated"`
-	MaxItems           string                 `xml:"MaxItems"`
-	NextRecordName     string                 `xml:"NextRecordName,omitempty"`
-	NextRecordType     string                 `xml:"NextRecordType,omitempty"`
+	XMLName              xml.Name               `xml:"ListResourceRecordSetsResponse"`
+	Xmlns                string                 `xml:"xmlns,attr,omitempty"`
+	ResourceRecordSets   []R53ResourceRecordSet `xml:"ResourceRecordSets>ResourceRecordSet"`
+	IsTruncated          bool                   `xml:"IsTruncated"`
+	MaxItems             string                 `xml:"MaxItems"`
+	NextRecordName       string                 `xml:"NextRecordName,omitempty"`
+	NextRecordType       string                 `xml:"NextRecordType,omitempty"`
+	NextRecordIdentifier string                 `xml:"NextRecordIdentifier,omitempty"`
 }
 
 type R53GetChangeResponse struct {
@@ -713,45 +714,119 @@ func handleR53ListRRSets(w http.ResponseWriter, r *http.Request) {
 		r53WriteError(w, http.StatusNotFound, "NoSuchHostedZone", "The specified hosted zone does not exist.")
 		return
 	}
-	// Real Route 53 ListResourceRecordSets honors StartRecordName +
-	// StartRecordType as a pagination cursor — records BEFORE the start
-	// position are not returned. The Terraform aws_route53_record
-	// resource's Read function uses this as a precise filter and treats
-	// "first record returned doesn't match my name/type" as "record not
-	// found." Sim implements the filter so cross-resource reads work.
-	startName := strings.ToLower(r.URL.Query().Get("name"))
+	startName := r53NormalizeRecordName(r.URL.Query().Get("name"))
 	startType := strings.ToUpper(r.URL.Query().Get("type"))
-	if startName != "" && !strings.HasSuffix(startName, ".") {
-		startName += "."
+	startIdentifier := r.URL.Query().Get("identifier")
+	if startName == "" && startType != "" {
+		r53WriteError(w, http.StatusBadRequest, "InvalidInput", "StartRecordType cannot be specified without StartRecordName.")
+		return
 	}
-	records := stored.Records
-	if startName != "" {
-		out := make([]R53ResourceRecordSet, 0, len(records))
-		startIdx := -1
-		for i, rr := range records {
-			rn := strings.ToLower(rr.Name)
-			if rn < startName {
-				continue
-			}
-			if rn == startName {
-				if startType != "" && strings.ToUpper(rr.Type) < startType {
-					continue
-				}
-			}
-			startIdx = i
-			break
+	maxItems := 300
+	if raw := r.URL.Query().Get("maxitems"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			r53WriteError(w, http.StatusBadRequest, "InvalidInput", "maxitems must be a positive integer.")
+			return
 		}
-		if startIdx >= 0 {
-			out = append(out, records[startIdx:]...)
-		}
-		records = out
+		maxItems = parsed
 	}
-	r53WriteXML(w, http.StatusOK, R53ListResourceRecordSetsResponse{
-		Xmlns:              r53Namespace,
-		ResourceRecordSets: records,
-		IsTruncated:        false,
-		MaxItems:           "100",
+	if maxItems > 300 {
+		maxItems = 300
+	}
+
+	records := append([]R53ResourceRecordSet(nil), stored.Records...)
+	sort.SliceStable(records, func(i, j int) bool {
+		return r53RRSetLess(records[i], records[j])
 	})
+
+	filtered := records[:0]
+	for _, rr := range records {
+		if startName != "" && r53RRSetCompareCursor(rr, startName, startType, startIdentifier) < 0 {
+			continue
+		}
+		filtered = append(filtered, rr)
+	}
+
+	isTruncated := len(filtered) > maxItems
+	var nextName, nextType, nextIdentifier string
+	if isTruncated {
+		next := filtered[maxItems]
+		nextName = next.Name
+		nextType = strings.ToUpper(next.Type)
+		nextIdentifier = next.SetIdentifier
+		filtered = filtered[:maxItems]
+	}
+
+	r53WriteXML(w, http.StatusOK, R53ListResourceRecordSetsResponse{
+		Xmlns:                r53Namespace,
+		ResourceRecordSets:   filtered,
+		IsTruncated:          isTruncated,
+		MaxItems:             strconv.Itoa(maxItems),
+		NextRecordName:       nextName,
+		NextRecordType:       nextType,
+		NextRecordIdentifier: nextIdentifier,
+	})
+}
+
+func r53NormalizeRecordName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name != "" && !strings.HasSuffix(name, ".") {
+		name += "."
+	}
+	return name
+}
+
+func r53RecordSortName(name string) string {
+	name = r53NormalizeRecordName(name)
+	trimmed := strings.TrimSuffix(name, ".")
+	if trimmed == "" {
+		return "."
+	}
+	labels := strings.Split(trimmed, ".")
+	for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
+		labels[i], labels[j] = labels[j], labels[i]
+	}
+	return strings.Join(labels, ".") + "."
+}
+
+func r53RRSetLess(a, b R53ResourceRecordSet) bool {
+	ak, bk := r53RecordSortName(a.Name), r53RecordSortName(b.Name)
+	if ak != bk {
+		return ak < bk
+	}
+	at, bt := strings.ToUpper(a.Type), strings.ToUpper(b.Type)
+	if at != bt {
+		return at < bt
+	}
+	return a.SetIdentifier < b.SetIdentifier
+}
+
+func r53RRSetCompareCursor(rr R53ResourceRecordSet, startName, startType, startIdentifier string) int {
+	rrName, cursorName := r53RecordSortName(rr.Name), r53RecordSortName(startName)
+	if rrName < cursorName {
+		return -1
+	}
+	if rrName > cursorName {
+		return 1
+	}
+	rrType := strings.ToUpper(rr.Type)
+	if startType != "" {
+		if rrType < startType {
+			return -1
+		}
+		if rrType > startType {
+			return 1
+		}
+	}
+	if startIdentifier != "" {
+		if rr.SetIdentifier < startIdentifier {
+			return -1
+		}
+		if rr.SetIdentifier > startIdentifier {
+			return 1
+		}
+	}
+	return 0
 }
 
 func handleR53GetChange(w http.ResponseWriter, r *http.Request) {

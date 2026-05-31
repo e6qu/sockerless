@@ -15,28 +15,28 @@ Legend:
 | `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-cloudwatch` | direct | direct | not applicable | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go` |
+| `aws-cloudwatch` | direct | direct | direct | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-dynamodb` | direct | direct | direct | `simulators/aws/sdk-tests/dynamodb_test.go`; `simulators/aws/cli-tests/dynamodb_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ec2` | direct | direct | direct | `simulators/aws/sdk-tests/ec2_test.go`; `simulators/aws/cli-tests/ec2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ecr` | direct | direct | direct | `simulators/aws/sdk-tests/ecr_test.go`; `simulators/aws/cli-tests/ecr_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ecs` | direct | direct | direct | `simulators/aws/sdk-tests/ecs_test.go`; `simulators/aws/cli-tests/ecs_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-efs` | direct | direct | not applicable | `simulators/aws/sdk-tests/efs_test.go`; `simulators/aws/cli-tests/efs_test.go` |
+| `aws-efs` | direct | direct | direct | `simulators/aws/sdk-tests/efs_test.go`; `simulators/aws/cli-tests/efs_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-elasticache` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-elbv2` | direct | direct | direct | `simulators/aws/sdk-tests/elbv2_test.go`; `simulators/aws/cli-tests/elbv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-eventbridge` | direct | direct | direct | `simulators/aws/sdk-tests/eventbridge_test.go`; `simulators/aws/cli-tests/eventbridge_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-iam` | direct | direct | direct | `simulators/aws/sdk-tests/iam_test.go`; `simulators/aws/cli-tests/iam_slr_oidc_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-kinesis` | direct | direct | direct | `simulators/aws/sdk-tests/kinesis_test.go`; `simulators/aws/cli-tests/kinesis_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-kms` | direct | not applicable | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-kms` | direct | direct | direct | `simulators/aws/sdk-tests/kms_test.go`; `simulators/aws/cli-tests/kms_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-lambda` | direct | direct | direct | `simulators/aws/sdk-tests/lambda_test.go`; `simulators/aws/cli-tests/lambda_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-rds` | direct | direct | direct | `simulators/aws/sdk-tests/rds_elasticache_test.go`; `simulators/aws/sdk-tests/rds_snapshot_test.go`; `simulators/aws/cli-tests/rds_elasticache_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-route53` | direct | direct | direct | `simulators/aws/sdk-tests/route53_test.go`; `simulators/aws/cli-tests/route53_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3` | direct | direct | direct | `simulators/aws/sdk-tests/s3_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-bucket-subresources` | direct | direct | direct | `simulators/aws/sdk-tests/s3_bucket_subresources_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-multipart` | direct | direct | not applicable | `simulators/aws/sdk-tests/s3_list_parts_test.go`; `simulators/aws/cli-tests/s3_test.go` |
-| `aws-secretsmanager` | direct | not applicable | direct | `simulators/aws/sdk-tests/secretsmanager_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-secretsmanager` | direct | direct | direct | `simulators/aws/sdk-tests/secretsmanager_test.go`; `simulators/aws/cli-tests/secretsmanager_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-sns` | direct | direct | direct | `simulators/aws/sdk-tests/sns_sqs_ops_test.go`; `simulators/aws/cli-tests/sqs_sns_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-sqs` | direct | direct | direct | `simulators/aws/sdk-tests/sqs_test.go`; `simulators/aws/cli-tests/sqs_sns_test.go`; `simulators/aws/terraform-tests/main.tf` |
-| `aws-ssm_parameters` | direct | not applicable | direct | `simulators/aws/sdk-tests/ssm_parameters_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-ssm_parameters` | direct | direct | direct | `simulators/aws/sdk-tests/ssm_parameters_test.go`; `simulators/aws/cli-tests/ssm_parameters_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-sts` | direct | direct | direct | `simulators/aws/sdk-tests/sts_test.go`; `simulators/aws/cli-tests/sts_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-wafv2` | direct | direct | direct | `simulators/aws/sdk-tests/wafv2_test.go`; `simulators/aws/cli-tests/wafv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |

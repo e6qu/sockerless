@@ -6,6 +6,16 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-31 — AWS Route 53 record-list fidelity and AWS client-surface audit
+
+Issue #296 / BUG-1238 was valid. `ListResourceRecordSets` used stored insert order before applying `StartRecordName`, which meant a client lookup that asked for `api.example.com. A` could see the zone's apex NS/SOA records first if those were inserted earlier. Real Route 53 lists record sets by reversed DNS labels, then record type, and uses that ordering for the start-name/type cursor.
+
+The AWS Route 53 simulator now sorts record sets with that public ordering before cursor filtering. It also honors `maxitems` up to Route 53's 300-record cap and returns the documented continuation fields when a page is truncated. The AWS SDK regression covers both the reported out-of-order lookup and truncation cursor behavior; the AWS CLI regression covers the reported lookup through `aws route53 list-resource-record-sets`.
+
+The same BUG-1104 audit pass found stale AWS client-surface claims. CloudWatch Logs and EFS were marked Terraform not-applicable even though terraform-provider-aws exposes `aws_cloudwatch_log_group`, `aws_efs_file_system`, `aws_efs_mount_target`, and `aws_efs_access_point`. The AWS Terraform production-shape harness now provisions those resources and asserts provider-refreshed identities. KMS, Secrets Manager, and SSM Parameter Store were marked AWS CLI not-applicable even though the official AWS CLI exposes those services. The CLI harness now covers KMS key/alias/encrypt/decrypt, Secrets Manager create/get/put/delete, and SSM parameter put/get/overwrite/delete.
+
+BUG-1239, BUG-1240, and BUG-1241 closed those stale matrix rows, and the coverage matrix plus affected surface tables now reflect direct external-client coverage.
+
 ## 2026-05-31 — AWS Lambda Terraform client-surface coverage
 
 The BUG-1104 audit found a stale AWS Lambda coverage claim. `aws-lambda` was marked Terraform not-applicable even though terraform-provider-aws v6.47.0 exposes Lambda function, alias, permission, function URL, and invocation surfaces.
