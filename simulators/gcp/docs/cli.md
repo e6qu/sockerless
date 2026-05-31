@@ -25,6 +25,7 @@ export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_REDIS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_SQL=http://localhost:4567/
 ```
@@ -151,6 +152,18 @@ gcloud artifacts docker images list \
   --format=json
 ```
 
+### Cloud Storage
+
+```sh
+gcloud storage buckets create gs://my-bucket --location=us --format=json
+printf 'hello world' > hello.txt
+gcloud storage cp hello.txt gs://my-bucket/hello.txt
+gcloud storage objects list gs://my-bucket --format=json
+gcloud storage cat gs://my-bucket/hello.txt
+gcloud storage rm gs://my-bucket/hello.txt
+gcloud storage buckets delete gs://my-bucket
+```
+
 ### Direct HTTP (for services without CLI endpoint overrides)
 
 Some services work better with direct HTTP calls since gcloud doesn't support endpoint overrides for all APIs:
@@ -217,6 +230,7 @@ curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/network
 | Cloud Functions | `gcloud functions` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS` | Deploy may require direct HTTP |
 | Memorystore Redis | `gcloud redis instances` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_REDIS` | Instance lifecycle |
 | Cloud SQL | `gcloud sql` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_SQL` | Instance, database, and user lifecycle |
+| Cloud Storage | `gcloud storage` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE` | Bucket and object lifecycle |
 | Cloud Run Jobs | — | — | Use direct HTTP |
 | GCS | — | — | Use direct HTTP or `STORAGE_EMULATOR_HOST` |
 | Artifact Registry | `gcloud artifacts` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY` | Repository CRUD and Docker image listing |

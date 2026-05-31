@@ -47,6 +47,8 @@ Implemented:
 - Docs for local CA trust and provider-specific HTTPS behavior.
 - Azure Terraform harness over the gateway: per-test Caddy state and CA, `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, ARM-advertised Azure data-plane URLs under the gateway, and `SSL_CERT_FILE` CA trust in the Linux Docker test container.
 - Shared simulator Docker test image with Caddy installed from the official package repository.
+- SDK/CLI gateway guidance for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
+- BUG-1104 GCS CLI audit: current `gcloud storage` endpoint overrides were documented and covered by real CLI tests; the simulator accepted current gcloud multipart upload boundaries and implemented `buckets.getStorageLayout`.
 
 Remaining staged work:
 

@@ -31,6 +31,12 @@ BUG-1247 fixed the direct GitHub Actions Azure Terraform job by installing Caddy
 
 The full Azure Terraform apply/destroy test passed through the gateway under the 300-second cap.
 
+## 2026-05-31 - SDK/CLI HTTPS Gateway and GCS CLI Audit
+
+The gateway docs were expanded with SDK/CLI-specific endpoint and CA trust knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs. The guidance kept TLS verification enabled: local clients trust the Caddy CA instead of disabling certificate checks.
+
+BUG-1104 audit found stale GCP GCS CLI coverage. Current gcloud supports Cloud Storage endpoint overrides, so `gcp-gcs` was no longer a CLI "not applicable" surface. BUG-1250 added real `gcloud storage` bucket/object lifecycle coverage, fixed the simulator to accept current gcloud multipart upload boundaries, and implemented the public GCS `buckets.getStorageLayout` response used by gcloud's upload path. BUG-1251 corrected GCS timestamp precision to Cloud Storage-style milliseconds so current Linux gcloud did not inject timestamp truncation warnings into command output.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -70,7 +76,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 ## Deferred Work
 
 - BUG-1075: live-cloud validation remains intentionally deferred. Do not mark live cloud cells green without authenticated real-cloud runs.
-- BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing.
+- BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI audit closed one stale "not applicable" row.
 
 ## Continuity Rules
 
