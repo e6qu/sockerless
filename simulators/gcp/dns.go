@@ -360,8 +360,8 @@ func registerCloudDNS(srv *sim.Server) {
 				return
 			}
 			if !dnsRecordSetsEqual(stored.Record, deletion) {
-				sim.GCPErrorf(w, http.StatusPreconditionFailed, "PRECONDITION_FAILED",
-					"record set %s/%s does not match existing data", deletion.Name, deletion.Type)
+				writeDNSChangeError(w, http.StatusPreconditionFailed, "FAILED_PRECONDITION",
+					fmt.Sprintf("record set %s/%s does not match existing data", deletion.Name, deletion.Type))
 				return
 			}
 		}
@@ -444,6 +444,21 @@ func registerCloudDNS(srv *sim.Server) {
 
 func dnsRecordSetKey(project, zone, name, typ string) string {
 	return fmt.Sprintf("%s/%s:%s:%s", project, zone, name, typ)
+}
+
+func writeDNSChangeError(w http.ResponseWriter, code int, status, message string) {
+	sim.WriteJSON(w, code, map[string]any{
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+			"status":  status,
+			"errors": []map[string]string{{
+				"domain":  "global",
+				"reason":  status,
+				"message": message,
+			}},
+		},
+	})
 }
 
 func dnsChangeKey(project, zone, id string) string {

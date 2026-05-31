@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/logging"
 	"cloud.google.com/go/logging/logadmin"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -26,6 +27,32 @@ func logadminClient(t *testing.T) *logadmin.Client {
 	t.Cleanup(func() { client.Close() })
 
 	return client
+}
+
+func TestLogging_SeverityFilterUsesCloudOrdering(t *testing.T) {
+	client := logadminClient(t)
+	writeClient, err := newLoggingWriteClient(t)
+	require.NoError(t, err)
+
+	logger := writeClient.Logger("severity-order-test")
+	require.NoError(t, logger.LogSync(ctx, logging.Entry{Payload: "debug payload", Severity: logging.Debug}))
+	require.NoError(t, logger.LogSync(ctx, logging.Entry{Payload: "error payload", Severity: logging.Error}))
+	require.NoError(t, logger.LogSync(ctx, logging.Entry{Payload: "critical payload", Severity: logging.Critical}))
+	require.NoError(t, writeClient.Close())
+
+	it := client.Entries(ctx, logadmin.Filter(`logName="projects/test-project/logs/severity-order-test" AND severity>=ERROR`))
+	var payloads []string
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		require.NoError(t, err)
+		if s, ok := entry.Payload.(string); ok {
+			payloads = append(payloads, s)
+		}
+	}
+	assert.ElementsMatch(t, []string{"error payload", "critical payload"}, payloads)
 }
 
 func TestLogging_WriteAndListEntries(t *testing.T) {

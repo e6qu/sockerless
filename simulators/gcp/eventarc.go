@@ -113,6 +113,9 @@ func isCloudBuildRequest(r *http.Request) bool {
 	}
 	project := sim.PathParam(r, "project")
 	location := sim.PathParam(r, "location")
+	if location == "global" {
+		return true
+	}
 	trigger := sim.PathParam(r, "trigger")
 	if project == "" || location == "" || trigger == "" {
 		return false

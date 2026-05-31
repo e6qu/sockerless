@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -29,6 +30,81 @@ func newServicesClient(t *testing.T) *run.ServicesClient {
 	require.NoError(t, err)
 	t.Cleanup(func() { client.Close() })
 	return client
+}
+
+func TestSDK_CloudRunV2Services_ListPaginationAndWireShape(t *testing.T) {
+	client := newServicesClient(t)
+	parent := "projects/test-project/locations/us-central1"
+
+	for _, id := range []string{"v2-svc-page-a", "v2-svc-page-b"} {
+		op, err := client.CreateService(ctx, &runpb.CreateServiceRequest{
+			Parent:    parent,
+			ServiceId: id,
+			Service: &runpb.Service{
+				Template: &runpb.RevisionTemplate{
+					Containers: []*runpb.Container{{Image: "gcr.io/test-project/" + id}},
+				},
+			},
+		})
+		require.NoError(t, err)
+		_, err = op.Wait(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			deleteOp, err := client.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: parent + "/services/" + id})
+			if err == nil {
+				_, _ = deleteOp.Wait(ctx)
+			}
+		})
+	}
+
+	resp, err := http.Get(baseURL + "/v2/" + parent + "/services?pageSize=1")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var first struct {
+		Services      []map[string]any `json:"services"`
+		NextPageToken string           `json:"nextPageToken"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&first))
+	require.Len(t, first.Services, 1)
+	require.NotEmpty(t, first.NextPageToken)
+
+	resp2, err := http.Get(baseURL + "/v2/" + parent + "/services?pageSize=1&pageToken=" + first.NextPageToken)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	var second struct {
+		Services []map[string]any `json:"services"`
+	}
+	require.NoError(t, json.NewDecoder(resp2.Body).Decode(&second))
+	require.Len(t, second.Services, 1)
+	require.NotEqual(t, first.Services[0]["name"], second.Services[0]["name"])
+
+	resp3, err := http.Get(baseURL + "/v2/projects/test-project/locations/europe-west1/services")
+	require.NoError(t, err)
+	defer resp3.Body.Close()
+	var empty map[string]any
+	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&empty))
+	require.IsType(t, []any{}, empty["services"], "empty service list must serialize as [] not null")
+}
+
+func TestSDK_CloudRunV2Service_OperationMetadataAndTimestampShape(t *testing.T) {
+	body := strings.NewReader(`{"template":{"containers":[{"image":"gcr.io/test-project/raw"}]}}`)
+	resp, err := http.Post(baseURL+"/v2/projects/test-project/locations/us-central1/services?serviceId=v2-svc-lro-shape", "application/json", body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var op map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&op))
+	metadata, ok := op["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "type.googleapis.com/google.cloud.run.v2.Service", metadata["@type"])
+	response, ok := op["response"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "type.googleapis.com/google.cloud.run.v2.Service", response["@type"])
+	createTime, _ := response["createTime"].(string)
+	assert.Regexp(t, `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`, createTime)
 }
 
 func TestSDK_CloudRunV2Services_CreateGetListDelete(t *testing.T) {

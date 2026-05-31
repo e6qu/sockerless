@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Azure ARM/DNS fidelity PR merged.
+- Branch: `main`, synced with `origin/main` after the GCP fidelity PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #304, #309-#312, #315, #321-#329, and #332-#338.
-- Open BUG trackers: BUG-1075, BUG-1104, BUG-1254, BUG-1263, BUG-1264, and BUG-1267.
-- Last completed work: Azure ARM/DNS issues #313, #314, and #340 were fixed.
+- Open GitHub issues at last check: #312, #315, #326-#329, and #332-#338.
+- Open BUG trackers: BUG-1075, BUG-1104, BUG-1264, and BUG-1267.
+- Last completed work: GCP issue #304 and issues #309-#311 and #321-#325 were fixed.
 
 ## Next Task
 
-Address the GCP issue group next: issue #304 / BUG-1254 plus GCP fidelity issues #309-#311 and #321-#325, unless a higher-priority issue appears.
+Address the Azure issue group next: BUG-1264 / issues #312, #315, and #326-#329, unless a higher-priority issue appears.
 
-The Azure ARM/DNS PR closed the narrow control-plane list/validation group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
+The GCP fidelity PR closed the stale GCP client-surface and API-shape group. The next highest-value work is the Azure backlog because it contains public API shape and LRO issues across Storage XML errors/listing shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes.
 
 ## Provider Facts To Preserve
 
@@ -61,19 +61,20 @@ The Azure ARM/DNS PR closed the narrow control-plane list/validation group. The 
    - Empty store-backed ARM lists serialized `{"value":[]}` rather than `{"value":null}`.
    - Private DNS zones implemented list-by-resource-group, and Private DNS virtual network links implemented list-by-zone.
    - The routes were covered through real Azure SDK and Azure CLI tests.
+- GCP issue #304 and issues #309-#311 and #321-#325 were fixed:
+   - API Gateway, Cloud Build, IAM, and Pub/Sub stale public-client rows now have real gcloud coverage; API Gateway also has `google-beta` Terraform coverage.
+   - Cloud Run/Functions list pagination, empty-list shape, LRO metadata types, and timestamps match public client expectations.
+   - Logging severity ordering, GCS metadata/IAM, Cloud SQL backup operations, and DNS precondition errors were corrected.
 
 ## Remaining Stages
 
-1. Address BUG-1254 / issue #304 plus GCP issues #309-#311 and #321-#325.
-2. Address Azure issues #312, #315, and #326-#329.
-3. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
+1. Address Azure issues #312, #315, and #326-#329.
+2. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered by the latest audit pass.
-- BUG-1263: GCP API-shape backlog from issues #309-#311 and #321-#325 remains open.
 - BUG-1264: Azure API-shape backlog from issues #312, #315, and #326-#329 remains open.
 - BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks.
 

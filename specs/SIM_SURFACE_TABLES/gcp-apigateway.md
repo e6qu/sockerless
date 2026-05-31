@@ -13,19 +13,19 @@ Surface registered in `simulators/gcp/apigateway.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/locations/global/apis` | ✓ `simulators/gcp/apigateway.go:53::handleGCPAPIGWCreateApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/global/apis/{api}` | ✓ `simulators/gcp/apigateway.go:54::handleGCPAPIGWGetApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/global/apis` | ✓ `simulators/gcp/apigateway.go:55::handleGCPAPIGWListApis` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/locations/global/apis/{api}` | ✓ `simulators/gcp/apigateway.go:56::handleGCPAPIGWDeleteApi` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/locations/global/apis/{api}/configs` | ✓ `simulators/gcp/apigateway.go:59::handleGCPAPIGWCreateConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}` | ✓ `simulators/gcp/apigateway.go:60::handleGCPAPIGWGetConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/global/apis/{api}/configs` | ✓ `simulators/gcp/apigateway.go:61::handleGCPAPIGWListConfigs` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}` | ✓ `simulators/gcp/apigateway.go:62::handleGCPAPIGWDeleteConfig` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/locations/{location}/gateways` | ✓ `simulators/gcp/apigateway.go:65::handleGCPAPIGWCreateGateway` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/gateways/{gw}` | ✓ `simulators/gcp/apigateway.go:66::handleGCPAPIGWGetGateway` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/locations/{location}/gateways` | ✓ `simulators/gcp/apigateway.go:67::handleGCPAPIGWListGateways` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/locations/{location}/gateways/{gw}` | ✓ `simulators/gcp/apigateway.go:68::handleGCPAPIGWDeleteGateway` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/locations/{location}/gateways/{gwAction}` | ✓ `simulators/gcp/apigateway.go:76::handleGCPAPIGWIamAction` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/global/apis` | ✓ `simulators/gcp/apigateway.go:53::handleGCPAPIGWCreateApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/global/apis/{api}` | ✓ `simulators/gcp/apigateway.go:54::handleGCPAPIGWGetApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/global/apis` | ✓ `simulators/gcp/apigateway.go:55::handleGCPAPIGWListApis` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/locations/global/apis/{api}` | ✓ `simulators/gcp/apigateway.go:56::handleGCPAPIGWDeleteApi` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/global/apis/{api}/configs` | ✓ `simulators/gcp/apigateway.go:59::handleGCPAPIGWCreateConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}` | ✓ `simulators/gcp/apigateway.go:60::handleGCPAPIGWGetConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/global/apis/{api}/configs` | ✓ `simulators/gcp/apigateway.go:61::handleGCPAPIGWListConfigs` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}` | ✓ `simulators/gcp/apigateway.go:62::handleGCPAPIGWDeleteConfig` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/gateways` | ✓ `simulators/gcp/apigateway.go:65::handleGCPAPIGWCreateGateway` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/gateways/{gw}` | ✓ `simulators/gcp/apigateway.go:66::handleGCPAPIGWGetGateway` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /v1/projects/{project}/locations/{location}/gateways` | ✓ `simulators/gcp/apigateway.go:67::handleGCPAPIGWListGateways` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v1/projects/{project}/locations/{location}/gateways/{gw}` | ✓ `simulators/gcp/apigateway.go:68::handleGCPAPIGWDeleteGateway` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/locations/{location}/gateways/{gwAction}` | ✓ `simulators/gcp/apigateway.go:76::handleGCPAPIGWIamAction` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

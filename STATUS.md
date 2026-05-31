@@ -8,11 +8,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | GCP issue group: #304, #309-#311, and #321-#325, unless a higher-priority issue appears. |
-| Last merged | Azure ARM/DNS fidelity fixes for issues #313, #314, and #340. |
-| Open GitHub issues | #304, #309-#312, #315, #321-#329, and #332-#338. |
-| Bugs | 1268 filed - 1265 fixed - 6 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1254 GCP client-surface gaps; BUG-1263 GCP API-shape backlog; BUG-1264 Azure API-shape backlog; BUG-1267 compute/networking real execution. |
+| Planned next | Azure issue group: #312, #315, and #326-#329, unless a higher-priority issue appears. |
+| Last merged | GCP fidelity and client-surface fixes for #304, #309-#311, and #321-#325. |
+| Open GitHub issues | #312, #315, #326-#329, and #332-#338. |
+| Bugs | 1269 filed - 1268 fixed - 4 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1264 Azure API-shape backlog; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
@@ -24,6 +24,8 @@ The AWS simulator fidelity PR fixed issues #305-#308 and #317-#320. S3 `ListObje
 The AWS Amplify fidelity PR fixed issues #330 and #331. Amplify `StopJob` and `DeleteJob` now used their distinct public REST paths and semantics, `DeleteJob` removed the job and its artifacts, and `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered on the real AWS SDK paths with SDK and CLI coverage. No Terraform coverage was added for those operations because the official Terraform AWS provider exposes Amplify app/branch/webhook/domain/backend-environment resources, not job artifact or access-log operations.
 
 The Azure ARM/DNS fidelity PR fixed issues #313, #314, and #340. ARM control-plane requests now required `api-version` and returned Azure's `InvalidApiVersionParameter` error when it was missing. Empty store-backed ARM list responses serialized as `{"value":[]}` instead of `{"value":null}`. Azure Private DNS implemented the public `GET .../privateDnsZones` list-by-resource-group route used by `armprivatedns.PrivateZonesClient.NewListByResourceGroupPager`, and virtual network links implemented `GET .../privateDnsZones/{zoneName}/virtualNetworkLinks`. The fixes shipped with real Azure SDK and Azure CLI coverage.
+
+The GCP fidelity PR fixed issue #304 and issues #309-#311 and #321-#325. API Gateway, Cloud Build, IAM, and Pub/Sub stale client-surface rows now have real gcloud coverage, and API Gateway has `google-beta` Terraform coverage. Cloud Run and Cloud Functions list/LRO/timestamp wire shapes were corrected; Cloud Logging severity filters use Google severity ranks; GCS metadata and IAM policy responses match public client expectations; Cloud SQL backup operations return SQL Admin operation shapes; and Cloud DNS precondition failures return canonical `FAILED_PRECONDITION` details.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -50,7 +52,8 @@ Implemented gateway surface:
 - AWS/GCP Terraform now had optional `make terraform-https-test` targets that started the simulator on HTTP loopback, put Caddy in front of it, set `SSL_CERT_FILE` to Caddy's local CA, and ran the real Terraform provider apply/destroy harness through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets delegated to the shared Linux simulator test image, matching Azure's CA-trust pattern.
 - Terraform CI installed Caddy for the Terraform matrix and ran AWS/GCP via those HTTPS targets while Azure continued its mandatory gateway-backed harness.
 - BUG-1253 corrected stale `gcp-vpcaccess` Terraform coverage: the GCP Terraform stack now used `vpc_access_custom_endpoint`, provisioned `google_vpc_access_connector`, asserted the canonical connector ID, and marked the matrix row direct.
-- BUG-1254 / issue #304 was opened for larger GCP audit gaps: API Gateway, Cloud Build, IAM, and Pub/Sub have public client surfaces where some matrix rows still need real gcloud/Terraform coverage.
+- BUG-1254 / issue #304 was fixed: API Gateway, Cloud Build, IAM, and Pub/Sub public client surfaces now have real coverage where the CLI/provider exposes them.
+- BUG-1263 was fixed: GCP API-shape issues #309-#311 and #321-#325 were corrected with SDK, CLI, and Terraform coverage where applicable.
 - BUG-1255..BUG-1262 / issues #305-#308 and #317-#320 were fixed in the AWS simulator with SDK coverage and targeted CLI regression coverage.
 
 ## Invariants
@@ -78,8 +81,6 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
-- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps found during the latest BUG-1104 pass.
-- BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
 - BUG-1264: Azure API-shape issues #312, #315, and #326-#329 remain open.
 - BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure.
 
@@ -91,6 +92,7 @@ Implemented gateway surface:
 - AWS simulator fidelity sweep: issues #305-#308 and #317-#320 were fixed with real AWS SDK coverage and targeted AWS CLI regression coverage.
 - AWS Amplify fidelity sweep: issues #330 and #331 were fixed with real AWS SDK and AWS CLI coverage.
 - Azure ARM/DNS fidelity sweep: issues #313, #314, and #340 were fixed with real Azure SDK and Azure CLI coverage.
+- GCP fidelity sweep: issue #304 and issues #309-#311 and #321-#325 were fixed with real Google SDK, gcloud, and Terraform provider coverage where those public client surfaces exist.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

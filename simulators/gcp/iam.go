@@ -20,9 +20,11 @@ type GCPServiceAccount struct {
 }
 
 type IAMPolicy struct {
-	Bindings []IAMBinding `json:"bindings"`
-	Etag     string       `json:"etag"`
-	Version  int          `json:"version"`
+	Kind       string       `json:"kind,omitempty"`
+	ResourceId string       `json:"resourceId,omitempty"`
+	Bindings   []IAMBinding `json:"bindings"`
+	Etag       string       `json:"etag"`
+	Version    int          `json:"version"`
 }
 
 type IAMBinding struct {
@@ -203,7 +205,7 @@ func registerIAM(srv *sim.Server) {
 			if !ok {
 				policy = IAMPolicy{
 					Bindings: []IAMBinding{},
-					Etag:     generateUUID()[:8],
+					Etag:     gcpPolicyETag(),
 					Version:  1,
 				}
 			}
@@ -217,7 +219,7 @@ func registerIAM(srv *sim.Server) {
 				return
 			}
 
-			req.Policy.Etag = generateUUID()[:8]
+			req.Policy.Etag = gcpPolicyETag()
 			if req.Policy.Version == 0 {
 				req.Policy.Version = 1
 			}
@@ -258,10 +260,12 @@ func registerIAM(srv *sim.Server) {
 		if !ok {
 			policy = IAMPolicy{
 				Bindings: []IAMBinding{},
-				Etag:     generateUUID()[:8],
+				Etag:     gcpPolicyETag(),
 				Version:  1,
 			}
 		}
+		policy.Kind = "storage#policy"
+		policy.ResourceId = "projects/_/buckets/" + bucket
 		sim.WriteJSON(w, http.StatusOK, policy)
 	})
 
@@ -275,10 +279,12 @@ func registerIAM(srv *sim.Server) {
 			return
 		}
 
-		policy.Etag = generateUUID()[:8]
+		policy.Etag = gcpPolicyETag()
 		if policy.Version == 0 {
 			policy.Version = 1
 		}
+		policy.Kind = "storage#policy"
+		policy.ResourceId = "projects/_/buckets/" + bucket
 		resourcePolicies.Put("bucket/"+bucket, policy)
 
 		sim.WriteJSON(w, http.StatusOK, policy)
@@ -296,7 +302,7 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 		if !ok {
 			policy = IAMPolicy{
 				Bindings: []IAMBinding{},
-				Etag:     generateUUID()[:8],
+				Etag:     gcpPolicyETag(),
 				Version:  1,
 			}
 		}
@@ -309,7 +315,7 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		req.Policy.Etag = generateUUID()[:8]
+		req.Policy.Etag = gcpPolicyETag()
 		if req.Policy.Version == 0 {
 			req.Policy.Version = 1
 		}

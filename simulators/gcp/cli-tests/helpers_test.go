@@ -134,6 +134,11 @@ func gcloudCLI(args ...string) *exec.Cmd {
 		"CLOUDSDK_CORE_PROJECT="+project,
 		"CLOUDSDK_CORE_DISABLE_PROMPTS=1",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_APIGATEWAY="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_API_GATEWAY="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDBUILD="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_IAM="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_LOGGING="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE="+baseURL+"/",
@@ -195,9 +200,14 @@ func runCLI(t *testing.T, cmd *exec.Cmd) string {
 func parseJSON(t *testing.T, data string, target any) {
 	t.Helper()
 	// gcloud may prefix JSON with status text (e.g. "Created [URL].\n").
-	// Strip everything before the first JSON delimiter.
-	if i := strings.IndexAny(data, "[{"); i > 0 {
-		data = data[i:]
+	// Try each plausible JSON delimiter until the remaining output decodes.
+	for i, r := range data {
+		if r != '[' && r != '{' {
+			continue
+		}
+		if err := json.Unmarshal([]byte(data[i:]), target); err == nil {
+			return
+		}
 	}
 	if err := json.Unmarshal([]byte(data), target); err != nil {
 		t.Fatalf("Failed to parse JSON: %v\nData: %s", err, data)

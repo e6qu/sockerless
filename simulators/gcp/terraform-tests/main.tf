@@ -6,6 +6,9 @@ terraform {
     google = {
       source = "hashicorp/google"
     }
+    google-beta = {
+      source = "hashicorp/google-beta"
+    }
     random = {
       source = "hashicorp/random"
     }
@@ -39,6 +42,16 @@ provider "google" {
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
+}
+
+provider "google-beta" {
+  project = "test-project"
+  region  = "us-central1"
+
+  access_token          = "test-token"
+  user_project_override = false
+
+  api_gateway_custom_endpoint = "${var.endpoint}/v1/"
 }
 
 # ---------- Compute (network + disks) ----------
@@ -389,6 +402,68 @@ resource "google_cloudbuild_trigger" "tf_cloudbuild_trigger" {
   }
 }
 
+# ---------- API Gateway ----------
+
+resource "google_api_gateway_api" "tf_apigw_api" {
+  provider = google-beta
+
+  api_id       = "tf-apigw-api"
+  display_name = "Terraform API Gateway API"
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_api_gateway_api_config" "tf_apigw_config" {
+  provider = google-beta
+
+  api           = google_api_gateway_api.tf_apigw_api.api_id
+  api_config_id = "tf-apigw-config"
+  display_name  = "Terraform API Gateway config"
+
+  openapi_documents {
+    document {
+      path = "openapi.yaml"
+      contents = base64encode(<<-EOT
+        swagger: "2.0"
+        info:
+          title: Terraform API Gateway simulator coverage
+          version: "1.0.0"
+        schemes:
+          - https
+        produces:
+          - application/json
+        paths:
+          /health:
+            get:
+              operationId: health
+              responses:
+                "200":
+                  description: ok
+      EOT
+      )
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "google_api_gateway_gateway" "tf_apigw_gateway" {
+  provider = google-beta
+
+  gateway_id   = "tf-apigw-gateway"
+  api_config   = google_api_gateway_api_config.tf_apigw_config.id
+  display_name = "Terraform API Gateway gateway"
+  region       = "us-central1"
+
+  labels = {
+    env = "terraform"
+  }
+}
+
 # ---------- Cloud Storage ----------
 
 resource "google_storage_bucket" "tf_bucket" {
@@ -582,6 +657,10 @@ output "pubsub_subscription_id" {
 
 output "cloudbuild_trigger_id" {
   value = google_cloudbuild_trigger.tf_cloudbuild_trigger.id
+}
+
+output "api_gateway_gateway_id" {
+  value = google_api_gateway_gateway.tf_apigw_gateway.id
 }
 
 output "storage_bucket_url" {

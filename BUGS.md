@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1269 filed - 1266 fixed - 6 open - 2 false positives.**
+**1269 filed - 1268 fixed - 4 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,14 +12,17 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1254 | P1 | gcp simulator coverage | stale not-applicable rows | Issue #304 tracks larger BUG-1104 findings: public gcloud/Terraform client surfaces exist for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows still marked partly not applicable. |
-| 1263 | P1 | gcp simulator fidelity | public API shape | Issues #309-#311 and #321-#325 track GCP Cloud Run pagination/null lists, Cloud Run/Functions LRO metadata `@type`, protobuf timestamp canonicalization, Cloud Logging severity ordering, GCS metadata/IAM shape, Cloud SQL backup operation shapes, and Cloud DNS canonical error status. |
 | 1264 | P1 | azure simulator fidelity | public API shape / LRO | Issues #312, #315, and #326-#329 track Azure Storage XML errors/listing shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes. ARM api-version validation and empty ARM list shapes were fixed. |
 | 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. |
 
 ## Recently Closed
 
-Last phase closed BUG-1268 and BUG-1269 / issues #313, #314, and #340:
+Last phase closed BUG-1254 and BUG-1263 / issues #304, #309-#311, and #321-#325:
+
+- BUG-1254 / issue #304: GCP API Gateway, Cloud Build, IAM, and Pub/Sub stale public-client rows were corrected. The simulator now has real gcloud coverage for those public CLI surfaces, and API Gateway has Terraform provider coverage through `google-beta`.
+- BUG-1263 / issues #309-#311 and #321-#325: GCP Cloud Run and Cloud Functions list/LRO/timestamp wire shapes, Cloud Logging severity ordering, GCS metadata and IAM policy shape, Cloud SQL backup operation shapes, and Cloud DNS precondition error status were fixed with real SDK, CLI, and Terraform coverage where those public client surfaces exist.
+
+Earlier recent phase closed BUG-1268 and BUG-1269 / issues #313, #314, and #340:
 
 - BUG-1268 / issue #340: Azure Private DNS now implements `PrivateZonesClient.NewListByResourceGroupPager` at `GET .../privateDnsZones`, and virtual network links now implement the public list-by-zone endpoint. Both paths are covered by the real Azure SDK and Azure CLI.
 - Issues #313 and #314: Azure ARM control-plane requests now reject missing `api-version` with `InvalidApiVersionParameter`, the dead unused AzureRouter validator was removed, and simulator list serialization returns `{"value":[]}` instead of `{"value":null}` for empty stores.

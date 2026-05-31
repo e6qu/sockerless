@@ -195,10 +195,6 @@ func generateUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-func nowTimestamp() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
-}
-
 // newLRO creates a completed Long-Running Operation and persists it so
 // subsequent GET /operations/{op} polls return the same record. The sim does
 // no asynchronous work, so the operation is always returned with `done=true`
@@ -237,12 +233,18 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 		target = n
 	}
 
+	metadataMap := map[string]any{
+		"@type":      gcpOperationMetadataType(typeName),
+		"createTime": nowTimestamp(),
+		"target":     target,
+	}
+	if strings.HasPrefix(typeName, "type.googleapis.com/google.cloud.run.v2.") {
+		metadataMap = cloneAnyMap(responseMap)
+	}
+
 	op := Operation{
-		Name: fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID),
-		Metadata: map[string]any{
-			"createTime": nowTimestamp(),
-			"target":     target,
-		},
+		Name:     fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID),
+		Metadata: metadataMap,
 		Done:     true,
 		Response: responseMap,
 	}
@@ -250,6 +252,17 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 		crOperations.Put(op.Name, op)
 	}
 	return op
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // Container handle tracker for Cloud Run Jobs real execution
@@ -385,10 +398,20 @@ func registerCloudRunJobs(srv *sim.Server) {
 		result := jobs.Filter(func(j Job) bool {
 			return strings.HasPrefix(j.Name, prefix)
 		})
+		if result == nil {
+			result = []Job{}
+		}
+		sortCloudRunJobs(result)
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"jobs": result,
-		})
+		resp := map[string]any{"jobs": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Delete job
@@ -593,10 +616,20 @@ func registerCloudRunJobs(srv *sim.Server) {
 		result := executions.Filter(func(e Execution) bool {
 			return strings.HasPrefix(e.Name, prefix)
 		})
+		if result == nil {
+			result = []Execution{}
+		}
+		sortCloudRunExecutions(result)
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"executions": result,
-		})
+		resp := map[string]any{"executions": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Cancel execution (note: also used for stop by the backend)
