@@ -68,7 +68,7 @@ Legend:
 | `gcp-dns` | direct | direct | direct | `simulators/gcp/sdk-tests/dns_test.go`; `simulators/gcp/cli-tests/dns_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-eventarc` | direct | direct | direct | `simulators/gcp/sdk-tests/eventarc_test.go`; `simulators/gcp/cli-tests/eventarc_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-firestore` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `gcp-gcs` | direct | not applicable | direct | `simulators/gcp/sdk-tests/storage_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-gcs` | direct | direct | direct | `simulators/gcp/sdk-tests/storage_test.go`; `simulators/gcp/cli-tests/storage_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-iam` | direct | not applicable | direct | `simulators/gcp/sdk-tests/iam_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-logging` | direct | direct | direct | `simulators/gcp/sdk-tests/logging_test.go`; `simulators/gcp/cli-tests/logging_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-memorystore_redis` | direct | direct | direct | `simulators/gcp/sdk-tests/memorystore_apigw_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |

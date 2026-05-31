@@ -9,9 +9,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | Optional AWS/GCP Terraform HTTPS examples, while preserving direct HTTP endpoint overrides. |
-| Last merged | Azure Terraform harness over the local HTTPS gateway. |
+| Last merged | SDK/CLI HTTPS gateway guidance plus BUG-1104 GCS CLI coverage audit. |
 | Open GitHub issues | None at last check. |
-| Bugs | 1249 filed - 1249 fixed - 2 open - 2 false positives. |
+| Bugs | 1250 filed - 1250 fixed - 2 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker. |
 | Live infra | None up. |
 
@@ -38,6 +38,8 @@ Implemented gateway surface:
 - Azure Terraform tests started the simulator on HTTP loopback, started Caddy with per-test state and CA, used `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, and passed the Caddy root CA through `SSL_CERT_FILE`.
 - The shared simulator Docker test image included Caddy, installed from the official Caddy package repository.
 - Azure Terraform CI installed Caddy on the runner for the direct `make terraform-test` path, the Azure Terraform harness failed loudly when Caddy or HTTPS was missing, and GCP arithmetic SDK coverage asserted the actual `"Result: 30"` Cloud Logging payload.
+- SDK/CLI gateway guidance documented real client knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs without disabling TLS verification.
+- BUG-1104 audit corrected stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, the simulator accepts current gcloud multipart upload boundaries, and GCS `buckets.getStorageLayout` returns the public response shape.
 
 ## Invariants
 
@@ -68,6 +70,7 @@ Implemented gateway surface:
 ## Recent Merged Work
 
 - Azure Terraform HTTPS gateway stage: the Azure Terraform harness used the local Caddy gateway end to end, and BUG-1246 fixed Azure Storage data-plane host dispatch so `azure.sockerless.localhost` metadata requests were no longer swallowed by the storage wrapper.
+- SDK/CLI HTTPS gateway audit: documented real CA/endpoint knobs for SDK and CLI clients, and fixed GCP GCS CLI coverage discovered by BUG-1104.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

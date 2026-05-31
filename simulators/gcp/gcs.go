@@ -161,6 +161,31 @@ func validateGCSObjectAttrs(attrs GCSObject) error {
 	return nil
 }
 
+func gcsMultipartBoundary(contentType string) string {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err == nil && params["boundary"] != "" {
+		return params["boundary"]
+	}
+	for _, part := range strings.Split(contentType, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(part), "boundary=") {
+			return strings.Trim(strings.TrimSpace(part[strings.Index(part, "=")+1:]), `"'`)
+		}
+	}
+	return ""
+}
+
+func gcsLocationType(location string) string {
+	switch strings.ToUpper(location) {
+	case "US", "EU", "ASIA":
+		return "multi-region"
+	}
+	if strings.Contains(location, "+") {
+		return "dual-region"
+	}
+	return "region"
+}
+
 func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
 	if attrs.ContentType == "" {
 		attrs.ContentType = "application/octet-stream"
@@ -452,6 +477,34 @@ func registerGCS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, bucket.Data)
 	})
 
+	// Get bucket storage layout
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/storageLayout", func(w http.ResponseWriter, r *http.Request) {
+		bucketName := sim.PathParam(r, "bucket")
+		bucket, ok := buckets.Get(bucketName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucketName)
+			return
+		}
+
+		location, _ := bucket.Data["location"].(string)
+		if location == "" {
+			location = "US"
+		}
+		enabled := false
+		if hns, ok := bucket.Data["hierarchicalNamespace"].(map[string]any); ok {
+			enabled, _ = hns["enabled"].(bool)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":         "storage#storageLayout",
+			"bucket":       bucketName,
+			"location":     location,
+			"locationType": gcsLocationType(location),
+			"hierarchicalNamespace": map[string]any{
+				"enabled": enabled,
+			},
+		})
+	})
+
 	// Delete bucket
 	srv.HandleFunc("DELETE /storage/v1/b/{bucket}", func(w http.ResponseWriter, r *http.Request) {
 		bucketName := sim.PathParam(r, "bucket")
@@ -614,7 +667,10 @@ func registerGCS(srv *sim.Server) {
 		objAttrs := GCSObject{}
 
 		ct := r.Header.Get("Content-Type")
-		mediaType, params, _ := mime.ParseMediaType(ct)
+		mediaType, _, _ := mime.ParseMediaType(ct)
+		if mediaType == "" && strings.HasPrefix(strings.ToLower(ct), "multipart/related") {
+			mediaType = "multipart/related"
+		}
 
 		defer r.Body.Close()
 
@@ -682,13 +738,14 @@ func registerGCS(srv *sim.Server) {
 		}
 
 		if mediaType == "multipart/related" {
+			boundary := gcsMultipartBoundary(ct)
 			// Multipart upload: first part is metadata JSON
 			// (including `name` when not in query), second part is
 			// data. Real GCS multipart/related bodies are not
 			// content-encoded — gzip travels on the resumable
 			// session chunk PUT instead (handled in
 			// handleGCSResumableChunk via openStreamingBody).
-			mr := multipart.NewReader(r.Body, params["boundary"])
+			mr := multipart.NewReader(r.Body, boundary)
 			metaPart, err := mr.NextPart()
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "failed to read metadata part: %v", err)

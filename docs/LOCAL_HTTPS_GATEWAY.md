@@ -84,6 +84,22 @@ export NO_PROXY="localhost,127.0.0.1,::1,sockerless.localhost,.sockerless.localh
 
 macOS system trust is separate from Go's Linux `SSL_CERT_FILE` path. For provider tests that must honor `SSL_CERT_FILE`, keep using the Linux Docker harness.
 
+## SDK and CLI Clients
+
+For AWS CLI, use `AWS_ENDPOINT_URL` or `--endpoint-url` with the gateway URL, and use `AWS_CA_BUNDLE` or `--ca-bundle` for the Caddy CA. AWS documents both endpoint overrides and CA bundle configuration in the CLI reference.
+
+For AWS SDKs, use the same custom endpoint support already used for the direct simulator URL. SDKs and tools that honor the shared AWS configuration can also use `AWS_CA_BUNDLE`.
+
+For gcloud, use the same `CLOUDSDK_API_ENDPOINT_OVERRIDES_*` variables as the direct simulator path, but point them at the gateway URL. Current gcloud documentation includes `CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE` for `gcloud storage`, and `core/custom_ca_certs_file` is the documented custom CA property.
+
+For Google Cloud Go clients, keep using explicit endpoint options such as `option.WithEndpoint` or emulator variables such as `STORAGE_EMULATOR_HOST` where the library supports them. HTTPS gateway clients must trust the Caddy CA through the process trust store or an HTTP client configured with that root.
+
+For Azure CLI `az rest`, pass full gateway URLs. Use a trusted CA path such as `REQUESTS_CA_BUNDLE` for Python-request based CLI paths rather than disabling verification.
+
+For Azure SDKs, use the same per-client endpoint/base URL override used for the direct simulator. HTTPS gateway clients must trust the Caddy CA through the runtime trust store or the SDK transport's root CA configuration.
+
+Reference docs: [AWS CLI endpoint overrides](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-endpoints.html), [AWS CLI CA bundle](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-options.html), [gcloud endpoint overrides](https://docs.cloud.google.com/sdk/gcloud/reference/topic/endpoint-override), [gcloud custom CA property](https://docs.cloud.google.com/sdk/gcloud/reference/topic/configurations), [Azure CLI `az rest`](https://learn.microsoft.com/en-us/cli/azure/reference-index?view=azure-cli-latest#az-rest).
+
 ## Stack Integration
 
 To start a normal dev stack and the HTTPS gateway together:

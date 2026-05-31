@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Azure Terraform HTTPS gateway PR merged.
+- Branch: `main`, synced with `origin/main` after the SDK/CLI HTTPS gateway and GCS CLI audit PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: Azure Terraform ran end to end through the optional Caddy HTTPS gateway.
+- Last completed work: SDK/CLI HTTPS gateway guidance was documented, and BUG-1104 found/fixed stale GCP GCS CLI coverage.
 
 ## Next Task
 
@@ -38,6 +38,8 @@ Azure Terraform was the hard proof point because AzureRM requires trusted HTTPS 
 - Azure Terraform tests through the gateway, including Caddy state isolation, CA trust, ARM metadata verification, Azure data-plane endpoint projection, and a 300-second test timeout.
 - Shared simulator Docker test image with Caddy installed from the official package repository.
 - BUG-1246 fixed Azure Storage data-plane middleware overmatching non-storage `*.localhost` hosts.
+- SDK/CLI guidance documents real endpoint and CA knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
+- BUG-1250 fixed stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, current gcloud multipart uploads work, and GCS `buckets.getStorageLayout` returns the public response shape.
 
 ## Remaining Stages
 
