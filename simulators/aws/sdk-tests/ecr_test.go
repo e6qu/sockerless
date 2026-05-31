@@ -1,6 +1,8 @@
 package aws_sdk_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -48,6 +50,34 @@ func TestECR_GetAuthorizationToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, out.AuthorizationData)
 	assert.NotEmpty(t, *out.AuthorizationData[0].AuthorizationToken)
+}
+
+func TestECR_PutImageDigestIsContentAddressed(t *testing.T) {
+	client := ecrClient()
+	_, err := client.CreateRepository(ctx, &ecr.CreateRepositoryInput{
+		RepositoryName: aws.String("content-digest-repo"),
+	})
+	require.NoError(t, err)
+
+	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","size":2,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"layers":[]}`
+	sum := sha256.Sum256([]byte(manifest))
+	wantDigest := "sha256:" + hex.EncodeToString(sum[:])
+
+	out1, err := client.PutImage(ctx, &ecr.PutImageInput{
+		RepositoryName: aws.String("content-digest-repo"),
+		ImageManifest:  aws.String(manifest),
+		ImageTag:       aws.String("v1"),
+	})
+	require.NoError(t, err)
+	out2, err := client.PutImage(ctx, &ecr.PutImageInput{
+		RepositoryName: aws.String("content-digest-repo"),
+		ImageManifest:  aws.String(manifest),
+		ImageTag:       aws.String("v2"),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, wantDigest, aws.ToString(out1.Image.ImageId.ImageDigest))
+	assert.Equal(t, wantDigest, aws.ToString(out2.Image.ImageId.ImageDigest))
 }
 
 // TestECR_PullThroughCacheCreate verifies the simulator accepts a

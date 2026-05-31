@@ -378,15 +378,14 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		sqsQueueDoesNotExist(w)
 		return
 	}
-	// Real SQS caps MaxNumberOfMessages at 10 (silently); requests with
-	// values >10 should NOT be coerced down to 1 (which breaks
-	// SDK pollers that batch 10-at-a-time). Default when zero/negative
-	// is 1 per the API spec.
 	maxN := req.MaxNumberOfMessages
-	if maxN <= 0 {
+	if maxN == 0 {
 		maxN = 1
-	} else if maxN > 10 {
-		maxN = 10
+	} else if maxN < 1 || maxN > 10 {
+		sqsErrorJSON(w, "InvalidParameterValue",
+			fmt.Sprintf("Value %d for parameter MaxNumberOfMessages is invalid. Reason: must be between 1 and 10.", maxN),
+			http.StatusBadRequest)
+		return
 	}
 	visTimeout := q.VisibilityTimeout
 	if req.VisibilityTimeout != nil {

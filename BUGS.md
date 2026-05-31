@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1254 filed - 1253 fixed - 3 open - 2 false positives.**
+**1264 filed - 1262 fixed - 5 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -13,10 +13,23 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1254 | P1 | gcp simulator coverage | stale not-applicable rows | Issue #304 tracks larger BUG-1104 findings: public gcloud/Terraform client surfaces exist for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows still marked partly not applicable. |
+| 1263 | P1 | gcp simulator fidelity | public API shape | Issues #309-#311 and #321-#325 track GCP Cloud Run pagination/null lists, Cloud Run/Functions LRO metadata `@type`, protobuf timestamp canonicalization, Cloud Logging severity ordering, GCS metadata/IAM shape, Cloud SQL backup operation shapes, and Cloud DNS canonical error status. |
+| 1264 | P1 | azure simulator fidelity | public API shape / LRO | Issues #312-#315 and #326-#329 track Azure Storage XML errors/listing shape, ARM api-version validation, empty ARM list shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes. |
 
 ## Recently Closed
 
-Last phase closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298, BUG-1246, BUG-1247, BUG-1248, BUG-1249, BUG-1250, BUG-1251, BUG-1252, and BUG-1253:
+Last phase closed BUG-1255..BUG-1262 / issues #305-#308 and #317-#320:
+
+- BUG-1255 / issue #305: S3 `ListObjectsV2` now returns lexicographically sorted keys, honors `start-after` and `continuation-token`, emits `NextContinuationToken`, and supports delimiter `CommonPrefixes`.
+- BUG-1256 / issue #306: Lambda `FunctionConfiguration` responses no longer leak request-only `Code`, uploaded `ZipFile`, or `Tags`; `GetFunction` keeps `Code` and `Tags` as top-level members.
+- BUG-1257 / issue #307: SNS returns `pending confirmation` for email/http/https-style protocols unless `ReturnSubscriptionArn=true`, and topic attributes distinguish confirmed vs pending subscriptions.
+- BUG-1258 / issue #308: SQS `ReceiveMessage` rejects out-of-range `MaxNumberOfMessages` with `InvalidParameterValue` instead of silently clamping.
+- BUG-1259 / issue #317: EC2 `DescribeInstances` applies supported filters and rejects unsupported filter names.
+- BUG-1260 / issue #318: EC2 `RunInstances` honors `MinCount`/`MaxCount`, returns `pending`, and transitions instances to `running`.
+- BUG-1261 / issue #319: ECR `PutImage` stores deterministic content-addressed SHA-256 manifest digests.
+- BUG-1262 / issue #320: KMS `GenerateDataKey` returns fresh crypto-random plaintext key material and ciphertext that decrypts back to it.
+
+Earlier recent phases closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298, BUG-1246, BUG-1247, BUG-1248, BUG-1249, BUG-1250, BUG-1251, BUG-1252, and BUG-1253:
 
 - Azure Cache for Redis has Azure CLI and azurerm Terraform coverage.
 - GCP Memorystore Redis has gcloud and terraform-provider-google coverage.

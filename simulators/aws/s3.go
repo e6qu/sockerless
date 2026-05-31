@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,16 +50,18 @@ type s3Buckets struct {
 }
 
 type s3ListBucketResult struct {
-	XMLName               xml.Name       `xml:"ListBucketResult"`
-	Xmlns                 string         `xml:"xmlns,attr"`
-	Name                  string         `xml:"Name"`
-	Prefix                string         `xml:"Prefix,omitempty"`
-	MaxKeys               int            `xml:"MaxKeys"`
-	KeyCount              int            `xml:"KeyCount"`
-	IsTruncated           bool           `xml:"IsTruncated"`
-	Contents              []s3ObjectInfo `xml:"Contents"`
-	ContinuationToken     string         `xml:"ContinuationToken,omitempty"`
-	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
+	XMLName               xml.Name         `xml:"ListBucketResult"`
+	Xmlns                 string           `xml:"xmlns,attr"`
+	Name                  string           `xml:"Name"`
+	Prefix                string           `xml:"Prefix,omitempty"`
+	MaxKeys               int              `xml:"MaxKeys"`
+	KeyCount              int              `xml:"KeyCount"`
+	IsTruncated           bool             `xml:"IsTruncated"`
+	Contents              []s3ObjectInfo   `xml:"Contents"`
+	CommonPrefixes        []s3CommonPrefix `xml:"CommonPrefixes,omitempty"`
+	ContinuationToken     string           `xml:"ContinuationToken,omitempty"`
+	NextContinuationToken string           `xml:"NextContinuationToken,omitempty"`
+	StartAfter            string           `xml:"StartAfter,omitempty"`
 }
 
 type s3ObjectInfo struct {
@@ -67,6 +70,10 @@ type s3ObjectInfo struct {
 	ETag         string `xml:"ETag"`
 	Size         int64  `xml:"Size"`
 	StorageClass string `xml:"StorageClass"`
+}
+
+type s3CommonPrefix struct {
+	Prefix string `xml:"Prefix"`
 }
 
 // State stores
@@ -393,10 +400,16 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 
 	// No sub-resource → ListObjects(V2). Falls through to the existing path below.
 	prefix := r.URL.Query().Get("prefix")
+	delimiter := r.URL.Query().Get("delimiter")
+	continuationToken := r.URL.Query().Get("continuation-token")
+	startAfter := r.URL.Query().Get("start-after")
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	maxKeys := 1000
 	if maxKeysStr != "" {
 		fmt.Sscanf(maxKeysStr, "%d", &maxKeys)
+	}
+	if maxKeys < 0 {
+		maxKeys = 0
 	}
 
 	// Collect objects for this bucket
@@ -428,21 +441,85 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	if contents == nil {
 		contents = []s3ObjectInfo{}
 	}
+	sort.Slice(contents, func(i, j int) bool {
+		return contents[i].Key < contents[j].Key
+	})
+
+	cursor := continuationToken
+	if cursor == "" {
+		cursor = startAfter
+	}
+	if cursor != "" {
+		next := contents[:0]
+		for _, obj := range contents {
+			if obj.Key > cursor && (delimiter == "" || !strings.HasPrefix(obj.Key, cursor)) {
+				next = append(next, obj)
+			}
+		}
+		contents = next
+	}
+
+	type listEntry struct {
+		key          string
+		object       s3ObjectInfo
+		commonPrefix string
+		isPrefix     bool
+	}
+	entries := make([]listEntry, 0, len(contents))
+	if delimiter != "" {
+		prefixes := map[string]bool{}
+		for _, obj := range contents {
+			rest := strings.TrimPrefix(obj.Key, prefix)
+			if idx := strings.Index(rest, delimiter); idx >= 0 {
+				cp := prefix + rest[:idx+len(delimiter)]
+				if !prefixes[cp] {
+					prefixes[cp] = true
+					entries = append(entries, listEntry{key: cp, commonPrefix: cp, isPrefix: true})
+				}
+				continue
+			}
+			entries = append(entries, listEntry{key: obj.Key, object: obj})
+		}
+	} else {
+		for _, obj := range contents {
+			entries = append(entries, listEntry{key: obj.Key, object: obj})
+		}
+	}
 
 	isTruncated := false
-	if len(contents) > maxKeys {
-		contents = contents[:maxKeys]
+	nextContinuationToken := ""
+	if len(entries) > maxKeys {
+		if maxKeys > 0 {
+			nextContinuationToken = entries[maxKeys-1].key
+		}
+		entries = entries[:maxKeys]
 		isTruncated = true
+	}
+	contents = contents[:0]
+	var commonPrefixes []s3CommonPrefix
+	for _, entry := range entries {
+		if entry.isPrefix {
+			commonPrefixes = append(commonPrefixes, s3CommonPrefix{Prefix: entry.commonPrefix})
+			continue
+		}
+		contents = append(contents, entry.object)
+	}
+	if contents == nil {
+		contents = []s3ObjectInfo{}
 	}
 
 	result := s3ListBucketResult{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:        bucket,
-		Prefix:      prefix,
-		MaxKeys:     maxKeys,
-		KeyCount:    len(contents),
-		IsTruncated: isTruncated,
-		Contents:    contents,
+		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:                  bucket,
+		Prefix:                prefix,
+		MaxKeys:               maxKeys,
+		KeyCount:              len(contents) + len(commonPrefixes),
+		IsTruncated:           isTruncated,
+		Contents:              contents,
+		CommonPrefixes:        commonPrefixes,
+		ContinuationToken:     continuationToken,
+		NextContinuationToken: nextContinuationToken,
+		StartAfter:            startAfter,
 	}
 
 	sim.WriteXML(w, http.StatusOK, result)

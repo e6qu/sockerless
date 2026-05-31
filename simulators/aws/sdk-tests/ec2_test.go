@@ -1,11 +1,14 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -241,12 +244,9 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runOut.Instances, 1)
 	instanceID := *runOut.Instances[0].InstanceId
-	assert.Equal(t, types.InstanceStateNameRunning, runOut.Instances[0].State.Name)
+	assert.Equal(t, types.InstanceStateNamePending, runOut.Instances[0].State.Name)
 
-	descOut, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		InstanceIds: []string{instanceID},
-	})
-	require.NoError(t, err)
+	descOut := waitForEC2InstanceState(t, client, instanceID, types.InstanceStateNameRunning)
 	require.Len(t, descOut.Reservations, 1)
 	require.Len(t, descOut.Reservations[0].Instances, 1)
 	assert.Equal(t, instanceID, *descOut.Reservations[0].Instances[0].InstanceId)
@@ -258,6 +258,30 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 		Tags:      []types.Tag{{Key: aws.String("phase"), Value: aws.String("sdk")}},
 	})
 	require.NoError(t, err)
+	tagged, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{{Name: aws.String("tag:phase"), Values: []string{"sdk"}}},
+	})
+	require.NoError(t, err)
+	require.Len(t, tagged.Reservations, 1)
+	assert.Equal(t, instanceID, aws.ToString(tagged.Reservations[0].Instances[0].InstanceId))
+	stoppedFiltered, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{{Name: aws.String("instance-state-name"), Values: []string{"stopped"}}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, stoppedFiltered.Reservations)
+	_, err = client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{{Name: aws.String("unsupported-filter-name"), Values: []string{"x"}}},
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr))
+	assert.Equal(t, "InvalidParameterValue", apiErr.ErrorCode())
+
+	descOut, err = client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	require.NoError(t, err)
+
 	_, err = client.DeleteTags(ctx, &ec2.DeleteTagsInput{
 		Resources: []string{instanceID},
 		Tags:      []types.Tag{{Key: aws.String("phase")}},
@@ -326,4 +350,52 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 	terminated, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
 	require.NoError(t, err)
 	assert.Equal(t, types.InstanceStateNameTerminated, terminated.Reservations[0].Instances[0].State.Name)
+}
+
+func TestEC2_RunInstancesHonorsMaxCount(t *testing.T) {
+	client := ec2Client()
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.67.0.0/16")})
+	require.NoError(t, err)
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     vpcOut.Vpc.VpcId,
+		CidrBlock: aws.String("10.67.1.0/24"),
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-count1234"),
+		InstanceType: types.InstanceTypeT3Micro,
+		MinCount:     aws.Int32(2),
+		MaxCount:     aws.Int32(2),
+		SubnetId:     subnetOut.Subnet.SubnetId,
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Instances, 2)
+	for _, inst := range runOut.Instances {
+		assert.Equal(t, types.InstanceStateNamePending, inst.State.Name)
+		waitForEC2InstanceState(t, client, aws.ToString(inst.InstanceId), types.InstanceStateNameRunning)
+		_, err = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{aws.ToString(inst.InstanceId)}})
+		require.NoError(t, err)
+	}
+}
+
+func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string, want types.InstanceStateName) *ec2.DescribeInstancesOutput {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last *ec2.DescribeInstancesOutput
+	for time.Now().Before(deadline) {
+		out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		require.NoError(t, err)
+		last = out
+		if len(out.Reservations) == 1 && len(out.Reservations[0].Instances) == 1 &&
+			out.Reservations[0].Instances[0].State.Name == want {
+			return out
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if last != nil && len(last.Reservations) == 1 && len(last.Reservations[0].Instances) == 1 {
+		t.Fatalf("instance %s state = %s, want %s", instanceID, last.Reservations[0].Instances[0].State.Name, want)
+	}
+	t.Fatalf("instance %s did not reach %s", instanceID, want)
+	return nil
 }

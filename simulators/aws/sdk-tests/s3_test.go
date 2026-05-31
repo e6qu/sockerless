@@ -3,6 +3,7 @@ package aws_sdk_test
 import (
 	"bytes"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -91,6 +92,99 @@ func TestS3_ListObjects(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(out.Contents), 2)
+}
+
+func TestS3_ListObjectsV2OrderingPaginationAndDelimiter(t *testing.T) {
+	client := s3Client()
+	bucket := "list-v2-contract"
+	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+
+	for _, key := range []string{"zebra", "apple", "mango", "dir/two", "dir/one", "banana", "cherry"} {
+		_, err = client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader([]byte(key)),
+		})
+		require.NoError(t, err)
+	}
+
+	first, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(bucket),
+		MaxKeys: aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.True(t, aws.ToBool(first.IsTruncated))
+	require.NotNil(t, first.NextContinuationToken)
+	require.Len(t, first.Contents, 2)
+	assert.Equal(t, []string{"apple", "banana"}, []string{
+		aws.ToString(first.Contents[0].Key),
+		aws.ToString(first.Contents[1].Key),
+	})
+
+	second, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:            aws.String(bucket),
+		ContinuationToken: first.NextContinuationToken,
+		MaxKeys:           aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, second.Contents, 2)
+	assert.Equal(t, []string{"cherry", "dir/one"}, []string{
+		aws.ToString(second.Contents[0].Key),
+		aws.ToString(second.Contents[1].Key),
+	})
+
+	after, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:     aws.String(bucket),
+		StartAfter: aws.String("mango"),
+	})
+	require.NoError(t, err)
+	keys := make([]string, 0, len(after.Contents))
+	for _, obj := range after.Contents {
+		keys = append(keys, aws.ToString(obj.Key))
+	}
+	assert.Equal(t, []string{"zebra"}, keys)
+
+	delimited, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:    aws.String(bucket),
+		Delimiter: aws.String("/"),
+	})
+	require.NoError(t, err)
+	var topKeys []string
+	for _, obj := range delimited.Contents {
+		topKeys = append(topKeys, aws.ToString(obj.Key))
+	}
+	assert.True(t, slices.IsSorted(topKeys))
+	assert.NotContains(t, topKeys, "dir/one")
+	require.Len(t, delimited.CommonPrefixes, 1)
+	assert.Equal(t, "dir/", aws.ToString(delimited.CommonPrefixes[0].Prefix))
+
+	delimitedPage, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:     aws.String(bucket),
+		Delimiter:  aws.String("/"),
+		StartAfter: aws.String("banana"),
+		MaxKeys:    aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, delimitedPage.Contents, 1)
+	require.Len(t, delimitedPage.CommonPrefixes, 1)
+	assert.Equal(t, "cherry", aws.ToString(delimitedPage.Contents[0].Key))
+	assert.Equal(t, "dir/", aws.ToString(delimitedPage.CommonPrefixes[0].Prefix))
+	require.True(t, aws.ToBool(delimitedPage.IsTruncated))
+	require.NotNil(t, delimitedPage.NextContinuationToken)
+
+	delimitedNext, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:            aws.String(bucket),
+		Delimiter:         aws.String("/"),
+		ContinuationToken: delimitedPage.NextContinuationToken,
+	})
+	require.NoError(t, err)
+	var nextKeys []string
+	for _, obj := range delimitedNext.Contents {
+		nextKeys = append(nextKeys, aws.ToString(obj.Key))
+	}
+	assert.Equal(t, []string{"mango", "zebra"}, nextKeys)
+	assert.Empty(t, delimitedNext.CommonPrefixes)
 }
 
 func TestS3_DeleteObject(t *testing.T) {

@@ -47,6 +47,18 @@ BUG-1104 audit found stale GCP VPC Access Terraform coverage. BUG-1253 added `vp
 
 The same audit found larger stale GCP client-surface rows for API Gateway, Cloud Build, IAM, and Pub/Sub. BUG-1254 / issue #304 was opened so those public gcloud/Terraform coverage gaps were explicit and tracked.
 
+## 2026-05-31 - AWS Simulator Fidelity Sweep
+
+Issues #305-#308 and #317-#320 were fixed in one AWS simulator PR.
+
+S3 `ListObjectsV2` returned keys in ascending bytewise order, honored `start-after` and `continuation-token`, emitted usable `NextContinuationToken`, and returned delimiter `CommonPrefixes`. Lambda `FunctionConfiguration` responses stopped leaking request-only `Code`, uploaded `ZipFile`, and `Tags`; `GetFunction` kept `Code` and `Tags` only as top-level response members.
+
+SNS returned the literal `pending confirmation` for confirmation-required protocols unless `ReturnSubscriptionArn=true`, and topic attributes counted pending vs confirmed subscriptions. SQS `ReceiveMessage` rejected out-of-range `MaxNumberOfMessages` with `InvalidParameterValue` instead of silently clamping.
+
+EC2 `RunInstances` honored `MinCount`/`MaxCount`, returned instances in `pending`, and transitioned them to `running`; `DescribeInstances` applied supported filters and rejected unsupported filter names. ECR `PutImage` produced deterministic content-addressed `sha256:<64-hex>` manifest digests. KMS `GenerateDataKey` used fresh crypto-random key material and returned ciphertext that decrypted to the generated plaintext.
+
+The fixes shipped with real AWS SDK coverage for each issue and targeted AWS CLI regression coverage for the affected AWS surfaces.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -88,6 +100,8 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1075: live-cloud validation remains intentionally deferred. Do not mark live cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered during the latest audit pass.
+- BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
+- BUG-1264: Azure API-shape issues #312-#315 and #326-#329 remain open.
 
 ## Continuity Rules
 
