@@ -8,18 +8,18 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Azure Terraform harness over the local HTTPS gateway. |
-| Last merged | Local HTTPS gateway Stage 1: Caddy gateway make targets, routing, docs, and admin UI visibility. |
+| Planned next | Optional AWS/GCP Terraform HTTPS examples, while preserving direct HTTP endpoint overrides. |
+| Last merged | Azure Terraform harness over the local HTTPS gateway. |
 | Open GitHub issues | None at last check. |
-| Bugs | 1245 filed - 1245 fixed - 2 open - 2 false positives. |
+| Bugs | 1246 filed - 1246 fixed - 2 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit-cadence tracker. |
 | Live infra | None up. |
 
 ## Current Next Task
 
-Wire Azure Terraform through the local Caddy HTTPS gateway.
+Add optional AWS/GCP Terraform HTTPS gateway examples, then decide whether CI should keep Azure Terraform on the gateway by default.
 
-The gateway itself now exists as local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
+Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
 Provider facts:
 
@@ -32,9 +32,11 @@ Provider facts:
 Implemented gateway surface:
 
 - `make stack-https-up`, `make stack-https-status`, `make stack-https-ca`, `make stack-https-down`.
-- Caddy routes for AWS, GCP, Azure ARM/metadata, and Azure host-addressed data-plane wildcards.
+- Caddy routes for AWS, GCP, Azure ARM/metadata, and Azure host-addressed data-plane wildcards, including Cosmos DB documents.
 - `STACK_HTTPS=1` stack integration for local dev stacks.
 - Admin UI topology card for gateway status, endpoints, CA path, and recovery commands.
+- Azure Terraform tests started the simulator on HTTP loopback, started Caddy with per-test state and CA, used `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, and passed the Caddy root CA through `SSL_CERT_FILE`.
+- The shared simulator Docker test image included Caddy, installed from the official Caddy package repository.
 
 ## Invariants
 
@@ -64,6 +66,7 @@ Implemented gateway surface:
 
 ## Recent Merged Work
 
+- Azure Terraform HTTPS gateway stage: the Azure Terraform harness used the local Caddy gateway end to end, and BUG-1246 fixed Azure Storage data-plane host dispatch so `azure.sockerless.localhost` metadata requests were no longer swallowed by the storage wrapper.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

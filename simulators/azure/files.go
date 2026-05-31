@@ -534,8 +534,8 @@ func registerAzureFiles(srv *sim.Server) {
 	// primaryEndpoints using subdomain-format URLs like:
 	//   https://{accountName}.blob.localhost:4568/?restype=service&comp=properties
 	// These requests arrive at the simulator with a Host header containing
-	// the subdomain. The middleware intercepts them based on the Host pattern
-	// {accountName}.{service}.localhost and returns mock XML responses.
+	// the subdomain. The middleware intercepts only Azure Storage service
+	// hosts, based on the Host pattern {accountName}.{service}.localhost.
 	//
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +553,10 @@ func registerAzureFiles(srv *sim.Server) {
 				if len(parts) == 2 {
 					accountName := parts[0]
 					serviceType := parts[1]
+					if !isStorageDataPlaneService(serviceType) {
+						next.ServeHTTP(w, r)
+						return
+					}
 					handleStorageDataPlane(w, r, serviceType, accountName, dataPlaneShares)
 					return
 				}
@@ -566,6 +570,15 @@ func registerAzureFiles(srv *sim.Server) {
 	_ = fileData
 }
 
+func isStorageDataPlaneService(serviceType string) bool {
+	switch serviceType {
+	case "blob", "file", "queue", "table", "web", "dfs":
+		return true
+	default:
+		return false
+	}
+}
+
 func applyStorageAccountEndpoints(r *http.Request, acct *StorageAccount) {
 	acct.Properties.PrimaryEndpoints = &StoragePrimaryEndpoints{
 		File:  azureStorageEndpointURL(r, acct.Name, "file"),
@@ -577,7 +590,7 @@ func applyStorageAccountEndpoints(r *http.Request, acct *StorageAccount) {
 	}
 }
 
-// handleStorageDataPlane returns mock XML responses for Azure Storage data plane
+// handleStorageDataPlane returns Azure Storage XML responses for data-plane
 // requests. The azurerm provider reads service properties after creating storage
 // accounts (static website for blob, share retention for file, CORS for queue).
 func handleStorageDataPlane(w http.ResponseWriter, r *http.Request, serviceType, accountName string, shares sim.Store[bool]) {

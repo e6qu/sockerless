@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1245 filed - 1245 fixed - 2 open - 2 false positives.**
+**1246 filed - 1246 fixed - 2 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,12 +15,13 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-Last phase closed BUG-1242, BUG-1243, BUG-1244, and BUG-1245 / issue #298:
+Last phase closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298, and BUG-1246:
 
 - Azure Cache for Redis has Azure CLI and azurerm Terraform coverage.
 - GCP Memorystore Redis has gcloud and terraform-provider-google coverage.
 - GCP Cloud SQL exposes the `/v1` and `/sql/v1beta4` SQL Admin paths needed by SDK, gcloud, and Terraform.
 - GCP Cloud DNS implements public Changes.Create/Get/List and ResourceRecordSets.Get/Patch with SDK, gcloud, and Terraform coverage.
+- BUG-1246: Azure Storage data-plane middleware overmatched non-storage `*.localhost` hosts and swallowed `azure.sockerless.localhost` metadata requests. It now dispatches only real Azure Storage service labels: `blob`, `file`, `queue`, `table`, `web`, and `dfs`.
 
 Older closed bugs are intentionally not repeated here. Use PR descriptions and `git log` for exact fix details.
 

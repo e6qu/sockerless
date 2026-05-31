@@ -17,6 +17,8 @@ Terraform provider endpoint behavior differs by cloud:
 
 The gateway is therefore most important for Azure Terraform and SDK paths that validate HTTPS endpoint URLs. AWS and GCP can use it for parity with public cloud URLs, but do not require it for the current simulator Terraform paths.
 
+The Azure Terraform harness runs through this gateway. It starts Caddy with isolated per-test state, trusts Caddy's local CA through `SSL_CERT_FILE` in the Linux test container, and uses the gateway host for AzureRM metadata and ARM endpoint discovery.
+
 ## Commands
 
 ```sh
@@ -45,8 +47,14 @@ Default HTTPS port: `8443`.
 | GCP | `https://gcp.sockerless.localhost:8443` |
 | Azure ARM/metadata | `https://azure.sockerless.localhost:8443` |
 | Azure Blob | `https://{account}.blob.azure.sockerless.localhost:8443` |
+| Azure Files | `https://{account}.file.azure.sockerless.localhost:8443` |
+| Azure Queue | `https://{account}.queue.azure.sockerless.localhost:8443` |
+| Azure Table | `https://{account}.table.azure.sockerless.localhost:8443` |
+| Azure Data Lake Storage | `https://{account}.dfs.azure.sockerless.localhost:8443` |
 | Azure Key Vault | `https://{vault}.vault.azure.sockerless.localhost:8443` |
 | Azure Service Bus | `https://{namespace}.servicebus.azure.sockerless.localhost:8443` |
+| Azure Event Grid | `https://{topic}.eventgrid.azure.sockerless.localhost:8443` |
+| Azure Cosmos DB documents | `https://{account}.documents.azure.sockerless.localhost:8443` |
 
 Override the port with:
 
@@ -66,6 +74,12 @@ Linux test containers can trust it with:
 
 ```sh
 export SSL_CERT_FILE="$(make -s stack-https-ca)"
+```
+
+If a developer shell has proxy variables set, ensure local simulator hosts bypass the proxy:
+
+```sh
+export NO_PROXY="localhost,127.0.0.1,::1,sockerless.localhost,.sockerless.localhost,*.sockerless.localhost${NO_PROXY:+,$NO_PROXY}"
 ```
 
 macOS system trust is separate from Go's Linux `SSL_CERT_FILE` path. For provider tests that must honor `SSL_CERT_FILE`, keep using the Linux Docker harness.

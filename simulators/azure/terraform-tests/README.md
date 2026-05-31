@@ -38,25 +38,27 @@ cd simulators/azure/terraform-tests
 go test -v ./...
 ```
 
-The test harness (`helpers_test.go`) handles simulator binary build, TLS certificate generation, port allocation, server startup, Terraform init/apply/destroy, and shutdown.
+The test harness (`helpers_test.go`) handles simulator binary build, port allocation, simulator startup, Caddy HTTPS gateway startup, Terraform init/apply/destroy, and shutdown.
 
 ## Prerequisites
 
 - Go 1.23+
 - `terraform` CLI installed and on `PATH` for direct Linux runs; the shared Docker image supplies Terraform for macOS delegation
+- `caddy` installed and on `PATH` for direct Linux runs; the shared Docker image supplies Caddy for macOS delegation
 - Docker (required for Container Apps resources and for macOS Linux-container delegation)
 - The `simulators/azure/` parent module (built automatically by `TestMain`)
 
 ## TLS requirement
 
-The AzureRM Terraform provider and `azurestack` provider hardcode `https://` for metadata endpoint calls. The test harness generates self-signed TLS certificates (CA + server cert) and starts the simulator with `SIM_TLS_CERT` / `SIM_TLS_KEY`. Terraform trusts the CA via `SSL_CERT_FILE`.
+The AzureRM Terraform provider and `azurestack` provider hardcode `https://` for metadata endpoint calls. The test harness starts the simulator on HTTP loopback, starts the repo's Caddy HTTPS gateway in front of it, and points Terraform at `https://azure.sockerless.localhost:<port>`. Terraform trusts Caddy's local CA via `SSL_CERT_FILE`.
 
 ## How it works
 
-1. `TestMain` generates a self-signed CA and server certificate
-2. Builds the Azure simulator binary and starts it with TLS on a free port
-3. Tests write Terraform configurations to a temp directory
-4. `terraform init` downloads the Terraform providers used by the test configuration
-5. `terraform apply -auto-approve` provisions resources against the simulator
-6. Test assertions verify the Terraform state
-7. `terraform destroy -auto-approve` tears down resources
+1. `TestMain` builds the Azure simulator binary and starts it on HTTP loopback
+2. The harness starts Caddy with isolated per-test state and waits for its local CA
+3. The harness verifies Azure metadata JSON through the HTTPS gateway
+4. Tests write Terraform configurations to a temp directory
+5. `terraform init` downloads the Terraform providers used by the test configuration
+6. `terraform apply -auto-approve` provisions resources against the simulator
+7. Test assertions verify the Terraform state
+8. `terraform destroy -auto-approve` tears down resources

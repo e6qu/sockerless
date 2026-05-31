@@ -17,7 +17,17 @@ The stage added `make stack-https-up`, `make stack-https-status`, `make stack-ht
 
 `STACK_HTTPS=1 make stack-azure-aca` now starts the gateway with the local stack and configures Azure ARM-advertised data-plane endpoint projection under the gateway hostnames. Direct HTTP and direct simulator TLS through `SIM_TLS_CERT` / `SIM_TLS_KEY` remain supported.
 
-The admin UI topology page now shows gateway status, endpoints, CA path, and the equivalent recovery `make` commands. The next stage is to run the Azure Terraform harness through this gateway, using `metadata_host`, ARM-advertised data-plane URLs, and `SSL_CERT_FILE` CA trust in the Linux test container.
+The admin UI topology page now shows gateway status, endpoints, CA path, and the equivalent recovery `make` commands.
+
+## 2026-05-31 - Azure Terraform Through Local HTTPS Gateway
+
+The Azure Terraform harness was moved from generated simulator TLS certificates to the optional local Caddy gateway. The simulator now starts on HTTP loopback for the test, Caddy terminates HTTPS on a random high port, Terraform uses `https://azure.sockerless.localhost:<port>` for AzureRM metadata and ARM endpoints, and the Linux Docker test container trusts Caddy's local CA through `SSL_CERT_FILE`.
+
+The shared simulator Docker test image now includes Caddy from the official package repository, so the macOS delegation path and Linux container path run the same real gateway flow. The harness verifies the direct simulator metadata route before starting Caddy, waits for Caddy's local CA file, verifies `/health`, and validates Azure metadata JSON through the gateway before Terraform starts.
+
+The gateway also preserved high-port Host headers and routed `*.documents.azure.sockerless.localhost` for Cosmos DB document endpoints. BUG-1246 fixed an Azure Storage data-plane middleware bug where the storage wrapper overmatched non-storage `*.localhost` hosts and swallowed `azure.sockerless.localhost` metadata requests.
+
+The full Azure Terraform apply/destroy test passed through the gateway under the 300-second cap.
 
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 

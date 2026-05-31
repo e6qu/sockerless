@@ -3,11 +3,19 @@
 ## Prerequisites
 
 - Terraform installed (`terraform version`)
-- Simulator running with **TLS enabled** on `https://localhost:4568`
+- Simulator running behind the optional Caddy HTTPS gateway at `https://azure.sockerless.localhost:8443`, or running with direct TLS enabled.
 
 ## TLS requirement
 
-The Azure Terraform providers (`azurestack`, `azurerm`) hardcode `https://` for metadata endpoint calls. The simulator must run with TLS:
+The Azure Terraform providers (`azurestack`, `azurerm`) hardcode `https://` for metadata endpoint calls. The recommended local path is the repo's Caddy HTTPS gateway:
+
+```sh
+make stack-https-up
+```
+
+The gateway fronts the Azure simulator at `https://azure.sockerless.localhost:8443` and preserves Azure host-addressed data-plane names such as `{account}.blob.azure.sockerless.localhost`, `{vault}.vault.azure.sockerless.localhost`, and `{account}.documents.azure.sockerless.localhost`. It is local transport infrastructure; the simulator's public ARM, metadata, and data-plane API shapes remain unchanged. See [`docs/LOCAL_HTTPS_GATEWAY.md`](../../../docs/LOCAL_HTTPS_GATEWAY.md).
+
+Direct simulator TLS remains supported when a test needs to exercise the simulator's own TLS listener:
 
 ```sh
 SIM_TLS_CERT=server-cert.pem SIM_TLS_KEY=server-key.pem ./simulator-azure
@@ -19,17 +27,7 @@ Terraform must trust the CA that signed the server certificate:
 export SSL_CERT_FILE=/path/to/ca.pem
 ```
 
-> **macOS note:** Go 1.20+ on macOS uses Security.framework for TLS and ignores `SSL_CERT_FILE`. The Azure Terraform test harness delegates direct macOS `go test` runs into the shared Linux Docker image so the real providers can trust the generated simulator CA.
-
-### Optional Caddy gateway
-
-For local operator workflows, the repository also ships an optional Caddy HTTPS gateway:
-
-```sh
-make stack-https-up
-```
-
-The gateway fronts the Azure simulator at `https://azure.sockerless.localhost:8443` and preserves Azure host-addressed data-plane names such as `{account}.blob.azure.sockerless.localhost`. It is local transport infrastructure; the simulator's public ARM, metadata, and data-plane API shapes remain unchanged. See [`docs/LOCAL_HTTPS_GATEWAY.md`](../../../docs/LOCAL_HTTPS_GATEWAY.md).
+> **macOS note:** Go 1.20+ on macOS uses Security.framework for TLS and ignores `SSL_CERT_FILE`. The Azure Terraform test harness delegates direct macOS `go test` runs into the shared Linux Docker image so the real providers can trust the gateway CA.
 
 ### Generating self-signed certificates
 
@@ -69,7 +67,7 @@ terraform {
 }
 
 provider "azurestack" {
-  arm_endpoint    = "https://localhost:4568"
+  arm_endpoint    = "https://azure.sockerless.localhost:8443"
   client_id       = "test-client-id"
   client_secret   = "test-client-secret"
   tenant_id       = "11111111-1111-1111-1111-111111111111"
@@ -92,8 +90,8 @@ export ARM_CLIENT_ID=test-client-id
 export ARM_CLIENT_SECRET=test-client-secret
 export ARM_TENANT_ID=11111111-1111-1111-1111-111111111111
 export ARM_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001
-export ARM_ENDPOINT=https://localhost:4568
-export SSL_CERT_FILE=/path/to/ca.pem
+export ARM_ENDPOINT=https://azure.sockerless.localhost:8443
+export SSL_CERT_FILE="$(make -s stack-https-ca)"
 ```
 
 ## Example resources
@@ -146,8 +144,8 @@ resource "azurerm_redis_firewall_rule" "ci" {
 ```sh
 # Using a variable for the endpoint
 terraform init
-terraform apply -auto-approve -var="endpoint=https://localhost:4568"
-terraform destroy -auto-approve -var="endpoint=https://localhost:4568"
+terraform apply -auto-approve -var="endpoint=https://azure.sockerless.localhost:8443"
+terraform destroy -auto-approve -var="endpoint=https://azure.sockerless.localhost:8443"
 ```
 
 With a `variables.tf`:
@@ -156,7 +154,7 @@ With a `variables.tf`:
 variable "endpoint" {
   description = "Simulator endpoint URL"
   type        = string
-  default     = "https://localhost:4568"
+  default     = "https://azure.sockerless.localhost:8443"
 }
 ```
 

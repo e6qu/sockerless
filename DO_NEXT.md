@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the local HTTPS gateway Stage 1 PR merged.
+- Branch: `main`, synced with `origin/main` after the Azure Terraform HTTPS gateway PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: optional Caddy HTTPS gateway Stage 1 for simulator APIs.
+- Last completed work: Azure Terraform ran end to end through the optional Caddy HTTPS gateway.
 
 ## Next Task
 
-Wire Azure Terraform through the optional local HTTPS gateway.
+Add optional AWS/GCP Terraform HTTPS gateway examples, preserving the existing direct HTTP Terraform paths.
 
-The gateway already provides a realistic local HTTPS front door without changing simulator public cloud API shapes. The next proof point is Azure Terraform, because AzureRM requires trusted HTTPS for custom metadata discovery.
+Azure Terraform was the hard proof point because AzureRM requires trusted HTTPS for custom metadata discovery. It now starts Caddy in the Linux test harness, trusts the Caddy local CA with `SSL_CERT_FILE`, and uses `https://azure.sockerless.localhost:<port>` for `metadata_host` and ARM endpoint flows.
 
 ## Provider Facts To Preserve
 
@@ -35,12 +35,14 @@ The gateway already provides a realistic local HTTPS front door without changing
    - Azure data-plane wildcards -> Azure simulator, preserving host-addressed routing.
 - `STACK_HTTPS=1` local stack integration, including Azure ARM-advertised data-plane URL projection.
 - Admin UI visibility for gateway status, endpoints, CA path, and equivalent recovery `make` commands.
+- Azure Terraform tests through the gateway, including Caddy state isolation, CA trust, ARM metadata verification, Azure data-plane endpoint projection, and a 300-second test timeout.
+- Shared simulator Docker test image with Caddy installed from the official package repository.
+- BUG-1246 fixed Azure Storage data-plane middleware overmatching non-storage `*.localhost` hosts.
 
 ## Remaining Stages
 
-1. Wire Azure Terraform first: `metadata_host`, ARM-advertised data-plane URLs, gateway CA export to Linux test containers through `SSL_CERT_FILE`.
-2. Document AWS/GCP HTTPS Terraform examples while preserving direct HTTP configs.
-3. Decide after local proof whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs.
+1. Document AWS/GCP HTTPS Terraform examples while preserving direct HTTP configs.
+2. Decide whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs/direct HTTP where those are the tested public-client paths.
 
 ## Deferred Trackers
 
