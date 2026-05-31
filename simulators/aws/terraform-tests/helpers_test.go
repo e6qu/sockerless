@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,6 +36,23 @@ func TestMain(m *testing.M) {
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+	}
+
+	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
+	lambdaHandlerDockerfile := `FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /lambda-runtime-handler .
+FROM alpine:latest
+COPY --from=build /lambda-runtime-handler /usr/local/bin/lambda-runtime-handler
+ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
+`
+	lambdaHandlerBuild := exec.Command("docker", "build",
+		"--platform", "linux/arm64",
+		"-t", "sockerless-lambda-runtime-handler:test", "-f", "-", lambdaHandlerDir)
+	lambdaHandlerBuild.Stdin = strings.NewReader(lambdaHandlerDockerfile)
+	if out, err := lambdaHandlerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build lambda-runtime-handler Docker image: %v\n%s", err, out)
 	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -10,7 +10,7 @@ The simulator exposes one HTTP endpoint (default `:4566`) that fronts all AWS se
 |---|---|---|
 | [AWS SDK for Go v2](https://github.com/aws/aws-sdk-go-v2) (`github.com/aws/aws-sdk-go-v2/service/*`) | v1.30 | Wire-level SDK compatibility — request/response shapes, error envelopes, pagination, optimistic concurrency tokens. Covers 30+ services. |
 | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/) | 2.17+ | Endpoint-override fidelity (`--endpoint-url`). CLI uses the same SDK but exercises a different argument-marshaling path. Some endpoints differ (e.g. Route 53 `/rrset/` with trailing slash). |
-| [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.32.1 | Full plan → apply → destroy round-trip across 60+ resource types (`aws_ecs_*`, `aws_lambda_*`, `aws_cloudfront_*`, `aws_route53_*`, `aws_wafv2_*`, `aws_amplify_*`, `aws_acm_*`, `aws_iam_*`, `aws_ecr_*`, `aws_s3_*`). Stresses cross-resource references and stateful drift detection. |
+| [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) | v6.47.0 | Full plan → apply → destroy round-trip across 60+ resource types (`aws_ecs_*`, `aws_lambda_*`, `aws_cloudfront_*`, `aws_route53_*`, `aws_wafv2_*`, `aws_amplify_*`, `aws_acm_*`, `aws_iam_*`, `aws_ecr_*`, `aws_s3_*`). Stresses cross-resource references, Lambda invocation through the Runtime API, and stateful drift detection. |
 
 Anything any of these three tools does against the real AWS endpoint, it must do against this simulator. Gaps from that contract are real bugs (see [BUGS.md](../../BUGS.md)).
 
@@ -20,7 +20,7 @@ Anything any of these three tools does against the real AWS endpoint, it must do
 |---|---|---|
 | `sdk-tests/` — 30 packages (`ecs_test.go`, `ecr_test.go`, `cloudfront_test.go`, `route53_test.go`, `wafv2_test.go`, `amplify_test.go`, `acm_test.go`, `iam_slr_oidc_test.go`, …) | Real `aws-sdk-go-v2` clients against the sim. Per-op assertions on response shape + error codes. | 2026-05-15 (PR #159 P159.10) |
 | `cli-tests/` — 30 packages (`ecs_test.go`, `iam_slr_oidc_test.go`, …) | Real `aws` CLI invoked via `os/exec`, parses CLI JSON output. | 2026-05-15 |
-| `terraform-tests/` — `TestStackProductionShape` | Real Terraform `aws` v6.32.1 against the sim. Provisions CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + ECR + Cloud Map together, asserts cross-resource outputs (WAF.resource_arn == CloudFront.arn; Route 53 ALIAS target == CloudFront domain; ACM ARN region == us-east-1), then `terraform destroy`. | 2026-05-15 |
+| `terraform-tests/` — `TestStackProductionShape` | Real Terraform `aws` v6.47.0 against the sim. Provisions CloudFront + ACM + WAFv2 + Route 53 ALIAS + Amplify + IAM SLR/OIDC + ECS + ECR + Cloud Map + Lambda resources together, asserts cross-resource outputs and Lambda Runtime API invocation output, then `terraform destroy`. | 2026-05-31 |
 | `make simulators/aws/test` | Leaf-Makefile unit + integration suite per `docs/MAKEFILE_STANDARD.md`. | 2026-05-15 |
 
 The SDK + Terraform tests are the load-bearing validation. CI runs all four on every PR (`.github/workflows/ci.yml`).

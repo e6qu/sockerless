@@ -6,6 +6,18 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-31 — AWS Lambda Terraform client-surface coverage
+
+The BUG-1104 audit found a stale AWS Lambda coverage claim. `aws-lambda` was marked Terraform not-applicable even though terraform-provider-aws v6.47.0 exposes Lambda function, alias, permission, function URL, and invocation surfaces.
+
+BUG-1236 closed that mismatch with the real Terraform provider path. The AWS Terraform production-shape harness now configures the Lambda endpoint and provisions `aws_lambda_function`, `aws_lambda_alias`, `aws_lambda_permission`, and `aws_lambda_function_url`. It also uses `aws_lambda_invocation` against a local Lambda Runtime API handler image, so Terraform's Invoke path runs through the same Runtime API callback machinery as SDK/CLI image-function invocations instead of a synthetic zip response.
+
+The provider coverage exposed real Lambda response-shape gaps. Create/read now return provider-required lifecycle and code fields including `LastUpdateStatus`, image `Code.ImageUri` / `ResolvedImageUri`, and `SourceKMSKeyArn` when present. Create-time `Publish` now records the first published version, and `ListVersionsByFunction` returns `$LATEST` followed by published versions so terraform-provider-aws can resolve the latest function version during refresh.
+
+PR #295 CI found one stale SDK assertion from before that fidelity fix. The SDK `PublishVersion` test now asserts the real `ListVersionsByFunction` sequence: `$LATEST` followed by the published versions. That closed BUG-1237 and kept the simulator change aligned with AWS's public API instead of weakening the implementation for an outdated test.
+
+The coverage matrix and Lambda surface table now show direct SDK, CLI, and Terraform coverage for AWS Lambda.
+
 ## 2026-05-31 — AWS Route 53 ListHostedZonesByName parity
 
 Issue #291 / BUG-1233 was valid. The AWS Route 53 simulator already handled hosted-zone lifecycle, record-set lifecycle, changes, and tags, but it did not register the public `GET /2013-04-01/hostedzonesbyname` operation used by real Route 53 clients for name-based hosted-zone lookup.

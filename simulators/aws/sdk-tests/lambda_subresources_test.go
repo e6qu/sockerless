@@ -28,7 +28,8 @@ func lambdaCreateFn(t *testing.T, c *lambda.Client, name string) string {
 
 // TestLambda_PublishVersion creates a function, publishes versions
 // monotonically, and lists them. Each PublishVersion returns 201 with
-// a Version field; the Nth call gives "N".
+// a Version field; the Nth call gives "N". ListVersionsByFunction
+// includes $LATEST followed by published versions.
 func TestLambda_PublishVersion(t *testing.T) {
 	c := lambdaClient()
 	ctx := context.Background()
@@ -50,7 +51,11 @@ func TestLambda_PublishVersion(t *testing.T) {
 		FunctionName: aws.String(name),
 	})
 	require.NoError(t, err)
-	assert.Len(t, list.Versions, 3)
+	require.Len(t, list.Versions, 4)
+	assert.Equal(t, "$LATEST", aws.ToString(list.Versions[0].Version))
+	for i, version := range list.Versions[1:] {
+		assert.Equal(t, []string{"1", "2", "3"}[i], aws.ToString(version.Version))
+	}
 }
 
 // TestLambda_AliasCRUD exercises the full alias lifecycle.

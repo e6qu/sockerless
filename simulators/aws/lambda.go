@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -19,26 +21,28 @@ var lambdaProcessHandles sync.Map // map[requestID]*sim.ContainerHandle
 // Lambda types
 
 type LambdaFunction struct {
-	FunctionName  string              `json:"FunctionName"`
-	FunctionArn   string              `json:"FunctionArn"`
-	Runtime       string              `json:"Runtime,omitempty"`
-	Role          string              `json:"Role"`
-	Handler       string              `json:"Handler,omitempty"`
-	Code          *LambdaFunctionCode `json:"Code,omitempty"`
-	CodeSize      int64               `json:"CodeSize"`
-	Description   string              `json:"Description,omitempty"`
-	MemorySize    int                 `json:"MemorySize"`
-	Timeout       int                 `json:"Timeout"`
-	Environment   *LambdaEnvironment  `json:"Environment,omitempty"`
-	Tags          map[string]string   `json:"Tags,omitempty"`
-	State         string              `json:"State"`
-	LastModified  string              `json:"LastModified"`
-	RevisionId    string              `json:"RevisionId"`
-	Version       string              `json:"Version"`
-	PackageType   string              `json:"PackageType,omitempty"`
-	Architectures []string            `json:"Architectures,omitempty"`
-	ImageConfig   *LambdaImageConfig  `json:"ImageConfig,omitempty"`
-	VpcConfig     *LambdaVpcConfig    `json:"VpcConfig,omitempty"`
+	FunctionName     string              `json:"FunctionName"`
+	FunctionArn      string              `json:"FunctionArn"`
+	Runtime          string              `json:"Runtime,omitempty"`
+	Role             string              `json:"Role"`
+	Handler          string              `json:"Handler,omitempty"`
+	Code             *LambdaFunctionCode `json:"Code,omitempty"`
+	CodeSha256       string              `json:"CodeSha256,omitempty"`
+	CodeSize         int64               `json:"CodeSize"`
+	Description      string              `json:"Description,omitempty"`
+	MemorySize       int                 `json:"MemorySize"`
+	Timeout          int                 `json:"Timeout"`
+	Environment      *LambdaEnvironment  `json:"Environment,omitempty"`
+	Tags             map[string]string   `json:"Tags,omitempty"`
+	State            string              `json:"State"`
+	LastUpdateStatus string              `json:"LastUpdateStatus,omitempty"`
+	LastModified     string              `json:"LastModified"`
+	RevisionId       string              `json:"RevisionId"`
+	Version          string              `json:"Version"`
+	PackageType      string              `json:"PackageType,omitempty"`
+	Architectures    []string            `json:"Architectures,omitempty"`
+	ImageConfig      *LambdaImageConfig  `json:"ImageConfig,omitempty"`
+	VpcConfig        *LambdaVpcConfig    `json:"VpcConfig,omitempty"`
 }
 
 // LambdaVpcConfig matches the real Lambda CreateFunction shape. When
@@ -64,6 +68,7 @@ type LambdaFunctionCode struct {
 	S3ObjectVersion string `json:"S3ObjectVersion,omitempty"`
 	ImageUri        string `json:"ImageUri,omitempty"` // external (operator-supplied): OCI image reference, any registry
 	ZipFile         string `json:"ZipFile,omitempty"`
+	SourceKMSKeyArn string `json:"SourceKMSKeyArn,omitempty"`
 }
 
 type LambdaEnvironment struct {
@@ -129,6 +134,7 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 		Environment   *LambdaEnvironment  `json:"Environment"`
 		Tags          map[string]string   `json:"Tags"`
 		PackageType   string              `json:"PackageType"`
+		Publish       bool                `json:"Publish"`
 		Architectures []string            `json:"Architectures"`
 		ImageConfig   *LambdaImageConfig  `json:"ImageConfig"`
 		VpcConfig     *LambdaVpcConfig    `json:"VpcConfig"`
@@ -190,30 +196,50 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fn := LambdaFunction{
-		FunctionName:  req.FunctionName,
-		FunctionArn:   lambdaArn(req.FunctionName),
-		Runtime:       req.Runtime,
-		Role:          req.Role,
-		Handler:       req.Handler,
-		Code:          req.Code,
-		CodeSize:      1024,
-		Description:   req.Description,
-		MemorySize:    req.MemorySize,
-		Timeout:       req.Timeout,
-		Environment:   req.Environment,
-		Tags:          req.Tags,
-		State:         "Active",
-		LastModified:  time.Now().UTC().Format(time.RFC3339),
-		RevisionId:    generateUUID(),
-		Version:       "$LATEST",
-		PackageType:   req.PackageType,
-		Architectures: req.Architectures,
-		ImageConfig:   req.ImageConfig,
-		VpcConfig:     vpcConfig,
+		FunctionName:     req.FunctionName,
+		FunctionArn:      lambdaArn(req.FunctionName),
+		Runtime:          req.Runtime,
+		Role:             req.Role,
+		Handler:          req.Handler,
+		Code:             req.Code,
+		CodeSha256:       lambdaCodeSha256(req.Code),
+		CodeSize:         1024,
+		Description:      req.Description,
+		MemorySize:       req.MemorySize,
+		Timeout:          req.Timeout,
+		Environment:      req.Environment,
+		Tags:             req.Tags,
+		State:            "Active",
+		LastUpdateStatus: "Successful",
+		LastModified:     time.Now().UTC().Format(time.RFC3339),
+		RevisionId:       generateUUID(),
+		Version:          "$LATEST",
+		PackageType:      req.PackageType,
+		Architectures:    req.Architectures,
+		ImageConfig:      req.ImageConfig,
+		VpcConfig:        vpcConfig,
 	}
 	lambdaFunctions.Put(req.FunctionName, fn)
+	if req.Publish {
+		publishLambdaVersion(req.FunctionName, "", fn)
+	}
 
 	sim.WriteJSON(w, http.StatusCreated, fn)
+}
+
+func lambdaCodeSha256(code *LambdaFunctionCode) string {
+	if code == nil || code.ImageUri != "" {
+		return ""
+	}
+	material := code.ZipFile
+	if material == "" {
+		material = code.S3Bucket + "/" + code.S3Key + "@" + code.S3ObjectVersion
+	}
+	if material == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(material))
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
@@ -236,11 +262,21 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 	// dereference to fetch the deployment package. The sim does not
 	// host an equivalent surface; clients that follow the URL will
 	// receive whatever real AWS returns for an unknown snapshot.
+	code := map[string]string{
+		"Location": fmt.Sprintf("https://awslambda-%s-tasks.s3.%s.amazonaws.com/snapshots/%s", awsRegion(), awsRegion(), name),
+	}
+	if fn.Code != nil {
+		if fn.Code.ImageUri != "" {
+			code["ImageUri"] = fn.Code.ImageUri
+			code["ResolvedImageUri"] = fn.Code.ImageUri
+		}
+		if fn.Code.SourceKMSKeyArn != "" {
+			code["SourceKMSKeyArn"] = fn.Code.SourceKMSKeyArn
+		}
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Configuration": fn,
-		"Code": map[string]string{
-			"Location": fmt.Sprintf("https://awslambda-%s-tasks.s3.%s.amazonaws.com/snapshots/%s", awsRegion(), awsRegion(), name),
-		},
+		"Code":          code,
 	})
 }
 
@@ -332,6 +368,7 @@ func handleLambdaUpdateFunctionConfiguration(w http.ResponseWriter, r *http.Requ
 			fn.VpcConfig = req.VpcConfig
 		}
 		fn.LastModified = time.Now().UTC().Format(time.RFC3339)
+		fn.LastUpdateStatus = "Successful"
 		fn.RevisionId = generateUUID()
 	})
 

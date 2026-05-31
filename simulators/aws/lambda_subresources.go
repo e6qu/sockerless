@@ -18,21 +18,23 @@ import (
 // but with a frozen Code reference and an updated FunctionArn:
 // `arn:aws:lambda:<region>:<account>:function:<name>:<version>`.
 type LambdaVersion struct {
-	FunctionName string              `json:"FunctionName"`
-	FunctionArn  string              `json:"FunctionArn"`
-	Version      string              `json:"Version"`
-	Runtime      string              `json:"Runtime,omitempty"`
-	Role         string              `json:"Role"`
-	Handler      string              `json:"Handler,omitempty"`
-	Code         *LambdaFunctionCode `json:"Code,omitempty"`
-	CodeSize     int64               `json:"CodeSize"`
-	MemorySize   int                 `json:"MemorySize"`
-	Timeout      int                 `json:"Timeout"`
-	State        string              `json:"State"`
-	LastModified string              `json:"LastModified"`
-	RevisionId   string              `json:"RevisionId"`
-	PackageType  string              `json:"PackageType,omitempty"`
-	Description  string              `json:"Description,omitempty"`
+	FunctionName     string              `json:"FunctionName"`
+	FunctionArn      string              `json:"FunctionArn"`
+	Version          string              `json:"Version"`
+	Runtime          string              `json:"Runtime,omitempty"`
+	Role             string              `json:"Role"`
+	Handler          string              `json:"Handler,omitempty"`
+	Code             *LambdaFunctionCode `json:"Code,omitempty"`
+	CodeSha256       string              `json:"CodeSha256,omitempty"`
+	CodeSize         int64               `json:"CodeSize"`
+	MemorySize       int                 `json:"MemorySize"`
+	Timeout          int                 `json:"Timeout"`
+	State            string              `json:"State"`
+	LastUpdateStatus string              `json:"LastUpdateStatus,omitempty"`
+	LastModified     string              `json:"LastModified"`
+	RevisionId       string              `json:"RevisionId"`
+	PackageType      string              `json:"PackageType,omitempty"`
+	Description      string              `json:"Description,omitempty"`
 }
 
 // LambdaAlias maps a name (e.g. "live") to a function version.
@@ -107,6 +109,61 @@ var (
 	lambdaURLConfigs   = map[string]LambdaFunctionUrlConfig{}
 )
 
+func latestLambdaVersion(fn LambdaFunction) LambdaVersion {
+	arn := fn.FunctionArn
+	if !strings.HasSuffix(arn, ":$LATEST") {
+		arn += ":$LATEST"
+	}
+	return LambdaVersion{
+		FunctionName:     fn.FunctionName,
+		FunctionArn:      arn,
+		Version:          "$LATEST",
+		Runtime:          fn.Runtime,
+		Role:             fn.Role,
+		Handler:          fn.Handler,
+		Code:             fn.Code,
+		CodeSha256:       fn.CodeSha256,
+		CodeSize:         fn.CodeSize,
+		MemorySize:       fn.MemorySize,
+		Timeout:          fn.Timeout,
+		State:            fn.State,
+		LastUpdateStatus: fn.LastUpdateStatus,
+		LastModified:     fn.LastModified,
+		RevisionId:       fn.RevisionId,
+		PackageType:      fn.PackageType,
+		Description:      fn.Description,
+	}
+}
+
+func publishLambdaVersion(name, description string, fn LambdaFunction) LambdaVersion {
+	lambdaVersionsMu.Lock()
+	defer lambdaVersionsMu.Unlock()
+	versions := lambdaVersions[name]
+	nextNum := len(versions) + 1
+	version := strconv.Itoa(nextNum)
+	v := LambdaVersion{
+		FunctionName:     fn.FunctionName,
+		FunctionArn:      fn.FunctionArn + ":" + version,
+		Version:          version,
+		Runtime:          fn.Runtime,
+		Role:             fn.Role,
+		Handler:          fn.Handler,
+		Code:             fn.Code,
+		CodeSha256:       fn.CodeSha256,
+		CodeSize:         fn.CodeSize,
+		MemorySize:       fn.MemorySize,
+		Timeout:          fn.Timeout,
+		State:            "Active",
+		LastUpdateStatus: "Successful",
+		LastModified:     time.Now().UTC().Format(time.RFC3339),
+		RevisionId:       generateUUID(),
+		PackageType:      fn.PackageType,
+		Description:      description,
+	}
+	lambdaVersions[name] = append(versions, v)
+	return v
+}
+
 func handleLambdaPublishVersion(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	fn, ok := lambdaFunctions.Get(name)
@@ -127,29 +184,7 @@ func handleLambdaPublishVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lambdaVersionsMu.Lock()
-	versions := lambdaVersions[name]
-	nextNum := len(versions) + 1
-	version := strconv.Itoa(nextNum)
-	v := LambdaVersion{
-		FunctionName: fn.FunctionName,
-		FunctionArn:  fn.FunctionArn + ":" + version,
-		Version:      version,
-		Runtime:      fn.Runtime,
-		Role:         fn.Role,
-		Handler:      fn.Handler,
-		Code:         fn.Code,
-		CodeSize:     fn.CodeSize,
-		MemorySize:   fn.MemorySize,
-		Timeout:      fn.Timeout,
-		State:        "Active",
-		LastModified: time.Now().UTC().Format(time.RFC3339),
-		RevisionId:   generateUUID(),
-		PackageType:  fn.PackageType,
-		Description:  req.Description,
-	}
-	lambdaVersions[name] = append(versions, v)
-	lambdaVersionsMu.Unlock()
+	v := publishLambdaVersion(name, req.Description, fn)
 	sim.WriteJSON(w, http.StatusCreated, v)
 }
 
@@ -161,7 +196,11 @@ func handleLambdaListVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lambdaVersionsMu.Lock()
-	versions := append([]LambdaVersion(nil), lambdaVersions[name]...)
+	versions := make([]LambdaVersion, 0, len(lambdaVersions[name])+1)
+	if fn, ok := lambdaFunctions.Get(name); ok {
+		versions = append(versions, latestLambdaVersion(fn))
+	}
+	versions = append(versions, lambdaVersions[name]...)
 	lambdaVersionsMu.Unlock()
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Versions": versions})
 }

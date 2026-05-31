@@ -105,7 +105,7 @@ The simulator supports the AWS API operations that these Terraform resources use
 |----------|-----------|
 | ECS | `aws_ecs_cluster`, `aws_ecs_task_definition`, `aws_ecs_service` |
 | ECR | `aws_ecr_repository`, `aws_ecr_lifecycle_policy` |
-| Lambda | `aws_lambda_function` |
+| Lambda | `aws_lambda_function`, `aws_lambda_alias`, `aws_lambda_permission`, `aws_lambda_function_url`, `aws_lambda_invocation` |
 | IAM | `aws_iam_role`, `aws_iam_role_policy`, `aws_iam_role_policy_attachment` |
 | EC2 | `aws_vpc`, `aws_subnet`, `aws_internet_gateway`, `aws_nat_gateway`, `aws_route_table`, `aws_security_group` |
 | S3 | `aws_s3_bucket`, `aws_s3_object` |
