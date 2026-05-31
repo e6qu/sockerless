@@ -156,7 +156,7 @@ func TestCloudRun_JobArithmetic(t *testing.T) {
 			messages = append(messages, s)
 		}
 	}
-	assert.Contains(t, messages, "30", "expected output '30' in Cloud Logging")
+	assert.Contains(t, strings.Join(messages, "\n"), "Result: 30", "expected arithmetic result in Cloud Logging")
 }
 
 func TestCloudRun_JobArithmeticInvalid(t *testing.T) {

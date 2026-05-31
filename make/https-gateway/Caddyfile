@@ -6,7 +6,7 @@
 https://aws.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
 	tls internal
 	reverse_proxy 127.0.0.1:{$SOCKERLESS_AWS_SIM_PORT:4566} {
-		header_up Host {http.request.host}
+		header_up Host {http.request.hostport}
 		header_up X-Forwarded-Proto https
 	}
 }
@@ -14,7 +14,7 @@ https://aws.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
 https://gcp.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
 	tls internal
 	reverse_proxy 127.0.0.1:{$SOCKERLESS_GCP_SIM_PORT:4567} {
-		header_up Host {http.request.host}
+		header_up Host {http.request.hostport}
 		header_up X-Forwarded-Proto https
 	}
 }
@@ -29,10 +29,11 @@ https://*.dfs.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.vault.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.servicebus.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.eventgrid.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
+https://*.documents.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443},
 https://*.azurecr.azure.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {
 	tls internal
 	reverse_proxy 127.0.0.1:{$SOCKERLESS_AZURE_SIM_PORT:4568} {
-		header_up Host {http.request.host}
+		header_up Host {http.request.hostport}
 		header_up X-Forwarded-Proto https
 	}
 }

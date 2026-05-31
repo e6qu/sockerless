@@ -12,6 +12,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        debian-archive-keyring \
+        debian-keyring \
         dnsmasq-base \
         docker.io \
         git \
@@ -23,6 +25,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         util-linux \
         unzip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends apt-transport-https; \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg; \
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list; \
+    chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends caddy; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
     arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \

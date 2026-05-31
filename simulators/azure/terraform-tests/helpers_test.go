@@ -1,142 +1,60 @@
 package azure_tf_test
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
 var (
-	baseURL    string
-	simCmd     *exec.Cmd
-	binaryPath string
-	simPort    int
-	caCertFile string
+	baseURL     string
+	simCmd      *exec.Cmd
+	gatewayCmd  *exec.Cmd
+	binaryPath  string
+	simPort     int
+	gatewayPort int
+	caCertFile  string
 )
 
-// generateTLSCerts creates a CA and server certificate in dir.
-// Returns the paths to caCert, serverCert, and serverKey files.
-func generateTLSCerts(dir string) (string, string, string) {
-	// Generate CA key
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		log.Fatalf("Failed to generate CA key: %v", err)
-	}
-
-	// CA certificate template
-	caTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Test CA"},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(1 * time.Hour),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-	}
-
-	// Self-sign CA cert
-	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		log.Fatalf("Failed to create CA certificate: %v", err)
-	}
-
-	// Generate server key
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		log.Fatalf("Failed to generate server key: %v", err)
-	}
-
-	// Server certificate template. The sim emits subdomain URLs that
-	// mirror real Azure's per-resource DNS naming (<vault>.vault.azure.net,
-	// <account>.blob.core.windows.net, etc.). We replicate that under
-	// `.localhost` so the SDK's URL parsers see canonical Azure shapes
-	// and the OS resolver returns 127.0.0.1 via RFC 6761 (`.localhost.`
-	// is loopback by spec; systemd-resolved on Ubuntu 24 honours it).
-	// Cert carries one wildcard SAN per Azure service subdomain we
-	// emit, plus the literal `localhost` for the ARM/control-plane URL.
-	serverTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(1 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
-		DNSNames: []string{
-			"localhost",
-			"*.vault.localhost",
-			"*.blob.localhost",
-			"*.file.localhost",
-			"*.queue.localhost",
-			"*.table.localhost",
-			"*.web.localhost",
-			"*.dfs.localhost",
-			"*.azurecr.localhost",
-			"*.servicebus.localhost",
-			"*.eventgrid.localhost",
-		},
-	}
-
-	// Sign server cert with CA
-	caCert, err := x509.ParseCertificate(caCertDER)
-	if err != nil {
-		log.Fatalf("Failed to parse CA certificate: %v", err)
-	}
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, &serverKey.PublicKey, caKey)
-	if err != nil {
-		log.Fatalf("Failed to create server certificate: %v", err)
-	}
-
-	// Write CA cert
-	caCertPath := filepath.Join(dir, "ca.pem")
-	writePEM(caCertPath, "CERTIFICATE", caCertDER)
-
-	// Write server cert
-	serverCertPath := filepath.Join(dir, "server-cert.pem")
-	writePEM(serverCertPath, "CERTIFICATE", serverCertDER)
-
-	// Write server key
-	serverKeyPath := filepath.Join(dir, "server-key.pem")
-	keyBytes, err := x509.MarshalECPrivateKey(serverKey)
-	if err != nil {
-		log.Fatalf("Failed to marshal server key: %v", err)
-	}
-	writePEM(serverKeyPath, "EC PRIVATE KEY", keyBytes)
-
-	return caCertPath, serverCertPath, serverKeyPath
-}
-
-func writePEM(path, blockType string, data []byte) {
-	f, err := os.Create(path)
-	if err != nil {
-		log.Fatalf("Failed to create %s: %v", path, err)
-	}
-	defer f.Close()
-	if err := pem.Encode(f, &pem.Block{Type: blockType, Bytes: data}); err != nil {
-		log.Fatalf("Failed to write %s: %v", path, err)
-	}
-}
-
 func TestMain(m *testing.M) {
+	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"),
+		"localhost",
+		"127.0.0.1",
+		"::1",
+		"sockerless.localhost",
+		".sockerless.localhost",
+		"*.sockerless.localhost",
+	)
+	os.Setenv("NO_PROXY", noProxy)
+	os.Setenv("no_proxy", noProxy)
+
 	if runtime.GOOS == "darwin" && os.Getenv("SOCKERLESS_AZURE_TF_IN_DOCKER") != "1" {
 		os.Exit(runTerraformTestsInDocker())
 	}
+
+	repoRoot, err := filepath.Abs("../../..")
+	if err != nil {
+		log.Fatalf("Failed to resolve repository root: %v", err)
+	}
+	caddyBin := os.Getenv("CADDY")
+	if caddyBin == "" {
+		caddyBin = "caddy"
+	}
+	caddyBin = requireExecutable(caddyBin, "Azure Terraform HTTPS gateway tests")
 
 	binaryPath, _ = filepath.Abs("../simulator-azure")
 
@@ -180,26 +98,20 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to retag alpine: %v", err)
 	}
 
-	// Generate TLS certificates
-	certDir, err := os.MkdirTemp("", "azure-tls-*")
+	gatewayDir, err := os.MkdirTemp("", "azure-https-gateway-*")
 	if err != nil {
-		log.Fatalf("Failed to create cert dir: %v", err)
+		log.Fatalf("Failed to create gateway state dir: %v", err)
 	}
-	caCertPath, serverCertPath, serverKeyPath := generateTLSCerts(certDir)
-	caCertFile = caCertPath
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		log.Fatalf("Failed to find free port: %v", err)
-	}
-	simPort = ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
+	simPort = freeTCPPort()
+	gatewayPort = freeTCPPort()
+	gatewayAdminPort := freeTCPPort()
+	caCertFile = filepath.Join(gatewayDir, "data", "caddy", "pki", "authorities", "local", "root.crt")
 
 	simCmd = exec.Command(binaryPath)
 	simCmd.Env = append(os.Environ(),
-		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", simPort),
-		fmt.Sprintf("SIM_TLS_CERT=%s", serverCertPath),
-		fmt.Sprintf("SIM_TLS_KEY=%s", serverKeyPath),
+		fmt.Sprintf("SIM_LISTEN_ADDR=127.0.0.1:%d", simPort),
+		"SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON="+azureGatewayDataPlaneEndpoints(gatewayPort),
 	)
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr
@@ -207,21 +119,58 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to start simulator: %v", err)
 	}
 
-	// localhost (not 127.0.0.1) so the sim emits subdomain URIs
-	// rooted at `.localhost` — RFC 6761 makes *.localhost resolve
-	// to loopback on systemd-resolved, and the cert above carries
-	// the matching wildcard SANs for each Azure service.
-	baseURL = fmt.Sprintf("https://localhost:%d", simPort)
-
-	if err := waitForHealth(baseURL+"/health", caCertPath); err != nil {
+	directURL := fmt.Sprintf("http://127.0.0.1:%d", simPort)
+	if err := waitForHTTPHealth(directURL + "/health"); err != nil {
 		simCmd.Process.Kill()
 		log.Fatalf("Simulator did not become healthy: %v", err)
 	}
+	if err := verifyDirectMetadata(directURL, fmt.Sprintf("azure.sockerless.localhost:%d", gatewayPort)); err != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Simulator metadata did not become healthy: %v", err)
+	}
+
+	gatewayCmd = exec.Command(caddyBin, "run", "--config", filepath.Join(repoRoot, "make", "https-gateway", "Caddyfile"), "--adapter", "caddyfile")
+	gatewayCmd.Env = append(os.Environ(),
+		fmt.Sprintf("XDG_DATA_HOME=%s", filepath.Join(gatewayDir, "data")),
+		fmt.Sprintf("XDG_CONFIG_HOME=%s", filepath.Join(gatewayDir, "config")),
+		fmt.Sprintf("SOCKERLESS_HTTPS_GATEWAY_PORT=%d", gatewayPort),
+		fmt.Sprintf("SOCKERLESS_HTTPS_GATEWAY_ADMIN_PORT=%d", gatewayAdminPort),
+		"SOCKERLESS_AWS_SIM_PORT=1",
+		"SOCKERLESS_GCP_SIM_PORT=1",
+		fmt.Sprintf("SOCKERLESS_AZURE_SIM_PORT=%d", simPort),
+	)
+	gatewayCmd.Stdout = os.Stdout
+	gatewayCmd.Stderr = os.Stderr
+	if err := gatewayCmd.Start(); err != nil {
+		simCmd.Process.Kill()
+		log.Fatalf("Failed to start HTTPS gateway: %v", err)
+	}
+
+	baseURL = fmt.Sprintf("https://azure.sockerless.localhost:%d", gatewayPort)
+	requireHTTPSURL(baseURL, "Azure Terraform endpoint")
+	if err := waitForFile(caCertFile, 10*time.Second); err != nil {
+		gatewayCmd.Process.Kill()
+		simCmd.Process.Kill()
+		log.Fatalf("HTTPS gateway did not publish its local CA: %v", err)
+	}
+
+	if err := waitForHealth(baseURL+"/health", caCertFile); err != nil {
+		gatewayCmd.Process.Kill()
+		simCmd.Process.Kill()
+		log.Fatalf("HTTPS gateway did not become healthy: %v", err)
+	}
+	if err := verifyGatewayMetadata(baseURL, caCertFile); err != nil {
+		gatewayCmd.Process.Kill()
+		simCmd.Process.Kill()
+		log.Fatalf("HTTPS gateway metadata did not become healthy: %v", err)
+	}
 
 	code := m.Run()
+	gatewayCmd.Process.Kill()
+	gatewayCmd.Wait()
 	simCmd.Process.Kill()
 	simCmd.Wait()
-	os.RemoveAll(certDir)
+	os.RemoveAll(gatewayDir)
 	os.Exit(code)
 }
 
@@ -260,6 +209,8 @@ func runTerraformTestsInDocker() int {
 		"-e", "TF_IN_AUTOMATION=1",
 		"-e", "CLOUDSDK_CORE_DISABLE_PROMPTS=1",
 		"-e", "AZURE_CORE_NO_COLOR=true",
+		"-e", "NO_PROXY=localhost,127.0.0.1,::1,sockerless.localhost,.sockerless.localhost,*.sockerless.localhost",
+		"-e", "no_proxy=localhost,127.0.0.1,::1,sockerless.localhost,.sockerless.localhost,*.sockerless.localhost",
 	}
 	if v := os.Getenv("TF_LOG"); v != "" {
 		args = append(args, "-e", "TF_LOG="+v)
@@ -267,7 +218,7 @@ func runTerraformTestsInDocker() int {
 	if v := os.Getenv("TF_LOG_PATH"); v != "" {
 		args = append(args, "-e", "TF_LOG_PATH="+v)
 	}
-	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", "600s", "./...")
+	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", "300s", "./...")
 
 	run := exec.Command("docker", args...)
 	run.Stdout = os.Stdout
@@ -294,19 +245,158 @@ func dockerSocketGroup() string {
 	return fmt.Sprintf("%d", stat.Gid)
 }
 
-func waitForHealth(url, caCert string) error {
-	caPEM, err := os.ReadFile(caCert)
-	if err != nil {
-		return fmt.Errorf("read CA cert: %w", err)
+func mergeNoProxy(existing string, entries ...string) string {
+	seen := map[string]bool{}
+	var merged []string
+	for _, part := range strings.Split(existing, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		merged = append(merged, part)
 	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(caPEM)
+	for _, entry := range entries {
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		merged = append(merged, entry)
+	}
+	return strings.Join(merged, ",")
+}
 
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: pool},
+func freeTCPPort() int {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Failed to find free port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func requireExecutable(name, purpose string) string {
+	if strings.ContainsRune(name, rune(os.PathSeparator)) {
+		info, err := os.Stat(name)
+		if err != nil {
+			log.Fatalf("%s requires executable %q: %v", purpose, name, err)
+		}
+		if info.IsDir() {
+			log.Fatalf("%s requires executable %q, but it is a directory", purpose, name)
+		}
+		if info.Mode()&0111 == 0 {
+			log.Fatalf("%s requires executable %q, but it is not executable", purpose, name)
+		}
+		return name
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		log.Fatalf("%s requires %q in PATH or CADDY=/path/to/caddy; install Caddy before running these tests: %v", purpose, name, err)
+	}
+	return path
+}
+
+func requireHTTPSURL(raw, purpose string) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		log.Fatalf("%s must be a valid HTTPS URL, got %q: %v", purpose, raw, err)
+	}
+	if u.Scheme != "https" {
+		log.Fatalf("%s must use HTTPS because AzureRM metadata discovery requires trusted HTTPS, got %q", purpose, raw)
+	}
+}
+
+func azureGatewayDataPlaneEndpoints(port int) string {
+	host := fmt.Sprintf("azure.sockerless.localhost:%d", port)
+	cfg := struct {
+		Storage    map[string]string `json:"storage,omitempty"`
+		KeyVault   string            `json:"keyVault,omitempty"`
+		ServiceBus string            `json:"serviceBus,omitempty"`
+		EventGrid  string            `json:"eventGrid,omitempty"`
+	}{
+		Storage: map[string]string{
+			"blob":  fmt.Sprintf("https://{account}.blob.%s/", host),
+			"file":  fmt.Sprintf("https://{account}.file.%s/", host),
+			"queue": fmt.Sprintf("https://{account}.queue.%s/", host),
+			"table": fmt.Sprintf("https://{account}.table.%s/", host),
+			"web":   fmt.Sprintf("https://{account}.web.%s/", host),
+			"dfs":   fmt.Sprintf("https://{account}.dfs.%s/", host),
 		},
+		KeyVault:   fmt.Sprintf("https://{vault}.vault.%s/", host),
+		ServiceBus: fmt.Sprintf("https://{namespace}.servicebus.%s/", host),
+		EventGrid:  fmt.Sprintf("https://{topic}.eventgrid.%s/api/events", host),
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		log.Fatalf("Failed to encode Azure gateway endpoint config: %v", err)
+	}
+	return string(data)
+}
+
+func waitForHTTPHealth(url string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	for i := 0; i < 50; i++ {
+		resp, err := client.Get(url)
+		if err == nil && resp.StatusCode == 200 {
+			var body struct {
+				Status   string `json:"status"`
+				Provider string `json:"provider"`
+			}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&body); decodeErr == nil && body.Status == "ok" && body.Provider == "azure" {
+				resp.Body.Close()
+				return nil
+			}
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", url)
+}
+
+func verifyDirectMetadata(baseURL, host string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	u := baseURL + "/metadata/endpoints?api-version=2022-09-01"
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Host = host
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", u, err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return fmt.Errorf("read %s response: %w", u, readErr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: status %d body %q", u, resp.StatusCode, string(body))
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("GET %s: headers %#v decode JSON body %q: %w", u, resp.Header, string(body), err)
+	}
+	return nil
+}
+
+func waitForFile(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("timeout waiting for %s", path)
+}
+
+func waitForHealth(url, caCert string) error {
+	client, err := trustedHTTPClient(caCert)
+	if err != nil {
+		return err
 	}
 	for i := 0; i < 50; i++ {
 		resp, err := client.Get(url)
@@ -322,7 +412,67 @@ func waitForHealth(url, caCert string) error {
 	return fmt.Errorf("timeout waiting for %s", url)
 }
 
+func verifyGatewayMetadata(baseURL, caCert string) error {
+	client, err := trustedHTTPClient(caCert)
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := verifyGatewayMetadataOnce(client, baseURL); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func verifyGatewayMetadataOnce(client *http.Client, baseURL string) error {
+	for _, apiVersion := range []string{"2022-09-01", "2020-06-01"} {
+		u := fmt.Sprintf("%s/metadata/endpoints?api-version=%s", baseURL, apiVersion)
+		resp, err := client.Get(u)
+		if err != nil {
+			return fmt.Errorf("GET %s: %w", u, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("read %s response: %w", u, readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("GET %s: status %d body %q", u, resp.StatusCode, string(body))
+		}
+		var payload any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return fmt.Errorf("GET %s: headers %#v decode JSON body %q: %w", u, resp.Header, string(body), err)
+		}
+	}
+	return nil
+}
+
+func trustedHTTPClient(caCert string) (*http.Client, error) {
+	caPEM, err := os.ReadFile(caCert)
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("parse CA cert %s", caCert)
+	}
+
+	return &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+	}, nil
+}
+
 func terraformCmd(args ...string) *exec.Cmd {
+	requireHTTPSURL(baseURL, "Azure Terraform endpoint")
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = filepath.Dir(mustAbs("main.tf"))
 	cmd.Env = append(os.Environ(),

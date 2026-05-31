@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: Azure Terraform over the local HTTPS gateway.
+Next planned phase: optional AWS/GCP Terraform HTTPS examples, then a CI policy decision for Azure Terraform's gateway path.
 
 ## Guiding Principles
 
@@ -41,16 +41,17 @@ This is local transport infrastructure, not a simulator public API change. Publi
 Implemented:
 
 - Caddy config and `make stack-https-{up,status,ca,down}` targets.
-- HTTPS routing for `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards.
+- HTTPS routing for `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards, including Cosmos DB documents.
 - `STACK_HTTPS=1 make stack-azure-aca` style stack integration, including Azure ARM-advertised data-plane URL projection.
 - Admin API/UI visibility for gateway status, endpoints, CA path, and recovery make commands.
 - Docs for local CA trust and provider-specific HTTPS behavior.
+- Azure Terraform harness over the gateway: per-test Caddy state and CA, `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, ARM-advertised Azure data-plane URLs under the gateway, and `SSL_CERT_FILE` CA trust in the Linux Docker test container.
+- Shared simulator Docker test image with Caddy installed from the official package repository.
 
 Remaining staged work:
 
-1. **Azure Terraform harness.** Run Azure Terraform through the gateway for `metadata_host`, ARM-advertised data-plane URLs, and gateway CA trust through `SSL_CERT_FILE` in Linux test containers.
-2. **AWS/GCP examples.** Add optional HTTPS Terraform examples while keeping direct HTTP endpoint overrides.
-3. **CI decision.** After local proof, decide whether Azure Terraform CI should use Caddy by default or keep generated direct simulator certs.
+1. **AWS/GCP examples.** Add optional HTTPS Terraform examples while keeping direct HTTP endpoint overrides.
+2. **CI decision.** Decide whether Azure Terraform CI should use Caddy by default now that the local proof passed under the 5-minute cap.
 
 ## Deferred Work
 
