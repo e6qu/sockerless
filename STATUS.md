@@ -9,10 +9,10 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | GCP issue group: #304, #309-#311, and #321-#325, unless a higher-priority issue appears. |
-| Last merged | AWS simulator fidelity fixes for issues #305-#308 and #317-#320. |
-| Open GitHub issues | #304, #309-#315, and #321-#329. |
-| Bugs | 1264 filed - 1262 fixed - 5 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1254 GCP client-surface gaps; BUG-1263 GCP API-shape backlog; BUG-1264 Azure API-shape backlog. |
+| Last merged | AWS Amplify fidelity fixes for issues #330 and #331. |
+| Open GitHub issues | #304, #309-#315, #321-#329, and #332-#336. |
+| Bugs | 1267 filed - 1264 fixed - 6 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1254 GCP client-surface gaps; BUG-1263 GCP API-shape backlog; BUG-1264 Azure API-shape backlog; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
@@ -20,6 +20,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 The AWS/GCP Terraform HTTPS gateway examples were added, and CI kept Terraform provider validation on the Caddy HTTPS path where gateway fidelity matters.
 
 The AWS simulator fidelity PR fixed issues #305-#308 and #317-#320. S3 `ListObjectsV2` now sorts and paginates keys, Lambda `FunctionConfiguration` responses no longer expose request-only `Code` or `Tags`, SNS confirmation-required subscriptions return `pending confirmation`, SQS rejects invalid receive batch sizes, EC2 honors run counts and filters with a pending-to-running state transition, ECR image digests are content-addressed, and KMS data keys use crypto-random key material.
+
+The AWS Amplify fidelity PR fixed issues #330 and #331. Amplify `StopJob` and `DeleteJob` now used their distinct public REST paths and semantics, `DeleteJob` removed the job and its artifacts, and `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered on the real AWS SDK paths with SDK and CLI coverage. No Terraform coverage was added for those operations because the official Terraform AWS provider exposes Amplify app/branch/webhook/domain/backend-environment resources, not job artifact or access-log operations.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -76,6 +78,7 @@ Implemented gateway surface:
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps found during the latest BUG-1104 pass.
 - BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
 - BUG-1264: Azure API-shape issues #312-#315 and #326-#329 remain open.
+- BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure.
 
 ## Recent Merged Work
 
@@ -83,6 +86,7 @@ Implemented gateway surface:
 - SDK/CLI HTTPS gateway audit: documented real CA/endpoint knobs for SDK and CLI clients, and fixed GCP GCS CLI coverage discovered by BUG-1104.
 - Terraform HTTPS gateway audit: AWS/GCP got optional HTTPS provider harnesses and GCP VPC Access Terraform coverage; issue #304 was opened for larger GCP client-surface gaps.
 - AWS simulator fidelity sweep: issues #305-#308 and #317-#320 were fixed with real AWS SDK coverage and targeted AWS CLI regression coverage.
+- AWS Amplify fidelity sweep: issues #330 and #331 were fixed with real AWS SDK and AWS CLI coverage.
 - PR #299 / issue #298: Azure Redis CLI/Terraform coverage; GCP Memorystore Redis gcloud/Terraform coverage; GCP Cloud SQL `/v1` and `/sql/v1beta4` coverage; GCP Cloud DNS Changes and record-set patch routes.
 - Local HTTPS gateway Stage 1: optional Caddy gateway, `.stack-pids` lifecycle integration, docs, and admin UI visibility.
 - PR #296/#295/#291/#289 series: AWS Route 53 list fidelity, Lambda Terraform coverage, RDS/ElastiCache/API Gateway client-surface coverage, and Terraform minimum-wait documentation.

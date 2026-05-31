@@ -59,6 +59,16 @@ EC2 `RunInstances` honored `MinCount`/`MaxCount`, returned instances in `pending
 
 The fixes shipped with real AWS SDK coverage for each issue and targeted AWS CLI regression coverage for the affected AWS surfaces.
 
+## 2026-05-31 - AWS Amplify Fidelity Sweep
+
+Issues #330 and #331 were fixed in one AWS simulator PR.
+
+Amplify `StopJob` and `DeleteJob` now used separate public AWS REST paths and semantics. `StopJob` handled `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}/stop` and cancelled the job. `DeleteJob` handled `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}`, removed the job, removed its artifacts, updated branch job counters, and made later `GetJob` calls return `NotFoundException`.
+
+The missing Amplify artifact and access-log operations were added on the AWS SDK paths: `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs`. Started jobs and deployments now had stored artifact records so `ListArtifacts` and `GetArtifactUrl` exercised real simulator state instead of returning arbitrary IDs. `GenerateAccessLogs` validated that the requested app owned the requested default or associated domain before returning the public response shape.
+
+The fixes shipped with real AWS SDK and AWS CLI coverage. Terraform coverage was not added because the official Terraform AWS provider does not expose these Amplify job artifact or access-log operations.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -102,6 +112,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered during the latest audit pass.
 - BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
 - BUG-1264: Azure API-shape issues #312-#315 and #326-#329 remain open.
+- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. It needs staged architecture work before Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs.
 
 ## Continuity Rules
 

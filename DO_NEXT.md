@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the AWS simulator fidelity PR merged.
+- Branch: `main`, synced with `origin/main` after the AWS Amplify fidelity PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #304, #309-#315, and #321-#329.
-- Open BUG trackers: BUG-1075, BUG-1104, BUG-1254, BUG-1263, and BUG-1264.
-- Last completed work: AWS simulator fidelity issues #305-#308 and #317-#320 were fixed.
+- Open GitHub issues at last check: #304, #309-#315, #321-#329, and #332-#336.
+- Open BUG trackers: BUG-1075, BUG-1104, BUG-1254, BUG-1263, BUG-1264, and BUG-1267.
+- Last completed work: AWS Amplify issues #330 and #331 were fixed.
 
 ## Next Task
 
 Address the GCP issue group next: issue #304 / BUG-1254 plus GCP fidelity issues #309-#311 and #321-#325, unless a higher-priority issue appears.
 
-The AWS simulator fidelity PR closed the immediate synthetic-value bugs and API-shape gaps in the AWS issue group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
+The AWS Amplify PR closed the narrow open AWS issue group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
 
 ## Provider Facts To Preserve
 
@@ -51,11 +51,16 @@ The AWS simulator fidelity PR closed the immediate synthetic-value bugs and API-
    - EC2 `RunInstances` honored `MinCount`/`MaxCount`, returned `pending` instances, transitioned them to `running`, and `DescribeInstances` applied supported filters while rejecting unsupported filter names.
    - ECR `PutImage` generated deterministic content-addressed `sha256:<64-hex>` digests from image manifests.
    - KMS `GenerateDataKey` returned fresh crypto-random plaintext key material and ciphertext that decrypted back to it.
+- AWS Amplify issues #330 and #331 were fixed:
+   - `StopJob` used the real `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}/stop` route and cancelled the job.
+   - `DeleteJob` used the real `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}` route, removed the job, removed its artifacts, and made later `GetJob` calls return `NotFoundException`.
+   - `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered with their AWS SDK REST paths and covered through the real AWS SDK and AWS CLI.
 
 ## Remaining Stages
 
 1. Address BUG-1254 / issue #304 plus GCP issues #309-#311 and #321-#325.
 2. Address Azure issues #312-#315 and #326-#329.
+3. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
 
 ## Deferred Trackers
 
@@ -64,6 +69,7 @@ The AWS simulator fidelity PR closed the immediate synthetic-value bugs and API-
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered by the latest audit pass.
 - BUG-1263: GCP API-shape backlog from issues #309-#311 and #321-#325 remains open.
 - BUG-1264: Azure API-shape backlog from issues #312-#315 and #326-#329 remains open.
+- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks.
 
 ## Start Checklist
 
