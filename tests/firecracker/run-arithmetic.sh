@@ -77,7 +77,7 @@ ci_version="${version%.*}"
 asset_index="$workdir/firecracker-ci-assets.xml"
 curl -fsSLo "$asset_index" "https://s3.amazonaws.com/spec.ccfc.min/?prefix=firecracker-ci/${ci_version}/${arch}/&list-type=2"
 
-kernel_key="$(tr '<' '\n' < "$asset_index" | sed -n 's#^Key>\(.*\)#\1#p' | grep "^firecracker-ci/${ci_version}/${arch}/vmlinux-" | sort -V | tail -1)"
+kernel_key="$(tr '<' '\n' < "$asset_index" | sed -n 's#^Key>\(.*\)#\1#p' | grep -E "^firecracker-ci/${ci_version}/${arch}/vmlinux-[0-9]+\\.[0-9]+\\.[0-9]+$" | sort -V | tail -1)"
 rootfs_key="$(tr '<' '\n' < "$asset_index" | sed -n 's#^Key>\(.*\)#\1#p' | grep "^firecracker-ci/${ci_version}/${arch}/ubuntu-.*[.]squashfs$" | sort -V | tail -1)"
 
 [ -n "$kernel_key" ] || fail "could not find Firecracker CI kernel asset for $ci_version/$arch"
