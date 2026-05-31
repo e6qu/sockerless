@@ -32,6 +32,8 @@ provider "google" {
   pubsub_custom_endpoint            = "${var.endpoint}/v1/"
   storage_custom_endpoint           = "${var.endpoint}/storage/v1/"
   secret_manager_custom_endpoint    = "${var.endpoint}/v1/"
+  redis_custom_endpoint             = "${var.endpoint}/v1/"
+  sql_custom_endpoint               = "${var.endpoint}/sql/v1beta4/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
@@ -169,20 +171,21 @@ resource "google_dns_managed_zone" "main" {
 
 # Private managed zone auto-backs itself with a real Docker network
 # inside the simulator (see simulators/gcp/dns.go handleCreateZone).
-# Terraform round-trip covers zone Create + Get + Delete — enough to
-# prove the `Visibility=private` path triggers the simulator's network
-# lifecycle.
-#
-# Record-set terraform coverage is intentionally omitted: the google
-# provider's ResourceRecordSets client reconstructs the endpoint URL
-# from the host/port only (ignoring the /dns/v1/ path from
-# dns_custom_endpoint), causing a plugin panic against the simulator.
-# The SDK + CLI tests cover the record-set-connects-container flow.
+# Terraform round-trip covers zone Create + Get + Delete so the
+# `Visibility=private` path triggers the simulator's network lifecycle.
 resource "google_dns_managed_zone" "private_xjob" {
   name        = "tf-xjob-zone"
   dns_name    = "tf-xjob.local."
   visibility  = "private"
   description = "cross-job DNS coverage"
+}
+
+resource "google_dns_record_set" "main_a" {
+  managed_zone = google_dns_managed_zone.main.name
+  name         = "www.${google_dns_managed_zone.main.dns_name}"
+  type         = "A"
+  ttl          = 300
+  rrdatas      = ["203.0.113.30"]
 }
 
 # ---------- Artifact Registry (Docker repo + cleanup policy) ----------
@@ -456,6 +459,41 @@ resource "google_firestore_document" "tf_firestore_doc" {
   fields      = "{\"team\":{\"stringValue\":\"platform\"},\"role\":{\"stringValue\":\"admin\"}}"
 }
 
+resource "google_redis_instance" "tf_redis" {
+  name           = "tf-redis"
+  tier           = "BASIC"
+  memory_size_gb = 1
+  region         = "us-central1"
+  redis_version  = "REDIS_7_0"
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_sql_database_instance" "tf_sql" {
+  name             = "tf-sql"
+  region           = "us-central1"
+  database_version = "POSTGRES_15"
+
+  settings {
+    tier = "db-f1-micro"
+  }
+
+  deletion_protection = false
+}
+
+resource "google_sql_database" "tf_sql_db" {
+  name     = "appdb"
+  instance = google_sql_database_instance.tf_sql.name
+}
+
+resource "google_sql_user" "tf_sql_user" {
+  name     = "appuser"
+  instance = google_sql_database_instance.tf_sql.name
+  password = "Str0ng-password-12345!"
+}
+
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
@@ -496,6 +534,10 @@ output "compute_disk_self_link" {
 
 output "dns_zone_name_servers" {
   value = google_dns_managed_zone.main.name_servers
+}
+
+output "dns_record_set_id" {
+  value = google_dns_record_set.main_a.id
 }
 
 output "ar_repo_id" {
@@ -608,4 +650,24 @@ output "bigquery_table_id" {
 
 output "firestore_document_name" {
   value = google_firestore_document.tf_firestore_doc.id
+}
+
+output "redis_instance_id" {
+  value = google_redis_instance.tf_redis.id
+}
+
+output "redis_instance_host" {
+  value = google_redis_instance.tf_redis.host
+}
+
+output "sql_instance_connection_name" {
+  value = google_sql_database_instance.tf_sql.connection_name
+}
+
+output "sql_database_id" {
+  value = google_sql_database.tf_sql_db.id
+}
+
+output "sql_user_name" {
+  value = google_sql_user.tf_sql_user.name
 }

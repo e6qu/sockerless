@@ -137,6 +137,27 @@ resource "azurerm_container_registry" "az_acr" {
   admin_enabled       = false
 }
 
+resource "azurerm_redis_cache" "az_redis" {
+  provider            = azurerm
+  name                = "tfazrmredis"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  capacity            = 1
+  family              = "C"
+  sku_name            = "Basic"
+  minimum_tls_version = "1.2"
+  redis_version       = "6"
+}
+
+resource "azurerm_redis_firewall_rule" "az_redis_fw" {
+  provider            = azurerm
+  name                = "allow_ci"
+  redis_cache_name    = azurerm_redis_cache.az_redis.name
+  resource_group_name = azurerm_resource_group.az_rg.name
+  start_ip            = "203.0.113.10"
+  end_ip              = "203.0.113.10"
+}
+
 # User-assigned managed identity — the runner backends bind one of these
 # to each pod/container so it can pull from ACR + read from Key Vault.
 resource "azurerm_user_assigned_identity" "az_uai" {
@@ -720,6 +741,14 @@ output "azrm_resource_group_id" {
 
 output "azrm_acr_id" {
   value = azurerm_container_registry.az_acr.id
+}
+
+output "azrm_redis_cache_hostname" {
+  value = azurerm_redis_cache.az_redis.hostname
+}
+
+output "azrm_redis_firewall_rule_id" {
+  value = azurerm_redis_firewall_rule.az_redis_fw.id
 }
 
 output "azrm_uai_id" {

@@ -25,6 +25,8 @@ export CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS=http://localhost:4567/
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_REDIS=http://localhost:4567/
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_SQL=http://localhost:4567/
 ```
 
 Note the trailing `/` — gcloud appends API paths directly to the override URL.
@@ -49,6 +51,53 @@ gcloud dns managed-zones list --format=json
 
 # Delete a zone
 gcloud dns managed-zones delete my-zone
+```
+
+Cloud DNS record-set mutation also works through the public transaction and update flows:
+
+```sh
+gcloud dns record-sets transaction start --zone=my-zone
+gcloud dns record-sets transaction add 203.0.113.10 \
+  --name=www.example.com. \
+  --ttl=300 \
+  --type=A \
+  --zone=my-zone
+gcloud dns record-sets transaction execute --zone=my-zone
+
+gcloud dns record-sets update www.example.com. \
+  --zone=my-zone \
+  --type=A \
+  --ttl=60 \
+  --rrdatas=203.0.113.11
+```
+
+### Memorystore Redis
+
+```sh
+gcloud redis instances create my-redis \
+  --region=us-central1 \
+  --tier=basic \
+  --size=1 \
+  --redis-version=redis_6_x \
+  --format=json
+
+gcloud redis instances describe my-redis --region=us-central1 --format=json
+gcloud redis instances delete my-redis --region=us-central1
+```
+
+### Cloud SQL
+
+```sh
+gcloud sql instances create my-sql \
+  --database-version=POSTGRES_15 \
+  --tier=db-custom-1-3840 \
+  --region=us-central1 \
+  --format=json
+
+gcloud sql databases create appdb --instance=my-sql --format=json
+gcloud sql users create appuser --instance=my-sql --password=local-password --format=json
+gcloud sql databases list --instance=my-sql --format=json
+gcloud sql users list --instance=my-sql --format=json
 ```
 
 ### Cloud Logging
@@ -166,6 +215,8 @@ curl -X POST http://localhost:4567/compute/v1/projects/my-project/global/network
 | Service Usage | `gcloud services` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE` | Full CLI support |
 | VPC Access | `gcloud compute networks vpc-access` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_VPCACCESS` | Full CLI support |
 | Cloud Functions | `gcloud functions` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDFUNCTIONS` | Deploy may require direct HTTP |
+| Memorystore Redis | `gcloud redis instances` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_REDIS` | Instance lifecycle |
+| Cloud SQL | `gcloud sql` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_SQL` | Instance, database, and user lifecycle |
 | Cloud Run Jobs | — | — | Use direct HTTP |
 | GCS | — | — | Use direct HTTP or `STORAGE_EMULATOR_HOST` |
 | Artifact Registry | `gcloud artifacts` | `CLOUDSDK_API_ENDPOINT_OVERRIDES_ARTIFACTREGISTRY` | Repository CRUD and Docker image listing |

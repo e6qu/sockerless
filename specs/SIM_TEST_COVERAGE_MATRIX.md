@@ -40,7 +40,7 @@ Legend:
 | `aws-sts` | direct | direct | direct | `simulators/aws/sdk-tests/sts_test.go`; `simulators/aws/cli-tests/sts_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-wafv2` | direct | direct | direct | `simulators/aws/sdk-tests/wafv2_test.go`; `simulators/aws/cli-tests/wafv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
-| `azure-cache_redis` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/redis_pg_test.go` |
+| `azure-cache_redis` | direct | direct | direct | `simulators/azure/sdk-tests/redis_pg_test.go`; `simulators/azure/cli-tests/redis_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/sdk-tests/network_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/cli-tests/loadbalancer_test.go`; `simulators/azure/cli-tests/nat_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-containerapps` | direct | direct | direct | `simulators/azure/sdk-tests/containerapps_test.go`; `simulators/azure/cli-tests/containerapps_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cosmos` | direct | direct | direct | `simulators/azure/sdk-tests/cosmos_test.go`; `simulators/azure/cli-tests/cosmos_test.go`; `simulators/azure/terraform-tests/main.tf` |
@@ -71,8 +71,8 @@ Legend:
 | `gcp-gcs` | direct | not applicable | direct | `simulators/gcp/sdk-tests/storage_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-iam` | direct | not applicable | direct | `simulators/gcp/sdk-tests/iam_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-logging` | direct | direct | direct | `simulators/gcp/sdk-tests/logging_test.go`; `simulators/gcp/cli-tests/logging_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `gcp-memorystore_redis` | direct | not applicable | not applicable | `simulators/gcp/sdk-tests/memorystore_apigw_test.go` |
+| `gcp-memorystore_redis` | direct | direct | direct | `simulators/gcp/sdk-tests/memorystore_apigw_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-pubsub` | direct | not applicable | direct | `simulators/gcp/sdk-tests/pubsub_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-secretmanager` | direct | direct | direct | `simulators/gcp/sdk-tests/secretmanager_test.go`; `simulators/gcp/cli-tests/secretmanager_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `gcp-sqladmin` | direct | not applicable | not applicable | `simulators/gcp/sdk-tests/cloudsql_test.go` |
+| `gcp-sqladmin` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudsql_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-vpcaccess` | direct | direct | not applicable | `simulators/gcp/sdk-tests/integration_test.go`; `simulators/gcp/cli-tests/vpcaccess_test.go` |

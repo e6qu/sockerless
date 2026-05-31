@@ -6,6 +6,14 @@ State [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · resume [DO_NEXT.md
 
 This file keeps narrative — *why* each phase, what was surprising, what blocked. Per-bug detail in [BUGS.md](BUGS.md); code-level detail in `git log`.
 
+## 2026-05-31 — Redis, Cloud SQL, and Cloud DNS client-surface coverage
+
+The BUG-1104 audit found three stale client-surface claims. Azure Cache for Redis, GCP Memorystore Redis, and GCP Cloud SQL were marked as CLI/Terraform not-applicable even though Azure CLI, gcloud, azurerm, and terraform-provider-google expose those public cloud APIs. Open issue #298 also identified a real GCP Cloud DNS gap: canonical clients mutate record sets through the Changes API and poll change resources, while the simulator only had direct record-set CRUD.
+
+BUG-1242 through BUG-1245 closed those gaps with real external clients. Azure Cache for Redis now supports the azurerm Redis cache and firewall-rule provider path, including top-level SKU round-tripping, PATCH, listKeys, and firewall-rule lifecycle, and the Azure CLI harness covers the same Microsoft.Cache ARM routes through `az rest`. GCP Memorystore Redis now has `gcloud redis instances` and `google_redis_instance` coverage through the public Redis API endpoint override. GCP Cloud SQL now supports both `/v1` and `/sql/v1beta4` SQL Admin paths, persists SQL operations for provider/gcloud polling, and covers instance, database, and user lifecycle through SDK, gcloud, and terraform-provider-google.
+
+The Cloud DNS implementation now matches the public mutation contract that issue #298 needed. `Changes.Create` validates exact deletions before additions, allows atomic replace only when the same change deletes the old record set, returns NOT_FOUND for unknown changes, and stores done change resources for `Changes.Get/List`. ResourceRecordSets.Get/Patch now exists for canonical reads and updates. Coverage uses the official Google DNS SDK, `gcloud dns record-sets transaction` / `record-sets update`, and Terraform `google_dns_record_set`.
+
 ## 2026-05-31 — AWS Route 53 record-list fidelity and AWS client-surface audit
 
 Issue #296 / BUG-1238 was valid. `ListResourceRecordSets` used stored insert order before applying `StartRecordName`, which meant a client lookup that asked for `api.example.com. A` could see the zone's apex NS/SOA records first if those were inserted earlier. Real Route 53 lists record sets by reversed DNS labels, then record type, and uses that ordering for the start-name/type cursor.

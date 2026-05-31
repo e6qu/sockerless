@@ -111,6 +111,24 @@ az rest --method GET \
   --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ContainerRegistry/registries/myregistry?api-version=2023-01-01-preview"
 ```
 
+### Azure Cache for Redis
+
+```sh
+# Create a Redis cache
+az rest --method PUT \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Cache/Redis/myredis?api-version=2024-11-01" \
+  --body '{"location":"eastus","sku":{"name":"Basic","family":"C","capacity":1},"properties":{"redisVersion":"6"}}'
+
+# List keys
+az rest --method POST \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Cache/Redis/myredis/listKeys?api-version=2024-11-01"
+
+# Create a firewall rule
+az rest --method PUT \
+  --url "$SIM/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Cache/Redis/myredis/firewallRules/allow-ci?api-version=2024-11-01" \
+  --body '{"properties":{"startIP":"203.0.113.10","endIP":"203.0.113.10"}}'
+```
+
 ### Private DNS
 
 ```sh
@@ -201,6 +219,7 @@ az rest --method GET \
 | Azure Functions | `Microsoft.Web` | Sites + invocation |
 | App Service Plans | `Microsoft.Web` | CRUD |
 | Container Registry | `Microsoft.ContainerRegistry` | CRUD + OCI Distribution |
+| Azure Cache for Redis | `Microsoft.Cache` | Cache lifecycle, listKeys, firewall rules |
 | Resource Groups | `Microsoft.Resources` | CRUD |
 | Virtual Networks | `Microsoft.Network` | VNets, subnets, NSGs |
 | Private DNS | `Microsoft.Network` | Zones, A records, VNet links |

@@ -13,21 +13,27 @@ Surface registered in `simulators/gcp/sqladmin.go` (and related files grouped un
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/projects/{project}/instances` | ✓ `simulators/gcp/sqladmin.go:104::handleSQLInsertInstance` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:105::handleSQLGetInstance` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances` | ✓ `simulators/gcp/sqladmin.go:106::handleSQLListInstances` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `PATCH /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:107::handleSQLPatchInstance` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:108::handleSQLDeleteInstance` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/instances/{instance}/databases` | ✓ `simulators/gcp/sqladmin.go:110::handleSQLInsertDatabase` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances/{instance}/databases` | ✓ `simulators/gcp/sqladmin.go:111::handleSQLListDatabases` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `simulators/gcp/sqladmin.go:112::handleSQLDeleteDatabase` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:114::handleSQLInsertUser` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:115::handleSQLListUsers` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/instances/{instance}/backupRuns` | ✓ `simulators/gcp/sqladmin.go:117::handleSQLInsertBackupRun` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances/{instance}/backupRuns` | ✓ `simulators/gcp/sqladmin.go:118::handleSQLListBackupRuns` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `GET /v1/projects/{project}/instances/{instance}/backupRuns/{id}` | ✓ `simulators/gcp/sqladmin.go:119::handleSQLGetBackupRun` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `DELETE /v1/projects/{project}/instances/{instance}/backupRuns/{id}` | ✓ `simulators/gcp/sqladmin.go:120::handleSQLDeleteBackupRun` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `POST /v1/projects/{project}/instances/{instance}/clone` | ✓ `simulators/gcp/sqladmin.go:121::handleSQLCloneInstance` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/instances` | ✓ `simulators/gcp/sqladmin.go:111::handleSQLInsertInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:112::handleSQLGetInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances` | ✓ `simulators/gcp/sqladmin.go:113::handleSQLListInstances` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `PATCH /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:114::handleSQLPatchInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `DELETE /v1/projects/{project}/instances/{instance}` | ✓ `simulators/gcp/sqladmin.go:115::handleSQLDeleteInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `POST /v1/projects/{project}/instances/{instance}/databases` | ✓ `simulators/gcp/sqladmin.go:117::handleSQLInsertDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `simulators/gcp/sqladmin.go:118::handleSQLGetDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/databases` | ✓ `simulators/gcp/sqladmin.go:119::handleSQLListDatabases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `DELETE /v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `simulators/gcp/sqladmin.go:120::handleSQLDeleteDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `POST /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:122::handleSQLInsertUser` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/users/{name}` | ✓ `simulators/gcp/sqladmin.go:123::handleSQLGetUser` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:124::handleSQLListUsers` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `PUT /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:125::handleSQLUpdateUser` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `DELETE /v1/projects/{project}/instances/{instance}/users` | ✓ `simulators/gcp/sqladmin.go:126::handleSQLDeleteUser` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `POST /v1/projects/{project}/instances/{instance}/backupRuns` | ✓ `simulators/gcp/sqladmin.go:128::handleSQLInsertBackupRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/backupRuns` | ✓ `simulators/gcp/sqladmin.go:129::handleSQLListBackupRuns` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/instances/{instance}/backupRuns/{id}` | ✓ `simulators/gcp/sqladmin.go:130::handleSQLGetBackupRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `DELETE /v1/projects/{project}/instances/{instance}/backupRuns/{id}` | ✓ `simulators/gcp/sqladmin.go:131::handleSQLDeleteBackupRun` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `POST /v1/projects/{project}/instances/{instance}/clone` | ✓ `simulators/gcp/sqladmin.go:132::handleSQLCloneInstance` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/operations/{operation}` | ✓ `simulators/gcp/sqladmin.go:134::handleSQLGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
+| `GET /v1/projects/{project}/operations` | ✓ `simulators/gcp/sqladmin.go:135::handleSQLListOperations` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | also mounted at `/sql/v1beta4` |
 
 ## Coverage status
 

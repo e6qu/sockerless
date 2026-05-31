@@ -75,3 +75,64 @@ func TestDNS_DeleteManagedZone(t *testing.T) {
 	err = svc.ManagedZones.Delete("test-project", "del-zone").Do()
 	require.NoError(t, err)
 }
+
+func TestDNS_ChangesAndPatchRecordSet(t *testing.T) {
+	svc := dnsService(t)
+	project := "test-project"
+	zoneName := "changes-zone"
+
+	_, err := svc.ManagedZones.Create(project, &dns.ManagedZone{
+		Name:    zoneName,
+		DnsName: "changes.example.com.",
+	}).Do()
+	require.NoError(t, err)
+
+	createChange, err := svc.Changes.Create(project, zoneName, &dns.Change{
+		Additions: []*dns.ResourceRecordSet{{
+			Name:    "www.changes.example.com.",
+			Type:    "A",
+			Ttl:     300,
+			Rrdatas: []string{"203.0.113.10"},
+		}},
+	}).Do()
+	require.NoError(t, err)
+	require.Equal(t, "done", createChange.Status)
+	require.NotEmpty(t, createChange.Id)
+
+	gotChange, err := svc.Changes.Get(project, zoneName, createChange.Id).Do()
+	require.NoError(t, err)
+	require.Equal(t, createChange.Id, gotChange.Id)
+
+	changeList, err := svc.Changes.List(project, zoneName).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, changeList.Changes)
+
+	patched, err := svc.ResourceRecordSets.Patch(project, zoneName, "www.changes.example.com.", "A", &dns.ResourceRecordSet{
+		Ttl:     600,
+		Rrdatas: []string{"203.0.113.11"},
+	}).Do()
+	require.NoError(t, err)
+	require.EqualValues(t, 600, patched.Ttl)
+	require.Equal(t, []string{"203.0.113.11"}, patched.Rrdatas)
+
+	replaceChange, err := svc.Changes.Create(project, zoneName, &dns.Change{
+		Deletions: []*dns.ResourceRecordSet{{
+			Name:    "www.changes.example.com.",
+			Type:    "A",
+			Ttl:     600,
+			Rrdatas: []string{"203.0.113.11"},
+		}},
+		Additions: []*dns.ResourceRecordSet{{
+			Name:    "www.changes.example.com.",
+			Type:    "A",
+			Ttl:     300,
+			Rrdatas: []string{"203.0.113.12"},
+		}},
+	}).Do()
+	require.NoError(t, err)
+	require.Equal(t, "done", replaceChange.Status)
+
+	record, err := svc.ResourceRecordSets.Get(project, zoneName, "www.changes.example.com.", "A").Do()
+	require.NoError(t, err)
+	require.Equal(t, []string{"203.0.113.12"}, record.Rrdatas)
+}

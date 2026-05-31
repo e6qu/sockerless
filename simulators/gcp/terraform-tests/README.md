@@ -4,7 +4,7 @@ Integration tests that run `terraform apply` and `terraform destroy` against the
 
 Resources covered:
 - `google_compute_network` + `google_compute_disk` + `google_compute_subnetwork` + `google_compute_firewall`
-- `google_dns_managed_zone` (public + private)
+- `google_dns_managed_zone` (public + private) + `google_dns_record_set`
 - `google_artifact_registry_repository` (Docker)
 - `google_cloud_run_v2_service` + `google_cloud_run_v2_job`
 - `google_cloudfunctions2_function`
@@ -16,6 +16,8 @@ Resources covered:
 - `google_logging_project_sink` + `google_logging_metric`
 - `google_bigquery_dataset` + `google_bigquery_table`
 - `google_firestore_document`
+- `google_redis_instance`
+- `google_sql_database_instance` + `google_sql_database` + `google_sql_user`
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
 - `google_service_account` (via `iam_beta_custom_endpoint`)
 

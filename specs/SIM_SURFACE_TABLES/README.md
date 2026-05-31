@@ -27,6 +27,7 @@ Re-run `bash scripts/seed-surface-tables.sh` after adding new `HandleFunc` regis
 - [`aws-kms`](aws-kms.md)
 - [`aws-lambda`](aws-lambda.md)
 - [`aws-rds`](aws-rds.md)
+- [`aws-route53`](aws-route53.md)
 - [`aws-s3-bucket-subresources`](aws-s3-bucket-subresources.md)
 - [`aws-s3-multipart`](aws-s3-multipart.md)
 - [`aws-s3`](aws-s3.md)

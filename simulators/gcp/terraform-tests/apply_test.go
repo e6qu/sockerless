@@ -2,6 +2,8 @@ package gcp_tf_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +14,9 @@ import (
 // (compute network + disk + subnet + firewall + regional address + Cloud NAT +
 // global HTTP load balancer, public + private DNS zones, Artifact Registry,
 // Cloud Run v2 Service + Job, Cloud Functions v2, Pub/Sub, Cloud Build trigger,
-// Cloud Storage bucket + object, Cloud Logging sink/metric, BigQuery dataset/table, Firestore
-// document, Eventarc trigger, Secret Manager, IAM service account) in a single
+// Cloud Storage bucket + object, Cloud Logging sink/metric, BigQuery dataset/table,
+// Firestore document, Memorystore Redis, Cloud SQL instance/database/user,
+// Eventarc trigger, Secret Manager, IAM service account) in a single
 // terraform apply round-trip and asserts the cross-resource references
 // converged.
 //
@@ -21,7 +24,7 @@ import (
 //   - compute.googleapis.com (networks + disks + subnetworks + firewalls +
 //     addresses + routers + router NATs + healthChecks + backendServices +
 //     urlMaps + targetHttpProxies + globalForwardingRules)
-//   - dns.googleapis.com (public + private managedZones)
+//   - dns.googleapis.com (public + private managedZones + record sets via Changes)
 //   - artifactregistry.googleapis.com (Docker repository)
 //   - run.googleapis.com v2 (Service + Job)
 //   - cloudfunctions.googleapis.com v2 (Function)
@@ -32,11 +35,14 @@ import (
 //   - logging.googleapis.com (project sink + metric)
 //   - bigquery.googleapis.com (dataset + table)
 //   - firestore.googleapis.com (document)
+//   - redis.googleapis.com (Memorystore Redis instance)
+//   - sqladmin.googleapis.com (Cloud SQL instance + database + user)
 //   - secretmanager.googleapis.com (secret + version)
 //   - iam.googleapis.com (service account — via iam_beta_custom_endpoint;
 //     terraform-provider-google routes the resource through iambeta.NewClient
 //     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
 func TestTerraformApplyDestroy(t *testing.T) {
+	cleanTerraformWorkspace(t)
 	init := terraformCmd("init")
 	init.Stdout = nil
 	init.Stderr = nil
@@ -52,6 +58,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	diskLink := outputs.must(t, "compute_disk_self_link")
 	require.Contains(t, diskLink, "/zones/us-central1-a/disks/tf-test-disk",
 		"compute disk self_link must round-trip the zone+name; got %s", diskLink)
+
+	dnsRecordID := outputs.must(t, "dns_record_set_id")
+	require.Contains(t, dnsRecordID, "projects/test-project/managedZones/tf-test-zone/rrsets/www.tf-test.example.com./A",
+		"DNS record-set id must include managed zone, FQDN, and type; got %s", dnsRecordID)
 
 	arRepoID := outputs.must(t, "ar_repo_id")
 	require.Contains(t, arRepoID, "projects/test-project/locations/us-central1/repositories/tf-ar-docker",
@@ -170,9 +180,44 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, fsDocName, "projects/test-project/databases/(default)/documents/tf-users/alice",
 		"Firestore document name must round-trip the canonical document path; got %s", fsDocName)
 
+	redisID := outputs.must(t, "redis_instance_id")
+	require.Contains(t, redisID, "projects/test-project/locations/us-central1/instances/tf-redis",
+		"Memorystore Redis id must round-trip the full resource path; got %s", redisID)
+
+	redisHost := outputs.must(t, "redis_instance_host")
+	require.True(t, strings.HasPrefix(redisHost, "10."),
+		"Memorystore Redis host must be an RFC1918 address; got %s", redisHost)
+
+	sqlConnectionName := outputs.must(t, "sql_instance_connection_name")
+	require.Equal(t, "test-project:us-central1:tf-sql", sqlConnectionName,
+		"Cloud SQL connection name must match project:region:instance; got %s", sqlConnectionName)
+
+	sqlDatabaseID := outputs.must(t, "sql_database_id")
+	require.Contains(t, sqlDatabaseID, "projects/test-project/instances/tf-sql/databases/appdb",
+		"Cloud SQL database id must include instance and database name; got %s", sqlDatabaseID)
+
+	sqlUserName := outputs.must(t, "sql_user_name")
+	require.Equal(t, "appuser", sqlUserName,
+		"Cloud SQL user name must round-trip through terraform state; got %s", sqlUserName)
+
 	destroy := terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev")
 	out, err = destroy.CombinedOutput()
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func cleanTerraformWorkspace(t *testing.T) {
+	t.Helper()
+	dir := filepath.Dir(mustAbs("main.tf"))
+	for _, name := range []string{
+		".terraform",
+		".terraform.lock.hcl",
+		"terraform.tfstate",
+		"terraform.tfstate.backup",
+		"crash.log",
+	} {
+		err := os.RemoveAll(filepath.Join(dir, name))
+		require.NoError(t, err, "clean terraform workspace artifact %s", name)
+	}
 }
 
 type tfOutputs map[string]struct {
