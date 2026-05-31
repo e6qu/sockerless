@@ -20,15 +20,16 @@ Surface registered in `simulators/aws/route53.go`. Rows below are the Route 53 R
 | `DELETE /2013-04-01/hostedzone/{id}` | ✓ `simulators/aws/route53.go:489::handleR53DeleteHostedZone` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /2013-04-01/hostedzone/{id}/rrset` | ✓ `simulators/aws/route53.go:616::handleR53ChangeRRSets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /2013-04-01/hostedzone/{id}/rrset/` | ✓ `simulators/aws/route53.go:616::handleR53ChangeRRSets` | n/a | n/a | n/a | AWS CLI path variant with trailing slash. |
-| `GET /2013-04-01/hostedzone/{id}/rrset` | ✓ `simulators/aws/route53.go:709::handleR53ListRRSets` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /2013-04-01/hostedzone/{id}/rrset/` | ✓ `simulators/aws/route53.go:709::handleR53ListRRSets` | n/a | n/a | n/a | AWS CLI path variant with trailing slash. |
-| `GET /2013-04-01/change/{id}` | ✓ `simulators/aws/route53.go:757::handleR53GetChange` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /2013-04-01/hostedzone/{id}/rrset` | ✓ `simulators/aws/route53.go:710::handleR53ListRRSets` | ✓ `simulators/aws/sdk-tests/route53_test.go::TestRoute53ListResourceRecordSetsSortedCursor` | ✓ (direct; see coverage matrix) | ✓ SDK test covers reversed-label ordering, start-name/type cursoring, `MaxItems`, `IsTruncated`, `NextRecordName`, and `NextRecordType` | |
+| `GET /2013-04-01/hostedzone/{id}/rrset/` | ✓ `simulators/aws/route53.go:710::handleR53ListRRSets` | n/a | n/a | n/a | AWS CLI path variant with trailing slash. |
+| `GET /2013-04-01/change/{id}` | ✓ `simulators/aws/route53.go:832::handleR53GetChange` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /2013-04-01/tags/{resourceType}/{resourceId}` | ✓ `simulators/aws/route53.go:361::handleR53ListTagsForResource` | n/a | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws Route 53 zone tag reads when tags are configured. |
 | `POST /2013-04-01/tags/{resourceType}/{resourceId}` | ✓ `simulators/aws/route53.go:374::handleR53ChangeTagsForResource` | n/a | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws Route 53 zone tag writes when tags are configured. |
 
 ## Coverage status
 
 - Route 53 hosted-zone and record lifecycle coverage uses the official AWS SDK, AWS CLI, and terraform-provider-aws resources.
+- Issue #296 / BUG-1238 closed the `ListResourceRecordSets` ordering gap: record sets are listed by Route 53's reversed-label DNS-name order, then type, then set identifier, and the response honors `maxitems` with continuation cursor fields.
 - `ListHostedZonesByName` was added for issue #291 / BUG-1233 and is covered through the official AWS SDK and AWS CLI surfaces. The pinned Terraform provider source was checked at v6.47.0; its current Route 53 zone data sources use `ListHostedZones`, not `ListHostedZonesByName`, so there is no Terraform provider call path for this exact API operation today.
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 

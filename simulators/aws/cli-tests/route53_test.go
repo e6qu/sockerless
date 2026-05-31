@@ -102,6 +102,56 @@ func TestRoute53_ZoneAndRecord(t *testing.T) {
 	runCLI(t, awsCLI("route53", "delete-hosted-zone", "--id", zoneID))
 }
 
+func TestRoute53_ListResourceRecordSetsSortedCursor(t *testing.T) {
+	caller := "cli-r53-cursor-" + time.Now().Format("150405.000000")
+	out := runCLI(t, awsCLI("route53", "create-hosted-zone",
+		"--name", "cli-cursor-sort.example.com.",
+		"--caller-reference", caller,
+		"--output", "json",
+	))
+	var createResult struct {
+		HostedZone struct {
+			Id string `json:"Id"`
+		} `json:"HostedZone"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &createResult))
+	zoneID := strings.TrimPrefix(createResult.HostedZone.Id, "/hostedzone/")
+	require.NotEmpty(t, zoneID)
+	t.Cleanup(func() {
+		delJSON := `{"Changes":[{"Action":"DELETE","ResourceRecordSet":{"Name":"api.cli-cursor-sort.example.com.","Type":"A","TTL":300,"ResourceRecords":[{"Value":"192.0.2.20"}]}}]}`
+		_ = awsCLI("route53", "change-resource-record-sets",
+			"--hosted-zone-id", zoneID,
+			"--change-batch", delJSON,
+		).Run()
+		_ = awsCLI("route53", "delete-hosted-zone", "--id", zoneID).Run()
+	})
+
+	changeJSON := `{"Changes":[{"Action":"UPSERT","ResourceRecordSet":{"Name":"api.cli-cursor-sort.example.com.","Type":"A","TTL":300,"ResourceRecords":[{"Value":"192.0.2.20"}]}}]}`
+	runCLI(t, awsCLI("route53", "change-resource-record-sets",
+		"--hosted-zone-id", zoneID,
+		"--change-batch", changeJSON,
+		"--output", "json",
+	))
+
+	listOut := runCLI(t, awsCLI("route53", "list-resource-record-sets",
+		"--hosted-zone-id", zoneID,
+		"--start-record-name", "api.cli-cursor-sort.example.com.",
+		"--start-record-type", "A",
+		"--max-items", "1",
+		"--output", "json",
+	))
+	var listResult struct {
+		ResourceRecordSets []struct {
+			Name string `json:"Name"`
+			Type string `json:"Type"`
+		} `json:"ResourceRecordSets"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listOut), &listResult))
+	require.Len(t, listResult.ResourceRecordSets, 1)
+	require.Equal(t, "api.cli-cursor-sort.example.com.", listResult.ResourceRecordSets[0].Name)
+	require.Equal(t, "A", listResult.ResourceRecordSets[0].Type)
+}
+
 func TestRoute53_ListHostedZonesByName(t *testing.T) {
 	suffix := strings.ReplaceAll(time.Now().Format("150405.000000"), ".", "-")
 	alphaName := "alpha.cli-r53-by-name-" + suffix + ".example.com"

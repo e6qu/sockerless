@@ -13,16 +13,16 @@ Surface registered in `simulators/aws/cloudwatch.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action Logs_20140328.CreateLogGroup` | ✓ `simulators/aws/cloudwatch.go:69::handleCWCreateLogGroup` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action Logs_20140328.DescribeLogGroups` | ✓ `simulators/aws/cloudwatch.go:70::handleCWDescribeLogGroups` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action Logs_20140328.DeleteLogGroup` | ✓ `simulators/aws/cloudwatch.go:71::handleCWDeleteLogGroup` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `Action Logs_20140328.CreateLogGroup` | ✓ `simulators/aws/cloudwatch.go:69::handleCWCreateLogGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws `aws_cloudwatch_log_group`. |
+| `Action Logs_20140328.DescribeLogGroups` | ✓ `simulators/aws/cloudwatch.go:70::handleCWDescribeLogGroups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws `aws_cloudwatch_log_group` refresh. |
+| `Action Logs_20140328.DeleteLogGroup` | ✓ `simulators/aws/cloudwatch.go:71::handleCWDeleteLogGroup` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws `aws_cloudwatch_log_group` destroy. |
 | `Action Logs_20140328.CreateLogStream` | ✓ `simulators/aws/cloudwatch.go:72::handleCWCreateLogStream` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 | `Action Logs_20140328.DescribeLogStreams` | ✓ `simulators/aws/cloudwatch.go:73::handleCWDescribeLogStreams` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 | `Action Logs_20140328.PutLogEvents` | ✓ `simulators/aws/cloudwatch.go:74::handleCWPutLogEvents` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 | `Action Logs_20140328.GetLogEvents` | ✓ `simulators/aws/cloudwatch.go:75::handleCWGetLogEvents` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 | `Action Logs_20140328.FilterLogEvents` | ✓ `simulators/aws/cloudwatch.go:76::handleCWFilterLogEvents` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action Logs_20140328.PutRetentionPolicy` | ✓ `simulators/aws/cloudwatch.go:77::handleCWPutRetentionPolicy` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
-| `Action Logs_20140328.ListTagsForResource` | ✓ `simulators/aws/cloudwatch.go:78::handleCWListTagsForResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
+| `Action Logs_20140328.PutRetentionPolicy` | ✓ `simulators/aws/cloudwatch.go:77::handleCWPutRetentionPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws `retention_in_days`. |
+| `Action Logs_20140328.ListTagsForResource` | ✓ `simulators/aws/cloudwatch.go:78::handleCWListTagsForResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | Covered by terraform-provider-aws log-group tag refresh. |
 | `Action Logs_20140328.TagResource` | ✓ `simulators/aws/cloudwatch.go:79::handleCWTagResource` | ✓ (direct; see coverage matrix) | n/a (not exposed by provider; see coverage matrix) | n/a | |
 
 ## Coverage status

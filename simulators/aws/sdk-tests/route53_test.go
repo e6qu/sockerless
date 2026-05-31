@@ -232,6 +232,88 @@ func TestRoute53RecordCRUD(t *testing.T) {
 	assert.Equal(t, r53types.ChangeStatusInsync, getChangeOut.ChangeInfo.Status)
 }
 
+func TestRoute53ListResourceRecordSetsSortedCursor(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	zoneOut, err := c.CreateHostedZone(ctx, &route53.CreateHostedZoneInput{
+		Name:            aws.String("cursor-sort.example.com."),
+		CallerReference: aws.String("sdk-rr-cursor-" + time.Now().Format("150405.000000")),
+	})
+	require.NoError(t, err)
+	zoneID := strings.TrimPrefix(aws.ToString(zoneOut.HostedZone.Id), "/hostedzone/")
+	defer func() {
+		_, _ = c.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+			HostedZoneId: aws.String(zoneID),
+			ChangeBatch: &r53types.ChangeBatch{
+				Changes: []r53types.Change{{
+					Action: r53types.ChangeActionDelete,
+					ResourceRecordSet: &r53types.ResourceRecordSet{
+						Name:            aws.String("api.cursor-sort.example.com."),
+						Type:            r53types.RRTypeA,
+						TTL:             aws.Int64(300),
+						ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("192.0.2.10")}},
+					},
+				}},
+			},
+		})
+		_, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)})
+	}()
+
+	_, err = c.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{
+			Changes: []r53types.Change{{
+				Action: r53types.ChangeActionUpsert,
+				ResourceRecordSet: &r53types.ResourceRecordSet{
+					Name:            aws.String("api.cursor-sort.example.com."),
+					Type:            r53types.RRTypeA,
+					TTL:             aws.Int64(300),
+					ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("192.0.2.10")}},
+				},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	page, err := c.ListResourceRecordSets(ctx, &route53.ListResourceRecordSetsInput{
+		HostedZoneId:    aws.String(zoneID),
+		StartRecordName: aws.String("api.cursor-sort.example.com."),
+		StartRecordType: r53types.RRTypeA,
+		MaxItems:        aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, page.ResourceRecordSets, 1)
+	require.Equal(t, "api.cursor-sort.example.com.", aws.ToString(page.ResourceRecordSets[0].Name))
+	require.Equal(t, r53types.RRTypeA, page.ResourceRecordSets[0].Type)
+	require.False(t, page.IsTruncated)
+
+	firstApexPage, err := c.ListResourceRecordSets(ctx, &route53.ListResourceRecordSetsInput{
+		HostedZoneId:    aws.String(zoneID),
+		StartRecordName: aws.String("cursor-sort.example.com."),
+		MaxItems:        aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, firstApexPage.ResourceRecordSets, 1)
+	require.Equal(t, "cursor-sort.example.com.", aws.ToString(firstApexPage.ResourceRecordSets[0].Name))
+	require.Equal(t, r53types.RRTypeNs, firstApexPage.ResourceRecordSets[0].Type)
+	require.True(t, firstApexPage.IsTruncated)
+	require.Equal(t, "cursor-sort.example.com.", aws.ToString(firstApexPage.NextRecordName))
+	require.Equal(t, r53types.RRTypeSoa, firstApexPage.NextRecordType)
+
+	secondApexPage, err := c.ListResourceRecordSets(ctx, &route53.ListResourceRecordSetsInput{
+		HostedZoneId:    aws.String(zoneID),
+		StartRecordName: firstApexPage.NextRecordName,
+		StartRecordType: firstApexPage.NextRecordType,
+		MaxItems:        aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, secondApexPage.ResourceRecordSets, 1)
+	require.Equal(t, "cursor-sort.example.com.", aws.ToString(secondApexPage.ResourceRecordSets[0].Name))
+	require.Equal(t, r53types.RRTypeSoa, secondApexPage.ResourceRecordSets[0].Type)
+}
+
 func TestRoute53AliasTargetForCloudFront(t *testing.T) {
 	c := r53Client()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
