@@ -17,6 +17,8 @@ The stage added `make stack-https-up`, `make stack-https-status`, `make stack-ht
 
 `STACK_HTTPS=1 make stack-azure-aca` now starts the gateway with the local stack and configures Azure ARM-advertised data-plane endpoint projection under the gateway hostnames. Direct HTTP and direct simulator TLS through `SIM_TLS_CERT` / `SIM_TLS_KEY` remain supported.
 
+Caddy's local CA trust-store installation was disabled with `skip_install_trust`. The gateway still issues internal certificates, and provider tests still validate TLS by trusting the exported Caddy root through `SSL_CERT_FILE` or equivalent client CA knobs. This avoided non-interactive CI hangs and did not introduce insecure TLS or a fallback path.
+
 The admin UI topology page now shows gateway status, endpoints, CA path, and the equivalent recovery `make` commands.
 
 ## 2026-05-31 - Azure Terraform Through Local HTTPS Gateway

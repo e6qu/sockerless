@@ -39,6 +39,7 @@ Implemented gateway surface:
 
 - `make stack-https-up`, `make stack-https-status`, `make stack-https-ca`, `make stack-https-down`.
 - Caddy routes for AWS, GCP, Azure ARM/metadata, Azure host-addressed data-plane wildcards including Cosmos DB documents, and an explicit `https://localhost:<port>` single-simulator route used by AWS/GCP Terraform HTTPS harnesses.
+- Caddy's local CA trust-store installation was disabled with `skip_install_trust`; tests and clients trust the exported CA file explicitly through knobs like `SSL_CERT_FILE`, so gateway startup stayed non-interactive while TLS verification remained enabled.
 - `STACK_HTTPS=1` stack integration for local dev stacks.
 - Admin UI topology card for gateway status, endpoints, CA path, and recovery commands.
 - Azure Terraform tests started the simulator on HTTP loopback, started Caddy with per-test state and CA, used `metadata_host`/ARM endpoint through `https://azure.sockerless.localhost:<port>`, and passed the Caddy root CA through `SSL_CERT_FILE`.

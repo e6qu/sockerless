@@ -28,6 +28,7 @@ The Azure ARM/DNS PR closed the narrow control-plane list/validation group. The 
 ## Completed Gateway Stage
 
 - Caddy config plus `make stack-https-{up,status,ca,down}` targets.
+- Caddy local-CA trust-store installation was disabled with `skip_install_trust`; provider tests trusted the exported CA file explicitly and kept TLS verification enabled.
 - HTTPS routes to current simulator ports:
    - `aws.sockerless.localhost` -> `127.0.0.1:4566`
    - `gcp.sockerless.localhost` -> `127.0.0.1:4567`

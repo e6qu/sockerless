@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1268 filed - 1265 fixed - 6 open - 2 false positives.**
+**1269 filed - 1266 fixed - 6 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -19,10 +19,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-Last phase closed BUG-1268 / issues #313, #314, and #340:
+Last phase closed BUG-1268 and BUG-1269 / issues #313, #314, and #340:
 
 - BUG-1268 / issue #340: Azure Private DNS now implements `PrivateZonesClient.NewListByResourceGroupPager` at `GET .../privateDnsZones`, and virtual network links now implement the public list-by-zone endpoint. Both paths are covered by the real Azure SDK and Azure CLI.
 - Issues #313 and #314: Azure ARM control-plane requests now reject missing `api-version` with `InvalidApiVersionParameter`, the dead unused AzureRouter validator was removed, and simulator list serialization returns `{"value":[]}` instead of `{"value":null}` for empty stores.
+- BUG-1269: AWS Terraform HTTPS CI could hang waiting for Caddy because `tls internal` attempted to install the generated local CA into CI runner trust stores even though the harness already trusted the CA through `SSL_CERT_FILE`. The shared gateway Caddyfile now uses `skip_install_trust`; tests still verify TLS normally with the exported CA file, and Caddy startup no longer performs host trust-store mutation.
 
 Earlier recent phase closed BUG-1265..BUG-1266 / issues #330-#331:
 

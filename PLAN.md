@@ -41,6 +41,7 @@ This is local transport infrastructure, not a simulator public API change. Publi
 Implemented:
 
 - Caddy config and `make stack-https-{up,status,ca,down}` targets.
+- Caddy local-CA trust-store installation was disabled with `skip_install_trust`; tests trusted the generated CA explicitly through `SSL_CERT_FILE` or client-specific CA knobs instead of mutating host trust stores.
 - HTTPS routing for `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards, including Cosmos DB documents.
 - `STACK_HTTPS=1 make stack-azure-aca` style stack integration, including Azure ARM-advertised data-plane URL projection.
 - Admin API/UI visibility for gateway status, endpoints, CA path, and recovery make commands.
