@@ -158,7 +158,14 @@ done
 fc_put() {
   path="$1"
   payload="$2"
-  sudo curl -fsS -X PUT --unix-socket "$api_socket" --data "$payload" "http://localhost${path}" >/dev/null
+  response="$workdir/firecracker-api-response.txt"
+  if ! sudo curl -fsS -X PUT --unix-socket "$api_socket" --data "$payload" -o "$response" "http://localhost${path}"; then
+    echo "Firecracker API PUT $path failed" >&2
+    if [ -s "$response" ]; then
+      cat "$response" >&2
+    fi
+    return 1
+  fi
 }
 
 fc_put /logger "{
@@ -167,6 +174,11 @@ fc_put /logger "{
   \"show_level\": true,
   \"show_log_origin\": true
 }"
+
+fc_put /machine-config '{
+  "vcpu_count": 2,
+  "mem_size_mib": 1024
+}'
 
 boot_args="console=ttyS0 reboot=k panic=1"
 if [ "$arch" = "aarch64" ]; then
@@ -190,11 +202,6 @@ fc_put /network-interfaces/net1 "{
   \"guest_mac\": \"$guest_mac\",
   \"host_dev_name\": \"$tap_dev\"
 }"
-
-fc_put /machine-config '{
-  "vcpu_count": 2,
-  "mem_size_mib": 1024
-}'
 
 fc_put /actions '{
   "action_type": "InstanceStart"
