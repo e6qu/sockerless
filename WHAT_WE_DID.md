@@ -71,6 +71,18 @@ The missing Amplify artifact and access-log operations were added on the AWS SDK
 
 The fixes shipped with real AWS SDK and AWS CLI coverage. Terraform coverage was not added because the official Terraform AWS provider does not expose these Amplify job artifact or access-log operations.
 
+## 2026-05-31 - GCP Fidelity and Client-Surface Sweep
+
+Issue #304 and issues #309-#311 and #321-#325 were fixed in one GCP simulator PR.
+
+The stale GCP client-surface rows were corrected with real public clients. API Gateway, Cloud Build, IAM, and Pub/Sub now have gcloud coverage where the public CLI exposes the surface. API Gateway also has Terraform provider coverage through `google-beta` resources for APIs, API configs, and gateways.
+
+Cloud Run services/jobs/executions and Cloud Functions list paths now return empty arrays instead of JSON nulls, apply stable ordering, support `pageSize`/`pageToken`, and emit canonical millisecond timestamps. Long-running operations now use the public metadata `@type` values expected by official Google SDK operation decoders.
+
+Cloud Logging severity comparisons now use Google severity ranks. GCS object metadata now includes generation, metageneration, CRC32C, MD5 where applicable, and compose component counts. Bucket IAM policy responses now include public `kind`, `resourceId`, and base64 etags. Cloud SQL backup insert/delete paths now return SQL Admin operation shapes, and Cloud DNS precondition mismatches now return canonical `FAILED_PRECONDITION` error details.
+
+The fixes passed the GCP simulator package tests plus real Google SDK, gcloud, and Terraform provider suites.
+
 ## 2026-05-31 - Azure ARM and Private DNS Fidelity Sweep
 
 Issues #313, #314, and #340 were fixed in one Azure simulator PR.
@@ -121,8 +133,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 
 - BUG-1075: live-cloud validation remains intentionally deferred. Do not mark live cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
-- BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered during the latest audit pass.
-- BUG-1263: GCP API-shape issues #309-#311 and #321-#325 remain open.
+- BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264: Azure API-shape issues #312, #315, and #326-#329 remain open.
 - BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. It needs staged architecture work before Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs.
 

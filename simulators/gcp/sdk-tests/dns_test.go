@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -135,4 +136,41 @@ func TestDNS_ChangesAndPatchRecordSet(t *testing.T) {
 	record, err := svc.ResourceRecordSets.Get(project, zoneName, "www.changes.example.com.", "A").Do()
 	require.NoError(t, err)
 	require.Equal(t, []string{"203.0.113.12"}, record.Rrdatas)
+}
+
+func TestDNS_ChangesCreatePreconditionUsesCanonicalStatus(t *testing.T) {
+	svc := dnsService(t)
+	project := "test-project"
+	zoneName := "precondition-zone"
+
+	_, err := svc.ManagedZones.Create(project, &dns.ManagedZone{
+		Name:    zoneName,
+		DnsName: "precondition.example.com.",
+	}).Do()
+	require.NoError(t, err)
+
+	_, err = svc.Changes.Create(project, zoneName, &dns.Change{
+		Additions: []*dns.ResourceRecordSet{{
+			Name:    "www.precondition.example.com.",
+			Type:    "A",
+			Ttl:     300,
+			Rrdatas: []string{"203.0.113.10"},
+		}},
+	}).Do()
+	require.NoError(t, err)
+
+	_, err = svc.Changes.Create(project, zoneName, &dns.Change{
+		Deletions: []*dns.ResourceRecordSet{{
+			Name:    "www.precondition.example.com.",
+			Type:    "A",
+			Ttl:     300,
+			Rrdatas: []string{"203.0.113.99"},
+		}},
+	}).Do()
+	require.Error(t, err)
+	gerr, ok := err.(*googleapi.Error)
+	require.True(t, ok)
+	require.Equal(t, 412, gerr.Code)
+	require.NotEmpty(t, gerr.Errors)
+	assert.Equal(t, "FAILED_PRECONDITION", gerr.Errors[0].Reason)
 }

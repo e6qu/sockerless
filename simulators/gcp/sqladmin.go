@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -77,7 +79,7 @@ type SQLOperation struct {
 // sim-state-machine-completeness skill).
 type SQLBackupRun struct {
 	Kind         string `json:"kind"`
-	ID           string `json:"id"`
+	ID           int64  `json:"id,string"`
 	Instance     string `json:"instance"`
 	Description  string `json:"description,omitempty"`
 	Status       string `json:"status"` // ENQUEUED|RUNNING|SUCCESSFUL|FAILED
@@ -135,8 +137,8 @@ func registerCloudSQLPrefix(srv *sim.Server, prefix string) {
 	srv.HandleFunc("GET "+prefix+"/projects/{project}/operations", handleSQLListOperations)
 }
 
-func sqlBackupRunKey(project, instance, id string) string {
-	return project + "/" + instance + "/" + id
+func sqlBackupRunKey(project, instance string, id int64) string {
+	return project + "/" + instance + "/" + strconv.FormatInt(id, 10)
 }
 
 func handleSQLInsertBackupRun(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +148,7 @@ func handleSQLInsertBackupRun(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found", instance)
 		return
 	}
-	id := generateUUID()
+	id := time.Now().UTC().UnixNano()
 	now := nowTimestamp()
 	br := SQLBackupRun{
 		Kind:         "sql#backupRun",
@@ -157,10 +159,11 @@ func handleSQLInsertBackupRun(w http.ResponseWriter, r *http.Request) {
 		StartTime:    now,
 		EndTime:      now,
 		Type:         "ON_DEMAND",
-		SelfLink:     gcpSelfLink(r, sqlAPIPrefix(r)+"/projects/"+project+"/instances/"+instance+"/backupRuns/"+id),
+		SelfLink:     gcpSelfLink(r, sqlAPIPrefix(r)+"/projects/"+project+"/instances/"+instance+"/backupRuns/"+strconv.FormatInt(id, 10)),
 	}
 	sqlBackupRuns.Put(sqlBackupRunKey(project, instance, id), br)
-	sim.WriteJSON(w, http.StatusOK, br)
+	op := newSQLOperation(project, "BACKUP_VOLUME", instance)
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func handleSQLListBackupRuns(w http.ResponseWriter, r *http.Request) {
@@ -182,11 +185,14 @@ func handleSQLListBackupRuns(w http.ResponseWriter, r *http.Request) {
 func handleSQLGetBackupRun(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	instance := sim.PathParam(r, "instance")
-	id := sim.PathParam(r, "id")
+	id, ok := parseSQLBackupRunID(w, sim.PathParam(r, "id"))
+	if !ok {
+		return
+	}
 	br, ok := sqlBackupRuns.Get(sqlBackupRunKey(project, instance, id))
 	if !ok {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
-			"backupRun %q on instance %q not found", id, instance)
+			"backupRun %q on instance %q not found", sim.PathParam(r, "id"), instance)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, br)
@@ -195,13 +201,26 @@ func handleSQLGetBackupRun(w http.ResponseWriter, r *http.Request) {
 func handleSQLDeleteBackupRun(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	instance := sim.PathParam(r, "instance")
-	id := sim.PathParam(r, "id")
-	if !sqlBackupRuns.Delete(sqlBackupRunKey(project, instance, id)) {
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
-			"backupRun %q on instance %q not found", id, instance)
+	id, ok := parseSQLBackupRunID(w, sim.PathParam(r, "id"))
+	if !ok {
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	if !sqlBackupRuns.Delete(sqlBackupRunKey(project, instance, id)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+			"backupRun %q on instance %q not found", sim.PathParam(r, "id"), instance)
+		return
+	}
+	op := newSQLOperation(project, "DELETE_BACKUP", instance)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func parseSQLBackupRunID(w http.ResponseWriter, raw string) (int64, bool) {
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "backupRun id must be an int64: %s", raw)
+		return 0, false
+	}
+	return id, true
 }
 
 // handleSQLCloneInstance creates a new instance from an existing

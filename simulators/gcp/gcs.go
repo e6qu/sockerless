@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -67,7 +68,11 @@ type GCSObject struct {
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	TimeCreated        string            `json:"timeCreated"`
 	Updated            string            `json:"updated"`
+	Generation         string            `json:"generation,omitempty"`
+	Metageneration     string            `json:"metageneration,omitempty"`
 	Md5Hash            string            `json:"md5Hash,omitempty"`
+	Crc32c             string            `json:"crc32c,omitempty"`
+	ComponentCount     int64             `json:"componentCount,omitempty"`
 	Etag               string            `json:"etag,omitempty"`
 	data               []byte            // unexported: raw object data
 	metadataCloned     bool
@@ -190,6 +195,12 @@ func gcsTimestamp() string {
 	return time.Now().UTC().Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z")
 }
 
+func gcsCRC32C(data []byte) string {
+	sum := crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli))
+	b := []byte{byte(sum >> 24), byte(sum >> 16), byte(sum >> 8), byte(sum)}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
 func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
 	if attrs.ContentType == "" {
 		attrs.ContentType = "application/octet-stream"
@@ -200,7 +211,13 @@ func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName strin
 	now := gcsTimestamp()
 	hash := md5.Sum(data)
 	md5Hash := base64.StdEncoding.EncodeToString(hash[:])
-	etag := fmt.Sprintf("%x", hash)
+	etag := base64.StdEncoding.EncodeToString(append(hash[:], []byte(now)...))
+	generation := int64(1)
+	if existing, ok := objects.Get(bucketName + "/" + objectName); ok {
+		if n, err := strconv.ParseInt(existing.Generation, 10, 64); err == nil && n >= generation {
+			generation = n + 1
+		}
+	}
 
 	objPath := filepath.Join(GCSBucketHostDir(bucketName), objectName)
 	if err := os.MkdirAll(filepath.Dir(objPath), 0o755); err != nil {
@@ -216,7 +233,10 @@ func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName strin
 	obj.Size = strconv.Itoa(len(data))
 	obj.TimeCreated = now
 	obj.Updated = now
+	obj.Generation = strconv.FormatInt(generation, 10)
+	obj.Metageneration = "1"
 	obj.Md5Hash = md5Hash
+	obj.Crc32c = gcsCRC32C(data)
 	obj.Etag = etag
 	if !attrs.metadataCloned {
 		obj.Metadata = cloneStringMap(attrs.Metadata)
@@ -381,19 +401,26 @@ func gcsObjectMetadata(r *http.Request, obj GCSObject) map[string]any {
 	selfLink := fmt.Sprintf("https://%s/storage/v1/b/%s/o/%s", r.Host, obj.Bucket, escapedObject)
 	mediaLink := fmt.Sprintf("https://%s/download/storage/v1/b/%s/o/%s?alt=media", r.Host, obj.Bucket, escapedObject)
 	meta := map[string]any{
-		"kind":        "storage#object",
-		"id":          fmt.Sprintf("%s/%s/1", obj.Bucket, obj.Name),
-		"selfLink":    selfLink,
-		"mediaLink":   mediaLink,
-		"name":        obj.Name,
-		"bucket":      obj.Bucket,
-		"generation":  "1",
-		"size":        obj.Size,
-		"contentType": obj.ContentType,
-		"timeCreated": obj.TimeCreated,
-		"updated":     obj.Updated,
-		"md5Hash":     obj.Md5Hash,
-		"etag":        obj.Etag,
+		"kind":           "storage#object",
+		"id":             fmt.Sprintf("%s/%s/1", obj.Bucket, obj.Name),
+		"selfLink":       selfLink,
+		"mediaLink":      mediaLink,
+		"name":           obj.Name,
+		"bucket":         obj.Bucket,
+		"generation":     defaultStr(obj.Generation, "1"),
+		"metageneration": defaultStr(obj.Metageneration, "1"),
+		"size":           obj.Size,
+		"contentType":    obj.ContentType,
+		"timeCreated":    obj.TimeCreated,
+		"updated":        obj.Updated,
+		"crc32c":         obj.Crc32c,
+		"etag":           obj.Etag,
+	}
+	if obj.Md5Hash != "" {
+		meta["md5Hash"] = obj.Md5Hash
+	}
+	if obj.ComponentCount > 0 {
+		meta["componentCount"] = obj.ComponentCount
 	}
 	if obj.ContentEncoding != "" {
 		meta["contentEncoding"] = obj.ContentEncoding
@@ -873,12 +900,18 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 		var composed []byte
+		var componentCount int64
 		for _, src := range req.SourceObjects {
 			srcObj, ok := objects.Get(bucketName + "/" + src.Name)
 			if !ok {
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
 					"source object %q not found in bucket %q", src.Name, bucketName)
 				return
+			}
+			if srcObj.ComponentCount > 0 {
+				componentCount += srcObj.ComponentCount
+			} else {
+				componentCount++
 			}
 			composed = append(composed, gcsObjectBytes(srcObj, bucketName, src.Name)...)
 		}
@@ -891,6 +924,12 @@ func registerGCS(srv *sim.Server) {
 			writeGCSPersistError(w, "write composed object", err)
 			return
 		}
+		composedObj.ComponentCount = componentCount
+		composedObj.Md5Hash = ""
+		objects.Update(bucketName+"/"+destObject, func(o *GCSObject) {
+			o.ComponentCount = componentCount
+			o.Md5Hash = ""
+		})
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, composedObj))
 	})
 

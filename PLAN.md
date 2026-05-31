@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: the GCP issue group (#304, #309-#311, and #321-#325), unless a higher-priority issue appears.
+Next planned phase: the Azure API-shape group (#312, #315, and #326-#329), unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -53,12 +53,13 @@ Implemented:
 - AWS/GCP Terraform HTTPS examples and harnesses: `make terraform-https-test` starts the simulator on HTTP loopback, starts Caddy with isolated state, trusts Caddy's local CA through `SSL_CERT_FILE`, and runs the real provider apply/destroy path against the gateway's resolver-independent `https://localhost:<ephemeral-port>` single-simulator route.
 - Terraform CI kept Caddy HTTPS for provider validation: Azure remained mandatory through the gateway, and AWS/GCP used their optional HTTPS gateway targets in CI while direct HTTP `make terraform-test` stayed available locally.
 - BUG-1253 fixed stale GCP VPC Access Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and updating the coverage matrix.
+- BUG-1254 / issue #304 fixed stale GCP client-surface coverage rows. API Gateway, Cloud Build, IAM, and Pub/Sub now have real gcloud coverage where the public CLI exposes the surface, and API Gateway has Terraform provider coverage through `google-beta`.
+- BUG-1263 / issues #309-#311 and #321-#325 fixed the GCP API-shape backlog: Cloud Run list pagination and empty-list wire shape, Cloud Run/Functions/API Gateway/Eventarc LRO metadata types, canonical millisecond timestamps, Cloud Logging severity ordering, GCS object metadata and bucket IAM policy shape, Cloud SQL backup operations, and Cloud DNS precondition error shape.
 
 Remaining staged work:
 
-1. **BUG-1254 / issue #304 plus BUG-1263.** Add real public-client coverage for larger stale GCP not-applicable rows and fix the GCP API-shape bugs in issues #309-#311 and #321-#325.
-2. **BUG-1264.** Fix remaining Azure API-shape and LRO bugs in issues #312, #315, and #326-#329.
-3. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
+1. **BUG-1264.** Fix remaining Azure API-shape and LRO bugs in issues #312, #315, and #326-#329.
+2. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
 
 ## AWS Fidelity Sweep
 
@@ -85,12 +86,21 @@ The Azure ARM/DNS fidelity sweep fixed issues #313, #314, and #340:
 - Private DNS zones supported list-by-resource-group through the real `GET .../privateDnsZones` route, and Private DNS virtual network links supported list-by-zone.
 - The fixes were covered through the real Azure SDK and Azure CLI.
 
+## GCP Fidelity Sweep
+
+The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-#325:
+
+- API Gateway, Cloud Build, IAM, and Pub/Sub stale client-surface rows were corrected with real gcloud coverage. API Gateway also gained Terraform provider coverage through `google-beta`.
+- Cloud Run services/jobs/executions and Cloud Functions list operations returned empty arrays, stable ordering, page tokens, and canonical millisecond timestamps where public clients observe them.
+- Long-running operation metadata used the public resource-specific `@type` values expected by official Google SDK operation decoders.
+- Cloud Logging severity comparisons used Google severity ranks instead of lexicographic string ordering.
+- GCS object metadata included generation, metageneration, CRC32C, MD5 where applicable, and compose component counts; bucket IAM policy responses included public `kind`, `resourceId`, and base64 etags.
+- Cloud SQL backup insert/delete returned real SQL Admin operation shapes, and Cloud DNS precondition failures returned canonical `FAILED_PRECONDITION` error details.
+
 ## Deferred Work
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
-- BUG-1254: GCP client-surface coverage gaps from the latest audit pass. Issue #304 tracks the remaining work.
-- BUG-1263: GCP API-shape backlog. Issues #309-#311 and #321-#325 remain open.
 - BUG-1264: Azure API-shape backlog. Issues #312, #315, and #326-#329 remain open.
 - BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require staged architecture work before implementation PRs.
 

@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -369,4 +370,52 @@ func TestSDK_CloudRun_ListJobs(t *testing.T) {
 	}
 	assert.True(t, foundA, "sdk-list-job-a not found in list")
 	assert.True(t, foundB, "sdk-list-job-b not found in list")
+}
+
+func TestSDK_CloudRun_ListJobsPaginationAndEmptyWireShape(t *testing.T) {
+	client := newJobsClient(t)
+	parent := "projects/test-project/locations/us-east1"
+
+	for _, id := range []string{"sdk-page-job-a", "sdk-page-job-b"} {
+		op, err := client.CreateJob(ctx, &runpb.CreateJobRequest{
+			Parent: parent,
+			JobId:  id,
+			Job: &runpb.Job{
+				Template: &runpb.ExecutionTemplate{
+					Template: &runpb.TaskTemplate{
+						Containers: []*runpb.Container{{Image: "alpine:latest"}},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		_, err = op.Wait(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			deleteOp, err := client.DeleteJob(ctx, &runpb.DeleteJobRequest{Name: parent + "/jobs/" + id})
+			if err == nil {
+				_, _ = deleteOp.Wait(ctx)
+			}
+		})
+	}
+
+	resp, err := http.Get(baseURL + "/v2/" + parent + "/jobs?pageSize=1")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var first struct {
+		Jobs          []map[string]any `json:"jobs"`
+		NextPageToken string           `json:"nextPageToken"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&first))
+	require.Len(t, first.Jobs, 1)
+	require.NotEmpty(t, first.NextPageToken)
+
+	emptyResp, err := http.Get(baseURL + "/v2/projects/test-project/locations/asia-south1/jobs")
+	require.NoError(t, err)
+	defer emptyResp.Body.Close()
+	require.Equal(t, http.StatusOK, emptyResp.StatusCode)
+	var empty map[string]any
+	require.NoError(t, json.NewDecoder(emptyResp.Body).Decode(&empty))
+	require.IsType(t, []any{}, empty["jobs"], "empty job list must serialize as [] not null")
 }

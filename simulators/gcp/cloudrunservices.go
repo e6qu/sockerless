@@ -512,7 +512,19 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		result := services.Filter(func(s ServiceV2) bool {
 			return strings.HasPrefix(s.Name, prefix)
 		})
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"services": result})
+		if result == nil {
+			result = []ServiceV2{}
+		}
+		sortCloudRunServices(result)
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"services": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// DeleteService: DELETE /v2/projects/{project}/locations/{location}/services/{service}

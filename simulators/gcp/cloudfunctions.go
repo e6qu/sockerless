@@ -181,10 +181,17 @@ func registerCloudFunctions(srv *sim.Server) {
 		if result == nil {
 			result = []Function{}
 		}
+		sortCloudFunctions(result)
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"functions": result,
-		})
+		resp := map[string]any{"functions": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Invoke function (simulator-only endpoint)

@@ -2,6 +2,7 @@ package gcp_sdk_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -209,12 +210,62 @@ func TestGCS_ObjectsCompose(t *testing.T) {
 	assert.Equal(t, "composed", meta["name"])
 	assert.Equal(t, "11", meta["size"], "concat size = 6+5 = 11")
 	assert.Equal(t, "text/plain", meta["contentType"])
+	assert.EqualValues(t, 2, meta["componentCount"], "composite object must report source component count")
+	assert.NotContains(t, meta, "md5Hash", "composite objects do not expose md5Hash")
+	assert.NotEmpty(t, meta["crc32c"], "object metadata must include crc32c")
 
 	xmlResp, err := http.Get(baseURL + "/" + bucket + "/composed")
 	require.NoError(t, err)
 	defer xmlResp.Body.Close()
 	got, _ := io.ReadAll(xmlResp.Body)
 	assert.Equal(t, "hello world", string(got))
+}
+
+func TestGCS_ObjectMetadataCRC32CAndGeneration(t *testing.T) {
+	bucket := "metadata-shape-bucket"
+	gcsRESTCreate(t, bucket)
+
+	for _, body := range []string{"first", "second"} {
+		req, _ := http.NewRequest("POST",
+			baseURL+"/upload/storage/v1/b/"+bucket+"/o?uploadType=media&name=object.txt",
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "text/plain")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "upload status: %s", data)
+	}
+
+	meta := gcsObjectMetadataRaw(t, bucket, "object.txt")
+	assert.Equal(t, "2", meta["generation"], "overwrites must advance object generation")
+	assert.Equal(t, "1", meta["metageneration"])
+	crc, ok := meta["crc32c"].(string)
+	require.True(t, ok)
+	decoded, err := base64.StdEncoding.DecodeString(crc)
+	require.NoError(t, err)
+	assert.Len(t, decoded, 4, "crc32c is base64-encoded big-endian uint32")
+	assert.NotEqual(t, "1", meta["etag"], "etag must not be a hard-coded generation placeholder")
+}
+
+func TestGCS_BucketIAMPolicyShape(t *testing.T) {
+	bucket := "iam-policy-shape-bucket"
+	gcsRESTCreate(t, bucket)
+
+	req, _ := http.NewRequest("GET", baseURL+"/storage/v1/b/"+bucket+"/iam", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var policy map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&policy))
+	assert.Equal(t, "storage#policy", policy["kind"])
+	assert.Equal(t, "projects/_/buckets/"+bucket, policy["resourceId"])
+	etag, ok := policy["etag"].(string)
+	require.True(t, ok)
+	_, err = base64.StdEncoding.DecodeString(etag)
+	require.NoError(t, err, "IAM etag must be base64, not raw hex")
 }
 
 func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {

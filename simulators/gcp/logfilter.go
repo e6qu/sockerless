@@ -136,6 +136,31 @@ func parseTimestamp(s string) (time.Time, error) {
 	return t, err
 }
 
+func severityRank(s string) (int, bool) {
+	switch strings.ToUpper(s) {
+	case "DEFAULT":
+		return 0, true
+	case "DEBUG":
+		return 100, true
+	case "INFO":
+		return 200, true
+	case "NOTICE":
+		return 300, true
+	case "WARNING":
+		return 400, true
+	case "ERROR":
+		return 500, true
+	case "CRITICAL":
+		return 600, true
+	case "ALERT":
+		return 700, true
+	case "EMERGENCY":
+		return 800, true
+	default:
+		return 0, false
+	}
+}
+
 // matchesFilter checks whether a LogEntry matches a structured filter string.
 // Supports: field="value" AND field>"value" AND field>="value"
 // with dot-notation paths (resource.type, resource.labels.X, timestamp, etc.)
@@ -165,10 +190,26 @@ func matchesFilter(entry LogEntry, filter string) bool {
 				return false
 			}
 		case opGt:
+			if c.field == "severity" {
+				left, lok := severityRank(val)
+				right, rok := severityRank(c.value)
+				if !lok || !rok || left <= right {
+					return false
+				}
+				continue
+			}
 			if val <= c.value {
 				return false
 			}
 		case opGe:
+			if c.field == "severity" {
+				left, lok := severityRank(val)
+				right, rok := severityRank(c.value)
+				if !lok || !rok || left < right {
+					return false
+				}
+				continue
+			}
 			if val < c.value {
 				return false
 			}
