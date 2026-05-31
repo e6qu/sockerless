@@ -43,6 +43,10 @@ func TestEventHubsSDK_ARMAndAMQPRoundTrip(t *testing.T) {
 	assert.Equal(t, ns, *createdNS.Name)
 	require.NotNil(t, createdNS.Properties.ServiceBusEndpoint)
 	assert.Contains(t, *createdNS.Properties.ServiceBusEndpoint, ns+".servicebus.")
+	require.NotNil(t, createdNS.Properties.ProvisioningState)
+	assert.Equal(t, "Succeeded", *createdNS.Properties.ProvisioningState)
+	require.NotNil(t, createdNS.Properties.Status)
+	assert.Equal(t, "Active", *createdNS.Properties.Status)
 	t.Cleanup(func() {
 		deletePoller, err := nsClient.BeginDelete(context.Background(), rg, ns, nil)
 		if err == nil {

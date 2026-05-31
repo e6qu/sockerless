@@ -757,6 +757,10 @@ func publishEventGridTopic(w http.ResponseWriter, r *http.Request, topic EventGr
 		sim.AzureErrorf(w, "InvalidRequestContent", http.StatusBadRequest, "failed to read request body: %v", err)
 		return
 	}
+	if err := validateEventGridPublishBody(body); err != nil {
+		sim.AzureErrorf(w, "InvalidEvent", http.StatusBadRequest, "%v", err)
+		return
+	}
 	for _, es := range eventGridSubscriptions.List() {
 		if !eventGridSubscriptionBelongsToTopic(es, topic.ID) {
 			continue
@@ -766,6 +770,45 @@ func publishEventGridTopic(w http.ResponseWriter, r *http.Request, topic EventGr
 		}
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+type eventGridPublishEvent struct {
+	ID          string          `json:"id"`
+	Subject     string          `json:"subject"`
+	EventType   string          `json:"eventType"`
+	EventTime   string          `json:"eventTime"`
+	Data        json.RawMessage `json:"data"`
+	DataVersion string          `json:"dataVersion"`
+}
+
+func validateEventGridPublishBody(body []byte) error {
+	var events []eventGridPublishEvent
+	if err := json.Unmarshal(body, &events); err != nil {
+		return fmt.Errorf("request body must be a JSON array of Event Grid events: %w", err)
+	}
+	if len(events) == 0 {
+		return fmt.Errorf("request body must contain at least one event")
+	}
+	for i, event := range events {
+		switch {
+		case event.ID == "":
+			return fmt.Errorf("event %d is missing required field id", i)
+		case event.Subject == "":
+			return fmt.Errorf("event %d is missing required field subject", i)
+		case event.EventType == "":
+			return fmt.Errorf("event %d is missing required field eventType", i)
+		case event.EventTime == "":
+			return fmt.Errorf("event %d is missing required field eventTime", i)
+		case len(event.Data) == 0:
+			return fmt.Errorf("event %d is missing required field data", i)
+		case event.DataVersion == "":
+			return fmt.Errorf("event %d is missing required field dataVersion", i)
+		}
+		if _, err := time.Parse(time.RFC3339Nano, event.EventTime); err != nil {
+			return fmt.Errorf("event %d has invalid eventTime: %w", i, err)
+		}
+	}
+	return nil
 }
 
 func eventGridSubscriptionBelongsToTopic(es EventGridEventSubscription, topicID string) bool {

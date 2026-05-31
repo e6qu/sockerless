@@ -84,6 +84,7 @@ func main() {
 	registerMetadata(srv)
 
 	// Infrastructure services
+	registerAzureAsyncOperations(srv)
 	registerResourceGroups(srv)
 	registerTags(srv)
 	registerNetwork(srv)

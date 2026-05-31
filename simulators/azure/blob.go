@@ -297,7 +297,7 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 				return
 			}
 		}
-		sim.AzureError(w, "MissingRequiredQueryParameter",
+		writeStorageError(w, "MissingRequiredQueryParameter",
 			"Container ops require restype=container", http.StatusBadRequest)
 		return
 	}
@@ -329,14 +329,14 @@ func handleBlobDataPlane(w http.ResponseWriter, r *http.Request, account string)
 	case http.MethodDelete:
 		handleDeleteBlob(w, r, account, container, blob)
 	default:
-		sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+		writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 	}
 }
 
 func handleCreateContainer(w http.ResponseWriter, r *http.Request, account, container string) {
 	key := blobContainerKey(account, container)
 	if _, ok := blobContainersData.Get(key); ok {
-		sim.AzureError(w, "ContainerAlreadyExists",
+		writeStorageError(w, "ContainerAlreadyExists",
 			"The specified container already exists.", http.StatusConflict)
 		return
 	}
@@ -355,7 +355,7 @@ func handleCreateContainer(w http.ResponseWriter, r *http.Request, account, cont
 
 func handleDeleteContainer(w http.ResponseWriter, r *http.Request, account, container string) {
 	if !blobContainersData.Delete(blobContainerKey(account, container)) {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
@@ -377,7 +377,7 @@ func handleDeleteContainer(w http.ResponseWriter, r *http.Request, account, cont
 func handleGetContainer(w http.ResponseWriter, r *http.Request, account, container string) {
 	c, ok := blobContainersData.Get(blobContainerKey(account, container))
 	if !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
@@ -399,10 +399,12 @@ func handleListContainers(w http.ResponseWriter, r *http.Request, account string
 		Properties containerProperties `xml:"Properties"`
 	}
 	type enum struct {
-		XMLName    xml.Name         `xml:"EnumerationResults"`
-		Containers []containerEntry `xml:"Containers>Container"`
+		XMLName         xml.Name         `xml:"EnumerationResults"`
+		ServiceEndpoint string           `xml:"ServiceEndpoint,attr"`
+		Containers      []containerEntry `xml:"Containers>Container"`
+		NextMarker      string           `xml:"NextMarker"`
 	}
-	out := enum{}
+	out := enum{ServiceEndpoint: azureStorageEndpointURL(r, account, "blob")}
 	prefix := account + "/"
 	for _, c := range blobContainersData.List() {
 		if strings.HasPrefix(blobContainerKey(c.Account, c.Name), prefix) {
@@ -418,14 +420,12 @@ func handleListContainers(w http.ResponseWriter, r *http.Request, account string
 	sort.Slice(out.Containers, func(i, j int) bool {
 		return out.Containers[i].Name < out.Containers[j].Name
 	})
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
@@ -438,10 +438,16 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 		} `xml:"Properties"`
 	}
 	type enum struct {
-		XMLName xml.Name    `xml:"EnumerationResults"`
-		Blobs   []blobEntry `xml:"Blobs>Blob"`
+		XMLName         xml.Name    `xml:"EnumerationResults"`
+		ServiceEndpoint string      `xml:"ServiceEndpoint,attr"`
+		ContainerName   string      `xml:"ContainerName,attr"`
+		Blobs           []blobEntry `xml:"Blobs>Blob"`
+		NextMarker      string      `xml:"NextMarker"`
 	}
-	out := enum{}
+	out := enum{
+		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
+		ContainerName:   container,
+	}
 	prefix := account + "/" + container + "/"
 	for _, b := range blobObjects.List() {
 		if strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), prefix) {
@@ -452,26 +458,24 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 			out.Blobs = append(out.Blobs, be)
 		}
 	}
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
 	body, err := openStreamingBody(r)
 	if err != nil {
-		sim.AzureError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+		writeStorageError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
 	defer body.Close()
 	data, err := io.ReadAll(body)
 	if err != nil {
-		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
 	hash := md5.Sum(data)
@@ -501,20 +505,20 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 
 func handleCopyBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
 	sourceURL := r.Header.Get("x-ms-copy-source")
 	srcAccount, srcContainer, srcBlob, ok := parseBlobCopySource(sourceURL)
 	if !ok {
-		sim.AzureError(w, "CannotVerifyCopySource",
+		writeStorageError(w, "CannotVerifyCopySource",
 			"The specified copy source is invalid.", http.StatusNotFound)
 		return
 	}
 	source, ok := blobObjects.Get(blobObjectKey(srcAccount, srcContainer, srcBlob))
 	if !ok {
-		sim.AzureError(w, "CannotVerifyCopySource",
+		writeStorageError(w, "CannotVerifyCopySource",
 			"The specified copy source does not exist.", http.StatusNotFound)
 		return
 	}
@@ -614,25 +618,25 @@ func cloneBlobMetadata(in map[string]string) map[string]string {
 
 func handleStageBlock(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
 	blockID := r.URL.Query().Get("blockid")
 	if blockID == "" {
-		sim.AzureError(w, "MissingRequiredQueryParameter",
+		writeStorageError(w, "MissingRequiredQueryParameter",
 			"StageBlock requires blockid.", http.StatusBadRequest)
 		return
 	}
 	body, err := openStreamingBody(r)
 	if err != nil {
-		sim.AzureError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
+		writeStorageError(w, "UnsupportedHttpVerb", err.Error(), http.StatusUnsupportedMediaType)
 		return
 	}
 	defer body.Close()
 	data, err := io.ReadAll(body)
 	if err != nil {
-		sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		writeStorageError(w, "InternalError", err.Error(), http.StatusInternalServerError)
 		return
 	}
 	key := blobBlockKey(account, container, blob, blockID)
@@ -656,21 +660,21 @@ type blockListRequest struct {
 
 func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
 	defer r.Body.Close()
 	var req blockListRequest
 	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
-		sim.AzureError(w, "InvalidXmlDocument", err.Error(), http.StatusBadRequest)
+		writeStorageError(w, "InvalidXmlDocument", err.Error(), http.StatusBadRequest)
 		return
 	}
 	refs := make([]blockRef, 0, len(req.Committed)+len(req.Latest)+len(req.Uncommitted))
 	for _, id := range req.Committed {
 		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
 		if !ok || !block.HasCommitted {
-			sim.AzureError(w, "InvalidBlockList",
+			writeStorageError(w, "InvalidBlockList",
 				"The specified block list is invalid.", http.StatusBadRequest)
 			return
 		}
@@ -679,7 +683,7 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 	for _, id := range req.Latest {
 		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
 		if !ok || (!block.HasUncommitted && !block.HasCommitted) {
-			sim.AzureError(w, "InvalidBlockList",
+			writeStorageError(w, "InvalidBlockList",
 				"The specified block list is invalid.", http.StatusBadRequest)
 			return
 		}
@@ -692,7 +696,7 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 	for _, id := range req.Uncommitted {
 		block, ok := blobBlocks.Get(blobBlockKey(account, container, blob, id))
 		if !ok || !block.HasUncommitted {
-			sim.AzureError(w, "InvalidBlockList",
+			writeStorageError(w, "InvalidBlockList",
 				"The specified block list is invalid.", http.StatusBadRequest)
 			return
 		}
@@ -770,7 +774,7 @@ func indexBlockRef(refs []blockRef, id string) int {
 
 func handleGetBlockList(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
-		sim.AzureError(w, "ContainerNotFound",
+		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
@@ -814,15 +818,13 @@ func handleGetBlockList(w http.ResponseWriter, r *http.Request, account, contain
 	sort.Slice(out.UncommittedBlocks, func(i, j int) bool {
 		return out.UncommittedBlocks[i].Name < out.UncommittedBlocks[j].Name
 	})
-	w.Header().Set("Content-Type", "application/xml")
-	body, _ := xml.Marshal(out)
-	_, _ = w.Write(body)
+	writeStorageXML(w, http.StatusOK, out)
 }
 
 func handleGetBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	b, ok := blobObjects.Get(blobObjectKey(account, container, blob))
 	if !ok {
-		sim.AzureError(w, "BlobNotFound",
+		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
 	}
@@ -833,7 +835,7 @@ func handleGetBlob(w http.ResponseWriter, r *http.Request, account, container, b
 func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	b, ok := blobObjects.Get(blobObjectKey(account, container, blob))
 	if !ok {
-		sim.AzureError(w, "BlobNotFound",
+		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
 	}
@@ -842,7 +844,7 @@ func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, 
 
 func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if !blobObjects.Delete(blobObjectKey(account, container, blob)) {
-		sim.AzureError(w, "BlobNotFound",
+		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
 	}

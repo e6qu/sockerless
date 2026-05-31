@@ -138,8 +138,8 @@ func handleEHCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		SKU:      req.SKU,
 		Tags:     req.Tags,
 		Properties: map[string]any{
-			"provisioningState":  "Succeeded",
-			"status":             "Active",
+			"provisioningState":  "Creating",
+			"status":             "Activating",
 			"createdAt":          now.Format(time.RFC3339Nano),
 			"updatedAt":          now.Format(time.RFC3339Nano),
 			"serviceBusEndpoint": azureServiceBusEndpointURL(r, name),
@@ -153,8 +153,8 @@ func handleEHCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		n.Properties[k] = v
 	}
 	ehApplyNamespaceDefaults(&n, r)
-	n.Properties["provisioningState"] = "Succeeded"
-	n.Properties["status"] = "Active"
+	n.Properties["provisioningState"] = "Creating"
+	n.Properties["status"] = "Activating"
 	ehNamespaces.Put(id, n)
 	rootID := id + "/authorizationRules/RootManageSharedAccessKey"
 	if _, ok := ehAuthRules.Get(rootID); !ok {
@@ -167,7 +167,19 @@ func handleEHCreateNamespace(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, n)
+	opID := issueAzureAsyncOperation(func() {
+		ehNamespaces.Update(id, func(stored *EHNamespace) {
+			if stored.Properties == nil {
+				stored.Properties = map[string]any{}
+			}
+			stored.Properties["provisioningState"] = "Succeeded"
+			stored.Properties["status"] = "Active"
+			stored.Properties["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		})
+	})
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.EventHub", n.Location, "operationResults", opID, r.URL.Query().Get("api-version"))
+	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
+	sim.WriteJSON(w, http.StatusCreated, n)
 }
 
 func handleEHGetNamespace(w http.ResponseWriter, r *http.Request) {

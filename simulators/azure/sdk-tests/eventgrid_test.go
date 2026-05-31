@@ -94,6 +94,29 @@ func TestEventGrid_TopicSubscriptionPublishSDK(t *testing.T) {
 		t.Fatal("timed out waiting for Event Grid subscription validation delivery")
 	}
 
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "malformed JSON", body: `{"id":`},
+		{name: "missing event envelope fields", body: `[{"id":"evt-bad","data":{}}]`},
+	} {
+		req, err := http.NewRequest(http.MethodPost, *topicResp.Properties.Endpoint+"?api-version=2018-01-01", bytes.NewBufferString(tc.body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err, tc.name)
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode, "%s: %s", tc.name, string(respBody))
+		assert.Contains(t, string(respBody), "InvalidEvent")
+		select {
+		case events := <-deliveries:
+			t.Fatalf("%s delivered invalid events: %#v", tc.name, events)
+		default:
+		}
+	}
+
 	body := `[{"id":"evt-1","eventType":"sockerless.test","subject":"/sdk","eventTime":"2026-05-27T00:00:00Z","data":{"ok":true},"dataVersion":"1"}]`
 	req, err := http.NewRequest(http.MethodPost, *topicResp.Properties.Endpoint+"?api-version=2018-01-01", bytes.NewBufferString(body))
 	require.NoError(t, err)

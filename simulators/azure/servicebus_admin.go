@@ -388,7 +388,7 @@ func handleSBAdminGetEntity(w http.ResponseWriter, r *http.Request, namespace, n
 		writeSBAdminXML(w, http.StatusOK, sbAdminTopicEntryFor(r, namespace, name, t))
 		return
 	}
-	writeSBAdminXML(w, http.StatusOK, sbAdminEmptyFeed(r, namespace))
+	sbAdminError(w, http.StatusNotFound, "404", "The messaging entity could not be found.")
 }
 
 func handleSBAdminDeleteEntity(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -482,7 +482,7 @@ func handleSBAdminGetSubscription(w http.ResponseWriter, r *http.Request, namesp
 		writeSBAdminXML(w, http.StatusOK, sbAdminSubscriptionEntryFor(r, namespace, topic, sub, s))
 		return
 	}
-	writeSBAdminXML(w, http.StatusOK, sbAdminEmptyFeed(r, namespace))
+	sbAdminError(w, http.StatusNotFound, "404", "The messaging entity could not be found.")
 }
 
 func handleSBAdminDeleteSubscription(w http.ResponseWriter, r *http.Request, namespace, topic, sub string) {
@@ -546,7 +546,7 @@ func handleSBAdminGetRule(w http.ResponseWriter, r *http.Request, namespace, top
 		writeSBAdminXML(w, http.StatusOK, sbAdminRuleEntryFor(r, namespace, topic, sub, rule, stored))
 		return
 	}
-	writeSBAdminXML(w, http.StatusOK, sbAdminEmptyFeed(r, namespace))
+	sbAdminError(w, http.StatusNotFound, "404", "The messaging entity could not be found.")
 }
 
 func handleSBAdminDeleteRule(w http.ResponseWriter, r *http.Request, namespace, topic, sub, rule string) {
@@ -839,15 +839,6 @@ func sbAdminRuleDescriptionFor(rule SBRule) sbAdminRuleDescription {
 			Type:          actionType,
 			SQLExpression: stringValue(rule.Properties, "actionSQLExpression", ""),
 		},
-	}
-}
-
-func sbAdminEmptyFeed(r *http.Request, namespace string) sbAdminQueueFeed {
-	return sbAdminQueueFeed{
-		AtomSchema: sbAtomSchema,
-		ID:         sbAdminURL(r, namespace, "$Resources"),
-		Title:      "Publicly Listed Services",
-		Entries:    []sbAdminQueueEntry{},
 	}
 }
 

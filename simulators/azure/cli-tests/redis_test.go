@@ -1,6 +1,7 @@
 package azure_cli_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,10 +34,16 @@ func TestRedisCLI_ARMResources(t *testing.T) {
 	parseJSON(t, out, &cache)
 	require.Equal(t, name, cache.Name)
 	require.Equal(t, "Basic", cache.SKU["name"])
-	require.Equal(t, "Succeeded", cache.Properties.ProvisioningState)
+	require.Equal(t, "Creating", cache.Properties.ProvisioningState)
 	require.Contains(t, cache.Properties.HostName, name+".redis.cache.")
 	require.Equal(t, 6380, cache.Properties.SSLPort)
 	require.Equal(t, "cli", cache.Tags["env"])
+
+	out = waitForCLIJSON(t, cacheURL, func(data string) bool {
+		return strings.Contains(data, `"provisioningState": "Succeeded"`)
+	})
+	parseJSON(t, out, &cache)
+	require.Equal(t, "Succeeded", cache.Properties.ProvisioningState)
 
 	keysOut := runCLI(t, azRest("POST", armURL("Microsoft.Cache", "Redis/"+name+"/listKeys", "2024-11-01"), ""))
 	var keys struct {

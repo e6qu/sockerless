@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,25 @@ func armReq(t *testing.T, method, path string, body string) *http.Response {
 	return resp
 }
 
+func waitAzureAsyncOperation(t *testing.T, opURL string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, opURL, nil)
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+		if strings.Contains(string(body), `"status":"Succeeded"`) {
+			return
+		}
+		require.True(t, time.Now().Before(deadline), "operation did not succeed: %s", string(body))
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // TestAzureRedisCache_ARMLifecycle exercises CRUD on the
 // Microsoft.Cache/Redis ARM surface.
 func TestAzureRedisCache_ARMLifecycle(t *testing.T) {
@@ -50,16 +70,23 @@ func TestAzureRedisCache_ARMLifecycle(t *testing.T) {
 	path := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Cache/Redis/%s", sub, rg, name)
 
 	resp := armReq(t, "PUT", path, `{"location":"eastus","properties":{"sku":{"name":"Standard","family":"C","capacity":1}}}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	opURL := resp.Header.Get("Azure-AsyncOperation")
+	require.NotEmpty(t, opURL)
+	assert.Equal(t, "0", resp.Header.Get("Retry-After"))
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	assert.Contains(t, string(body), `"provisioningState":"Succeeded"`)
+	assert.Contains(t, string(body), `"provisioningState":"Creating"`)
 	host, _ := simHostParts(t)
 	assert.Contains(t, string(body), `"hostName":"lifecycle-redis.redis.cache.`+host+`"`)
 
+	waitAzureAsyncOperation(t, opURL)
+
 	resp = armReq(t, "GET", path, "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
+	assert.Contains(t, string(body), `"provisioningState":"Succeeded"`)
 
 	listPath := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Cache/Redis", sub, rg)
 	resp = armReq(t, "GET", listPath, "")
@@ -87,12 +114,23 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 		sub, rg, name)
 
 	resp := armReq(t, "PUT", armBase, `{"location":"eastus","properties":{"version":"15","administratorLogin":"psqladmin"}}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	opURL := resp.Header.Get("Azure-AsyncOperation")
+	require.NotEmpty(t, opURL)
+	assert.Equal(t, "0", resp.Header.Get("Retry-After"))
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	assert.Contains(t, string(body), `"state":"Ready"`)
+	assert.Contains(t, string(body), `"state":"Starting"`)
 	host, _ := simHostParts(t)
 	assert.Contains(t, string(body), `"fullyQualifiedDomainName":"lifecycle-pg.postgres.database.`+host+`"`)
+
+	waitAzureAsyncOperation(t, opURL)
+
+	resp = armReq(t, "GET", armBase, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Contains(t, string(body), `"state":"Ready"`)
 
 	// Create a database.
 	dbPath := armBase + "/databases/appdb"

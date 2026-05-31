@@ -93,6 +93,20 @@ Store-backed Azure ARM list responses now serialize empty lists as `{"value":[]}
 
 Azure Private DNS now implements `GET .../privateDnsZones` for list-by-resource-group, matching `armprivatedns.PrivateZonesClient.NewListByResourceGroupPager`. Private DNS virtual network links now implement `GET .../privateDnsZones/{zoneName}/virtualNetworkLinks`, matching the public list-by-zone route. Both route families are covered by real Azure SDK and Azure CLI tests.
 
+## 2026-05-31 - Azure API Shape and LRO Fidelity Sweep
+
+Issues #312, #315, and #326-#329 were fixed in one Azure simulator PR.
+
+Azure Storage Blob/File/Queue data-plane errors now use XML `<Error>` envelopes, `Content-Type: application/xml`, and `x-ms-error-code`. Blob `ListContainers` and `ListBlobs` responses now emit the XML declaration, public `EnumerationResults` attributes, and `NextMarker`. Queue service properties now return the public service-properties XML used by the Terraform provider's data-plane availability check.
+
+Service Bus admin data-plane reads for missing queues, topics, subscriptions, and rules now return 404 Atom/XML errors instead of successful empty feeds. Event Grid topic publish now rejects malformed JSON, empty batches, missing required Event Grid envelope fields, and invalid event times before delivering to subscriptions.
+
+Azure Cache for Redis, PostgreSQL Flexible Server, and Event Hubs namespace create operations now return 201 with `Azure-AsyncOperation`, `Location`, and `Retry-After` headers. The created resources start in their public in-progress states and converge through the operation endpoint to `Succeeded`, `Ready`, or `Active` as appropriate.
+
+Key Vault secret, key, and certificate attributes now include default soft-delete recovery metadata: `recoveryLevel` is `Recoverable+Purgeable`, and `recoverableDays` is 90.
+
+The fixes were covered through real Azure SDK integration tests plus raw HTTP assertions for wire details that official SDKs normalize.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -134,7 +148,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1075: live-cloud validation remains intentionally deferred. Do not mark live cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
-- BUG-1264: Azure API-shape issues #312, #315, and #326-#329 remain open.
+- BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
 - BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. It needs staged architecture work before Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs.
 
 ## Continuity Rules

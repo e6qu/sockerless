@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: the Azure API-shape group (#312, #315, and #326-#329), unless a higher-priority issue appears.
+Next planned phase: stage the compute/networking real-execution program from BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -55,11 +55,11 @@ Implemented:
 - BUG-1253 fixed stale GCP VPC Access Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and updating the coverage matrix.
 - BUG-1254 / issue #304 fixed stale GCP client-surface coverage rows. API Gateway, Cloud Build, IAM, and Pub/Sub now have real gcloud coverage where the public CLI exposes the surface, and API Gateway has Terraform provider coverage through `google-beta`.
 - BUG-1263 / issues #309-#311 and #321-#325 fixed the GCP API-shape backlog: Cloud Run list pagination and empty-list wire shape, Cloud Run/Functions/API Gateway/Eventarc LRO metadata types, canonical millisecond timestamps, Cloud Logging severity ordering, GCS object metadata and bucket IAM policy shape, Cloud SQL backup operations, and Cloud DNS precondition error shape.
+- BUG-1264 / issues #312, #315, and #326-#329 fixed the Azure API-shape backlog: Storage Blob/File/Queue data-plane errors now return XML error envelopes, storage list responses include the public XML declaration/attributes/markers, and Queue service properties support the provider availability probe; Service Bus admin missing queue/topic/subscription/rule reads return real 404 Atom/XML errors; Event Grid publish rejects malformed and schema-invalid events before delivery; Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates return Azure LRO headers and in-progress resource states before converging; Key Vault secret/key/certificate attributes include default recovery metadata.
 
 Remaining staged work:
 
-1. **BUG-1264.** Fix remaining Azure API-shape and LRO bugs in issues #312, #315, and #326-#329.
-2. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
+1. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
 
 ## AWS Fidelity Sweep
 
@@ -86,6 +86,15 @@ The Azure ARM/DNS fidelity sweep fixed issues #313, #314, and #340:
 - Private DNS zones supported list-by-resource-group through the real `GET .../privateDnsZones` route, and Private DNS virtual network links supported list-by-zone.
 - The fixes were covered through the real Azure SDK and Azure CLI.
 
+The Azure API-shape and LRO fidelity sweep fixed issues #312, #315, and #326-#329:
+
+- Storage Blob/File/Queue data-plane errors returned XML `<Error>` envelopes with `Content-Type: application/xml` and `x-ms-error-code`, and Queue service properties returned the public service-properties XML used by Terraform provider availability checks.
+- Blob `ListContainers` and `ListBlobs` XML responses emitted XML declarations, public `EnumerationResults` attributes, and `NextMarker`.
+- Service Bus admin data-plane missing entity reads returned 404 Atom/XML errors rather than successful empty feeds.
+- Event Grid topic publish rejected malformed JSON, empty batches, missing required Event Grid envelope fields, and invalid `eventTime` values before webhook fanout.
+- Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates returned Azure LRO headers with in-progress resource state and converged to final public states through operation polling.
+- Key Vault secret/key/certificate attributes included `recoveryLevel: Recoverable+Purgeable` and `recoverableDays: 90`.
+
 ## GCP Fidelity Sweep
 
 The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-#325:
@@ -101,7 +110,6 @@ The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
-- BUG-1264: Azure API-shape backlog. Issues #312, #315, and #326-#329 remain open.
 - BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require staged architecture work before implementation PRs.
 
 ## Current Capability Summary

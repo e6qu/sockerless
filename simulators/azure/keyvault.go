@@ -214,11 +214,43 @@ func (s kvSecretStored) isDeleted() bool { return s.DeletedAt > 0 }
 
 // KeyVaultAttrs mirrors the data-plane SecretAttributes shape.
 type KeyVaultAttrs struct {
-	Enabled   bool  `json:"enabled"`
-	Created   int64 `json:"created,omitempty"`
-	Updated   int64 `json:"updated,omitempty"`
-	NotBefore int64 `json:"nbf,omitempty"`
-	Expires   int64 `json:"exp,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	Created         int64  `json:"created,omitempty"`
+	Updated         int64  `json:"updated,omitempty"`
+	NotBefore       int64  `json:"nbf,omitempty"`
+	Expires         int64  `json:"exp,omitempty"`
+	RecoveryLevel   string `json:"recoveryLevel,omitempty"`
+	RecoverableDays *int   `json:"recoverableDays,omitempty"`
+}
+
+func (a KeyVaultAttrs) MarshalJSON() ([]byte, error) {
+	type keyVaultAttrsWire struct {
+		Enabled         bool   `json:"enabled"`
+		Created         int64  `json:"created,omitempty"`
+		Updated         int64  `json:"updated,omitempty"`
+		NotBefore       int64  `json:"nbf,omitempty"`
+		Expires         int64  `json:"exp,omitempty"`
+		RecoveryLevel   string `json:"recoveryLevel,omitempty"`
+		RecoverableDays *int   `json:"recoverableDays,omitempty"`
+	}
+	recoveryLevel := a.RecoveryLevel
+	if recoveryLevel == "" {
+		recoveryLevel = "Recoverable+Purgeable"
+	}
+	recoverableDays := a.RecoverableDays
+	if recoverableDays == nil {
+		days := 90
+		recoverableDays = &days
+	}
+	return json.Marshal(keyVaultAttrsWire{
+		Enabled:         a.Enabled,
+		Created:         a.Created,
+		Updated:         a.Updated,
+		NotBefore:       a.NotBefore,
+		Expires:         a.Expires,
+		RecoveryLevel:   recoveryLevel,
+		RecoverableDays: recoverableDays,
+	})
 }
 
 var (
