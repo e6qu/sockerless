@@ -67,7 +67,7 @@ func (s *MemoryStore[T]) List() []T {
 func (s *MemoryStore[T]) Filter(fn func(T) bool) []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var result []T
+	result := make([]T, 0)
 	for _, v := range s.items {
 		if fn(v) {
 			result = append(result, v)

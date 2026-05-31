@@ -4,7 +4,7 @@ Sockerless can run an optional Caddy front door for local simulator APIs. The si
 
 This is local transport infrastructure. It does not add simulator-specific cloud API routes, headers, request fields, or response shapes.
 
-Relevant Caddy references: [Caddyfile environment substitutions](https://caddyserver.com/docs/caddyfile/concepts), [`tls internal`](https://caddyserver.com/docs/caddyfile/directives/tls), and [`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+Relevant Caddy references: [Caddyfile environment substitutions](https://caddyserver.com/docs/caddyfile/concepts), [`tls internal`](https://caddyserver.com/docs/caddyfile/directives/tls), [`skip_install_trust`](https://caddyserver.com/docs/caddyfile/options#skip-install-trust), and [`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
 
 ## Why It Exists
 
@@ -78,6 +78,8 @@ Linux test containers can trust it with:
 ```sh
 export SSL_CERT_FILE="$(make -s stack-https-ca)"
 ```
+
+The gateway deliberately sets Caddy's `skip_install_trust` option. Tests and developer commands trust the exported CA file explicitly instead of letting Caddy mutate host, CI runner, Java, or browser trust stores. This keeps gateway startup non-interactive and keeps TLS verification enabled.
 
 If a developer shell has proxy variables set, ensure local simulator hosts bypass the proxy:
 

@@ -36,6 +36,30 @@ func TestPrivateDNS_CreateAndShowZone(t *testing.T) {
 	runCLI(t, azRest("DELETE", url, ""))
 }
 
+func TestPrivateDNS_ListZonesByResourceGroup(t *testing.T) {
+	zoneURL := dnsURL("privateDnsZones/cli-list.local")
+	runCLI(t, azRest("PUT", zoneURL, `{"location":"global"}`))
+
+	out := runCLI(t, azRest("GET", dnsURL("privateDnsZones"), ""))
+	var zones struct {
+		Value []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &zones)
+	found := false
+	for _, zone := range zones.Value {
+		if zone.Name == "cli-list.local" {
+			found = true
+			assert.Equal(t, "Microsoft.Network/privateDnsZones", zone.Type)
+		}
+	}
+	assert.True(t, found, "expected list response to include cli-list.local")
+
+	runCLI(t, azRest("DELETE", zoneURL, ""))
+}
+
 func TestPrivateDNS_CreateRecordSet(t *testing.T) {
 	zoneURL := dnsURL("privateDnsZones/record-test.local")
 	runCLI(t, azRest("PUT", zoneURL, `{"location":"global"}`))
@@ -85,6 +109,18 @@ func TestPrivateDNS_VNetLink(t *testing.T) {
 	out = runCLI(t, azRest("GET", linkURL, ""))
 	parseJSON(t, out, &link)
 	assert.Equal(t, "mylink", link.Name)
+
+	out = runCLI(t, azRest("GET", dnsURL("privateDnsZones/link-test.local/virtualNetworkLinks"), ""))
+	var links struct {
+		Value []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &links)
+	require.Len(t, links.Value, 1)
+	assert.Equal(t, "mylink", links.Value[0].Name)
+	assert.Equal(t, "Microsoft.Network/privateDnsZones/virtualNetworkLinks", links.Value[0].Type)
 
 	// Cleanup
 	runCLI(t, azRest("DELETE", linkURL, ""))

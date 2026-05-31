@@ -41,6 +41,7 @@ This is local transport infrastructure, not a simulator public API change. Publi
 Implemented:
 
 - Caddy config and `make stack-https-{up,status,ca,down}` targets.
+- Caddy local-CA trust-store installation was disabled with `skip_install_trust`; tests trusted the generated CA explicitly through `SSL_CERT_FILE` or client-specific CA knobs instead of mutating host trust stores.
 - HTTPS routing for `aws.sockerless.localhost`, `gcp.sockerless.localhost`, `azure.sockerless.localhost`, and Azure host-addressed data-plane wildcards, including Cosmos DB documents.
 - `STACK_HTTPS=1 make stack-azure-aca` style stack integration, including Azure ARM-advertised data-plane URL projection.
 - Admin API/UI visibility for gateway status, endpoints, CA path, and recovery make commands.
@@ -56,7 +57,7 @@ Implemented:
 Remaining staged work:
 
 1. **BUG-1254 / issue #304 plus BUG-1263.** Add real public-client coverage for larger stale GCP not-applicable rows and fix the GCP API-shape bugs in issues #309-#311 and #321-#325.
-2. **BUG-1264.** Fix Azure API-shape and LRO bugs in issues #312-#315 and #326-#329.
+2. **BUG-1264.** Fix remaining Azure API-shape and LRO bugs in issues #312, #315, and #326-#329.
 3. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
 
 ## AWS Fidelity Sweep
@@ -77,13 +78,20 @@ The AWS Amplify fidelity sweep fixed issues #330 and #331:
 - `DeleteJob` used `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}`, removed the job and its artifacts, and made later `GetJob` / `GetArtifactUrl` calls return `NotFoundException`.
 - `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered with their public AWS SDK REST paths and covered through the real AWS SDK and AWS CLI.
 
+The Azure ARM/DNS fidelity sweep fixed issues #313, #314, and #340:
+
+- ARM control-plane paths now required `api-version` and returned `InvalidApiVersionParameter` with the public Azure error shape when callers omitted it.
+- Store-backed ARM list responses returned empty arrays rather than JSON nulls.
+- Private DNS zones supported list-by-resource-group through the real `GET .../privateDnsZones` route, and Private DNS virtual network links supported list-by-zone.
+- The fixes were covered through the real Azure SDK and Azure CLI.
+
 ## Deferred Work
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
 - BUG-1254: GCP client-surface coverage gaps from the latest audit pass. Issue #304 tracks the remaining work.
 - BUG-1263: GCP API-shape backlog. Issues #309-#311 and #321-#325 remain open.
-- BUG-1264: Azure API-shape backlog. Issues #312-#315 and #326-#329 remain open.
+- BUG-1264: Azure API-shape backlog. Issues #312, #315, and #326-#329 remain open.
 - BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require staged architecture work before implementation PRs.
 
 ## Current Capability Summary

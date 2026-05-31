@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1267 filed - 1264 fixed - 6 open - 2 false positives.**
+**1269 filed - 1266 fixed - 6 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -14,12 +14,18 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1254 | P1 | gcp simulator coverage | stale not-applicable rows | Issue #304 tracks larger BUG-1104 findings: public gcloud/Terraform client surfaces exist for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows still marked partly not applicable. |
 | 1263 | P1 | gcp simulator fidelity | public API shape | Issues #309-#311 and #321-#325 track GCP Cloud Run pagination/null lists, Cloud Run/Functions LRO metadata `@type`, protobuf timestamp canonicalization, Cloud Logging severity ordering, GCS metadata/IAM shape, Cloud SQL backup operation shapes, and Cloud DNS canonical error status. |
-| 1264 | P1 | azure simulator fidelity | public API shape / LRO | Issues #312-#315 and #326-#329 track Azure Storage XML errors/listing shape, ARM api-version validation, empty ARM list shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes. |
+| 1264 | P1 | azure simulator fidelity | public API shape / LRO | Issues #312, #315, and #326-#329 track Azure Storage XML errors/listing shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes. ARM api-version validation and empty ARM list shapes were fixed. |
 | 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. |
 
 ## Recently Closed
 
-Last phase closed BUG-1265..BUG-1266 / issues #330-#331:
+Last phase closed BUG-1268 and BUG-1269 / issues #313, #314, and #340:
+
+- BUG-1268 / issue #340: Azure Private DNS now implements `PrivateZonesClient.NewListByResourceGroupPager` at `GET .../privateDnsZones`, and virtual network links now implement the public list-by-zone endpoint. Both paths are covered by the real Azure SDK and Azure CLI.
+- Issues #313 and #314: Azure ARM control-plane requests now reject missing `api-version` with `InvalidApiVersionParameter`, the dead unused AzureRouter validator was removed, and simulator list serialization returns `{"value":[]}` instead of `{"value":null}` for empty stores.
+- BUG-1269: AWS Terraform HTTPS CI could hang waiting for Caddy because `tls internal` attempted to install the generated local CA into CI runner trust stores even though the harness already trusted the CA through `SSL_CERT_FILE`. The shared gateway Caddyfile now uses `skip_install_trust`; tests still verify TLS normally with the exported CA file, and Caddy startup no longer performs host trust-store mutation.
+
+Earlier recent phase closed BUG-1265..BUG-1266 / issues #330-#331:
 
 - BUG-1265 / issue #330: Amplify `StopJob` and `DeleteJob` now used distinct public REST paths. `StopJob` cancelled the job through `.../jobs/{jobId}/stop`; `DeleteJob` removed the job and its artifacts through `.../jobs/{jobId}`.
 - BUG-1266 / issue #331: Amplify `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were implemented on the AWS SDK REST paths and covered by real AWS SDK and AWS CLI tests. Terraform was not changed because the official AWS provider does not expose these job-artifact or access-log operations.

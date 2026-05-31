@@ -1,6 +1,7 @@
 {
 	admin localhost:{$SOCKERLESS_HTTPS_GATEWAY_ADMIN_PORT:28443}
 	auto_https disable_redirects
+	skip_install_trust
 }
 
 https://aws.sockerless.localhost:{$SOCKERLESS_HTTPS_GATEWAY_PORT:8443} {

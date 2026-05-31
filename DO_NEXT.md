@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the AWS Amplify fidelity PR merged.
+- Branch: `main`, synced with `origin/main` after the Azure ARM/DNS fidelity PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #304, #309-#315, #321-#329, and #332-#336.
+- Open GitHub issues at last check: #304, #309-#312, #315, #321-#329, and #332-#338.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1254, BUG-1263, BUG-1264, and BUG-1267.
-- Last completed work: AWS Amplify issues #330 and #331 were fixed.
+- Last completed work: Azure ARM/DNS issues #313, #314, and #340 were fixed.
 
 ## Next Task
 
 Address the GCP issue group next: issue #304 / BUG-1254 plus GCP fidelity issues #309-#311 and #321-#325, unless a higher-priority issue appears.
 
-The AWS Amplify PR closed the narrow open AWS issue group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
+The Azure ARM/DNS PR closed the narrow control-plane list/validation group. The next highest-value work is the GCP group because it combines the already-planned stale public-client coverage audit with public API shape bugs in Cloud Run, Cloud Logging, GCS, Cloud SQL, and Cloud DNS.
 
 ## Provider Facts To Preserve
 
@@ -28,6 +28,7 @@ The AWS Amplify PR closed the narrow open AWS issue group. The next highest-valu
 ## Completed Gateway Stage
 
 - Caddy config plus `make stack-https-{up,status,ca,down}` targets.
+- Caddy local-CA trust-store installation was disabled with `skip_install_trust`; provider tests trusted the exported CA file explicitly and kept TLS verification enabled.
 - HTTPS routes to current simulator ports:
    - `aws.sockerless.localhost` -> `127.0.0.1:4566`
    - `gcp.sockerless.localhost` -> `127.0.0.1:4567`
@@ -55,11 +56,16 @@ The AWS Amplify PR closed the narrow open AWS issue group. The next highest-valu
    - `StopJob` used the real `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}/stop` route and cancelled the job.
    - `DeleteJob` used the real `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}` route, removed the job, removed its artifacts, and made later `GetJob` calls return `NotFoundException`.
    - `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered with their AWS SDK REST paths and covered through the real AWS SDK and AWS CLI.
+- Azure ARM/DNS issues #313, #314, and #340 were fixed:
+   - ARM control-plane requests required `api-version` and returned `InvalidApiVersionParameter` when omitted.
+   - Empty store-backed ARM lists serialized `{"value":[]}` rather than `{"value":null}`.
+   - Private DNS zones implemented list-by-resource-group, and Private DNS virtual network links implemented list-by-zone.
+   - The routes were covered through real Azure SDK and Azure CLI tests.
 
 ## Remaining Stages
 
 1. Address BUG-1254 / issue #304 plus GCP issues #309-#311 and #321-#325.
-2. Address Azure issues #312-#315 and #326-#329.
+2. Address Azure issues #312, #315, and #326-#329.
 3. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
 
 ## Deferred Trackers
@@ -68,7 +74,7 @@ The AWS Amplify PR closed the narrow open AWS issue group. The next highest-valu
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
 - BUG-1254: issue #304 tracks larger GCP client-surface coverage gaps discovered by the latest audit pass.
 - BUG-1263: GCP API-shape backlog from issues #309-#311 and #321-#325 remains open.
-- BUG-1264: Azure API-shape backlog from issues #312-#315 and #326-#329 remains open.
+- BUG-1264: Azure API-shape backlog from issues #312, #315, and #326-#329 remains open.
 - BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks.
 
 ## Start Checklist

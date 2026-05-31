@@ -54,6 +54,10 @@ func main() {
 		log.Fatalf("simulator startup: %v", err)
 	}
 
+	// ARM request validation runs after path cleanup and after auth discovery
+	// interception, so provider endpoint joins and OAuth/OpenID routes keep
+	// their Azure-compatible behavior.
+	srv.WrapHandler(AzureARMAPIVersionMiddleware)
 	// Clean double slashes in request paths. The azurerm v3 provider (via
 	// go-azure-sdk) appends a trailing slash to the resourceManager endpoint,
 	// producing paths like //subscriptions/... Go's default mux would 301
@@ -61,7 +65,7 @@ func main() {
 	srv.WrapHandler(CleanPathMiddleware)
 
 	// Wrap with auth middleware for OAuth2 token requests (must be outside
-	// the mux to avoid route conflicts with ACR's /v2/{path...})
+	// the mux to avoid route conflicts with ACR's /v2/{path...}).
 	srv.WrapHandler(AzureAuthMiddleware)
 
 	// Register Azure service routes

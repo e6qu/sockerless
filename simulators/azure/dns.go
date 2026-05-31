@@ -219,6 +219,17 @@ func registerPrivateDNS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, zone)
 	})
 
+	// GET - List zones by resource group
+	srv.HandleFunc("GET "+armBase+"/privateDnsZones", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/privateDnsZones/", sub, rg)
+		filtered := zones.Filter(func(z PrivateDnsZone) bool {
+			return strings.HasPrefix(z.ID, prefix)
+		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
+	})
+
 	// GET - Get zone
 	srv.HandleFunc("GET "+armBase+"/privateDnsZones/{zoneName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
@@ -561,6 +572,19 @@ func registerPrivateDNS(srv *sim.Server) {
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, link)
+	})
+
+	// GET - List VNet links by private zone
+	srv.HandleFunc("GET "+armBase+"/privateDnsZones/{zoneName}/virtualNetworkLinks", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		zoneName := sim.PathParam(r, "zoneName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/privateDnsZones/%s/virtualNetworkLinks/",
+			sub, rg, zoneName)
+		filtered := vnetLinks.Filter(func(link VNetLink) bool {
+			return strings.HasPrefix(link.ID, prefix)
+		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
 	})
 
 	// GET - Get VNet link

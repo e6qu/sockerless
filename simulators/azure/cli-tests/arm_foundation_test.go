@@ -66,3 +66,18 @@ func TestCLIAzureARMFoundationEndpoints(t *testing.T) {
 		t.Fatal("resource group list returned no resource groups")
 	}
 }
+
+func TestCLIAzureARMRequiresAPIVersion(t *testing.T) {
+	cmd := azRest("GET", fmt.Sprintf("%s/subscriptions/%s/resourceGroups", baseURL, subscriptionID), "")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected missing api-version request to fail, got output: %s", out)
+	}
+	text := string(out)
+	if !strings.Contains(text, "InvalidApiVersionParameter") {
+		t.Fatalf("expected InvalidApiVersionParameter in az output, got: %s", text)
+	}
+	if !strings.Contains(text, "api-version query parameter") {
+		t.Fatalf("expected api-version message in az output, got: %s", text)
+	}
+}
