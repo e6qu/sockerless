@@ -2,6 +2,8 @@ package aws_sdk_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -209,6 +211,88 @@ func TestAmplifyJobLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, listJobs.JobSummaries, 1)
+
+	artifacts, err := c.ListArtifacts(ctx, &amplify.ListArtifactsInput{
+		AppId:      aws.String(appID),
+		BranchName: aws.String("main"),
+		JobId:      aws.String(jobID),
+		MaxResults: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, artifacts.Artifacts, 1)
+	artifactID := aws.ToString(artifacts.Artifacts[0].ArtifactId)
+	require.NotEmpty(t, artifactID)
+	require.NotEmpty(t, aws.ToString(artifacts.Artifacts[0].ArtifactFileName))
+
+	artifactURL, err := c.GetArtifactUrl(ctx, &amplify.GetArtifactUrlInput{
+		ArtifactId: aws.String(artifactID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, artifactID, aws.ToString(artifactURL.ArtifactId))
+	artifactURLString := aws.ToString(artifactURL.ArtifactUrl)
+	require.NotEmpty(t, artifactURLString)
+	artifactResp, err := http.Get(artifactURLString)
+	require.NoError(t, err)
+	defer artifactResp.Body.Close()
+	assert.Equal(t, http.StatusOK, artifactResp.StatusCode)
+	artifactBody, err := io.ReadAll(artifactResp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(artifactBody), artifactID)
+
+	logs, err := c.GenerateAccessLogs(ctx, &amplify.GenerateAccessLogsInput{
+		AppId:      aws.String(appID),
+		DomainName: app.App.DefaultDomain,
+		StartTime:  aws.Time(time.Now().Add(-time.Hour)),
+		EndTime:    aws.Time(time.Now()),
+	})
+	require.NoError(t, err)
+	logURLString := aws.ToString(logs.LogUrl)
+	require.NotEmpty(t, logURLString)
+	logResp, err := http.Get(logURLString)
+	require.NoError(t, err)
+	defer logResp.Body.Close()
+	assert.Equal(t, http.StatusOK, logResp.StatusCode)
+	logBody, err := io.ReadAll(logResp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(logBody), "cs-method")
+
+	stopOut, err := c.StopJob(ctx, &amplify.StopJobInput{
+		AppId:      aws.String(appID),
+		BranchName: aws.String("main"),
+		JobId:      aws.String(jobID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, amplifytypes.JobStatusCancelled, stopOut.JobSummary.Status)
+
+	deleteOut, err := c.DeleteJob(ctx, &amplify.DeleteJobInput{
+		AppId:      aws.String(appID),
+		BranchName: aws.String("main"),
+		JobId:      aws.String(jobID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, jobID, aws.ToString(deleteOut.JobSummary.JobId))
+
+	_, err = c.GetJob(ctx, &amplify.GetJobInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"), JobId: aws.String(jobID),
+	})
+	require.Error(t, err)
+	_, err = c.GetArtifactUrl(ctx, &amplify.GetArtifactUrlInput{
+		ArtifactId: aws.String(artifactID),
+	})
+	require.Error(t, err)
+
+	listJobs, err = c.ListJobs(ctx, &amplify.ListJobsInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	require.Empty(t, listJobs.JobSummaries)
+
+	branch, err := c.GetBranch(ctx, &amplify.GetBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, aws.ToString(branch.Branch.ActiveJobId))
+	assert.Equal(t, "0", aws.ToString(branch.Branch.TotalNumberOfJobs))
 }
 
 func TestAmplifyCreateDeployment(t *testing.T) {

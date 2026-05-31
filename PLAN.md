@@ -57,6 +57,7 @@ Remaining staged work:
 
 1. **BUG-1254 / issue #304 plus BUG-1263.** Add real public-client coverage for larger stale GCP not-applicable rows and fix the GCP API-shape bugs in issues #309-#311 and #321-#325.
 2. **BUG-1264.** Fix Azure API-shape and LRO bugs in issues #312-#315 and #326-#329.
+3. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
 
 ## AWS Fidelity Sweep
 
@@ -70,6 +71,12 @@ The AWS simulator fidelity sweep fixed issues #305-#308 and #317-#320:
 - ECR `PutImage` used content-addressed SHA-256 manifest digests.
 - KMS `GenerateDataKey` used fresh crypto-random key material.
 
+The AWS Amplify fidelity sweep fixed issues #330 and #331:
+
+- `StopJob` used `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}/stop` and cancelled the job.
+- `DeleteJob` used `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}`, removed the job and its artifacts, and made later `GetJob` / `GetArtifactUrl` calls return `NotFoundException`.
+- `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered with their public AWS SDK REST paths and covered through the real AWS SDK and AWS CLI.
+
 ## Deferred Work
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
@@ -77,6 +84,7 @@ The AWS simulator fidelity sweep fixed issues #305-#308 and #317-#320:
 - BUG-1254: GCP client-surface coverage gaps from the latest audit pass. Issue #304 tracks the remaining work.
 - BUG-1263: GCP API-shape backlog. Issues #309-#311 and #321-#325 remain open.
 - BUG-1264: Azure API-shape backlog. Issues #312-#315 and #326-#329 remain open.
+- BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require staged architecture work before implementation PRs.
 
 ## Current Capability Summary
 

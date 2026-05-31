@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -127,6 +130,11 @@ type AmplifyJobStep struct {
 	LogUrl    string  `json:"logUrl,omitempty"`
 }
 
+type AmplifyArtifact struct {
+	ArtifactFileName string `json:"artifactFileName"`
+	ArtifactId       string `json:"artifactId"`
+}
+
 type amplifyStoredApp struct {
 	App      AmplifyApp
 	Branches map[string]AmplifyBranch
@@ -143,10 +151,20 @@ type amplifyStoredJob struct {
 	BranchName string
 }
 
+type amplifyStoredArtifact struct {
+	Artifact   AmplifyArtifact
+	AppId      string
+	BranchName string
+	JobId      string
+	Key        string
+	URL        string
+}
+
 var (
-	amplifyApps     sim.Store[amplifyStoredApp]
-	amplifyWebhooks sim.Store[amplifyStoredWebhook]
-	amplifyJobs     sim.Store[amplifyStoredJob]
+	amplifyApps      sim.Store[amplifyStoredApp]
+	amplifyWebhooks  sim.Store[amplifyStoredWebhook]
+	amplifyJobs      sim.Store[amplifyStoredJob]
+	amplifyArtifacts sim.Store[amplifyStoredArtifact]
 )
 
 // ---------- Helpers ----------
@@ -176,6 +194,10 @@ func amplifyJobARN(appID, branch, jobID string) string {
 	return fmt.Sprintf("arn:aws:amplify:%s:%s:apps/%s/branches/%s/jobs/%s", awsRegion(), awsAccountID(), appID, branch, jobID)
 }
 
+func amplifyArtifactID(jobID string) string {
+	return jobID + "-" + amplifyJobID()
+}
+
 func amplifyEpoch() float64 { return float64(time.Now().UTC().Unix()) }
 
 func amplifyWriteJSON(w http.ResponseWriter, status int, v any) {
@@ -200,6 +222,7 @@ func registerAmplify(srv *sim.Server) {
 	amplifyApps = sim.MakeStore[amplifyStoredApp](srv.DB(), "amplify_apps")
 	amplifyWebhooks = sim.MakeStore[amplifyStoredWebhook](srv.DB(), "amplify_webhooks")
 	amplifyJobs = sim.MakeStore[amplifyStoredJob](srv.DB(), "amplify_jobs")
+	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](srv.DB(), "amplify_artifacts")
 
 	mux := srv.Mux()
 	// Apps
@@ -224,7 +247,11 @@ func registerAmplify(srv *sim.Server) {
 	mux.HandleFunc("POST /apps/{appId}/branches/{name}/jobs", handleAmplifyStartJob)
 	mux.HandleFunc("GET /apps/{appId}/branches/{name}/jobs", handleAmplifyListJobs)
 	mux.HandleFunc("GET /apps/{appId}/branches/{name}/jobs/{jobId}", handleAmplifyGetJob)
-	mux.HandleFunc("DELETE /apps/{appId}/branches/{name}/jobs/{jobId}", handleAmplifyStopJob)
+	mux.HandleFunc("DELETE /apps/{appId}/branches/{name}/jobs/{jobId}/stop", handleAmplifyStopJob)
+	mux.HandleFunc("DELETE /apps/{appId}/branches/{name}/jobs/{jobId}", handleAmplifyDeleteJob)
+	mux.HandleFunc("GET /apps/{appId}/branches/{name}/jobs/{jobId}/artifacts", handleAmplifyListArtifacts)
+	mux.HandleFunc("GET /artifacts/{artifactId}", handleAmplifyGetArtifactURL)
+	mux.HandleFunc("POST /apps/{appId}/accesslogs", handleAmplifyGenerateAccessLogs)
 	// Deployments — note SDK routes:
 	//   POST /apps/{appId}/branches/{name}/deployments       — CreateDeployment (returns upload URL)
 	//   POST /apps/{appId}/branches/{name}/deployments/start — StartDeployment (kicks off the job)
@@ -339,6 +366,7 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, jb := range amplifyJobs.List() {
 		if jb.AppId == id {
+			amplifyDeleteArtifactsForJob(jb.Job.Summary.JobId)
 			amplifyJobs.Delete(jb.Job.Summary.JobId)
 		}
 	}
@@ -576,6 +604,12 @@ func handleAmplifyDeleteBranch(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "branch not found")
 		return
 	}
+	for _, jb := range amplifyJobs.List() {
+		if jb.AppId == appID && jb.BranchName == name {
+			amplifyDeleteArtifactsForJob(jb.Job.Summary.JobId)
+			amplifyJobs.Delete(jb.Job.Summary.JobId)
+		}
+	}
 	delete(stored.Branches, name)
 	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyBranch{"branch": br})
@@ -753,10 +787,11 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	amplifyJobs.Put(jobID, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
+	amplifyCreateJobArtifact(r, appID, branch, jobID, "e2e-test-artifacts.zip")
 	// Bump branch active job + count.
 	br := stored.Branches[branch]
 	br.ActiveJobId = jobID
-	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch)+1)
+	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
 	stored.Branches[branch] = br
 	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]any{"jobSummary": summary})
@@ -772,9 +807,101 @@ func amplifyBranchJobCount(appID, branch string) int {
 	return n
 }
 
-func handleAmplifyGetJob(w http.ResponseWriter, r *http.Request) {
+func amplifyCreateJobArtifact(r *http.Request, appID, branch, jobID, fileName string) AmplifyArtifact {
+	artifactID := amplifyArtifactID(jobID)
+	key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/" + fileName
+	artifact := AmplifyArtifact{
+		ArtifactId:       artifactID,
+		ArtifactFileName: fileName,
+	}
+	amplifyPutS3Object(key, "application/zip", []byte("amplify artifact "+artifactID+"\n"))
+	amplifyArtifacts.Put(artifactID, amplifyStoredArtifact{
+		Artifact:   artifact,
+		AppId:      appID,
+		BranchName: branch,
+		JobId:      jobID,
+		Key:        key,
+		URL:        amplifyPresignedS3URL(r, key),
+	})
+	return artifact
+}
+
+func amplifyDeleteArtifactsForJob(jobID string) {
+	for _, artifact := range amplifyArtifacts.List() {
+		if artifact.JobId == jobID {
+			s3Objects.Delete(s3ObjectKey(amplifyArtifactBucketName(), artifact.Key))
+			amplifyArtifacts.Delete(artifact.Artifact.ArtifactId)
+		}
+	}
+}
+
+func amplifyArtifactBucketName() string {
+	bucket := "amplify-sim-artifacts-" + awsRegion() + "-" + awsAccountID()
+	if _, ok := s3Buckets_.Get(bucket); !ok {
+		s3Buckets_.Put(bucket, S3Bucket{
+			Name:         bucket,
+			CreationDate: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	return bucket
+}
+
+func amplifyPutS3Object(key, contentType string, data []byte) {
+	bucket := amplifyArtifactBucketName()
+	hash := md5.Sum(data)
+	s3Objects.Put(s3ObjectKey(bucket, key), S3Object{
+		Key:          s3ObjectKey(bucket, key),
+		Data:         data,
+		ContentType:  contentType,
+		ETag:         fmt.Sprintf("\"%x\"", hash),
+		LastModified: time.Now().UTC(),
+		Size:         int64(len(data)),
+		Metadata:     map[string]string{"amplify": "true"},
+	})
+}
+
+func amplifyPresignedS3URL(r *http.Request, key string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded == "http" || forwarded == "https" {
+		scheme = forwarded
+	}
+	return fmt.Sprintf("%s://%s/%s/%s?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600",
+		scheme, r.Host, amplifyArtifactBucketName(), key)
+}
+
+func amplifyJobForRequest(r *http.Request) (amplifyStoredJob, bool) {
+	appID := r.PathValue("appId")
+	branch := r.PathValue("name")
 	jobID := r.PathValue("jobId")
 	stored, ok := amplifyJobs.Get(jobID)
+	if !ok || stored.AppId != appID || stored.BranchName != branch {
+		return amplifyStoredJob{}, false
+	}
+	return stored, true
+}
+
+func amplifyUpdateBranchAfterJobChange(appID, branch, changedJobID string) {
+	stored, ok := amplifyApps.Get(appID)
+	if !ok {
+		return
+	}
+	br, ok := stored.Branches[branch]
+	if !ok {
+		return
+	}
+	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
+	if br.ActiveJobId == changedJobID {
+		br.ActiveJobId = ""
+	}
+	stored.Branches[branch] = br
+	amplifyApps.Put(appID, stored)
+}
+
+func handleAmplifyGetJob(w http.ResponseWriter, r *http.Request) {
+	stored, ok := amplifyJobForRequest(r)
 	if !ok {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
 		return
@@ -784,7 +911,7 @@ func handleAmplifyGetJob(w http.ResponseWriter, r *http.Request) {
 
 func handleAmplifyStopJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("jobId")
-	stored, ok := amplifyJobs.Get(jobID)
+	stored, ok := amplifyJobForRequest(r)
 	if !ok {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
 		return
@@ -792,6 +919,20 @@ func handleAmplifyStopJob(w http.ResponseWriter, r *http.Request) {
 	stored.Job.Summary.Status = "CANCELLED"
 	stored.Job.Summary.EndTime = amplifyEpoch()
 	amplifyJobs.Put(jobID, stored)
+	amplifyUpdateBranchAfterJobChange(stored.AppId, stored.BranchName, jobID)
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": stored.Job.Summary})
+}
+
+func handleAmplifyDeleteJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("jobId")
+	stored, ok := amplifyJobForRequest(r)
+	if !ok {
+		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
+		return
+	}
+	amplifyDeleteArtifactsForJob(jobID)
+	amplifyJobs.Delete(jobID)
+	amplifyUpdateBranchAfterJobChange(stored.AppId, stored.BranchName, jobID)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": stored.Job.Summary})
 }
 
@@ -811,8 +952,113 @@ func handleAmplifyListJobs(w http.ResponseWriter, r *http.Request) {
 	amplifyWriteJSON(w, http.StatusOK, map[string]any{"jobSummaries": summaries})
 }
 
-// CreateDeployment is for manual zip-upload deployments. Sim accepts the
-// upload-URL request and returns a synthesised S3-presigned URL.
+func handleAmplifyListArtifacts(w http.ResponseWriter, r *http.Request) {
+	storedJob, ok := amplifyJobForRequest(r)
+	if !ok {
+		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
+		return
+	}
+	artifacts := []AmplifyArtifact{}
+	for _, stored := range amplifyArtifacts.List() {
+		if stored.AppId == storedJob.AppId && stored.BranchName == storedJob.BranchName && stored.JobId == storedJob.Job.Summary.JobId {
+			artifacts = append(artifacts, stored.Artifact)
+		}
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		return artifacts[i].ArtifactId < artifacts[j].ArtifactId
+	})
+
+	start := 0
+	if token := r.URL.Query().Get("nextToken"); token != "" {
+		offset, err := strconv.Atoi(token)
+		if err != nil || offset < 0 {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid nextToken")
+			return
+		}
+		start = offset
+	}
+	if start > len(artifacts) {
+		start = len(artifacts)
+	}
+	limit := len(artifacts) - start
+	if raw := r.URL.Query().Get("maxResults"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid maxResults")
+			return
+		}
+		if parsed > 0 && parsed < limit {
+			limit = parsed
+		}
+	}
+	end := start + limit
+	out := map[string]any{"artifacts": artifacts[start:end]}
+	if end < len(artifacts) {
+		out["nextToken"] = strconv.Itoa(end)
+	}
+	amplifyWriteJSON(w, http.StatusOK, out)
+}
+
+func handleAmplifyGetArtifactURL(w http.ResponseWriter, r *http.Request) {
+	artifactID := r.PathValue("artifactId")
+	stored, ok := amplifyArtifacts.Get(artifactID)
+	if !ok {
+		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "artifact not found")
+		return
+	}
+	amplifyWriteJSON(w, http.StatusOK, map[string]string{
+		"artifactId":  stored.Artifact.ArtifactId,
+		"artifactUrl": stored.URL,
+	})
+}
+
+type amplifyGenerateAccessLogsReq struct {
+	DomainName string  `json:"domainName"`
+	StartTime  float64 `json:"startTime,omitempty"`
+	EndTime    float64 `json:"endTime,omitempty"`
+}
+
+func handleAmplifyGenerateAccessLogs(w http.ResponseWriter, r *http.Request) {
+	appID := r.PathValue("appId")
+	stored, ok := amplifyApps.Get(appID)
+	if !ok {
+		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
+		return
+	}
+	var req amplifyGenerateAccessLogsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode body: "+err.Error())
+		return
+	}
+	if req.DomainName == "" {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "domainName is required")
+		return
+	}
+	if !amplifyAppOwnsDomain(stored, req.DomainName) {
+		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "domain not found")
+		return
+	}
+	key := "accesslogs/" + appID + "/" + req.DomainName + "/" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10) + ".log"
+	amplifyPutS3Object(key, "text/plain", []byte("date time x-edge-location sc-bytes c-ip cs-method cs-host cs-uri-stem sc-status\n"))
+	amplifyWriteJSON(w, http.StatusOK, map[string]string{
+		"logUrl": amplifyPresignedS3URL(r, key),
+	})
+}
+
+func amplifyAppOwnsDomain(stored amplifyStoredApp, domain string) bool {
+	if stored.App.DefaultDomain == domain {
+		return true
+	}
+	for _, domainAssoc := range amplifyDomains.List() {
+		if domainAssoc.AppId == stored.App.AppId && domainAssoc.Domain.DomainName == domain {
+			return true
+		}
+	}
+	return false
+}
+
+// CreateDeployment is for manual zip-upload deployments. The upload target is
+// an external Amplify-style presigned URL, matching the public response shape.
 func handleAmplifyCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("appId")
 	if _, ok := amplifyApps.Get(appID); !ok {
@@ -858,6 +1104,12 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		Status: "SUCCEED", JobType: "MANUAL",
 	}
 	amplifyJobs.Put(jobID, amplifyStoredJob{Job: AmplifyJob{Summary: summary}, AppId: appID, BranchName: branch})
+	amplifyCreateJobArtifact(r, appID, branch, jobID, "deployment-artifacts.zip")
+	br := stored.Branches[branch]
+	br.ActiveJobId = jobID
+	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
+	stored.Branches[branch] = br
+	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
 }
 

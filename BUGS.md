@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1264 filed - 1262 fixed - 5 open - 2 false positives.**
+**1267 filed - 1264 fixed - 6 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,10 +15,16 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1254 | P1 | gcp simulator coverage | stale not-applicable rows | Issue #304 tracks larger BUG-1104 findings: public gcloud/Terraform client surfaces exist for GCP API Gateway, Cloud Build, IAM, and Pub/Sub rows still marked partly not applicable. |
 | 1263 | P1 | gcp simulator fidelity | public API shape | Issues #309-#311 and #321-#325 track GCP Cloud Run pagination/null lists, Cloud Run/Functions LRO metadata `@type`, protobuf timestamp canonicalization, Cloud Logging severity ordering, GCS metadata/IAM shape, Cloud SQL backup operation shapes, and Cloud DNS canonical error status. |
 | 1264 | P1 | azure simulator fidelity | public API shape / LRO | Issues #312-#315 and #326-#329 track Azure Storage XML errors/listing shape, ARM api-version validation, empty ARM list shape, Service Bus missing entity 404s, Event Grid validation, Redis/Postgres/EventHub LRO create semantics, and Key Vault recovery attributes. |
+| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. |
 
 ## Recently Closed
 
-Last phase closed BUG-1255..BUG-1262 / issues #305-#308 and #317-#320:
+Last phase closed BUG-1265..BUG-1266 / issues #330-#331:
+
+- BUG-1265 / issue #330: Amplify `StopJob` and `DeleteJob` now used distinct public REST paths. `StopJob` cancelled the job through `.../jobs/{jobId}/stop`; `DeleteJob` removed the job and its artifacts through `.../jobs/{jobId}`.
+- BUG-1266 / issue #331: Amplify `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were implemented on the AWS SDK REST paths and covered by real AWS SDK and AWS CLI tests. Terraform was not changed because the official AWS provider does not expose these job-artifact or access-log operations.
+
+Earlier recent phase closed BUG-1255..BUG-1262 / issues #305-#308 and #317-#320:
 
 - BUG-1255 / issue #305: S3 `ListObjectsV2` now returns lexicographically sorted keys, honors `start-after` and `continuation-token`, emits `NextContinuationToken`, and supports delimiter `CommonPrefixes`.
 - BUG-1256 / issue #306: Lambda `FunctionConfiguration` responses no longer leak request-only `Code`, uploaded `ZipFile`, or `Tags`; `GetFunction` keeps `Code` and `Tags` as top-level members.
