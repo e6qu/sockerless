@@ -1,143 +1,61 @@
 # Do Next
 
-Status [STATUS.md](STATUS.md) · roadmap [PLAN.md](PLAN.md) · bugs [BUGS.md](BUGS.md) · narrative [WHAT_WE_DID.md](WHAT_WE_DID.md) · vibe catalogue [docs/VIBE_CODING.md](docs/VIBE_CODING.md).
+Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS.md) - narrative [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-## Where we are
+## Current State
 
-The simulator Docker test harness phase closed the local verification blockers from PR #252. `make docker-test` now exists at the top level and per simulator, builds a real shared Linux test image, and runs the existing SDK/CLI/Terraform test categories from the repository root. Azure Terraform tests on macOS now delegate direct `go test` execution into that Linux image so the real Terraform providers can validate the generated simulator CA via `SSL_CERT_FILE`.
+- Branch: `main`, synced with `origin/main` after PR #299 merged.
+- Active implementation branch: none.
+- Open GitHub issues at last check: none.
+- Open BUG trackers: BUG-1075 and BUG-1104.
+- Last completed work: issue #298 / BUG-1242..BUG-1245, covering Azure Redis, GCP Memorystore Redis, GCP Cloud SQL, and GCP Cloud DNS Changes client-surface fidelity.
 
-PR #252 implemented the first follow-up from PR #246's foundational simulator service audit. The audit lives in `specs/SIM_FOUNDATIONAL_AUDIT.md` and covers object storage, managed data stores, DNS, queues, event routing, stream/event ingestion, VM/EC2-like compute, VPC/networking, NAT/egress, gateways, and managed load balancers across AWS/GCP/Azure.
+## Next Task
 
-Event routing is now present across the three sims for foundational flows: AWS EventBridge rule/target/event delivery, GCP Eventarc trigger lifecycle, and Azure Event Grid topic/subscription/publish flows. Coverage uses official SDKs, vendor CLIs, and Terraform provider resources. BUG-1197..1199 are closed.
+Implement the optional local HTTPS gateway for simulator APIs.
 
-The advanced/sibling event-service parity phase closed BUG-1213/#249, BUG-1214/#250, and BUG-1215/#251. AWS EventBridge now has event-bus lifecycle, bus policy permissions, archives, and replays. Azure Event Grid now has domains, domain topics, system topics, partner topics, and event subscriptions on those scopes. GCP Eventarc now has channels, provider discovery, and channel connections. Coverage uses the official SDKs where the current modules expose clients, vendor CLIs, and Terraform provider resources where the providers expose them; the GCP provider schema was checked and does not expose an Eventarc channel-connection resource.
+The goal is a realistic local HTTPS front door for clients that require or naturally expect HTTPS, without changing simulator public cloud API shapes. Caddy is the current preferred implementation because it can terminate local TLS, manage a local CA, and reverse-proxy cleanly to existing simulator HTTP ports.
 
-The Azure host-addressed local DNS portability issue is now closed. The Azure simulator has an opt-in DNS listener for local simulator zones, so SDK/CLI/Terraform clients can keep Azure-shaped host-addressed data-plane endpoints and resolve them through normal DNS instead of URL rewrites or Host-header injection.
+## Provider Facts To Preserve
 
-The stream/event ingestion gap is now closed. AWS Kinesis is implemented as a real JSON-protocol slice with stream lifecycle, shard listing, records, shard iterators, tags, retention, monitoring, encryption state, shard-count update, and limits. Azure Event Hubs is implemented with ARM namespace/event hub/consumer group/auth-rule lifecycle plus AMQP send/receive over the raw AMQP/TLS listener.
+- AzureRM is the hard requirement. `metadata_host` is host-only and provider source constructs `https://<host>` for custom Azure metadata discovery.
+- Azure Stack is also HTTPS-shaped for ARM/metadata use.
+- AzAPI exposes full endpoint URLs and defaults to HTTPS Azure endpoints; it is configurable but should work through the same gateway.
+- Google Terraform provider custom endpoints are full URLs; current HTTP simulator endpoint overrides are valid and should keep working.
+- AWS Terraform provider custom endpoints are full URLs; official docs explicitly support `http://localhost` service endpoints. HTTPS is optional for realism and CA-bundle coverage.
+- Existing simulator direct TLS support via `SIM_TLS_CERT` / `SIM_TLS_KEY` stays. The gateway is an operator/developer front door, not a replacement for direct simulator TLS.
 
-The managed data SaaS gap is now closed: GCP BigQuery, GCP Firestore, Azure Cosmos DB, and the AWS DynamoDB query/filter audit landed with SDK/CLI/Terraform coverage. The follow-up Azure azurerm storage endpoint report is also closed: the exact `azurerm_storage_container` + `storage_account_name` path now runs in the Azure Terraform harness and verifies the `{account}.blob.{suffix}` endpoint shape plus matching ARM resource ID.
+## Staged Plan
 
-The simulator test-contract matrix backfill is now closed. `specs/SIM_TEST_COVERAGE_MATRIX.md` has one row per canonical simulator surface table and CI/pre-commit enforcement through `scripts/check-simulator-coverage-matrix.sh`. The reported concrete holes were fixed with real external clients: AWS DynamoDB/SQS/SNS have direct AWS CLI lifecycle coverage, and the GCP Terraform harness covers Cloud Functions v2, Cloud Build triggers, Pub/Sub topics/subscriptions, and Cloud Logging sinks/metrics against simulator routes implemented for the provider call sequence.
+1. Add Caddy gateway config plus `make` targets to start/stop/status it.
+2. Route HTTPS hostnames to current simulator ports:
+   - `aws.sockerless.localhost` -> `127.0.0.1:4566`
+   - `gcp.sockerless.localhost` -> `127.0.0.1:4567`
+   - `azure.sockerless.localhost` -> `127.0.0.1:4568`
+   - Azure data-plane wildcards -> Azure simulator, preserving host-addressed routing.
+3. Wire Azure Terraform first: `metadata_host`, ARM-advertised data-plane URLs, gateway CA export to Linux test containers through `SSL_CERT_FILE`.
+4. Document AWS/GCP HTTPS usage while preserving direct HTTP configs.
+5. Add admin UI visibility for gateway status, endpoints, CA path, and equivalent recovery `make` commands.
+6. Decide after local proof whether CI should use Caddy by default for Azure Terraform or keep generated direct simulator certs.
 
-The Azure Entra token-resource gap is now closed. The simulator token endpoint derives RS256 JWT `aud` from OAuth v2 `scope` and OAuth v1 `resource`, so ARM keeps the management audience while Key Vault, Service Bus, and Storage data-plane clients can receive the resource-specific audiences their SDKs request.
+## Deferred Trackers
 
-The VM/instance compute gap is now closed. AWS EC2, GCP Compute Engine, and Azure Virtual Machines expose their public control-plane lifecycle APIs through the simulators with official SDK, vendor CLI, and Terraform coverage.
+- BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
+- BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
 
-The managed load-balancer gap is now closed. AWS ELBv2, GCP global external HTTP load balancing, and Azure Load Balancer expose their public control-plane APIs through the simulators with official SDK, vendor CLI, and Terraform coverage.
+## Start Checklist
 
-The NAT/public-IP parity gap is now closed. AWS EC2 Elastic IP + NAT Gateway + route-table flows, GCP regional addresses + manual Cloud NAT, and Azure Public IP Prefix + NAT Gateway + subnet NAT association flows are implemented through public cloud API surfaces and covered by official SDKs, vendor CLIs, and Terraform providers.
+1. `git fetch origin`
+2. `git checkout main`
+3. `git pull origin main`
+4. `gh issue list --state open --limit 30`
+5. Create a fresh branch from `origin/main`.
+6. File any concrete gaps in `BUGS.md` before code changes.
 
-The stale surface-table audit-debt pass is now closed. Surface tables no longer carry generic closed-BUG `BUG-1159` / `BUG-1147` deferral markers, and `scripts/seed-surface-tables.sh` now derives SDK/Terraform status from `specs/SIM_TEST_COVERAGE_MATRIX.md` so regenerated rows stay aligned with the maintained coverage index. The pass also fixed AWS S3 multipart list fidelity: `GET /{bucket}?uploads` now implements `ListMultipartUploads`, and both `ListMultipartUploads` and `ListParts` honor pagination markers/limits with official AWS SDK paginator and AWS CLI `s3api` coverage.
+## Rules That Matter For This Task
 
-The Azure Service Bus ARM Terraform parity issue is now closed. `Microsoft.ServiceBus/namespaces/{name}/networkRuleSets/default` supports get/update, network rule sets can be listed, disaster recovery and migration configuration lists return empty Azure-shaped list results when no config exists, and absent aliases/configurations return Azure-shaped 404s. The Azure Terraform harness now creates `azurerm_servicebus_namespace` plus `azurerm_servicebus_queue`, with matching official SDK and Azure CLI coverage.
-
-The AWS S3 bucket-subresource implementation and coverage follow-ups from the stale surface-table cleanup are now closed. Issue #281 / BUG-1221 fixed the affected public-API behavior and selected coverage rows, and issue #285 / BUG-1226 finished the remaining row-level SDK/CLI/Terraform coverage audit. The simulator now covers the remaining bucket configuration families through official AWS SDK, AWS CLI `s3api`, and Terraform-provider paths where those client surfaces exist.
-
-The BUG-1104 audit pass found and closed a stale AWS API Gateway client-surface claim. AWS API Gateway and API Gateway v2 now have direct official AWS CLI and Terraform-provider coverage instead of not-applicable matrix entries, and the simulator implements the public read/delete routes those clients require for refresh and destroy flows.
-
-The next BUG-1104 audit pass found and closed stale AWS RDS and ElastiCache client-surface claims. AWS CLI and terraform-provider-aws do expose `aws rds create-db-instance`, DB snapshots, DB snapshot attributes, `aws elasticache create-cache-cluster`, `aws_db_instance`, `aws_db_snapshot`, and `aws_elasticache_cluster`, so those surfaces now have real CLI/Terraform coverage. The simulator also persists create-time Query API tags for both services, tags RDS snapshots through the public RDS tag APIs, supports `DescribeDBSnapshotAttributes`, returns RDS `DbiResourceId`, and reads DB instances by RDS resource id, matching the public fields terraform-provider-aws v6 uses to carry DB instance identity through create/read/restore.
-
-The PR #289 AWS Terraform CI follow-up closed BUG-1232/#290, BUG-1234/#292, and BUG-1235/#293. The failure was not a reason to lengthen the 5-minute test timeout: it exposed real AWS simulator fidelity gaps and a real Terraform harness packaging problem. Cloud Map private DNS namespace CRUD no longer blocks on eager Docker network create/remove work; Docker network setup now happens lazily only when a container-backed ECS registration needs private DNS. Identifier-addressed RDS, ElastiCache, and SQS missing-resource paths now return the AWS not-found error shapes that SDKs and terraform-provider-aws expect. The provider-driven RDS instance, RDS snapshot, RDS restore, and ElastiCache Terraform coverage now runs in focused real Terraform packages, preserving the SDK/CLI/Terraform contract while keeping each Terraform package under the required 5-minute cap. The provider minimum-wait notes now live in `docs/terraform_min_timeouts_aws.md`, `docs/terraform_min_timeouts_gcp.md`, and `docs/terraform_min_timeouts_azure.md` with links to the pinned upstream provider source.
-
-Issue #291 / BUG-1233 is now closed. The AWS Route 53 simulator implements `GET /2013-04-01/hostedzonesbyname` with Route 53 DNS-name normalization, DNS-name ordered results, `dnsname`/`hostedzoneid` cursor handling, `maxitems`, and `IsTruncated` / `NextDNSName` / `NextHostedZoneId` response fields. Official AWS SDK and AWS CLI tests cover the operation, including the paged-cursor contract where the returned next cursor identifies the first zone in the next page. The pinned terraform-provider-aws v6.47.0 Route 53 zone lookup source was checked and currently uses `ListHostedZones`, not `ListHostedZonesByName`, so this exact operation has no current provider resource path; Route 53 remains covered by Terraform hosted-zone, record, alias, and tag resources.
-
-BUG-1236 is now closed. The BUG-1104 audit found that `aws-lambda` still claimed Terraform was not applicable even though terraform-provider-aws v6.47.0 exposes Lambda function, alias, permission, function URL, and invocation surfaces. The AWS Terraform production-shape harness now provisions those public provider paths, including `aws_lambda_invocation` against a real local Runtime API handler image. The simulator returns the Lambda lifecycle fields and version list shape the provider reads during refresh, including `LastUpdateStatus`, image code metadata, create-time `Publish`, `$LATEST`, and the first published version.
-
-BUG-1237 is now closed. PR #295 CI found that the existing AWS Lambda SDK subresource test still expected `ListVersionsByFunction` to return only published versions. The corrected test now matches AWS's public response shape by asserting `$LATEST` plus the published versions, so the SDK suite protects the same Lambda version-list fidelity that the Terraform provider needs.
-
-BUG-1238 / issue #296 is now closed. The AWS Route 53 simulator's `ListResourceRecordSets` implementation no longer depends on stored insert order. It sorts record sets the way Route 53 documents the API: DNS names by reversed labels, then record type, then set identifier, before applying the start-name/type/identifier cursor. The route also honors `maxitems` up to Route 53's 300-record cap and returns `IsTruncated`, `NextRecordName`, `NextRecordType`, and `NextRecordIdentifier` when a follow-up page is available. Official AWS SDK coverage verifies both the reported out-of-order cursor lookup and service truncation cursors; AWS CLI coverage verifies the same reported lookup through the vendor CLI.
-
-BUG-1239 and BUG-1240 are now closed. The BUG-1104 AWS client-surface audit found stale not-applicable claims for CloudWatch Logs and EFS Terraform coverage. The AWS Terraform production-shape harness now provisions `aws_cloudwatch_log_group`, `aws_efs_file_system`, `aws_efs_mount_target`, and `aws_efs_access_point`, with outputs asserting the provider-refresh resource identities.
-
-BUG-1241 is now closed. The same AWS audit found stale not-applicable claims for AWS CLI coverage of KMS, Secrets Manager, and SSM Parameter Store. The AWS CLI harness now covers `aws kms` key/alias/encrypt/decrypt, `aws secretsmanager` secret create/get/put/delete, and `aws ssm` parameter put/get/overwrite/delete flows.
-
-BUG-1242, BUG-1243, BUG-1244, and BUG-1245 / issue #298 are now closed. The BUG-1104 audit found stale not-applicable claims for Azure Cache for Redis, GCP Memorystore Redis, and GCP Cloud SQL external clients, and the open Cloud DNS issue correctly identified missing public Changes and patch routes. Azure Cache for Redis now has real Azure CLI and azurerm Terraform coverage for cache lifecycle, listKeys, firewall rules, SKU round-tripping, and PATCH. GCP Memorystore Redis and Cloud SQL now have real gcloud and terraform-provider-google coverage, including SQL `/sql/v1beta4` operation polling, database, and user paths. GCP Cloud DNS now implements Changes.Create/Get/List and ResourceRecordSets.Get/Patch with exact delete/add validation and SDK, gcloud transaction/update, and Terraform `google_dns_record_set` coverage.
-
-The Azure Key Vault data-plane follow-up from the stale surface-table cleanup is now closed. Issue #282 / BUG-1222 no longer remains as hidden table debt; Key Vault secrets, keys, and certificates now have public data-plane parity for the reported lifecycle, backup/restore, soft-delete purge, certificate operation/import/merge, and key crypto flows, with official Azure SDK and Terraform coverage.
-
-## Stage plan
-
-Current phase: Redis, Cloud SQL, and Cloud DNS client-surface coverage from BUG-1242..BUG-1245 / issue #298 is closed. No implementation branch remains active after the PR merged. Next implementation pass: start from the current GitHub open-issue list; if none exist, continue BUG-1104's client-surface audit and file each concrete gap as a BUG before fixing.
-
-The post-merge continuity cleanup reset `STATUS.md`, `DO_NEXT.md`, and `WHAT_WE_DID.md` so fresh sessions see `main` as idle after the Azure Key Vault data-plane parity merge. The local harness hardening pass fixed the real failures exposed by `make docker-test`: AWS ECS task tests now stop tasks through public ECS APIs, Cloud Map tests clean up through public Service Discovery APIs, and workload callback host selection now uses a container-reachable host when AWS/GCP/Azure simulators run inside the Docker harness. The mux-overlap scanner gate now models Go's real mux specificity so S3 wildcard routes do not produce false cross-slice failures.
-
-The proactive simulator audit corrected the stale S3 bucket-subresource tracking reference by opening issue #285 / BUG-1226 for the remaining row-level SDK/CLI/Terraform coverage audit. That follow-up was completed: the S3 bucket-subresource table no longer has silent row-level client-coverage gaps. The next BUG-1104 audit pass found stale API Gateway not-applicable cells: AWS CLI and terraform-provider-aws do expose API Gateway and API Gateway v2 resources. BUG-1227 closed that gap with real CLI/Terraform coverage and public refresh/destroy routes for both API Gateway surfaces. The following BUG-1104 audit pass found stale AWS RDS and ElastiCache not-applicable cells. BUG-1228 and BUG-1229 closed those gaps with real AWS CLI and terraform-provider-aws coverage, plus the RDS `DbiResourceId`, DB snapshot attribute, RDS resource-id lookup, snapshot tag, and create-time tag response-shape fixes those public clients exposed. Issue #291 then closed the missing Route 53 `ListHostedZonesByName` public API path with SDK/CLI coverage and a Route 53 surface table. BUG-1236 then closed the stale AWS Lambda Terraform not-applicable claim with provider-driven function, alias, permission, function URL, and invocation coverage.
-
-BUG-1227 finding: the API Gateway rows in `specs/SIM_TEST_COVERAGE_MATRIX.md` were stale. AWS API Gateway and API Gateway v2 have official AWS CLI commands and Terraform AWS provider resources, so the simulator had to support those real client paths instead of documenting them as not applicable. The fix added `aws apigateway` and `aws apigatewayv2` lifecycle tests, Terraform REST API / HTTP API resources, and the missing public Get/Delete routes for v1 resources, methods, integrations, deployments, stages and v2 routes, integrations, stages, deployments.
-
-BUG-1228 / BUG-1229 finding: the RDS and ElastiCache rows in `specs/SIM_TEST_COVERAGE_MATRIX.md` were stale. AWS CLI and terraform-provider-aws both expose DB instance, DB snapshot, DB snapshot attribute, restore-from-snapshot, and cache cluster lifecycle surfaces. The fix added real `aws rds` and `aws elasticache` CLI lifecycle tests, added `aws_db_instance`, `aws_db_snapshot`, restored `aws_db_instance`, and `aws_elasticache_cluster` to the Terraform harness, refreshed the surface tables to direct SDK/CLI/Terraform coverage, persisted create-time Query API tags, supported RDS snapshot tags and `DescribeDBSnapshotAttributes`, returned RDS `DbiResourceId`, and allowed DB instance reads by RDS resource id so terraform-provider-aws v6 reads created/restored DB instances by the public RDS identity fields it expects.
-
-Issue #282 / BUG-1222 finding: the stale marker cleanup found real Azure Key Vault data-plane gaps. The fix implemented the missing public data-plane behavior instead of documenting limitations: secrets, keys, and certificates now support paged lifecycle reads, property updates, backup/restore, soft-delete purge, key import/update/version reads, real RSA sign/verify/encrypt/decrypt/wrap/unwrap operations, and certificate operation/import/merge flows. Coverage uses official Azure SDK clients plus azurerm `azurerm_key_vault_secret`, `azurerm_key_vault_key`, and `azurerm_key_vault_certificate`.
-
-Issue #281 / BUG-1221 finding: the stale marker cleanup found real AWS S3 bucket-subresource gaps that should not stay hidden behind closed historical BUG references. That follow-up was closed with current SDK/CLI/Terraform coverage and public-API behavior fixes for the affected bucket-subresource rows; the remaining row-level coverage audit was later closed by issue #285 / BUG-1226.
-
-Issue #285 / BUG-1226 finding: the remaining S3 bucket-subresource table gaps were real coverage debt, and the Terraform lifecycle row also exposed a real public-API fidelity bug. The fix completed SDK, CLI, and Terraform coverage for the remaining bucket configuration families, added Get/List dispatch for ID-addressed analytics, inventory, metrics, and intelligent-tiering configurations, returned the documented lifecycle `x-amz-transition-default-minimum-object-size` header that terraform-provider-aws waits on, and isolated Terraform test state per run so failed local applies cannot refresh against stale simulator ports.
-
-BUG-1206 finding: the report was real. The old broad table markers were stale because the maintained coverage matrix and many later SDK/CLI/Terraform tests had superseded the blanket "deferred under BUG-1159 / BUG-1147" language. The fix removed those markers, taught the table seeder to read the coverage matrix, refreshed the generated tables, and converted concrete implementation gaps into issue #281 / BUG-1221 and issue #282 / BUG-1222. During the cleanup, the AWS S3 multipart table also exposed a real implementation mismatch: `ListMultipartUploads` was documented but not routed. That is now implemented and covered by SDK paginator and AWS CLI tests. The concrete implementation follow-ups were closed by their later implementation PRs, including the S3 row-level coverage pass in issue #285 / BUG-1226.
-
-Issue #279 finding: the audit gap was real. AWS had EC2 NAT primitives but lacked explicit SDK/CLI/Terraform coverage for the EIP/NAT route path. GCP lacked the regional address and address-label public APIs that manual Cloud NAT and the Terraform provider use. Azure lacked Public IP Prefix resources and NAT Gateway/subnet association list/back-reference behavior. The fix added those public API routes and pinned them with official SDK, vendor CLI, and Terraform coverage across all three simulators.
-
-Issue #263 finding: the audit gap was real. API Gateway, APIM, CloudFront, and existing network primitives did not cover managed L4/L7 load-balancer APIs. The fix added AWS ELBv2 load balancer/target group/listener lifecycle and target-health operations; GCP Compute global health checks, backend services, URL maps, target HTTP proxies, and global forwarding rules; and Azure `Microsoft.Network/loadBalancers` with public IP frontends, backend pools, probes, and load-balancing rules. Each cloud has official SDK, vendor CLI, and Terraform coverage.
-
-Issue #276 finding: the report was real. The azurerm Service Bus namespace resource reads `networkRuleSets/default` immediately after namespace creation, and the simulator had not implemented that public ARM child resource. The fix added persisted network rule set get/list/update, empty disaster recovery and migration configuration list reads, and Azure-shaped 404s for absent configs, then pinned the path with official `armservicebus` SDK, Azure CLI `az rest`, and azurerm Terraform namespace+queue coverage.
-
-Issue #266 finding: the audit gap was real. AWS EC2 exposed VPC/subnet/security-group/NAT helpers but not EC2 instance lifecycle; GCP Compute exposed networks/subnets/firewalls/routers/NAT/disks/zones but not instances; Azure exposed Network resources but not `Microsoft.Compute/virtualMachines` and the NIC/public-IP wiring VM resources require. The fix added public-cloud-compatible control-plane VM slices for all three clouds with SDK/CLI/Terraform coverage. No Firecracker or local execution substrate is exposed through public simulator APIs.
-
-Issue #272 finding: the report was real. The Azure simulator minted RS256/JWKS-verifiable tokens, but every token had `aud=https://management.azure.com/`, even when real Azure clients requested data-plane audiences through OAuth v2 `scope` such as `https://vault.azure.net/.default` or OAuth v1 `resource` such as `https://servicebus.azure.net`. The fix derives the JWT audience from those public token-request fields, keeps the ARM default for omitted audience fields, and covers the behavior with unit tests plus simulator SDK-harness HTTP tests.
-
-Issue #264 finding: the report was real. The repository had SDK/CLI/Terraform jobs, but no maintained matrix tying those jobs to the canonical simulator surface tables. The concrete examples were also real: AWS DynamoDB/SQS/SNS needed direct AWS CLI lifecycle coverage, and the GCP Terraform harness still missed Cloud Functions v2, Cloud Build triggers, Pub/Sub topic/subscription resources, and Cloud Logging sink/metric resources. The fix added those real-client tests, the missing GCP Cloud Logging and Cloud Build provider routes, and a CI/pre-commit matrix check.
-
-Issue #269 finding: the reported endpoint requirement made sense, and the simulator implementation on `main` already supported templated storage endpoints through `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` plus matching `/metadata/endpoints` storage suffix derivation. The missing piece was exact Terraform provider coverage for the realistic data-plane resource path. The fix added `azurerm_storage_container` with `storage_account_name`, not `storage_account_id`, so the provider must parse `primary_blob_endpoint`, accept the `{account}.blob.{suffix}` shape, and issue Blob data-plane calls.
-
-Issue #267 finding: the foundational data SaaS gap was real. The fix added GCP BigQuery dataset/table/job/query/tabledata flows, GCP Firestore document CRUD/commit/batch/query flows, and Azure Cosmos DB ARM plus SQL data-plane flows. The AWS DynamoDB audit found Query/filtered Scan returned unfiltered table contents; that now honors equality expressions using `ExpressionAttributeNames` and `ExpressionAttributeValues`.
-
-Issue #243 finding: Azure ARM resource responses were inconsistent with the simulator's cloud-facing contract. Storage and Key Vault derived endpoint hosts from the incoming ARM request, but Service Bus, Redis, APIM, PostgreSQL Flexible Server, and Container Apps still returned production cloud suffixes. The fix derives those endpoint fields from the simulator request host while preserving Azure-shaped field names and host patterns; Service Bus listKeys connection strings were updated with the same host derivation.
-
-Issue #244 finding: Container Apps Jobs and Apps passed `Architecture: "linux/arm64"` to Docker for every started container, including sidecars. That made the real container start fail on amd64 hosts when the local image manifest was amd64. The fix resolves each image and inspects its local manifest platform before calling `StartContainerSync`, matching the Cloud Run Services pattern.
-
-Issue #239 finding: PR #238 made GCS object metadata durable and observable but did not validate accepted metadata fields. The fix implements validation where the public docs are explicit: `customTime` must parse as RFC 3339 and `contentLanguage` must be at most 100 characters. Invalid metadata now returns `400 INVALID_ARGUMENT` across multipart upload, resumable upload init/finalization, compose, `copyTo`, and `rewriteTo`.
-
-Issue #240 finding: `gcsObjectResource.applyTo` and `persistGCSObject` both cloned custom metadata in the normal write flow. The fix marks metadata that was already cloned from the request resource and leaves `persistGCSObject` as the store-boundary clone for any uncloned map, removing the redundant clone without weakening isolation.
-
-Issue #241 finding: PR #238 centralized GCS object writes through `persistGCSObject`, but future direct `objects.Put` calls could bypass the disk-backed byte write and metadata normalization. The fix adds a source-level guard test that fails if GCS object store writes occur outside `persistGCSObject`.
-
-Issue #236 finding: the GCS `rewriteTo` / `copyTo` endpoints were real public JSON API surfaces, and callers can supply a destination object resource body with metadata beyond `contentType`. The fix persists custom metadata plus HTTP metadata fields, applies destination-over-source precedence for supplied fields, inherits absent fields from the source object, and returns the stored fields from metadata reads and download headers.
-
-Issue #237 finding: upload, resumable upload, compose, and copy/rewrite all performed the same object-byte write, checksum, timestamp, and store-update work independently. The fix routes those paths through one persistence helper so future object metadata changes update one real write path.
-
-Issue #232 finding: Azure Blob Copy Blob is a public data-plane `PUT` selected by `x-ms-copy-source`, not a multipart-copy detail. The fix branches before Put Blob, resolves host-style and path-style source URLs with escaped names, copies the real stored source bytes, returns Azure copy ID/status headers, and preserves source metadata unless destination metadata is supplied.
-
-Issue #233 finding: GCS object copy is a public JSON API surface. The fix implements canonical `rewriteTo` and legacy `copyTo` routes in the existing object POST handler, backed by real object bytes. `rewriteTo` completes synchronously with `done: true` for same-simulator copies and returns SDK-compatible string byte counts.
-
-Issue #234 finding: GCS object listing is documented as lexicographic by object name. The fix sorts `items[]` after filtering and also sorts delimiter-produced `prefixes[]` for stable directory-style listings.
-
-## Standing invariants (full list in STATUS.md)
-
-- Never auto-merge; user merges every PR.
-- Single-branch rule per phase; never more than 1 PR open.
-- File BUGs in BUGS.md *before* any fix attempt.
-- No fakes / no fallbacks / no silent shims.
-- Every reopen carries a postmortem trail (`.claude/skills/reopen-postmortem/SKILL.md`).
-- Every closed-enumeration surface has a `specs/SIM_SURFACE_TABLES/<name>.md` with no silent ✗ rows.
-- Every List* op has a paged-iterator test (`sim-canonical-config-test` rule).
-- Every stateful resource type has a state-machine assertion (`sim-state-machine-completeness`).
-- `make hooks` on every fresh clone (wires `mux-overlap-scan` + gofmt + golangci-lint + …).
-
-## Session-resume checklist
-
-1. `git fetch origin && gh pr list --state open && git status`.
-2. If a phase PR is open: `gh pr checks <N>`; report state.
-3. If a PR merged: sync `main`, delete merged branch, prune remotes, refresh continuity docs to idle.
-4. If fresh issues filed: `gh issue list --state open --limit 30`; file each as a BUG in BUGS.md before any fix attempt.
-5. Read `.claude/skills/avoid-vibe-slop/SKILL.md` before any code change.
-
-## Reference for next reopen / new issue
-
-If a community-filed issue surfaces against a closed enumeration (subresources, ops on a single service, paged List, state-bearing resource), the routine is:
-
-1. Identify the surface table at `specs/SIM_SURFACE_TABLES/<surface>.md`. If none exists, create one before any fix.
-2. File a BUG in BUGS.md citing which row(s) the issue covers + which siblings should be checked.
-3. Fix the named row + every reasonable sibling (`surface-table-completeness` rule).
-4. SDK test uses the canonical client (no raw `net/http` where an SDK exists; for List* use a Pager).
-5. For reopens: BUG entry MUST include the three postmortem fields (what test passed but should have failed / what SDK code path was missed / what new canonical-client test catches the regression).
+- No simulator-specific public API changes.
+- No mocks, fakes, or fallback modes.
+- No interactive commands.
+- Rebase the PR branch on `origin/main` before pushing.
+- User merges PRs; never run `gh pr merge`.
