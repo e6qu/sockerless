@@ -101,20 +101,24 @@ else
 endif
 
 test: ## run unit tests
+ifdef UI_PACKAGE
+	$(GO_ENV) go test -tags noui ./...
+else
 	$(GO_ENV) go test ./...
+endif
 
 test-integration: ## run integration tests against the local simulator
-	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags noui -v -timeout 15m ./...
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags 'noui integration' -v -timeout 15m ./...
 
 test-faas-smoke: ## run this backend's sim-backed FaaS runner smoke test
 ifndef FAAS_SMOKE_TESTS
 	@printf "$(COLOR_DIM)$(APP_NAME): no FaaS smoke test configured.$(COLOR_RESET)\n"
 else
-	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags noui -v -count=1 -run '$(FAAS_SMOKE_TESTS)' -timeout 15m ./...
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=sim go test -tags 'noui integration' -v -count=1 -run '$(FAAS_SMOKE_TESTS)' -timeout 15m ./...
 endif
 
 test-integration-cloud: ## run integration tests against the operator-supplied real cloud (requires SOCKERLESS_ENDPOINT_URL + per-backend ARM env vars)
-	$(GO_ENV) SOCKERLESS_TEST_TARGET=cloud go test -tags noui -v -timeout 30m ./...
+	$(GO_ENV) SOCKERLESS_TEST_TARGET=cloud go test -tags 'noui integration' -v -timeout 30m ./...
 
 upgrade-deps: ## bump every direct require in go.mod to its latest (excluding github.com/sockerless/* in-repo modules)
 	@deps=$$(awk '/^require \(/{b=1;next} /^\)/&&b{b=0} b&&!/\/\/ indirect/&&!/github.com\/sockerless\//{sub(/^[ \t]+/,"");sub(/[ \t]*\/\/.*$$/,"");if(NF>=2)print $$1}' go.mod); \

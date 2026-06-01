@@ -165,18 +165,26 @@ pinned official Firecracker release, requires `/dev/kvm`, boots an official
 Firecracker CI Linux guest, copies the repo's real `eval-arithmetic` Go source
 and configured Go toolchain into the guest rootfs, then runs `go test`,
 `go build`, and multiple arithmetic executions inside the microVM. This is the
-minimum CI guard for the substrate itself; cloud VM/VPC/LB tests are added to
-the same real-execution path as each public API is migrated.
+minimum CI guard for guest execution.
+
+CI also runs the real host-network substrate target. It requires Linux, real
+host networking tools, nftables, `/dev/kvm`, and sufficient privileges. The
+target creates a Linux bridge, two network namespaces, veth NICs, lease-based
+addresses, routes, and an nftables table; verifies gateway and
+namespace-to-namespace packet reachability with real packets; and verifies
+cleanup removes the host artifacts. This is the minimum CI guard for the
+network/NIC substrate itself; cloud VM/VPC/LB tests are added to the same
+real-execution path as each public API is migrated.
 
 ## Implementation Order
 
-1. Add host capability detection and cleanup scaffolding without changing public
+1. Host capability detection and cleanup scaffolding landed without changing
+   public resource behavior.
+2. The first real network/IPAM/NIC substrate landed without changing public
    resource behavior.
-2. Implement real network/IPAM/NIC substrate for one cloud path while preserving
-   public API shape.
 3. Attach one VM family to Firecracker using that network substrate.
 4. Add security enforcement on that packet path.
-5. Add load-balancer proxying and health checks on that packet path.
+5. Add NAT/routing and load-balancer proxying/health checks on that packet path.
 6. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
    separate product emulators.
 

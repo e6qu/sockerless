@@ -1,3 +1,5 @@
+//go:build integration
+
 // Integration tests for the gcf backend. TestMain (in
 // integration_test.go) brings up the sockerless backend, GCP simulator,
 // and the docker client pointed at the backend. SOCKERLESS_TEST_TARGET

@@ -119,6 +119,18 @@ CI now includes a mandatory `firecracker (microVM arithmetic)` job. It installs 
 
 Issues #332-#336 remained open because this stage did not yet change EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public behavior.
 
+## 2026-06-01 - Real-Execution Host Network Substrate
+
+The next BUG-1267 stage added the first shared implementation code for the real-execution substrate without changing cloud public API behavior.
+
+[simulators/realexec](simulators/realexec) now provides deterministic host capability checks for Linux, required substrate commands, `/dev/kvm`, and kernel capabilities; an idempotent LIFO cleanup stack; an auditable host command runner for substrate operations; lease-based IPv4 IPAM; and Linux bridge/netns/veth NIC creation. IP allocation reserves unusable, gateway, network, broadcast, and duplicate addresses instead of deriving addresses from counters or store length.
+
+`make realexec-network-test` runs only on Linux hosts with the required real tools and privileges. It creates a real bridge, network namespaces, veth NICs, IP leases, routes, and an nftables table; verifies packet reachability to the gateway and between namespaces; and verifies cleanup removes host artifacts. The mandatory Firecracker CI job runs this host-network target after the microVM arithmetic target, so CI guards both real guest execution and the first real network/NIC path.
+
+Issues #332-#336 remained open because this stage still did not migrate EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public API paths onto the substrate.
+
+Validation also fixed BUG-1270 and BUG-1271 in the shared Makefile layer. `make test` now uses `-tags noui` for UI-bearing Go apps, backend integration tests are behind an explicit `integration` build tag, integration CI/Make targets opt into `noui integration`, UI packages without a `test` script report that cleanly, and Go libraries have a `build-noui` compile-check alias for the top-level fanout.
+
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
 We checked whether a generic local HTTPS gateway for simulator APIs made sense, especially for Terraform providers that require HTTPS even when pointed at a local simulator.
@@ -161,7 +173,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. The substrate contract and Firecracker guest arithmetic CI guard landed; Firecracker-backed VM, Linux networking, nftables, and load-balancer data-plane implementation PRs remain.
+- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. The substrate contract, Firecracker guest arithmetic CI guard, host capability checks, cleanup primitives, and first Linux bridge/netns/veth/IPAM path landed; Firecracker-backed public VM APIs, nftables security enforcement, NAT/routing, and load-balancer data-plane PRs remain.
 
 ## Continuity Rules
 

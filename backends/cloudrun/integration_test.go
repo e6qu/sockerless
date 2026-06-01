@@ -1,3 +1,5 @@
+//go:build integration
+
 // TestMain + helpers for the cloudrun integration tests. Drives the
 // docker SDK against a running sockerless-backend-cloudrun pointed at
 // a SOCKERLESS_TEST_TARGET-selected endpoint. No fallbacks, no skips —

@@ -1,3 +1,5 @@
+//go:build integration
+
 // TestMain + helpers for the gcf integration tests. Drives the docker
 // SDK against a running sockerless-backend-gcf pointed at a
 // SOCKERLESS_TEST_TARGET-selected endpoint. No fallbacks, no skips —

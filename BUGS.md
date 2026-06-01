@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1269 filed - 1269 fixed - 3 open - 2 false positives.**
+**1271 filed - 1271 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,9 +12,14 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. The substrate contract and Firecracker guest arithmetic CI guard landed; the public data-plane implementation remains open. |
+| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. The substrate contract, Firecracker guest arithmetic CI guard, host capability checks, cleanup primitives, and first Linux bridge/netns/veth/IPAM path landed; public VM/VPC/security/NAT/LB API migration remains open. |
 
 ## Recently Closed
+
+This phase closed BUG-1270 and BUG-1271:
+
+- BUG-1270: Top-level `make test` failed on UI-bearing Go apps and backend integration packages. The shared Go app `test` target now uses `-tags noui` when a UI package is configured, backend integration tests are build-tagged with `integration`, and integration CI/Make targets opt into `noui integration` explicitly.
+- BUG-1271: Top-level fanout targets failed on leaf packages without the expected target shape. UI packages without a `test` script now report that explicitly instead of invoking `/bin/test`, and Go library Makefiles provide a `build-noui` compile-check alias for the aggregate no-UI build.
 
 Last phase closed BUG-1264 / issues #312, #315, and #326-#329:
 
