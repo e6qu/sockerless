@@ -2,6 +2,7 @@ FROM golang:1.25 AS builder
 
 # Build simulator
 WORKDIR /sim
+COPY simulators/realexec/ /realexec/
 COPY simulators/azure/ /sim/
 RUN GOWORK=off go build -tags noui -o /simulator-azure .
 
