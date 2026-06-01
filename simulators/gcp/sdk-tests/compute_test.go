@@ -85,6 +85,14 @@ func TestCompute_RegionalAddressAndManualRouterNAT(t *testing.T) {
 	}
 	_, err := svc.Networks.Insert(project, network).Context(ctx).Do()
 	require.NoError(t, err)
+	subnet := &compute.Subnetwork{
+		Name:        "sdk-nat-subnet",
+		IpCidrRange: "10.25.0.0/24",
+		Network:     "projects/test-project/global/networks/sdk-nat-network",
+		Region:      region,
+	}
+	_, err = svc.Subnetworks.Insert(project, region, subnet).Context(ctx).Do()
+	require.NoError(t, err)
 
 	addr := &compute.Address{
 		Name:        "sdk-nat-address",
@@ -394,6 +402,19 @@ func TestCompute_Instances_Lifecycle(t *testing.T) {
 	svc := computeService(t)
 	const project = "test-project"
 	const zone = "us-central1-a"
+	const region = "us-central1"
+
+	network := &compute.Network{Name: "sdk-vm-network", AutoCreateSubnetworks: false}
+	_, err := svc.Networks.Insert(project, network).Context(ctx).Do()
+	require.NoError(t, err)
+	subnet := &compute.Subnetwork{
+		Name:        "sdk-vm-subnet",
+		IpCidrRange: "10.26.0.0/24",
+		Network:     "projects/test-project/global/networks/sdk-vm-network",
+		Region:      region,
+	}
+	_, err = svc.Subnetworks.Insert(project, region, subnet).Context(ctx).Do()
+	require.NoError(t, err)
 
 	inst := &compute.Instance{
 		Name:        "sdk-vm-1",
@@ -407,7 +428,8 @@ func TestCompute_Instances_Lifecycle(t *testing.T) {
 			},
 		}},
 		NetworkInterfaces: []*compute.NetworkInterface{{
-			Network: "projects/test-project/global/networks/default",
+			Network:    "projects/test-project/global/networks/sdk-vm-network",
+			Subnetwork: "projects/test-project/regions/us-central1/subnetworks/sdk-vm-subnet",
 		}},
 		Labels: map[string]string{"env": "sdk"},
 		Tags:   &compute.Tags{Items: []string{"runner"}},

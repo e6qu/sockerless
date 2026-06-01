@@ -19,6 +19,15 @@ func TestCapabilityErrorIsTyped(t *testing.T) {
 	}
 }
 
+func TestNetworkCapabilityDetectionDoesNotRequireKVM(t *testing.T) {
+	report := DetectNetworkCapabilities()
+	for _, missing := range report.Missing {
+		if missing == "command:firecracker" || missing == "command:jailer" || missing == "kvm:/dev/kvm" {
+			t.Fatalf("network-only capability detection included guest requirement %q in %#v", missing, report.Missing)
+		}
+	}
+}
+
 func TestLinuxEffectiveCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status")

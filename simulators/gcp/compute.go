@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 // gcpInt64 round-trips int64 quoted-as-string (real GCP discovery
@@ -429,9 +432,15 @@ type ComputeForwardingRule struct {
 	NetworkTier         string `json:"networkTier,omitempty"`
 }
 
+var (
+	gcpSubnetworks sim.Store[ComputeSubnetwork]
+	gcpAddresses   sim.Store[ComputeAddress]
+)
+
 func registerCompute(srv *sim.Server) {
 	networks := sim.MakeStore[ComputeNetwork](srv.DB(), "compute_networks")
 	subnetworks := sim.MakeStore[ComputeSubnetwork](srv.DB(), "compute_subnetworks")
+	gcpSubnetworks = subnetworks
 
 	// Create network
 	srv.HandleFunc("POST /compute/v1/projects/{project}/global/networks", func(w http.ResponseWriter, r *http.Request) {
@@ -461,6 +470,13 @@ func registerCompute(srv *sim.Server) {
 		net.RoutingConfig.RoutingMode = req.RoutingConfig.RoutingMode
 		if net.RoutingConfig.RoutingMode == "" {
 			net.RoutingConfig.RoutingMode = "REGIONAL"
+		}
+		if !gcpRequireNetworkHost(w) {
+			return
+		}
+		if err := gcpCreateRealNetwork(r.Context(), selfLink); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to create real VPC network fabric: %v", err)
+			return
 		}
 		networks.Put(selfLink, net)
 
@@ -507,6 +523,10 @@ func registerCompute(srv *sim.Server) {
 		selfLink := fmt.Sprintf("projects/%s/global/networks/%s", project, name)
 
 		networks.Delete(selfLink)
+		if err := gcpDeleteRealNetwork(r.Context(), selfLink); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real VPC network fabric: %v", err)
+			return
+		}
 		op := newComputeOp(project, "global", selfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
@@ -562,9 +582,16 @@ func registerCompute(srv *sim.Server) {
 			Network:               req.Network,
 			IpCidrRange:           req.IpCidrRange,
 			Region:                fmt.Sprintf("projects/%s/regions/%s", project, region),
-			GatewayAddress:        "10.0.0.1",
+			GatewayAddress:        gcpSubnetGateway(req.IpCidrRange),
 			PrivateIpGoogleAccess: req.PrivateIpGoogleAccess,
 			CreationTimestamp:     time.Now().UTC().Format(time.RFC3339),
+		}
+		if !gcpRequireNetworkHost(w) {
+			return
+		}
+		if err := gcpCreateRealSubnetwork(r.Context(), subnet); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to create real subnet network fabric: %v", err)
+			return
 		}
 		subnetworks.Put(selfLink, subnet)
 
@@ -595,6 +622,10 @@ func registerCompute(srv *sim.Server) {
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, name)
 
 		subnetworks.Delete(selfLink)
+		if err := gcpDeleteRealSubnetwork(r.Context(), selfLink); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real subnet network fabric: %v", err)
+			return
+		}
 		op := newComputeOp(project, "regions/"+region, selfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
@@ -721,6 +752,7 @@ func registerCompute(srv *sim.Server) {
 	// `google_compute_router_nat` 404.
 	addresses := sim.MakeStore[ComputeAddress](srv.DB(), "compute_addresses")
 	routers := sim.MakeStore[ComputeRouter](srv.DB(), "compute_routers")
+	gcpAddresses = addresses
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/addresses", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
@@ -752,7 +784,12 @@ func registerCompute(srv *sim.Server) {
 			addr.Status = "RESERVED"
 		}
 		if addr.Address == "" && strings.EqualFold(addr.IPVersion, "IPV4") {
-			addr.Address = computeEphemeralIPv4(addr.Id)
+			ip, err := realexec.ReservePublicIPv4(addr.SelfLink, nil)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to reserve real public IPv4 lease: %v", err)
+				return
+			}
+			addr.Address = ip.String()
 		}
 		if addr.LabelFingerprint == "" {
 			addr.LabelFingerprint = computeFingerprint()
@@ -819,6 +856,9 @@ func registerCompute(srv *sim.Server) {
 		region := sim.PathParam(r, "region")
 		name := sim.PathParam(r, "name")
 		selfLink := computeRegionalAddressLink(project, region, name)
+		if addr, ok := addresses.Get(selfLink); ok {
+			realexec.ReleasePublicIPv4(net.ParseIP(addr.Address))
+		}
 		addresses.Delete(selfLink)
 		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, "regions/"+region, selfLink, "delete"))
 	})
@@ -844,6 +884,15 @@ func registerCompute(srv *sim.Server) {
 		rt.SelfLink = fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, rt.Name)
 		rt.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
 		rt.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if len(rt.Nats) > 0 {
+			if !gcpRequireNetworkHost(w) {
+				return
+			}
+			if err := gcpConfigureRealRouterNAT(r.Context(), rt); err != nil {
+				sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to program real Cloud NAT fabric: %v", err)
+				return
+			}
+		}
 		routers.Put(rt.SelfLink, rt)
 		op := newComputeOpWithType(project, "regions/"+region, rt.SelfLink, "insert")
 		sim.WriteJSON(w, http.StatusOK, op)
@@ -919,6 +968,15 @@ func registerCompute(srv *sim.Server) {
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "router %q not found", name)
 			return
+		}
+		if rt, ok := routers.Get(selfLink); ok && len(rt.Nats) > 0 {
+			if !gcpRequireNetworkHost(w) {
+				return
+			}
+			if err := gcpConfigureRealRouterNAT(r.Context(), rt); err != nil {
+				sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to program real Cloud NAT fabric: %v", err)
+				return
+			}
 		}
 		op := newComputeOpWithType(project, "regions/"+region, selfLink, "patch")
 		sim.WriteJSON(w, http.StatusOK, op)
@@ -1176,7 +1234,7 @@ func registerComputeInstances(srv *sim.Server) {
 		return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, name)
 	}
 
-	normalizeInstance := func(project, zone string, inst *ComputeInstance) {
+	normalizeInstance := func(ctx context.Context, project, zone string, inst *ComputeInstance) error {
 		inst.Kind = "compute#instance"
 		if inst.Id == "" {
 			inst.Id = computeNumericID()
@@ -1253,7 +1311,23 @@ func registerComputeInstances(srv *sim.Server) {
 				inst.NetworkInterfaces[i].Network = fmt.Sprintf("projects/%s/global/networks/default", project)
 			}
 			if inst.NetworkInterfaces[i].NetworkIP == "" {
-				inst.NetworkInterfaces[i].NetworkIP = fmt.Sprintf("10.128.0.%d", i+4)
+				subnetLink := inst.NetworkInterfaces[i].Subnetwork
+				if subnetLink == "" {
+					return fmt.Errorf("network interface %s requires a subnetwork for real IP allocation", inst.NetworkInterfaces[i].Name)
+				}
+				ip, err := gcpCreateRealNIC(ctx, inst.SelfLink+"/"+inst.NetworkInterfaces[i].Name, subnetLink, "")
+				if err != nil {
+					return err
+				}
+				inst.NetworkInterfaces[i].NetworkIP = ip
+			} else {
+				subnetLink := inst.NetworkInterfaces[i].Subnetwork
+				if subnetLink == "" {
+					return fmt.Errorf("network interface %s requires a subnetwork for real IP allocation", inst.NetworkInterfaces[i].Name)
+				}
+				if _, err := gcpCreateRealNIC(ctx, inst.SelfLink+"/"+inst.NetworkInterfaces[i].Name, subnetLink, inst.NetworkInterfaces[i].NetworkIP); err != nil {
+					return err
+				}
 			}
 			if inst.NetworkInterfaces[i].StackType == "" {
 				inst.NetworkInterfaces[i].StackType = "IPV4_ONLY"
@@ -1277,15 +1351,9 @@ func registerComputeInstances(srv *sim.Server) {
 			}
 		}
 		if len(inst.NetworkInterfaces) == 0 {
-			inst.NetworkInterfaces = []ComputeNetworkInterface{{
-				Kind:        "compute#networkInterface",
-				Name:        "nic0",
-				Network:     fmt.Sprintf("projects/%s/global/networks/default", project),
-				NetworkIP:   "10.128.0.4",
-				StackType:   "IPV4_ONLY",
-				Fingerprint: generateUUID()[:8],
-			}}
+			return fmt.Errorf("compute instance requires a network interface with a subnetwork for real IP allocation")
 		}
+		return nil
 	}
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instances", func(w http.ResponseWriter, r *http.Request) {
@@ -1300,7 +1368,13 @@ func registerComputeInstances(srv *sim.Server) {
 			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
 			return
 		}
-		normalizeInstance(project, zone, &inst)
+		if !gcpRequireNetworkHost(w) {
+			return
+		}
+		if err := normalizeInstance(r.Context(), project, zone, &inst); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to attach real instance network interface: %v", err)
+			return
+		}
 		instances.Put(inst.SelfLink, inst)
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, inst.SelfLink, "insert"))
 	})
@@ -1360,9 +1434,13 @@ func registerComputeInstances(srv *sim.Server) {
 		zone := sim.PathParam(r, "zone")
 		name := sim.PathParam(r, "name")
 		selfLink := instanceSelfLink(project, zone, name)
-		if _, ok := instances.Get(selfLink); !ok {
+		inst, ok := instances.Get(selfLink)
+		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
+		}
+		for _, ni := range inst.NetworkInterfaces {
+			_ = gcpDeleteRealNIC(r.Context(), inst.SelfLink+"/"+ni.Name)
 		}
 		instances.Delete(selfLink)
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "delete"))

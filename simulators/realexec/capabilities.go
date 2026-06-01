@@ -50,6 +50,13 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 	if len(requiredCommands) == 0 {
 		requiredCommands = []string{"firecracker", "jailer", "ip", "nft"}
 	}
+	requiresKVM := false
+	for _, name := range requiredCommands {
+		if name == "firecracker" || name == "jailer" {
+			requiresKVM = true
+			break
+		}
+	}
 
 	report := CapabilityReport{
 		GOOS:     runtime.GOOS,
@@ -70,7 +77,7 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 		report.Commands[name] = path
 	}
 
-	if report.GOOS == "linux" {
+	if report.GOOS == "linux" && requiresKVM {
 		if f, err := os.OpenFile(report.KVMPath, os.O_RDWR, 0); err == nil {
 			report.KVMUsable = true
 			_ = f.Close()
@@ -78,6 +85,9 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 			report.Missing = append(report.Missing, "kvm:"+report.KVMPath)
 		}
 
+	}
+
+	if report.GOOS == "linux" {
 		effectiveCaps, err := linuxEffectiveCapabilities("/proc/self/status")
 		if err != nil {
 			report.Missing = append(report.Missing, "linux-capabilities")
@@ -94,6 +104,10 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 	}
 
 	return report
+}
+
+func DetectNetworkCapabilities() CapabilityReport {
+	return DetectCapabilities("ip", "nft", "sysctl")
 }
 
 func (r CapabilityReport) Require() error {

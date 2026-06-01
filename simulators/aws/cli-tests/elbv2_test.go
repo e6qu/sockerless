@@ -1,11 +1,33 @@
 package aws_cli_test
 
 import (
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
 
 func TestELBv2LoadBalancerCLI(t *testing.T) {
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		_, _ = w.Write([]byte("cli-proxied"))
+	}))
+	defer targetServer.Close()
+	targetURL, err := url.Parse(targetServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetHost, targetPort, err := net.SplitHostPort(targetURL.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	out := runCLI(t, awsCLI("ec2", "create-vpc",
 		"--cidr-block", "10.91.0.0/16",
 		"--query", "Vpc.VpcId",
@@ -54,6 +76,7 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 		"--port", "80",
 		"--vpc-id", vpcID,
 		"--target-type", "ip",
+		"--health-check-timeout-seconds", "1",
 		"--query", "TargetGroups[0].TargetGroupArn",
 		"--output", "text"))
 	tgArn := strings.TrimSpace(out)
@@ -63,25 +86,46 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 
 	runCLI(t, awsCLI("elbv2", "register-targets",
 		"--target-group-arn", tgArn,
-		"--targets", "Id=10.91.1.25,Port=80"))
+		"--targets", "Id="+targetHost+",Port="+targetPort, "Id=192.0.2.254,Port=80"))
 	out = runCLI(t, awsCLI("elbv2", "describe-target-health",
 		"--target-group-arn", tgArn,
+		"--targets", "Id="+targetHost+",Port="+targetPort,
 		"--query", "TargetHealthDescriptions[0].TargetHealth.State",
 		"--output", "text"))
 	if strings.TrimSpace(out) != "healthy" {
 		t.Fatalf("expected healthy target, got %q", out)
 	}
+	out = runCLI(t, awsCLI("elbv2", "describe-target-health",
+		"--target-group-arn", tgArn,
+		"--targets", "Id=192.0.2.254,Port=80",
+		"--query", "TargetHealthDescriptions[0].TargetHealth.State",
+		"--output", "text"))
+	if strings.TrimSpace(out) != "unhealthy" {
+		t.Fatalf("expected unhealthy target, got %q", out)
+	}
 
 	out = runCLI(t, awsCLI("elbv2", "create-listener",
 		"--load-balancer-arn", lbArn,
 		"--protocol", "HTTP",
-		"--port", "80",
+		"--port", "18081",
 		"--default-actions", "Type=forward,TargetGroupArn="+tgArn,
 		"--query", "Listeners[0].ListenerArn",
 		"--output", "text"))
 	listenerArn := strings.TrimSpace(out)
 	if !strings.Contains(listenerArn, ":listener/app/cli-lb/") {
 		t.Fatalf("expected ELBv2 listener ARN, got %q", listenerArn)
+	}
+	resp, err := http.Get("http://127.0.0.1:18081/proxy-check")
+	if err != nil {
+		t.Fatalf("GET through real ELBv2 listener: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read ELBv2 proxy response: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "cli-proxied" {
+		t.Fatalf("expected proxied body, got %q", string(body))
 	}
 
 	out = runCLI(t, awsCLI("elbv2", "describe-load-balancers",
@@ -122,7 +166,7 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 	runCLI(t, awsCLI("elbv2", "delete-listener", "--listener-arn", listenerArn))
 	runCLI(t, awsCLI("elbv2", "deregister-targets",
 		"--target-group-arn", tgArn,
-		"--targets", "Id=10.91.1.25,Port=80"))
+		"--targets", "Id="+targetHost+",Port="+targetPort, "Id=192.0.2.254,Port=80"))
 	runCLI(t, awsCLI("elbv2", "delete-target-group", "--target-group-arn", tgArn))
 	runCLI(t, awsCLI("elbv2", "delete-load-balancer", "--load-balancer-arn", lbArn))
 }

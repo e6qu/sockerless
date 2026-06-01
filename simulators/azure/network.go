@@ -225,6 +225,13 @@ func registerNetwork(srv *sim.Server) {
 			vnet.Properties.Subnets = append(vnet.Properties.Subnets, SubnetRef{ID: s.ID, Name: s.Name})
 		}
 
+		if !azureRequireNetworkHost(w) {
+			return
+		}
+		if err := azureCreateRealVnet(r.Context(), vnet); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to create real virtual network fabric: %v", err)
+			return
+		}
 		vnets.Put(resourceID, vnet)
 
 		// go-azure-sdk expects 200 for sync creates
@@ -270,7 +277,12 @@ func registerNetwork(srv *sim.Server) {
 			return strings.HasPrefix(s.ID, resourceID+"/subnets/")
 		})
 		for _, s := range subnetList {
+			_ = azureDeleteRealSubnet(r.Context(), s.ID)
 			subnets.Delete(s.ID)
+		}
+		if err := azureDeleteRealVnet(r.Context(), resourceID); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to delete real virtual network fabric: %v", err)
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -315,6 +327,13 @@ func registerNetwork(srv *sim.Server) {
 				PrivateLinkServiceNetworkPolicies: privateLinkPolicies,
 			},
 		}
+		if !azureRequireNetworkHost(w) {
+			return
+		}
+		if err := azureCreateRealSubnet(r.Context(), sn); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to create real subnet network fabric: %v", err)
+			return
+		}
 		subnets.Put(resourceID, sn)
 
 		// go-azure-sdk expects 200 for sync creates
@@ -347,6 +366,10 @@ func registerNetwork(srv *sim.Server) {
 			sub, rg, vnetName, subnetName)
 
 		subnets.Delete(resourceID)
+		if err := azureDeleteRealSubnet(r.Context(), resourceID); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to delete real subnet network fabric: %v", err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -618,7 +641,22 @@ func registerNetwork(srv *sim.Server) {
 		if gw.Sku == nil {
 			gw.Sku = &SkuName{Name: "Standard"}
 		}
+		if len(gw.Properties.PublicIPAddresses) > 0 || len(gw.Properties.Subnets) > 0 {
+			if !azureRequireNetworkHost(w) {
+				return
+			}
+		}
 		natGateways.Put(resourceID, gw)
+		for _, ref := range gw.Properties.Subnets {
+			if sn, ok := azureSubnets.Get(ref.ID); ok {
+				sn.Properties.NatGateway = &SubResource{ID: gw.ID}
+				if err := azureConfigureRealNATGatewayForSubnet(r.Context(), sn); err != nil {
+					natGateways.Delete(resourceID)
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to program real NAT gateway fabric: %v", err)
+					return
+				}
+			}
+		}
 		sim.WriteJSON(w, http.StatusOK, gw)
 	})
 
@@ -661,6 +699,7 @@ func registerNetwork(srv *sim.Server) {
 		resourceID := fmt.Sprintf(
 			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/natGateways/%s",
 			sub, rg, name)
+		azureDeleteRealNATGateway(resourceID)
 		natGateways.Delete(resourceID)
 		w.WriteHeader(http.StatusOK)
 	})

@@ -10,9 +10,9 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: real-execution network namespaces for issue #336.
+Last completed phase: issue #336 VPC fabric/NAT/IPAM paths were moved onto the real-execution substrate, and AWS became the first migrated #334/#335 packet path with real ELBv2 probes/proxying plus nftables security-group ingress.
 
-Next planned phase: migrate the first public VPC/NIC or VM family onto the real-execution substrate for BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Next planned phase: continue BUG-1267 with Firecracker-backed VM execution, GCP/Azure security enforcement, and the remaining managed load-balancer data-plane work for issues #332-#335 and #338, unless a higher-priority issue appears. Number #337 is a merged PR, not an open issue.
 
 ## Guiding Principles
 
@@ -65,11 +65,11 @@ Implemented:
 
 Remaining staged work:
 
-1. **BUG-1267 / issues #332-#336.** Attach the first public VM family to the real-execution substrate, then proceed to nftables security enforcement, NAT/routing, and real load-balancer data planes.
+1. **BUG-1267 / issues #332-#335 and #338.** Attach VM execution to Firecracker guests, enforce remaining security groups/firewalls/NSGs with nftables, and move remaining managed load balancers onto real proxy/listener data planes.
 
 ## Real-Execution Substrate
 
-The first BUG-1267 stages established the architecture, host-model contract, capability checks, cleanup primitives, and first real host-network path for issues #332-#336 without changing simulator public API behavior:
+The BUG-1267 stages established the architecture, host-model contract, capability checks, cleanup primitives, and real host-network paths for issues #332-#336:
 
 - [specs/SIMULATOR_EXECUTION.md](specs/SIMULATOR_EXECUTION.md) was rewritten to reflect the current Docker/Podman-backed container/FaaS execution model.
 - [specs/SIMULATOR_REAL_EXECUTION.md](specs/SIMULATOR_REAL_EXECUTION.md) defined the VM/network real-execution substrate: Firecracker guests, Linux netns/bridges/tap/veth, netlink routing, nftables policy/NAT, L4/L7 proxying, active health checks, per-instance metadata, capability checks, and no metadata fallback.
@@ -79,8 +79,10 @@ The first BUG-1267 stages established the architecture, host-model contract, cap
 - [simulators/realexec](simulators/realexec) added the shared real-execution substrate module with deterministic host capability detection, LIFO cleanup, an auditable host command runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
 - `make realexec-network-test` now creates a real Linux bridge, network namespaces, veth NICs, routes, leases, and an nftables table in the mandatory Firecracker CI job, verifies gateway and namespace-to-namespace reachability with real packets, and verifies cleanup removes host artifacts.
 - The network object now owns a dedicated Linux network namespace. Its bridge and gateway address live inside that namespace, and attached NIC veth peers are moved into that namespace before being enslaved to the bridge. The host-network smoke test verifies the bridge is inside the network namespace and that guest namespaces still reach the gateway and each other with real packets.
+- Issue #336 was fixed. AWS `CreateVpc`/`CreateSubnet`, EC2 ENIs from `RunInstances` and Auto Scaling, Elastic IP allocation, NAT gateways, and NAT routes now use the substrate. GCP Compute networks/subnetworks, instance NIC allocation, regional addresses, and Cloud NAT now use the substrate. Azure virtual networks/subnets, NIC private IP/MAC allocation, public IP allocation, and NAT gateway subnet programming now use the substrate. These paths require Linux network namespace, bridge/veth, routing, and nftables capabilities and fail loudly when the host cannot provide them.
+- AWS security groups and ELBv2 were the first #335/#334 public paths to move beyond metadata: EC2 ENI ingress rules compile to nftables on the real veth path, ELBv2 target health uses real TCP/HTTP probes, and ELBv2 listeners run a real local TCP proxy to healthy targets.
 
-Issues #332-#336 remained open because no EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public API path had been migrated to the substrate yet.
+Issues #332-#335 and #338 remained open for Firecracker-backed VM execution and the remaining GCP/Azure security and cross-cloud load-balancer data planes. Number #337 is a merged PR, not an open issue.
 
 ## AWS Fidelity Sweep
 
@@ -138,7 +140,7 @@ The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
-- BUG-1267: compute/networking real-execution backlog. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and first Linux host-network substrate path landed. Issues #332-#336 remain open until public VM, VPC, security, NAT, and load-balancer API paths use the substrate.
+- BUG-1267: compute/networking real-execution backlog. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate. AWS security-group ingress and ELBv2 health/proxy paths were the first #335/#334 migrations. Issues #332-#335 and #338 remain open for Firecracker-backed VM execution, GCP/Azure security enforcement, and remaining managed load-balancer data planes. Number #337 is a merged PR, not an open issue.
 
 ## Current Capability Summary
 

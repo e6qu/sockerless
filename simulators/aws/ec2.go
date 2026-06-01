@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 // EC2 types
@@ -507,6 +509,13 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		EnableDnsSupport:   true,
 		EnableDnsHostnames: false,
 	}
+	if !ec2RequireNetworkHost(w) {
+		return
+	}
+	if err := ec2CreateRealVPC(r.Context(), vpc); err != nil {
+		ec2ErrorXML(w, "VpcLimitExceeded", fmt.Sprintf("failed to create real VPC network fabric: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 	ec2Vpcs.Put(id, vpc)
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -553,6 +562,10 @@ func handleDescribeVpcs(w http.ResponseWriter, r *http.Request) {
 func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("VpcId")
 	ec2Vpcs.Delete(id)
+	if err := ec2DeleteRealVPC(r.Context(), id); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real VPC network fabric: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteVpcResponse %s>
@@ -624,6 +637,13 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 		Tags:             tags,
 		OwnerId:          ec2Owner(),
 	}
+	if !ec2RequireNetworkHost(w) {
+		return
+	}
+	if err := ec2CreateRealSubnet(r.Context(), subnet); err != nil {
+		ec2ErrorXML(w, "InvalidSubnet.Conflict", fmt.Sprintf("failed to create real subnet network fabric: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 	ec2Subnets.Put(id, subnet)
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -690,6 +710,10 @@ func handleModifySubnetAttribute(w http.ResponseWriter, r *http.Request) {
 func handleDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("SubnetId")
 	ec2Subnets.Delete(id)
+	if err := ec2DeleteRealSubnet(r.Context(), id); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real subnet network fabric: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteSubnetResponse %s>
@@ -815,11 +839,15 @@ func handleAllocateAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	tags := parseTags(r)
 	id := ec2ID("eipalloc")
-	ip := fmt.Sprintf("203.0.113.%d", ec2ElasticIPs.Len()+1)
+	ip, err := realexec.ReservePublicIPv4(id, nil)
+	if err != nil {
+		ec2ErrorXML(w, "AddressLimitExceeded", fmt.Sprintf("failed to reserve real public IPv4 lease: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	eip := EC2ElasticIP{
 		AllocationId: id,
-		PublicIp:     ip,
+		PublicIp:     ip.String(),
 		Domain:       domain,
 		Tags:         tags,
 	}
@@ -829,7 +857,7 @@ func handleAllocateAddress(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<AllocateAddressResponse %s>
   <requestId>%s</requestId>
   <allocationId>%s</allocationId><publicIp>%s</publicIp><domain>%s</domain>
-</AllocateAddressResponse>`, ec2Xmlns(), generateUUID(), id, ip, domain)
+</AllocateAddressResponse>`, ec2Xmlns(), generateUUID(), id, ip.String(), domain)
 }
 
 func handleDescribeAddresses(w http.ResponseWriter, r *http.Request) {
@@ -857,6 +885,9 @@ func handleDescribeAddresses(w http.ResponseWriter, r *http.Request) {
 
 func handleReleaseAddress(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("AllocationId")
+	if eip, ok := ec2ElasticIPs.Get(id); ok {
+		realexec.ReleasePublicIPv4(net.ParseIP(eip.PublicIp))
+	}
 	ec2ElasticIPs.Delete(id)
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -902,6 +933,12 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	if e, ok := ec2ElasticIPs.Get(allocId); ok {
 		publicIp = e.PublicIp
 	}
+	privateIP, err := AllocateSubnetIP(subnetId)
+	if err != nil {
+		ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", fmt.Sprintf("failed to allocate NAT gateway private IP: %v", err), http.StatusBadRequest)
+		return
+	}
+	eniID := ec2ID("eni")
 
 	natgw := EC2NatGateway{
 		NatGatewayId: id,
@@ -913,10 +950,17 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 		NatGatewayAddresses: []EC2NatGatewayAddress{{
 			AllocationId:       allocId,
 			PublicIp:           publicIp,
-			PrivateIp:          "10.0.0.10",
-			NetworkInterfaceId: ec2ID("eni"),
+			PrivateIp:          privateIP,
+			NetworkInterfaceId: eniID,
 		}},
 		CreateTime: time.Now().UTC().Format(time.RFC3339),
+	}
+	if !ec2RequireNetworkHost(w) {
+		return
+	}
+	if err := ec2CreateRealNATGateway(r.Context(), natgw); err != nil {
+		ec2ErrorXML(w, "NatGatewayLimitExceeded", fmt.Sprintf("failed to create real NAT gateway fabric: %v", err), http.StatusServiceUnavailable)
+		return
 	}
 	ec2NatGateways.Put(id, natgw)
 
@@ -927,12 +971,12 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
     <natGatewayId>%s</natGatewayId><subnetId>%s</subnetId>
     <vpcId>%s</vpcId><state>available</state>
     <natGatewayAddressSet>
-      <item><allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>10.0.0.10</privateIp></item>
+      <item><allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>%s</privateIp></item>
     </natGatewayAddressSet>
     <createTime>%s</createTime>
     %s
   </natGateway>
-</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, allocId, publicIp, natgw.CreateTime, writeTagSetXML(tags))
+</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, allocId, publicIp, privateIP, natgw.CreateTime, writeTagSetXML(tags))
 }
 
 func natgwItemXML(n EC2NatGateway) string {
@@ -980,6 +1024,10 @@ func handleDescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 func handleDeleteNatGateway(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("NatGatewayId")
 	ec2NatGateways.Delete(id)
+	if err := ec2DeleteRealNATGateway(r.Context(), id); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real NAT gateway fabric: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteNatGatewayResponse %s>
@@ -1123,6 +1171,15 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	destCidr := r.FormValue("DestinationCidrBlock")
 	gwId := r.FormValue("GatewayId")
 	natId := r.FormValue("NatGatewayId")
+	if natId != "" {
+		if !ec2RequireNetworkHost(w) {
+			return
+		}
+		if err := ec2ConfigureRealNATRoute(r.Context(), rtId, destCidr, natId); err != nil {
+			ec2ErrorXML(w, "RouteLimitExceeded", fmt.Sprintf("failed to program real NAT route: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+	}
 
 	ec2RouteTables.Update(rtId, func(rt *EC2RouteTable) {
 		rt.Routes = append(rt.Routes, EC2Route{
@@ -1427,6 +1484,10 @@ func handleAuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request)
 	})
 
 	rules := createSecurityGroupRules(groupId, perm, false)
+	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 	var ruleSetXML strings.Builder
 	for _, rule := range rules {
 		ruleSetXML.WriteString(sgrItemXML(rule))
@@ -1467,6 +1528,10 @@ func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
 		sg.IpPermissions = removePermission(sg.IpPermissions, perm)
 	})
+	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<RevokeSecurityGroupIngressResponse %s>
@@ -1739,7 +1804,8 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 			}
 			privateIP = ip
 		}
-		inst := ec2CreateInstance(EC2InstanceCreateSpec{
+		inst, err := ec2CreateInstance(EC2InstanceCreateSpec{
+			Context:          r.Context(),
 			ReservationId:    reservationID,
 			ImageId:          imageID,
 			InstanceType:     instanceType,
@@ -1752,6 +1818,13 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 			KeyName:          r.FormValue("KeyName"),
 			State:            "pending",
 		})
+		if err != nil {
+			if i < minCount {
+				ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", fmt.Sprintf("failed to attach real EC2 network interface: %v", err), http.StatusServiceUnavailable)
+				return
+			}
+			break
+		}
 		instances = append(instances, inst)
 		go ec2TransitionInstanceToRunning(inst.InstanceId)
 	}
@@ -1793,6 +1866,7 @@ func runInstancesCounts(w http.ResponseWriter, r *http.Request) (int, int, bool)
 }
 
 type EC2InstanceCreateSpec struct {
+	Context          context.Context
 	ReservationId    string
 	ImageId          string
 	InstanceType     string
@@ -1806,12 +1880,18 @@ type EC2InstanceCreateSpec struct {
 	State            string
 }
 
-func ec2CreateInstance(spec EC2InstanceCreateSpec) EC2Instance {
+func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 	if spec.State == "" {
 		spec.State = "pending"
 	}
+	if spec.Context == nil {
+		spec.Context = context.Background()
+	}
 	instanceID := ec2ID("i")
 	eniID := ec2ID("eni")
+	if err := ec2CreateRealNIC(spec.Context, eniID, spec.SubnetId, spec.PrivateIP, spec.SecurityGroupIds); err != nil {
+		return EC2Instance{}, err
+	}
 	rootDevice := "/dev/sda1"
 	inst := EC2Instance{
 		InstanceId:         instanceID,
@@ -1865,7 +1945,7 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) EC2Instance {
 	}
 	rootVolume.HostPath = EBSVolumeHostDir(rootVolumeID)
 	ec2Volumes.Put(rootVolumeID, rootVolume)
-	return inst
+	return inst, nil
 }
 
 func ec2TransitionInstanceToRunning(instanceID string) {
@@ -2031,6 +2111,10 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 		}
 		if deleteENI && inst.NetworkInterfaceId != "" {
 			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+			if err := ec2DeleteRealNIC(r.Context(), inst.NetworkInterfaceId); err != nil {
+				ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real EC2 network interface: %v", err), http.StatusServiceUnavailable)
+				return
+			}
 			ec2DeleteOnTerminationVolumes(id)
 		}
 		fmt.Fprintf(&items, `<item><instanceId>%s</instanceId><currentState><code>%d</code><name>%s</name></currentState><previousState><code>%d</code><name>%s</name></previousState></item>`,

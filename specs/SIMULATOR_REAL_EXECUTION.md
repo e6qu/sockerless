@@ -1,7 +1,9 @@
 # Simulator Real-Execution Substrate
 
 Issues #332-#336 track the move from metadata-only VM/network resources to real
-execution. This document is the implementation contract for that program.
+execution. Issue #338 is the comparison/meta issue that keeps the simulator
+scope aligned with real cloud behavior. This document is the implementation
+contract for that program.
 
 The first rule is unchanged: simulator public APIs must match the public cloud.
 The substrate is an implementation detail behind EC2, GCE, Azure VM, VPC,
@@ -169,13 +171,13 @@ minimum CI guard for guest execution.
 
 CI also runs the real host-network substrate target. It requires Linux, real
 host networking tools, nftables, `/dev/kvm`, and sufficient privileges. The
-target creates a dedicated network namespace containing a Linux bridge and
-gateway, two guest network namespaces, veth NICs, lease-based addresses,
-routes, and an nftables table; verifies gateway and namespace-to-namespace
-packet reachability with real packets; and verifies cleanup removes the host
-artifacts. This is the minimum CI guard for the
-network/NIC substrate itself; cloud VM/VPC/LB tests are added to the same
-real-execution path as each public API is migrated.
+target creates a dedicated network namespace containing subnet bridges and
+gateways, guest network namespaces, veth NICs, lease-based addresses, routed
+egress, SNAT state, routes, and nftables tables; verifies gateway,
+namespace-to-namespace, and egress reachability with real packets; and verifies
+cleanup removes the host artifacts. This is the minimum CI guard for the
+network/NIC/NAT substrate itself; cloud VM/security/LB tests are added to the
+same real-execution path as each public API is migrated.
 
 ## Implementation Order
 
@@ -184,10 +186,17 @@ real-execution path as each public API is migrated.
 2. The first real network/IPAM/NIC substrate landed without changing public
    resource behavior; each network now owns a Linux network namespace with its
    bridge and gateway inside it.
-3. Attach one VM family to Firecracker using that network substrate.
-4. Add security enforcement on that packet path.
-5. Add NAT/routing and load-balancer proxying/health checks on that packet path.
-6. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
+3. Public VPC/network/subnet/NIC/public-IP/NAT route paths for AWS, GCP, and
+   Azure were migrated onto the substrate and fail loudly when host networking
+   capabilities are unavailable.
+4. AWS security-group ingress rules and AWS ELBv2 health/listener paths were
+   migrated onto the packet path: security groups compile to nftables on ENI
+   veth peers, target health uses real probes, and listeners proxy to healthy
+   targets.
+5. Attach one VM family to Firecracker using that network substrate.
+6. Add GCP/Azure security enforcement on that packet path.
+7. Add the remaining load-balancer proxying/health checks on that packet path.
+8. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
    separate product emulators.
 
 The open issues remain open until the corresponding real behavior exists.

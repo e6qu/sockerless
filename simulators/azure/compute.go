@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 type PublicIPAddress struct {
@@ -251,7 +252,12 @@ func registerPublicIPAddresses(srv *sim.Server) {
 			pip.Properties.PublicIPAddressVersion = "IPv4"
 		}
 		if pip.Properties.PublicIPAddress == "" && strings.EqualFold(pip.Properties.PublicIPAllocationMethod, "Static") {
-			pip.Properties.PublicIPAddress = fmt.Sprintf("203.0.113.%d", len(azurePublicIPs.List())+4)
+			ip, err := realexec.ReservePublicIPv4(id, nil)
+			if err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to reserve real public IPv4 lease: %v", err)
+				return
+			}
+			pip.Properties.PublicIPAddress = ip.String()
 		}
 		azurePublicIPs.Put(id, pip)
 		sim.WriteJSON(w, http.StatusOK, pip)
@@ -281,6 +287,9 @@ func registerPublicIPAddresses(srv *sim.Server) {
 	srv.HandleFunc("DELETE "+armBase+"/publicIPAddresses/{publicIPName}", func(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s",
 			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "publicIPName"))
+		if pip, ok := azurePublicIPs.Get(id); ok {
+			realexec.ReleasePublicIPv4(net.ParseIP(pip.Properties.PublicIPAddress))
+		}
 		azurePublicIPs.Delete(id)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -560,7 +569,7 @@ func registerNetworkInterfaces(srv *sim.Server) {
 			Properties: req.Properties,
 		}
 		nic.Properties.ProvisioningState = "Succeeded"
-		nic.Properties.MacAddress = "00-0D-3A-00-00-01"
+		nic.Properties.MacAddress = formatAzureMAC(azureNICMAC(id))
 		for i := range nic.Properties.IPConfigurations {
 			ipcfg := &nic.Properties.IPConfigurations[i]
 			if ipcfg.Name == "" {
@@ -578,9 +587,20 @@ func registerNetworkInterfaces(srv *sim.Server) {
 			if i == 0 {
 				ipcfg.Properties.Primary = true
 			}
-			if ipcfg.Properties.PrivateIPAddress == "" {
-				ipcfg.Properties.PrivateIPAddress = allocateAzurePrivateIP(ipcfg.Properties.Subnet)
+			if ipcfg.Properties.Subnet == nil {
+				sim.AzureError(w, "InvalidRequestFormat", "network interface IP configuration requires a subnet reference.", http.StatusBadRequest)
+				return
 			}
+			if !azureRequireNetworkHost(w) {
+				return
+			}
+			privateIP, mac, err := azureCreateRealNIC(r.Context(), id, ipcfg.Properties.Subnet.ID, ipcfg.Properties.PrivateIPAddress, azureNICMAC(id))
+			if err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to create real network interface fabric: %v", err)
+				return
+			}
+			ipcfg.Properties.PrivateIPAddress = privateIP
+			nic.Properties.MacAddress = mac
 		}
 		azureNICs.Put(id, nic)
 		sim.WriteJSON(w, http.StatusOK, nic)
@@ -611,25 +631,12 @@ func registerNetworkInterfaces(srv *sim.Server) {
 		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s",
 			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "networkInterfaceName"))
 		azureNICs.Delete(id)
+		if err := azureDeleteRealNIC(r.Context(), id); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to delete real network interface fabric: %v", err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
-}
-
-func allocateAzurePrivateIP(subnetRef *SubResource) string {
-	if subnetRef != nil {
-		if subnet, ok := azureSubnets.Get(subnetRef.ID); ok {
-			if _, cidr, err := net.ParseCIDR(subnet.Properties.AddressPrefix); err == nil {
-				ip := cidr.IP.To4()
-				if ip != nil {
-					out := make(net.IP, len(ip))
-					copy(out, ip)
-					out[3] += byte(len(azureNICs.List()) + 4)
-					return out.String()
-				}
-			}
-		}
-	}
-	return fmt.Sprintf("10.0.0.%d", len(azureNICs.List())+4)
 }
 
 func registerVirtualMachines(srv *sim.Server) {

@@ -4,13 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
-## 2026-06-01 - Realexec Network Namespaces
+## 2026-06-01 - Real Network Fabric For Issue #336
 
-Issue #336 advanced but remained open. The shared `simulators/realexec` substrate now models each cloud network/VPC implementation object as its own Linux network namespace instead of placing the bridge in the host namespace.
+Issue #336 was fixed. The shared `simulators/realexec` substrate models each cloud network/VPC implementation object as its own Linux network namespace instead of placing the bridge in the host namespace.
 
-`CreateNetwork` creates the network namespace, creates the bridge and gateway address inside it, and brings loopback and the bridge up there. `AttachNamespaceNIC` creates a veth pair, moves the host-side peer into the network namespace, enslaves it to the bridge there, then moves the guest-side peer into the workload namespace with its leased private IP and default route.
+`CreateNetwork` creates the network namespace, creates the bridge and gateway address inside it, and brings loopback and the bridge up there. Networks can own multiple subnet bridges. `AttachNamespaceNIC` creates a veth pair, moves the host-side peer into the network namespace, enslaves it to the subnet bridge there, then moves the guest-side peer into the workload namespace with its leased private IP, unique MAC, and default route. The substrate also creates routed egress veth links and programs nftables SNAT for NAT egress.
 
-The mandatory `make realexec-network-test` path was updated to prove the bridge is inside the network namespace, then verifies guest-to-gateway and namespace-to-namespace packet reachability with real `ping`, and cleanup removes both guest and network namespaces.
+AWS EC2 VPC/subnet creation, `RunInstances`/Auto Scaling ENIs, Elastic IP allocation, NAT gateways, and NAT routes use the substrate. GCP Compute networks/subnetworks, instance NICs, regional addresses, and Cloud NAT use it. Azure virtual networks/subnets, NIC private IP/MAC allocation, public IP allocation, and NAT gateway subnet programming use it. These public API paths now fail loudly on hosts without the required Linux network namespace, bridge/veth, route, and nftables capabilities.
+
+The mandatory `make realexec-network-test` path proves bridge placement, guest-to-gateway and namespace-to-namespace packet reachability, routed egress reachability, SNAT programming, and cleanup of guest/network namespaces and nftables state.
+
+Simulator Docker test targets expose the required real networking privileges to the Linux test image. That keeps Darwin/local Docker harnesses on the real namespace/nftables path instead of hiding the requirement or falling back to metadata behavior.
+
+The same PR started the remaining BUG-1267 packet-path work without closing #333-#335. The shared substrate gained nftables ingress filtering on real NIC veth peers. AWS security-group ingress rules for EC2 ENIs now compile into that filter, and rule updates reprogram attached ENIs. AWS ELBv2 target health now performs real TCP/HTTP probes instead of returning hardcoded `healthy`, and AWS ELBv2 listeners start a real local TCP proxy that forwards only to currently healthy targets. GCP/Azure security and load-balancer data-plane migrations remained for the next BUG-1267 phase, and #333 Firecracker-backed public VM lifecycle remained open.
 
 ## 2026-06-01 - Azure Tables ARM Fidelity
 
@@ -147,7 +153,7 @@ The AWS/GCP/Azure host-dispatch tests were updated to keep rejecting broad host-
 
 CI now includes a mandatory `firecracker (microVM arithmetic)` job. It installs pinned Firecracker v1.15.1, requires `/dev/kvm`, boots a real Firecracker Linux guest, copies the repo's `simulators/testdata/eval-arithmetic` source and configured Go toolchain into the guest rootfs, then runs `go test`, `go build`, and multiple arithmetic executions inside the microVM. This is a real substrate smoke test, not a mock or metadata-only probe.
 
-Issues #332-#336 remained open because this stage did not yet change EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public behavior.
+At that point, issues #332-#336 remained open because this stage did not yet change EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public behavior. Later BUG-1267 stages moved #336 and the first AWS #334/#335 packet paths onto the substrate.
 
 ## 2026-06-01 - Real-Execution Host Network Substrate
 
@@ -157,7 +163,7 @@ The next BUG-1267 stage added the first shared implementation code for the real-
 
 `make realexec-network-test` runs only on Linux hosts with the required real tools and privileges. It creates a real bridge, network namespaces, veth NICs, IP leases, routes, and an nftables table; verifies packet reachability to the gateway and between namespaces; and verifies cleanup removes host artifacts. The mandatory Firecracker CI job runs this host-network target after the microVM arithmetic target, so CI guards both real guest execution and the first real network/NIC path.
 
-Issues #332-#336 remained open because this stage still did not migrate EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public API paths onto the substrate.
+At that point, issues #332-#336 remained open because this stage still did not migrate EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public API paths onto the substrate. Later BUG-1267 stages moved #336 and the first AWS #334/#335 packet paths onto the substrate.
 
 Validation also fixed BUG-1270 and BUG-1271 in the shared Makefile layer. `make test` now uses `-tags noui` for UI-bearing Go apps, backend integration tests are behind an explicit `integration` build tag, integration CI/Make targets opt into `noui integration`, UI packages without a `test` script report that cleanly, and Go libraries have a `build-noui` compile-check alias for the top-level fanout.
 
@@ -175,7 +181,7 @@ EBS now supports create/attach/detach/delete/modify volumes, create/describe/del
 
 S3 added `ListObjectVersions` so Terraform provider cleanup can enumerate and remove CloudTrail-delivered objects when `force_destroy` is enabled.
 
-Issues #332-#336 remained open. This PR did not migrate EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public APIs onto Firecracker and the real network substrate.
+At that point, issues #332-#336 remained open. That PR did not migrate EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public APIs onto Firecracker and the real network substrate. Later BUG-1267 stages moved #336 and the first AWS #334/#335 packet paths onto the substrate.
 
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 
@@ -219,7 +225,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332-#336 track the cross-cloud compute/networking real-execution program. The substrate contract, Firecracker guest arithmetic CI guard, host capability checks, cleanup primitives, and first Linux bridge/netns/veth/IPAM path landed; Firecracker-backed public VM APIs, nftables security enforcement, NAT/routing, and load-balancer data-plane PRs remain.
+- BUG-1267: issues #332-#335 and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, and AWS security-group ingress plus ELBv2 health/proxying were the first #335/#334 packet-path migrations. Firecracker-backed public VM APIs, GCP/Azure security enforcement, and remaining load-balancer data-plane work remain.
 
 ## Continuity Rules
 

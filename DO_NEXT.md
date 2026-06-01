@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the realexec network namespace PR merged.
+- Branch: `main`, synced with `origin/main` after the issue #336 real network fabric PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #332-#338. Issue #356 was fixed and closed by the Azure Tables ARM PR; #336 advanced but remained open.
+- Open GitHub issues at last check: #332-#335 and #338. Issues #336 and #356 were fixed and closed. Number #337 is a merged PR, not an open issue.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: the shared realexec network object moved from a host-namespace bridge to a dedicated Linux network namespace per simulated cloud network/VPC implementation object.
+- Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 health/proxy paths became the first real #335/#334 packet-path migrations.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#335 and #338, unless a higher-priority issue appears.
 
-Migrate the first public VPC/NIC or VM family to the shared real-execution substrate. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
+Next implementation should focus on Firecracker-backed VM execution, GCP/Azure nftables firewall/NSG enforcement, and GCP/Azure managed load-balancer proxy/listener data planes. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
 
 ## Provider Facts To Preserve
 
@@ -118,17 +118,16 @@ Migrate the first public VPC/NIC or VM family to the shared real-execution subst
 
 ## Remaining Stages
 
-1. Migrate one public VPC/NIC or VM family to the real network/IPAM/NIC substrate.
-2. Attach one public VM family to Firecracker using that substrate if the first migration was VPC/NIC-only.
-3. Add nftables security enforcement on that packet path.
-4. Add NAT/routing behavior and real load-balancer proxying/health checks.
-5. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
+1. Attach one public VM family to Firecracker using the real network/IPAM/NIC substrate.
+2. Add GCP/Azure nftables security enforcement on their packet paths.
+3. Add the remaining real load-balancer proxying and health checks across AWS/GCP/Azure.
+4. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and Linux netns/bridge/veth/IPAM substrate path landed; public VM/VPC/LB behavior remains to implement.
+- BUG-1267: issues #332-#335 and #338 track the remaining compute/networking real-execution program: Firecracker-backed VM instances, remaining nftables security enforcement, and real L4/L7 load balancing with health checks. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, and AWS security-group ingress plus ELBv2 health/proxying were the first #335/#334 packet-path migrations.
 
 ## Start Checklist
 

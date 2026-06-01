@@ -470,7 +470,8 @@ func handleELBv2DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 	b.WriteString("<TargetHealthDescriptions>")
 	for _, target := range targets {
-		fmt.Fprintf(&b, `<member><Target>%s</Target><TargetHealth><State>healthy</State></TargetHealth></member>`, elbv2TargetXML(target))
+		state := elbv2ProbeTarget(r.Context(), tg, target)
+		fmt.Fprintf(&b, `<member><Target>%s</Target><TargetHealth><State>%s</State></TargetHealth></member>`, elbv2TargetXML(target), state)
 	}
 	b.WriteString("</TargetHealthDescriptions>")
 	elbv2XMLResponse(w, "DescribeTargetHealth", b.String(), sim.RequestID(r.Context()))
@@ -498,6 +499,10 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		DefaultActions:  parseELBv2Actions(r),
 		Certificates:    queryList(r, "Certificates"),
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
+	}
+	if err := elbv2StartRealListener(listener); err != nil {
+		elbv2ErrorXML(w, "ResourceInUse", "failed to start real listener proxy: "+err.Error(), http.StatusServiceUnavailable, sim.RequestID(r.Context()))
+		return
 	}
 	elbv2Listeners.Put(arn, listener)
 	for _, action := range listener.DefaultActions {
@@ -549,7 +554,9 @@ func handleELBv2ModifyListenerAttributes(w http.ResponseWriter, r *http.Request)
 }
 
 func handleELBv2DeleteListener(w http.ResponseWriter, r *http.Request) {
-	elbv2Listeners.Delete(r.FormValue("ListenerArn"))
+	arn := r.FormValue("ListenerArn")
+	elbv2StopRealListener(arn)
+	elbv2Listeners.Delete(arn)
 	elbv2XMLResponse(w, "DeleteListener", "", sim.RequestID(r.Context()))
 }
 
