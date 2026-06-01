@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Azure API-shape PR merged.
+- Branch: `main`, synced with `origin/main` after the real-execution substrate PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: #332-#338.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: Azure issues #312, #315, and #326-#329 were fixed.
+- Last completed work: the first BUG-1267 real-execution substrate stage landed.
 
 ## Next Task
 
-Stage the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
-Start with the architecture and Linux capability substrate before changing public VM, VPC, load balancer, or firewall behavior. The implementation must not add fakes, metadata-only data planes, or simulator-only public API knobs.
+Start with host capability detection and cleanup scaffolding, then implement the first real network/IPAM/NIC path before changing public VM, load balancer, or firewall behavior. The implementation must not add fakes, metadata-only data planes, or simulator-only public API knobs.
 
 ## Provider Facts To Preserve
 
@@ -72,16 +72,24 @@ Start with the architecture and Linux capability substrate before changing publi
    - Event Grid publish validates the Event Grid event envelope before delivery.
    - Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers and converge from in-progress to final states.
    - Key Vault secret/key/certificate attributes include default recovery metadata.
+- The first BUG-1267 real-execution substrate stage landed:
+   - `specs/SIMULATOR_EXECUTION.md` describes the current Docker/Podman-backed container/FaaS execution model plus the narrow VM-level real-execution exception.
+   - `specs/SIMULATOR_REAL_EXECUTION.md` defines Firecracker guests, Linux network namespaces, bridges/tap/veth, netlink routing, nftables policy/NAT, load-balancer proxying, active health checks, per-instance metadata, capability checks, and loud failure semantics.
+   - `feedback_sim_host_model.md` records the allowed host execution paths.
+   - AWS/GCP/Azure host-dispatch tests point at the explicit substrate exception while still rejecting broad `os/exec` workload execution.
+   - CI runs `make firecracker-test` in a mandatory `firecracker (microVM arithmetic)` job. That job installs pinned Firecracker v1.15.1, requires `/dev/kvm`, boots a real guest, and runs Go test/build plus `eval-arithmetic` executions inside the microVM.
 
 ## Remaining Stages
 
-1. Stage the real-execution compute/networking track from BUG-1267 / issues #332-#336. Start with an architecture/substrate PR before changing public instance, VPC, load balancer, or firewall behavior.
+1. Implement real-execution host capability detection and cleanup scaffolding for BUG-1267 / issues #332-#336, using the Firecracker CI job as the substrate guard.
+2. Implement the first real network/IPAM/NIC path, then attach one VM family to Firecracker.
+3. Add nftables security enforcement and real load-balancer proxying/health checks.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks.
+- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract and Firecracker guest arithmetic CI guard landed; public VM/VPC/LB behavior remains to implement.
 
 ## Start Checklist
 

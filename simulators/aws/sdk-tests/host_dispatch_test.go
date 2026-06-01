@@ -9,10 +9,11 @@ import (
 
 // Workload-dispatch invariant.
 //
-// No sim handler may execute a workload via `os/exec`. Every workload
-// runs on a Docker host (StartContainerSync / StartHTTPContainer)
-// honouring the workload's Architecture field. See
-// feedback_sim_host_model.md.
+// No sim handler may execute a workload via `os/exec`. Container/FaaS workloads
+// run on a Docker host (StartContainerSync / StartHTTPContainer) honouring the
+// workload's Architecture field. VM-level resources may only use the dedicated
+// Firecracker/Linux-networking real-execution substrate described in
+// specs/SIMULATOR_REAL_EXECUTION.md and feedback_sim_host_model.md.
 //
 // Allowlist: sim infrastructure files that legitimately spawn other
 // processes that are NOT workloads (the docker CLI, etc.).
@@ -48,7 +49,7 @@ func TestNoOsExecOfWorkloads(t *testing.T) {
 		text := string(body)
 		// "os/exec" import OR exec.Command call.
 		if strings.Contains(text, `"os/exec"`) || strings.Contains(text, "exec.Command") {
-			t.Errorf("%s imports os/exec or calls exec.Command — workloads must dispatch via Docker (StartContainerSync), not host process. See feedback_sim_host_model.md.", e.Name())
+			t.Errorf("%s imports os/exec or calls exec.Command — workloads must dispatch via Docker, or through the dedicated VM real-execution substrate. See specs/SIMULATOR_REAL_EXECUTION.md and feedback_sim_host_model.md.", e.Name())
 		}
 	}
 }

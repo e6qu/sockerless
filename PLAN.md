@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Next planned phase: stage the compute/networking real-execution program from BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Next planned phase: implement the first real-execution host capability scaffolding for BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -59,7 +59,19 @@ Implemented:
 
 Remaining staged work:
 
-1. **BUG-1267 / issues #332-#336.** Stage the compute/networking real-execution program. Start with architecture and Linux capability plumbing before implementing Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, or real load-balancer data planes.
+1. **BUG-1267 / issues #332-#336.** Implement the real-execution host capability scaffolding, then proceed to Firecracker-backed VMs, real VPC/IPAM/routing/NAT, nftables enforcement, and real load-balancer data planes.
+
+## Real-Execution Substrate
+
+The first BUG-1267 stage established the architecture and host-model contract for issues #332-#336 without changing simulator public API behavior:
+
+- [specs/SIMULATOR_EXECUTION.md](specs/SIMULATOR_EXECUTION.md) was rewritten to reflect the current Docker/Podman-backed container/FaaS execution model.
+- [specs/SIMULATOR_REAL_EXECUTION.md](specs/SIMULATOR_REAL_EXECUTION.md) defined the VM/network real-execution substrate: Firecracker guests, Linux netns/bridges/tap/veth, netlink routing, nftables policy/NAT, L4/L7 proxying, active health checks, per-instance metadata, capability checks, and no metadata fallback.
+- [feedback_sim_host_model.md](feedback_sim_host_model.md) documented the allowed host execution paths.
+- The AWS/GCP/Azure host-dispatch tests now pointed at the explicit real-execution exception while continuing to reject broad `os/exec` workload execution.
+- CI gained `make firecracker-test`, which installed the pinned official Firecracker release, required `/dev/kvm`, booted a real Firecracker Linux guest, and ran `go test`, `go build`, and multiple `eval-arithmetic` executions inside that microVM.
+
+Issues #332-#336 remained open because no VM, VPC, security, NAT, or load-balancer data plane behavior was changed yet.
 
 ## AWS Fidelity Sweep
 
@@ -110,7 +122,7 @@ The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
-- BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require staged architecture work before implementation PRs.
+- BUG-1267: compute/networking real-execution backlog. Issues #332-#336 remain open and require implementation PRs after the architecture/substrate contract.
 
 ## Current Capability Summary
 

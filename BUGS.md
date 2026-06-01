@@ -12,7 +12,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. |
+| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. The substrate contract and Firecracker guest arithmetic CI guard landed; the public data-plane implementation remains open. |
 
 ## Recently Closed
 
