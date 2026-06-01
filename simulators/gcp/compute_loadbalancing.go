@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 func registerComputeLoadBalancing(srv *sim.Server) {
@@ -214,7 +216,12 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		fr.SelfLink = computeGlobalLink(project, "forwardingRules", fr.Name)
 		fr.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
 		if fr.IPAddress == "" {
-			fr.IPAddress = computeEphemeralIPv4(fr.Id)
+			ip, err := realexec.ReserveGCPPublicIPv4(fr.SelfLink, nil)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to reserve real GCP public IPv4 lease: %v", err)
+				return
+			}
+			fr.IPAddress = ip.String()
 		}
 		if fr.IPProtocol == "" {
 			fr.IPProtocol = "TCP"
@@ -235,7 +242,14 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		computeWriteGlobalList(w, r, forwardingRules, "compute#forwardingRuleList")
 	})
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/forwardingRules/{name}", func(w http.ResponseWriter, r *http.Request) {
-		computeDeleteGlobalResource(w, r, forwardingRules, "forwardingRules")
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := computeGlobalLink(project, "forwardingRules", name)
+		if fr, ok := forwardingRules.Get(selfLink); ok {
+			realexec.ReleasePublicIPv4(net.ParseIP(fr.IPAddress))
+		}
+		forwardingRules.Delete(selfLink)
+		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "delete"))
 	})
 }
 
@@ -303,13 +317,6 @@ func computeDeleteGlobalResource[T computeNamedResource](w http.ResponseWriter, 
 	selfLink := computeGlobalLink(project, collection, name)
 	store.Delete(selfLink)
 	sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "delete"))
-}
-
-func computeEphemeralIPv4(id string) string {
-	if len(id) < 6 {
-		return "34.0.0.1"
-	}
-	return fmt.Sprintf("34.%d.%d.%d", id[0], id[1], id[2])
 }
 
 func computeFingerprint() string {

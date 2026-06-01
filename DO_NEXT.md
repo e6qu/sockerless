@@ -9,6 +9,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - Open GitHub issues at last check: #332-#335 and #338. Issues #336 and #356 were fixed and closed. Number #337 is a merged PR, not an open issue.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
 - Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 health/proxy paths became the first real #335/#334 packet-path migrations.
+- The PR #358 CI fix preserved real-network capabilities in simulator Docker tests, fixed provider-shaped public IPv4 pools and GCP public-IP assertions, made GCP real fabric creation atomic, and avoided Linux-name collisions with hash-derived names.
 
 ## Next Task
 
@@ -108,6 +109,11 @@ Next implementation should focus on Firecracker-backed VM execution, GCP/Azure n
    - The bridge and gateway address are created inside that namespace.
    - Attached NIC host-side veth peers move into the network namespace before joining the bridge; guest-side peers move into the workload namespace with their leased IP and default route.
    - The mandatory host-network smoke test verifies the bridge namespace placement plus real packet reachability and cleanup.
+- The PR #358 CI fix landed:
+   - Simulator Docker real-network targets now run with the `--privileged` capabilities intact instead of dropping to the host UID and losing `CAP_NET_ADMIN` / `CAP_SYS_ADMIN`.
+   - AWS, GCP, and Azure public IP allocation uses provider-shaped public pools, and Terraform tests assert the exact provider CIDRs.
+   - GCP real fabric names use hashed cloud resource IDs within Linux's 15-character limit, and GCP network/subnet/NIC substrate mutations are serialized with the simulator registry.
+   - Docker test image build contexts exclude local caches, Terraform state, generated simulator binaries, and local agent metadata.
 - The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
 - Azure Tables ARM issue #356 was fixed:
    - Cosmos DB Tables support public ARM CRUD/list at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` plus table throughput at `.../throughputSettings/default`.

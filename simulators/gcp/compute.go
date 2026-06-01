@@ -830,7 +830,7 @@ func registerCompute(srv *sim.Server) {
 			addr.Status = "RESERVED"
 		}
 		if addr.Address == "" && strings.EqualFold(addr.IPVersion, "IPV4") {
-			ip, err := realexec.ReservePublicIPv4(addr.SelfLink, nil)
+			ip, err := realexec.ReserveGCPPublicIPv4(addr.SelfLink, nil)
 			if err != nil {
 				sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to reserve real public IPv4 lease: %v", err)
 				return

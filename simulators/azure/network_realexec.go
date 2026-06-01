@@ -198,7 +198,7 @@ func azureConfigureRealNATGatewayForSubnet(ctx context.Context, subnet Subnet) e
 			return fmt.Errorf("public IP address %s has no IPv4 lease", pip.ID)
 		}
 	} else if len(gw.Properties.PublicIPPrefixes) > 0 {
-		ip, err := realexec.ReservePublicIPv4(gw.ID, nil)
+		ip, err := realexec.ReserveAzurePublicIPv4(gw.ID, nil)
 		if err != nil {
 			return err
 		}

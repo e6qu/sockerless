@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/http"
 	"strings"
@@ -31,15 +32,13 @@ func gcpRequireNetworkHost(w http.ResponseWriter) bool {
 }
 
 func gcpRealName(prefix, id string) string {
-	id = strings.NewReplacer("/", "", "-", "", "_", "", ".", "").Replace(id)
-	if len(id) > 10 {
-		id = id[len(id)-10:]
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	suffix := fmt.Sprintf("%08x", h.Sum32())
+	if len(prefix) >= 15 {
+		return prefix[:15]
 	}
-	name := prefix + id
-	if len(name) > 15 {
-		return name[:15]
-	}
-	return name
+	return (prefix + suffix)[:min(15, len(prefix)+len(suffix))]
 }
 
 func gcpCreateRealNetwork(ctx context.Context, selfLink string) error {
@@ -48,12 +47,12 @@ func gcpCreateRealNetwork(ctx context.Context, selfLink string) error {
 		gcpRealMu.Unlock()
 		return nil
 	}
-	gcpRealMu.Unlock()
-	network, err := gcpRealHost.CreateNetworkNamespace(ctx, gcpRealName("gn", selfLink))
+	namespaceName := gcpRealName("gn", selfLink)
+	network, err := gcpRealHost.CreateNetworkNamespace(ctx, namespaceName)
 	if err != nil {
+		gcpRealMu.Unlock()
 		return err
 	}
-	gcpRealMu.Lock()
 	gcpRealNetworks[selfLink] = network
 	gcpRealMu.Unlock()
 	return nil
@@ -96,8 +95,13 @@ func gcpCreateRealSubnetwork(ctx context.Context, subnet ComputeSubnetwork) erro
 			return err
 		}
 		gcpRealMu.Lock()
+		if _, ok := gcpRealSubnets[subnet.SelfLink]; ok {
+			gcpRealMu.Unlock()
+			return nil
+		}
 		network = gcpRealNetworks[subnet.Network]
-		gcpRealMu.Unlock()
+	} else {
+		gcpRealMu.Lock()
 	}
 	realSubnet, err := network.CreateSubnet(ctx, realexec.SubnetSpec{
 		Name:       subnet.SelfLink,
@@ -106,9 +110,9 @@ func gcpCreateRealSubnetwork(ctx context.Context, subnet ComputeSubnetwork) erro
 		Gateway:    net.ParseIP(subnet.GatewayAddress),
 	})
 	if err != nil {
+		gcpRealMu.Unlock()
 		return err
 	}
-	gcpRealMu.Lock()
 	gcpRealSubnets[subnet.SelfLink] = realSubnet
 	gcpRealSubnetNetworks[subnet.SelfLink] = subnet.Network
 	gcpRealMu.Unlock()
@@ -144,8 +148,13 @@ func gcpCreateRealNIC(ctx context.Context, nicID, subnetLink, requestedIP string
 			return "", err
 		}
 		gcpRealMu.Lock()
+		if existing, ok := gcpRealNICs[nicID]; ok {
+			gcpRealMu.Unlock()
+			return existing.PrivateIP.String(), nil
+		}
 		subnet = gcpRealSubnets[subnetLink]
-		gcpRealMu.Unlock()
+	} else {
+		gcpRealMu.Lock()
 	}
 	privateIP := net.ParseIP(requestedIP)
 	if requestedIP == "" {
@@ -159,9 +168,9 @@ func gcpCreateRealNIC(ctx context.Context, nicID, subnetLink, requestedIP string
 		MAC:           gcpNICMAC(nicID),
 	})
 	if err != nil {
+		gcpRealMu.Unlock()
 		return "", err
 	}
-	gcpRealMu.Lock()
 	gcpRealNICs[nicID] = nic
 	gcpRealMu.Unlock()
 	return nic.PrivateIP.String(), nil
@@ -199,16 +208,13 @@ func gcpConfigureRealRouterNAT(ctx context.Context, router ComputeRouter) error 
 			}
 		}
 		if publicIP == nil {
-			ip, err := realexec.ReservePublicIPv4(router.SelfLink+"/"+nat.Name, nil)
+			ip, err := realexec.ReserveGCPPublicIPv4(router.SelfLink+"/"+nat.Name, nil)
 			if err != nil {
 				return err
 			}
 			publicIP = ip
 		}
 		sources := gcpNATSourceCIDRs(router.Network, nat)
-		if len(sources) == 0 {
-			return fmt.Errorf("router NAT %s has no source subnetworks", nat.Name)
-		}
 		for _, cidr := range sources {
 			if err := network.ConfigureSNAT(ctx, cidr, publicIP, gcpRealName("gsn", router.SelfLink+nat.Name+cidr)); err != nil {
 				return err

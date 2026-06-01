@@ -252,7 +252,7 @@ func registerPublicIPAddresses(srv *sim.Server) {
 			pip.Properties.PublicIPAddressVersion = "IPv4"
 		}
 		if pip.Properties.PublicIPAddress == "" && strings.EqualFold(pip.Properties.PublicIPAllocationMethod, "Static") {
-			ip, err := realexec.ReservePublicIPv4(id, nil)
+			ip, err := realexec.ReserveAzurePublicIPv4(id, nil)
 			if err != nil {
 				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to reserve real public IPv4 lease: %v", err)
 				return

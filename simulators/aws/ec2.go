@@ -839,7 +839,7 @@ func handleAllocateAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	tags := parseTags(r)
 	id := ec2ID("eipalloc")
-	ip, err := realexec.ReservePublicIPv4(id, nil)
+	ip, err := realexec.ReserveAWSPublicIPv4(id, nil)
 	if err != nil {
 		ec2ErrorXML(w, "AddressLimitExceeded", fmt.Sprintf("failed to reserve real public IPv4 lease: %v", err), http.StatusServiceUnavailable)
 		return
