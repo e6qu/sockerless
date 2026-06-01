@@ -474,22 +474,22 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 		return fmt.Errorf("NIC %s is not attached to a network", n.HostVethName)
 	}
 	table := deriveLinuxName("fw"+n.HostVethName, "fw")
-	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "inet", table)
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "table", "inet", table); err != nil {
+	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
+	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "table", "bridge", table); err != nil {
 		return err
 	}
 	n.cleanup.Add(func(cleanupCtx context.Context) error {
-		_ = n.network.runner.Run(cleanupCtx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "inet", table)
+		_ = n.network.runner.Run(cleanupCtx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
 		return nil
 	})
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "chain", "inet", table, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"); err != nil {
+	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "chain", "bridge", table, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"); err != nil {
 		return err
 	}
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "inet", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
+	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
 		return err
 	}
 	for _, rule := range rules {
-		args := []string{"ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "inet", table, "forward", "oifname", n.HostVethName}
+		args := []string{"ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", n.HostVethName}
 		if rule.SourceCIDR != "" {
 			args = append(args, "ip", "saddr", rule.SourceCIDR)
 		}
@@ -522,7 +522,7 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 			return err
 		}
 	}
-	return n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "inet", table, "forward", "oifname", n.HostVethName, "drop")
+	return n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", n.HostVethName, "drop")
 }
 
 func validateLinuxName(label, name string) error {
