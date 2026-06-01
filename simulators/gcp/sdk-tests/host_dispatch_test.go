@@ -32,8 +32,7 @@ func TestNoOsExecOfWorkloads(t *testing.T) {
 		if strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		if reason, ok := allowList[e.Name()]; ok {
-			t.Logf("allowlisted %s: %s", e.Name(), reason)
+		if _, ok := allowList[e.Name()]; ok {
 			continue
 		}
 		path := filepath.Join(simDir, e.Name())

@@ -205,17 +205,18 @@ type EC2VolumeAttachment struct {
 }
 
 type EC2Snapshot struct {
-	SnapshotId  string
-	VolumeId    string
-	VolumeSize  int
-	State       string
-	StartTime   string
-	Progress    string
-	Description string
-	OwnerId     string
-	Tags        []EC2Tag
-	HostPath    string
-	VolumeData  []byte
+	SnapshotId    string
+	VolumeId      string
+	VolumeSize    int
+	State         string
+	StartTime     string
+	CompletionDue string
+	Progress      string
+	Description   string
+	OwnerId       string
+	Tags          []EC2Tag
+	HostPath      string
+	VolumeData    []byte
 }
 
 // State stores
@@ -2532,6 +2533,7 @@ func handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 	var data []byte
 	var snapshotHostPath string
 	if snapshotID != "" {
+		ec2SettleSnapshot(snapshotID)
 		snap, ok := ec2Snapshots.Get(snapshotID)
 		if !ok {
 			ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", snapshotID), http.StatusBadRequest)
@@ -2685,17 +2687,19 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
 		return
 	}
+	now := time.Now().UTC()
 	snap := EC2Snapshot{
-		SnapshotId:  ec2ID("snap"),
-		VolumeId:    volID,
-		VolumeSize:  vol.Size,
-		State:       "pending",
-		StartTime:   time.Now().UTC().Format(time.RFC3339),
-		Progress:    "0%",
-		Description: r.FormValue("Description"),
-		OwnerId:     ec2Owner(),
-		Tags:        parseTags(r),
-		VolumeData:  append([]byte(nil), vol.Data...),
+		SnapshotId:    ec2ID("snap"),
+		VolumeId:      volID,
+		VolumeSize:    vol.Size,
+		State:         "pending",
+		StartTime:     now.Format(time.RFC3339),
+		CompletionDue: now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+		Progress:      "0%",
+		Description:   r.FormValue("Description"),
+		OwnerId:       ec2Owner(),
+		Tags:          parseTags(r),
+		VolumeData:    append([]byte(nil), vol.Data...),
 	}
 	snap.HostPath = ebsSnapshotHostDirPath(snap.SnapshotId)
 	if err := ebsPrepareVolumeHostPath(&vol); err != nil {
@@ -2716,12 +2720,28 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 
 func ec2TransitionSnapshotToCompleted(snapshotID string) {
 	time.Sleep(100 * time.Millisecond)
+	ec2SettleSnapshot(snapshotID)
+}
+
+func ec2SettleSnapshot(snapshotID string) {
 	ec2Snapshots.Update(snapshotID, func(snap *EC2Snapshot) {
-		if snap.State == "pending" {
+		if snap.State == "pending" && !ec2SnapshotCompletionDue(*snap).After(time.Now().UTC()) {
 			snap.State = "completed"
 			snap.Progress = "100%"
 		}
 	})
+}
+
+func ec2SnapshotCompletionDue(snap EC2Snapshot) time.Time {
+	if snap.CompletionDue != "" {
+		if t, err := time.Parse(time.RFC3339Nano, snap.CompletionDue); err == nil {
+			return t
+		}
+	}
+	if t, err := time.Parse(time.RFC3339, snap.StartTime); err == nil {
+		return t.Add(100 * time.Millisecond)
+	}
+	return time.Time{}
 }
 
 func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -2729,6 +2749,7 @@ func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 	snapshots := make([]EC2Snapshot, 0)
 	if len(ids) > 0 {
 		for _, id := range ids {
+			ec2SettleSnapshot(id)
 			snap, ok := ec2Snapshots.Get(id)
 			if !ok {
 				ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", id), http.StatusBadRequest)
@@ -2737,6 +2758,9 @@ func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 			snapshots = append(snapshots, snap)
 		}
 	} else {
+		for _, snap := range ec2Snapshots.List() {
+			ec2SettleSnapshot(snap.SnapshotId)
+		}
 		snapshots = ec2Snapshots.List()
 	}
 	var items strings.Builder

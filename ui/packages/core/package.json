@@ -12,7 +12,7 @@
     "./styles": "./src/styles/tokens.css"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json --emitDeclarationOnly",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

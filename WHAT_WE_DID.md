@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - CI Log and Cloud Backend Architecture Cleanup
+
+The cleanup after PR #358 fixed two classes of issues without skipping tests, suppressing warnings, adding fallbacks, or weakening HTTPS/gateway behavior.
+
+Cloud backend `ContainerInspect` and `ContainerList` paths stopped delegating into core `BaseServer` local-state handlers. The cloud backends now resolve/list through cloud state explicitly, and `BaseServer.ContainerList` returns provider list errors instead of silently falling back to incomplete local/pending state. `scripts/check-cloud-backend-isolation.sh` now scans all cloud backend Go files and fails future direct `BaseServer.ContainerInspect` / `BaseServer.ContainerList` use.
+
+The same phase removed misleading pass-green CI output. The GCP host-dispatch allowlist test still enforces the same invariant, but no longer logs a source path in a way GitHub annotates as `##[error]`. Vite package builds run under Bun's runtime to avoid Node 26's Tailwind `module.register()` deprecation warning, `ui-core` emits declaration artifacts for Turbo output tracking, and UI app tests start from `/ui/` so React Router does not print unmatched-route stderr.
+
+The same PR fixed newly opened AWS simulator issues #359 and #360. EC2 EBS snapshots now carry an internal completion due time and settle on public `DescribeSnapshots` and `CreateVolume(SnapshotId)` paths, so a standard CreateVolume -> CreateSnapshot -> DescribeSnapshots -> CreateVolume(SnapshotId) flow observes `completed` and restores successfully. DynamoDB `DeleteItem` now honors `ReturnValues=ALL_OLD` by returning the deleted item's pre-delete attributes when the item existed and no attributes when it did not. Both fixes shipped with real AWS SDK regression coverage.
+
+The pre-push dependency freshness gate also found and fixed stale live-test AWS credential action pins. The live ECS and Lambda workflows now use `aws-actions/configure-aws-credentials@v6.2.0`.
+
 ## 2026-06-01 - Real Network Fabric For Issue #336
 
 Issue #336 was fixed. The shared `simulators/realexec` substrate models each cloud network/VPC implementation object as its own Linux network namespace instead of placing the bridge in the host namespace.

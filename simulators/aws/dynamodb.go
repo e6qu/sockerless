@@ -679,6 +679,7 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 		TableName           string         `json:"TableName"`
 		Key                 map[string]any `json:"Key"`
 		ConditionExpression string         `json:"ConditionExpression"`
+		ReturnValues        string         `json:"ReturnValues"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -693,9 +694,9 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Key)
+	oldItem, existed := ddbItems.Get(itemKey)
 	if req.ConditionExpression != "" {
-		_, exists := ddbItems.Get(itemKey)
-		if !exists && containsCI(req.ConditionExpression, "attribute_exists") {
+		if !existed && containsCI(req.ConditionExpression, "attribute_exists") {
 			sim.AWSError(w, "ConditionalCheckFailedException",
 				"The conditional request failed", http.StatusBadRequest)
 			return
@@ -703,6 +704,10 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Delete(itemKey)
 	ddbItemNames.Delete(itemKey)
+	if strings.EqualFold(req.ReturnValues, "ALL_OLD") && existed {
+		writeDDBJSON(w, http.StatusOK, map[string]any{"Attributes": oldItem})
+		return
+	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
 }
 

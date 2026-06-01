@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1287 filed - 1287 fixed - 3 open - 2 false positives.**
+**1292 filed - 1292 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,7 +16,15 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1285:
+This phase closed BUG-1288 through BUG-1292:
+
+- BUG-1288: Cloud backends still had direct `BaseServer.ContainerInspect` / `BaseServer.ContainerList` delegates, and the shared list path ignored `CloudState.ListContainers` errors. Cloud backend inspect/list paths now resolve through cloud state explicitly, provider list errors fail loudly, and `scripts/check-cloud-backend-isolation.sh` fails future direct inspect/list delegates across all cloud backend Go files.
+- BUG-1289: CI logs still had warning/error-looking noise after PR #358 even when tests passed. The GCP host-dispatch allowlist test no longer emits a GitHub `##[error]` annotation for its intentional source reference, Vite package builds run under Bun's runtime instead of Node 26's deprecated `module.register()` path, `ui-core` emits declaration artifacts for Turbo output tracking, and UI router tests start from `/ui/` so they no longer print unmatched-route stderr.
+- BUG-1290 / issue #359: AWS EC2 EBS snapshots could remain observably `pending` for standard snapshot restore flows. EC2 snapshots now persist an internal completion due time and settle pending snapshots on `DescribeSnapshots` and `CreateVolume(SnapshotId)`, so both filtered and unfiltered public reads expose `completed` before restore succeeds. AWS SDK coverage exercises CreateVolume -> CreateSnapshot -> filtered and unfiltered DescribeSnapshots -> CreateVolume(SnapshotId) without requiring VPC setup.
+- BUG-1291 / issue #360: DynamoDB `DeleteItem` ignored `ReturnValues=ALL_OLD`. The handler now captures the pre-delete item and returns it as `Attributes` only when the item existed and `ReturnValues` is `ALL_OLD`; missing items still return no attributes. AWS SDK coverage verifies both existing and missing-item paths.
+- BUG-1292: Pre-push dependency freshness failed because the live ECS and Lambda workflows pinned `aws-actions/configure-aws-credentials@v6.1.3` while the latest published semantic tag was `v6.2.0`. Both workflows now use `v6.2.0`.
+
+Previous phase closed BUG-1285 through BUG-1287:
 
 - BUG-1285 / issue #336: VPC/network/subnet/NIC/public-IP/NAT routing paths were metadata-only. The shared realexec substrate now supports per-network Linux namespaces, multiple subnet bridges, veth NIC attachment with real IPAM and unique MACs, routed egress links, public IPv4 IPAM, and nftables SNAT. AWS EC2 VPC/subnet, `RunInstances`/Auto Scaling ENIs, Elastic IPs, NAT gateways, and NAT routes use the substrate. GCP Compute networks/subnetworks, instance NICs, regional addresses, and Cloud NAT use it. Azure virtual networks/subnets, NIC private IP/MAC allocation, public IPs, and NAT gateway subnet programming use it. These paths fail loudly when Linux namespace/bridge/veth/route/nftables capabilities are missing.
 - BUG-1286 / issues #334 and #335 partial: AWS ELBv2 and AWS security groups still had fabricated packet-path behavior. AWS ELBv2 target health now probes targets over real TCP/HTTP, ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without control-plane listener-port binding, and EC2 security-group ingress rules compile to nftables on attached real ENI veth peers. The remaining GCP/Azure security and cross-cloud load-balancer data-plane work stays under BUG-1267.

@@ -45,13 +45,9 @@ func (s *Server) ContainerChanges(id string) ([]api.ContainerChangeItem, error) 
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	resolvedID, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
-	}
-	c, err := s.BaseServer.ContainerInspect(id)
-	if err != nil {
-		return nil, err
 	}
 	// When InvocationResult is recorded (cmd ran + exited), override
 	// CloudState's "running" status with "exited" so inspect-poll
@@ -59,7 +55,7 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 	// not ContainerWait) see the real exit. Cloud Run Service.status
 	// stays "Ready" forever — without this override, State.Status="running"
 	// lies and gitlab-runner waits forever.
-	if inv, ok := s.Store.GetInvocationResult(resolvedID); ok {
+	if inv, ok := s.Store.GetInvocationResult(c.ID); ok {
 		c.State.Status = "exited"
 		c.State.Running = false
 		c.State.ExitCode = inv.ExitCode
@@ -67,11 +63,11 @@ func (s *Server) ContainerInspect(id string) (*api.Container, error) {
 			c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 	}
-	return c, nil
+	return &c, nil
 }
 
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	return s.BaseServer.ContainerList(opts)
+	return s.CloudContainerList(context.Background(), opts)
 }
 
 func (s *Server) ContainerRename(id string, newName string) error {
