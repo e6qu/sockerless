@@ -59,6 +59,7 @@ GO_APPS := \
   cmd/sockerless \
   agent \
   backends/aws-common \
+  simulators/realexec \
   github-runner-dispatcher-aws \
   github-runner-dispatcher-gcp \
   github-runner-dispatcher-azure
@@ -170,7 +171,7 @@ FORCE:
 
 SIMULATOR_APPS := simulators/aws simulators/gcp simulators/azure
 
-.PHONY: docker-test docker-test-build firecracker-test
+.PHONY: docker-test docker-test-build firecracker-test realexec-network-test
 docker-test-build: ## build Docker test images for all cloud simulators
 	@$(MAKE) -s _fanout TARGET=docker-test-build APPS="$(SIMULATOR_APPS)"
 
@@ -179,6 +180,9 @@ docker-test: ## run SDK, CLI, and Terraform tests for all cloud simulators insid
 
 firecracker-test: ## boot a real Firecracker microVM and run Go arithmetic build/execution inside it
 	@bash tests/firecracker/run-arithmetic.sh
+
+realexec-network-test: ## create a real Linux bridge/netns/veth NIC path and verify cleanup
+	@bash tests/realexec/run-network-nic.sh
 
 # ── Stack orchestration ─────────────────────────────────────────────
 

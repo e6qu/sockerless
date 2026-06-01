@@ -8,10 +8,10 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Real-execution host capability scaffolding for BUG-1267 / issues #332-#336, unless a higher-priority issue appears. |
-| Last merged | Real-execution architecture/substrate contract for BUG-1267. |
+| Planned next | Attach the first public VM family to the real-execution substrate for BUG-1267 / issues #332-#336. |
+| Last merged | Real-execution host capability and Linux network/NIC substrate for BUG-1267. |
 | Open GitHub issues | #332-#338 at last check. |
-| Bugs | 1269 filed - 1269 fixed - 3 open - 2 false positives. |
+| Bugs | 1271 filed - 1271 fixed - 3 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
@@ -29,7 +29,9 @@ The GCP fidelity PR fixed issue #304 and issues #309-#311 and #321-#325. API Gat
 
 The Azure API-shape PR fixed issues #312, #315, and #326-#329. Storage Blob/File/Queue data-plane errors now return XML error envelopes with `x-ms-error-code`, Blob list XML responses include the public XML declaration, `EnumerationResults` attributes, and `NextMarker`, and Queue service properties support the Terraform provider availability probe. Service Bus admin missing entity reads return 404 Atom/XML errors. Event Grid publish validates JSON arrays and required Event Grid envelope fields before delivery. Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers plus in-progress states before converging to final states. Key Vault secret/key/certificate attributes include default recovery metadata.
 
-The first BUG-1267 real-execution stage landed the architecture/substrate contract for issues #332-#336. `specs/SIMULATOR_EXECUTION.md` now documents the current Docker/Podman-backed container/FaaS model, `specs/SIMULATOR_REAL_EXECUTION.md` defines the Firecracker/Linux-networking substrate contract, and `feedback_sim_host_model.md` records the allowed host execution paths. The AWS/GCP/Azure host-dispatch tests now reference the explicit real-execution exception while continuing to reject broad host-process workload execution. CI now has a mandatory `firecracker (microVM arithmetic)` job that installs a pinned official Firecracker release, requires `/dev/kvm`, boots a real guest, and runs `go test`, `go build`, and multiple `eval-arithmetic` executions inside that microVM. Issues #332-#336 remained open because no real VM, VPC, nftables, NAT, or load-balancer behavior had been implemented yet.
+The first BUG-1267 real-execution stages landed the architecture/substrate contract, host capability checks, cleanup primitives, and first real Linux host-network path for issues #332-#336. `specs/SIMULATOR_EXECUTION.md` documents the current Docker/Podman-backed container/FaaS model, `specs/SIMULATOR_REAL_EXECUTION.md` defines the Firecracker/Linux-networking substrate contract, and `feedback_sim_host_model.md` records the allowed host execution paths. The AWS/GCP/Azure host-dispatch tests reference the explicit real-execution exception while continuing to reject broad host-process workload execution. The shared [simulators/realexec](simulators/realexec) module detects Linux, `/dev/kvm`, required host tools, and kernel capabilities; provides LIFO cleanup; allocates subnet leases through real IPAM; and creates Linux bridges, namespaces, veth NICs, addresses, and routes. CI has a mandatory `firecracker (microVM arithmetic)` job that installs a pinned official Firecracker release, requires `/dev/kvm`, boots a real guest, runs `go test`, `go build`, and multiple `eval-arithmetic` executions inside that microVM, then runs `make realexec-network-test` to create real host networking, verify packet reachability, exercise nftables, and verify cleanup. Issues #332-#336 remained open because no EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public API path had been migrated to the substrate yet.
+
+The same phase fixed aggregate Makefile regressions found during validation. `make test` now runs UI-bearing Go app unit tests with `-tags noui`, backend integration tests are gated behind an explicit `integration` build tag, integration CI/Make targets opt into `noui integration`, UI packages without package-level tests report that cleanly, and Go libraries support the top-level `build-noui` fanout through a compile-check alias.
 
 Azure Terraform already ran through the local Caddy HTTPS gateway. The gateway remains local transport infrastructure. It does not add simulator-only public API endpoints, request fields, headers, or response shapes.
 
@@ -85,7 +87,7 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
-- BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure. The architecture/substrate contract was staged; implementation remains open.
+- BUG-1267: issues #332-#336 track the real-execution compute/networking program across AWS/GCP/Azure. The architecture/substrate contract, host capability checks, cleanup primitives, and first Linux bridge/netns/veth/IPAM path landed; public VM, VPC, security, NAT, and load-balancer API migration remains open.
 
 ## Recent Merged Work
 

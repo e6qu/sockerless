@@ -32,12 +32,13 @@ The top-level app lists currently cover three kinds of independently buildable p
 | `simulators/gcp` | `simulator-gcp` | `ui/packages/simulator-gcp` | `:4567` |
 | `simulators/azure` | `simulator-azure` | `ui/packages/simulator-azure` | `:4568` |
 
-### Go binaries (no UI) (5)
+### Go binaries / libraries (no UI) (6)
 
 | App | Binary |
 |---|---|
 | `cmd/sockerless` | `sockerless` (CLI) |
 | `agent` | `sockerless-agent`, `sockerless-lambda-bootstrap`, `sockerless-cloudrun-bootstrap`, `sockerless-gcf-bootstrap` |
+| `simulators/realexec` | Go library for the shared real-execution substrate |
 | `github-runner-dispatcher-aws` | dispatcher binary |
 | `github-runner-dispatcher-gcp` | dispatcher binary |
 | `github-runner-dispatcher-azure` | dispatcher binary |
@@ -55,7 +56,7 @@ The top-level app lists currently cover three kinds of independently buildable p
 
 ## Standard target surface
 
-Every leaf Makefile MUST implement these 7 targets. Targets that don't apply to a given kind (e.g. `run` on a UI package) call `@echo "n/a for this app type"` and exit 0 — the contract is "the target name always exists."
+Every leaf Makefile MUST implement these 7 targets. Targets that don't apply to a given kind (e.g. `run` on a UI package) call `@echo "n/a for this app type"` and exit 0, or alias the nearest compile-check target for libraries. The contract is "the target name always exists."
 
 | Target | What it does |
 |---|---|
@@ -71,7 +72,7 @@ Optional targets, when meaningful:
 
 | Target | Applies to | What it does |
 |---|---|---|
-| `build-noui` | Go-with-UI apps | Build the binary with `-tags noui`, no embedded UI. |
+| `build-noui` | Go-with-UI apps and Go libraries in the top-level no-UI fanout | Build the binary with `-tags noui`, or compile-check libraries. |
 | `embed` | Go-with-UI apps | Build the UI + copy `ui/packages/<x>/dist` → local `dist/`. Implicit dep of `build`. |
 | `test-integration` | apps with `_integration_test.go` | Run the build-tag-gated integration tests. |
 | `test-faas-smoke` | FaaS backends | Run the backend's runner-shaped simulator smoke (`create -> start -> exec×N -> wait -> remove`). No-op with a clear message when `FAAS_SMOKE_TESTS` is unset. |
@@ -159,10 +160,14 @@ dev-ui:
 	$(MAKE) -C $(UI_PKG_DIR) run
 
 test:
+ifdef UI_PACKAGE
+	go test -tags noui ./...
+else
 	go test ./...
+endif
 
 test-integration:
-	go test -tags integration ./...
+	SOCKERLESS_TEST_TARGET=sim go test -tags 'noui integration' ./...
 
 lint:
 	go vet ./...
@@ -192,7 +197,7 @@ preview: build
 	bun run preview
 
 test:
-	bun run test
+	if package.json defines a test script, run it; otherwise report no test script configured
 
 lint:
 	bunx tsc --noEmit

@@ -35,8 +35,12 @@ dev: run ## alias for `run`
 preview: build ## serve the built bundle locally
 	bun run preview
 
-test: install ## run vitest
-	bun run test
+test: install ## run package tests when this UI package defines a test script
+	@if bun -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)" >/dev/null 2>&1; then \
+	  bun run test; \
+	else \
+	  printf "$(COLOR_DIM)%s: no test script configured.$(COLOR_RESET)\n" "$(notdir $(CURDIR))"; \
+	fi
 
 lint: install ## type-check via tsc --noEmit
 	bunx tsc --noEmit

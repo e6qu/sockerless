@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the real-execution substrate PR merged.
+- Branch: `main`, synced with `origin/main` after the real-execution host-network substrate PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: #332-#338.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: the first BUG-1267 real-execution substrate stage landed.
+- Last completed work: the first BUG-1267 real-execution host capability and Linux network/NIC substrate stages landed.
 
 ## Next Task
 
 Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
-Start with host capability detection and cleanup scaffolding, then implement the first real network/IPAM/NIC path before changing public VM, load balancer, or firewall behavior. The implementation must not add fakes, metadata-only data planes, or simulator-only public API knobs.
+Attach the first public VM family to the shared real-execution substrate. The implementation must use the cloud's public API shape, boot a real Firecracker guest, attach it to the real network/NIC path, and expose per-instance metadata through the cloud-native metadata contract. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
 
 ## Provider Facts To Preserve
 
@@ -78,18 +78,23 @@ Start with host capability detection and cleanup scaffolding, then implement the
    - `feedback_sim_host_model.md` records the allowed host execution paths.
    - AWS/GCP/Azure host-dispatch tests point at the explicit substrate exception while still rejecting broad `os/exec` workload execution.
    - CI runs `make firecracker-test` in a mandatory `firecracker (microVM arithmetic)` job. That job installs pinned Firecracker v1.15.1, requires `/dev/kvm`, boots a real guest, and runs Go test/build plus `eval-arithmetic` executions inside the microVM.
+- The second BUG-1267 substrate stage landed:
+   - [simulators/realexec](simulators/realexec) provides deterministic capability detection, LIFO cleanup, an auditable host runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
+   - `make realexec-network-test` creates real Linux networking artifacts, verifies gateway and namespace-to-namespace packet reachability, creates/removes an nftables table, and verifies cleanup removes the bridge and network namespaces.
+   - The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
 
 ## Remaining Stages
 
-1. Implement real-execution host capability detection and cleanup scaffolding for BUG-1267 / issues #332-#336, using the Firecracker CI job as the substrate guard.
-2. Implement the first real network/IPAM/NIC path, then attach one VM family to Firecracker.
-3. Add nftables security enforcement and real load-balancer proxying/health checks.
+1. Attach one public VM family to Firecracker using the real network/IPAM/NIC substrate.
+2. Add nftables security enforcement on that packet path.
+3. Add NAT/routing behavior and real load-balancer proxying/health checks.
+4. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract and Firecracker guest arithmetic CI guard landed; public VM/VPC/LB behavior remains to implement.
+- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and first Linux bridge/netns/veth/IPAM substrate path landed; public VM/VPC/LB behavior remains to implement.
 
 ## Start Checklist
 

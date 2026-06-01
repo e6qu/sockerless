@@ -98,7 +98,7 @@ jobs:
           set -e
           cd "backends/${{ matrix.backend }}"
           # ECS doesn't have FaaS smoke tests; skip flag is a no-op there.
-          go test -tags noui -v -skip 'FaaSE2ESmoke' -timeout 15m ./...
+          go test -tags 'noui integration' -v -skip 'FaaSE2ESmoke' -timeout 15m ./...
 
   # test-faas-smoke: per-backend FaaS smoke matrix. These tests
   # exercise the runner-shaped lifecycle (create → start → exec×N →
@@ -152,11 +152,13 @@ jobs:
       - name: Install Firecracker test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iptables openssh-client squashfs-tools
+          sudo apt-get install -y curl e2fsprogs iproute2 iptables iputils-ping nftables openssh-client squashfs-tools
       - name: Install Firecracker
         run: bash scripts/install-firecracker.sh
       - name: Run Firecracker arithmetic smoke
         run: make firecracker-test
+      - name: Run real-execution network/NIC smoke
+        run: make realexec-network-test
 
   sim:
     # Native linux/arm64 runner — matches the sim's primary capacity
