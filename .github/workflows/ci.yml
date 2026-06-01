@@ -33,8 +33,8 @@ jobs:
           - shard: dispatchers
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -54,8 +54,8 @@ jobs:
     name: check-deps (Go modules + Terraform providers on latest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -72,8 +72,8 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -119,8 +119,8 @@ jobs:
           - shard: azure backends
             backends: aca azure-functions
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -157,8 +157,8 @@ jobs:
           - shard: azure-functions
             backends: azf
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -179,8 +179,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     name: test (e2e)
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -195,8 +195,8 @@ jobs:
     env:
       FIRECRACKER_VERSION: v1.15.1
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -222,8 +222,8 @@ jobs:
         cloud: [gcp, azure]
     name: sim (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -253,8 +253,8 @@ jobs:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -281,8 +281,8 @@ jobs:
           - suite: appdata
             run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -310,13 +310,13 @@ jobs:
         cloud: [aws, gcp, azure]
     name: tf (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_wrapper: false
       - name: Install real-networking tools
@@ -346,8 +346,8 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v6.0.2
+      - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
@@ -358,8 +358,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -375,8 +375,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -411,8 +411,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -450,7 +450,7 @@ jobs:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
@@ -470,13 +470,13 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v4.0.1
       - name: Run terraform tests
         run: |
           cd terraform/modules/ecs/test
