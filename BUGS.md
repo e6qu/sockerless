@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1276 filed - 1276 fixed - 3 open - 2 false positives.**
+**1283 filed - 1283 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,13 +16,20 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1272 through BUG-1276:
+This phase closed BUG-1272 through BUG-1283:
 
 - BUG-1272 / issue #310: Eventarc, Firestore, and Pub/Sub still emitted some protobuf `Timestamp` fields with `time.RFC3339Nano`, producing non-canonical fractional-second widths. Those call sites now use the shared canonical timestamp formatter and have SDK regression coverage.
 - BUG-1273 / issue #343: AWS CloudTrail was missing. The AWS simulator now implements trail CRUD, logging status, event selectors/tags, `LookupEvents`, records simulator API calls, and delivers gzipped CloudTrail logs into S3 with SDK, CLI, and Terraform coverage.
 - BUG-1274 / issue #346: AWS Auto Scaling Groups were missing. The AWS simulator now implements launch configurations, ASG lifecycle, desired-capacity updates, scaling activities, tags, and ASG-driven EC2 instance materialization with SDK, CLI, and Terraform coverage.
 - BUG-1275 / issue #347: EBS was read-only metadata and ECS managed EBS could not prove snapshot data round trips. The AWS simulator now implements EBS volume/snapshot lifecycle, pending-to-completed snapshot state, restore from snapshot, and ECS managed EBS task mounts that write bytes, snapshot them, restore them, and read them back in a later task through real SDK and CLI flows.
 - BUG-1276: Terraform cleanup could not enumerate CloudTrail-delivered objects through S3 version listing. S3 now implements `ListObjectVersions` with real object entries so provider `force_destroy` can clean up delivered logs.
+- BUG-1277: GitHub Actions linux/arm64 CPU jobs were flaky because the repo has no root `go.mod`, so `actions/setup-go` restored no module cache and many hosted arm64 jobs cold-downloaded and compiled dependencies concurrently until runners were torn down mid-test. CI now gives every Go setup step an explicit `go.work`/`**/go.sum` cache key, without skipping tests or increasing timeouts.
+- BUG-1278: CI still carried stale ten- and fifteen-minute command timeouts that could hide slow tests after the flake fix. Explicit CI step and Go test timeouts are now capped at five minutes.
+- BUG-1279: Aggregate `lint` and `build-check` CI jobs exceeded the five-minute job budget even though the underlying work passed. CI now runs lint, build gates, amd64 builds, and arm64 builds as independent capped jobs; status-only aggregate jobs were removed so `needs` is not used for contexts that do not consume upstream outputs.
+- BUG-1280: The first CI flake fix overcorrected by serializing hosted linux/arm64 CPU matrices and expanded lint into nineteen one-module jobs, producing a slow forty-plus-job PR run. CI now keeps the explicit Go cache and five-minute caps, removes broad `max-parallel: 1` serialization and phase-ordering `needs` gates from backend, FaaS smoke, e2e, simulator, Terraform, and smoke jobs, and groups lint/backend/FaaS smoke work into fewer real-coverage shards. No tests or jobs were disabled.
+- BUG-1281: GCP Cloud Logging lost container log lines when stdout and stderr scanner goroutines appended to the same log name concurrently through a read-modify-write store sequence. Cloud Logging appends are now serialized so real container stdout/stderr lines are preserved; AWS already used atomic store updates and Azure already serialized monitor appends.
+- BUG-1282: Several workflows either lacked concurrency cancellation or explicitly kept old runs alive, leaving stale pipelines queued/running after new PR branch pushes. Every workflow now has top-level concurrency keyed by workflow plus PR source branch/ref and `cancel-in-progress: true`, so new pushes auto-stop older runs for the same branch/ref.
+- BUG-1283: PR CI still had two oversized real-test steps: AWS simulator CLI coverage bundled all 76 AWS CLI tests into one five-minute step and AWS Terraform provider coverage could exceed five minutes after real RDS restore work passed. AWS simulator coverage now keeps SDK coverage intact and shards the AWS CLI tests by service family, with a mechanical coverage check confirming every existing CLI test is selected exactly once. Terraform provider CI has a ten-minute cap, matching the allowed budget for real provider apply/destroy work. CI has 29 jobs and no `needs` edges.
 
 Previous phase closed BUG-1270 and BUG-1271:
 

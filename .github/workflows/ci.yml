@@ -1,5 +1,10 @@
 name: CI
 
+env:
+  GO_CACHE_DEPENDENCY_PATHS: |
+    go.work
+    **/go.sum
+
 on:
   pull_request:
     branches: [main]
@@ -7,22 +12,43 @@ on:
   workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  lint:
+  lint-go:
+    name: lint (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: core-local
+            modules: cmd/sockerless cmd/sockerless-admin agent bleephub backends/docker
+          - shard: cloud-backends
+            modules: backends/aws-common backends/ecs backends/lambda backends/cloudrun backends/cloudrun-functions backends/aca backends/azure-functions
+          - shard: simulators
+            modules: simulators/aws simulators/gcp simulators/azure simulators/realexec
+          - shard: dispatchers
+            modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install golangci-lint
         run: curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.10.1
       - name: Lint
-        run: make lint
+        run: |
+          set -e
+          for module in ${{ matrix.modules }}; do
+            echo "=== $module ==="
+            make "$module/lint"
+          done
+        timeout-minutes: 5
 
   check-deps:
     name: check-deps (Go modules + Terraform providers on latest)
@@ -33,6 +59,7 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install jq (curl already available)
         run: sudo apt-get install -y jq
       - name: Check dependency freshness
@@ -50,14 +77,15 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Architecture checks
         run: bash scripts/check-cloud-backend-isolation.sh
       - name: Core + API + agent
         run: |
           set -e
-          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 15m ./...); }
-          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 15m ./...); }
-          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 15m ./...); }
+          run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
+          run_noflags() { echo "=== $1 ===" && (cd "$1" && go test -v -timeout 5m ./...); }
+          run_race() { echo "=== $1 ===" && (cd "$1" && go test -v -race -timeout 5m ./...); }
           run_work() { echo "=== $1 ===" && (cd "$1" && GOWORK=off go test -v -timeout 2m ./...); }
           run_noflags api
           run backends/core
@@ -71,61 +99,83 @@ jobs:
           run_work simulators/gcp/shared
           run_work simulators/azure/shared
 
-  # test-backend: per-backend matrix. Each job runs one backend's
-  # integration tests (TestMain spawns sim + backend, exercises Docker).
-  # Matrix isolates flakes to one job — re-run individual backend
-  # without restarting the others. FaaS smoke tests are skipped here
-  # (`-skip FaaSE2ESmoke`) — they run in `test-faas-smoke` below.
+  # test-backend: grouped backend integration tests. Each shard runs
+  # real simulator-backed Docker integration tests for related backends.
+  # FaaS smoke tests are skipped here (`-skip FaaSE2ESmoke`) and run
+  # in `test-faas-smoke` below.
   test-backend:
-    name: test (${{ matrix.backend }})
+    name: test (${{ matrix.shard }})
     runs-on: ubuntu-24.04-arm
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
       fail-fast: false
       matrix:
-        backend: [ecs, lambda, cloudrun, cloudrun-functions, aca, azure-functions]
+        include:
+          - shard: aws backends
+            backends: ecs lambda
+          - shard: gcp backends
+            backends: cloudrun cloudrun-functions
+          - shard: azure backends
+            backends: aca azure-functions
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Verify docker available
         run: docker version && docker info
-      - name: Integration tests for ${{ matrix.backend }}
+      - name: Integration tests for ${{ matrix.shard }}
         run: |
           set -e
-          cd "backends/${{ matrix.backend }}"
-          # ECS doesn't have FaaS smoke tests; skip flag is a no-op there.
-          go test -tags 'noui integration' -v -skip 'FaaSE2ESmoke' -timeout 15m ./...
+          for backend in ${{ matrix.backends }}; do
+            echo "=== $backend ==="
+            cd "backends/$backend"
+            # ECS doesn't have FaaS smoke tests; skip flag is a no-op there.
+            go test -tags 'noui integration' -v -skip 'FaaSE2ESmoke' -timeout 5m ./...
+            cd ../..
+          done
 
-  # test-faas-smoke: per-backend FaaS smoke matrix. These tests
-  # exercise the runner-shaped lifecycle (create → start → exec×N →
-  # signal → wait → remove). Isolated to their own jobs so
-  # signal-timing flakes don't restart the unit suite.
+  # test-faas-smoke: grouped FaaS smoke matrix. These tests exercise
+  # the runner-shaped lifecycle (create → start → exec×N → signal →
+  # wait → remove) against real simulator-backed backends.
   test-faas-smoke:
-    name: test (${{ matrix.backend }} faas-smoke)
+    name: test (${{ matrix.shard }} faas-smoke)
     runs-on: ubuntu-24.04-arm
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
       fail-fast: false
       matrix:
-        backend: [lambda, cloudrun, gcf, aca, azf]
+        include:
+          - shard: aws-gcp
+            backends: lambda cloudrun
+          - shard: gcp-azure
+            backends: gcf aca
+          - shard: azure-functions
+            backends: azf
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Verify docker available
         run: docker version && docker info
-      - name: FaaS smoke for ${{ matrix.backend }}
-        run: make faas-smoke-test-${{ matrix.backend }}
+      - name: FaaS smoke for ${{ matrix.shard }}
+        run: |
+          set -e
+          for backend in ${{ matrix.backends }}; do
+            echo "=== $backend ==="
+            make "faas-smoke-test-$backend"
+          done
 
   test-e2e:
-    # Native linux/arm64 — same rationale as `test`.
+    # Native linux/arm64 CPU architecture, matching the simulator
+    # capacity contract without QEMU.
     runs-on: ubuntu-24.04-arm
     name: test (e2e)
     steps:
@@ -134,6 +184,7 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Run tests
         run: cd tests && go test -v -timeout 5m ./...
 
@@ -149,6 +200,7 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install Firecracker test dependencies
         run: |
           sudo apt-get update
@@ -161,13 +213,13 @@ jobs:
         run: make realexec-network-test
 
   sim:
-    # Native linux/arm64 runner — matches the sim's primary capacity
-    # contract (Apple Silicon dev hosts also arm64). No QEMU.
+    # Native linux/arm64 CPU architecture — matches the simulator's
+    # primary capacity contract without QEMU.
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
-        cloud: [aws, gcp, azure]
+        cloud: [gcp, azure]
     name: sim (${{ matrix.cloud }})
     steps:
       - uses: actions/checkout@v6
@@ -175,6 +227,7 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install gcloud CLI
         if: matrix.cloud == 'gcp'
         run: |
@@ -185,14 +238,54 @@ jobs:
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Run SDK tests
         run: cd simulators/${{ matrix.cloud }} && make sdk-test
-        # Native arm64 — workloads run without emulation; 10min covers
-        # image build + container start.
-        timeout-minutes: 10
+        timeout-minutes: 5
         env:
           GOWORK: "off"
       - name: Run CLI tests
         run: cd simulators/${{ matrix.cloud }} && make cli-test
-        timeout-minutes: 10
+        timeout-minutes: 5
+        env:
+          GOWORK: "off"
+
+  sim-aws-sdk:
+    name: sim (aws sdk)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - name: Run AWS SDK tests
+        run: cd simulators/aws && make sdk-test
+        timeout-minutes: 5
+        env:
+          GOWORK: "off"
+
+  sim-aws-cli:
+    name: sim (aws cli ${{ matrix.suite }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: edge
+            run: '^Test(ACM|Amplify|APIGateway|AutoScaling|CloudFront|CloudTrail)'
+          - suite: compute
+            run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECS|EFS|ELBv2|Logs)'
+          - suite: appdata
+            run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - name: Run AWS CLI tests
+        run: cd simulators/aws && make cli-test CLI_TEST_TIMEOUT=300s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
+        timeout-minutes: 5
         env:
           GOWORK: "off"
 
@@ -216,6 +309,7 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - uses: hashicorp/setup-terraform@v4
       - name: Install Caddy
         run: |
@@ -229,7 +323,9 @@ jobs:
       - name: Run terraform tests
         run: |
           cd simulators/${{ matrix.cloud }}
-          if [ "${{ matrix.cloud }}" = "azure" ]; then
+          if [ "${{ matrix.cloud }}" = "aws" ]; then
+            make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
+          elif [ "${{ matrix.cloud }}" = "azure" ]; then
             make terraform-test
           else
             make terraform-https-test
@@ -249,19 +345,35 @@ jobs:
       - run: cd ui && bunx turbo run build
       - run: cd ui && bunx turbo run test
 
-  build-check:
+  build-gates:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Check backend api.Backend coverage
         run: cd tools/check-backend-coverage && GOWORK=off go run . --enforce
+        timeout-minutes: 5
       - name: Check simulator SDK/CLI/Terraform coverage matrix
         run: bash scripts/check-simulator-coverage-matrix.sh
+        timeout-minutes: 5
+
+  build-amd64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Build all binaries (amd64)
+        timeout-minutes: 5
         env:
           GOWORK: "off"
         run: |
@@ -285,7 +397,19 @@ jobs:
           build github-runner-dispatcher-aws ./cmd/github-runner-dispatcher-aws
           build github-runner-dispatcher-gcp ./cmd/github-runner-dispatcher-gcp
           build github-runner-dispatcher-azure ./cmd/github-runner-dispatcher-azure
+
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Cross-compile all binaries (arm64)
+        timeout-minutes: 5
         env:
           GOOS: linux
           GOARCH: arm64
@@ -314,7 +438,7 @@ jobs:
           build github-runner-dispatcher-azure ./cmd/github-runner-dispatcher-azure
 
   smoke:
-    # Native linux/arm64 — sim's primary capacity (Phase 135b).
+    # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
@@ -322,17 +446,17 @@ jobs:
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
           docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-ecs
-        timeout-minutes: 10
+        timeout-minutes: 5
       - name: Smoke test (cloudrun)
         run: |
           docker build -t smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
           docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-cloudrun
-        timeout-minutes: 10
+        timeout-minutes: 5
       - name: Smoke test (aca)
         run: |
           docker build -t smoke-aca -f smoke-tests/Dockerfile.aca .
           docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock smoke-aca
-        timeout-minutes: 10
+        timeout-minutes: 5
 
   terraform:
     runs-on: ubuntu-latest
@@ -342,9 +466,10 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - uses: hashicorp/setup-terraform@v4
       - name: Run terraform tests
         run: |
           cd terraform/modules/ecs/test
-          GOWORK=off go test -v -timeout 10m ./...
-        timeout-minutes: 10
+          GOWORK=off go test -v -timeout 5m ./...
+        timeout-minutes: 5
