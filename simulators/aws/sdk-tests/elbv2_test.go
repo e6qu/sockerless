@@ -1,6 +1,12 @@
 package aws_sdk_test
 
 import (
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -29,6 +35,20 @@ func elbv2Client() *elbv2.Client {
 func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	ec2c := ec2Client()
 	elb := elbv2Client()
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		_, _ = w.Write([]byte("proxied"))
+	}))
+	defer targetServer.Close()
+	targetURL, err := url.Parse(targetServer.URL)
+	require.NoError(t, err)
+	targetHost, targetPortText, err := net.SplitHostPort(targetURL.Host)
+	require.NoError(t, err)
+	targetPort, err := strconv.Atoi(targetPortText)
+	require.NoError(t, err)
 
 	vpcOut, err := ec2c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.90.0.0/16")})
 	require.NoError(t, err)
@@ -64,6 +84,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, lbOut.LoadBalancers, 1)
 	lbArn := *lbOut.LoadBalancers[0].LoadBalancerArn
+	lbDNSName := *lbOut.LoadBalancers[0].DNSName
 	assert.Equal(t, elbtypes.LoadBalancerStateEnumActive, lbOut.LoadBalancers[0].State.Code)
 
 	describeLB, err := elb.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
@@ -130,7 +151,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 		HealthyThresholdCount:      aws.Int32(3),
 		UnhealthyThresholdCount:    aws.Int32(2),
 		HealthCheckIntervalSeconds: aws.Int32(10),
-		HealthCheckTimeoutSeconds:  aws.Int32(5),
+		HealthCheckTimeoutSeconds:  aws.Int32(2),
 	})
 	require.NoError(t, err)
 	describeTG, err := elb.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{
@@ -157,18 +178,26 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 		Value: aws.String("60"),
 	})
 
-	target := elbtypes.TargetDescription{Id: aws.String("10.90.1.44"), Port: aws.Int32(80)}
+	target := elbtypes.TargetDescription{Id: aws.String(targetHost), Port: aws.Int32(int32(targetPort))}
+	unreachableTarget := elbtypes.TargetDescription{Id: aws.String("192.0.2.254"), Port: aws.Int32(80)}
 	_, err = elb.RegisterTargets(ctx, &elbv2.RegisterTargetsInput{
 		TargetGroupArn: aws.String(tgArn),
-		Targets:        []elbtypes.TargetDescription{target},
+		Targets:        []elbtypes.TargetDescription{target, unreachableTarget},
 	})
 	require.NoError(t, err)
 	health, err := elb.DescribeTargetHealth(ctx, &elbv2.DescribeTargetHealthInput{
 		TargetGroupArn: aws.String(tgArn),
 	})
 	require.NoError(t, err)
-	require.Len(t, health.TargetHealthDescriptions, 1)
+	require.Len(t, health.TargetHealthDescriptions, 2)
 	assert.Equal(t, elbtypes.TargetHealthStateEnumHealthy, health.TargetHealthDescriptions[0].TargetHealth.State)
+	unhealthy, err := elb.DescribeTargetHealth(ctx, &elbv2.DescribeTargetHealthInput{
+		TargetGroupArn: aws.String(tgArn),
+		Targets:        []elbtypes.TargetDescription{unreachableTarget},
+	})
+	require.NoError(t, err)
+	require.Len(t, unhealthy.TargetHealthDescriptions, 1)
+	assert.Equal(t, elbtypes.TargetHealthStateEnumUnhealthy, unhealthy.TargetHealthDescriptions[0].TargetHealth.State)
 
 	listenerOut, err := elb.CreateListener(ctx, &elbv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbArn),
@@ -181,6 +210,13 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, listenerOut.Listeners, 1)
+	proxiedReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/proxy-check", nil)
+	require.NoError(t, err)
+	proxiedReq.Host = lbDNSName
+	proxiedResp, err := http.DefaultClient.Do(proxiedReq)
+	require.NoError(t, err)
+	require.NoError(t, proxiedResp.Body.Close())
+	assert.Equal(t, http.StatusOK, proxiedResp.StatusCode, fmt.Sprintf("ELBv2 proxy status = %s", proxiedResp.Status))
 	listenerArn := *listenerOut.Listeners[0].ListenerArn
 	listeners, err := elb.DescribeListeners(ctx, &elbv2.DescribeListenersInput{
 		LoadBalancerArn: aws.String(lbArn),
@@ -228,7 +264,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 
 	_, err = elb.DeregisterTargets(ctx, &elbv2.DeregisterTargetsInput{
 		TargetGroupArn: aws.String(tgArn),
-		Targets:        []elbtypes.TargetDescription{target},
+		Targets:        []elbtypes.TargetDescription{target, unreachableTarget},
 	})
 	require.NoError(t, err)
 	_, err = elb.DeleteListener(ctx, &elbv2.DeleteListenerInput{ListenerArn: aws.String(listenerArn)})

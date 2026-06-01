@@ -1,7 +1,9 @@
 # Simulator Real-Execution Substrate
 
 Issues #332-#336 track the move from metadata-only VM/network resources to real
-execution. This document is the implementation contract for that program.
+execution. Issue #338 is the comparison/meta issue that keeps the simulator
+scope aligned with real cloud behavior. This document is the implementation
+contract for that program.
 
 The first rule is unchanged: simulator public APIs must match the public cloud.
 The substrate is an implementation detail behind EC2, GCE, Azure VM, VPC,
@@ -37,7 +39,8 @@ Required capabilities:
 - Permission to create bridges, tap/veth devices, and assign addresses.
 - Permission to program routes through netlink.
 - Permission to install and remove `nftables` rules.
-- Permission to bind load-balancer listener addresses and ports.
+- Permission to materialize load-balancer data-plane endpoints through the
+  required listener, gateway, DNS, namespace, and proxy primitives.
 
 Capability checks must be explicit and deterministic. They may inspect the host
 and required binaries, but they must not create permanent resources as a probe.
@@ -102,7 +105,16 @@ Static global metadata fixtures are not acceptable for migrated VM paths.
 
 ## Load Balancers
 
-Load balancers must bind a real local listener for the advertised VIP/DNS/port.
+Load-balancer control-plane APIs create and mutate load-balancer, target-group,
+backend-service, forwarding-rule, and listener configuration. They must not
+start simulator-private listener ports as a side effect unless the real cloud
+control plane does that as part of provisioning.
+
+The data plane must be reachable through the cloud-shaped endpoint the control
+plane advertises: DNS name, VIP, scheme, port, and path. The local realization
+may use the simulator mux, Caddy, Docker networking, Linux namespaces, or bound
+listeners underneath, but that plumbing must not leak into public cloud API
+responses or client configuration.
 
 - L4 listeners proxy TCP streams to healthy backends.
 - L7 listeners proxy HTTP and apply the cloud's listener/rule/url-map behavior.
@@ -110,7 +122,8 @@ Load balancers must bind a real local listener for the advertised VIP/DNS/port.
   thresholds, and path when applicable.
 - Target health APIs return the probe result, not a hardcoded healthy state.
 
-If the host cannot bind the required listener, provisioning fails loudly.
+If the host cannot materialize the required advertised data-plane endpoint,
+provisioning or data-plane dispatch fails loudly with the cloud's error shape.
 
 ## Security Enforcement
 
@@ -169,23 +182,33 @@ minimum CI guard for guest execution.
 
 CI also runs the real host-network substrate target. It requires Linux, real
 host networking tools, nftables, `/dev/kvm`, and sufficient privileges. The
-target creates a Linux bridge, two network namespaces, veth NICs, lease-based
-addresses, routes, and an nftables table; verifies gateway and
-namespace-to-namespace packet reachability with real packets; and verifies
+target creates a dedicated network namespace containing subnet bridges and
+gateways, guest network namespaces, veth NICs, lease-based addresses, routed
+egress, SNAT state, routes, and nftables tables; verifies gateway,
+namespace-to-namespace, and egress reachability with real packets; and verifies
 cleanup removes the host artifacts. This is the minimum CI guard for the
-network/NIC substrate itself; cloud VM/VPC/LB tests are added to the same
-real-execution path as each public API is migrated.
+network/NIC/NAT substrate itself; cloud VM/security/LB tests are added to the
+same real-execution path as each public API is migrated.
 
 ## Implementation Order
 
 1. Host capability detection and cleanup scaffolding landed without changing
    public resource behavior.
 2. The first real network/IPAM/NIC substrate landed without changing public
-   resource behavior.
-3. Attach one VM family to Firecracker using that network substrate.
-4. Add security enforcement on that packet path.
-5. Add NAT/routing and load-balancer proxying/health checks on that packet path.
-6. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
+   resource behavior; each network now owns a Linux network namespace with its
+   bridge and gateway inside it.
+3. Public VPC/network/subnet/NIC/public-IP/NAT route paths for AWS, GCP, and
+   Azure were migrated onto the substrate and fail loudly when host networking
+   capabilities are unavailable.
+4. AWS security-group ingress rules and AWS ELBv2 health/data-plane paths were
+   migrated onto the packet path: security groups compile to nftables on ENI
+   veth peers, target health uses real probes, and ELBv2 data-plane requests
+   route by load-balancer DNS host to healthy targets without binding listener
+   ports from the Query Protocol control plane.
+5. Attach one VM family to Firecracker using that network substrate.
+6. Add GCP/Azure security enforcement on that packet path.
+7. Add the remaining load-balancer proxying/health checks on that packet path.
+8. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
    separate product emulators.
 
 The open issues remain open until the corresponding real behavior exists.

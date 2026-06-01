@@ -27,8 +27,9 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	prefix := shortPrefix()
 	host := NewHost()
 	network, err := host.CreateNetwork(ctx, NetworkSpec{
-		BridgeName: prefix + "br",
-		CIDR:       "10.203.0.0/29",
+		NamespaceName: prefix + "nw",
+		BridgeName:    prefix + "br",
+		CIDR:          "10.203.0.0/29",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,11 +78,76 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	}
 
 	runner := Runner{}
+	if _, err := runner.Output(ctx, "ip", "netns", "exec", network.NamespaceName, "ip", "link", "show", network.BridgeName); err != nil {
+		t.Fatalf("network bridge %s is not inside namespace %s: %v", network.BridgeName, network.NamespaceName, err)
+	}
 	if err := runner.Run(ctx, "ip", "netns", "exec", first.NamespaceName, "ping", "-c", "1", "-W", "1", network.Gateway.String()); err != nil {
 		t.Fatalf("first namespace cannot reach bridge gateway %s: %v", network.Gateway, err)
 	}
 	if err := runner.Run(ctx, "ip", "netns", "exec", second.NamespaceName, "ping", "-c", "1", "-W", "1", first.PrivateIP.String()); err != nil {
 		t.Fatalf("second namespace cannot reach first NIC %s over bridge: %v", first.PrivateIP, err)
+	}
+	if err := first.ConfigureIngressFilter(ctx, nil); err != nil {
+		t.Fatalf("configure deny-all ingress filter: %v", err)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", second.NamespaceName, "ping", "-c", "1", "-W", "1", first.PrivateIP.String()); err == nil {
+		t.Fatalf("second namespace reached first NIC despite deny-all ingress filter")
+	}
+	if err := first.ConfigureIngressFilter(ctx, []PacketRule{{Protocol: "icmp", SourceCIDR: "10.203.0.0/29"}}); err != nil {
+		t.Fatalf("configure allow-icmp ingress filter: %v", err)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", second.NamespaceName, "ping", "-c", "1", "-W", "1", first.PrivateIP.String()); err != nil {
+		t.Fatalf("second namespace cannot reach first NIC after allow-icmp ingress filter: %v", err)
+	}
+
+	otherSubnet, err := network.CreateSubnet(ctx, SubnetSpec{
+		Name:       "other",
+		BridgeName: prefix + "b2",
+		CIDR:       "10.203.1.0/29",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := otherSubnet.Close(context.Background()); err != nil {
+			t.Fatalf("other subnet cleanup: %v", err)
+		}
+	}()
+	third, err := otherSubnet.AttachNamespaceNIC(ctx, NamespaceNICSpec{
+		NamespaceName: prefix + "n3",
+		HostVethName:  prefix + "h3",
+		GuestVethName: prefix + "g3",
+		MAC:           "02:00:5e:10:00:03",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := third.Close(context.Background()); err != nil {
+			t.Fatalf("third NIC cleanup: %v", err)
+		}
+	}()
+	if third.PrivateIP.String() != "10.203.1.2" {
+		t.Fatalf("third lease = %s; want 10.203.1.2", third.PrivateIP)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", third.NamespaceName, "ping", "-c", "1", "-W", "1", otherSubnet.Gateway.String()); err != nil {
+		t.Fatalf("third namespace cannot reach subnet gateway %s: %v", otherSubnet.Gateway, err)
+	}
+
+	publicIP, err := ReservePublicIPv4("host-test", nil)
+	if err != nil {
+		t.Fatalf("reserve public IPv4: %v", err)
+	}
+	defer ReleasePublicIPv4(publicIP)
+	if err := network.ConfigureSNAT(ctx, "10.203.0.0/29", publicIP, prefix+"sn"); err != nil {
+		t.Fatalf("configure SNAT: %v", err)
+	}
+	egress, err := network.EnsureEgress(ctx)
+	if err != nil {
+		t.Fatalf("ensure egress: %v", err)
+	}
+	if err := runner.Run(ctx, "ip", "netns", "exec", first.NamespaceName, "ping", "-c", "1", "-W", "1", egress.HostIP.String()); err != nil {
+		t.Fatalf("first namespace cannot reach egress host peer %s through routed fabric: %v", egress.HostIP, err)
 	}
 
 	table := prefix + "tbl"
@@ -115,8 +181,9 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	prefix := shortPrefix()
 	host := NewHost()
 	network, err := host.CreateNetwork(ctx, NetworkSpec{
-		BridgeName: prefix + "br",
-		CIDR:       "10.204.0.0/29",
+		NamespaceName: prefix + "nw",
+		BridgeName:    prefix + "br",
+		CIDR:          "10.204.0.0/29",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,14 +204,14 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	}
 
 	runner := Runner{}
-	if _, err := runner.Output(ctx, "ip", "link", "show", prefix+"br"); err == nil {
-		t.Fatalf("bridge %sbr still exists after cleanup", prefix)
-	}
 	out, err := runner.Output(ctx, "ip", "netns", "list")
 	if err != nil {
 		t.Fatalf("list namespaces: %v", err)
 	}
 	if strings.Contains(out, prefix+"ns") {
 		t.Fatalf("namespace %sns still exists after cleanup: %s", prefix, out)
+	}
+	if strings.Contains(out, prefix+"nw") {
+		t.Fatalf("network namespace %snw still exists after cleanup: %s", prefix, out)
 	}
 }

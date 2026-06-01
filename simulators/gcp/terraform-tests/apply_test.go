@@ -2,6 +2,7 @@ package gcp_tf_test
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,8 +138,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"firewall id must include the canonical global path; got %s", firewallID)
 
 	natAddress := outputs.must(t, "nat_address")
-	require.True(t, strings.HasPrefix(natAddress, "34."),
-		"regional NAT address must receive an external IPv4 address; got %s", natAddress)
+	requireIPv4InCIDR(t, natAddress, "8.34.210.0/24",
+		"regional NAT address must come from the simulator's real GCP public IPv4 pool; got %s", natAddress)
 
 	routerNATName := outputs.must(t, "router_nat_name")
 	require.Equal(t, "tf-router-nat", routerNATName,
@@ -161,8 +162,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"load-balancer target HTTP proxy id must include the canonical global path; got %s", lbProxyID)
 
 	lbForwardingIP := outputs.must(t, "lb_forwarding_rule_ip")
-	require.True(t, strings.HasPrefix(lbForwardingIP, "34."),
-		"load-balancer global forwarding rule must receive an external IPv4 address; got %s", lbForwardingIP)
+	requireIPv4InCIDR(t, lbForwardingIP, "8.34.210.0/24",
+		"load-balancer global forwarding rule must come from the simulator's real GCP public IPv4 pool; got %s", lbForwardingIP)
 
 	gcsObjLink := outputs.must(t, "gcs_object_self_link")
 	require.Contains(t, gcsObjLink, "tf-test-artifact.txt",
@@ -209,6 +210,15 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	destroy := terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev")
 	out, err = destroy.CombinedOutput()
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func requireIPv4InCIDR(t *testing.T, value, cidr string, msgAndArgs ...any) {
+	t.Helper()
+	ip := net.ParseIP(value).To4()
+	require.NotNil(t, ip, msgAndArgs...)
+	_, block, err := net.ParseCIDR(cidr)
+	require.NoError(t, err)
+	require.True(t, block.Contains(ip), msgAndArgs...)
 }
 
 func cleanTerraformWorkspace(t *testing.T) {

@@ -2,6 +2,7 @@ package aws_tf_test
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -172,8 +173,8 @@ func TestStackProductionShape(t *testing.T) {
 		"EC2 NAT gateway id must use nat-* shape; got %s", natGatewayID)
 
 	natEIP := outputs.must(t, "ec2_nat_eip_public_ip")
-	require.True(t, strings.HasPrefix(natEIP, "203.0.113."),
-		"EC2 NAT Elastic IP must round-trip the allocated public IP; got %s", natEIP)
+	requireIPv4InCIDR(t, natEIP, "3.2.0.0/24",
+		"EC2 NAT Elastic IP must come from the simulator's real AWS EC2 public IPv4 pool; got %s", natEIP)
 
 	natRouteTableID := outputs.must(t, "ec2_nat_route_table_id")
 	require.True(t, strings.HasPrefix(natRouteTableID, "rtb-"),
@@ -300,6 +301,15 @@ func runTimed(t *testing.T, label string, cmd interface {
 	out, err := cmd.CombinedOutput()
 	t.Logf("%s duration=%s", label, time.Since(start).Round(time.Millisecond))
 	return out, err
+}
+
+func requireIPv4InCIDR(t *testing.T, value, cidr string, msgAndArgs ...any) {
+	t.Helper()
+	ip := net.ParseIP(value).To4()
+	require.NotNil(t, ip, msgAndArgs...)
+	_, block, err := net.ParseCIDR(cidr)
+	require.NoError(t, err)
+	require.True(t, block.Contains(ip), msgAndArgs...)
 }
 
 type tfOutputs map[string]struct {

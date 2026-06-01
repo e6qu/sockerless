@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 # Build simulator (independent module, not in go.work)
 WORKDIR /sim
+COPY simulators/realexec/ /realexec/
 COPY simulators/gcp/ /sim/
 RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-gcp .
 

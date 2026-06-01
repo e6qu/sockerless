@@ -1,5 +1,8 @@
 .git
 .build
+.claude
+.gocache
+.stack-pids
 **/.terraform
 **/.terragrunt-cache
 **/.terraform.lock.hcl
@@ -7,3 +10,5 @@
 **/*.tfstate.backup
 _tasks
 spec
+simulators/*/simulator-*
+simulators/*/*.test

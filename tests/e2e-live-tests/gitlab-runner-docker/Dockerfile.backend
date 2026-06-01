@@ -2,14 +2,17 @@ FROM golang:1.25 AS builder
 
 # --- Build all 3 simulators ---
 WORKDIR /sim-aws
+COPY simulators/realexec/ /realexec/
 COPY simulators/aws/ /sim-aws/
 RUN GOWORK=off go build -tags noui -o /out/simulator-aws .
 
 WORKDIR /sim-gcp
+COPY simulators/realexec/ /realexec/
 COPY simulators/gcp/ /sim-gcp/
 RUN GOWORK=off go build -tags noui -o /out/simulator-gcp .
 
 WORKDIR /sim-azure
+COPY simulators/realexec/ /realexec/
 COPY simulators/azure/ /sim-azure/
 RUN GOWORK=off go build -tags noui -o /out/simulator-azure .
 

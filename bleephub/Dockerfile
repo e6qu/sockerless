@@ -16,6 +16,7 @@ RUN cd backends/ecs && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 
 # --- Build AWS simulator ---
+COPY simulators/realexec/ /realexec/
 COPY simulators/aws/ /sim-aws/
 RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
 

@@ -10,8 +10,8 @@ github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.26 h1:A1PmWU2zfkIm9EyFlJncFXL4W4p
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.26/go.mod h1:dY4MRzXEizrD4hqtpKvWVGPX7QleSGGVY+EBolo1RmM=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.0 h1:9mQjo8AR+FeCtycPoN69yJ1SdvDq5uqKKMVJGhd3+Uc=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.0/go.mod h1:/QK33sTEGzZNON7eoEihKEi9uAdfO9mQrSLs8JTo6x0=
-github.com/aws/aws-sdk-go-v2/service/ecr v1.57.4 h1:G9jRHLHN24jig5Cyy4jOIsQ1LFJDv2TPh5PhHIL8R9g=
-github.com/aws/aws-sdk-go-v2/service/ecr v1.57.4/go.mod h1:rVIdQJfKZ3je75aE9AqnBB4Ezk4xldB9aFXXbf/fEeM=
+github.com/aws/aws-sdk-go-v2/service/ecr v1.58.0 h1:AgcSdMlb2xv8LdnVa3SIdQbf4Yfvo5pVO7G1pFUu8go=
+github.com/aws/aws-sdk-go-v2/service/ecr v1.58.0/go.mod h1:rVIdQJfKZ3je75aE9AqnBB4Ezk4xldB9aFXXbf/fEeM=
 github.com/aws/aws-sdk-go-v2/service/efs v1.41.18 h1:gyHxFihkAMu1IDaU6rGErifwJuc5KF2kEEeRa9+CfOM=
 github.com/aws/aws-sdk-go-v2/service/efs v1.41.18/go.mod h1:iQpXC22xgdqxLzERwUgery+Xd78zJnpIYewjfvOZKPY=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.10 h1:d5/908OJ4bXg8lyjeMPvXetEKqoDoLi5Owy1zNue3yg=

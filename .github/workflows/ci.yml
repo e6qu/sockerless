@@ -33,8 +33,8 @@ jobs:
           - shard: dispatchers
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -51,19 +51,26 @@ jobs:
         timeout-minutes: 5
 
   check-deps:
-    name: check-deps (Go modules + Terraform providers on latest)
+    name: check-deps (deps + actions + scripts)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - name: Install jq (curl already available)
-        run: sudo apt-get install -y jq
-      - name: Check dependency freshness
+      - name: Install script check tools
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck zsh
+      - name: Check shell scripts
+        run: |
+          shellcheck -x -s bash scripts/*.sh
+          bash -n scripts/*.sh
+          zsh -n scripts/*.sh
+      - name: Check dependency freshness (bash)
         run: bash scripts/check-latest-deps.sh
+      - name: Check dependency freshness (zsh)
+        run: zsh scripts/check-latest-deps.sh
 
   # test-core: fast unit + library tests, no Docker integration.
   # Split out so flakes in per-backend integration don't restart the
@@ -72,8 +79,8 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -119,8 +126,8 @@ jobs:
           - shard: azure backends
             backends: aca azure-functions
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -157,8 +164,8 @@ jobs:
           - shard: azure-functions
             backends: azf
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -179,8 +186,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     name: test (e2e)
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -195,8 +202,8 @@ jobs:
     env:
       FIRECRACKER_VERSION: v1.15.1
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -222,8 +229,8 @@ jobs:
         cloud: [gcp, azure]
     name: sim (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -236,13 +243,15 @@ jobs:
       - name: Install Azure CLI
         if: matrix.cloud == 'azure'
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+      - name: Install real-networking tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
       - name: Run SDK tests
-        run: cd simulators/${{ matrix.cloud }} && make sdk-test
+        run: cd simulators/${{ matrix.cloud }} && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
       - name: Run CLI tests
-        run: cd simulators/${{ matrix.cloud }} && make cli-test
+        run: cd simulators/${{ matrix.cloud }} && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -251,14 +260,16 @@ jobs:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - name: Install real-networking tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
       - name: Run AWS SDK tests
-        run: cd simulators/aws && make sdk-test
+        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -277,14 +288,16 @@ jobs:
           - suite: appdata
             run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - name: Install real-networking tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
       - name: Run AWS CLI tests
-        run: cd simulators/aws && make cli-test CLI_TEST_TIMEOUT=300s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
+        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=300s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -304,16 +317,19 @@ jobs:
         cloud: [aws, gcp, azure]
     name: tf (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_wrapper: false
+      - name: Install real-networking tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
       - name: Install Caddy
         run: |
-          sudo apt-get update
           sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
@@ -324,11 +340,11 @@ jobs:
         run: |
           cd simulators/${{ matrix.cloud }}
           if [ "${{ matrix.cloud }}" = "aws" ]; then
-            make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
           elif [ "${{ matrix.cloud }}" = "azure" ]; then
-            make terraform-test
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-test
           else
-            make terraform-https-test
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test
           fi
         timeout-minutes: 10
         env:
@@ -337,8 +353,8 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v6.0.2
+      - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
@@ -349,8 +365,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -366,8 +382,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -402,8 +418,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
@@ -441,7 +457,7 @@ jobs:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
@@ -461,13 +477,13 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@v4.0.1
       - name: Run terraform tests
         run: |
           cd terraform/modules/ecs/test

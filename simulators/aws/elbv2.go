@@ -470,7 +470,8 @@ func handleELBv2DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 	b.WriteString("<TargetHealthDescriptions>")
 	for _, target := range targets {
-		fmt.Fprintf(&b, `<member><Target>%s</Target><TargetHealth><State>healthy</State></TargetHealth></member>`, elbv2TargetXML(target))
+		state := elbv2ProbeTarget(r.Context(), tg, target)
+		fmt.Fprintf(&b, `<member><Target>%s</Target><TargetHealth><State>%s</State></TargetHealth></member>`, elbv2TargetXML(target), state)
 	}
 	b.WriteString("</TargetHealthDescriptions>")
 	elbv2XMLResponse(w, "DescribeTargetHealth", b.String(), sim.RequestID(r.Context()))
@@ -549,7 +550,8 @@ func handleELBv2ModifyListenerAttributes(w http.ResponseWriter, r *http.Request)
 }
 
 func handleELBv2DeleteListener(w http.ResponseWriter, r *http.Request) {
-	elbv2Listeners.Delete(r.FormValue("ListenerArn"))
+	arn := r.FormValue("ListenerArn")
+	elbv2Listeners.Delete(arn)
 	elbv2XMLResponse(w, "DeleteListener", "", sim.RequestID(r.Context()))
 }
 
@@ -804,6 +806,7 @@ func defaultELBv2LoadBalancerAttributes() map[string]string {
 		"idle_timeout.timeout_seconds":                    "60",
 		"routing.http2.enabled":                           "true",
 		"routing.http.drop_invalid_header_fields.enabled": "false",
+		"routing.http.preserve_host_header.enabled":       "false",
 	}
 }
 

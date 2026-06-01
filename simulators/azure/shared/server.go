@@ -135,6 +135,11 @@ func (s *Server) WrapHandler(wrapper func(http.Handler) http.Handler) {
 	s.handler = wrapper(s.handler)
 }
 
+// ServeHTTP serves through the same final handler chain as ListenAndServe.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.handler.ServeHTTP(w, r)
+}
+
 // Handle registers a pattern on the server's mux.
 func (s *Server) Handle(pattern string, handler http.Handler) {
 	s.mux.Handle(pattern, handler)

@@ -4,17 +4,18 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Azure Tables ARM PR merged.
+- Branch: `main`, synced with `origin/main` after the issue #336 real network fabric PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #332-#338. Issue #356 was fixed and closed by the Azure Tables ARM PR.
+- Open GitHub issues at last check: #332-#335 and #338. Issues #336 and #356 were fixed and closed. Number #337 is a merged PR, not an open issue.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: issue #356 was fixed with real public-client coverage for Azure Cosmos DB Tables ARM and Azure Storage Tables ARM.
+- Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 host-dispatched health/proxy paths became the first real #335/#334 packet-path migrations; Azure Event Grid topic endpoints stopped leaking simulator-local per-topic publish listeners.
+- The PR #358 CI fix preserved real-network capabilities in simulator Docker tests, fixed provider-shaped public IPv4 pools and GCP public-IP assertions, made GCP real fabric creation atomic, and avoided Linux-name collisions with hash-derived names.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#335 and #338, unless a higher-priority issue appears.
 
-Attach the first public VM family to the shared real-execution substrate. The implementation must use the cloud's public API shape, boot a real Firecracker guest, attach it to the real network/NIC path, and expose per-instance metadata through the cloud-native metadata contract. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
+Next implementation should focus on Firecracker-backed VM execution, GCP/Azure nftables firewall/NSG enforcement, and GCP/Azure managed load-balancer proxy/listener data planes, with full fixes and regression tests for every touched public path. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
 
 ## Provider Facts To Preserve
 
@@ -41,7 +42,8 @@ Attach the first public VM family to the shared real-execution substrate. The im
 - BUG-1246 fixed Azure Storage data-plane middleware overmatching non-storage `*.localhost` hosts.
 - SDK/CLI guidance documents real endpoint and CA knobs for AWS CLI/SDKs, gcloud/Google clients, Azure CLI, and Azure SDKs.
 - BUG-1250/BUG-1251 fixed stale `gcp-gcs` CLI coverage: `gcloud storage` now has real bucket/object lifecycle coverage, current gcloud multipart uploads work, GCS `buckets.getStorageLayout` returns the public response shape, and GCS timestamps use Cloud Storage-style millisecond precision.
-- AWS/GCP now had `make terraform-https-test` targets. They start the simulator on HTTP loopback, put Caddy in front of it, trust Caddy's CA through `SSL_CERT_FILE`, and run the real Terraform provider apply/destroy harness against the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI.
+- AWS/GCP now had `make terraform-https-test` targets. They start the simulator on HTTP loopback, put Caddy in front of it, trust Caddy's CA through `SSL_CERT_FILE`, and run the real Terraform provider apply/destroy harness against the gateway's `https://localhost:<ephemeral-port>` single-simulator route. AWS covers the root production-shape stack plus the RDS and ElastiCache Terraform subpackages through the same HTTPS path. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI.
+- AWS Terraform Make targets now build the simulator once, pass that real binary to every Terraform package, keep package-level concurrency, and emit package-qualified JSON test events for the root/RDS/ElastiCache provider flows.
 - Terraform CI installed Caddy for the Terraform matrix and ran AWS/GCP via the HTTPS gateway targets; Azure continued using its mandatory Caddy-backed Terraform harness.
 - BUG-1253 fixed stale `gcp-vpcaccess` Terraform coverage by adding `google_vpc_access_connector` to the GCP Terraform stack and marking the matrix row direct.
 - AWS simulator fidelity issues #305-#308 and #317-#320 were fixed:
@@ -103,6 +105,16 @@ Attach the first public VM family to the shared real-execution substrate. The im
 - The second BUG-1267 substrate stage landed:
    - [simulators/realexec](simulators/realexec) provides deterministic capability detection, LIFO cleanup, an auditable host runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
    - `make realexec-network-test` creates real Linux networking artifacts, verifies gateway and namespace-to-namespace packet reachability, creates/removes an nftables table, and verifies cleanup removes the bridge and network namespaces.
+- The third BUG-1267 substrate stage landed:
+   - Each realexec network now owns a dedicated Linux network namespace.
+   - The bridge and gateway address are created inside that namespace.
+   - Attached NIC host-side veth peers move into the network namespace before joining the bridge; guest-side peers move into the workload namespace with their leased IP and default route.
+   - The mandatory host-network smoke test verifies the bridge namespace placement plus real packet reachability and cleanup.
+- The PR #358 CI fix landed:
+   - Simulator Docker real-network targets now run with the `--privileged` capabilities intact instead of dropping to the host UID and losing `CAP_NET_ADMIN` / `CAP_SYS_ADMIN`.
+   - AWS, GCP, and Azure public IP allocation uses provider-shaped public pools, and Terraform tests assert the exact provider CIDRs.
+   - GCP real fabric names use hashed cloud resource IDs within Linux's 15-character limit, and GCP network/subnet/NIC substrate mutations are serialized with the simulator registry.
+   - Docker test image build contexts exclude local caches, Terraform state, generated simulator binaries, and local agent metadata.
 - The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
 - Azure Tables ARM issue #356 was fixed:
    - Cosmos DB Tables support public ARM CRUD/list at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` plus table throughput at `.../throughputSettings/default`.
@@ -114,15 +126,15 @@ Attach the first public VM family to the shared real-execution substrate. The im
 ## Remaining Stages
 
 1. Attach one public VM family to Firecracker using the real network/IPAM/NIC substrate.
-2. Add nftables security enforcement on that packet path.
-3. Add NAT/routing behavior and real load-balancer proxying/health checks.
+2. Add GCP/Azure nftables security enforcement on their packet paths.
+3. Add the remaining real load-balancer proxying and health checks across AWS/GCP/Azure.
 4. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and first Linux bridge/netns/veth/IPAM substrate path landed; public VM/VPC/LB behavior remains to implement.
+- BUG-1267: issues #332-#335 and #338 track the remaining compute/networking real-execution program: Firecracker-backed VM instances, remaining nftables security enforcement, and real L4/L7 load balancing with health checks. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
 
 ## Start Checklist
 

@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.9
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.0
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.57.4
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.41.18
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.2

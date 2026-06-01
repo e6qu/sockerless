@@ -18,10 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         docker.io \
         git \
         gnupg \
+        iproute2 \
+        iputils-ping \
         jq \
         lsb-release \
         make \
+        nftables \
         openssh-client \
+        procps \
         util-linux \
         unzip \
     && rm -rf /var/lib/apt/lists/*

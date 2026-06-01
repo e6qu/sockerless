@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/logging v1.18.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
+	github.com/sockerless/simulator-realexec v0.0.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
@@ -65,3 +66,5 @@ require (
 )
 
 replace github.com/sockerless/simulator => ./shared
+
+replace github.com/sockerless/simulator-realexec => ../realexec

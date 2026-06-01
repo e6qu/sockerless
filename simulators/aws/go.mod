@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/sockerless/simulator v0.0.0
+	github.com/sockerless/simulator-realexec v0.0.0
 )
 
 require (
@@ -65,3 +66,5 @@ require (
 )
 
 replace github.com/sockerless/simulator => ./shared
+
+replace github.com/sockerless/simulator-realexec => ../realexec

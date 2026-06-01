@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -320,7 +321,8 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 		if err != nil {
 			return err
 		}
-		inst := ec2CreateInstance(EC2InstanceCreateSpec{
+		inst, err := ec2CreateInstance(EC2InstanceCreateSpec{
+			Context:          context.Background(),
 			ReservationId:    ec2ID("r"),
 			ImageId:          lc.ImageId,
 			InstanceType:     lc.InstanceType,
@@ -333,6 +335,9 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 			KeyName:          lc.KeyName,
 			State:            "running",
 		})
+		if err != nil {
+			return err
+		}
 		asg.InstanceIds = append(asg.InstanceIds, inst.InstanceId)
 	}
 	for len(asg.InstanceIds) > asg.DesiredCapacity {
@@ -343,6 +348,7 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 			ec2Instances.Put(id, inst)
 			if inst.NetworkInterfaceId != "" {
 				ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+				_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
 			}
 			ec2DeleteOnTerminationVolumes(id)
 		}

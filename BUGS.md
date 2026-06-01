@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1284 filed - 1284 fixed - 3 open - 2 false positives.**
+**1287 filed - 1287 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,11 +12,17 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | metadata-only data plane | Issues #332-#336 track the real-execution program for VM instances, VPC/network/subnet/route/NAT/IPAM fabric, security-group/firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. The substrate contract, Firecracker guest arithmetic CI guard, host capability checks, cleanup primitives, and first Linux bridge/netns/veth/IPAM path landed; public VM/VPC/security/NAT/LB API migration remains open. |
+| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332-#335 and #338 track the remaining real-execution program for Firecracker-backed VM execution, GCP/Azure firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. Issue #336's VPC/network/subnet/route/NAT/IPAM fabric moved onto the substrate; AWS security-group ingress and ELBv2 host-dispatched health/proxy paths were the first #335/#334 migrations. |
 
 ## Recently Closed
 
-This phase closed BUG-1284:
+This phase closed BUG-1285:
+
+- BUG-1285 / issue #336: VPC/network/subnet/NIC/public-IP/NAT routing paths were metadata-only. The shared realexec substrate now supports per-network Linux namespaces, multiple subnet bridges, veth NIC attachment with real IPAM and unique MACs, routed egress links, public IPv4 IPAM, and nftables SNAT. AWS EC2 VPC/subnet, `RunInstances`/Auto Scaling ENIs, Elastic IPs, NAT gateways, and NAT routes use the substrate. GCP Compute networks/subnetworks, instance NICs, regional addresses, and Cloud NAT use it. Azure virtual networks/subnets, NIC private IP/MAC allocation, public IPs, and NAT gateway subnet programming use it. These paths fail loudly when Linux namespace/bridge/veth/route/nftables capabilities are missing.
+- BUG-1286 / issues #334 and #335 partial: AWS ELBv2 and AWS security groups still had fabricated packet-path behavior. AWS ELBv2 target health now probes targets over real TCP/HTTP, ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without control-plane listener-port binding, and EC2 security-group ingress rules compile to nftables on attached real ENI veth peers. The remaining GCP/Azure security and cross-cloud load-balancer data-plane work stays under BUG-1267.
+- BUG-1287: Azure Event Grid topic ARM create/get/list leaked simulator-local data-plane plumbing by allocating per-topic `127.0.0.1:<random>` HTTP listeners when ARM was reached through localhost. Topics now always advertise the shared host-dispatched Event Grid data-plane endpoint, or the configured HTTPS gateway template, and publish requests route through the Azure simulator handler by Event Grid Host header. Regression tests verify create/get/list endpoint shape and publish fanout through the advertised host without per-topic local listener endpoints.
+
+Previous phase closed BUG-1284:
 
 - BUG-1284 / issue #356: Azure Cosmos DB Tables ARM and Azure Storage Tables ARM were missing. The Azure simulator now implements `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` CRUD/list plus table throughput at `.../throughputSettings/default`, and `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}` CRUD/list/update. ARM-created tables project into the real Tables data-plane store, deletes remove table entities, and the Storage Tables data plane honors the real `Prefer: return-no-content` create behavior and table ACL get/set calls used by terraform-provider-azurerm. The fix shipped with official Azure SDK coverage (`armcosmos.TableResourcesClient`, `armstorage.TableClient`), Azure CLI `az rest` coverage, and Terraform `azurerm_cosmosdb_table` / `azurerm_storage_table` apply/destroy coverage.
 
@@ -87,7 +93,7 @@ Earlier recent phases closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298
 - BUG-1249: Azure Terraform HTTPS coverage could fail late if Caddy was missing or if a future edit accidentally changed the provider endpoint away from HTTPS. The harness now preflights the Caddy executable and fails loudly unless the Terraform endpoint is HTTPS.
 - BUG-1250: BUG-1104 audit found stale `gcp-gcs` CLI coverage marked not applicable even though current gcloud supports Cloud Storage endpoint overrides. The simulator now has real `gcloud storage` bucket/object lifecycle coverage, accepts the current CLI multipart boundary form, and implements the public `buckets.getStorageLayout` probe.
 - BUG-1251: GCS object and bucket timestamps used RFC3339 nanosecond precision, which caused current Linux gcloud Storage to emit timestamp truncation warnings into command output. GCS timestamps now use Cloud Storage-style millisecond precision.
-- BUG-1252: AWS/GCP Terraform had only direct HTTP simulator harnesses even though the optional Caddy gateway existed. AWS/GCP now have `make terraform-https-test` targets that run the real providers through Caddy HTTPS with CA trust while preserving direct HTTP `make terraform-test`.
+- BUG-1252: AWS/GCP Terraform had direct HTTP simulator harnesses even though the optional Caddy gateway existed. AWS/GCP now have `make terraform-https-test` targets that run the real providers through Caddy HTTPS with CA trust while preserving direct HTTP `make terraform-test`; AWS covers both the root stack and the RDS/ElastiCache Terraform subpackages through the HTTPS path.
 - BUG-1253: The `gcp-vpcaccess` Terraform matrix row was marked not applicable even though terraform-provider-google exposes `google_vpc_access_connector`. The GCP Terraform stack now provisions a real connector through `vpc_access_custom_endpoint`, asserts its canonical ID, and marks the matrix row direct.
 
 Older closed bugs are intentionally not repeated here. Use PR descriptions and `git log` for exact fix details.
