@@ -50,6 +50,52 @@ func computeNumericID() string {
 	return fmt.Sprintf("%d", binary.BigEndian.Uint64(b)>>1)
 }
 
+var gcpAutoModeSubnetCIDRs = map[string]string{
+	"africa-south1":           "10.218.0.0/20",
+	"asia-east1":              "10.140.0.0/20",
+	"asia-east2":              "10.170.0.0/20",
+	"asia-northeast1":         "10.146.0.0/20",
+	"asia-northeast2":         "10.174.0.0/20",
+	"asia-northeast3":         "10.178.0.0/20",
+	"asia-south1":             "10.160.0.0/20",
+	"asia-south2":             "10.190.0.0/20",
+	"asia-southeast1":         "10.148.0.0/20",
+	"asia-southeast2":         "10.184.0.0/20",
+	"asia-southeast3":         "10.232.0.0/20",
+	"australia-southeast1":    "10.152.0.0/20",
+	"australia-southeast2":    "10.192.0.0/20",
+	"europe-central2":         "10.186.0.0/20",
+	"europe-north1":           "10.166.0.0/20",
+	"europe-north2":           "10.226.0.0/20",
+	"europe-west1":            "10.132.0.0/20",
+	"europe-west2":            "10.154.0.0/20",
+	"europe-west3":            "10.156.0.0/20",
+	"europe-west4":            "10.164.0.0/20",
+	"europe-west6":            "10.172.0.0/20",
+	"europe-west8":            "10.198.0.0/20",
+	"europe-west9":            "10.200.0.0/20",
+	"europe-west10":           "10.214.0.0/20",
+	"europe-west12":           "10.210.0.0/20",
+	"europe-southwest1":       "10.204.0.0/20",
+	"me-central1":             "10.212.0.0/20",
+	"me-central2":             "10.216.0.0/20",
+	"me-west1":                "10.208.0.0/20",
+	"northamerica-northeast1": "10.162.0.0/20",
+	"northamerica-northeast2": "10.188.0.0/20",
+	"northamerica-south1":     "10.224.0.0/20",
+	"southamerica-east1":      "10.158.0.0/20",
+	"southamerica-west1":      "10.194.0.0/20",
+	"us-central1":             "10.128.0.0/20",
+	"us-east1":                "10.142.0.0/20",
+	"us-east4":                "10.150.0.0/20",
+	"us-east5":                "10.202.0.0/20",
+	"us-south1":               "10.206.0.0/20",
+	"us-west1":                "10.138.0.0/20",
+	"us-west2":                "10.168.0.0/20",
+	"us-west3":                "10.180.0.0/20",
+	"us-west4":                "10.182.0.0/20",
+}
+
 func newComputeOp(project, scope string, targetLink string) map[string]any {
 	return newComputeOpWithType(project, scope, targetLink, "operation")
 }
@@ -1045,7 +1091,7 @@ func registerCompute(srv *sim.Server) {
 	})
 
 	registerComputeCatalog(srv)
-	registerComputeInstances(srv)
+	registerComputeInstances(srv, networks, subnetworks)
 	registerComputeDisks(srv)
 	registerComputeZones(srv)
 	registerComputeLoadBalancing(srv)
@@ -1090,6 +1136,95 @@ func normalizeComputeRegionalAddressRef(project, region, ref string) string {
 		return ref
 	}
 	return computeRegionalAddressLink(project, region, ref)
+}
+
+func normalizeComputeGlobalNetworkRef(project, ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "https://www.googleapis.com/compute/v1/")
+	ref = strings.TrimPrefix(ref, "https://compute.googleapis.com/compute/v1/")
+	if idx := strings.Index(ref, "/projects/"); idx >= 0 {
+		return strings.TrimPrefix(ref[idx:], "/")
+	}
+	if strings.HasPrefix(ref, "projects/") {
+		return ref
+	}
+	if strings.HasPrefix(ref, "global/networks/") {
+		return "projects/" + project + "/" + ref
+	}
+	if strings.Contains(ref, "/") {
+		return ref
+	}
+	return fmt.Sprintf("projects/%s/global/networks/%s", project, ref)
+}
+
+func normalizeComputeSubnetworkRef(project, region, ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "https://www.googleapis.com/compute/v1/")
+	ref = strings.TrimPrefix(ref, "https://compute.googleapis.com/compute/v1/")
+	if idx := strings.Index(ref, "/projects/"); idx >= 0 {
+		return strings.TrimPrefix(ref[idx:], "/")
+	}
+	if strings.HasPrefix(ref, "projects/") {
+		return ref
+	}
+	if strings.HasPrefix(ref, "regions/") {
+		return "projects/" + project + "/" + ref
+	}
+	if strings.Contains(ref, "/") {
+		return ref
+	}
+	return fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, ref)
+}
+
+func ensureGCPAutoModeSubnetwork(ctx context.Context, networks sim.Store[ComputeNetwork], subnetworks sim.Store[ComputeSubnetwork], project, region, networkLink string) (string, error) {
+	networkLink = normalizeComputeGlobalNetworkRef(project, networkLink)
+	net, ok := networks.Get(networkLink)
+	if !ok && networkLink == fmt.Sprintf("projects/%s/global/networks/default", project) {
+		net = ComputeNetwork{
+			Kind:                  "compute#network",
+			Id:                    computeNumericID(),
+			Name:                  "default",
+			SelfLink:              networkLink,
+			AutoCreateSubnetworks: true,
+			CreationTimestamp:     time.Now().UTC().Format(time.RFC3339),
+		}
+		net.RoutingConfig.RoutingMode = "REGIONAL"
+		if err := gcpCreateRealNetwork(ctx, networkLink); err != nil {
+			return "", err
+		}
+		networks.Put(networkLink, net)
+		ok = true
+	}
+	if !ok {
+		return "", fmt.Errorf("network %s not found", networkLink)
+	}
+	if !net.AutoCreateSubnetworks {
+		return "", fmt.Errorf("network %s has no automatic subnet in region %s", networkLink, region)
+	}
+	cidr, ok := gcpAutoModeSubnetCIDRs[region]
+	if !ok {
+		return "", fmt.Errorf("auto mode subnet range for region %s is not implemented", region)
+	}
+	subnetLink := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, net.Name)
+	if _, ok := subnetworks.Get(subnetLink); ok {
+		return subnetLink, nil
+	}
+	subnet := ComputeSubnetwork{
+		Kind:              "compute#subnetwork",
+		Id:                computeNumericID(),
+		Name:              net.Name,
+		SelfLink:          subnetLink,
+		Network:           networkLink,
+		IpCidrRange:       cidr,
+		Region:            fmt.Sprintf("projects/%s/regions/%s", project, region),
+		GatewayAddress:    gcpSubnetGateway(cidr),
+		CreationTimestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := gcpCreateRealSubnetwork(ctx, subnet); err != nil {
+		return "", err
+	}
+	subnetworks.Put(subnetLink, subnet)
+	return subnetLink, nil
 }
 
 // registerComputeZones serves GET /compute/v1/projects/{project}/zones
@@ -1227,7 +1362,7 @@ func computeZoneOp(project, zone, target, opType string) map[string]any {
 	}
 }
 
-func registerComputeInstances(srv *sim.Server) {
+func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork], subnetworks sim.Store[ComputeSubnetwork]) {
 	instances := sim.MakeStore[ComputeInstance](srv.DB(), "compute_instances")
 
 	instanceSelfLink := func(project, zone, name string) string {
@@ -1309,6 +1444,17 @@ func registerComputeInstances(srv *sim.Server) {
 			}
 			if inst.NetworkInterfaces[i].Network == "" {
 				inst.NetworkInterfaces[i].Network = fmt.Sprintf("projects/%s/global/networks/default", project)
+			} else {
+				inst.NetworkInterfaces[i].Network = normalizeComputeGlobalNetworkRef(project, inst.NetworkInterfaces[i].Network)
+			}
+			if inst.NetworkInterfaces[i].Subnetwork == "" {
+				subnetLink, err := ensureGCPAutoModeSubnetwork(ctx, networks, subnetworks, project, regionFromZone(zone), inst.NetworkInterfaces[i].Network)
+				if err != nil {
+					return err
+				}
+				inst.NetworkInterfaces[i].Subnetwork = subnetLink
+			} else {
+				inst.NetworkInterfaces[i].Subnetwork = normalizeComputeSubnetworkRef(project, regionFromZone(zone), inst.NetworkInterfaces[i].Subnetwork)
 			}
 			if inst.NetworkInterfaces[i].NetworkIP == "" {
 				subnetLink := inst.NetworkInterfaces[i].Subnetwork

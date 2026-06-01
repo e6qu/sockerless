@@ -76,7 +76,7 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 		"--port", "80",
 		"--vpc-id", vpcID,
 		"--target-type", "ip",
-		"--health-check-timeout-seconds", "1",
+		"--health-check-timeout-seconds", "2",
 		"--query", "TargetGroups[0].TargetGroupArn",
 		"--output", "text"))
 	tgArn := strings.TrimSpace(out)

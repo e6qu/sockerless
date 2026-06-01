@@ -496,7 +496,7 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 		switch strings.ToLower(rule.Protocol) {
 		case "tcp", "udp":
 			proto := strings.ToLower(rule.Protocol)
-			args = append(args, proto)
+			args = append(args, "ip", "protocol", proto, proto)
 			if rule.FromPort > 0 || rule.ToPort > 0 {
 				from, to := rule.FromPort, rule.ToPort
 				if from == 0 {
@@ -512,7 +512,7 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 				}
 			}
 		case "icmp":
-			args = append(args, "icmp")
+			args = append(args, "ip", "protocol", "icmp")
 		case "-1", "all", "":
 		default:
 			return fmt.Errorf("unsupported packet filter protocol %q", rule.Protocol)

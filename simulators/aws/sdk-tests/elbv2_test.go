@@ -150,7 +150,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 		HealthyThresholdCount:      aws.Int32(3),
 		UnhealthyThresholdCount:    aws.Int32(2),
 		HealthCheckIntervalSeconds: aws.Int32(10),
-		HealthCheckTimeoutSeconds:  aws.Int32(1),
+		HealthCheckTimeoutSeconds:  aws.Int32(2),
 	})
 	require.NoError(t, err)
 	describeTG, err := elb.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{

@@ -317,6 +317,8 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
       - name: Install real-networking tools
         run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
       - name: Install Caddy
