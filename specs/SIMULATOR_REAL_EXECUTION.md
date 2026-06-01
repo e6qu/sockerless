@@ -169,10 +169,11 @@ minimum CI guard for guest execution.
 
 CI also runs the real host-network substrate target. It requires Linux, real
 host networking tools, nftables, `/dev/kvm`, and sufficient privileges. The
-target creates a Linux bridge, two network namespaces, veth NICs, lease-based
-addresses, routes, and an nftables table; verifies gateway and
-namespace-to-namespace packet reachability with real packets; and verifies
-cleanup removes the host artifacts. This is the minimum CI guard for the
+target creates a dedicated network namespace containing a Linux bridge and
+gateway, two guest network namespaces, veth NICs, lease-based addresses,
+routes, and an nftables table; verifies gateway and namespace-to-namespace
+packet reachability with real packets; and verifies cleanup removes the host
+artifacts. This is the minimum CI guard for the
 network/NIC substrate itself; cloud VM/VPC/LB tests are added to the same
 real-execution path as each public API is migrated.
 
@@ -181,7 +182,8 @@ real-execution path as each public API is migrated.
 1. Host capability detection and cleanup scaffolding landed without changing
    public resource behavior.
 2. The first real network/IPAM/NIC substrate landed without changing public
-   resource behavior.
+   resource behavior; each network now owns a Linux network namespace with its
+   bridge and gateway inside it.
 3. Attach one VM family to Firecracker using that network substrate.
 4. Add security enforcement on that packet path.
 5. Add NAT/routing and load-balancer proxying/health checks on that packet path.

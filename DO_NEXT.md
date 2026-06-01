@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the Azure Tables ARM PR merged.
+- Branch: `main`, synced with `origin/main` after the realexec network namespace PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #332-#338. Issue #356 was fixed and closed by the Azure Tables ARM PR.
+- Open GitHub issues at last check: #332-#338. Issue #356 was fixed and closed by the Azure Tables ARM PR; #336 advanced but remained open.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: issue #356 was fixed with real public-client coverage for Azure Cosmos DB Tables ARM and Azure Storage Tables ARM.
+- Last completed work: the shared realexec network object moved from a host-namespace bridge to a dedicated Linux network namespace per simulated cloud network/VPC implementation object.
 
 ## Next Task
 
 Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
-Attach the first public VM family to the shared real-execution substrate. The implementation must use the cloud's public API shape, boot a real Firecracker guest, attach it to the real network/NIC path, and expose per-instance metadata through the cloud-native metadata contract. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
+Migrate the first public VPC/NIC or VM family to the shared real-execution substrate. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
 
 ## Provider Facts To Preserve
 
@@ -103,6 +103,11 @@ Attach the first public VM family to the shared real-execution substrate. The im
 - The second BUG-1267 substrate stage landed:
    - [simulators/realexec](simulators/realexec) provides deterministic capability detection, LIFO cleanup, an auditable host runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
    - `make realexec-network-test` creates real Linux networking artifacts, verifies gateway and namespace-to-namespace packet reachability, creates/removes an nftables table, and verifies cleanup removes the bridge and network namespaces.
+- The third BUG-1267 substrate stage landed:
+   - Each realexec network now owns a dedicated Linux network namespace.
+   - The bridge and gateway address are created inside that namespace.
+   - Attached NIC host-side veth peers move into the network namespace before joining the bridge; guest-side peers move into the workload namespace with their leased IP and default route.
+   - The mandatory host-network smoke test verifies the bridge namespace placement plus real packet reachability and cleanup.
 - The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
 - Azure Tables ARM issue #356 was fixed:
    - Cosmos DB Tables support public ARM CRUD/list at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` plus table throughput at `.../throughputSettings/default`.
@@ -113,16 +118,17 @@ Attach the first public VM family to the shared real-execution substrate. The im
 
 ## Remaining Stages
 
-1. Attach one public VM family to Firecracker using the real network/IPAM/NIC substrate.
-2. Add nftables security enforcement on that packet path.
-3. Add NAT/routing behavior and real load-balancer proxying/health checks.
-4. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
+1. Migrate one public VPC/NIC or VM family to the real network/IPAM/NIC substrate.
+2. Attach one public VM family to Firecracker using that substrate if the first migration was VPC/NIC-only.
+3. Add nftables security enforcement on that packet path.
+4. Add NAT/routing behavior and real load-balancer proxying/health checks.
+5. Repeat across AWS, GCP, and Azure without creating product-specific emulators.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and first Linux bridge/netns/veth/IPAM substrate path landed; public VM/VPC/LB behavior remains to implement.
+- BUG-1267: issues #332-#336 track the compute/networking real-execution program: Firecracker-backed VM instances, real netns/bridge/tap/IPAM/routing/NAT, nftables security enforcement, and real L4/L7 load balancing with health checks. The architecture/substrate contract, Firecracker guest arithmetic CI guard, and Linux netns/bridge/veth/IPAM substrate path landed; public VM/VPC/LB behavior remains to implement.
 
 ## Start Checklist
 

@@ -27,8 +27,9 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	prefix := shortPrefix()
 	host := NewHost()
 	network, err := host.CreateNetwork(ctx, NetworkSpec{
-		BridgeName: prefix + "br",
-		CIDR:       "10.203.0.0/29",
+		NamespaceName: prefix + "nw",
+		BridgeName:    prefix + "br",
+		CIDR:          "10.203.0.0/29",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +78,9 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	}
 
 	runner := Runner{}
+	if _, err := runner.Output(ctx, "ip", "netns", "exec", network.NamespaceName, "ip", "link", "show", network.BridgeName); err != nil {
+		t.Fatalf("network bridge %s is not inside namespace %s: %v", network.BridgeName, network.NamespaceName, err)
+	}
 	if err := runner.Run(ctx, "ip", "netns", "exec", first.NamespaceName, "ping", "-c", "1", "-W", "1", network.Gateway.String()); err != nil {
 		t.Fatalf("first namespace cannot reach bridge gateway %s: %v", network.Gateway, err)
 	}
@@ -115,8 +119,9 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	prefix := shortPrefix()
 	host := NewHost()
 	network, err := host.CreateNetwork(ctx, NetworkSpec{
-		BridgeName: prefix + "br",
-		CIDR:       "10.204.0.0/29",
+		NamespaceName: prefix + "nw",
+		BridgeName:    prefix + "br",
+		CIDR:          "10.204.0.0/29",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,14 +142,14 @@ func TestCloseRemovesHostArtifacts(t *testing.T) {
 	}
 
 	runner := Runner{}
-	if _, err := runner.Output(ctx, "ip", "link", "show", prefix+"br"); err == nil {
-		t.Fatalf("bridge %sbr still exists after cleanup", prefix)
-	}
 	out, err := runner.Output(ctx, "ip", "netns", "list")
 	if err != nil {
 		t.Fatalf("list namespaces: %v", err)
 	}
 	if strings.Contains(out, prefix+"ns") {
 		t.Fatalf("namespace %sns still exists after cleanup: %s", prefix, out)
+	}
+	if strings.Contains(out, prefix+"nw") {
+		t.Fatalf("network namespace %snw still exists after cleanup: %s", prefix, out)
 	}
 }

@@ -4,6 +4,14 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-01 - Realexec Network Namespaces
+
+Issue #336 advanced but remained open. The shared `simulators/realexec` substrate now models each cloud network/VPC implementation object as its own Linux network namespace instead of placing the bridge in the host namespace.
+
+`CreateNetwork` creates the network namespace, creates the bridge and gateway address inside it, and brings loopback and the bridge up there. `AttachNamespaceNIC` creates a veth pair, moves the host-side peer into the network namespace, enslaves it to the bridge there, then moves the guest-side peer into the workload namespace with its leased private IP and default route.
+
+The mandatory `make realexec-network-test` path was updated to prove the bridge is inside the network namespace, then verifies guest-to-gateway and namespace-to-namespace packet reachability with real `ping`, and cleanup removes both guest and network namespaces.
+
 ## 2026-06-01 - Azure Tables ARM Fidelity
 
 Issue #356 was fixed. The Azure simulator now implements the public ARM surfaces for Azure Cosmos DB Tables and Azure Storage Tables.

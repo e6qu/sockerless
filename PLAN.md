@@ -10,9 +10,9 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: Azure Tables ARM fidelity for issue #356.
+Last completed phase: real-execution network namespaces for issue #336.
 
-Next planned phase: attach the first public VM family to the real-execution substrate for BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
+Next planned phase: migrate the first public VPC/NIC or VM family onto the real-execution substrate for BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
 ## Guiding Principles
 
@@ -78,6 +78,7 @@ The first BUG-1267 stages established the architecture, host-model contract, cap
 - CI gained `make firecracker-test`, which installed the pinned official Firecracker release, required `/dev/kvm`, booted a real Firecracker Linux guest, and ran `go test`, `go build`, and multiple `eval-arithmetic` executions inside that microVM.
 - [simulators/realexec](simulators/realexec) added the shared real-execution substrate module with deterministic host capability detection, LIFO cleanup, an auditable host command runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
 - `make realexec-network-test` now creates a real Linux bridge, network namespaces, veth NICs, routes, leases, and an nftables table in the mandatory Firecracker CI job, verifies gateway and namespace-to-namespace reachability with real packets, and verifies cleanup removes host artifacts.
+- The network object now owns a dedicated Linux network namespace. Its bridge and gateway address live inside that namespace, and attached NIC veth peers are moved into that namespace before being enslaved to the bridge. The host-network smoke test verifies the bridge is inside the network namespace and that guest namespaces still reach the gateway and each other with real packets.
 
 Issues #332-#336 remained open because no EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public API path had been migrated to the substrate yet.
 

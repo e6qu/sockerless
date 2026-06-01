@@ -18,19 +18,27 @@ func NewHost() *Host {
 }
 
 type NetworkSpec struct {
-	BridgeName string
-	CIDR       string
+	NamespaceName string
+	BridgeName    string
+	CIDR          string
 }
 
 type Network struct {
-	BridgeName string
-	Gateway    net.IP
-	ipam       *IPAM
-	cleanup    *CleanupStack
-	runner     Runner
+	NamespaceName string
+	BridgeName    string
+	Gateway       net.IP
+	ipam          *IPAM
+	cleanup       *CleanupStack
+	runner        Runner
 }
 
 func (h *Host) CreateNetwork(ctx context.Context, spec NetworkSpec) (*Network, error) {
+	if spec.NamespaceName == "" {
+		spec.NamespaceName = deriveLinuxName(spec.BridgeName, "ns")
+	}
+	if err := validateLinuxName("network namespace", spec.NamespaceName); err != nil {
+		return nil, err
+	}
 	if err := validateLinuxName("bridge", spec.BridgeName); err != nil {
 		return nil, err
 	}
@@ -48,26 +56,35 @@ func (h *Host) CreateNetwork(ctx context.Context, spec NetworkSpec) (*Network, e
 	}
 
 	rollback := &CleanupStack{}
-	if err := h.runner.Run(ctx, "ip", "link", "add", "name", spec.BridgeName, "type", "bridge"); err != nil {
+	if err := h.runner.Run(ctx, "ip", "netns", "add", spec.NamespaceName); err != nil {
 		return nil, err
 	}
 	rollback.Add(func(cleanupCtx context.Context) error {
-		return h.runner.Run(cleanupCtx, "ip", "link", "del", spec.BridgeName)
+		return h.runner.Run(cleanupCtx, "ip", "netns", "del", spec.NamespaceName)
 	})
-	if err := h.runner.Run(ctx, "ip", "addr", "add", fmt.Sprintf("%s/%d", gateway, ipam.PrefixBits()), "dev", spec.BridgeName); err != nil {
+	if err := h.runner.Run(ctx, "ip", "netns", "exec", spec.NamespaceName, "ip", "link", "add", "name", spec.BridgeName, "type", "bridge"); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
-	if err := h.runner.Run(ctx, "ip", "link", "set", "dev", spec.BridgeName, "up"); err != nil {
+	if err := h.runner.Run(ctx, "ip", "netns", "exec", spec.NamespaceName, "ip", "addr", "add", fmt.Sprintf("%s/%d", gateway, ipam.PrefixBits()), "dev", spec.BridgeName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := h.runner.Run(ctx, "ip", "netns", "exec", spec.NamespaceName, "ip", "link", "set", "dev", "lo", "up"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := h.runner.Run(ctx, "ip", "netns", "exec", spec.NamespaceName, "ip", "link", "set", "dev", spec.BridgeName, "up"); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
 
 	n := &Network{
-		BridgeName: spec.BridgeName,
-		Gateway:    append(net.IP(nil), gateway...),
-		ipam:       ipam,
-		runner:     h.runner,
+		NamespaceName: spec.NamespaceName,
+		BridgeName:    spec.BridgeName,
+		Gateway:       append(net.IP(nil), gateway...),
+		ipam:          ipam,
+		runner:        h.runner,
 	}
 	n.cleanup = rollback
 	return n, nil
@@ -137,14 +154,21 @@ func (n *Network) AttachNamespaceNIC(ctx context.Context, spec NamespaceNICSpec)
 		return nil, err
 	}
 	rollback.Add(func(cleanupCtx context.Context) error {
+		if err := n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "ip", "link", "del", spec.HostVethName); err == nil {
+			return nil
+		}
 		return n.runner.Run(cleanupCtx, "ip", "link", "del", spec.HostVethName)
 	})
 
-	if err := n.runner.Run(ctx, "ip", "link", "set", spec.HostVethName, "master", n.BridgeName); err != nil {
+	if err := n.runner.Run(ctx, "ip", "link", "set", spec.HostVethName, "netns", n.NamespaceName); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
-	if err := n.runner.Run(ctx, "ip", "link", "set", spec.HostVethName, "up"); err != nil {
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "link", "set", spec.HostVethName, "master", n.BridgeName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "ip", "link", "set", spec.HostVethName, "up"); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
@@ -200,6 +224,16 @@ func validateLinuxName(label, name string) error {
 		return fmt.Errorf("invalid %s name %q: must match %s", label, name, linuxNameRE.String())
 	}
 	return nil
+}
+
+func deriveLinuxName(base, suffix string) string {
+	if len(base)+len(suffix) <= 15 {
+		return base + suffix
+	}
+	if len(suffix) >= 15 {
+		return suffix[:15]
+	}
+	return base[:15-len(suffix)] + suffix
 }
 
 func nextIPv4(ip net.IP) net.IP {
