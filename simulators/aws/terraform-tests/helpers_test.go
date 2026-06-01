@@ -49,12 +49,16 @@ func TestMain(m *testing.M) {
 	tfState = filepath.Join(stateDir, "terraform.tfstate")
 	binaryPath = filepath.Join(stateDir, "simulator-aws")
 
-	simDir, _ := filepath.Abs("..")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")
-	build.Dir = simDir
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+	if configured := os.Getenv("SOCKERLESS_AWS_SIMULATOR_BINARY"); configured != "" {
+		binaryPath = requireExecutable(configured, "AWS Terraform tests")
+	} else {
+		simDir, _ := filepath.Abs("..")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")
+		build.Dir = simDir
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+		}
 	}
 
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")

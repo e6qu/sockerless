@@ -79,7 +79,9 @@ BUG-1104 audit found stale GCP GCS CLI coverage. Current gcloud supports Cloud S
 
 ## 2026-05-31 - Terraform HTTPS Gateway and Coverage Audit
 
-AWS and GCP gained optional Terraform HTTPS gateway harnesses without removing the direct HTTP Terraform path. `make terraform-https-test` starts each simulator on HTTP loopback, starts Caddy with isolated state, trusts Caddy's local CA with `SSL_CERT_FILE`, and runs the real provider apply/destroy suite through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI. The public named gateway hosts remained available for normal stack use; the harness route avoided wildcard `.localhost` resolver differences.
+AWS and GCP gained optional Terraform HTTPS gateway harnesses without removing the direct HTTP Terraform path. `make terraform-https-test` starts each simulator on HTTP loopback, starts Caddy with isolated state, trusts Caddy's local CA with `SSL_CERT_FILE`, and runs the real provider apply/destroy suite through the gateway's `https://localhost:<ephemeral-port>` single-simulator route. AWS covers the root production-shape Terraform stack plus the RDS and ElastiCache subpackages through that same HTTPS path. On macOS those targets run inside the shared Linux simulator test image so provider CA trust matches CI. The public named gateway hosts remained available for normal stack use; the harness route avoided wildcard `.localhost` resolver differences.
+
+The AWS Terraform Make targets now build the real simulator once and pass that binary into every Terraform package. The package list still runs concurrently, and `go test -json` emits package-qualified events so CI no longer hides the root, RDS, and ElastiCache provider flows behind one opaque silent period.
 
 Terraform CI kept Caddy HTTPS for provider validation. Azure remained mandatory through the gateway because AzureRM metadata discovery requires trusted HTTPS; AWS/GCP used their new HTTPS gateway targets in CI while `make terraform-test` stayed available for direct HTTP.
 
