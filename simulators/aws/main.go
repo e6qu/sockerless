@@ -69,6 +69,7 @@ func main() {
 	registerWAFv2(awsRouter, srv)
 	registerEventBridge(awsRouter, srv)
 	registerKinesis(awsRouter, srv)
+	registerCloudTrail(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
@@ -79,6 +80,7 @@ func main() {
 	registerRDS(queryRouter, srv)
 	registerElastiCache(queryRouter, srv)
 	registerELBv2(queryRouter, srv)
+	registerAutoScaling(queryRouter, srv)
 
 	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
 	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).
@@ -87,11 +89,14 @@ func main() {
 	// POST / handler: check X-Amz-Target first (JSON protocol),
 	// fall back to Action parameter (Query Protocol)
 	srv.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
 		if r.Header.Get("X-Amz-Target") != "" {
-			awsRouter.ServeHTTP(w, r)
+			awsRouter.ServeHTTP(rec, r)
+			cloudTrailRecordAPICall(r, rec.statusCode())
 			return
 		}
-		queryRouter.ServeHTTP(w, r)
+		queryRouter.ServeHTTP(rec, r)
+		cloudTrailRecordAPICall(r, rec.statusCode())
 	})
 
 	// Smithy RPCv2 CBOR services (path-based routing)

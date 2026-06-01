@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/stretchr/testify/assert"
@@ -147,6 +148,157 @@ exit 1`},
 		messages = append(messages, aws.ToString(e.Message))
 	}
 	assert.Contains(t, strings.Join(messages, "\n"), "sidecar-ok")
+}
+
+func TestECS_ManagedEBSVolumeSnapshotRoundTripSDK(t *testing.T) {
+	client := ecsClient()
+	ec2c := ec2Client()
+	cw := cwLogsClient()
+
+	clusterName := "managed-ebs-roundtrip"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
+	require.NoError(t, err)
+
+	logGroupName := "/ecs/managed-ebs-roundtrip"
+	_, _ = cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(logGroupName)})
+	t.Cleanup(func() {
+		_, _ = cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroupName)})
+	})
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("managed-ebs-roundtrip"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		Volumes: []ecstypes.Volume{{
+			Name:               aws.String("workspace"),
+			ConfiguredAtLaunch: aws.Bool(true),
+		}},
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:       aws.String("writer"),
+			Image:      aws.String(evalImageName),
+			EntryPoint: []string{"sh", "-c"},
+			Command:    []string{"printf 'sockerless-ebs-roundtrip' > /workspace/state.txt"},
+			MountPoints: []ecstypes.MountPoint{{
+				SourceVolume:  aws.String("workspace"),
+				ContainerPath: aws.String("/workspace"),
+			}},
+		}},
+	})
+	require.NoError(t, err)
+
+	keepVolume := false
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: tdOut.TaskDefinition.TaskDefinitionArn,
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+		},
+		VolumeConfigurations: []ecstypes.TaskVolumeConfiguration{{
+			Name: aws.String("workspace"),
+			ManagedEBSVolume: &ecstypes.TaskManagedEBSVolumeConfiguration{
+				RoleArn:    aws.String("arn:aws:iam::123456789012:role/ecsInfrastructureRole"),
+				SizeInGiB:  aws.Int32(1),
+				VolumeType: aws.String("gp3"),
+				TerminationPolicy: &ecstypes.TaskManagedEBSVolumeTerminationPolicy{
+					DeleteOnTermination: aws.Bool(keepVolume),
+				},
+				TagSpecifications: []ecstypes.EBSTagSpecification{{
+					ResourceType: ecstypes.EBSResourceTypeVolume,
+					Tags:         []ecstypes.Tag{{Key: aws.String("purpose"), Value: aws.String("roundtrip")}},
+				}},
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	writerTaskArn := aws.ToString(runOut.Tasks[0].TaskArn)
+	waitForECSTaskStatus(t, client, clusterName, writerTaskArn, "STOPPED")
+	writerDesc, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{writerTaskArn},
+	})
+	require.NoError(t, err)
+	volumeID := ebsVolumeIDFromTask(t, writerDesc.Tasks[0])
+	t.Cleanup(func() {
+		_, _ = ec2c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)})
+	})
+
+	snapshotOut, err := ec2c.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volumeID),
+		Description: aws.String("ecs managed ebs roundtrip"),
+	})
+	require.NoError(t, err)
+	snapshotID := aws.ToString(snapshotOut.SnapshotId)
+	require.NotEmpty(t, snapshotID)
+	waitForEC2SnapshotState(t, ec2c, snapshotID, "completed")
+	t.Cleanup(func() {
+		_, _ = ec2c.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapshotID)})
+	})
+
+	readerTD, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("managed-ebs-reader"),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		Volumes: []ecstypes.Volume{{
+			Name:               aws.String("workspace"),
+			ConfiguredAtLaunch: aws.Bool(true),
+		}},
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:       aws.String("reader"),
+			Image:      aws.String(evalImageName),
+			EntryPoint: []string{"sh", "-c"},
+			Command: []string{`test "$(cat /workspace/state.txt)" = "sockerless-ebs-roundtrip"
+echo EBS_ROUNDTRIP_OK`},
+			MountPoints: []ecstypes.MountPoint{{
+				SourceVolume:  aws.String("workspace"),
+				ContainerPath: aws.String("/workspace"),
+			}},
+			LogConfiguration: &ecstypes.LogConfiguration{
+				LogDriver: ecstypes.LogDriverAwslogs,
+				Options: map[string]string{
+					"awslogs-group":         logGroupName,
+					"awslogs-stream-prefix": "ecs",
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	runReader, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: readerTD.TaskDefinition.TaskDefinitionArn,
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+		},
+		VolumeConfigurations: []ecstypes.TaskVolumeConfiguration{{
+			Name: aws.String("workspace"),
+			ManagedEBSVolume: &ecstypes.TaskManagedEBSVolumeConfiguration{
+				RoleArn:    aws.String("arn:aws:iam::123456789012:role/ecsInfrastructureRole"),
+				SnapshotId: aws.String(snapshotID),
+				VolumeType: aws.String("gp3"),
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, runReader.Tasks, 1)
+	readerTaskArn := aws.ToString(runReader.Tasks[0].TaskArn)
+	waitForECSTaskStatus(t, client, clusterName, readerTaskArn, "STOPPED")
+
+	events, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	require.NoError(t, err)
+	var messages []string
+	for _, e := range events.Events {
+		messages = append(messages, aws.ToString(e.Message))
+	}
+	assert.Contains(t, strings.Join(messages, "\n"), "EBS_ROUNDTRIP_OK")
 }
 
 func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
@@ -351,6 +503,36 @@ func cleanupECSTask(t *testing.T, client *ecs.Client, clusterName, taskArn strin
 		})
 		require.NoError(t, err)
 	})
+}
+
+func waitForECSTaskStatus(t *testing.T, client *ecs.Client, clusterName, taskArn, want string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		desc, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(clusterName),
+			Tasks:   []string{taskArn},
+		})
+		if err != nil || len(desc.Tasks) != 1 || desc.Tasks[0].LastStatus == nil {
+			return false
+		}
+		return aws.ToString(desc.Tasks[0].LastStatus) == want
+	}, 20*time.Second, 500*time.Millisecond)
+}
+
+func ebsVolumeIDFromTask(t *testing.T, task ecstypes.Task) string {
+	t.Helper()
+	for _, att := range task.Attachments {
+		if aws.ToString(att.Type) != "AmazonElasticBlockStorage" {
+			continue
+		}
+		for _, detail := range att.Details {
+			if aws.ToString(detail.Name) == "volumeId" {
+				return aws.ToString(detail.Value)
+			}
+		}
+	}
+	t.Fatalf("task %s did not include an AmazonElasticBlockStorage volume attachment", aws.ToString(task.TaskArn))
+	return ""
 }
 
 func TestECS_TaskExecutesCommand(t *testing.T) {

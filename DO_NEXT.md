@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the real-execution host-network substrate PR merged.
+- Branch: `main`, synced with `origin/main` after the GCP timestamp and AWS core-services PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: #332-#338.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: the first BUG-1267 real-execution host capability and Linux network/NIC substrate stages landed.
+- Last completed work: issue #310 and issues #341, #343, #346, and #347 were fixed with real public-client coverage where applicable.
 
 ## Next Task
 
@@ -72,6 +72,28 @@ Attach the first public VM family to the shared real-execution substrate. The im
    - Event Grid publish validates the Event Grid event envelope before delivery.
    - Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers and converge from in-progress to final states.
    - Key Vault secret/key/certificate attributes include default recovery metadata.
+- GCP issue #310 was fixed after its reopen:
+   - Eventarc, Firestore, and Pub/Sub timestamp call sites now use the shared canonical protobuf timestamp formatter.
+- AWS core issues #341, #343, #346, and #347 were fixed:
+   - CloudTrail supports trail CRUD, logging status, event selectors/tags, `LookupEvents`, simulator API-call recording, and gzipped S3 log delivery.
+   - Auto Scaling supports launch configurations and ASGs; desired-capacity changes create/terminate EC2 instances.
+   - EBS supports volume lifecycle, attach/detach/delete/modify, snapshot lifecycle, pending-to-completed snapshots, restore from snapshot, and ECS managed EBS byte round trips through real task containers.
+   - S3 `ListObjectVersions` supports Terraform cleanup of CloudTrail-delivered objects.
+- CI linux/arm64 CPU runner flakiness was fixed:
+   - Every `actions/setup-go` step now uses explicit `go.work` and `**/go.sum` cache dependency paths, because this repo has no root `go.mod`.
+   - Backend, FaaS smoke, e2e, simulator, Terraform, and smoke jobs fan out without phase-ordering gates; the earlier broad arm64 serialization was removed after the cache fix and job-shard reduction addressed the actual pressure point.
+   - Non-Terraform explicit CI step and Go test timeouts are capped at five minutes; Terraform provider CI is capped at ten minutes for real provider apply/destroy work.
+   - Status-only aggregate jobs were removed; CI has no `needs` edges and runs 29 jobs.
+   - Lint, backend integration, and FaaS smoke coverage is grouped into fewer real-coverage shards without disabling checks.
+   - AWS CLI simulator coverage is sharded by service family, with every existing CLI test selected exactly once.
+   - The fix did not skip tests, add mocks, add fallbacks, or weaken checks.
+- GCP Cloud Logging container-output durability was fixed:
+   - Cloud Functions and Cloud Run real container stdout/stderr scanners can append to the same Cloud Logging log name concurrently.
+   - GCP Cloud Logging now serializes the append read-modify-write cycle, so stderr lines such as `Parsing expression:` are not overwritten by concurrent stdout appends.
+   - AWS CloudWatch already used atomic store updates, and Azure Monitor already serialized append operations.
+- GitHub Actions stale-run cancellation was fixed:
+   - Every workflow now has top-level concurrency keyed by workflow name plus PR source branch/ref.
+   - `cancel-in-progress: true` is set everywhere, including live-test and release/publish workflows, so new pushes stop older runs for the same branch/ref.
 - The first BUG-1267 real-execution substrate stage landed:
    - `specs/SIMULATOR_EXECUTION.md` describes the current Docker/Podman-backed container/FaaS execution model plus the narrow VM-level real-execution exception.
    - `specs/SIMULATOR_REAL_EXECUTION.md` defines Firecracker guests, Linux network namespaces, bridges/tap/veth, netlink routing, nftables policy/NAT, load-balancer proxying, active health checks, per-instance metadata, capability checks, and loud failure semantics.

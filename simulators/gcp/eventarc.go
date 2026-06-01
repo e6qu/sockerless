@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -201,7 +200,7 @@ func handleEventarcCreateTrigger(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := nowTimestamp()
 	req.Name = eventarcTriggerName(project, location, triggerID)
 	req.Uid = generateUUID()
 	req.CreateTime = now
@@ -269,7 +268,7 @@ func handleEventarcPatchTrigger(w http.ResponseWriter, r *http.Request) {
 	if req.EventDataContentType != "" {
 		existing.EventDataContentType = req.EventDataContentType
 	}
-	existing.UpdateTime = time.Now().UTC().Format(time.RFC3339Nano)
+	existing.UpdateTime = nowTimestamp()
 	eventarcTriggers.Put(key, existing)
 	op := newLRO(project, location, existing, "type.googleapis.com/google.cloud.eventarc.v1.Trigger")
 	sim.WriteJSON(w, http.StatusOK, op)

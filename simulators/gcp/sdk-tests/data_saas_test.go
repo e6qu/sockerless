@@ -84,10 +84,13 @@ func TestFirestore_DocumentCommitBatchGetRunQuery(t *testing.T) {
 	}).Do()
 	require.NoError(t, err)
 	require.Len(t, commit.WriteResults, 1)
+	assertProtoJSONTimestamp(t, commit.WriteResults[0].UpdateTime)
 
 	got, err := svc.Projects.Databases.Documents.Get(docName).Do()
 	require.NoError(t, err)
 	assert.Equal(t, "platform", got.Fields["team"].StringValue)
+	assertProtoJSONTimestamp(t, got.CreateTime)
+	assertProtoJSONTimestamp(t, got.UpdateTime)
 
 	batchResp, err := http.Post(baseURL+"/v1/projects/test-project/databases/(default)/documents:batchGet",
 		"application/json",

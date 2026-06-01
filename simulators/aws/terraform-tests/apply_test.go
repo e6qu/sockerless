@@ -42,6 +42,18 @@ import (
 //     DescribeAddressesAttribute, ReleaseAddress, CreateNatGateway,
 //     DescribeNatGateways, DeleteNatGateway, CreateRouteTable,
 //     CreateRoute, DescribeRouteTables
+//   - EC2 EBS: CreateVolume, AttachVolume, DetachVolume,
+//     DeleteVolume, CreateSnapshot, DescribeSnapshots, DeleteSnapshot
+//   - Auto Scaling: CreateLaunchConfiguration,
+//     DescribeLaunchConfigurations, DeleteLaunchConfiguration,
+//     CreateAutoScalingGroup, DescribeAutoScalingGroups,
+//     UpdateAutoScalingGroup, SetDesiredCapacity,
+//     DescribeScalingActivities, CreateOrUpdateTags, DeleteTags,
+//     DescribeTags, DeleteAutoScalingGroup
+//   - CloudTrail: CreateTrail, DescribeTrails, GetTrail,
+//     UpdateTrail, GetTrailStatus, StartLogging, StopLogging,
+//     LookupEvents, DeleteTrail, AddTags, RemoveTags, ListTags,
+//     PutEventSelectors, GetEventSelectors
 //   - API Gateway: CreateRestApi, GetRestApi, DeleteRestApi,
 //     CreateResource, GetResource, DeleteResource, PutMethod,
 //     GetMethod, DeleteMethod, PutIntegration, GetIntegration,
@@ -166,6 +178,23 @@ func TestStackProductionShape(t *testing.T) {
 	natRouteTableID := outputs.must(t, "ec2_nat_route_table_id")
 	require.True(t, strings.HasPrefix(natRouteTableID, "rtb-"),
 		"EC2 route table id must use rtb-* shape; got %s", natRouteTableID)
+
+	ebsVolumeID := outputs.must(t, "ec2_ebs_volume_id")
+	require.True(t, strings.HasPrefix(ebsVolumeID, "vol-"),
+		"EBS volume id must use vol-* shape; got %s", ebsVolumeID)
+	ebsSnapshotID := outputs.must(t, "ec2_ebs_snapshot_id")
+	require.True(t, strings.HasPrefix(ebsSnapshotID, "snap-"),
+		"EBS snapshot id must use snap-* shape; got %s", ebsSnapshotID)
+	ebsRestoredVolumeID := outputs.must(t, "ec2_ebs_restored_volume_id")
+	require.True(t, strings.HasPrefix(ebsRestoredVolumeID, "vol-"),
+		"EBS restored volume id must use vol-* shape; got %s", ebsRestoredVolumeID)
+
+	require.Equal(t, "tf-asg", outputs.must(t, "autoscaling_group_name"),
+		"Auto Scaling group name must round-trip through provider refresh")
+
+	cloudTrailARN := outputs.must(t, "cloudtrail_arn")
+	require.Contains(t, cloudTrailARN, ":trail/tf-trail",
+		"CloudTrail ARN must use the trail resource path; got %s", cloudTrailARN)
 
 	efsFSArn := outputs.must(t, "efs_file_system_arn")
 	require.Contains(t, efsFSArn, ":file-system/fs-",

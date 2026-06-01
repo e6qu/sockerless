@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-01 - AWS Core Services and CI Flake Hardening
+
+Issue #310's reopened GCP timestamp gap was fixed. Eventarc trigger timestamps, Firestore document timestamps, and Pub/Sub publish times now use the shared canonical protobuf timestamp formatter.
+
+AWS CloudTrail, Auto Scaling, and EBS support were added with public SDK, CLI, and Terraform coverage where the client surfaces exist. CloudTrail records simulator API calls and writes gzipped S3 log objects. Auto Scaling Groups materialize and terminate EC2 instances through the EC2 slice. EBS volumes and snapshots now support lifecycle, pending-to-completed snapshots, restore, and ECS managed EBS task byte round trips through real task containers. S3 `ListObjectVersions` was added so Terraform cleanup can delete CloudTrail-delivered objects.
+
+CI flakiness from hosted linux/arm64 CPU runner shutdowns was fixed without skipping tests. GitHub Actions now caches Go modules using the workspace's real dependency files (`go.work` and `**/go.sum`). Non-Terraform CI step and Go test timeouts stay capped at five minutes so slow or hung tests fail loudly; Terraform provider CI is capped at ten minutes for real apply/destroy coverage. Status-only aggregate jobs were removed, CI has no `needs` edges, and the workflow runs 29 jobs. The initial overcorrection that serialized arm64 matrices and expanded lint into nineteen one-module jobs was corrected before merge: backend, FaaS smoke, e2e, simulator, Terraform, and smoke jobs fan out without phase-ordering gates, lint/backend/FaaS smoke coverage is grouped into fewer real-coverage shards, and AWS CLI simulator tests are sharded by service family with every existing CLI test selected exactly once.
+
+The final CI pass fixed a real GCP Cloud Logging append race exposed by parallel simulator jobs. Cloud Functions and Cloud Run collect stdout and stderr from separate real Docker log scanner goroutines; GCP Cloud Logging now serializes appends to a log name so concurrent stdout/stderr lines are preserved instead of overwriting one another. AWS CloudWatch already used atomic store updates, and Azure Monitor already serialized appends.
+
+All GitHub Actions workflows now auto-cancel stale runs. Each workflow's concurrency group is keyed by workflow name plus PR source branch/ref, with `cancel-in-progress: true`, so a new push to a PR branch stops older queued or running pipelines for that same branch/ref.
+
 ## 2026-05-31 - Local HTTPS Gateway Stage 1
 
 The local HTTPS gateway was implemented as optional transport infrastructure for simulator APIs. It did not change simulator public cloud API shapes.
@@ -130,6 +142,22 @@ The next BUG-1267 stage added the first shared implementation code for the real-
 Issues #332-#336 remained open because this stage still did not migrate EC2/GCE/Azure VM, VPC, firewall, NAT, or load-balancer public API paths onto the substrate.
 
 Validation also fixed BUG-1270 and BUG-1271 in the shared Makefile layer. `make test` now uses `-tags noui` for UI-bearing Go apps, backend integration tests are behind an explicit `integration` build tag, integration CI/Make targets opt into `noui integration`, UI packages without a `test` script report that cleanly, and Go libraries have a `build-noui` compile-check alias for the top-level fanout.
+
+## 2026-06-01 - GCP Timestamp Reopen and AWS Core Services
+
+Issue #310 was fixed after it was reopened. Eventarc trigger create/update timestamps, Firestore document timestamps, and Pub/Sub publish times now use the shared canonical protobuf timestamp formatter instead of `time.RFC3339Nano`.
+
+AWS core-service issues #341, #343, #346, and #347 were fixed in one simulator PR.
+
+CloudTrail now implements trail CRUD, logging start/stop/status, event selectors, tag operations, and `LookupEvents`. The simulator records real API calls made against the AWS simulator and, for logging trails, writes gzipped CloudTrail JSON objects into S3 under the public `AWSLogs/<account>/CloudTrail/<region>/...` key shape. SDK, CLI, and Terraform `aws_cloudtrail` coverage exercise the public client surfaces.
+
+Auto Scaling now implements launch configurations, Auto Scaling Groups, desired-capacity changes, scaling activities, tags, and deletion. ASG reconciliation creates and terminates EC2 instances through the EC2 simulator slice so `DescribeAutoScalingGroups` and `DescribeInstances` observe the same fleet.
+
+EBS now supports create/attach/detach/delete/modify volumes, create/describe/delete snapshots, pending-to-completed snapshot state, and restore from snapshot. ECS managed EBS `volumeConfigurations` create real EBS-backed host directories, mount them into ECS task containers, snapshot bytes written by one task, restore from that snapshot, and prove the bytes are readable in a later task. This avoids local storage fakes while keeping the public AWS API shape.
+
+S3 added `ListObjectVersions` so Terraform provider cleanup can enumerate and remove CloudTrail-delivered objects when `force_destroy` is enabled.
+
+Issues #332-#336 remained open. This PR did not migrate EC2/GCE/Azure VM, VPC, security, NAT, or load-balancer public APIs onto Firecracker and the real network substrate.
 
 ## 2026-05-31 - Terraform Provider HTTPS Behavior Audit
 

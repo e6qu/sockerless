@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"cloud.google.com/go/logging/apiv2/loggingpb"
 	sim "github.com/sockerless/simulator"
@@ -38,6 +39,7 @@ type MonitoredResource struct {
 var logEntries sim.Store[[]LogEntry]
 var logSinks sim.Store[LoggingSink]
 var logMetrics sim.Store[LoggingMetric]
+var logEntriesMu sync.Mutex
 
 type LoggingSink struct {
 	Name                 string             `json:"name"`
@@ -139,6 +141,8 @@ func writeLogEntries(logName string, resource *MonitoredResource, labels map[str
 		}
 	}
 
+	logEntriesMu.Lock()
+	defer logEntriesMu.Unlock()
 	for _, entry := range entries {
 		ln := entry.LogName
 		existing, ok := logEntries.Get(ln)

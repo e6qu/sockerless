@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -62,7 +61,7 @@ func fsDatabasePrefix(project, database string) string {
 }
 
 func fsNow() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return nowTimestamp()
 }
 
 func fsFullName(project, database, docPath string) string {

@@ -379,6 +379,107 @@ func TestEC2_RunInstancesHonorsMaxCount(t *testing.T) {
 	}
 }
 
+func TestEC2_EBSVolumeSnapshotLifecycleSDK(t *testing.T) {
+	client := ec2Client()
+	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.68.0.0/16")})
+	require.NoError(t, err)
+	subnetOut, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            vpcOut.Vpc.VpcId,
+		CidrBlock:        aws.String("10.68.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-ebs1234"),
+		InstanceType: types.InstanceTypeT3Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		SubnetId:     subnetOut.Subnet.SubnetId,
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Instances, 1)
+	instanceID := aws.ToString(runOut.Instances[0].InstanceId)
+	waitForEC2InstanceState(t, client, instanceID, types.InstanceStateNameRunning)
+	t.Cleanup(func() {
+		_, _ = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{InstanceIds: []string{instanceID}})
+	})
+
+	created, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(1),
+		VolumeType:       types.VolumeTypeGp3,
+		TagSpecifications: []types.TagSpecification{{
+			ResourceType: types.ResourceTypeVolume,
+			Tags:         []types.Tag{{Key: aws.String("env"), Value: aws.String("sdk")}},
+		}},
+	})
+	require.NoError(t, err)
+	volumeID := aws.ToString(created.VolumeId)
+	require.NotEmpty(t, volumeID)
+	assert.Equal(t, types.VolumeStateAvailable, created.State)
+
+	attached, err := client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		Device:     aws.String("/dev/sdf"),
+		InstanceId: aws.String(instanceID),
+		VolumeId:   aws.String(volumeID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, types.VolumeAttachmentStateAttached, attached.State)
+
+	described, err := client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+	require.NoError(t, err)
+	require.Len(t, described.Volumes, 1)
+	assert.Equal(t, types.VolumeStateInUse, described.Volumes[0].State)
+	require.Len(t, described.Volumes[0].Attachments, 1)
+	assert.Equal(t, instanceID, aws.ToString(described.Volumes[0].Attachments[0].InstanceId))
+
+	modified, err := client.ModifyVolume(ctx, &ec2.ModifyVolumeInput{
+		VolumeId:   aws.String(volumeID),
+		Size:       aws.Int32(2),
+		VolumeType: types.VolumeTypeGp3,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, modified.VolumeModification)
+	assert.Equal(t, int32(2), aws.ToInt32(modified.VolumeModification.TargetSize))
+
+	snapshotOut, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volumeID),
+		Description: aws.String("sdk snapshot"),
+		TagSpecifications: []types.TagSpecification{{
+			ResourceType: types.ResourceTypeSnapshot,
+			Tags:         []types.Tag{{Key: aws.String("env"), Value: aws.String("sdk")}},
+		}},
+	})
+	require.NoError(t, err)
+	snapshotID := aws.ToString(snapshotOut.SnapshotId)
+	require.NotEmpty(t, snapshotID)
+	assert.Equal(t, types.SnapshotStatePending, snapshotOut.State)
+
+	snaps := waitForEC2SnapshotState(t, client, snapshotID, types.SnapshotStateCompleted)
+	require.Len(t, snaps.Snapshots, 1)
+	assert.Equal(t, volumeID, aws.ToString(snaps.Snapshots[0].VolumeId))
+
+	restored, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		SnapshotId:       aws.String(snapshotID),
+		VolumeType:       types.VolumeTypeGp3,
+	})
+	require.NoError(t, err)
+	restoredID := aws.ToString(restored.VolumeId)
+	require.NotEmpty(t, restoredID)
+	assert.Equal(t, snapshotID, aws.ToString(restored.SnapshotId))
+
+	_, err = client.DetachVolume(ctx, &ec2.DetachVolumeInput{VolumeId: aws.String(volumeID)})
+	require.NoError(t, err)
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)})
+	require.NoError(t, err)
+	_, err = client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(restoredID)})
+	require.NoError(t, err)
+	_, err = client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapshotID)})
+	require.NoError(t, err)
+}
+
 func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string, want types.InstanceStateName) *ec2.DescribeInstancesOutput {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -397,5 +498,25 @@ func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string
 		t.Fatalf("instance %s state = %s, want %s", instanceID, last.Reservations[0].Instances[0].State.Name, want)
 	}
 	t.Fatalf("instance %s did not reach %s", instanceID, want)
+	return nil
+}
+
+func waitForEC2SnapshotState(t *testing.T, client *ec2.Client, snapshotID string, want types.SnapshotState) *ec2.DescribeSnapshotsOutput {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last *ec2.DescribeSnapshotsOutput
+	for time.Now().Before(deadline) {
+		out, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{snapshotID}})
+		require.NoError(t, err)
+		last = out
+		if len(out.Snapshots) == 1 && out.Snapshots[0].State == want {
+			return out
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if last != nil && len(last.Snapshots) == 1 {
+		t.Fatalf("snapshot %s state = %s, want %s", snapshotID, last.Snapshots[0].State, want)
+	}
+	t.Fatalf("snapshot %s did not reach %s", snapshotID, want)
 	return nil
 }

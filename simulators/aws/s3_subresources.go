@@ -755,3 +755,67 @@ func handleS3MultiObjectDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	sim.WriteXML(w, http.StatusOK, out)
 }
+
+func handleS3ListObjectVersions(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	prefix := r.URL.Query().Get("prefix")
+	bucketPrefix := bucket + "/"
+	objects := s3Objects.Filter(func(obj S3Object) bool {
+		if !strings.HasPrefix(obj.Key, bucketPrefix) {
+			return false
+		}
+		relKey := obj.Key[len(bucketPrefix):]
+		return prefix == "" || strings.HasPrefix(relKey, prefix)
+	})
+	sort.Slice(objects, func(i, j int) bool {
+		return objects[i].Key < objects[j].Key
+	})
+
+	type owner struct {
+		ID          string `xml:"ID"`
+		DisplayName string `xml:"DisplayName"`
+	}
+	type version struct {
+		Key          string `xml:"Key"`
+		VersionId    string `xml:"VersionId"`
+		IsLatest     bool   `xml:"IsLatest"`
+		LastModified string `xml:"LastModified"`
+		ETag         string `xml:"ETag"`
+		Size         int64  `xml:"Size"`
+		StorageClass string `xml:"StorageClass"`
+		Owner        owner  `xml:"Owner"`
+	}
+	out := struct {
+		XMLName         xml.Name  `xml:"ListVersionsResult"`
+		Xmlns           string    `xml:"xmlns,attr"`
+		Name            string    `xml:"Name"`
+		Prefix          string    `xml:"Prefix"`
+		KeyMarker       string    `xml:"KeyMarker"`
+		VersionIDMarker string    `xml:"VersionIdMarker"`
+		MaxKeys         int       `xml:"MaxKeys"`
+		IsTruncated     bool      `xml:"IsTruncated"`
+		Versions        []version `xml:"Version"`
+	}{
+		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
+		Name:        bucket,
+		Prefix:      prefix,
+		MaxKeys:     1000,
+		IsTruncated: false,
+	}
+	for _, obj := range objects {
+		out.Versions = append(out.Versions, version{
+			Key:          strings.TrimPrefix(obj.Key, bucketPrefix),
+			VersionId:    "null",
+			IsLatest:     true,
+			LastModified: obj.LastModified.UTC().Format(time.RFC3339),
+			ETag:         obj.ETag,
+			Size:         obj.Size,
+			StorageClass: "STANDARD",
+			Owner: owner{
+				ID:          awsAccountID(),
+				DisplayName: "simulator",
+			},
+		})
+	}
+	sim.WriteXML(w, http.StatusOK, out)
+}

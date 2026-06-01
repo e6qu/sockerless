@@ -1,6 +1,8 @@
 package gcp_sdk_test
 
 import (
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	eventarc "cloud.google.com/go/eventarc/apiv1"
@@ -64,6 +66,15 @@ func TestEventarc_TriggerLifecycleSDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, name, got.GetName())
 	assert.Equal(t, "svc", got.GetDestination().GetCloudRun().GetService())
+
+	rawResp, err := http.Get(baseURL + "/v1/" + name)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rawResp.StatusCode)
+	var raw map[string]any
+	require.NoError(t, json.NewDecoder(rawResp.Body).Decode(&raw))
+	rawResp.Body.Close()
+	assertProtoJSONTimestamp(t, raw["createTime"].(string))
+	assertProtoJSONTimestamp(t, raw["updateTime"].(string))
 
 	iter := client.ListTriggers(ctx, &eventarcpb.ListTriggersRequest{Parent: parent})
 	listed, err := iter.Next()
