@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -108,5 +109,42 @@ func TestLoggingMiddleware_StreamingEnvelopeSentinels(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLoggingMiddleware_AWSQueryActionAndServerErrorBody(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := zerolog.New(buf)
+
+	h := LoggingMiddleware(logger, "aws")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`<Response><Errors><Error><Code>DependencyViolation</Code><Message>failed to program real NAT route</Message></Error></Errors></Response>`))
+	}))
+
+	form := url.Values{
+		"Action":  {"CreateRoute"},
+		"Version": {"2016-11-15"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	for _, want := range []string{
+		`"aws_query_action":"CreateRoute"`,
+		`"aws_query_version":"2016-11-15"`,
+		`"status":503`,
+		`"error_body":"<Response><Errors><Error><Code>DependencyViolation</Code><Message>failed to program real NAT route</Message></Error></Errors></Response>"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected log to contain %q; got: %s", want, out)
+		}
+	}
+	if strings.Contains(out, `"amz_target":`) {
+		t.Errorf("did not expect aws json target field for query protocol request; got: %s", out)
 	}
 }

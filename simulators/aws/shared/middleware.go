@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -21,6 +22,8 @@ const (
 	// IdentityKey is the context key for the extracted caller identity.
 	identityKey
 )
+
+const loggedErrorBodyLimit = 4096
 
 // RequestID returns the request ID from the context.
 func RequestID(ctx context.Context) string {
@@ -73,6 +76,13 @@ func LoggingMiddleware(logger zerolog.Logger, provider string) func(http.Handler
 			case "aws":
 				if target := r.Header.Get("X-Amz-Target"); target != "" {
 					event.Str("amz_target", target)
+				} else {
+					if action := r.FormValue("Action"); action != "" {
+						event.Str("aws_query_action", action)
+					}
+					if version := r.FormValue("Version"); version != "" {
+						event.Str("aws_query_version", version)
+					}
 				}
 			case "azure":
 				if v := r.URL.Query().Get("api-version"); v != "" {
@@ -103,6 +113,9 @@ func LoggingMiddleware(logger zerolog.Logger, provider string) func(http.Handler
 			}
 			if k := r.Header.Get("x-goog-encryption-key-sha256"); k != "" {
 				event.Bool("gcs_sse_c", true)
+			}
+			if sw.status >= 500 && sw.body.Len() > 0 {
+				event.Str("error_body", sw.body.String())
 			}
 
 			event.Msg("request")
@@ -179,11 +192,24 @@ func generateRequestID() string {
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	body   bytes.Buffer
 }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	if w.body.Len() < loggedErrorBodyLimit {
+		remaining := loggedErrorBodyLimit - w.body.Len()
+		if len(p) > remaining {
+			_, _ = w.body.Write(p[:remaining])
+		} else {
+			_, _ = w.body.Write(p)
+		}
+	}
+	return w.ResponseWriter.Write(p)
 }
 
 // Hijack implements http.Hijacker so WebSocket upgrades work through the middleware.
