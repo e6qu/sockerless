@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-01 - Azure Tables ARM Fidelity
+
+Issue #356 was fixed. The Azure simulator now implements the public ARM surfaces for Azure Cosmos DB Tables and Azure Storage Tables.
+
+Cosmos DB Tables now supports `PUT`, `GET`, `DELETE`, and list at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}`, plus table throughput get/update at `.../throughputSettings/default`. The implementation follows the official Azure REST spec and the path used by terraform-provider-azurerm's `azurerm_cosmosdb_table`.
+
+Storage Tables now supports ARM create/update/get/delete/list at `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}`. ARM-created Storage and Cosmos tables are projected into the same Azure Tables data-plane store used by `/Tables` and entity routes, and table delete removes associated entities. The Tables data plane now also honors the real `Prefer: return-no-content` create contract and implements table ACL get/set for the Giovanni client path used by `azurerm_storage_table`.
+
+The fix shipped with official Azure SDK tests (`armcosmos.TableResourcesClient`, `armstorage.TableClient`), Azure CLI `az rest` tests, and Terraform apply/destroy coverage for `azurerm_cosmosdb_table` and `azurerm_storage_table`.
+
 ## 2026-06-01 - AWS Core Services and CI Flake Hardening
 
 Issue #310's reopened GCP timestamp gap was fixed. Eventarc trigger timestamps, Firestore document timestamps, and Pub/Sub publish times now use the shared canonical protobuf timestamp formatter.

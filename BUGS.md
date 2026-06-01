@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1283 filed - 1283 fixed - 3 open - 2 false positives.**
+**1284 filed - 1284 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,7 +16,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1272 through BUG-1283:
+This phase closed BUG-1284:
+
+- BUG-1284 / issue #356: Azure Cosmos DB Tables ARM and Azure Storage Tables ARM were missing. The Azure simulator now implements `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` CRUD/list plus table throughput at `.../throughputSettings/default`, and `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}` CRUD/list/update. ARM-created tables project into the real Tables data-plane store, deletes remove table entities, and the Storage Tables data plane honors the real `Prefer: return-no-content` create behavior and table ACL get/set calls used by terraform-provider-azurerm. The fix shipped with official Azure SDK coverage (`armcosmos.TableResourcesClient`, `armstorage.TableClient`), Azure CLI `az rest` coverage, and Terraform `azurerm_cosmosdb_table` / `azurerm_storage_table` apply/destroy coverage.
+
+Previous phase closed BUG-1272 through BUG-1283:
 
 - BUG-1272 / issue #310: Eventarc, Firestore, and Pub/Sub still emitted some protobuf `Timestamp` fields with `time.RFC3339Nano`, producing non-canonical fractional-second widths. Those call sites now use the shared canonical timestamp formatter and have SDK regression coverage.
 - BUG-1273 / issue #343: AWS CloudTrail was missing. The AWS simulator now implements trail CRUD, logging status, event selectors/tags, `LookupEvents`, records simulator API calls, and delivers gzipped CloudTrail logs into S3 with SDK, CLI, and Terraform coverage.

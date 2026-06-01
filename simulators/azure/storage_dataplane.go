@@ -94,6 +94,23 @@ type TableData struct {
 	Account string
 	Name    string
 	Created string
+	ACLs    []TableSignedIdentifier
+}
+
+type TableSignedIdentifiers struct {
+	XMLName xml.Name                `xml:"SignedIdentifiers"`
+	Items   []TableSignedIdentifier `xml:"SignedIdentifier"`
+}
+
+type TableSignedIdentifier struct {
+	ID           string            `xml:"Id"`
+	AccessPolicy TableAccessPolicy `xml:"AccessPolicy"`
+}
+
+type TableAccessPolicy struct {
+	Start      string `xml:"Start,omitempty"`
+	Expiry     string `xml:"Expiry,omitempty"`
+	Permission string `xml:"Permission,omitempty"`
 }
 
 // TableEntity stores arbitrary OData properties keyed by name. Real
@@ -798,6 +815,30 @@ func tableEntityKey(account, table, pk, rk string) string {
 	return account + "/" + table + "/" + pk + "/" + rk
 }
 
+func upsertTableDataPlaneProjection(account, table string) {
+	key := tableKey(account, table)
+	if existing, ok := tableData.Get(key); ok {
+		existing.Account = account
+		existing.Name = table
+		if existing.Created == "" {
+			existing.Created = time.Now().UTC().Format(time.RFC3339)
+		}
+		tableData.Put(key, existing)
+		return
+	}
+	tableData.Put(key, TableData{Account: account, Name: table, Created: time.Now().UTC().Format(time.RFC3339)})
+}
+
+func deleteTableDataPlaneProjection(account, table string) {
+	tableData.Delete(tableKey(account, table))
+	prefix := account + "/" + table + "/"
+	for _, e := range tableEntities.List() {
+		if strings.HasPrefix(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey), prefix) {
+			tableEntities.Delete(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey))
+		}
+	}
+}
+
 func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
@@ -808,6 +849,10 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 	}
 	if strings.HasPrefix(path, "Tables('") && strings.HasSuffix(path, "')") {
 		name := strings.TrimSuffix(strings.TrimPrefix(path, "Tables('"), "')")
+		if r.URL.Query().Get("comp") == "acl" {
+			handleTableACL(w, r, account, name)
+			return
+		}
 		if r.Method == http.MethodDelete {
 			handleTableDelete(w, r, account, name)
 			return
@@ -819,6 +864,10 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 	}
 	if path == "Tables" && r.Method == http.MethodGet {
 		handleTablesList(w, r, account)
+		return
+	}
+	if !strings.Contains(path, "/") && path != "" && r.URL.Query().Get("comp") == "acl" {
+		handleTableACL(w, r, account, path)
 		return
 	}
 	if strings.HasSuffix(path, "()") && r.Method == http.MethodGet {
@@ -895,22 +944,22 @@ func handleTableCreate(w http.ResponseWriter, r *http.Request, account string) {
 		sim.AzureError(w, "TableAlreadyExists", "The specified table already exists.", http.StatusConflict)
 		return
 	}
-	t := TableData{Account: account, Name: body.TableName, Created: time.Now().UTC().Format(time.RFC3339)}
-	tableData.Put(key, t)
+	upsertTableDataPlaneProjection(account, body.TableName)
+	upsertStorageTableARMProjection(account, body.TableName)
+	if strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "return-no-content") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	sim.WriteJSON(w, http.StatusCreated, map[string]string{"TableName": body.TableName})
 }
 
 func handleTableDelete(w http.ResponseWriter, r *http.Request, account, table string) {
-	if !tableData.Delete(tableKey(account, table)) {
+	if _, ok := tableData.Get(tableKey(account, table)); !ok {
 		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
 		return
 	}
-	prefix := account + "/" + table + "/"
-	for _, e := range tableEntities.List() {
-		if strings.HasPrefix(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey), prefix) {
-			tableEntities.Delete(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey))
-		}
-	}
+	deleteTableDataPlaneProjection(account, table)
+	deleteStorageTableARMProjection(account, table)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -932,6 +981,33 @@ func handleTablesList(w http.ResponseWriter, r *http.Request, account string) {
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": names})
+}
+
+func handleTableACL(w http.ResponseWriter, r *http.Request, account, table string) {
+	key := tableKey(account, table)
+	t, ok := tableData.Get(key)
+	if !ok {
+		writeStorageError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/xml")
+		if err := xml.NewEncoder(w).Encode(TableSignedIdentifiers{Items: t.ACLs}); err != nil {
+			sim.AzureError(w, "InternalError", err.Error(), http.StatusInternalServerError)
+		}
+	case http.MethodPut:
+		var body TableSignedIdentifiers
+		if err := xml.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			writeStorageError(w, "InvalidXmlDocument", "The XML specified is not syntactically valid.", http.StatusBadRequest)
+			return
+		}
+		t.ACLs = body.Items
+		tableData.Put(key, t)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeStorageError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+	}
 }
 
 func handleEntityInsert(w http.ResponseWriter, r *http.Request, account, table string) {

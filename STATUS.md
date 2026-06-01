@@ -9,15 +9,17 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | Attach the first public VM family to the real-execution substrate for BUG-1267 / issues #332-#336. |
-| Last merged | GCP timestamp reopen, AWS core services, and CI flake/timeout hardening. |
-| Open GitHub issues | #332-#338 at last check after #310, #341, #343, #346, and #347 were resolved. |
-| Bugs | 1283 filed - 1283 fixed - 3 open - 2 false positives. |
+| Last merged | Azure Cosmos Tables ARM and Storage Tables ARM support for issue #356. |
+| Open GitHub issues | #332-#338 at last check after #310, #341, #343, #346, #347, and #356 were resolved. |
+| Bugs | 1284 filed - 1284 fixed - 3 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
 
 The AWS/GCP Terraform HTTPS gateway examples were added, and CI kept Terraform provider validation on the Caddy HTTPS path where gateway fidelity matters.
+
+The Azure Tables ARM PR fixed issue #356. The Azure simulator now implements Cosmos DB Tables ARM at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` with CRUD/list and table throughput at `.../throughputSettings/default`, matching the official Azure REST spec and terraform-provider-azurerm's `azurerm_cosmosdb_table` path. It also implements Storage Tables ARM at `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}` with CRUD/list/update, matching `armstorage.TableClient`. ARM-created Cosmos and Storage tables project into the same Azure Tables data-plane store used by `/Tables` and entity operations; deletes remove table entities. The Tables data-plane create handler honors `Prefer: return-no-content`, and table ACL get/set is implemented for the Giovanni client path used by `azurerm_storage_table`. Coverage includes official Azure SDK tests (`armcosmos.TableResourcesClient`, `armstorage.TableClient`), Azure CLI `az rest` tests, and Terraform apply/destroy coverage for `azurerm_cosmosdb_table` and `azurerm_storage_table`.
 
 The AWS simulator fidelity PR fixed issues #305-#308 and #317-#320. S3 `ListObjectsV2` now sorts and paginates keys, Lambda `FunctionConfiguration` responses no longer expose request-only `Code` or `Tags`, SNS confirmation-required subscriptions return `pending confirmation`, SQS rejects invalid receive batch sizes, EC2 honors run counts and filters with a pending-to-running state transition, ECR image digests are content-addressed, and KMS data keys use crypto-random key material.
 

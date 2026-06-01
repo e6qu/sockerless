@@ -40,6 +40,15 @@ type CosmosSQLContainer struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+type CosmosTable struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties map[string]any    `json:"properties,omitempty"`
+}
+
 type CosmosThroughput struct {
 	ID         string         `json:"id"`
 	Name       string         `json:"name"`
@@ -63,6 +72,7 @@ var (
 	cosmosAccounts    sim.Store[CosmosAccount]
 	cosmosDatabases   sim.Store[CosmosSQLDatabase]
 	cosmosContainers  sim.Store[CosmosSQLContainer]
+	cosmosTables      sim.Store[CosmosTable]
 	cosmosThroughputs sim.Store[CosmosThroughput]
 	cosmosDocs        sim.Store[CosmosDocument]
 )
@@ -71,6 +81,7 @@ func registerCosmosDB(srv *sim.Server) {
 	cosmosAccounts = sim.MakeStore[CosmosAccount](srv.DB(), "cosmos_accounts")
 	cosmosDatabases = sim.MakeStore[CosmosSQLDatabase](srv.DB(), "cosmos_sql_databases")
 	cosmosContainers = sim.MakeStore[CosmosSQLContainer](srv.DB(), "cosmos_sql_containers")
+	cosmosTables = sim.MakeStore[CosmosTable](srv.DB(), "cosmos_tables")
 	cosmosThroughputs = sim.MakeStore[CosmosThroughput](srv.DB(), "cosmos_throughputs")
 	cosmosDocs = sim.MakeStore[CosmosDocument](srv.DB(), "cosmos_documents")
 
@@ -82,6 +93,13 @@ func registerCosmosDB(srv *sim.Server) {
 	srv.HandleFunc("POST "+armBase+"/{account}/listKeys", handleCosmosListKeys)
 	srv.HandleFunc("POST "+armBase+"/{account}/listConnectionStrings", handleCosmosListConnectionStrings)
 	srv.HandleFunc("POST "+armBase+"/{account}/readonlykeys", handleCosmosListKeys)
+
+	srv.HandleFunc("PUT "+armBase+"/{account}/tables/{table}", handleCosmosCreateTable)
+	srv.HandleFunc("GET "+armBase+"/{account}/tables/{table}", handleCosmosGetTable)
+	srv.HandleFunc("DELETE "+armBase+"/{account}/tables/{table}", handleCosmosDeleteTable)
+	srv.HandleFunc("GET "+armBase+"/{account}/tables", handleCosmosListTables)
+	srv.HandleFunc("GET "+armBase+"/{account}/tables/{table}/throughputSettings/default", handleCosmosGetThroughput)
+	srv.HandleFunc("PUT "+armBase+"/{account}/tables/{table}/throughputSettings/default", handleCosmosPutThroughput)
 
 	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}", handleCosmosCreateSQLDatabase)
 	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}", handleCosmosGetSQLDatabase)
@@ -122,6 +140,10 @@ func cosmosSQLDatabaseID(sub, rg, account, database string) string {
 
 func cosmosSQLContainerID(sub, rg, account, database, container string) string {
 	return cosmosSQLDatabaseID(sub, rg, account, database) + "/containers/" + container
+}
+
+func cosmosTableID(sub, rg, account, table string) string {
+	return cosmosAccountID(sub, rg, account) + "/tables/" + table
 }
 
 func cosmosDocKey(account, database, container, doc string) string {
@@ -212,7 +234,8 @@ func handleCosmosListAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {
-	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	account := sim.PathParam(r, "account")
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), account)
 	if !cosmosAccounts.Delete(id) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
 		return
@@ -225,6 +248,17 @@ func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	for _, c := range cosmosContainers.List() {
 		if strings.HasPrefix(c.ID, id+"/") {
 			cosmosContainers.Delete(c.ID)
+		}
+	}
+	for _, t := range cosmosTables.List() {
+		if strings.HasPrefix(t.ID, id+"/") {
+			cosmosTables.Delete(t.ID)
+			deleteTableDataPlaneProjection(account, t.Name)
+		}
+	}
+	for _, t := range cosmosThroughputs.List() {
+		if strings.HasPrefix(t.ID, id+"/") {
+			cosmosThroughputs.Delete(t.ID)
 		}
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -261,6 +295,79 @@ func handleCosmosListConnectionStrings(w http.ResponseWriter, r *http.Request) {
 			"type":             "Sql",
 		}},
 	})
+}
+
+func handleCosmosCreateTable(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	table := sim.PathParam(r, "table")
+	if _, ok := cosmosAccounts.Get(cosmosAccountID(sub, rg, account)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", account)
+		return
+	}
+	var req CosmosTable
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid table body: %v", err)
+		return
+	}
+	props := ensureResourceProperty(req.Properties, table)
+	if options, ok := props["options"].(map[string]any); ok {
+		if throughput := options["throughput"]; throughput != nil {
+			cosmosThroughputs.Put(cosmosTableID(sub, rg, account, table)+"/throughputSettings/default", CosmosThroughput{
+				ID:   cosmosTableID(sub, rg, account, table) + "/throughputSettings/default",
+				Name: "default",
+				Type: "Microsoft.DocumentDB/databaseAccounts/tables/throughputSettings",
+				Properties: map[string]any{
+					"resource": map[string]any{"throughput": throughput},
+				},
+			})
+		}
+	}
+	c := CosmosTable{
+		ID:         cosmosTableID(sub, rg, account, table),
+		Name:       table,
+		Type:       "Microsoft.DocumentDB/databaseAccounts/tables",
+		Location:   req.Location,
+		Tags:       req.Tags,
+		Properties: props,
+	}
+	cosmosTables.Put(c.ID, c)
+	upsertTableDataPlaneProjection(account, table)
+	sim.WriteJSON(w, http.StatusOK, c)
+}
+
+func handleCosmosGetTable(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	table := sim.PathParam(r, "table")
+	t, ok := cosmosTables.Get(cosmosTableID(sub, rg, account, table))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB table not found: %s", table)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, t)
+}
+
+func handleCosmosListTables(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	prefix := cosmosAccountID(sub, rg, account) + "/tables/"
+	all := cosmosTables.Filter(func(t CosmosTable) bool { return strings.HasPrefix(t.ID, prefix) })
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	if all == nil {
+		all = []CosmosTable{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+}
+
+func handleCosmosDeleteTable(w http.ResponseWriter, r *http.Request) {
+	sub, rg, account := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account")
+	table := sim.PathParam(r, "table")
+	id := cosmosTableID(sub, rg, account, table)
+	if !cosmosTables.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB table not found: %s", table)
+		return
+	}
+	cosmosThroughputs.Delete(id + "/throughputSettings/default")
+	deleteTableDataPlaneProjection(account, table)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleCosmosCreateSQLDatabase(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +487,7 @@ func handleCosmosGetThroughput(w http.ResponseWriter, r *http.Request) {
 		t = CosmosThroughput{
 			ID:   id,
 			Name: "default",
-			Type: "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings",
+			Type: cosmosThroughputType(r),
 			Properties: map[string]any{
 				"resource": map[string]any{"throughput": float64(400)},
 			},
@@ -399,7 +506,7 @@ func handleCosmosPutThroughput(w http.ResponseWriter, r *http.Request) {
 	req.ID = id
 	req.Name = "default"
 	if req.Type == "" {
-		req.Type = "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings"
+		req.Type = cosmosThroughputType(r)
 	}
 	if req.Properties == nil {
 		req.Properties = map[string]any{"resource": map[string]any{"throughput": float64(400)}}
@@ -414,10 +521,23 @@ func cosmosARMParts(r *http.Request) (string, string, string, string) {
 
 func cosmosThroughputID(r *http.Request) string {
 	sub, rg, account, database := cosmosARMParts(r)
+	if table := sim.PathParam(r, "table"); table != "" {
+		return cosmosTableID(sub, rg, account, table) + "/throughputSettings/default"
+	}
 	if c := sim.PathParam(r, "container"); c != "" {
 		return cosmosSQLContainerID(sub, rg, account, database, c) + "/throughputSettings/default"
 	}
 	return cosmosSQLDatabaseID(sub, rg, account, database) + "/throughputSettings/default"
+}
+
+func cosmosThroughputType(r *http.Request) string {
+	if sim.PathParam(r, "table") != "" {
+		return "Microsoft.DocumentDB/databaseAccounts/tables/throughputSettings"
+	}
+	if sim.PathParam(r, "container") != "" {
+		return "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings"
+	}
+	return "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings"
 }
 
 func ensureResourceProperty(props map[string]any, name string) map[string]any {

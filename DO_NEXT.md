@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the GCP timestamp and AWS core-services PR merged.
+- Branch: `main`, synced with `origin/main` after the Azure Tables ARM PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #332-#338.
+- Open GitHub issues at last check: #332-#338. Issue #356 was fixed and closed by the Azure Tables ARM PR.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: issue #310 and issues #341, #343, #346, and #347 were fixed with real public-client coverage where applicable.
+- Last completed work: issue #356 was fixed with real public-client coverage for Azure Cosmos DB Tables ARM and Azure Storage Tables ARM.
 
 ## Next Task
 
@@ -103,7 +103,13 @@ Attach the first public VM family to the shared real-execution substrate. The im
 - The second BUG-1267 substrate stage landed:
    - [simulators/realexec](simulators/realexec) provides deterministic capability detection, LIFO cleanup, an auditable host runner, lease-based IPv4 IPAM, and Linux bridge/netns/veth NIC creation.
    - `make realexec-network-test` creates real Linux networking artifacts, verifies gateway and namespace-to-namespace packet reachability, creates/removes an nftables table, and verifies cleanup removes the bridge and network namespaces.
-   - The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
+- The mandatory Firecracker CI job runs both the microVM arithmetic target and the real host-network target.
+- Azure Tables ARM issue #356 was fixed:
+   - Cosmos DB Tables support public ARM CRUD/list at `Microsoft.DocumentDB/databaseAccounts/{account}/tables/{table}` plus table throughput at `.../throughputSettings/default`.
+   - Storage Tables support public ARM CRUD/list/update at `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}`.
+   - ARM-created tables project into the real Azure Tables data-plane store, deletes remove entities, and data-plane table create honors `Prefer: return-no-content`.
+   - Table ACL get/set is implemented for terraform-provider-azurerm's Giovanni client path.
+   - Coverage includes official Azure SDK, Azure CLI `az rest`, and Terraform `azurerm_cosmosdb_table` / `azurerm_storage_table` apply/destroy tests.
 
 ## Remaining Stages
 

@@ -179,6 +179,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmCosmosContainer, "/providers/Microsoft.DocumentDB/databaseAccounts/tfazrmcosmos/sqlDatabases/tfappdb/containers/users",
 		"azurerm Cosmos SQL container id must include canonical ARM path; got %s", azrmCosmosContainer)
 
+	azrmCosmosTable := outputs.must(t, "azrm_cosmosdb_table_id")
+	require.Contains(t, azrmCosmosTable, "/providers/Microsoft.DocumentDB/databaseAccounts/tfazrmcosmos/tables/tfcosmostable",
+		"azurerm Cosmos table id must include canonical ARM path; got %s", azrmCosmosTable)
+
 	azrmKVPolicy := outputs.must(t, "azrm_key_vault_access_policy_id")
 	require.Contains(t, strings.ToLower(azrmKVPolicy), "/providers/microsoft.keyvault/vaults/tf-azrm-kv",
 		"azurerm Key Vault access policy id must include vault ARM path; got %s", azrmKVPolicy)
@@ -237,6 +241,16 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmStorageContainerARM := outputs.must(t, "azrm_storage_container_resource_manager_id")
 	require.Contains(t, azrmStorageContainerARM, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/blobServices/default/containers/tfazrmcontainer",
 		"azurerm storage container resource_manager_id must include canonical ARM container path; got %s", azrmStorageContainerARM)
+
+	azrmStorageTable := outputs.must(t, "azrm_storage_table_id")
+	require.Contains(t, azrmStorageTable, "tfazrmst12345.table.",
+		"azurerm storage table id must be data-plane table URL-shaped; got %s", azrmStorageTable)
+	require.Contains(t, azrmStorageTable, "/Tables('tfazrmstable')",
+		"azurerm storage table id must include table name; got %s", azrmStorageTable)
+
+	azrmStorageTableARM := outputs.must(t, "azrm_storage_table_resource_manager_id")
+	require.Contains(t, azrmStorageTableARM, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/tableServices/default/tables/tfazrmstable",
+		"azurerm storage table resource_manager_id must include canonical ARM table path; got %s", azrmStorageTableARM)
 
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",

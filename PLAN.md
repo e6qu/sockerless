@@ -10,6 +10,8 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
+Last completed phase: Azure Tables ARM fidelity for issue #356.
+
 Next planned phase: attach the first public VM family to the real-execution substrate for BUG-1267 / issues #332-#336, unless a higher-priority issue appears.
 
 ## Guiding Principles
@@ -59,6 +61,7 @@ Implemented:
 - BUG-1272 / issue #310 fixed the reopened GCP protobuf timestamp gap: Eventarc trigger `createTime`/`updateTime`, Firestore document timestamps, and Pub/Sub `publishTime` now use the shared canonical timestamp formatter.
 - BUG-1273..BUG-1276 / issues #341, #343, #346, and #347 fixed AWS core-service gaps: CloudTrail trail CRUD/logging/lookup/S3 delivery, Auto Scaling launch configurations and ASGs that materialize EC2 instances, EBS volume/snapshot lifecycle with pending-to-completed snapshots, ECS managed EBS byte-level task/snapshot/restore round trips, and S3 `ListObjectVersions` for provider cleanup.
 - BUG-1277..BUG-1283 fixed CI flakiness without weakening coverage: all Go setup steps use explicit `go.work`/`**/go.sum` cache dependency paths for the multi-module workspace, hosted linux/arm64 CPU jobs fan out without broad ordered queues or phase-ordering `needs` gates, status-only aggregate jobs were removed, CI now has 29 jobs, non-Terraform explicit CI step and Go test timeouts are capped at five minutes, Terraform provider CI is capped at ten minutes, lint/backend/FaaS smoke work is grouped into fewer real-coverage shards, GCP Cloud Logging appends now preserve concurrent stdout/stderr container lines, every workflow auto-cancels older runs for the same PR branch/ref, and AWS simulator CLI coverage is sharded by service family with every existing CLI test selected exactly once.
+- BUG-1284 / issue #356 fixed Azure Tables ARM fidelity: Cosmos DB Tables ARM CRUD/list/throughput, Storage Tables ARM CRUD/list/update, shared projection into the Tables data plane, data-plane `Prefer: return-no-content`, and table ACL get/set used by `azurerm_storage_table`. Coverage includes official Azure SDK, Azure CLI, and Terraform provider apply/destroy paths.
 
 Remaining staged work:
 

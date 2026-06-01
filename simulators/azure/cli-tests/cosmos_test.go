@@ -19,6 +19,22 @@ func TestAzureCosmosDB_ARMAndDataPlaneRESTCLIFlows(t *testing.T) {
 	collURL := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account+"/sqlDatabases/appdb/containers/users", "2024-05-15")
 	runCLI(t, azRest("PUT", collURL, `{"properties":{"resource":{"id":"users","partitionKey":{"paths":["/id"],"kind":"Hash"}}}}`))
 
+	tableURL := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account+"/tables/clitable", "2024-08-15")
+	tableOut := runCLI(t, azRest("PUT", tableURL, `{"properties":{"resource":{"id":"clitable"},"options":{"throughput":400}}}`))
+	if !strings.Contains(tableOut, `"name": "clitable"`) {
+		t.Fatalf("Cosmos table create response missing table name: %s", tableOut)
+	}
+	listTablesURL := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account+"/tables", "2024-08-15")
+	listOut := runCLI(t, azRest("GET", listTablesURL, ""))
+	if !strings.Contains(listOut, `"name": "clitable"`) {
+		t.Fatalf("Cosmos table list response missing table: %s", listOut)
+	}
+	throughputURL := armURL("Microsoft.DocumentDB", "databaseAccounts/"+account+"/tables/clitable/throughputSettings/default", "2024-08-15")
+	throughputOut := runCLI(t, azRest("GET", throughputURL, ""))
+	if !strings.Contains(throughputOut, `"throughput": 400`) {
+		t.Fatalf("Cosmos table throughput response missing RU value: %s", throughputOut)
+	}
+
 	req, err := http.NewRequest("POST", baseURL+"/dbs/appdb/colls/users/docs", strings.NewReader(`{"id":"alice","team":"platform"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -50,4 +66,28 @@ func TestAzureCosmosDB_ARMAndDataPlaneRESTCLIFlows(t *testing.T) {
 	if !strings.Contains(string(body), "alice") {
 		t.Fatalf("query response did not include alice: %s", string(body))
 	}
+
+	runCLI(t, azRest("DELETE", tableURL, ""))
+}
+
+func TestAzureStorageTables_ARMRESTCLIFlows(t *testing.T) {
+	account := "clitableacct"
+	accountURL := armURL("Microsoft.Storage", "storageAccounts/"+account, "2023-05-01")
+	runCLI(t, azRest("PUT", accountURL, `{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`))
+
+	tableURL := armURL("Microsoft.Storage", "storageAccounts/"+account+"/tableServices/default/tables/clistorage", "2024-01-01")
+	out := runCLI(t, azRest("PUT", tableURL, ""))
+	if !strings.Contains(out, `"tableName": "clistorage"`) {
+		t.Fatalf("storage table create response missing tableName: %s", out)
+	}
+	out = runCLI(t, azRest("GET", tableURL, ""))
+	if !strings.Contains(out, `"tableName": "clistorage"`) {
+		t.Fatalf("storage table get response missing tableName: %s", out)
+	}
+	listURL := armURL("Microsoft.Storage", "storageAccounts/"+account+"/tableServices/default/tables", "2024-01-01")
+	out = runCLI(t, azRest("GET", listURL, ""))
+	if !strings.Contains(out, `"name": "clistorage"`) {
+		t.Fatalf("storage table list response missing table: %s", out)
+	}
+	runCLI(t, azRest("DELETE", tableURL, ""))
 }
