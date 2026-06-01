@@ -500,10 +500,6 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		Certificates:    queryList(r, "Certificates"),
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
 	}
-	if err := elbv2StartRealListener(listener); err != nil {
-		elbv2ErrorXML(w, "ResourceInUse", "failed to start real listener proxy: "+err.Error(), http.StatusServiceUnavailable, sim.RequestID(r.Context()))
-		return
-	}
 	elbv2Listeners.Put(arn, listener)
 	for _, action := range listener.DefaultActions {
 		if action.TargetGroupArn != "" {
@@ -555,7 +551,6 @@ func handleELBv2ModifyListenerAttributes(w http.ResponseWriter, r *http.Request)
 
 func handleELBv2DeleteListener(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ListenerArn")
-	elbv2StopRealListener(arn)
 	elbv2Listeners.Delete(arn)
 	elbv2XMLResponse(w, "DeleteListener", "", sim.RequestID(r.Context()))
 }
@@ -811,6 +806,7 @@ func defaultELBv2LoadBalancerAttributes() map[string]string {
 		"idle_timeout.timeout_seconds":                    "60",
 		"routing.http2.enabled":                           "true",
 		"routing.http.drop_invalid_header_fields.enabled": "false",
+		"routing.http.preserve_host_header.enabled":       "false",
 	}
 }
 

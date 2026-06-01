@@ -84,6 +84,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, lbOut.LoadBalancers, 1)
 	lbArn := *lbOut.LoadBalancers[0].LoadBalancerArn
+	lbDNSName := *lbOut.LoadBalancers[0].DNSName
 	assert.Equal(t, elbtypes.LoadBalancerStateEnumActive, lbOut.LoadBalancers[0].State.Code)
 
 	describeLB, err := elb.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
@@ -201,7 +202,7 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	listenerOut, err := elb.CreateListener(ctx, &elbv2.CreateListenerInput{
 		LoadBalancerArn: aws.String(lbArn),
 		Protocol:        elbtypes.ProtocolEnumHttp,
-		Port:            aws.Int32(18080),
+		Port:            aws.Int32(80),
 		DefaultActions: []elbtypes.Action{{
 			Type:           elbtypes.ActionTypeEnumForward,
 			TargetGroupArn: aws.String(tgArn),
@@ -209,7 +210,10 @@ func TestELBv2_LoadBalancerTargetGroupListenerLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, listenerOut.Listeners, 1)
-	proxiedResp, err := http.Get("http://127.0.0.1:18080/proxy-check")
+	proxiedReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/proxy-check", nil)
+	require.NoError(t, err)
+	proxiedReq.Host = lbDNSName
+	proxiedResp, err := http.DefaultClient.Do(proxiedReq)
 	require.NoError(t, err)
 	require.NoError(t, proxiedResp.Body.Close())
 	assert.Equal(t, http.StatusOK, proxiedResp.StatusCode, fmt.Sprintf("ELBv2 proxy status = %s", proxiedResp.Status))

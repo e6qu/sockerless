@@ -8,14 +8,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - Active implementation branch: none.
 - Open GitHub issues at last check: #332-#335 and #338. Issues #336 and #356 were fixed and closed. Number #337 is a merged PR, not an open issue.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 health/proxy paths became the first real #335/#334 packet-path migrations.
+- Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 host-dispatched health/proxy paths became the first real #335/#334 packet-path migrations; Azure Event Grid topic endpoints stopped leaking simulator-local per-topic publish listeners.
 - The PR #358 CI fix preserved real-network capabilities in simulator Docker tests, fixed provider-shaped public IPv4 pools and GCP public-IP assertions, made GCP real fabric creation atomic, and avoided Linux-name collisions with hash-derived names.
 
 ## Next Task
 
 Continue the real-execution compute/networking track next: BUG-1267 / issues #332-#335 and #338, unless a higher-priority issue appears.
 
-Next implementation should focus on Firecracker-backed VM execution, GCP/Azure nftables firewall/NSG enforcement, and GCP/Azure managed load-balancer proxy/listener data planes. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
+Next implementation should focus on Firecracker-backed VM execution, GCP/Azure nftables firewall/NSG enforcement, and GCP/Azure managed load-balancer proxy/listener data planes, with full fixes and regression tests for every touched public path. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only data planes, simulator-only public API knobs, or fallback execution paths.
 
 ## Provider Facts To Preserve
 
@@ -134,7 +134,7 @@ Next implementation should focus on Firecracker-backed VM execution, GCP/Azure n
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332-#335 and #338 track the remaining compute/networking real-execution program: Firecracker-backed VM instances, remaining nftables security enforcement, and real L4/L7 load balancing with health checks. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, and AWS security-group ingress plus ELBv2 health/proxying were the first #335/#334 packet-path migrations.
+- BUG-1267: issues #332-#335 and #338 track the remaining compute/networking real-execution program: Firecracker-backed VM instances, remaining nftables security enforcement, and real L4/L7 load balancing with health checks. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
 
 ## Start Checklist
 

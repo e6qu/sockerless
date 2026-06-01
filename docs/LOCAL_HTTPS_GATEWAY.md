@@ -1,8 +1,8 @@
 # Local HTTPS Gateway
 
-Sockerless can run an optional Caddy front door for local simulator APIs. The simulators still listen on their normal HTTP loopback ports; Caddy terminates HTTPS and reverse-proxies to them.
+Sockerless can run an optional Caddy front door for local simulator APIs. The simulator processes may still listen on HTTP loopback as local implementation plumbing; Caddy terminates HTTPS and reverse-proxies cloud-shaped hostnames to them.
 
-This is local transport infrastructure. It does not add simulator-specific cloud API routes, headers, request fields, or response shapes.
+This is local transport infrastructure. It does not add simulator-specific cloud API routes, headers, request fields, or response shapes, and it should be preferred whenever a public client expects HTTPS or host-addressed cloud endpoints.
 
 Relevant Caddy references: [Caddyfile environment substitutions](https://caddyserver.com/docs/caddyfile/concepts), [`tls internal`](https://caddyserver.com/docs/caddyfile/directives/tls), [`skip_install_trust`](https://caddyserver.com/docs/caddyfile/options#skip-install-trust), and [`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
 
@@ -63,7 +63,7 @@ Override the port with:
 make stack-https-up STACK_HTTPS_PORT=9443
 ```
 
-The `localhost` route is for resolver-independent single-simulator tests and points to `SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT`, which the normal stack sets to the AWS simulator port. Public, cloud-shaped gateway names remain the named `*.sockerless.localhost` endpoints above.
+The `localhost` route is only a resolver-independent single-simulator harness route and points to `SOCKERLESS_HTTPS_GATEWAY_DEFAULT_SIM_PORT`, which the normal stack sets to the AWS simulator port. Public, cloud-shaped gateway names remain the named `*.sockerless.localhost` endpoints above, and service data planes should use the hostnames advertised by their cloud control plane whenever local DNS/gateway routing can resolve them.
 
 ## CA Trust
 

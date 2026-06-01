@@ -114,7 +114,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![core](https://img.shields.io/badge/core-19.2k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-24.3k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-31.6k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-31.7k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-24.9k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-16.5k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)

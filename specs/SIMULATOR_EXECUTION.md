@@ -69,7 +69,7 @@ the real-execution substrate. Missing dependencies must fail loudly:
 - no `/dev/kvm`,
 - no permission to create netns/bridges/tap devices,
 - no permission to install `nftables` rules,
-- no ability to bind the required load-balancer listener.
+- no ability to materialize the required load-balancer data-plane endpoint.
 
 The simulator must return the public cloud's error shape for the affected API
 request where the cloud API has one. It must not return a successful resource

@@ -63,9 +63,14 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 		"--subnets", subnet1, subnet2,
 		"--security-groups", sgID,
 		"--tags", "Key=env,Value=cli",
-		"--query", "LoadBalancers[0].LoadBalancerArn",
+		"--query", "LoadBalancers[0].[LoadBalancerArn,DNSName]",
 		"--output", "text"))
-	lbArn := strings.TrimSpace(out)
+	lbFields := strings.Fields(out)
+	if len(lbFields) != 2 {
+		t.Fatalf("expected load balancer ARN and DNS name, got %q", out)
+	}
+	lbArn := lbFields[0]
+	lbDNSName := lbFields[1]
 	if !strings.Contains(lbArn, ":loadbalancer/app/cli-lb/") {
 		t.Fatalf("expected ELBv2 load balancer ARN, got %q", lbArn)
 	}
@@ -107,7 +112,7 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 	out = runCLI(t, awsCLI("elbv2", "create-listener",
 		"--load-balancer-arn", lbArn,
 		"--protocol", "HTTP",
-		"--port", "18081",
+		"--port", "80",
 		"--default-actions", "Type=forward,TargetGroupArn="+tgArn,
 		"--query", "Listeners[0].ListenerArn",
 		"--output", "text"))
@@ -115,9 +120,14 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 	if !strings.Contains(listenerArn, ":listener/app/cli-lb/") {
 		t.Fatalf("expected ELBv2 listener ARN, got %q", listenerArn)
 	}
-	resp, err := http.Get("http://127.0.0.1:18081/proxy-check")
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/proxy-check", nil)
 	if err != nil {
-		t.Fatalf("GET through real ELBv2 listener: %v", err)
+		t.Fatalf("build ELBv2 data-plane request: %v", err)
+	}
+	req.Host = lbDNSName
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET through real ELBv2 data plane: %v", err)
 	}
 	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()

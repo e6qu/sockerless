@@ -7,9 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -43,15 +41,7 @@ var (
 	eventGridSystemTopics  sim.Store[EventGridTopic]
 	eventGridPartnerTopics sim.Store[EventGridTopic]
 	eventGridSubscriptions sim.Store[EventGridEventSubscription]
-	eventGridListenersMu   sync.Mutex
-	eventGridListeners     = map[string]*eventGridTopicListener{}
 )
-
-type eventGridTopicListener struct {
-	url    string
-	server *http.Server
-	ln     net.Listener
-}
 
 func registerEventGrid(srv *sim.Server) {
 	eventGridTopics = sim.MakeStore[EventGridTopic](srv.DB(), "eventgrid_topics")
@@ -192,7 +182,7 @@ func eventGridEndpointHost(r *http.Request, topic string) string {
 	return strings.Join([]string{topic, "eventgrid", hostname}, ".") + portSuffix
 }
 
-func eventGridTopicWithEndpoint(r *http.Request, topic EventGridTopic) (EventGridTopic, error) {
+func eventGridTopicWithEndpoint(r *http.Request, topic EventGridTopic) EventGridTopic {
 	props := topic.Properties
 	if props == nil {
 		props = map[string]any{}
@@ -200,69 +190,11 @@ func eventGridTopicWithEndpoint(r *http.Request, topic EventGridTopic) (EventGri
 	if endpoint := azureEventGridEndpointURL(r, topic.Name); endpoint != "" {
 		props["endpoint"] = endpoint
 		topic.Properties = props
-		return topic, nil
-	}
-	hostname, _ := azureRequestHostParts(r)
-	if isLocalAzureHost(hostname) {
-		endpoint, err := ensureEventGridTopicListener(topic)
-		if err != nil {
-			return EventGridTopic{}, err
-		}
-		props["endpoint"] = endpoint
 	} else {
 		props["endpoint"] = fmt.Sprintf("%s://%s/api/events", azureRequestScheme(r), eventGridEndpointHost(r, topic.Name))
 	}
 	topic.Properties = props
-	return topic, nil
-}
-
-func isLocalAzureHost(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func ensureEventGridTopicListener(topic EventGridTopic) (string, error) {
-	eventGridListenersMu.Lock()
-	defer eventGridListenersMu.Unlock()
-	if existing := eventGridListeners[topic.ID]; existing != nil {
-		return existing.url, nil
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	egSrv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost || strings.TrimRight(r.URL.Path, "/") != "/api/events" {
-				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "unknown Event Grid data-plane path %q", r.URL.Path)
-				return
-			}
-			publishEventGridTopic(w, r, topic)
-		}),
-	}
-	listener := &eventGridTopicListener{
-		url:    "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port) + "/api/events",
-		server: egSrv,
-		ln:     ln,
-	}
-	eventGridListeners[topic.ID] = listener
-	go func() {
-		_ = egSrv.Serve(ln)
-	}()
-	return listener.url, nil
-}
-
-func closeEventGridTopicListener(topicID string) {
-	eventGridListenersMu.Lock()
-	listener := eventGridListeners[topicID]
-	delete(eventGridListeners, topicID)
-	eventGridListenersMu.Unlock()
-	if listener != nil {
-		_ = listener.server.Close()
-	}
+	return topic
 }
 
 func handleEventGridCreateTopic(w http.ResponseWriter, r *http.Request) {
@@ -291,11 +223,7 @@ func handleEventGridCreateTopic(w http.ResponseWriter, r *http.Request) {
 		Tags:       req.Tags,
 		Properties: props,
 	}
-	topic, err := eventGridTopicWithEndpoint(r, topic)
-	if err != nil {
-		sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError, "failed to allocate Event Grid topic endpoint: %v", err)
-		return
-	}
+	topic = eventGridTopicWithEndpoint(r, topic)
 	eventGridTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusCreated, topic)
 }
@@ -307,11 +235,7 @@ func handleEventGridGetTopic(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "topic %q not found", id)
 		return
 	}
-	topic, err := eventGridTopicWithEndpoint(r, topic)
-	if err != nil {
-		sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError, "failed to allocate Event Grid topic endpoint: %v", err)
-		return
-	}
+	topic = eventGridTopicWithEndpoint(r, topic)
 	eventGridTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusOK, topic)
 }
@@ -334,7 +258,6 @@ func handleEventGridDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "topic %q not found", id)
 		return
 	}
-	closeEventGridTopicListener(id)
 	for _, sub := range eventGridSubscriptions.List() {
 		if strings.HasPrefix(sub.ID, id+"/providers/Microsoft.EventGrid/eventSubscriptions/") {
 			eventGridSubscriptions.Delete(sub.ID)
@@ -350,12 +273,7 @@ func handleEventGridListTopicsByRG(w http.ResponseWriter, r *http.Request) {
 	out := make([]EventGridTopic, 0)
 	for _, topic := range eventGridTopics.List() {
 		if strings.HasPrefix(topic.ID, prefix) {
-			topic, err := eventGridTopicWithEndpoint(r, topic)
-			if err != nil {
-				sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError, "failed to allocate Event Grid topic endpoint: %v", err)
-				return
-			}
-			out = append(out, topic)
+			out = append(out, eventGridTopicWithEndpoint(r, topic))
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
@@ -367,12 +285,7 @@ func handleEventGridListTopicsBySubscription(w http.ResponseWriter, r *http.Requ
 	out := make([]EventGridTopic, 0)
 	for _, topic := range eventGridTopics.List() {
 		if strings.HasPrefix(topic.ID, prefix) {
-			topic, err := eventGridTopicWithEndpoint(r, topic)
-			if err != nil {
-				sim.AzureErrorf(w, "InternalError", http.StatusInternalServerError, "failed to allocate Event Grid topic endpoint: %v", err)
-				return
-			}
-			out = append(out, topic)
+			out = append(out, eventGridTopicWithEndpoint(r, topic))
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})

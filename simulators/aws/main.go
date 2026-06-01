@@ -82,6 +82,10 @@ func main() {
 	registerELBv2(queryRouter, srv)
 	registerAutoScaling(queryRouter, srv)
 
+	// Host-addressed service data planes are registered outside the
+	// Query Protocol control-plane router.
+	registerELBv2DataPlane(srv)
+
 	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
 	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).
 	registerSQS(awsRouter, srv)

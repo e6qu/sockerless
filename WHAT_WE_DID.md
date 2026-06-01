@@ -18,7 +18,7 @@ Simulator Docker test targets expose the required real networking privileges to 
 
 The same PR fixed the GCP Terraform HTTPS CI failure without weakening tests. Provider public IPv4 leases now come from explicit AWS, GCP, and Azure public pools rather than a documentation block, and Terraform assertions verify the exact provider-shaped CIDRs. GCP load-balancer forwarding rules allocate and release real public IPv4 leases. GCP Linux namespace/bridge/veth names are hash-derived from the full cloud resource ID so different public resource names do not collide after Linux's 15-character truncation. GCP real network, subnet, and NIC creation is serialized with the in-memory fabric registry, so parallel Terraform operations cannot interleave duplicate substrate creation. The simulator Docker test targets preserve the real-network capabilities supplied by `--privileged`; they no longer drop to the host UID before running tests that require `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`. The Docker build context excludes local caches, Terraform state, generated simulator binaries, and local agent metadata.
 
-The same PR started the remaining BUG-1267 packet-path work without closing #333-#335. The shared substrate gained nftables ingress filtering on real NIC veth peers. AWS security-group ingress rules for EC2 ENIs now compile into that filter, and rule updates reprogram attached ENIs. AWS ELBv2 target health now performs real TCP/HTTP probes instead of returning hardcoded `healthy`, and AWS ELBv2 listeners start a real local TCP proxy that forwards only to currently healthy targets. GCP/Azure security and load-balancer data-plane migrations remained for the next BUG-1267 phase, and #333 Firecracker-backed public VM lifecycle remained open.
+The same PR started the remaining BUG-1267 packet-path work without closing #333-#335. The shared substrate gained nftables ingress filtering on real NIC veth peers. AWS security-group ingress rules for EC2 ENIs now compile into that filter, and rule updates reprogram attached ENIs. AWS ELBv2 target health now performs real TCP/HTTP probes instead of returning hardcoded `healthy`, and AWS ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without the Query Protocol control plane binding listener ports. Azure Event Grid topic ARM create/get/list stopped allocating per-topic `127.0.0.1:<random>` publish listeners and now advertises the shared host-dispatched topic endpoint or the configured Caddy HTTPS gateway template. GCP/Azure security and load-balancer data-plane migrations remained for the next BUG-1267 phase, and #333 Firecracker-backed public VM lifecycle remained open.
 
 ## 2026-06-01 - Azure Tables ARM Fidelity
 
@@ -29,6 +29,12 @@ Cosmos DB Tables now supports `PUT`, `GET`, `DELETE`, and list at `Microsoft.Doc
 Storage Tables now supports ARM create/update/get/delete/list at `Microsoft.Storage/storageAccounts/{account}/tableServices/default/tables/{table}`. ARM-created Storage and Cosmos tables are projected into the same Azure Tables data-plane store used by `/Tables` and entity routes, and table delete removes associated entities. The Tables data plane now also honors the real `Prefer: return-no-content` create contract and implements table ACL get/set for the Giovanni client path used by `azurerm_storage_table`.
 
 The fix shipped with official Azure SDK tests (`armcosmos.TableResourcesClient`, `armstorage.TableClient`), Azure CLI `az rest` tests, and Terraform apply/destroy coverage for `azurerm_cosmosdb_table` and `azurerm_storage_table`.
+
+## 2026-06-01 - Azure Event Grid Host-Dispatched Publish
+
+Azure Event Grid topic endpoints stopped leaking simulator-local data-plane plumbing. Topic ARM create/get/list now advertise the shared host-dispatched Event Grid publish endpoint, or the configured Caddy HTTPS gateway template, rather than allocating per-topic `127.0.0.1:<random>` listener URLs.
+
+Publish requests route through the Azure simulator by Event Grid Host header and fan out to webhook subscriptions. Regression tests cover endpoint shape on create/get/list and real webhook delivery through the advertised endpoint.
 
 ## 2026-06-01 - AWS Core Services and CI Flake Hardening
 
@@ -229,7 +235,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332-#335 and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, and AWS security-group ingress plus ELBv2 health/proxying were the first #335/#334 packet-path migrations. Firecracker-backed public VM APIs, GCP/Azure security enforcement, and remaining load-balancer data-plane work remain.
+- BUG-1267: issues #332-#335 and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM. Firecracker-backed public VM APIs, GCP/Azure security enforcement, and remaining load-balancer data-plane work remain.
 
 ## Continuity Rules
 
