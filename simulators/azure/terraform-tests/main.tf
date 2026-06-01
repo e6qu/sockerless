@@ -476,6 +476,14 @@ resource "azurerm_cosmosdb_sql_container" "az_cosmos_container" {
   throughput            = 400
 }
 
+resource "azurerm_cosmosdb_table" "az_cosmos_table" {
+  provider            = azurerm
+  name                = "tfcosmostable"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  account_name        = azurerm_cosmosdb_account.az_cosmos.name
+  throughput          = 400
+}
+
 # Log Analytics workspace — Container App Environment requires one for
 # log ingestion. PerGB2018 is the canonical SKU.
 resource "azurerm_log_analytics_workspace" "az_law" {
@@ -589,6 +597,12 @@ resource "azurerm_storage_container" "az_st_container" {
   name                  = "tfazrmcontainer"
   storage_account_name  = azurerm_storage_account.az_st.name
   container_access_type = "private"
+}
+
+resource "azurerm_storage_table" "az_st_table" {
+  provider             = azurerm
+  name                 = "tfazrmstable"
+  storage_account_name = azurerm_storage_account.az_st.name
 }
 
 # Linux Function App — AZF runner backend's host primitive.
@@ -815,6 +829,10 @@ output "azrm_cosmosdb_sql_container_id" {
   value = azurerm_cosmosdb_sql_container.az_cosmos_container.id
 }
 
+output "azrm_cosmosdb_table_id" {
+  value = azurerm_cosmosdb_table.az_cosmos_table.id
+}
+
 output "azrm_law_id" {
   value = azurerm_log_analytics_workspace.az_law.id
 }
@@ -849,6 +867,14 @@ output "azrm_storage_container_id" {
 
 output "azrm_storage_container_resource_manager_id" {
   value = azurerm_storage_container.az_st_container.resource_manager_id
+}
+
+output "azrm_storage_table_id" {
+  value = azurerm_storage_table.az_st_table.id
+}
+
+output "azrm_storage_table_resource_manager_id" {
+  value = azurerm_storage_table.az_st_table.resource_manager_id
 }
 
 output "azrm_function_app_id" {

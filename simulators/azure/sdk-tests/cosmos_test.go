@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,4 +62,69 @@ func TestAzureCosmosDB_ARMAndDataPlaneLifecycle(t *testing.T) {
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"alice"`)
+}
+
+func TestAzureCosmosDB_TableARMOfficialSDKLifecycle(t *testing.T) {
+	rg := "sdk-cosmos-table-rg"
+	account := "sdkcosmostable"
+	table := "sdkUsers"
+	armBase := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.DocumentDB/databaseAccounts/%s", subscriptionID, rg, account)
+
+	ensureRG(t, rg)
+	resp := armReq(t, "PUT", armBase, `{"location":"eastus","kind":"GlobalDocumentDB","properties":{"databaseAccountOfferType":"Standard"}}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	client, err := armcosmos.NewTableResourcesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	poller, err := client.BeginCreateUpdateTable(ctx, rg, account, table, armcosmos.TableCreateUpdateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armcosmos.TableCreateUpdateProperties{
+			Resource: &armcosmos.TableResource{ID: to.Ptr(table)},
+			Options:  &armcosmos.CreateUpdateOptions{Throughput: to.Ptr[int32](400)},
+		},
+	}, nil)
+	require.NoError(t, err)
+	created, err := poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.Properties)
+	require.NotNil(t, created.Properties.Resource)
+	assert.Equal(t, table, *created.Properties.Resource.ID)
+
+	got, err := client.GetTable(ctx, rg, account, table, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.Properties)
+	require.NotNil(t, got.Properties.Resource)
+	assert.Equal(t, table, *got.Properties.Resource.ID)
+
+	pager := client.NewListTablesPager(rg, account, nil)
+	require.True(t, pager.More())
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Value)
+	assert.Equal(t, table, *page.Value[0].Name)
+
+	throughput, err := client.GetTableThroughput(ctx, rg, account, table, nil)
+	require.NoError(t, err)
+	require.NotNil(t, throughput.Properties)
+	require.NotNil(t, throughput.Properties.Resource)
+	assert.Equal(t, int32(400), *throughput.Properties.Resource.Throughput)
+
+	updatePoller, err := client.BeginUpdateTableThroughput(ctx, rg, account, table, armcosmos.ThroughputSettingsUpdateParameters{
+		Properties: &armcosmos.ThroughputSettingsUpdateProperties{
+			Resource: &armcosmos.ThroughputSettingsResource{Throughput: to.Ptr[int32](500)},
+		},
+	}, nil)
+	require.NoError(t, err)
+	updated, err := updatePoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	require.NotNil(t, updated.Properties)
+	require.NotNil(t, updated.Properties.Resource)
+	assert.Equal(t, int32(500), *updated.Properties.Resource.Throughput)
+
+	deletePoller, err := client.BeginDeleteTable(ctx, rg, account, table, nil)
+	require.NoError(t, err)
+	_, err = deletePoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
 }

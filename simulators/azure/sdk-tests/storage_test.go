@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +93,37 @@ func TestStorage_ARMListKeysCanonical512BitPerAccount(t *testing.T) {
 		assert.Len(t, raw, 64)
 		assert.Equal(t, "FULL", key.Permissions)
 	}
+}
+
+func TestStorageTable_ARMOfficialSDKLifecycle(t *testing.T) {
+	rg := "storage-table-arm-rg"
+	account := "sdkarmtableacct"
+	table := "sdkarmtable"
+	ensureRG(t, rg)
+	createStorageAccount(t, rg, account)
+
+	client, err := armstorage.NewTableClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	created, err := client.Create(ctx, rg, account, table, nil)
+	require.NoError(t, err)
+	require.NotNil(t, created.TableProperties)
+	assert.Equal(t, table, *created.TableProperties.TableName)
+
+	got, err := client.Get(ctx, rg, account, table, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.TableProperties)
+	assert.Equal(t, table, *got.TableProperties.TableName)
+
+	pager := client.NewListPager(rg, account, nil)
+	require.True(t, pager.More())
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Value)
+	assert.Equal(t, table, *page.Value[0].Name)
+
+	_, err = client.Delete(ctx, rg, account, table, nil)
+	require.NoError(t, err)
 }
 
 func TestStorage_ARMPatchAdvertisedEndpointsAndResourceEnumeration(t *testing.T) {

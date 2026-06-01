@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +58,20 @@ type BlobContainer struct {
 	Type       string             `json:"type"`
 	Etag       string             `json:"etag,omitempty"`
 	Properties BlobContainerProps `json:"properties"`
+}
+
+// StorageTable is a Microsoft.Storage ARM table resource. It is the
+// control-plane projection of an Azure Tables data-plane table.
+type StorageTable struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Properties StorageTableProperties `json:"properties"`
+}
+
+type StorageTableProperties struct {
+	TableName         string           `json:"tableName,omitempty"`
+	SignedIdentifiers []map[string]any `json:"signedIdentifiers,omitempty"`
 }
 
 // BlobContainerProps mirrors the ARM `BlobContainerProperties` shape
@@ -114,14 +130,62 @@ type FileShareProperties struct {
 	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
-// Package-level store for dashboard access.
-var azStorageAccounts sim.Store[StorageAccount]
+// Package-level stores for cross-plane projections and dashboard access.
+var (
+	azStorageAccounts sim.Store[StorageAccount]
+	storageTables     sim.Store[StorageTable]
+)
+
+func storageTableResourceID(sub, rg, account, table string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s/tableServices/default/tables/%s",
+		sub, rg, account, table)
+}
+
+func storageTableResourceIDForAccount(account, table string) (string, bool) {
+	if azStorageAccounts == nil {
+		return "", false
+	}
+	for _, acct := range azStorageAccounts.List() {
+		if acct.Name == account {
+			return acct.ID + "/tableServices/default/tables/" + table, true
+		}
+	}
+	return "", false
+}
+
+func upsertStorageTableARMProjection(account, table string) {
+	if storageTables == nil {
+		return
+	}
+	resourceID, ok := storageTableResourceIDForAccount(account, table)
+	if !ok {
+		return
+	}
+	storageTables.Put(resourceID, StorageTable{
+		ID:   resourceID,
+		Name: table,
+		Type: "Microsoft.Storage/storageAccounts/tableServices/tables",
+		Properties: StorageTableProperties{
+			TableName: table,
+		},
+	})
+}
+
+func deleteStorageTableARMProjection(account, table string) {
+	if storageTables == nil {
+		return
+	}
+	if resourceID, ok := storageTableResourceIDForAccount(account, table); ok {
+		storageTables.Delete(resourceID)
+	}
+}
 
 func registerAzureFiles(srv *sim.Server) {
 	storageAccounts := sim.MakeStore[StorageAccount](srv.DB(), "storage_accounts")
 	azStorageAccounts = storageAccounts
 	fileShares := sim.MakeStore[FileShare](srv.DB(), "file_shares")
 	fileData := sim.MakeStore[[]byte](srv.DB(), "file_data")
+	storageTables = sim.MakeStore[StorageTable](srv.DB(), "storage_tables")
 	// dataPlaneShares tracks shares created via either ARM or data-plane APIs
 	// so that the data-plane middleware can return 404 for non-existent shares.
 	dataPlaneShares := sim.MakeStore[bool](srv.DB(), "file_data_plane_shares")
@@ -243,6 +307,13 @@ func registerAzureFiles(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, name)
 
 		if storageAccounts.Delete(resourceID) {
+			tablePrefix := resourceID + "/tableServices/default/tables/"
+			for _, t := range storageTables.List() {
+				if strings.HasPrefix(t.ID, tablePrefix) {
+					storageTables.Delete(t.ID)
+					deleteTableDataPlaneProjection(name, t.Name)
+				}
+			}
 			w.WriteHeader(http.StatusOK)
 		} else {
 			w.WriteHeader(http.StatusNoContent)
@@ -436,6 +507,100 @@ func registerAzureFiles(srv *sim.Server) {
 		storageServiceHandler("queueServices", "Microsoft.Storage/storageAccounts/queueServices"))
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/tableServices/default",
 		storageServiceHandler("tableServices", "Microsoft.Storage/storageAccounts/tableServices"))
+
+	// --- Tables (ARM control plane) ---
+	tableBasePath := armBase + "/storageAccounts/{accountName}/tableServices/default/tables"
+
+	writeStorageTableNotFound := func(w http.ResponseWriter, table, account string) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Storage table %q not found in storage account %q", table, account)
+	}
+	readStorageTableBody := func(r *http.Request) (StorageTable, error) {
+		var req StorageTable
+		if r.Body == nil {
+			return req, nil
+		}
+		err := sim.ReadJSON(r, &req)
+		if err != nil && err != io.EOF {
+			return req, err
+		}
+		return req, nil
+	}
+	upsertStorageTable := func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		account := sim.PathParam(r, "accountName")
+		table := sim.PathParam(r, "tableName")
+		acctID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, account)
+		if _, ok := storageAccounts.Get(acctID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", account, rg)
+			return
+		}
+		req, err := readStorageTableBody(r)
+		if err != nil {
+			sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+			return
+		}
+		resourceID := storageTableResourceID(sub, rg, account, table)
+		props := req.Properties
+		props.TableName = table
+		out := StorageTable{
+			ID:         resourceID,
+			Name:       table,
+			Type:       "Microsoft.Storage/storageAccounts/tableServices/tables",
+			Properties: props,
+		}
+		storageTables.Put(resourceID, out)
+		upsertTableDataPlaneProjection(account, table)
+		sim.WriteJSON(w, http.StatusOK, out)
+	}
+	srv.HandleFunc("PUT "+tableBasePath+"/{tableName}", upsertStorageTable)
+	srv.HandleFunc("PATCH "+tableBasePath+"/{tableName}", upsertStorageTable)
+
+	srv.HandleFunc("GET "+tableBasePath+"/{tableName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		account := sim.PathParam(r, "accountName")
+		table := sim.PathParam(r, "tableName")
+		resourceID := storageTableResourceID(sub, rg, account, table)
+		t, ok := storageTables.Get(resourceID)
+		if !ok {
+			writeStorageTableNotFound(w, table, account)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, t)
+	})
+
+	srv.HandleFunc("DELETE "+tableBasePath+"/{tableName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		account := sim.PathParam(r, "accountName")
+		table := sim.PathParam(r, "tableName")
+		resourceID := storageTableResourceID(sub, rg, account, table)
+		if !storageTables.Delete(resourceID) {
+			writeStorageTableNotFound(w, table, account)
+			return
+		}
+		deleteTableDataPlaneProjection(account, table)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv.HandleFunc("GET "+tableBasePath, func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		account := sim.PathParam(r, "accountName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s/tableServices/default/tables/",
+			sub, rg, account)
+		all := storageTables.Filter(func(t StorageTable) bool {
+			return strings.HasPrefix(t.ID, prefix)
+		})
+		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+		if all == nil {
+			all = []StorageTable{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+	})
 
 	// --- Blob Containers (ARM control plane) ---
 	// Sockerless runner artifact / cache flows store blobs in
