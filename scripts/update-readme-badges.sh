@@ -20,8 +20,34 @@ readme="README.md"
 # Portable sed -i (macOS vs Linux)
 sedi() { if [[ "$OSTYPE" == darwin* ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
-count_go() { find "$1" -name '*.go' -not -name '*_test.go' -not -path '*/vendor/*' -print0 2>/dev/null | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}'; }
-count_ts() { find "$1" \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -not -path '*/dist/*' -print0 2>/dev/null | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}'; }
+count_tracked_lines() {
+  local root=$1
+  local kind=$2
+  git ls-files -z -- "$root" |
+    while IFS= read -r -d '' file; do
+      case "$file" in
+        */vendor/*|*/node_modules/*|*/dist/*) continue ;;
+      esac
+      case "$kind" in
+        go)
+          case "$file" in *.go) ;; *) continue ;; esac
+          case "$file" in *_test.go) continue ;; esac
+          ;;
+        gotest)
+          case "$file" in *_test.go) ;; *) continue ;; esac
+          ;;
+        ts)
+          case "$file" in *.ts|*.tsx) ;; *) continue ;; esac
+          ;;
+        *)
+          echo "unknown count kind: $kind" >&2
+          return 1
+          ;;
+      esac
+      wc -l <"$file" | tr -d ' '
+    done |
+    awk '{ s += $1 } END { print s + 0 }'
+}
 
 fmt_k() {
   local n=${1:-0}
@@ -35,11 +61,10 @@ fmt_k() {
 }
 
 # Top-level
-go_total=$(find . -name '*.go' -not -path './.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -print0 | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-go_test=$(find . -name '*_test.go' -not -path './.git/*' -print0 | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-go_src=$((go_total - go_test))
-ts_total=$(find . \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -not -path '*/dist/*' -print0 | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-go_modules=$(find . -name 'go.mod' -not -path './.git/*' | wc -l | tr -d ' ')
+go_src=$(count_tracked_lines . go)
+go_test=$(count_tracked_lines . gotest)
+ts_total=$(count_tracked_lines . ts)
+go_modules=$(git ls-files -- 'go.mod' '*/go.mod' | wc -l | tr -d ' ')
 
 sedi "s|Go-[0-9.]*k_lines|Go-$(fmt_k "$go_src")_lines|g" "$readme"
 sedi "s|TypeScript-[0-9.]*k_lines|TypeScript-$(fmt_k "${ts_total:-0}")_lines|g" "$readme"
@@ -68,7 +93,7 @@ for pair in \
   badge="${pair%%:*}"
   dir="${pair#*:}"
   if [ -d "$dir" ]; then
-    val=$(fmt_k "$(count_go "$dir")")
+    val=$(fmt_k "$(count_tracked_lines "$dir" go)")
     sedi "s|badge/${badge}-[0-9.k]*-|badge/${badge}-${val}-|g" "$readme"
   fi
 done
@@ -86,7 +111,7 @@ for pair in \
   badge="${pair%%:*}"
   dir="${pair#*:}"
   if [ -d "$dir" ]; then
-    val=$(fmt_k "$(count_ts "$dir")")
+    val=$(fmt_k "$(count_tracked_lines "$dir" ts)")
     sedi "s|badge/${badge}-[0-9.k]*-|badge/${badge}-${val}-|g" "$readme"
   fi
 done

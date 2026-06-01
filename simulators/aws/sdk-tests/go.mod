@@ -17,9 +17,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.6
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.2
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.0
-	github.com/aws/aws-sdk-go-v2/service/ecs v1.81.2
+	github.com/aws/aws-sdk-go-v2/service/ecs v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.41.18
-	github.com/aws/aws-sdk-go-v2/service/elasticache v1.52.4
+	github.com/aws/aws-sdk-go-v2/service/elasticache v1.53.0
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.0
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.46.2
 	github.com/aws/aws-sdk-go-v2/service/iam v1.54.0

@@ -112,6 +112,22 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      - id: shellcheck-scripts-all
+        name: ShellCheck all scripts
+        entry: bash -c 'shellcheck -x -s bash scripts/*.sh'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: shell-syntax-scripts-all
+        name: Shell syntax all scripts (bash + zsh)
+        entry: bash -c 'bash -n scripts/*.sh && zsh -n scripts/*.sh'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: update-readme-badges
         name: Update README badges
         entry: bash scripts/update-readme-badges.sh
