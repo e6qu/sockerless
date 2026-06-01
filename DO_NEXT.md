@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the real-execution host-network substrate PR merged.
+- Branch: `main`, synced with `origin/main` after the GCP timestamp and AWS core-services PR merged.
 - Active implementation branch: none.
 - Open GitHub issues at last check: #332-#338.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: the first BUG-1267 real-execution host capability and Linux network/NIC substrate stages landed.
+- Last completed work: issue #310 and issues #341, #343, #346, and #347 were fixed with real public-client coverage where applicable.
 
 ## Next Task
 
@@ -72,6 +72,13 @@ Attach the first public VM family to the shared real-execution substrate. The im
    - Event Grid publish validates the Event Grid event envelope before delivery.
    - Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates use Azure LRO headers and converge from in-progress to final states.
    - Key Vault secret/key/certificate attributes include default recovery metadata.
+- GCP issue #310 was fixed after its reopen:
+   - Eventarc, Firestore, and Pub/Sub timestamp call sites now use the shared canonical protobuf timestamp formatter.
+- AWS core issues #341, #343, #346, and #347 were fixed:
+   - CloudTrail supports trail CRUD, logging status, event selectors/tags, `LookupEvents`, simulator API-call recording, and gzipped S3 log delivery.
+   - Auto Scaling supports launch configurations and ASGs; desired-capacity changes create/terminate EC2 instances.
+   - EBS supports volume lifecycle, attach/detach/delete/modify, snapshot lifecycle, pending-to-completed snapshots, restore from snapshot, and ECS managed EBS byte round trips through real task containers.
+   - S3 `ListObjectVersions` supports Terraform cleanup of CloudTrail-delivered objects.
 - The first BUG-1267 real-execution substrate stage landed:
    - `specs/SIMULATOR_EXECUTION.md` describes the current Docker/Podman-backed container/FaaS execution model plus the narrow VM-level real-execution exception.
    - `specs/SIMULATOR_REAL_EXECUTION.md` defines Firecracker guests, Linux network namespaces, bridges/tap/veth, netlink routing, nftables policy/NAT, load-balancer proxying, active health checks, per-instance metadata, capability checks, and loud failure semantics.

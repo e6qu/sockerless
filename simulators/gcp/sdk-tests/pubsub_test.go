@@ -81,6 +81,7 @@ func TestPubSub_TopicAndSubscriptionLifecycle(t *testing.T) {
 	bodies := map[string]bool{}
 	var ackIds []string
 	for _, m := range pullResp.ReceivedMessages {
+		assertProtoJSONTimestamp(t, m.Message.PublishTime)
 		decoded, err := base64.StdEncoding.DecodeString(m.Message.Data)
 		require.NoError(t, err)
 		bodies[string(decoded)] = true

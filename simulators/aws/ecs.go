@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +71,7 @@ type ECSLogConfiguration struct {
 type ECSVolume struct {
 	Name                   string              `json:"name"`
 	EfsVolumeConfiguration *ECSEfsVolumeConfig `json:"efsVolumeConfiguration,omitempty"`
+	ConfiguredAtLaunch     bool                `json:"configuredAtLaunch,omitempty"`
 }
 
 type ECSEfsVolumeConfig struct {
@@ -82,6 +84,31 @@ type ECSEfsVolumeConfig struct {
 type ECSEfsAuthorizationConfig struct {
 	AccessPointId string `json:"accessPointId,omitempty"`
 	Iam           string `json:"iam,omitempty"`
+}
+
+type ECSTaskVolumeConfiguration struct {
+	Name             string                                `json:"name"`
+	ManagedEBSVolume *ECSTaskManagedEBSVolumeConfiguration `json:"managedEBSVolume,omitempty"`
+}
+
+type ECSTaskManagedEBSVolumeConfiguration struct {
+	Encrypted         bool                                `json:"encrypted,omitempty"`
+	KmsKeyId          string                              `json:"kmsKeyId,omitempty"`
+	VolumeType        string                              `json:"volumeType,omitempty"`
+	SizeInGiB         int                                 `json:"sizeInGiB,omitempty"`
+	SnapshotId        string                              `json:"snapshotId,omitempty"`
+	RoleArn           string                              `json:"roleArn,omitempty"`
+	TerminationPolicy *ECSTaskManagedEBSTerminationPolicy `json:"terminationPolicy,omitempty"`
+	TagSpecifications []ECSTaskManagedEBSTagSpecification `json:"tagSpecifications,omitempty"`
+}
+
+type ECSTaskManagedEBSTerminationPolicy struct {
+	DeleteOnTermination *bool `json:"deleteOnTermination,omitempty"`
+}
+
+type ECSTaskManagedEBSTagSpecification struct {
+	ResourceType string   `json:"resourceType,omitempty"`
+	Tags         []ECSTag `json:"tags,omitempty"`
 }
 
 type ECSTag struct {
@@ -511,16 +538,181 @@ func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type ecsRequestError struct {
+	code    string
+	message string
+	status  int
+}
+
+func ecsConfiguredAtLaunchVolumes(td ECSTaskDefinition) map[string]bool {
+	out := map[string]bool{}
+	for _, vol := range td.Volumes {
+		if vol.ConfiguredAtLaunch {
+			out[vol.Name] = true
+		}
+	}
+	return out
+}
+
+func ecsManagedEBSTags(specs []ECSTaskManagedEBSTagSpecification) []EC2Tag {
+	var tags []EC2Tag
+	for _, spec := range specs {
+		if spec.ResourceType != "" && spec.ResourceType != "volume" {
+			continue
+		}
+		for _, tag := range spec.Tags {
+			tags = append(tags, EC2Tag(tag))
+		}
+	}
+	return tags
+}
+
+func ecsTaskDetail(details []ECSKeyValuePair, name string) string {
+	for _, detail := range details {
+		if detail.Name == name {
+			return detail.Value
+		}
+	}
+	return ""
+}
+
+func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeConfiguration, taskID, requestedSubnet string) (map[string]string, []ECSAttachment, *ecsRequestError) {
+	allowed := ecsConfiguredAtLaunchVolumes(td)
+	hosts := map[string]string{}
+	var attachments []ECSAttachment
+	if len(configs) == 0 {
+		return hosts, attachments, nil
+	}
+
+	az := awsAvailabilityZone()
+	if requestedSubnet != "" {
+		if subnet, ok := ec2Subnets.Get(requestedSubnet); ok && subnet.AvailabilityZone != "" {
+			az = subnet.AvailabilityZone
+		}
+	}
+
+	for _, cfg := range configs {
+		if cfg.Name == "" {
+			return nil, nil, &ecsRequestError{"InvalidParameterException", "volumeConfigurations.name is required", http.StatusBadRequest}
+		}
+		if !allowed[cfg.Name] {
+			return nil, nil, &ecsRequestError{"ClientException", fmt.Sprintf("Volume %s is not configuredAtLaunch in the task definition", cfg.Name), http.StatusBadRequest}
+		}
+		managed := cfg.ManagedEBSVolume
+		if managed == nil {
+			return nil, nil, &ecsRequestError{"ClientException", fmt.Sprintf("Volume %s requires managedEBSVolume", cfg.Name), http.StatusBadRequest}
+		}
+
+		size := managed.SizeInGiB
+		if size == 0 {
+			size = 8
+		}
+		snapshotID := managed.SnapshotId
+		var snapshotHostPath string
+		if snapshotID != "" {
+			snap, ok := ec2Snapshots.Get(snapshotID)
+			if !ok {
+				return nil, nil, &ecsRequestError{"InvalidParameterException", fmt.Sprintf("Snapshot not found: %s", snapshotID), http.StatusBadRequest}
+			}
+			if snap.State != "completed" {
+				return nil, nil, &ecsRequestError{"InvalidParameterException", fmt.Sprintf("Snapshot is not completed: %s", snapshotID), http.StatusBadRequest}
+			}
+			if size < snap.VolumeSize {
+				size = snap.VolumeSize
+			}
+			snapshotHostPath = snap.HostPath
+		}
+		volumeType := managed.VolumeType
+		if volumeType == "" {
+			volumeType = "gp3"
+		}
+		deleteOnTermination := true
+		if managed.TerminationPolicy != nil && managed.TerminationPolicy.DeleteOnTermination != nil {
+			deleteOnTermination = *managed.TerminationPolicy.DeleteOnTermination
+		}
+
+		volumeID := ec2ID("vol")
+		now := time.Now().UTC().Format(time.RFC3339)
+		vol := EC2Volume{
+			VolumeId:         volumeID,
+			Size:             size,
+			SnapshotId:       snapshotID,
+			AvailabilityZone: az,
+			State:            "in-use",
+			CreateTime:       now,
+			VolumeType:       volumeType,
+			Encrypted:        managed.Encrypted,
+			Tags:             ecsManagedEBSTags(managed.TagSpecifications),
+			Attachments: []EC2VolumeAttachment{{
+				VolumeId:            volumeID,
+				InstanceId:          taskID,
+				Device:              cfg.Name,
+				State:               "attached",
+				AttachTime:          now,
+				DeleteOnTermination: deleteOnTermination,
+			}},
+		}
+		if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+			return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not create managed EBS volume data path: %v", err), http.StatusInternalServerError}
+		}
+		if snapshotHostPath != "" {
+			if err := ebsCopyDir(vol.HostPath, snapshotHostPath); err != nil {
+				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not restore managed EBS snapshot data: %v", err), http.StatusInternalServerError}
+			}
+		}
+		ec2Volumes.Put(volumeID, vol)
+		hosts[cfg.Name] = vol.HostPath
+		attachments = append(attachments, ECSAttachment{
+			Id:     "ebs-" + volumeID,
+			Type:   "AmazonElasticBlockStorage",
+			Status: "ATTACHING",
+			Details: []ECSKeyValuePair{
+				{Name: "volumeName", Value: cfg.Name},
+				{Name: "volumeId", Value: volumeID},
+				{Name: "deleteOnTermination", Value: strconv.FormatBool(deleteOnTermination)},
+			},
+		})
+	}
+	return hosts, attachments, nil
+}
+
+func ecsCleanupTaskManagedEBS(task *ECSTask) {
+	for i := range task.Attachments {
+		att := &task.Attachments[i]
+		if att.Type != "AmazonElasticBlockStorage" {
+			continue
+		}
+		volumeID := ecsTaskDetail(att.Details, "volumeId")
+		if volumeID == "" {
+			continue
+		}
+		deleteOnTermination, _ := strconv.ParseBool(ecsTaskDetail(att.Details, "deleteOnTermination"))
+		if deleteOnTermination {
+			if vol, ok := ec2Volumes.Get(volumeID); ok {
+				_ = os.RemoveAll(vol.HostPath)
+			}
+			ec2Volumes.Delete(volumeID)
+		} else {
+			ec2Volumes.Update(volumeID, func(vol *EC2Volume) {
+				vol.State = "available"
+				vol.Attachments = nil
+			})
+		}
+		att.Status = "DETACHED"
+	}
+}
+
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster              string   `json:"cluster"`
-		TaskDefinition       string   `json:"taskDefinition"`
-		Count                int      `json:"count"`
-		LaunchType           string   `json:"launchType"`
-		Group                string   `json:"group"`
-		Tags                 []ECSTag `json:"tags,omitempty"`
-		PropagateTags        string   `json:"propagateTags,omitempty"`
-		EnableExecuteCommand bool     `json:"enableExecuteCommand,omitempty"`
+		Cluster              string                       `json:"cluster"`
+		TaskDefinition       string                       `json:"taskDefinition"`
+		Count                int                          `json:"count"`
+		LaunchType           string                       `json:"launchType"`
+		Group                string                       `json:"group"`
+		Tags                 []ECSTag                     `json:"tags,omitempty"`
+		PropagateTags        string                       `json:"propagateTags,omitempty"`
+		EnableExecuteCommand bool                         `json:"enableExecuteCommand,omitempty"`
+		VolumeConfigurations []ECSTaskVolumeConfiguration `json:"volumeConfigurations,omitempty"`
 		NetworkConfiguration *struct {
 			AwsvpcConfiguration *struct {
 				Subnets        []string `json:"subnets"`
@@ -646,6 +838,12 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		}
 		taskTags = append(taskTags, req.Tags...)
 
+		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(td, req.VolumeConfigurations, taskID, requestedSubnet)
+		if ebsErr != nil {
+			sim.AWSError(w, ebsErr.code, ebsErr.message, ebsErr.status)
+			return
+		}
+
 		attachmentDetails := []ECSKeyValuePair{
 			{Name: "privateIPv4Address", Value: privateIP},
 		}
@@ -676,6 +874,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 		}
+		task.Attachments = append(task.Attachments, ebsAttachments...)
 
 		// Store VPC network configuration from request
 		if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
@@ -693,7 +892,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		tasks = append(tasks, task)
 
 		// Simulate async transition: PROVISIONING → PENDING → RUNNING
-		go func(id string, td ECSTaskDefinition, taskTags []ECSTag) {
+		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, taskVolumeHosts map[string]string) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -773,7 +972,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			processes, err := startECSTaskContainers(id, td, taskTags, sink)
+			processes, err := startECSTaskContainers(id, td, taskTags, taskVolumeHosts, sink)
 			if err != nil {
 				stoppedAt := time.Now().Unix()
 				ecsTasks.Update(id, func(t *ECSTask) {
@@ -787,6 +986,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						t.Containers[j].LastStatus = "STOPPED"
 						t.Containers[j].ExitCode = &exitCode
 					}
+					ecsCleanupTaskManagedEBS(t)
 				})
 			} else if processes != nil {
 				ecsProcessHandles.Store(id, processes)
@@ -811,12 +1011,13 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 								t.Containers[j].LastStatus = "STOPPED"
 								t.Containers[j].ExitCode = &exitCode
 							}
+							ecsCleanupTaskManagedEBS(t)
 						})
 					}(id, name, handle)
 				}
 			}
 
-		}(taskID, td, taskTags)
+		}(taskID, td, taskTags, taskVolumeHosts)
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -825,7 +1026,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, sink sim.LogSink) (*ecsTaskProcesses, error) {
+func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
 	if len(td.ContainerDefinitions) == 0 {
 		return nil, nil
 	}
@@ -840,6 +1041,10 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 
 	volMap := make(map[string]string)
 	for _, v := range td.Volumes {
+		if host, ok := taskVolumeHosts[v.Name]; ok {
+			volMap[v.Name] = host
+			continue
+		}
 		if v.EfsVolumeConfiguration != nil {
 			cfg := v.EfsVolumeConfiguration
 			var host string
@@ -1011,6 +1216,7 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 			t.Containers[j].LastStatus = "STOPPED"
 			t.Containers[j].ExitCode = &exitCode
 		}
+		ecsCleanupTaskManagedEBS(t)
 	})
 
 	if !found {

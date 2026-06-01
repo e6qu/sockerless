@@ -56,6 +56,8 @@ Implemented:
 - BUG-1254 / issue #304 fixed stale GCP client-surface coverage rows. API Gateway, Cloud Build, IAM, and Pub/Sub now have real gcloud coverage where the public CLI exposes the surface, and API Gateway has Terraform provider coverage through `google-beta`.
 - BUG-1263 / issues #309-#311 and #321-#325 fixed the GCP API-shape backlog: Cloud Run list pagination and empty-list wire shape, Cloud Run/Functions/API Gateway/Eventarc LRO metadata types, canonical millisecond timestamps, Cloud Logging severity ordering, GCS object metadata and bucket IAM policy shape, Cloud SQL backup operations, and Cloud DNS precondition error shape.
 - BUG-1264 / issues #312, #315, and #326-#329 fixed the Azure API-shape backlog: Storage Blob/File/Queue data-plane errors now return XML error envelopes, storage list responses include the public XML declaration/attributes/markers, and Queue service properties support the provider availability probe; Service Bus admin missing queue/topic/subscription/rule reads return real 404 Atom/XML errors; Event Grid publish rejects malformed and schema-invalid events before delivery; Redis, PostgreSQL Flexible Server, and Event Hubs namespace creates return Azure LRO headers and in-progress resource states before converging; Key Vault secret/key/certificate attributes include default recovery metadata.
+- BUG-1272 / issue #310 fixed the reopened GCP protobuf timestamp gap: Eventarc trigger `createTime`/`updateTime`, Firestore document timestamps, and Pub/Sub `publishTime` now use the shared canonical timestamp formatter.
+- BUG-1273..BUG-1276 / issues #341, #343, #346, and #347 fixed AWS core-service gaps: CloudTrail trail CRUD/logging/lookup/S3 delivery, Auto Scaling launch configurations and ASGs that materialize EC2 instances, EBS volume/snapshot lifecycle with pending-to-completed snapshots, ECS managed EBS byte-level task/snapshot/restore round trips, and S3 `ListObjectVersions` for provider cleanup.
 
 Remaining staged work:
 
@@ -92,6 +94,13 @@ The AWS Amplify fidelity sweep fixed issues #330 and #331:
 - `StopJob` used `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}/stop` and cancelled the job.
 - `DeleteJob` used `DELETE /apps/{appId}/branches/{branchName}/jobs/{jobId}`, removed the job and its artifacts, and made later `GetJob` / `GetArtifactUrl` calls return `NotFoundException`.
 - `ListArtifacts`, `GetArtifactUrl`, and `GenerateAccessLogs` were registered with their public AWS SDK REST paths and covered through the real AWS SDK and AWS CLI.
+
+The AWS core-services sweep fixed issues #341, #343, #346, and #347:
+
+- CloudTrail implements trail CRUD, logging status, event selectors, tag operations, `LookupEvents`, recording of simulator API calls, and gzipped CloudTrail object delivery into S3. SDK, CLI, and Terraform `aws_cloudtrail` coverage exercise the public client surfaces.
+- Auto Scaling implements launch configurations, Auto Scaling Groups, desired-capacity updates, scaling activities, tags, and deletion. ASGs create and terminate EC2 instances through the EC2 simulator slice, and SDK/CLI/Terraform coverage verifies desired-capacity materialization.
+- EBS implements create/attach/detach/delete/modify volumes, snapshot create/describe/delete, pending-to-completed snapshot state, and volume restore from snapshot. ECS managed EBS `volumeConfigurations` create real EBS-backed host directories, mount them into task containers, snapshot the written bytes, restore from the snapshot, and prove the bytes are present in a later task through SDK and CLI tests. Terraform coverage exercises EC2 EBS volume, attachment, snapshot, and restore resources.
+- S3 `ListObjectVersions` was added so Terraform `force_destroy` can enumerate and remove CloudTrail-delivered objects.
 
 The Azure ARM/DNS fidelity sweep fixed issues #313, #314, and #340:
 

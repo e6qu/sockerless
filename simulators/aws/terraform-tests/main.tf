@@ -44,6 +44,8 @@ provider "aws" {
     lambda           = var.endpoint
     cloudwatchlogs   = var.endpoint
     elbv2            = var.endpoint
+    autoscaling      = var.endpoint
+    cloudtrail       = var.endpoint
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
     ssm              = var.endpoint
@@ -189,6 +191,68 @@ resource "aws_instance" "tf_vm" {
 
   tags = {
     Name = "tf-ec2-instance"
+  }
+}
+
+resource "aws_ebs_volume" "tf_ebs" {
+  availability_zone = "us-east-1a"
+  size              = 1
+  type              = "gp3"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_volume_attachment" "tf_ebs_attachment" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.tf_ebs.id
+  instance_id = aws_instance.tf_vm.id
+}
+
+resource "aws_ebs_snapshot" "tf_ebs_snapshot" {
+  volume_id   = aws_ebs_volume.tf_ebs.id
+  description = "terraform ebs snapshot coverage"
+
+  tags = {
+    env = "terraform"
+  }
+
+  depends_on = [aws_volume_attachment.tf_ebs_attachment]
+}
+
+resource "aws_ebs_volume" "tf_ebs_restored" {
+  availability_zone = "us-east-1a"
+  snapshot_id       = aws_ebs_snapshot.tf_ebs_snapshot.id
+  type              = "gp3"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_launch_configuration" "tf_asg_lc" {
+  name_prefix   = "tf-asg-lc-"
+  image_id      = "ami-tf-asg"
+  instance_type = "t3.micro"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_autoscaling_group" "tf_asg" {
+  name                 = "tf-asg"
+  launch_configuration = aws_launch_configuration.tf_asg_lc.name
+  min_size             = 1
+  max_size             = 2
+  desired_capacity     = 1
+  vpc_zone_identifier  = [aws_subnet.tf_ec2_subnet.id]
+
+  tag {
+    key                 = "env"
+    value               = "terraform"
+    propagate_at_launch = true
   }
 }
 
@@ -724,6 +788,18 @@ resource "aws_s3_bucket" "tf_bucket" {
   }
 }
 
+resource "aws_cloudtrail" "tf_trail" {
+  name                          = "tf-trail"
+  s3_bucket_name                = aws_s3_bucket.tf_bucket.id
+  s3_key_prefix                 = "trail-logs"
+  enable_logging                = false
+  include_global_service_events = false
+
+  tags = {
+    env = "terraform"
+  }
+}
+
 resource "aws_s3_bucket" "tf_bucket_replication_dest" {
   bucket        = "tf-test-replication-dest"
   force_destroy = true
@@ -1062,6 +1138,21 @@ output "ec2_nat_eip_public_ip" {
 }
 output "ec2_nat_route_table_id" {
   value = aws_route_table.tf_nat_rt.id
+}
+output "ec2_ebs_volume_id" {
+  value = aws_ebs_volume.tf_ebs.id
+}
+output "ec2_ebs_snapshot_id" {
+  value = aws_ebs_snapshot.tf_ebs_snapshot.id
+}
+output "ec2_ebs_restored_volume_id" {
+  value = aws_ebs_volume.tf_ebs_restored.id
+}
+output "autoscaling_group_name" {
+  value = aws_autoscaling_group.tf_asg.name
+}
+output "cloudtrail_arn" {
+  value = aws_cloudtrail.tf_trail.arn
 }
 output "efs_file_system_arn" {
   value = aws_efs_file_system.tf_efs.arn

@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +178,44 @@ type EC2NetworkInterface struct {
 	OwnerId            string
 }
 
+type EC2Volume struct {
+	VolumeId         string
+	Size             int
+	SnapshotId       string
+	AvailabilityZone string
+	State            string
+	CreateTime       string
+	VolumeType       string
+	Encrypted        bool
+	Tags             []EC2Tag
+	Attachments      []EC2VolumeAttachment
+	HostPath         string
+	Data             []byte
+}
+
+type EC2VolumeAttachment struct {
+	VolumeId            string
+	InstanceId          string
+	Device              string
+	State               string
+	AttachTime          string
+	DeleteOnTermination bool
+}
+
+type EC2Snapshot struct {
+	SnapshotId  string
+	VolumeId    string
+	VolumeSize  int
+	State       string
+	StartTime   string
+	Progress    string
+	Description string
+	OwnerId     string
+	Tags        []EC2Tag
+	HostPath    string
+	VolumeData  []byte
+}
+
 // State stores
 var (
 	ec2Vpcs               sim.Store[EC2Vpc]
@@ -187,6 +228,8 @@ var (
 	ec2SecurityGroupRules sim.Store[EC2SecurityGroupRule]
 	ec2Instances          sim.Store[EC2Instance]
 	ec2NetworkInterfaces  sim.Store[EC2NetworkInterface]
+	ec2Volumes            sim.Store[EC2Volume]
+	ec2Snapshots          sim.Store[EC2Snapshot]
 	// ec2SubnetIPCursor tracks the next host octet to hand out per
 	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
 	// allocation pool; we approximate with a monotonic counter that
@@ -287,6 +330,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2SecurityGroupRules = sim.MakeStore[EC2SecurityGroupRule](srv.DB(), "ec2_security_group_rules")
 	ec2Instances = sim.MakeStore[EC2Instance](srv.DB(), "ec2_instances")
 	ec2NetworkInterfaces = sim.MakeStore[EC2NetworkInterface](srv.DB(), "ec2_network_interfaces")
+	ec2Volumes = sim.MakeStore[EC2Volume](srv.DB(), "ec2_volumes")
+	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
 
 	// VPC
 	r.Register("DescribeAccountAttributes", handleDescribeAccountAttributes)
@@ -354,6 +399,14 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DeleteTags", handleDeleteTags)
 	r.Register("DescribeTags", handleDescribeTags)
 	r.Register("DescribeVolumes", handleDescribeVolumes)
+	r.Register("CreateVolume", handleCreateVolume)
+	r.Register("AttachVolume", handleAttachVolume)
+	r.Register("DetachVolume", handleDetachVolume)
+	r.Register("DeleteVolume", handleDeleteVolume)
+	r.Register("ModifyVolume", handleModifyVolume)
+	r.Register("CreateSnapshot", handleCreateSnapshot)
+	r.Register("DescribeSnapshots", handleDescribeSnapshots)
+	r.Register("DeleteSnapshot", handleDeleteSnapshot)
 	r.Register("DescribeImages", handleDescribeImages)
 	r.Register("DescribeInstanceTypes", handleDescribeInstanceTypes)
 	r.Register("DescribeKeyPairs", handleDescribeKeyPairs)
@@ -1686,40 +1739,21 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 			}
 			privateIP = ip
 		}
-		instanceID := ec2ID("i")
-		eniID := ec2ID("eni")
-		inst := EC2Instance{
-			InstanceId:         instanceID,
-			ReservationId:      reservationID,
-			ImageId:            imageID,
-			InstanceType:       instanceType,
-			SubnetId:           subnetID,
-			VpcId:              subnet.VpcId,
-			State:              "pending",
-			PrivateIpAddress:   privateIP,
-			SecurityGroupIds:   sgIDs,
-			Tags:               tags,
-			LaunchTime:         launchTime,
-			KeyName:            r.FormValue("KeyName"),
-			Architecture:       "x86_64",
-			RootDeviceName:     "/dev/sda1",
-			NetworkInterfaceId: eniID,
-		}
-		ec2Instances.Put(instanceID, inst)
-		ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
-			NetworkInterfaceId: eniID,
-			SubnetId:           subnetID,
-			VpcId:              subnet.VpcId,
-			PrivateIpAddress:   privateIP,
-			Status:             "in-use",
-			AttachmentId:       "eni-attach-" + eniID,
-			InstanceId:         instanceID,
-			SecurityGroupIds:   sgIDs,
-			Tags:               inst.Tags,
-			OwnerId:            ec2Owner(),
+		inst := ec2CreateInstance(EC2InstanceCreateSpec{
+			ReservationId:    reservationID,
+			ImageId:          imageID,
+			InstanceType:     instanceType,
+			Subnet:           subnet,
+			SubnetId:         subnetID,
+			PrivateIP:        privateIP,
+			SecurityGroupIds: sgIDs,
+			Tags:             tags,
+			LaunchTime:       launchTime,
+			KeyName:          r.FormValue("KeyName"),
+			State:            "pending",
 		})
 		instances = append(instances, inst)
-		go ec2TransitionInstanceToRunning(instanceID)
+		go ec2TransitionInstanceToRunning(inst.InstanceId)
 	}
 
 	var instanceItems strings.Builder
@@ -1756,6 +1790,82 @@ func runInstancesCounts(w http.ResponseWriter, r *http.Request) (int, int, bool)
 		return 0, 0, false
 	}
 	return minCount, maxCount, true
+}
+
+type EC2InstanceCreateSpec struct {
+	ReservationId    string
+	ImageId          string
+	InstanceType     string
+	Subnet           EC2Subnet
+	SubnetId         string
+	PrivateIP        string
+	SecurityGroupIds []string
+	Tags             []EC2Tag
+	LaunchTime       string
+	KeyName          string
+	State            string
+}
+
+func ec2CreateInstance(spec EC2InstanceCreateSpec) EC2Instance {
+	if spec.State == "" {
+		spec.State = "pending"
+	}
+	instanceID := ec2ID("i")
+	eniID := ec2ID("eni")
+	rootDevice := "/dev/sda1"
+	inst := EC2Instance{
+		InstanceId:         instanceID,
+		ReservationId:      spec.ReservationId,
+		ImageId:            spec.ImageId,
+		InstanceType:       spec.InstanceType,
+		SubnetId:           spec.SubnetId,
+		VpcId:              spec.Subnet.VpcId,
+		State:              spec.State,
+		PrivateIpAddress:   spec.PrivateIP,
+		SecurityGroupIds:   spec.SecurityGroupIds,
+		Tags:               spec.Tags,
+		LaunchTime:         spec.LaunchTime,
+		KeyName:            spec.KeyName,
+		Architecture:       "x86_64",
+		RootDeviceName:     rootDevice,
+		NetworkInterfaceId: eniID,
+	}
+	ec2Instances.Put(instanceID, inst)
+	ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
+		NetworkInterfaceId: eniID,
+		SubnetId:           spec.SubnetId,
+		VpcId:              spec.Subnet.VpcId,
+		PrivateIpAddress:   spec.PrivateIP,
+		Status:             "in-use",
+		AttachmentId:       "eni-attach-" + eniID,
+		InstanceId:         instanceID,
+		SecurityGroupIds:   spec.SecurityGroupIds,
+		Tags:               spec.Tags,
+		OwnerId:            ec2Owner(),
+	})
+	rootVolumeID := "vol-" + strings.TrimPrefix(instanceID, "i-")
+	rootVolume := EC2Volume{
+		VolumeId:         rootVolumeID,
+		Size:             8,
+		SnapshotId:       "snap-" + strings.TrimPrefix(spec.ImageId, "ami-"),
+		AvailabilityZone: spec.Subnet.AvailabilityZone,
+		State:            "in-use",
+		CreateTime:       spec.LaunchTime,
+		VolumeType:       "gp3",
+		Tags:             spec.Tags,
+		Attachments: []EC2VolumeAttachment{{
+			VolumeId:            rootVolumeID,
+			InstanceId:          instanceID,
+			Device:              rootDevice,
+			State:               "attached",
+			AttachTime:          spec.LaunchTime,
+			DeleteOnTermination: true,
+		}},
+		Data: []byte{},
+	}
+	rootVolume.HostPath = EBSVolumeHostDir(rootVolumeID)
+	ec2Volumes.Put(rootVolumeID, rootVolume)
+	return inst
 }
 
 func ec2TransitionInstanceToRunning(instanceID string) {
@@ -1913,8 +2023,15 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 		prev := inst.State
 		inst.State = next
 		ec2Instances.Put(id, inst)
+		if next == "stopped" {
+			ec2UpdateVolumeAttachmentsForInstance(id, "attached", "in-use")
+		}
+		if next == "running" {
+			ec2UpdateVolumeAttachmentsForInstance(id, "attached", "in-use")
+		}
 		if deleteENI && inst.NetworkInterfaceId != "" {
 			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+			ec2DeleteOnTerminationVolumes(id)
 		}
 		fmt.Fprintf(&items, `<item><instanceId>%s</instanceId><currentState><code>%d</code><name>%s</name></currentState><previousState><code>%d</code><name>%s</name></previousState></item>`,
 			id, instanceStateCode(next), next, instanceStateCode(prev), prev)
@@ -1930,6 +2047,48 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
   <requestId>%s</requestId>
   <instancesSet>%s</instancesSet>
 </%sResponse>`, action, ec2Xmlns(), generateUUID(), items.String(), action)
+}
+
+func ec2UpdateVolumeAttachmentsForInstance(instanceID, attachmentState, volumeState string) {
+	for _, vol := range ec2Volumes.List() {
+		changed := false
+		for i := range vol.Attachments {
+			if vol.Attachments[i].InstanceId == instanceID {
+				vol.Attachments[i].State = attachmentState
+				changed = true
+			}
+		}
+		if changed {
+			vol.State = volumeState
+			ec2Volumes.Put(vol.VolumeId, vol)
+		}
+	}
+}
+
+func ec2DeleteOnTerminationVolumes(instanceID string) {
+	for _, vol := range ec2Volumes.List() {
+		keep := vol.Attachments[:0]
+		deleteVolume := false
+		for _, att := range vol.Attachments {
+			if att.InstanceId == instanceID && att.DeleteOnTermination {
+				deleteVolume = true
+				continue
+			}
+			keep = append(keep, att)
+		}
+		if deleteVolume {
+			_ = os.RemoveAll(vol.HostPath)
+			ec2Volumes.Delete(vol.VolumeId)
+			continue
+		}
+		if len(keep) != len(vol.Attachments) {
+			vol.Attachments = keep
+			if len(vol.Attachments) == 0 {
+				vol.State = "available"
+			}
+			ec2Volumes.Put(vol.VolumeId, vol)
+		}
+	}
 }
 
 func handleDescribeInstanceStatus(w http.ResponseWriter, r *http.Request) {
@@ -2018,6 +2177,12 @@ func handleCreateTags(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(id, "eni-") {
 			ec2NetworkInterfaces.Update(id, func(eni *EC2NetworkInterface) { eni.Tags = mergeEC2Tags(eni.Tags, tags) })
 		}
+		if strings.HasPrefix(id, "vol-") {
+			ec2Volumes.Update(id, func(vol *EC2Volume) { vol.Tags = mergeEC2Tags(vol.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "snap-") {
+			ec2Snapshots.Update(id, func(snap *EC2Snapshot) { snap.Tags = mergeEC2Tags(snap.Tags, tags) })
+		}
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateTagsResponse %s><requestId>%s</requestId><return>true</return></CreateTagsResponse>`, ec2Xmlns(), generateUUID())
@@ -2048,6 +2213,12 @@ func handleDeleteTags(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(id, "eni-") {
 			ec2NetworkInterfaces.Update(id, func(eni *EC2NetworkInterface) { eni.Tags = filter(eni.Tags) })
+		}
+		if strings.HasPrefix(id, "vol-") {
+			ec2Volumes.Update(id, func(vol *EC2Volume) { vol.Tags = filter(vol.Tags) })
+		}
+		if strings.HasPrefix(id, "snap-") {
+			ec2Snapshots.Update(id, func(snap *EC2Snapshot) { snap.Tags = filter(snap.Tags) })
 		}
 	}
 	w.Header().Set("Content-Type", "text/xml")
@@ -2103,6 +2274,16 @@ func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
 			writeEntry(tagEntry{resourceID: eni.NetworkInterfaceId, resourceType: "network-interface", key: tag.Key, value: tag.Value})
 		}
 	}
+	for _, vol := range ec2Volumes.List() {
+		for _, tag := range vol.Tags {
+			writeEntry(tagEntry{resourceID: vol.VolumeId, resourceType: "volume", key: tag.Key, value: tag.Value})
+		}
+	}
+	for _, snap := range ec2Snapshots.List() {
+		for _, tag := range snap.Tags {
+			writeEntry(tagEntry{resourceID: snap.SnapshotId, resourceType: "snapshot", key: tag.Key, value: tag.Value})
+		}
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeTagsResponse %s>
   <requestId>%s</requestId>
@@ -2112,43 +2293,395 @@ func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
 
 func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
 	volumeIDs := ec2ParamList(r, "VolumeId")
-	include := func(volumeID string) bool {
-		if len(volumeIDs) == 0 {
-			return true
-		}
+	volumes := make([]EC2Volume, 0)
+	if len(volumeIDs) > 0 {
 		for _, id := range volumeIDs {
-			if id == volumeID {
-				return true
+			vol, ok := ec2Volumes.Get(id)
+			if !ok {
+				ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", id), http.StatusBadRequest)
+				return
 			}
+			volumes = append(volumes, vol)
 		}
-		return false
+	} else {
+		volumes = ec2Volumes.List()
 	}
 	var items strings.Builder
-	for _, inst := range ec2Instances.List() {
-		volumeID := "vol-" + strings.TrimPrefix(inst.InstanceId, "i-")
-		if !include(volumeID) {
-			continue
-		}
-		fmt.Fprintf(&items, `<item>
-    <volumeId>%s</volumeId>
-    <size>8</size>
-    <snapshotId>snap-%s</snapshotId>
-    <availabilityZone>%s</availabilityZone>
-    <status>in-use</status>
-    <createTime>%s</createTime>
-    <attachmentSet><item><volumeId>%s</volumeId><instanceId>%s</instanceId><device>%s</device><status>attached</status><attachTime>%s</attachTime><deleteOnTermination>true</deleteOnTermination></item></attachmentSet>
-    <volumeType>gp3</volumeType>
-    <encrypted>false</encrypted>
-    <multiAttachEnabled>false</multiAttachEnabled>
-    %s
-  </item>`, volumeID, strings.TrimPrefix(inst.ImageId, "ami-"), awsAvailabilityZone(), inst.LaunchTime,
-			volumeID, inst.InstanceId, inst.RootDeviceName, inst.LaunchTime, writeTagSetXML(inst.Tags))
+	for _, vol := range volumes {
+		items.WriteString(ec2VolumeXML(vol))
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeVolumesResponse %s>
   <requestId>%s</requestId>
   <volumeSet>%s</volumeSet>
 </DescribeVolumesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func ebsHostRoot() string {
+	if dir := os.Getenv("SIM_EBS_DATA_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "sockerless-sim-ebs")
+}
+
+func ebsVolumeHostDirPath(volumeID string) string {
+	return filepath.Join(ebsHostRoot(), "volumes", volumeID)
+}
+
+func ebsSnapshotHostDirPath(snapshotID string) string {
+	return filepath.Join(ebsHostRoot(), "snapshots", snapshotID)
+}
+
+func EBSVolumeHostDir(volumeID string) string {
+	dir := ebsVolumeHostDirPath(volumeID)
+	_ = os.MkdirAll(dir, 0o777)
+	return dir
+}
+
+func ebsPrepareVolumeHostPath(vol *EC2Volume) error {
+	if vol.HostPath == "" {
+		vol.HostPath = ebsVolumeHostDirPath(vol.VolumeId)
+	}
+	return os.MkdirAll(vol.HostPath, 0o777)
+}
+
+func ebsCopyDir(dst, src string) error {
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o777); err != nil {
+		return err
+	}
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		if err != nil {
+			_ = in.Close()
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			_ = in.Close()
+			_ = out.Close()
+			return err
+		}
+		if err := in.Close(); err != nil {
+			_ = out.Close()
+			return err
+		}
+		return out.Close()
+	})
+}
+
+func ec2VolumeXML(vol EC2Volume) string {
+	return "<item>" + ec2VolumeFieldsXML(vol) + "</item>"
+}
+
+func ec2VolumeFieldsXML(vol EC2Volume) string {
+	var attachments strings.Builder
+	if len(vol.Attachments) == 0 {
+		attachments.WriteString("<attachmentSet/>")
+	} else {
+		attachments.WriteString("<attachmentSet>")
+		for _, att := range vol.Attachments {
+			fmt.Fprintf(&attachments, `<item><volumeId>%s</volumeId><instanceId>%s</instanceId><device>%s</device><status>%s</status><attachTime>%s</attachTime><deleteOnTermination>%t</deleteOnTermination></item>`,
+				att.VolumeId, att.InstanceId, att.Device, att.State, att.AttachTime, att.DeleteOnTermination)
+		}
+		attachments.WriteString("</attachmentSet>")
+	}
+	snapshot := vol.SnapshotId
+	if snapshot == "" {
+		snapshot = ""
+	}
+	return fmt.Sprintf(`
+    <volumeId>%s</volumeId>
+    <size>%d</size>
+    <snapshotId>%s</snapshotId>
+    <availabilityZone>%s</availabilityZone>
+    <status>%s</status>
+    <createTime>%s</createTime>
+    %s
+    <volumeType>%s</volumeType>
+    <encrypted>%t</encrypted>
+    <multiAttachEnabled>false</multiAttachEnabled>
+    %s
+  `, vol.VolumeId, vol.Size, snapshot, vol.AvailabilityZone, vol.State, vol.CreateTime,
+		attachments.String(), vol.VolumeType, vol.Encrypted, writeTagSetXML(vol.Tags))
+}
+
+func handleCreateVolume(w http.ResponseWriter, r *http.Request) {
+	az := r.FormValue("AvailabilityZone")
+	if az == "" {
+		az = awsAvailabilityZone()
+	}
+	size := 8
+	if v := r.FormValue("Size"); v != "" {
+		if _, err := fmt.Sscanf(v, "%d", &size); err != nil || size < 1 {
+			ec2ErrorXML(w, "InvalidParameterValue", "Size must be a positive integer", http.StatusBadRequest)
+			return
+		}
+	}
+	snapshotID := r.FormValue("SnapshotId")
+	var data []byte
+	var snapshotHostPath string
+	if snapshotID != "" {
+		snap, ok := ec2Snapshots.Get(snapshotID)
+		if !ok {
+			ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", snapshotID), http.StatusBadRequest)
+			return
+		}
+		if snap.State != "completed" {
+			ec2ErrorXML(w, "IncorrectState", fmt.Sprintf("The snapshot %q is not completed", snapshotID), http.StatusBadRequest)
+			return
+		}
+		if size < snap.VolumeSize {
+			size = snap.VolumeSize
+		}
+		data = append([]byte(nil), snap.VolumeData...)
+		snapshotHostPath = snap.HostPath
+	}
+	volType := r.FormValue("VolumeType")
+	if volType == "" {
+		volType = "gp3"
+	}
+	vol := EC2Volume{
+		VolumeId:         ec2ID("vol"),
+		Size:             size,
+		SnapshotId:       snapshotID,
+		AvailabilityZone: az,
+		State:            "available",
+		CreateTime:       time.Now().UTC().Format(time.RFC3339),
+		VolumeType:       volType,
+		Encrypted:        r.FormValue("Encrypted") == "true",
+		Tags:             parseTags(r),
+		Data:             data,
+	}
+	if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not create volume data path: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if snapshotHostPath != "" {
+		if err := ebsCopyDir(vol.HostPath, snapshotHostPath); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not restore snapshot data: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+	ec2Volumes.Put(vol.VolumeId, vol)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateVolumeResponse %s><requestId>%s</requestId>%s</CreateVolumeResponse>`,
+		ec2Xmlns(), generateUUID(), ec2VolumeFieldsXML(vol))
+}
+
+func handleAttachVolume(w http.ResponseWriter, r *http.Request) {
+	volID := r.FormValue("VolumeId")
+	instanceID := r.FormValue("InstanceId")
+	device := r.FormValue("Device")
+	if device == "" {
+		device = "/dev/sdf"
+	}
+	vol, ok := ec2Volumes.Get(volID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
+		return
+	}
+	if _, ok := ec2Instances.Get(instanceID); !ok {
+		ec2ErrorXML(w, "InvalidInstanceID.NotFound", fmt.Sprintf("The instance ID %q does not exist", instanceID), http.StatusBadRequest)
+		return
+	}
+	if len(vol.Attachments) > 0 {
+		ec2ErrorXML(w, "IncorrectState", "Volume is already attached", http.StatusBadRequest)
+		return
+	}
+	att := EC2VolumeAttachment{
+		VolumeId:   volID,
+		InstanceId: instanceID,
+		Device:     device,
+		State:      "attached",
+		AttachTime: time.Now().UTC().Format(time.RFC3339),
+	}
+	vol.State = "in-use"
+	vol.Attachments = []EC2VolumeAttachment{att}
+	ec2Volumes.Put(volID, vol)
+	ec2AttachmentResponse(w, "AttachVolume", att)
+}
+
+func handleDetachVolume(w http.ResponseWriter, r *http.Request) {
+	volID := r.FormValue("VolumeId")
+	vol, ok := ec2Volumes.Get(volID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
+		return
+	}
+	if len(vol.Attachments) == 0 {
+		ec2ErrorXML(w, "IncorrectState", "Volume is not attached", http.StatusBadRequest)
+		return
+	}
+	att := vol.Attachments[0]
+	att.State = "detached"
+	vol.Attachments = nil
+	vol.State = "available"
+	ec2Volumes.Put(volID, vol)
+	ec2AttachmentResponse(w, "DetachVolume", att)
+}
+
+func ec2AttachmentResponse(w http.ResponseWriter, action string, att EC2VolumeAttachment) {
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<%sResponse %s><requestId>%s</requestId><volumeId>%s</volumeId><instanceId>%s</instanceId><device>%s</device><status>%s</status><attachTime>%s</attachTime></%sResponse>`,
+		action, ec2Xmlns(), generateUUID(), att.VolumeId, att.InstanceId, att.Device, att.State, att.AttachTime, action)
+}
+
+func handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
+	volID := r.FormValue("VolumeId")
+	vol, ok := ec2Volumes.Get(volID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
+		return
+	}
+	if len(vol.Attachments) > 0 {
+		ec2ErrorXML(w, "VolumeInUse", "Volume is in-use", http.StatusBadRequest)
+		return
+	}
+	_ = os.RemoveAll(vol.HostPath)
+	ec2Volumes.Delete(volID)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DeleteVolumeResponse %s><requestId>%s</requestId><return>true</return></DeleteVolumeResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
+	volID := r.FormValue("VolumeId")
+	vol, ok := ec2Volumes.Get(volID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
+		return
+	}
+	if v := r.FormValue("Size"); v != "" {
+		var size int
+		if _, err := fmt.Sscanf(v, "%d", &size); err != nil || size < vol.Size {
+			ec2ErrorXML(w, "InvalidParameterValue", "Size must be an integer greater than or equal to the current volume size", http.StatusBadRequest)
+			return
+		}
+		vol.Size = size
+	}
+	if v := r.FormValue("VolumeType"); v != "" {
+		vol.VolumeType = v
+	}
+	ec2Volumes.Put(volID, vol)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyVolumeResponse %s><requestId>%s</requestId><volumeModification><volumeId>%s</volumeId><modificationState>completed</modificationState><targetSize>%d</targetSize><targetVolumeType>%s</targetVolumeType><originalSize>%d</originalSize><originalVolumeType>%s</originalVolumeType><progress>100</progress><startTime>%s</startTime></volumeModification></ModifyVolumeResponse>`,
+		ec2Xmlns(), generateUUID(), vol.VolumeId, vol.Size, vol.VolumeType, vol.Size, vol.VolumeType, time.Now().UTC().Format(time.RFC3339))
+}
+
+func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	volID := r.FormValue("VolumeId")
+	vol, ok := ec2Volumes.Get(volID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
+		return
+	}
+	snap := EC2Snapshot{
+		SnapshotId:  ec2ID("snap"),
+		VolumeId:    volID,
+		VolumeSize:  vol.Size,
+		State:       "pending",
+		StartTime:   time.Now().UTC().Format(time.RFC3339),
+		Progress:    "0%",
+		Description: r.FormValue("Description"),
+		OwnerId:     ec2Owner(),
+		Tags:        parseTags(r),
+		VolumeData:  append([]byte(nil), vol.Data...),
+	}
+	snap.HostPath = ebsSnapshotHostDirPath(snap.SnapshotId)
+	if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not access volume data path: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := ebsCopyDir(snap.HostPath, vol.HostPath); err != nil {
+		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not snapshot volume data: %v", err), http.StatusInternalServerError)
+		return
+	}
+	ec2Volumes.Put(vol.VolumeId, vol)
+	ec2Snapshots.Put(snap.SnapshotId, snap)
+	go ec2TransitionSnapshotToCompleted(snap.SnapshotId)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateSnapshotResponse %s><requestId>%s</requestId>%s</CreateSnapshotResponse>`,
+		ec2Xmlns(), generateUUID(), ec2SnapshotFieldsXML(snap))
+}
+
+func ec2TransitionSnapshotToCompleted(snapshotID string) {
+	time.Sleep(100 * time.Millisecond)
+	ec2Snapshots.Update(snapshotID, func(snap *EC2Snapshot) {
+		if snap.State == "pending" {
+			snap.State = "completed"
+			snap.Progress = "100%"
+		}
+	})
+}
+
+func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
+	ids := ec2ParamList(r, "SnapshotId")
+	snapshots := make([]EC2Snapshot, 0)
+	if len(ids) > 0 {
+		for _, id := range ids {
+			snap, ok := ec2Snapshots.Get(id)
+			if !ok {
+				ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", id), http.StatusBadRequest)
+				return
+			}
+			snapshots = append(snapshots, snap)
+		}
+	} else {
+		snapshots = ec2Snapshots.List()
+	}
+	var items strings.Builder
+	for _, snap := range snapshots {
+		items.WriteString(ec2SnapshotXML(snap))
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeSnapshotsResponse %s><requestId>%s</requestId><snapshotSet>%s</snapshotSet></DescribeSnapshotsResponse>`,
+		ec2Xmlns(), generateUUID(), items.String())
+}
+
+func ec2SnapshotXML(snap EC2Snapshot) string {
+	return "<item>" + ec2SnapshotFieldsXML(snap) + "</item>"
+}
+
+func ec2SnapshotFieldsXML(snap EC2Snapshot) string {
+	return fmt.Sprintf(`<snapshotId>%s</snapshotId><volumeId>%s</volumeId><status>%s</status><startTime>%s</startTime><progress>%s</progress><ownerId>%s</ownerId><volumeSize>%d</volumeSize><description>%s</description>%s`,
+		snap.SnapshotId, snap.VolumeId, snap.State, snap.StartTime, snap.Progress, snap.OwnerId, snap.VolumeSize, xmlEscape(snap.Description), writeTagSetXML(snap.Tags))
+}
+
+func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	snapID := r.FormValue("SnapshotId")
+	if !ec2Snapshots.Delete(snapID) {
+		ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", snapID), http.StatusBadRequest)
+		return
+	}
+	_ = os.RemoveAll(ebsSnapshotHostDirPath(snapID))
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DeleteSnapshotResponse %s><requestId>%s</requestId><return>true</return></DeleteSnapshotResponse>`, ec2Xmlns(), generateUUID())
 }
 
 func parseIndexedTags(r *http.Request, prefix string) []EC2Tag {

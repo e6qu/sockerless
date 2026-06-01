@@ -3,6 +3,7 @@ package aws_cli_test
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEC2InstanceLifecycleCLI(t *testing.T) {
@@ -123,4 +124,96 @@ func TestEC2NatGatewayCLI(t *testing.T) {
 
 	runCLI(t, awsCLI("ec2", "delete-nat-gateway", "--nat-gateway-id", natID))
 	runCLI(t, awsCLI("ec2", "release-address", "--allocation-id", allocationID))
+}
+
+func TestEC2EBSVolumeSnapshotCLI(t *testing.T) {
+	out := runCLI(t, awsCLI("ec2", "create-vpc",
+		"--cidr-block", "10.81.0.0/16",
+		"--query", "Vpc.VpcId",
+		"--output", "text"))
+	vpcID := strings.TrimSpace(out)
+
+	out = runCLI(t, awsCLI("ec2", "create-subnet",
+		"--vpc-id", vpcID,
+		"--cidr-block", "10.81.1.0/24",
+		"--availability-zone", "us-east-1a",
+		"--query", "Subnet.SubnetId",
+		"--output", "text"))
+	subnetID := strings.TrimSpace(out)
+
+	out = runCLI(t, awsCLI("ec2", "run-instances",
+		"--image-id", "ami-cli-ebs",
+		"--instance-type", "t3.micro",
+		"--subnet-id", subnetID,
+		"--query", "Instances[0].InstanceId",
+		"--output", "text"))
+	instanceID := strings.TrimSpace(out)
+
+	out = runCLI(t, awsCLI("ec2", "create-volume",
+		"--availability-zone", "us-east-1a",
+		"--size", "1",
+		"--volume-type", "gp3",
+		"--query", "VolumeId",
+		"--output", "text"))
+	volumeID := strings.TrimSpace(out)
+	if volumeID == "" || !strings.HasPrefix(volumeID, "vol-") {
+		t.Fatalf("expected EBS volume id, got %q", volumeID)
+	}
+
+	runCLI(t, awsCLI("ec2", "attach-volume",
+		"--volume-id", volumeID,
+		"--instance-id", instanceID,
+		"--device", "/dev/sdf"))
+
+	out = runCLI(t, awsCLI("ec2", "describe-volumes",
+		"--volume-ids", volumeID,
+		"--query", "Volumes[0].Attachments[0].InstanceId",
+		"--output", "text"))
+	if strings.TrimSpace(out) != instanceID {
+		t.Fatalf("expected EBS attachment to %s, got %q", instanceID, out)
+	}
+
+	out = runCLI(t, awsCLI("ec2", "create-snapshot",
+		"--volume-id", volumeID,
+		"--description", "cli snapshot",
+		"--query", "SnapshotId",
+		"--output", "text"))
+	snapshotID := strings.TrimSpace(out)
+	if snapshotID == "" || !strings.HasPrefix(snapshotID, "snap-") {
+		t.Fatalf("expected EBS snapshot id, got %q", snapshotID)
+	}
+	waitCLISnapshotStatus(t, snapshotID, "completed")
+
+	out = runCLI(t, awsCLI("ec2", "create-volume",
+		"--availability-zone", "us-east-1a",
+		"--snapshot-id", snapshotID,
+		"--volume-type", "gp3",
+		"--query", "VolumeId",
+		"--output", "text"))
+	restoredVolumeID := strings.TrimSpace(out)
+	if restoredVolumeID == "" || !strings.HasPrefix(restoredVolumeID, "vol-") {
+		t.Fatalf("expected restored EBS volume id, got %q", restoredVolumeID)
+	}
+
+	runCLI(t, awsCLI("ec2", "detach-volume", "--volume-id", volumeID))
+	runCLI(t, awsCLI("ec2", "delete-volume", "--volume-id", volumeID))
+	runCLI(t, awsCLI("ec2", "delete-volume", "--volume-id", restoredVolumeID))
+	runCLI(t, awsCLI("ec2", "delete-snapshot", "--snapshot-id", snapshotID))
+	runCLI(t, awsCLI("ec2", "terminate-instances", "--instance-ids", instanceID))
+}
+
+func waitCLISnapshotStatus(t *testing.T, snapshotID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		out := runCLI(t, awsCLI("ec2", "describe-snapshots",
+			"--snapshot-ids", snapshotID,
+			"--query", "Snapshots[0].State",
+			"--output", "text"))
+		if strings.TrimSpace(out) == want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("snapshot %s did not reach %s", snapshotID, want)
 }

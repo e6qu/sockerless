@@ -269,6 +269,9 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	case q.Has("uploads"):
 		handleS3ListMultipartUploads(w, r)
 		return
+	case q.Has("versions"):
+		handleS3ListObjectVersions(w, r)
+		return
 	case q.Has("versioning"):
 		emitStoredOrEmptyXML(w, bucket, "versioning", "VersioningConfiguration")
 		return

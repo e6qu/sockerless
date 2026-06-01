@@ -301,7 +301,7 @@ func handlePSPublish(w http.ResponseWriter, r *http.Request, project, topic stri
 		return
 	}
 	var msgIds []string
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := nowTimestamp()
 	for _, m := range req.Messages {
 		msgID := generateUUIDLocal()
 		m.MessageId = msgID

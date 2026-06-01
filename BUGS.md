@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1271 filed - 1271 fixed - 3 open - 2 false positives.**
+**1276 filed - 1276 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,7 +16,15 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1270 and BUG-1271:
+This phase closed BUG-1272 through BUG-1276:
+
+- BUG-1272 / issue #310: Eventarc, Firestore, and Pub/Sub still emitted some protobuf `Timestamp` fields with `time.RFC3339Nano`, producing non-canonical fractional-second widths. Those call sites now use the shared canonical timestamp formatter and have SDK regression coverage.
+- BUG-1273 / issue #343: AWS CloudTrail was missing. The AWS simulator now implements trail CRUD, logging status, event selectors/tags, `LookupEvents`, records simulator API calls, and delivers gzipped CloudTrail logs into S3 with SDK, CLI, and Terraform coverage.
+- BUG-1274 / issue #346: AWS Auto Scaling Groups were missing. The AWS simulator now implements launch configurations, ASG lifecycle, desired-capacity updates, scaling activities, tags, and ASG-driven EC2 instance materialization with SDK, CLI, and Terraform coverage.
+- BUG-1275 / issue #347: EBS was read-only metadata and ECS managed EBS could not prove snapshot data round trips. The AWS simulator now implements EBS volume/snapshot lifecycle, pending-to-completed snapshot state, restore from snapshot, and ECS managed EBS task mounts that write bytes, snapshot them, restore them, and read them back in a later task through real SDK and CLI flows.
+- BUG-1276: Terraform cleanup could not enumerate CloudTrail-delivered objects through S3 version listing. S3 now implements `ListObjectVersions` with real object entries so provider `force_destroy` can clean up delivered logs.
+
+Previous phase closed BUG-1270 and BUG-1271:
 
 - BUG-1270: Top-level `make test` failed on UI-bearing Go apps and backend integration packages. The shared Go app `test` target now uses `-tags noui` when a UI package is configured, backend integration tests are build-tagged with `integration`, and integration CI/Make targets opt into `noui integration` explicitly.
 - BUG-1271: Top-level fanout targets failed on leaf packages without the expected target shape. UI packages without a `test` script now report that explicitly instead of invoking `/bin/test`, and Go library Makefiles provide a `build-noui` compile-check alias for the aggregate no-UI build.
