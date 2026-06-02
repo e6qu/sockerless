@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1298 filed - 1298 fixed - 3 open - 2 false positives.**
+**1299 filed - 1298 fixed - 4 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -13,6 +13,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332, #333, and #338 track the remaining real-execution program after #334/#335 were fixed: Firecracker-backed VM execution and umbrella follow-through across the real-execution substrate. |
+| 1299 | P1 | simulator VM metadata | missing guest metadata plane | Firecracker-backed VM lifecycle now boots real AWS EC2, GCP Compute Engine, and Azure VM guests, but guest-internal metadata service reachability for 169.254.169.254 / provider metadata hostnames still needs a real network-namespace data-plane implementation before #333 can be fully closed. |
 
 ## Recently Closed
 

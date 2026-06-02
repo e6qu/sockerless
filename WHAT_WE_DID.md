@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - Firecracker-Backed VM Lifecycle
+
+Issues #332 and #333 were advanced. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths now use real Firecracker guests instead of metadata-only running/stopped state.
+
+The shared `simulators/realexec` module now supports TAP NIC attachment to cloud subnet bridges and a Firecracker launcher. The launcher uses the pinned official Firecracker CI kernel/rootfs assets, prepares a per-VM Ubuntu ext4 rootfs with the provider-private IPv4 address and gateway, starts Firecracker inside the cloud network namespace, configures the Firecracker API over its Unix socket, and waits for real guest packet reachability before the simulator reports the VM as running.
+
+AWS EC2 `RunInstances` still returns public `pending` state, but the transition to `running` occurs only after the Firecracker guest boots on the instance private IP. `StopInstances`, `StartInstances`, and `TerminateInstances` stop, restart, or delete the real guest/TAP lifecycle, and stale persisted `running` state is reconciled against the live guest process. GCP Compute Engine insert/start/stop/delete and Azure VM PUT/start/powerOff/restart/deallocate/delete use the same real guest lifecycle while preserving provider status names. GCP firewall rules and Azure NSGs apply to Firecracker TAP NICs as well as the existing namespace NIC paths.
+
+Simulator CI SDK/CLI/Terraform jobs install Firecracker plus the required rootfs/network tooling because VM public APIs now require the real substrate. Local package compile checks passed for `simulators/realexec`, `simulators/aws`, `simulators/gcp`, and `simulators/azure`. Full AWS SDK/CLI harnesses could not run in the local sandbox because their `TestMain` Docker builds need Docker socket access.
+
+BUG-1299 / issue #371 remains open: guest-visible metadata service reachability from inside Firecracker VMs still needs a real provider-shaped metadata data plane before issue #333 can be fully closed.
+
 ## 2026-06-02 - Simulator Image Context And API-Only Runtime Mode
 
 Issues #366 and #367 were fixed.

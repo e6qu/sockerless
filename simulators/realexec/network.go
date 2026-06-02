@@ -247,6 +247,22 @@ type NamespaceNIC struct {
 	network       *Network
 }
 
+type TapNICSpec struct {
+	TapName   string
+	PrivateIP net.IP
+	MAC       string
+}
+
+type TapNIC struct {
+	TapName    string
+	PrivateIP  net.IP
+	Gateway    net.IP
+	PrefixBits int
+	cleanup    *CleanupStack
+	subnet     *Subnet
+	network    *Network
+}
+
 type PacketRule struct {
 	Protocol   string
 	SourceCIDR string
@@ -463,7 +479,68 @@ func (s *Subnet) AttachNamespaceNIC(ctx context.Context, spec NamespaceNICSpec) 
 	return nic, nil
 }
 
+func (s *Subnet) AttachTapNIC(ctx context.Context, spec TapNICSpec) (*TapNIC, error) {
+	if err := validateLinuxName("tap", spec.TapName); err != nil {
+		return nil, err
+	}
+	if spec.MAC != "" {
+		if _, err := net.ParseMAC(spec.MAC); err != nil {
+			return nil, fmt.Errorf("invalid MAC %q: %w", spec.MAC, err)
+		}
+	}
+
+	ip, err := s.ipam.Reserve(spec.TapName, spec.PrivateIP)
+	if err != nil {
+		return nil, err
+	}
+	rollback := &CleanupStack{}
+	rollback.Add(func(context.Context) error {
+		s.ipam.Release(ip)
+		return nil
+	})
+
+	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "tuntap", "add", "dev", spec.TapName, "mode", "tap"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	rollback.Add(func(cleanupCtx context.Context) error {
+		return s.network.runner.Run(cleanupCtx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "del", spec.TapName)
+	})
+	if spec.MAC != "" {
+		if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", "dev", spec.TapName, "address", spec.MAC); err != nil {
+			_ = rollback.Close(context.Background())
+			return nil, err
+		}
+	}
+	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", spec.TapName, "master", s.BridgeName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", "dev", spec.TapName, "up"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
+	nic := &TapNIC{
+		TapName:    spec.TapName,
+		PrivateIP:  append(net.IP(nil), ip...),
+		Gateway:    append(net.IP(nil), s.Gateway...),
+		PrefixBits: s.ipam.PrefixBits(),
+		cleanup:    rollback,
+		subnet:     s,
+		network:    s.network,
+	}
+	return nic, nil
+}
+
 func (n *NamespaceNIC) Close(ctx context.Context) error {
+	if n.cleanup == nil {
+		return nil
+	}
+	return n.cleanup.Close(ctx)
+}
+
+func (n *TapNIC) Close(ctx context.Context) error {
 	if n.cleanup == nil {
 		return nil
 	}
@@ -474,23 +551,38 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 	if n.network == nil {
 		return fmt.Errorf("NIC %s is not attached to a network", n.HostVethName)
 	}
-	table := deriveLinuxName("fw"+n.HostVethName, "fw")
-	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "table", "bridge", table); err != nil {
+	return n.configureIngressFilter(ctx, n.HostVethName, rules)
+}
+
+func (n *TapNIC) ConfigureIngressFilter(ctx context.Context, rules []PacketRule) error {
+	if n.network == nil {
+		return fmt.Errorf("tap NIC %s is not attached to a network", n.TapName)
+	}
+	return configureBridgeIngressFilter(ctx, n.network, n.cleanup, n.TapName, rules)
+}
+
+func (n *NamespaceNIC) configureIngressFilter(ctx context.Context, devName string, rules []PacketRule) error {
+	return configureBridgeIngressFilter(ctx, n.network, n.cleanup, devName, rules)
+}
+
+func configureBridgeIngressFilter(ctx context.Context, network *Network, cleanup *CleanupStack, devName string, rules []PacketRule) error {
+	table := deriveLinuxName("fw"+devName, "fw")
+	_ = network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "delete", "table", "bridge", table)
+	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "table", "bridge", table); err != nil {
 		return err
 	}
-	n.cleanup.Add(func(cleanupCtx context.Context) error {
-		_ = n.network.runner.Run(cleanupCtx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		_ = network.runner.Run(cleanupCtx, "ip", "netns", "exec", network.NamespaceName, "nft", "delete", "table", "bridge", table)
 		return nil
 	})
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "chain", "bridge", table, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"); err != nil {
+	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "chain", "bridge", table, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "policy", "accept", ";", "}"); err != nil {
 		return err
 	}
-	if err := n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
+	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "ct", "state", "established,related", "accept"); err != nil {
 		return err
 	}
 	for _, rule := range rules {
-		args := []string{"ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", n.HostVethName}
+		args := []string{"ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", devName}
 		if rule.SourceCIDR != "" {
 			args = append(args, "ip", "saddr", rule.SourceCIDR)
 		}
@@ -528,11 +620,11 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 			return fmt.Errorf("unsupported packet filter action %q", rule.Action)
 		}
 		args = append(args, action)
-		if err := n.network.runner.Run(ctx, args[0], args[1:]...); err != nil {
+		if err := network.runner.Run(ctx, args[0], args[1:]...); err != nil {
 			return err
 		}
 	}
-	return n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", n.HostVethName, "drop")
+	return network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", devName, "drop")
 }
 
 func (n *NamespaceNIC) ClearIngressFilter(ctx context.Context) error {
@@ -542,6 +634,22 @@ func (n *NamespaceNIC) ClearIngressFilter(ctx context.Context) error {
 	table := deriveLinuxName("fw"+n.HostVethName, "fw")
 	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
 	return nil
+}
+
+func (n *TapNIC) ClearIngressFilter(ctx context.Context) error {
+	if n.network == nil {
+		return fmt.Errorf("tap NIC %s is not attached to a network", n.TapName)
+	}
+	table := deriveLinuxName("fw"+n.TapName, "fw")
+	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
+	return nil
+}
+
+func (n *TapNIC) NetworkNamespace() string {
+	if n.network == nil {
+		return ""
+	}
+	return n.network.NamespaceName
 }
 
 func validateLinuxName(label, name string) error {

@@ -40,17 +40,29 @@ func TestEC2InstanceLifecycleCLI(t *testing.T) {
 		t.Fatalf("expected EC2 instance id, got %q", instanceID)
 	}
 
-	out = runCLI(t, awsCLI("ec2", "describe-instances",
-		"--instance-ids", instanceID,
-		"--query", "Reservations[0].Instances[0].State.Name",
-		"--output", "text"))
-	if strings.TrimSpace(out) != "running" {
-		t.Fatalf("expected running instance, got %q", out)
-	}
+	waitForCLIInstanceState(t, instanceID, "running")
 
 	runCLI(t, awsCLI("ec2", "stop-instances", "--instance-ids", instanceID))
 	runCLI(t, awsCLI("ec2", "start-instances", "--instance-ids", instanceID))
 	runCLI(t, awsCLI("ec2", "terminate-instances", "--instance-ids", instanceID))
+}
+
+func waitForCLIInstanceState(t *testing.T, instanceID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		out := runCLI(t, awsCLI("ec2", "describe-instances",
+			"--instance-ids", instanceID,
+			"--query", "Reservations[0].Instances[0].State.Name",
+			"--output", "text"))
+		last = strings.TrimSpace(out)
+		if last == want {
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+	t.Fatalf("expected instance %s state %s, got %s", instanceID, want, last)
 }
 
 func TestEC2NatGatewayCLI(t *testing.T) {

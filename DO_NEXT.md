@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the simulator image-context/runtime-mode branch was cut.
+- Branch: `main`, synced with `origin/main` before the Firecracker VM lifecycle branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: #332, #333, and #338. Issues #366 and #367 were fixed by this PR. Issues #334, #335, #336, #356, #359, #360, #362, and #365 were fixed and closed. Number #337 is a merged PR, not an open issue. Versioned release/image publishing remains deferred while the project is early.
-- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: simulator image-context and API-only runtime documentation issues #366 and #367. Simulator release-image builds now use the shared `simulators/` context everywhere, so each per-cloud module can resolve its `../realexec` replace. `simulators/.dockerignore` keeps release contexts source-focused, and `SIM_RUNTIME=process` is documented and surfaced in fatal messages as an explicit API-only mode for non-execution runs.
+- Open GitHub issues at last check after this PR merged: #332, #333, and #338. This PR advanced #332/#333 by moving AWS EC2, GCP Compute Engine, and Azure VM lifecycle onto real Firecracker guests. #333 remains open until guest metadata reachability is implemented/verified. Number #337 is a merged PR, not an open issue. Versioned release/image publishing remains deferred while the project is early.
+- Open BUG trackers: BUG-1075, BUG-1104, BUG-1267, and BUG-1299 / issue #371.
+- Last completed work: Firecracker-backed public VM lifecycle. The shared realexec substrate has TAP NICs and a Firecracker launcher; AWS/GCP/Azure VM create/start paths boot real guests on provider-private subnet IPs, public running state waits for real packet reachability, and stop/restart/delete actions operate on the guest process/TAP lifecycle.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issues #332, #333, and #338, unless a higher-priority issue appears. Do not pick up versioned release/image publishing yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
+Continue the real-execution compute/networking track next: BUG-1299 / issue #371 guest metadata, then BUG-1267 / issue #338 umbrella follow-through, unless a higher-priority issue appears. Do not pick up versioned release/image publishing yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
 
-Next implementation should focus on Firecracker-backed public VM execution with full fixes and regression tests for every touched public path. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only execution, simulator-only public API knobs, or fallback execution paths.
+Next implementation should focus on guest-visible metadata for the Firecracker-backed VM paths. The implementation must expose the provider metadata service from inside the guest using the real provider address/hostname behavior, route through the simulator's cloud slice without simulator-specific public API knobs, and fail loudly when required host/network capabilities are missing.
 
 ## Provider Facts To Preserve
 
@@ -124,15 +124,15 @@ Next implementation should focus on Firecracker-backed public VM execution with 
 
 ## Remaining Stages
 
-1. Attach one public VM family to Firecracker using the real network/IPAM/NIC substrate.
-2. Expand that VM execution pattern across the remaining cloud VM families without creating product-specific emulators.
-3. Re-audit #338 / BUG-1104 coverage claims after each VM family lands.
+1. Implement guest-visible metadata reachability for AWS EC2 IMDS, GCP metadata server, and Azure IMDS on the Firecracker guest network.
+2. Add/extend regression coverage that proves metadata is reachable from the guest without mocks or host-only probes.
+3. Re-audit #338 / BUG-1104 coverage claims after the metadata plane lands.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332, #333, and #338 track the remaining compute/networking real-execution program: Firecracker-backed public VM instances and umbrella follow-through. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, GCP/Azure #334/#335 packet paths were completed, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
+- BUG-1267: issues #332, #333, and #338 track the compute/networking real-execution program. AWS/GCP/Azure public VM lifecycle now boots Firecracker guests, and BUG-1299 / issue #371 tracks the remaining guest metadata plane before #333 can be fully closed. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS/GCP/Azure #334/#335 packet paths were completed, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
 
 ## Last CI/Architecture Cleanup
 

@@ -10,9 +10,9 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: simulator image-context and API-only runtime documentation for issues #366 and #367. Runtime image builds now use the shared `simulators/` Docker context in publish-container-images, compose, and per-cloud `docker-build` targets, with each Dockerfile building from `/src/<cloud>` so `../realexec` is present. `simulators/.dockerignore` excludes local test/build/cache artifacts from release-image contexts. `SIM_RUNTIME=process` is documented and surfaced in fatal messages as an explicit API-only mode for non-execution simulator runs; Docker/Podman remains required for workload execution.
+Last completed phase: Firecracker-backed public VM lifecycle for issues #332/#333. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths now boot real Firecracker guests attached to the provider subnet TAP, transition public running state only after guest packet reachability, and power off/restart/delete the real guest on public lifecycle actions. Simulator SDK/CLI/Terraform CI jobs install Firecracker and the required rootfs tooling because VM APIs now require the real substrate.
 
-Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Versioned release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
+Next planned phase: continue BUG-1267 / BUG-1299 / issue #371 with guest metadata reachability and #338 umbrella follow-through, unless a higher-priority issue appears. Versioned release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
 
 ## Guiding Principles
 
@@ -71,7 +71,8 @@ Implemented:
 
 Remaining staged work:
 
-1. **BUG-1267 / issues #332, #333, and #338.** Attach public VM execution to Firecracker guests and keep auditing the real-execution substrate for cross-cloud parity gaps.
+1. **BUG-1299 / issue #371, related to issue #333.** Implement/verify the guest-visible metadata plane for Firecracker-backed AWS EC2, GCP Compute Engine, and Azure VM guests at the provider metadata address/hostnames without leaking simulator plumbing.
+2. **BUG-1267 / issues #332, #338.** Continue umbrella follow-through and re-audit the real-execution substrate for cross-cloud parity gaps.
 
 ## Real-Execution Substrate
 
@@ -90,7 +91,7 @@ The BUG-1267 stages established the architecture, host-model contract, capabilit
 - AWS security groups and ELBv2 were the first #335/#334 public paths to move beyond metadata: EC2 ENI ingress rules compile to nftables on the real veth path, ELBv2 target health uses real TCP/HTTP probes, and ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without the Query Protocol control plane binding listener ports.
 - Azure Event Grid topic publish also follows the control-plane/data-plane separation rule: ARM responses advertise a shared host-dispatched topic endpoint instead of leaking per-topic localhost listener plumbing, and publish requests route by Event Grid Host header through the Azure simulator.
 
-Issues #332, #333, and #338 remained open for Firecracker-backed VM execution and umbrella follow-through. Issues #334 and #335 were fixed for AWS first, then for GCP/Azure in the later packet-path phase. Number #337 is a merged PR, not an open issue.
+Firecracker-backed public VM lifecycle landed for AWS EC2, GCP Compute Engine, and Azure VMs. The shared substrate added TAP NIC attachment to cloud subnet bridges and a Firecracker launcher that prepares provider-private-IP guest root filesystems, boots the guest inside the cloud network namespace, and gates public running state on real packet reachability. AWS EC2 `RunInstances` returns `pending` and transitions only after boot; stop/start/terminate operate on the guest. GCP and Azure VM lifecycle handlers use the same substrate, and GCP firewall/Azure NSG filters apply to TAP NICs. BUG-1299 / issue #371 remains open for guest-visible metadata services before #333 can be fully closed. Number #337 is a merged PR, not an open issue.
 
 ## AWS Fidelity Sweep
 
@@ -148,7 +149,7 @@ The GCP simulator fidelity sweep fixed issue #304 and issues #309-#311 and #321-
 
 - BUG-1075: live-cloud validation. Deferred by user direction. Do not mark live cells green without authenticated real-cloud runs.
 - BUG-1104: audit cadence. Keep open while simulator work continues; every simulator phase should re-check stale SDK/CLI/Terraform coverage claims.
-- BUG-1267: compute/networking real-execution backlog. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate. AWS security-group ingress and ELBv2 host-dispatched health/proxy paths were the first #335/#334 migrations, GCP/Azure #334/#335 packet paths were completed, and Azure Event Grid no longer leaks simulator-local publish listeners from ARM. Issues #332, #333, and #338 remain open for Firecracker-backed VM execution and umbrella follow-through. Number #337 is a merged PR, not an open issue.
+- BUG-1267: compute/networking real-execution backlog. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate. AWS/GCP/Azure firewall and load-balancer packet paths were migrated, Azure Event Grid no longer leaks simulator-local publish listeners from ARM, and AWS/GCP/Azure public VM lifecycle now boots Firecracker guests. BUG-1299 / issue #371 remains open for the guest metadata plane before #333 can be fully closed. Number #337 is a merged PR, not an open issue.
 
 ## Current Capability Summary
 

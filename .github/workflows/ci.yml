@@ -243,8 +243,11 @@ jobs:
       - name: Install Azure CLI
         if: matrix.cloud == 'azure'
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-      - name: Install real-networking tools
-        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
+      - name: Install real-execution tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          bash scripts/install-firecracker.sh
       - name: Run SDK tests
         run: cd simulators/${{ matrix.cloud }} && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
@@ -266,8 +269,11 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - name: Install real-networking tools
-        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
+      - name: Install real-execution tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          bash scripts/install-firecracker.sh
       - name: Run AWS SDK tests
         run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
@@ -294,8 +300,11 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
-      - name: Install real-networking tools
-        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
+      - name: Install real-execution tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          bash scripts/install-firecracker.sh
       - name: Run AWS CLI tests
         run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=300s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
         timeout-minutes: 5
@@ -326,8 +335,11 @@ jobs:
       - uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_wrapper: false
-      - name: Install real-networking tools
-        run: sudo apt-get update && sudo apt-get install -y iproute2 iputils-ping nftables procps
+      - name: Install real-execution tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          bash scripts/install-firecracker.sh
       - name: Install Caddy
         run: |
           sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl

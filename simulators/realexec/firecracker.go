@@ -1,0 +1,528 @@
+package realexec
+
+import (
+	"bytes"
+	"context"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+const defaultFirecrackerVersion = "v1.15.1"
+
+var firecrackerAssetsMu sync.Mutex
+
+type FirecrackerVMConfig struct {
+	ID         string
+	Tap        *TapNIC
+	MAC        string
+	VCPUCount  int
+	MemoryMiB  int
+	WorkDir    string
+	BootPeriod time.Duration
+}
+
+type FirecrackerVM struct {
+	ID        string
+	WorkDir   string
+	APISocket string
+	PrivateIP net.IP
+
+	cmd     *exec.Cmd
+	cleanup *CleanupStack
+}
+
+type firecrackerAssets struct {
+	KernelPath string
+	RootFSDir  string
+}
+
+type s3ListBucketResult struct {
+	Contents []s3Object `xml:"Contents"`
+}
+
+type s3Object struct {
+	Key string `xml:"Key"`
+}
+
+func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*FirecrackerVM, error) {
+	if cfg.ID == "" {
+		return nil, fmt.Errorf("firecracker VM ID is required")
+	}
+	if cfg.Tap == nil {
+		return nil, fmt.Errorf("firecracker VM %s requires a TAP NIC", cfg.ID)
+	}
+	if cfg.MAC == "" {
+		return nil, fmt.Errorf("firecracker VM %s requires a guest MAC address", cfg.ID)
+	}
+	if err := DetectFirecrackerCapabilities().Require(); err != nil {
+		return nil, err
+	}
+	if cfg.VCPUCount == 0 {
+		cfg.VCPUCount = 1
+	}
+	if cfg.MemoryMiB == 0 {
+		cfg.MemoryMiB = 512
+	}
+	if cfg.BootPeriod == 0 {
+		cfg.BootPeriod = 2 * time.Minute
+	}
+	if cfg.WorkDir == "" {
+		cfg.WorkDir = filepath.Join(os.TempDir(), "sockerless-firecracker", sanitizePathName(cfg.ID))
+	}
+
+	assets, err := ensureFirecrackerAssets(ctx, defaultFirecrackerVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = os.RemoveAll(cfg.WorkDir)
+	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
+		return nil, err
+	}
+	rollback := &CleanupStack{}
+	rollback.Add(func(context.Context) error {
+		return os.RemoveAll(cfg.WorkDir)
+	})
+
+	rootfsDir := filepath.Join(cfg.WorkDir, "rootfs")
+	if err := copyRootFS(ctx, assets.RootFSDir, rootfsDir); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := configureRootFSNetwork(rootfsDir, cfg.Tap.PrivateIP, cfg.Tap.Gateway, cfg.Tap.PrefixBits); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
+	rootfsPath := filepath.Join(cfg.WorkDir, "rootfs.ext4")
+	if err := createExt4RootFS(ctx, rootfsDir, rootfsPath); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	apiSocket := filepath.Join(cfg.WorkDir, "firecracker.socket")
+	_ = os.Remove(apiSocket)
+
+	consoleLog, err := os.Create(filepath.Join(cfg.WorkDir, "firecracker-console.log"))
+	if err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	defer consoleLog.Close()
+	args := []string{"netns", "exec", cfg.Tap.NetworkNamespace(), "firecracker", "--api-sock", apiSocket, "--enable-pci"}
+	cmd := exec.Command("ip", args...)
+	cmd.Stdout = consoleLog
+	cmd.Stderr = consoleLog
+	if err := cmd.Start(); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	rollback.Add(func(context.Context) error {
+		if cmd.Process == nil {
+			return nil
+		}
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		return nil
+	})
+
+	if err := waitForUnixSocket(ctx, apiSocket, cmd, 10*time.Second); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := configureFirecracker(ctx, apiSocket, cfg, assets.KernelPath, rootfsPath); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := waitForGuestPing(ctx, cfg.Tap.NetworkNamespace(), cfg.Tap.PrivateIP, cmd, cfg.BootPeriod); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
+	vm := &FirecrackerVM{
+		ID:        cfg.ID,
+		WorkDir:   cfg.WorkDir,
+		APISocket: apiSocket,
+		PrivateIP: append(net.IP(nil), cfg.Tap.PrivateIP...),
+		cmd:       cmd,
+		cleanup:   rollback,
+	}
+	return vm, nil
+}
+
+func DetectFirecrackerCapabilities() CapabilityReport {
+	return DetectCapabilities("cp", "firecracker", "ip", "nft", "mkfs.ext4", "ping", "unsquashfs")
+}
+
+func (vm *FirecrackerVM) Stop(ctx context.Context) error {
+	if vm == nil || vm.cleanup == nil {
+		return nil
+	}
+	return vm.cleanup.Close(ctx)
+}
+
+func (vm *FirecrackerVM) Alive() bool {
+	if vm == nil || vm.cmd == nil || vm.cmd.Process == nil {
+		return false
+	}
+	return vm.cmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAssets, error) {
+	firecrackerAssetsMu.Lock()
+	defer firecrackerAssetsMu.Unlock()
+
+	arch, err := firecrackerAssetArch()
+	if err != nil {
+		return firecrackerAssets{}, err
+	}
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return firecrackerAssets{}, err
+	}
+	ciVersion := strings.TrimSuffix(version, filepath.Ext(version))
+	dir := filepath.Join(cacheRoot, "sockerless", "firecracker-ci", ciVersion, arch)
+	kernelMarker := filepath.Join(dir, "kernel.path")
+	rootfsMarker := filepath.Join(dir, "rootfs.ready")
+	if kernel, err := os.ReadFile(kernelMarker); err == nil {
+		rootfsDir := filepath.Join(dir, "rootfs")
+		if _, statErr := os.Stat(rootfsMarker); statErr == nil {
+			return firecrackerAssets{KernelPath: strings.TrimSpace(string(kernel)), RootFSDir: rootfsDir}, nil
+		}
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return firecrackerAssets{}, err
+	}
+	kernelKey, rootfsKey, err := findFirecrackerAssetKeys(ctx, ciVersion, arch)
+	if err != nil {
+		return firecrackerAssets{}, err
+	}
+	kernelPath := filepath.Join(dir, filepath.Base(kernelKey))
+	rootfsSquash := filepath.Join(dir, filepath.Base(rootfsKey))
+	if err := downloadFile(ctx, "https://s3.amazonaws.com/spec.ccfc.min/"+kernelKey, kernelPath); err != nil {
+		return firecrackerAssets{}, err
+	}
+	if err := downloadFile(ctx, "https://s3.amazonaws.com/spec.ccfc.min/"+rootfsKey, rootfsSquash); err != nil {
+		return firecrackerAssets{}, err
+	}
+	rootfsDir := filepath.Join(dir, "rootfs")
+	_ = os.RemoveAll(rootfsDir)
+	if err := (Runner{}).Run(ctx, "unsquashfs", "-quiet", "-d", rootfsDir, rootfsSquash); err != nil {
+		return firecrackerAssets{}, err
+	}
+	if err := os.WriteFile(kernelMarker, []byte(kernelPath+"\n"), 0o644); err != nil {
+		return firecrackerAssets{}, err
+	}
+	if err := os.WriteFile(rootfsMarker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		return firecrackerAssets{}, err
+	}
+	return firecrackerAssets{KernelPath: kernelPath, RootFSDir: rootfsDir}, nil
+}
+
+func firecrackerAssetArch() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x86_64", nil
+	case "arm64":
+		return "aarch64", nil
+	default:
+		return "", fmt.Errorf("firecracker CI assets support amd64 and arm64 hosts; got %s", runtime.GOARCH)
+	}
+}
+
+func findFirecrackerAssetKeys(ctx context.Context, ciVersion, arch string) (string, string, error) {
+	url := fmt.Sprintf("https://s3.amazonaws.com/spec.ccfc.min/?prefix=firecracker-ci/%s/%s/&list-type=2", ciVersion, arch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", "", fmt.Errorf("list Firecracker CI assets: HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var listing s3ListBucketResult
+	if err := xml.NewDecoder(resp.Body).Decode(&listing); err != nil {
+		return "", "", err
+	}
+	var kernels, rootfs []string
+	prefix := fmt.Sprintf("firecracker-ci/%s/%s/", ciVersion, arch)
+	for _, obj := range listing.Contents {
+		if strings.HasPrefix(obj.Key, prefix+"vmlinux-") {
+			kernels = append(kernels, obj.Key)
+		}
+		if strings.HasPrefix(obj.Key, prefix+"ubuntu-") && strings.HasSuffix(obj.Key, ".squashfs") {
+			rootfs = append(rootfs, obj.Key)
+		}
+	}
+	sort.Slice(kernels, func(i, j int) bool { return firecrackerAssetKeyLess(kernels[i], kernels[j]) })
+	sort.Slice(rootfs, func(i, j int) bool { return firecrackerAssetKeyLess(rootfs[i], rootfs[j]) })
+	if len(kernels) == 0 {
+		return "", "", fmt.Errorf("no Firecracker CI kernel asset found for %s/%s", ciVersion, arch)
+	}
+	if len(rootfs) == 0 {
+		return "", "", fmt.Errorf("no Firecracker CI Ubuntu rootfs asset found for %s/%s", ciVersion, arch)
+	}
+	return kernels[len(kernels)-1], rootfs[len(rootfs)-1], nil
+}
+
+func firecrackerAssetKeyLess(a, b string) bool {
+	abase := filepath.Base(a)
+	bbase := filepath.Base(b)
+	av := versionParts(abase)
+	bv := versionParts(bbase)
+	for i := 0; i < len(av) || i < len(bv); i++ {
+		var ai, bi int
+		if i < len(av) {
+			ai = av[i]
+		}
+		if i < len(bv) {
+			bi = bv[i]
+		}
+		if ai != bi {
+			return ai < bi
+		}
+	}
+	return abase < bbase
+}
+
+func versionParts(value string) []int {
+	var parts []int
+	var digits strings.Builder
+	flush := func() {
+		if digits.Len() == 0 {
+			return
+		}
+		n, err := strconv.Atoi(digits.String())
+		if err == nil {
+			parts = append(parts, n)
+		}
+		digits.Reset()
+	}
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return parts
+}
+
+func downloadFile(ctx context.Context, url, path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("download %s: HTTP %d: %s", url, resp.StatusCode, string(body))
+	}
+	tmp := path + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func copyRootFS(ctx context.Context, src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	return (Runner{}).Run(ctx, "cp", "-a", filepath.Join(src, "."), dst)
+}
+
+func configureRootFSNetwork(rootfsDir string, ip, gateway net.IP, prefixBits int) error {
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("guest IPv4 address is required")
+	}
+	if gateway == nil || gateway.To4() == nil {
+		return fmt.Errorf("guest IPv4 gateway is required")
+	}
+	systemdDir := filepath.Join(rootfsDir, "etc", "systemd", "network")
+	if err := os.MkdirAll(systemdDir, 0o755); err != nil {
+		return err
+	}
+	if entries, err := os.ReadDir(systemdDir); err == nil {
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".network") {
+				if err := os.Remove(filepath.Join(systemdDir, entry.Name())); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	networkd := fmt.Sprintf(`[Match]
+Name=eth0
+
+[Network]
+Address=%s/%d
+Gateway=%s
+DNS=1.1.1.1
+`, ip, prefixBits, gateway)
+	if err := os.WriteFile(filepath.Join(systemdDir, "10-sockerless-eth0.network"), []byte(networkd), 0o644); err != nil {
+		return err
+	}
+	netplanDir := filepath.Join(rootfsDir, "etc", "netplan")
+	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
+		return err
+	}
+	netplan := fmt.Sprintf(`network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - %s/%d
+      routes:
+        - to: default
+          via: %s
+      nameservers:
+        addresses:
+          - 1.1.1.1
+`, ip, prefixBits, gateway)
+	return os.WriteFile(filepath.Join(netplanDir, "10-sockerless.yaml"), []byte(netplan), 0o600)
+}
+
+func createExt4RootFS(ctx context.Context, rootfsDir, rootfsPath string) error {
+	if err := os.Truncate(rootfsPath, 3*1024*1024*1024); err != nil {
+		return err
+	}
+	return (Runner{}).Run(ctx, "mkfs.ext4", "-q", "-d", rootfsDir, "-F", rootfsPath)
+}
+
+func waitForUnixSocket(ctx context.Context, socket string, cmd *exec.Cmd, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(socket); err == nil {
+			return nil
+		}
+		if cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) != nil {
+			return fmt.Errorf("firecracker exited before API socket was created")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for Firecracker API socket %s", socket)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func configureFirecracker(ctx context.Context, apiSocket string, cfg FirecrackerVMConfig, kernelPath, rootfsPath string) error {
+	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 ip=%s::%s:%s::eth0:off nameserver=1.1.1.1",
+		cfg.Tap.PrivateIP, cfg.Tap.Gateway, prefixNetmask(cfg.Tap.PrefixBits))
+	if runtime.GOARCH == "arm64" {
+		bootArgs = "keep_bootcon " + bootArgs
+	}
+	requests := []struct {
+		path string
+		body string
+	}{
+		{"/logger", fmt.Sprintf(`{"log_path":%q,"level":"Info","show_level":true,"show_log_origin":true}`, filepath.Join(cfg.WorkDir, "firecracker.log"))},
+		{"/machine-config", fmt.Sprintf(`{"vcpu_count":%d,"mem_size_mib":%d}`, cfg.VCPUCount, cfg.MemoryMiB)},
+		{"/boot-source", fmt.Sprintf(`{"kernel_image_path":%q,"boot_args":%q}`, kernelPath, bootArgs)},
+		{"/drives/rootfs", fmt.Sprintf(`{"drive_id":"rootfs","path_on_host":%q,"is_root_device":true,"is_read_only":false}`, rootfsPath)},
+		{"/network-interfaces/net1", fmt.Sprintf(`{"iface_id":"net1","guest_mac":%q,"host_dev_name":%q}`, cfg.MAC, cfg.Tap.TapName)},
+		{"/actions", `{"action_type":"InstanceStart"}`},
+	}
+	for _, req := range requests {
+		if err := firecrackerPut(ctx, apiSocket, req.path, req.body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firecrackerPut(ctx context.Context, socket, path, payload string) error {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socket)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://firecracker"+path, bytes.NewBufferString(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("firecracker API PUT %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("firecracker API PUT %s returned HTTP %d: %s", path, resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func waitForGuestPing(ctx context.Context, namespace string, ip net.IP, cmd *exec.Cmd, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		ping := exec.CommandContext(ctx, "ip", "netns", "exec", namespace, "ping", "-c", "1", "-W", "1", ip.String())
+		if err := ping.Run(); err == nil {
+			return nil
+		}
+		if cmd.Process != nil && cmd.Process.Signal(syscall.Signal(0)) != nil {
+			return fmt.Errorf("firecracker exited before guest %s became reachable", ip)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for Firecracker guest %s reachability", ip)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func prefixNetmask(prefixBits int) net.IP {
+	mask := net.CIDRMask(prefixBits, 32)
+	return net.IPv4(mask[0], mask[1], mask[2], mask[3])
+}
+
+func sanitizePathName(value string) string {
+	replacer := strings.NewReplacer("/", "-", ":", "-", " ", "-", "\t", "-", "\n", "-")
+	return replacer.Replace(value)
+}

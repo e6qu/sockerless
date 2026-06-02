@@ -8,16 +8,22 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for #332, #333, and #338. Versioned releases/image publishing remain deferred while the project is early. |
-| Last merged | Simulator image-context and API-only runtime documentation fixes for issues #366 and #367. |
-| Open GitHub issues | #332, #333, and #338 at last check after #366 and #367 were resolved. Number #337 is a merged PR, not an open issue. |
-| Bugs | 1298 filed - 1298 fixed - 3 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
+| Planned next | Continue BUG-1267 follow-through on guest metadata/data-plane verification for #333/#338. Versioned releases/image publishing remain deferred while the project is early. |
+| Last merged | Firecracker-backed VM lifecycle for AWS EC2, GCP Compute Engine, and Azure VMs. |
+| Open GitHub issues | #332, #333, and #338 at last check. #332/#333 were advanced by real guest lifecycle; #333 remains open until guest metadata reachability is implemented/verified. Number #337 is a merged PR, not an open issue. |
+| Bugs | 1299 filed - 1298 fixed - 4 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution; BUG-1299 / issue #371 guest metadata plane. |
 | Live infra | None up. |
 
 ## Current State
 
-Issues #366 and #367 were fixed. Simulator image builds now use the shared `simulators/` Docker context everywhere the runtime images are built: the publish-container-images workflow, `simulators/docker-compose.yml`, and the per-cloud `docker-build` Make targets. Each Dockerfile copies the shared context and builds from `/src/aws`, `/src/gcp`, or `/src/azure`, so each module's `../realexec` replace target is present. `simulators/.dockerignore` keeps release-image contexts focused on source by excluding test harnesses, generated test binaries, Terraform caches/state, built UI assets, and local simulator binaries. Local Docker builds for all three simulator images passed from the fixed context, and the context shrank from roughly 1.1 GB of local artifacts to roughly 3.5 MB.
+The Firecracker-backed VM lifecycle phase advanced issues #332 and #333. The shared `simulators/realexec` substrate now supports TAP NICs attached to cloud subnet bridges and a Firecracker launcher that downloads the pinned official Firecracker CI kernel/rootfs assets, prepares per-VM Ubuntu ext4 root filesystems with the cloud-private IPv4 address/gateway, starts the real Firecracker process inside the cloud network namespace, configures the Firecracker API over its Unix socket, and waits for real guest packet reachability before public VM state becomes running.
+
+AWS EC2 `RunInstances` now creates the control-plane instance/ENI/volume rows, returns `pending`, and transitions to `running` only after the Firecracker guest boots on the instance private IP. `StopInstances`, `StartInstances`, and `TerminateInstances` stop, restart, or delete the real guest/TAP lifecycle, and `DescribeInstances` reconciles stale persisted `running` state with live guest process state. GCP Compute Engine instance insert/start/stop/delete and Azure VM PUT/start/powerOff/restart/deallocate/delete now follow the same real guest lifecycle while preserving the public provider status names. GCP firewall rules and Azure NSGs apply to Firecracker TAP NICs as well as the existing namespace NIC users. Simulator CI SDK/CLI/Terraform jobs install Firecracker and the rootfs tooling because VM public APIs now require the real substrate.
+
+BUG-1299 / issue #371 remains open because per-instance metadata reachability from inside Firecracker guests still needs a real network-namespace data-plane implementation before #333 can be fully closed.
+
+Issues #366 and #367 were fixed earlier. Simulator image builds now use the shared `simulators/` Docker context everywhere the runtime images are built: the publish-container-images workflow, `simulators/docker-compose.yml`, and the per-cloud `docker-build` Make targets. Each Dockerfile copies the shared context and builds from `/src/aws`, `/src/gcp`, or `/src/azure`, so each module's `../realexec` replace target is present. `simulators/.dockerignore` keeps release-image contexts focused on source by excluding test harnesses, generated test binaries, Terraform caches/state, built UI assets, and local simulator binaries. Local Docker builds for all three simulator images passed from the fixed context, and the context shrank from roughly 1.1 GB of local artifacts to roughly 3.5 MB.
 
 `SIM_RUNTIME=process` is now documented as an explicit API-only startup mode for simulator runs that do not invoke workload execution. It is not a fallback or degraded execution path. Docker/Podman remains required for workload execution, and startup fatal messages now state that requirement while pointing API-only operators to `SIM_RUNTIME=process`. Common and per-cloud README files plus the simulator command comments were updated.
 
@@ -134,7 +140,7 @@ Implemented gateway surface:
 
 - BUG-1075: live-cloud validation remains deferred. Do not mark cells green without real authenticated cloud runs.
 - BUG-1104: audit cadence remains open. Continue re-checking stale SDK/CLI/Terraform not-applicable claims during simulator phases.
-- BUG-1267: issues #332, #333, and #338 track the remaining real-execution compute/networking program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and #334/#335 were completed for GCP/Azure firewall/NSG and load-balancer packet paths. Azure Event Grid's endpoint leak was fixed by moving topic publish onto the shared host-dispatched data plane. Firecracker-backed public VM execution remains open. Number #337 is a merged PR, not an open issue.
+- BUG-1267: issues #332, #333, and #338 track the real-execution compute/networking program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS/GCP/Azure firewall and load-balancer packet paths were migrated, and AWS/GCP/Azure VM lifecycle now boots and powers real Firecracker guests. BUG-1299 / issue #371 tracks the remaining guest metadata plane required before #333 can be fully closed. Number #337 is a merged PR, not an open issue.
 
 ## Recent Merged Work
 

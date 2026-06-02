@@ -1773,6 +1773,9 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "InvalidSubnetID.NotFound", http.StatusBadRequest, "The subnet ID %q does not exist", subnetID)
 		return
 	}
+	if !ec2RequireVMHost(w) {
+		return
+	}
 	reservationID := ec2ID("r")
 	sgIDs := runInstancesSecurityGroups(r)
 	if len(sgIDs) == 0 {
@@ -1890,9 +1893,6 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 	}
 	instanceID := ec2ID("i")
 	eniID := ec2ID("eni")
-	if err := ec2CreateRealNIC(spec.Context, eniID, spec.SubnetId, spec.PrivateIP, spec.SecurityGroupIds); err != nil {
-		return EC2Instance{}, err
-	}
 	rootDevice := "/dev/sda1"
 	inst := EC2Instance{
 		InstanceId:         instanceID,
@@ -1950,7 +1950,19 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 }
 
 func ec2TransitionInstanceToRunning(instanceID string) {
-	time.Sleep(100 * time.Millisecond)
+	inst, ok := ec2Instances.Get(instanceID)
+	if !ok {
+		return
+	}
+	if err := ec2StartRealVM(context.Background(), inst); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
+		ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+			if inst.State == "pending" {
+				inst.State = "stopped"
+			}
+		})
+		return
+	}
 	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
 		if inst.State == "pending" {
 			inst.State = "running"
@@ -1972,6 +1984,12 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		instances = ec2Instances.List()
+	}
+	for i := range instances {
+		if instances[i].State == "running" && !ec2RealVMAlive(instances[i].InstanceId) {
+			instances[i].State = "stopped"
+			ec2Instances.Put(instances[i].InstanceId, instances[i])
+		}
 	}
 	filters := ec2Filters(r)
 	if len(filters) > 0 {
@@ -2102,6 +2120,18 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 			return
 		}
 		prev := inst.State
+		if next == "running" {
+			if err := ec2StartRealVM(r.Context(), inst); err != nil {
+				ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to start real EC2 instance: %v", err), http.StatusServiceUnavailable)
+				return
+			}
+		}
+		if next == "stopped" || next == "terminated" {
+			if err := ec2StopRealVM(r.Context(), id); err != nil {
+				ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to stop real EC2 instance: %v", err), http.StatusServiceUnavailable)
+				return
+			}
+		}
 		inst.State = next
 		ec2Instances.Put(id, inst)
 		if next == "stopped" {

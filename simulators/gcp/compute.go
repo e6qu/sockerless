@@ -1153,12 +1153,21 @@ func gcpReapplyRealFirewalls(ctx context.Context) error {
 			nicID := inst.SelfLink + "/" + ni.Name
 			gcpRealMu.Lock()
 			nic := gcpRealNICs[nicID]
+			tap := gcpRealVMNICs[nicID]
 			gcpRealMu.Unlock()
-			if nic == nil {
+			if nic == nil && tap == nil {
 				continue
 			}
-			if err := nic.ConfigureIngressFilter(ctx, gcpIngressPacketRules(inst, ni)); err != nil {
-				return fmt.Errorf("configure firewall on %s: %w", nicID, err)
+			rules := gcpIngressPacketRules(inst, ni)
+			if nic != nil {
+				if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
+					return fmt.Errorf("configure firewall on %s: %w", nicID, err)
+				}
+			}
+			if tap != nil {
+				if err := tap.ConfigureIngressFilter(ctx, rules); err != nil {
+					return fmt.Errorf("configure firewall on %s: %w", nicID, err)
+				}
 			}
 		}
 	}
@@ -1852,24 +1861,8 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			} else {
 				inst.NetworkInterfaces[i].Subnetwork = normalizeComputeSubnetworkRef(project, regionFromZone(zone), inst.NetworkInterfaces[i].Subnetwork)
 			}
-			if inst.NetworkInterfaces[i].NetworkIP == "" {
-				subnetLink := inst.NetworkInterfaces[i].Subnetwork
-				if subnetLink == "" {
-					return fmt.Errorf("network interface %s requires a subnetwork for real IP allocation", inst.NetworkInterfaces[i].Name)
-				}
-				ip, err := gcpCreateRealNIC(ctx, inst.SelfLink+"/"+inst.NetworkInterfaces[i].Name, subnetLink, "")
-				if err != nil {
-					return err
-				}
-				inst.NetworkInterfaces[i].NetworkIP = ip
-			} else {
-				subnetLink := inst.NetworkInterfaces[i].Subnetwork
-				if subnetLink == "" {
-					return fmt.Errorf("network interface %s requires a subnetwork for real IP allocation", inst.NetworkInterfaces[i].Name)
-				}
-				if _, err := gcpCreateRealNIC(ctx, inst.SelfLink+"/"+inst.NetworkInterfaces[i].Name, subnetLink, inst.NetworkInterfaces[i].NetworkIP); err != nil {
-					return err
-				}
+			if inst.NetworkInterfaces[i].Subnetwork == "" {
+				return fmt.Errorf("network interface %s requires a subnetwork for real IP allocation", inst.NetworkInterfaces[i].Name)
 			}
 			if inst.NetworkInterfaces[i].StackType == "" {
 				inst.NetworkInterfaces[i].StackType = "IPV4_ONLY"
@@ -1917,6 +1910,11 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to attach real instance network interface: %v", err)
 			return
 		}
+		if err := gcpStartRealVM(r.Context(), &inst); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to boot real Compute Engine instance: %v", err)
+			return
+		}
+		inst.Status = "RUNNING"
 		instances.Put(inst.SelfLink, inst)
 		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
@@ -1934,6 +1932,10 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
+		}
+		if inst.Status == "RUNNING" && !gcpRealVMAlive(inst.SelfLink) {
+			inst.Status = "TERMINATED"
+			instances.Put(selfLink, inst)
 		}
 		sim.WriteJSON(w, http.StatusOK, inst)
 	})
@@ -1985,9 +1987,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
 		}
-		for _, ni := range inst.NetworkInterfaces {
-			_ = gcpDeleteRealNIC(r.Context(), inst.SelfLink+"/"+ni.Name)
-		}
+		_ = gcpDeleteRealVM(r.Context(), inst)
 		instances.Delete(selfLink)
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "delete"))
 	})
@@ -1997,6 +1997,10 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		zone := sim.PathParam(r, "zone")
 		name := sim.PathParam(r, "name")
 		selfLink := instanceSelfLink(project, zone, name)
+		if err := gcpStopRealVM(r.Context(), selfLink); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to stop real Compute Engine instance: %v", err)
+			return
+		}
 		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = "TERMINATED" }); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
@@ -2009,10 +2013,17 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		zone := sim.PathParam(r, "zone")
 		name := sim.PathParam(r, "name")
 		selfLink := instanceSelfLink(project, zone, name)
-		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = "RUNNING" }); !ok {
+		inst, ok := instances.Get(selfLink)
+		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
 		}
+		if err := gcpStartRealVM(r.Context(), &inst); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to start real Compute Engine instance: %v", err)
+			return
+		}
+		inst.Status = "RUNNING"
+		instances.Put(selfLink, inst)
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "start"))
 	})
 

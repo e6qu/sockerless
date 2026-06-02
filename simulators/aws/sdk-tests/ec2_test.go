@@ -531,7 +531,7 @@ func TestEC2_EBSVolumeSnapshotLifecycleSDK(t *testing.T) {
 
 func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string, want types.InstanceStateName) *ec2.DescribeInstancesOutput {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	var last *ec2.DescribeInstancesOutput
 	for time.Now().Before(deadline) {
 		out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
@@ -541,7 +541,7 @@ func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string
 			out.Reservations[0].Instances[0].State.Name == want {
 			return out
 		}
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 	if last != nil && len(last.Reservations) == 1 && len(last.Reservations[0].Instances) == 1 {
 		t.Fatalf("instance %s state = %s, want %s", instanceID, last.Reservations[0].Instances[0].State.Name, want)

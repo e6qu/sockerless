@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +18,8 @@ var (
 	ec2RealVPCs    = map[string]*realexec.Network{}
 	ec2RealSubnets = map[string]*realexec.Subnet{}
 	ec2RealNICs    = map[string]*realexec.NamespaceNIC{}
+	ec2RealVMNICs  = map[string]*realexec.TapNIC{}
+	ec2RealVMs     = map[string]*realexec.FirecrackerVM{}
 	ec2RealNATNICs = map[string]*realexec.NamespaceNIC{}
 )
 
@@ -24,6 +27,16 @@ func ec2RequireNetworkHost(w http.ResponseWriter) bool {
 	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
 		ec2ErrorXML(w, "UnsupportedOperation",
 			fmt.Sprintf("real EC2 networking requires Linux network namespace, bridge, veth, route, and nftables host capabilities: %v", err),
+			http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+func ec2RequireVMHost(w http.ResponseWriter) bool {
+	if err := realexec.DetectFirecrackerCapabilities().Require(); err != nil {
+		ec2ErrorXML(w, "UnsupportedOperation",
+			fmt.Sprintf("real EC2 instances require Linux Firecracker, KVM, TAP, network namespace, bridge, route, and nftables host capabilities: %v", err),
 			http.StatusServiceUnavailable)
 		return false
 	}
@@ -74,6 +87,18 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 		if eni, ok := ec2NetworkInterfaces.Get(eniID); ok && eni.VpcId == vpcID {
 			delete(ec2RealNICs, eniID)
 			_ = nic.Close(ctx)
+		}
+	}
+	for eniID, nic := range ec2RealVMNICs {
+		if eni, ok := ec2NetworkInterfaces.Get(eniID); ok && eni.VpcId == vpcID {
+			delete(ec2RealVMNICs, eniID)
+			_ = nic.Close(ctx)
+		}
+	}
+	for instanceID, vm := range ec2RealVMs {
+		if inst, ok := ec2Instances.Get(instanceID); ok && inst.VpcId == vpcID {
+			delete(ec2RealVMs, instanceID)
+			_ = vm.Stop(ctx)
 		}
 	}
 	for subnetID, subnet := range ec2RealSubnets {
@@ -135,58 +160,48 @@ func ec2DeleteRealSubnet(ctx context.Context, subnetID string) error {
 	return subnet.Close(ctx)
 }
 
-func ec2CreateRealNIC(ctx context.Context, eniID, subnetID, privateIP string, securityGroupIDs []string) error {
-	ec2RealMu.Lock()
-	if _, ok := ec2RealNICs[eniID]; ok {
-		ec2RealMu.Unlock()
-		return ec2ApplyRealNICSecurityGroups(ctx, eniID, securityGroupIDs)
-	}
-	subnet := ec2RealSubnets[subnetID]
-	ec2RealMu.Unlock()
-	if subnet == nil {
-		sn, ok := ec2Subnets.Get(subnetID)
-		if !ok {
-			return fmt.Errorf("subnet %s not found", subnetID)
-		}
-		if err := ec2CreateRealSubnet(ctx, sn); err != nil {
-			return err
-		}
-		ec2RealMu.Lock()
-		subnet = ec2RealSubnets[subnetID]
-		ec2RealMu.Unlock()
-	}
-	nic, err := subnet.AttachNamespaceNIC(ctx, realexec.NamespaceNICSpec{
-		NamespaceName: ec2RealName("ai", eniID),
-		HostVethName:  ec2RealName("ah", eniID),
-		GuestVethName: ec2RealName("ag", eniID),
-		PrivateIP:     net.ParseIP(privateIP),
-		MAC:           ec2ENIMAC(eniID),
-	})
-	if err != nil {
-		return err
-	}
-	ec2RealMu.Lock()
-	ec2RealNICs[eniID] = nic
-	ec2RealMu.Unlock()
-	return ec2ApplyRealNICSecurityGroups(ctx, eniID, securityGroupIDs)
-}
-
 func ec2DeleteRealNIC(ctx context.Context, eniID string) error {
+	instanceIDForENI := ""
+	for _, inst := range ec2Instances.List() {
+		if inst.NetworkInterfaceId == eniID {
+			instanceIDForENI = inst.InstanceId
+			break
+		}
+	}
 	ec2RealMu.Lock()
 	nic := ec2RealNICs[eniID]
 	delete(ec2RealNICs, eniID)
-	ec2RealMu.Unlock()
-	if nic == nil {
-		return nil
+	tap := ec2RealVMNICs[eniID]
+	delete(ec2RealVMNICs, eniID)
+	var vm *realexec.FirecrackerVM
+	if instanceIDForENI != "" {
+		vm = ec2RealVMs[instanceIDForENI]
+		delete(ec2RealVMs, instanceIDForENI)
 	}
-	return nic.Close(ctx)
+	ec2RealMu.Unlock()
+	var errs []error
+	if vm != nil {
+		errs = append(errs, vm.Stop(ctx))
+	}
+	if nic == nil {
+		if tap != nil {
+			errs = append(errs, tap.Close(ctx))
+		}
+		return errors.Join(errs...)
+	}
+	errs = append(errs, nic.Close(ctx))
+	if tap != nil {
+		errs = append(errs, tap.Close(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGroupIDs []string) error {
 	ec2RealMu.Lock()
 	nic := ec2RealNICs[eniID]
+	tap := ec2RealVMNICs[eniID]
 	ec2RealMu.Unlock()
-	if nic == nil {
+	if nic == nil && tap == nil {
 		return nil
 	}
 	var rules []realexec.PacketRule
@@ -215,7 +230,92 @@ func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGr
 			}
 		}
 	}
-	return nic.ConfigureIngressFilter(ctx, rules)
+	if nic != nil {
+		if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
+			return err
+		}
+	}
+	if tap != nil {
+		if err := tap.ConfigureIngressFilter(ctx, rules); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
+	if inst.NetworkInterfaceId == "" {
+		return fmt.Errorf("instance %s has no network interface", inst.InstanceId)
+	}
+	ec2RealMu.Lock()
+	if vm := ec2RealVMs[inst.InstanceId]; vm != nil && vm.Alive() {
+		ec2RealMu.Unlock()
+		return nil
+	}
+	tap := ec2RealVMNICs[inst.NetworkInterfaceId]
+	subnet := ec2RealSubnets[inst.SubnetId]
+	ec2RealMu.Unlock()
+	if subnet == nil {
+		sn, ok := ec2Subnets.Get(inst.SubnetId)
+		if !ok {
+			return fmt.Errorf("subnet %s not found", inst.SubnetId)
+		}
+		if err := ec2CreateRealSubnet(ctx, sn); err != nil {
+			return err
+		}
+		ec2RealMu.Lock()
+		subnet = ec2RealSubnets[inst.SubnetId]
+		ec2RealMu.Unlock()
+	}
+	if tap == nil {
+		created, err := subnet.AttachTapNIC(ctx, realexec.TapNICSpec{
+			TapName:   ec2RealName("at", inst.NetworkInterfaceId),
+			PrivateIP: net.ParseIP(inst.PrivateIpAddress),
+			MAC:       ec2ENIMAC(inst.NetworkInterfaceId),
+		})
+		if err != nil {
+			return err
+		}
+		tap = created
+		ec2RealMu.Lock()
+		ec2RealVMNICs[inst.NetworkInterfaceId] = tap
+		ec2RealMu.Unlock()
+	}
+	vm, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
+		ID:        "aws-" + inst.InstanceId,
+		Tap:       tap,
+		MAC:       ec2ENIMAC(inst.NetworkInterfaceId),
+		VCPUCount: 1,
+		MemoryMiB: 512,
+	})
+	if err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	if old := ec2RealVMs[inst.InstanceId]; old != nil {
+		_ = old.Stop(context.Background())
+	}
+	ec2RealVMs[inst.InstanceId] = vm
+	ec2RealMu.Unlock()
+	return ec2ApplyRealNICSecurityGroups(ctx, inst.NetworkInterfaceId, inst.SecurityGroupIds)
+}
+
+func ec2StopRealVM(ctx context.Context, instanceID string) error {
+	ec2RealMu.Lock()
+	vm := ec2RealVMs[instanceID]
+	delete(ec2RealVMs, instanceID)
+	ec2RealMu.Unlock()
+	if vm == nil {
+		return nil
+	}
+	return vm.Stop(ctx)
+}
+
+func ec2RealVMAlive(instanceID string) bool {
+	ec2RealMu.Lock()
+	vm := ec2RealVMs[instanceID]
+	ec2RealMu.Unlock()
+	return vm != nil && vm.Alive()
 }
 
 func ec2ReapplyRealSecurityGroup(ctx context.Context, groupID string) error {
