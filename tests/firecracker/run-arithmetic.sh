@@ -180,6 +180,14 @@ echo FIRECRACKER_ARITHMETIC_OK
 GUESTSCRIPT
 chmod 755 "$rootfs_dir/root/run-firecracker-arithmetic.sh"
 
+cat > "$rootfs_dir/root/configure-firecracker-network.sh" <<GUESTNETWORK
+#!/bin/sh
+set -eu
+ip route replace default via "$tap_ip" dev eth0
+echo nameserver 1.1.1.1 >/etc/resolv.conf
+GUESTNETWORK
+chmod 755 "$rootfs_dir/root/configure-firecracker-network.sh"
+
 sudo chown -R root:root "$rootfs_dir"
 truncate -s 3G "$rootfs_ext4"
 sudo mkfs.ext4 -q -d "$rootfs_dir" -F "$rootfs_ext4"
@@ -320,7 +328,7 @@ until ssh "${ssh_opts[@]}" "root@$guest_ip" true >/dev/null 2>&1; do
   sleep 1
 done
 
-ssh "${ssh_opts[@]}" "root@$guest_ip" "GATEWAY=$tap_ip" 'ip route replace default via "$GATEWAY" dev eth0 && echo nameserver 1.1.1.1 >/etc/resolv.conf'
+ssh "${ssh_opts[@]}" "root@$guest_ip" /root/configure-firecracker-network.sh
 ssh "${ssh_opts[@]}" "root@$guest_ip" /root/run-firecracker-arithmetic.sh | tee "$workdir/guest-arithmetic.log"
 grep -q FIRECRACKER_ARITHMETIC_OK "$workdir/guest-arithmetic.log" || fail "guest arithmetic smoke did not print success marker"
 
