@@ -45,7 +45,22 @@ func TestDynamoDB_TableLifecycle(t *testing.T) {
 		TableName: aws.String(tableName),
 	})
 	require.NoError(t, err)
+	require.NotNil(t, desc.Table)
 	assert.Equal(t, tableName, *desc.Table.TableName)
+	assert.Equal(t, "ACTIVE", string(desc.Table.TableStatus))
+	assert.Contains(t, *desc.Table.TableArn, "arn:aws:dynamodb:")
+	// BillingModeSummary must reflect PAY_PER_REQUEST.
+	require.NotNil(t, desc.Table.BillingModeSummary, "BillingModeSummary must be present")
+	assert.Equal(t, "PAY_PER_REQUEST", string(desc.Table.BillingModeSummary.BillingMode))
+	// ProvisionedThroughput must be present (zero-filled) even for on-demand tables.
+	require.NotNil(t, desc.Table.ProvisionedThroughput, "ProvisionedThroughput must be present")
+	// TableClassSummary must default to STANDARD.
+	require.NotNil(t, desc.Table.TableClassSummary, "TableClassSummary must be present")
+	assert.Equal(t, "STANDARD", string(desc.Table.TableClassSummary.TableClass))
+	// WarmThroughput must be non-nil with Status=ACTIVE — terraform-provider-aws v6
+	// waitTableWarmThroughputActive loops 21 times and errors if the field is absent.
+	require.NotNil(t, desc.Table.WarmThroughput, "WarmThroughput must be present")
+	assert.Equal(t, "ACTIVE", string(desc.Table.WarmThroughput.Status))
 
 	list, err := c.ListTables(ctx, &dynamodb.ListTablesInput{})
 	require.NoError(t, err)

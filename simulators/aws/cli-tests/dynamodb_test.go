@@ -22,13 +22,31 @@ func TestDynamoDBCLI_TableAndItems(t *testing.T) {
 	out := runCLI(t, awsCLI("dynamodb", "describe-table", "--table-name", table))
 	var desc struct {
 		Table struct {
-			TableName   string `json:"TableName"`
-			TableStatus string `json:"TableStatus"`
+			TableName          string `json:"TableName"`
+			TableStatus        string `json:"TableStatus"`
+			TableArn           string `json:"TableArn"`
+			BillingModeSummary struct {
+				BillingMode string `json:"BillingMode"`
+			} `json:"BillingModeSummary"`
+			ProvisionedThroughput struct {
+				ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+				WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+			} `json:"ProvisionedThroughput"`
+			TableClassSummary struct {
+				TableClass string `json:"TableClass"`
+			} `json:"TableClassSummary"`
+			WarmThroughput struct {
+				Status string `json:"Status"`
+			} `json:"WarmThroughput"`
 		} `json:"Table"`
 	}
 	parseJSON(t, out, &desc)
 	assert.Equal(t, table, desc.Table.TableName)
 	assert.Equal(t, "ACTIVE", desc.Table.TableStatus)
+	assert.Contains(t, desc.Table.TableArn, "arn:aws:dynamodb:")
+	assert.Equal(t, "PAY_PER_REQUEST", desc.Table.BillingModeSummary.BillingMode)
+	assert.Equal(t, "STANDARD", desc.Table.TableClassSummary.TableClass)
+	assert.Equal(t, "ACTIVE", desc.Table.WarmThroughput.Status)
 
 	runCLI(t, awsCLI("dynamodb", "put-item",
 		"--table-name", table,

@@ -147,3 +147,55 @@ func TestSSMParameter_DeleteParameters(t *testing.T) {
 	assert.ElementsMatch(t, []string{"/del/a", "/del/b"}, out.DeletedParameters)
 	assert.Equal(t, []string{"/del/missing"}, out.InvalidParameters)
 }
+
+// TestSSMParameter_ListTagsForResource verifies the ListTagsForResource round
+// trip. terraform-provider-aws calls this after PutParameter to populate the
+// resource's `tags` attribute; an absent TagList (instead of []) causes the
+// provider to treat the parameter as untagged and removes the tags on the next
+// plan, causing perpetual drift.
+func TestSSMParameter_ListTagsForResource(t *testing.T) {
+	c := ssmClient()
+
+	paramName := "/tag-test/list-tags"
+	_, err := c.PutParameter(ctx, &ssm.PutParameterInput{
+		Name:  aws.String(paramName),
+		Type:  ssmtypes.ParameterTypeString,
+		Value: aws.String("v"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(paramName)}) })
+
+	// No tags yet — must return an empty (non-nil) TagList.
+	emptyOut, err := c.ListTagsForResource(ctx, &ssm.ListTagsForResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String(paramName),
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, emptyOut.TagList, "TagList must be non-nil (empty slice) when no tags are set")
+	assert.Empty(t, emptyOut.TagList)
+
+	// Attach tags via AddTagsToResource.
+	_, err = c.AddTagsToResource(ctx, &ssm.AddTagsToResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String(paramName),
+		Tags: []ssmtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("test")},
+			{Key: aws.String("owner"), Value: aws.String("ci")},
+		},
+	})
+	require.NoError(t, err)
+
+	// ListTagsForResource must return exactly the attached tags.
+	tagOut, err := c.ListTagsForResource(ctx, &ssm.ListTagsForResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String(paramName),
+	})
+	require.NoError(t, err)
+	require.Len(t, tagOut.TagList, 2)
+	tagMap := make(map[string]string, len(tagOut.TagList))
+	for _, tag := range tagOut.TagList {
+		tagMap[*tag.Key] = *tag.Value
+	}
+	assert.Equal(t, "test", tagMap["env"])
+	assert.Equal(t, "ci", tagMap["owner"])
+}

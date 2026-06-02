@@ -156,3 +156,41 @@ func TestSecretsManager_ListAndTag(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// TestSecretsManager_GetResourcePolicy verifies the GetResourcePolicy response
+// shape. terraform-provider-aws calls this after CreateSecret to populate the
+// `policy` attribute. Real Secrets Manager omits ResourcePolicy when no policy
+// is attached; returning an empty string causes the provider to crash with
+// "unexpected end of JSON input".
+func TestSecretsManager_GetResourcePolicy(t *testing.T) {
+	c := smClient()
+
+	createOut, err := c.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+		Name:         aws.String("grp-test-secret"),
+		SecretString: aws.String("value"),
+	})
+	require.NoError(t, err)
+	secretArn := *createOut.ARN
+	t.Cleanup(func() {
+		_, _ = c.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+			SecretId:                   aws.String("grp-test-secret"),
+			ForceDeleteWithoutRecovery: aws.Bool(true),
+		})
+	})
+
+	// No policy attached — response must carry ARN and Name but omit ResourcePolicy.
+	out, err := c.GetResourcePolicy(ctx, &secretsmanager.GetResourcePolicyInput{
+		SecretId: aws.String("grp-test-secret"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, secretArn, *out.ARN, "ARN must match the created secret")
+	assert.Equal(t, "grp-test-secret", *out.Name)
+	assert.Nil(t, out.ResourcePolicy, "ResourcePolicy must be nil when no policy is attached")
+
+	// Lookup by full ARN must also work.
+	outByArn, err := c.GetResourcePolicy(ctx, &secretsmanager.GetResourcePolicyInput{
+		SecretId: aws.String(secretArn),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, secretArn, *outByArn.ARN)
+}

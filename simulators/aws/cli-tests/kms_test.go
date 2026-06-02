@@ -3,6 +3,7 @@ package aws_cli_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,4 +57,29 @@ func TestKMSCLI_KeyAliasAndCrypto(t *testing.T) {
 	parseJSON(t, decryptOut, &decryptResult)
 	require.Equal(t, "Y2xpLXNlY3JldA==", decryptResult.Plaintext)
 	require.Contains(t, decryptResult.KeyId, createResult.KeyMetadata.KeyId)
+}
+
+func TestKMSCLI_GetKeyPolicy(t *testing.T) {
+	createOut := runCLI(t, awsCLI("kms", "create-key", "--output", "json"))
+	var created struct {
+		KeyMetadata struct {
+			KeyId string `json:"KeyId"`
+		} `json:"KeyMetadata"`
+	}
+	parseJSON(t, createOut, &created)
+	keyId := created.KeyMetadata.KeyId
+	require.NotEmpty(t, keyId)
+
+	// Default policy must be non-empty and reference "default" as the policy name.
+	out := runCLI(t, awsCLI("kms", "get-key-policy",
+		"--key-id", keyId,
+		"--policy-name", "default",
+		"--output", "json"))
+	var result struct {
+		Policy     string `json:"Policy"`
+		PolicyName string `json:"PolicyName"`
+	}
+	parseJSON(t, out, &result)
+	assert.NotEmpty(t, result.Policy, "Policy must be non-empty")
+	assert.Equal(t, "default", result.PolicyName)
 }
