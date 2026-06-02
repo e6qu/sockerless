@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1308 filed - 1308 fixed - 2 open - 3 false positives.**
+**1309 filed - 1309 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,7 +15,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1267:
+This phase closed BUG-1309 / issue #378:
+
+- BUG-1309 / issue #378: EC2 `AttachVolume` was metadata-only for Firecracker-backed instances, so guest writes to attached EBS volumes could not persist into snapshots or restored volumes. The AWS simulator now prepares sparse file-backed EBS block images under each volume host path, pre-registers Firecracker EBS drive slots for EC2 guests, patches the running microVM drive backing file on `AttachVolume`, patches back to an empty slot on `DetachVolume`, and refreshes the drive after `ModifyVolume` resize. `CreateSnapshot` and `CreateVolume(SnapshotId)` continue to copy the real EBS host path, now including the raw block image written by the guest. The mandatory Firecracker smoke now performs a real guest block-device write, snapshots/restores the backing image, and reads the payload back inside the guest.
+
+Previous phase closed BUG-1267:
 
 - BUG-1267 / issues #332 and #338: The cross-cloud VM/networking real-execution umbrella was audited after the VPC/NAT, firewall/security, managed load-balancer, VM lifecycle, and guest metadata phases had merged. The audit found no remaining metadata-only #332 subfamily: AWS/GCP/Azure VPC/network/NIC/public-IP/NAT paths use the realexec netns/bridge/veth/IPAM/SNAT substrate; AWS security groups, GCP firewalls, and Azure NSGs compile to nftables on the packet path; AWS ELBv2, GCP load balancing, and Azure Load Balancer use real health probes and proxying; AWS EC2, GCP Compute Engine, and Azure VMs boot Firecracker guests; and guest metadata routes through provider-shaped link-local addresses/hostnames to instance-specific metadata handlers. Issue #338's LocalStack comparison was no longer accurate where it described VM/networking as metadata-only, so it was closed as a stale meta/reference tracker rather than kept open as a deliverable.
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -35,6 +36,13 @@ type FirecrackerVMConfig struct {
 	WorkDir       string
 	BootPeriod    time.Duration
 	MetadataHosts []string
+	BlockDrives   []FirecrackerBlockDrive
+}
+
+type FirecrackerBlockDrive struct {
+	ID       string
+	Path     string
+	ReadOnly bool
 }
 
 type FirecrackerVM struct {
@@ -204,6 +212,29 @@ func (vm *FirecrackerVM) Alive() bool {
 		return false
 	}
 	return vm.cmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+func (vm *FirecrackerVM) PatchBlockDrivePath(ctx context.Context, driveID, path string) error {
+	if vm == nil {
+		return fmt.Errorf("firecracker VM is nil")
+	}
+	if driveID == "" {
+		return fmt.Errorf("firecracker drive ID is required")
+	}
+	if path == "" {
+		return fmt.Errorf("firecracker drive %s requires a backing path", driveID)
+	}
+	body, err := json.Marshal(struct {
+		DriveID    string `json:"drive_id"`
+		PathOnHost string `json:"path_on_host"`
+	}{
+		DriveID:    driveID,
+		PathOnHost: path,
+	})
+	if err != nil {
+		return err
+	}
+	return firecrackerPatch(ctx, vm.APISocket, "/drives/"+driveID, string(body))
 }
 
 func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAssets, error) {
@@ -803,9 +834,46 @@ func configureFirecracker(ctx context.Context, apiSocket string, cfg Firecracker
 		{"/machine-config", fmt.Sprintf(`{"vcpu_count":%d,"mem_size_mib":%d}`, cfg.VCPUCount, cfg.MemoryMiB)},
 		{"/boot-source", fmt.Sprintf(`{"kernel_image_path":%q,"boot_args":%q}`, kernelPath, bootArgs)},
 		{"/drives/rootfs", fmt.Sprintf(`{"drive_id":"rootfs","path_on_host":%q,"is_root_device":true,"is_read_only":false}`, rootfsPath)},
-		{"/network-interfaces/net1", fmt.Sprintf(`{"iface_id":"net1","guest_mac":%q,"host_dev_name":%q}`, cfg.MAC, cfg.Tap.TapName)},
-		{"/actions", `{"action_type":"InstanceStart"}`},
 	}
+	for _, drive := range cfg.BlockDrives {
+		if drive.ID == "" {
+			return fmt.Errorf("firecracker non-root block drive ID is required")
+		}
+		if drive.ID == "rootfs" {
+			return fmt.Errorf("firecracker non-root block drive ID cannot be rootfs")
+		}
+		if drive.Path == "" {
+			return fmt.Errorf("firecracker block drive %s requires a host path", drive.ID)
+		}
+		body, err := json.Marshal(struct {
+			DriveID      string `json:"drive_id"`
+			PathOnHost   string `json:"path_on_host"`
+			IsRootDevice bool   `json:"is_root_device"`
+			IsReadOnly   bool   `json:"is_read_only"`
+		}{
+			DriveID:      drive.ID,
+			PathOnHost:   drive.Path,
+			IsRootDevice: false,
+			IsReadOnly:   drive.ReadOnly,
+		})
+		if err != nil {
+			return err
+		}
+		requests = append(requests, struct {
+			path string
+			body string
+		}{"/drives/" + drive.ID, string(body)})
+	}
+	requests = append(requests,
+		struct {
+			path string
+			body string
+		}{"/network-interfaces/net1", fmt.Sprintf(`{"iface_id":"net1","guest_mac":%q,"host_dev_name":%q}`, cfg.MAC, cfg.Tap.TapName)},
+		struct {
+			path string
+			body string
+		}{"/actions", `{"action_type":"InstanceStart"}`},
+	)
 	for _, req := range requests {
 		if err := firecrackerPut(ctx, apiSocket, req.path, req.body); err != nil {
 			return err
@@ -815,6 +883,14 @@ func configureFirecracker(ctx context.Context, apiSocket string, cfg Firecracker
 }
 
 func firecrackerPut(ctx context.Context, socket, path, payload string) error {
+	return firecrackerRequest(ctx, http.MethodPut, socket, path, payload)
+}
+
+func firecrackerPatch(ctx context.Context, socket, path, payload string) error {
+	return firecrackerRequest(ctx, http.MethodPatch, socket, path, payload)
+}
+
+func firecrackerRequest(ctx context.Context, method, socket, path, payload string) error {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var dialer net.Dialer
@@ -823,19 +899,19 @@ func firecrackerPut(ctx context.Context, socket, path, payload string) error {
 	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://firecracker"+path, bytes.NewBufferString(payload))
+	req, err := http.NewRequestWithContext(ctx, method, "http://firecracker"+path, bytes.NewBufferString(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("firecracker API PUT %s: %w", path, err)
+		return fmt.Errorf("firecracker API %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("firecracker API PUT %s returned HTTP %d: %s", path, resp.StatusCode, string(body))
+		return fmt.Errorf("firecracker API %s %s returned HTTP %d: %s", method, path, resp.StatusCode, string(body))
 	}
 	return nil
 }

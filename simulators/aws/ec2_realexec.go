@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -13,15 +16,18 @@ import (
 )
 
 var (
-	ec2RealHost    = realexec.NewHost()
-	ec2RealMu      sync.Mutex
-	ec2RealVPCs    = map[string]*realexec.Network{}
-	ec2RealSubnets = map[string]*realexec.Subnet{}
-	ec2RealNICs    = map[string]*realexec.NamespaceNIC{}
-	ec2RealVMNICs  = map[string]*realexec.TapNIC{}
-	ec2RealVMs     = map[string]*realexec.FirecrackerVM{}
-	ec2RealNATNICs = map[string]*realexec.NamespaceNIC{}
+	ec2RealHost     = realexec.NewHost()
+	ec2RealMu       sync.Mutex
+	ec2RealVPCs     = map[string]*realexec.Network{}
+	ec2RealSubnets  = map[string]*realexec.Subnet{}
+	ec2RealNICs     = map[string]*realexec.NamespaceNIC{}
+	ec2RealVMNICs   = map[string]*realexec.TapNIC{}
+	ec2RealVMs      = map[string]*realexec.FirecrackerVM{}
+	ec2RealEBSSlots = map[string]map[string]string{}
+	ec2RealNATNICs  = map[string]*realexec.NamespaceNIC{}
 )
+
+const ec2RealEBSMaxSlots = 15
 
 func ec2RequireNetworkHost(w http.ResponseWriter) bool {
 	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
@@ -99,6 +105,7 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 	for instanceID, vm := range ec2RealVMs {
 		if inst, ok := ec2Instances.Get(instanceID); ok && inst.VpcId == vpcID {
 			delete(ec2RealVMs, instanceID)
+			delete(ec2RealEBSSlots, instanceID)
 			_ = vm.Stop(ctx)
 		}
 	}
@@ -178,6 +185,7 @@ func ec2DeleteRealNIC(ctx context.Context, eniID string) error {
 	if instanceIDForENI != "" {
 		vm = ec2RealVMs[instanceIDForENI]
 		delete(ec2RealVMs, instanceIDForENI)
+		delete(ec2RealEBSSlots, instanceIDForENI)
 	}
 	ec2RealMu.Unlock()
 	var errs []error
@@ -292,12 +300,17 @@ func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
 	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, ec2RealName("amd", inst.VpcId)); err != nil {
 		return fmt.Errorf("configure EC2 IMDS routing for %s: %w", inst.InstanceId, err)
 	}
+	blockDrives, slots, err := ec2RealEBSBlockDrives(inst)
+	if err != nil {
+		return err
+	}
 	vm, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
-		ID:        "aws-" + inst.InstanceId,
-		Tap:       tap,
-		MAC:       ec2ENIMAC(inst.NetworkInterfaceId),
-		VCPUCount: 1,
-		MemoryMiB: 512,
+		ID:          "aws-" + inst.InstanceId,
+		Tap:         tap,
+		MAC:         ec2ENIMAC(inst.NetworkInterfaceId),
+		VCPUCount:   1,
+		MemoryMiB:   512,
+		BlockDrives: blockDrives,
 	})
 	if err != nil {
 		return err
@@ -307,6 +320,7 @@ func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
 		_ = old.Stop(context.Background())
 	}
 	ec2RealVMs[inst.InstanceId] = vm
+	ec2RealEBSSlots[inst.InstanceId] = slots
 	ec2RealMu.Unlock()
 	return ec2ApplyRealNICSecurityGroups(ctx, inst.NetworkInterfaceId, inst.SecurityGroupIds)
 }
@@ -315,11 +329,196 @@ func ec2StopRealVM(ctx context.Context, instanceID string) error {
 	ec2RealMu.Lock()
 	vm := ec2RealVMs[instanceID]
 	delete(ec2RealVMs, instanceID)
+	delete(ec2RealEBSSlots, instanceID)
 	ec2RealMu.Unlock()
 	if vm == nil {
 		return nil
 	}
 	return vm.Stop(ctx)
+}
+
+func ec2RealEBSBlockDrives(inst EC2Instance) ([]realexec.FirecrackerBlockDrive, map[string]string, error) {
+	attachments := ec2RealEBSAttachments(inst.InstanceId, inst.RootDeviceName)
+	if len(attachments) > ec2RealEBSMaxSlots {
+		return nil, nil, fmt.Errorf("instance %s has %d EBS data volumes attached, maximum supported by the Firecracker substrate is %d", inst.InstanceId, len(attachments), ec2RealEBSMaxSlots)
+	}
+	slots := map[string]string{}
+	drives := make([]realexec.FirecrackerBlockDrive, 0, ec2RealEBSMaxSlots)
+	for i := 1; i <= ec2RealEBSMaxSlots; i++ {
+		slot := ec2RealEBSSlotID(i)
+		path := ec2RealEBSSlotPlaceholderPath(inst.InstanceId, slot)
+		if i <= len(attachments) {
+			vol, ok := ec2Volumes.Get(attachments[i-1].VolumeId)
+			if !ok {
+				return nil, nil, fmt.Errorf("attached volume %s not found", attachments[i-1].VolumeId)
+			}
+			blockPath, err := ebsEnsureVolumeBlockImage(&vol)
+			if err != nil {
+				return nil, nil, fmt.Errorf("prepare block image for %s: %w", vol.VolumeId, err)
+			}
+			ec2Volumes.Put(vol.VolumeId, vol)
+			path = blockPath
+			slots[vol.VolumeId] = slot
+		} else if err := ec2PrepareRealEBSSlotPlaceholder(path); err != nil {
+			return nil, nil, err
+		}
+		drives = append(drives, realexec.FirecrackerBlockDrive{
+			ID:   slot,
+			Path: path,
+		})
+	}
+	return drives, slots, nil
+}
+
+func ec2RealEBSAttachments(instanceID, rootDeviceName string) []EC2VolumeAttachment {
+	var attachments []EC2VolumeAttachment
+	for _, vol := range ec2Volumes.List() {
+		if len(vol.Attachments) == 0 {
+			continue
+		}
+		att := vol.Attachments[0]
+		if att.InstanceId != instanceID || att.Device == rootDeviceName {
+			continue
+		}
+		attachments = append(attachments, att)
+	}
+	sort.Slice(attachments, func(i, j int) bool {
+		return attachments[i].Device < attachments[j].Device
+	})
+	return attachments
+}
+
+func ec2AttachRealVolume(ctx context.Context, instanceID string, vol *EC2Volume) error {
+	inst, ok := ec2Instances.Get(instanceID)
+	if !ok || inst.State != "running" {
+		return nil
+	}
+	blockPath, err := ebsEnsureVolumeBlockImage(vol)
+	if err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	vm := ec2RealVMs[instanceID]
+	slots := ec2RealEBSSlots[instanceID]
+	if slots == nil {
+		slots = map[string]string{}
+		ec2RealEBSSlots[instanceID] = slots
+	}
+	slot := slots[vol.VolumeId]
+	if slot == "" {
+		slot = ec2FirstFreeRealEBSSlot(slots)
+	}
+	ec2RealMu.Unlock()
+	if vm == nil || !vm.Alive() {
+		return fmt.Errorf("instance %s is running without a live Firecracker VM", instanceID)
+	}
+	if slot == "" {
+		return fmt.Errorf("AttachmentLimitExceeded: no Firecracker EBS drive slots are available for instance %s", instanceID)
+	}
+	if err := vm.PatchBlockDrivePath(ctx, slot, blockPath); err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	if ec2RealEBSSlots[instanceID] == nil {
+		ec2RealEBSSlots[instanceID] = map[string]string{}
+	}
+	ec2RealEBSSlots[instanceID][vol.VolumeId] = slot
+	ec2RealMu.Unlock()
+	return nil
+}
+
+func ec2DetachRealVolume(ctx context.Context, instanceID, volumeID string) error {
+	inst, ok := ec2Instances.Get(instanceID)
+	if !ok || inst.State != "running" {
+		return nil
+	}
+	ec2RealMu.Lock()
+	vm := ec2RealVMs[instanceID]
+	slot := ""
+	if slots := ec2RealEBSSlots[instanceID]; slots != nil {
+		slot = slots[volumeID]
+	}
+	ec2RealMu.Unlock()
+	if slot == "" {
+		return nil
+	}
+	if vm == nil || !vm.Alive() {
+		return fmt.Errorf("instance %s is running without a live Firecracker VM", instanceID)
+	}
+	placeholder := ec2RealEBSSlotPlaceholderPath(instanceID, slot)
+	if err := ec2PrepareRealEBSSlotPlaceholder(placeholder); err != nil {
+		return err
+	}
+	if err := vm.PatchBlockDrivePath(ctx, slot, placeholder); err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	if slots := ec2RealEBSSlots[instanceID]; slots != nil {
+		delete(slots, volumeID)
+	}
+	ec2RealMu.Unlock()
+	return nil
+}
+
+func ec2RefreshRealVolume(ctx context.Context, vol EC2Volume) error {
+	if len(vol.Attachments) == 0 {
+		return nil
+	}
+	inst, ok := ec2Instances.Get(vol.Attachments[0].InstanceId)
+	if !ok || inst.State != "running" {
+		return nil
+	}
+	ec2RealMu.Lock()
+	vm := ec2RealVMs[inst.InstanceId]
+	slot := ""
+	if slots := ec2RealEBSSlots[inst.InstanceId]; slots != nil {
+		slot = slots[vol.VolumeId]
+	}
+	ec2RealMu.Unlock()
+	if vm == nil || !vm.Alive() {
+		return fmt.Errorf("instance %s is running without a live Firecracker VM", inst.InstanceId)
+	}
+	if slot == "" {
+		return fmt.Errorf("volume %s is attached to %s without a Firecracker drive slot", vol.VolumeId, inst.InstanceId)
+	}
+	blockPath, err := ebsEnsureVolumeBlockImage(&vol)
+	if err != nil {
+		return err
+	}
+	return vm.PatchBlockDrivePath(ctx, slot, blockPath)
+}
+
+func ec2FirstFreeRealEBSSlot(slots map[string]string) string {
+	used := map[string]bool{}
+	for _, slot := range slots {
+		used[slot] = true
+	}
+	for i := 1; i <= ec2RealEBSMaxSlots; i++ {
+		slot := ec2RealEBSSlotID(i)
+		if !used[slot] {
+			return slot
+		}
+	}
+	return ""
+}
+
+func ec2RealEBSSlotID(index int) string {
+	return fmt.Sprintf("ebs%d", index)
+}
+
+func ec2RealEBSSlotPlaceholderPath(instanceID, slot string) string {
+	return filepath.Join(ebsHostRoot(), "firecracker-slots", instanceID, slot+".raw")
+}
+
+func ec2PrepareRealEBSSlotPlaceholder(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o666)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 func ec2RealVMAlive(instanceID string) bool {
