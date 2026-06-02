@@ -212,8 +212,13 @@ func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAs
 	rootfsMarker := filepath.Join(dir, "rootfs.ready")
 	if kernel, err := os.ReadFile(kernelMarker); err == nil {
 		rootfsDir := filepath.Join(dir, "rootfs")
+		kernelPath := strings.TrimSpace(string(kernel))
 		if _, statErr := os.Stat(rootfsMarker); statErr == nil {
-			return firecrackerAssets{KernelPath: strings.TrimSpace(string(kernel)), RootFSDir: rootfsDir}, nil
+			if err := verifyELFKernel(kernelPath); err == nil {
+				return firecrackerAssets{KernelPath: kernelPath, RootFSDir: rootfsDir}, nil
+			}
+			_ = os.Remove(kernelMarker)
+			_ = os.Remove(kernelPath)
 		}
 	}
 
@@ -227,6 +232,10 @@ func ensureFirecrackerAssets(ctx context.Context, version string) (firecrackerAs
 	kernelPath := filepath.Join(dir, filepath.Base(kernelKey))
 	rootfsSquash := filepath.Join(dir, filepath.Base(rootfsKey))
 	if err := downloadFile(ctx, "https://s3.amazonaws.com/spec.ccfc.min/"+kernelKey, kernelPath); err != nil {
+		return firecrackerAssets{}, err
+	}
+	if err := verifyELFKernel(kernelPath); err != nil {
+		_ = os.Remove(kernelPath)
 		return firecrackerAssets{}, err
 	}
 	if err := downloadFile(ctx, "https://s3.amazonaws.com/spec.ccfc.min/"+rootfsKey, rootfsSquash); err != nil {
@@ -279,7 +288,7 @@ func findFirecrackerAssetKeys(ctx context.Context, ciVersion, arch string) (stri
 	var kernels, rootfs []string
 	prefix := fmt.Sprintf("firecracker-ci/%s/%s/", ciVersion, arch)
 	for _, obj := range listing.Contents {
-		if strings.HasPrefix(obj.Key, prefix+"vmlinux-") {
+		if isFirecrackerKernelAsset(prefix, obj.Key) {
 			kernels = append(kernels, obj.Key)
 		}
 		if strings.HasPrefix(obj.Key, prefix+"ubuntu-") && strings.HasSuffix(obj.Key, ".squashfs") {
@@ -295,6 +304,14 @@ func findFirecrackerAssetKeys(ctx context.Context, ciVersion, arch string) (stri
 		return "", "", fmt.Errorf("no Firecracker CI Ubuntu rootfs asset found for %s/%s", ciVersion, arch)
 	}
 	return kernels[len(kernels)-1], rootfs[len(rootfs)-1], nil
+}
+
+func isFirecrackerKernelAsset(prefix, key string) bool {
+	if !strings.HasPrefix(key, prefix+"vmlinux-") {
+		return false
+	}
+	base := filepath.Base(key)
+	return !strings.HasSuffix(base, ".config") && !strings.HasSuffix(base, ".debug.gz")
 }
 
 func firecrackerAssetKeyLess(a, b string) bool {
@@ -371,6 +388,23 @@ func downloadFile(ctx context.Context, url, path string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func verifyELFKernel(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		return fmt.Errorf("read Firecracker kernel magic %s: %w", path, err)
+	}
+	if magic != [4]byte{0x7f, 'E', 'L', 'F'} {
+		return fmt.Errorf("firecracker kernel %s is not an ELF image", path)
+	}
+	return nil
 }
 
 func copyRootFS(ctx context.Context, src, dst string) error {
