@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,9 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
-	// Multi-stage Docker build forced to linux/arm64 (sim capacity contract).
+	workloadPlatform := nativeDockerPlatform()
+
+	// Multi-stage Docker build for the runner-native Linux platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build
@@ -54,7 +57,7 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	dockerBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", workloadPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
@@ -164,6 +167,10 @@ func parseJSON(t *testing.T, data string, target any) {
 	if err := json.Unmarshal([]byte(data), target); err != nil {
 		t.Fatalf("Failed to parse JSON: %v\nData: %s", err, data)
 	}
+}
+
+func nativeDockerPlatform() string {
+	return "linux/" + runtime.GOARCH
 }
 
 func waitForCLIJSON(t *testing.T, url string, ready func(string) bool) string {

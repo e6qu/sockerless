@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ COPY --from=build /lambda-runtime-handler /usr/local/bin/lambda-runtime-handler
 ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
 `
 	lambdaHandlerBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", nativeDockerPlatform(),
 		"-t", "sockerless-lambda-runtime-handler:test", "-f", "-", lambdaHandlerDir)
 	lambdaHandlerBuild.Stdin = strings.NewReader(lambdaHandlerDockerfile)
 	if out, err := lambdaHandlerBuild.CombinedOutput(); err != nil {
@@ -179,6 +180,10 @@ func waitForHealth(url string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", url)
+}
+
+func nativeDockerPlatform() string {
+	return "linux/" + runtime.GOARCH
 }
 
 func terraformCmd(args ...string) *exec.Cmd {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,9 +36,11 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
+	workloadPlatform := nativeDockerPlatform()
+
 	// Build the Docker image hosting eval-arithmetic. The build is a
 	// multi-stage Docker build so the workload binary's architecture
-	// matches the image's (never the sim host's).
+	// matches the image's platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build
@@ -48,10 +51,8 @@ FROM alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
-	// Build for linux/arm64 explicitly — sim's primary capacity contract.
-	// Requires QEMU on amd64 hosts (CI sets it up via docker/setup-qemu-action).
 	dockerBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", workloadPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
@@ -69,7 +70,7 @@ COPY --from=build /http-localhost-probe /usr/local/bin/http-localhost-probe
 ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
 `
 	probeBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", workloadPlatform,
 		"-t", httpProbeImageName, "-f", "-", probeDir)
 	probeBuild.Stdin = strings.NewReader(probeDockerfile)
 	if out, err := probeBuild.CombinedOutput(); err != nil {
@@ -116,6 +117,10 @@ ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
 	simCmd.Process.Kill()
 	simCmd.Wait()
 	os.Exit(code)
+}
+
+func nativeDockerPlatform() string {
+	return "linux/" + runtime.GOARCH
 }
 
 func waitForHealth(url string) error {

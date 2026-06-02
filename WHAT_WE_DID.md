@@ -8,7 +8,7 @@ This file is intentionally compact. Detailed phase history lives in PR descripti
 
 The PR #372 CI failure was fixed without skipping tests, adding fallbacks, or weakening Firecracker/HTTPS behavior. The failed simulator SDK/CLI/Terraform jobs were running on `ubuntu-24.04-arm`; that runner class installed Firecracker but did not expose `/dev/kvm`, so AWS EC2, GCP Compute Engine, and Azure VM public API tests failed loudly with missing KVM, and Terraform retried until its 10-minute step budget expired.
 
-The VM-backed simulator SDK/CLI/Terraform jobs now run on `ubuntu-latest`, the same KVM-capable hosted runner class that already passed the mandatory Firecracker microVM arithmetic smoke. The GCP simulator job installs the matching x86_64 gcloud CLI archive.
+The VM-backed simulator SDK/CLI/Terraform jobs now run on `ubuntu-latest`, the same KVM-capable hosted runner class that already passed the mandatory Firecracker microVM arithmetic smoke. The GCP simulator job installs the matching x86_64 gcloud CLI archive. Simulator SDK/CLI/Terraform harnesses now build their local workload images for the runner-native Linux Docker platform, so x64 KVM CI uses `linux/amd64` images and arm hosts still use `linux/arm64` images without requiring emulation.
 
 The same follow-up fixed an AWS Auto Scaling lifecycle gap exposed by the failed AWS SDK shard. ASGs no longer create EC2 rows marked `running` without a guest process. Scale-out now starts the real EC2 Firecracker guest through the shared EC2 lifecycle and records `running` only after startup succeeds; scale-in stops the guest before terminating instance state, ENI state, and delete-on-termination volumes.
 
