@@ -123,6 +123,16 @@ func TestAzureTokenAudienceFromForm(t *testing.T) {
 			want: "https://storage.azure.com/",
 		},
 		{
+			name: "oidc-only scopes use default management audience",
+			form: url.Values{"scope": {"openid profile email"}},
+			want: "https://management.azure.com/",
+		},
+		{
+			name: "oidc scopes are skipped before resource scope",
+			form: url.Values{"scope": {"openid profile email https://graph.microsoft.com/User.Read"}},
+			want: "https://graph.microsoft.com",
+		},
+		{
 			name: "v1 resource is audience",
 			form: url.Values{"resource": {"https://servicebus.azure.net"}},
 			want: "https://servicebus.azure.net",

@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - Azure Entra Authorization-Code Flow
+
+Issue #362 was fixed. The Azure Entra simulator now implements the interactive OIDC authorization-code front half that its discovery document already advertised.
+
+Discovery now returns simulator-local absolute URLs for the served authorization, token, and JWKS endpoints, plus metadata for the implemented auth-code response type, response modes, grant types, PKCE methods, and RS256 signing algorithm.
+
+`GET /{tenant}/oauth2/v2.0/authorize` validates the documented public OAuth/OIDC request parameters, requires `response_type=code` and `scope`, issues a short-lived authorization code, preserves `state`, supports `query`, `fragment`, and `form_post` response modes, and redirects or posts back to the relying party redirect URI. `POST /{tenant}/oauth2/v2.0/token` now redeems `grant_type=authorization_code` by matching tenant, client ID, and redirect URI; authorization codes are consumed exactly once; PKCE `plain` and `S256` code challenges are enforced when present; unsupported grant types return OAuth errors instead of being treated as client credentials.
+
+The existing RS256/JWKS signing path was reused. Access tokens are still signed JWTs with the requested resource audience, authorization-code flows with `openid` scope also return a signed ID token containing the client ID audience, nonce, and basic user claims, and flows with `offline_access` receive a refresh token that can be redeemed at the same token endpoint.
+
+Regression coverage runs through the real Azure simulator SDK-test harness. It verifies discovery, authorize redirect, state propagation, code redemption, ID-token claims, refresh-token redemption, PKCE failure, single-use code behavior, missing-scope rejection, hybrid-flow rejection, and unsupported-grant rejection. Unit coverage verifies OIDC scopes are skipped when deriving access-token audience.
+
+Issue #363, requesting initial versioned releases and GHCR image publishing, was intentionally deferred while the project is still early. Do not cut tags or add artifact/image publishing work until that deferral is lifted.
+
 ## 2026-06-02 - GCP/Azure Security And Load-Balancer Packet Paths
 
 Issues #334 and #335 were fixed for GCP and Azure.

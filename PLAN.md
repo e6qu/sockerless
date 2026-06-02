@@ -10,9 +10,9 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: GCP/Azure issue #335 security enforcement and issue #334 managed load-balancer data planes moved onto the real packet path. GCP firewalls and Azure NSGs compile to nftables on real NIC veth peers; GCP/Azure managed load balancers actively probe and proxy healthy backends through their public control-plane resource graphs.
+Last completed phase: Azure Entra OIDC authorization-code flow for issue #362. The simulator now serves the `authorization_endpoint` advertised by discovery, advertises simulator-local absolute auth/token/JWKS endpoints and supported auth-code capabilities, issues short-lived one-time authorization codes, redirects with code/state, redeems codes at the token endpoint with PKCE validation, rejects unsupported grants, returns signed access/ID tokens through the existing JWKS-backed signing path, and supports refresh tokens for `offline_access`.
 
-Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Number #337 is a merged PR, not an open issue.
+Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Issue #363 release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
 
 ## Guiding Principles
 
@@ -66,6 +66,7 @@ Implemented:
 - BUG-1287 fixed Azure Event Grid topic endpoint leakage. Topic ARM create/get/list now advertise the shared host-dispatched Event Grid data-plane endpoint, or the configured Caddy HTTPS gateway template, instead of allocating simulator-local `127.0.0.1:<random>` publish listeners. Regression tests verify create/get/list endpoint shape and publish delivery through the advertised host.
 - BUG-1293 / issue #335 fixed the remaining GCP/Azure security enforcement packet paths. GCP firewall ingress and Azure NSG inbound rules compile to nftables on real NIC veth peers, with rule/tag/subnet/NIC mutations reapplying filters and failing loudly on substrate errors.
 - BUG-1294 / issue #334 fixed the remaining GCP/Azure managed load-balancer packet paths. GCP backend services use unmanaged instance groups, `getHealth`, real probes, frontend-IP dispatch, URL-map resolution, and proxying to healthy members; Azure Load Balancer uses frontend public IP dispatch, ARM rule/backend/probe resolution, real probes, and proxying to healthy backend NICs or backend-pool addresses.
+- BUG-1295 / issue #362 fixed Azure Entra OIDC authorization-code flow. Discovery's advertised `authorization_endpoint` is now served with absolute simulator-local metadata for the implemented auth-code slice, authorization requests redirect with code/state, token redemption consumes codes exactly once, PKCE is validated, unsupported grants are rejected, OAuth errors use public error fields, `openid` scopes receive a signed ID token alongside the access token, and `offline_access` receives a redeemable refresh token.
 
 Remaining staged work:
 
