@@ -1,6 +1,7 @@
 package realexec
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -90,6 +91,42 @@ func TestEnsureRootFSInitLinksSystemdWhenKernelInitIsMissing(t *testing.T) {
 func TestEnsureRootFSInitFailsWithoutInitOrSystemd(t *testing.T) {
 	if err := ensureRootFSInit(t.TempDir()); err == nil {
 		t.Fatal("rootfs without init candidate or systemd was accepted")
+	}
+}
+
+func TestCopyRootFSCopiesContentsIntoDestination(t *testing.T) {
+	src := t.TempDir()
+	systemdPath := filepath.Join(src, "usr", "lib", "systemd", "systemd")
+	if err := os.MkdirAll(filepath.Dir(systemdPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemdPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sbinDir := filepath.Join(src, "sbin")
+	if err := os.MkdirAll(sbinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../usr/lib/systemd/systemd", filepath.Join(sbinDir, "init")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "rootfs")
+	if err := copyRootFS(context.Background(), src, dst); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(dst, "sbin", "init"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "../usr/lib/systemd/systemd" {
+		t.Fatalf("copied init target = %q, want ../usr/lib/systemd/systemd", target)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "usr", "lib", "systemd", "systemd")); err != nil {
+		t.Fatalf("copied rootfs missing systemd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, filepath.Base(src), "sbin", "init")); !os.IsNotExist(err) {
+		t.Fatalf("copy nested the source directory under destination: %v", err)
 	}
 }
 

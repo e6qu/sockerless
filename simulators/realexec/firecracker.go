@@ -422,7 +422,7 @@ func copyRootFS(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	return (Runner{}).Run(ctx, "cp", "-a", filepath.Join(src, "."), dst)
+	return (Runner{}).Run(ctx, "cp", "-a", src+string(os.PathSeparator)+".", dst)
 }
 
 func ensureRootFSInit(rootfsDir string) error {
