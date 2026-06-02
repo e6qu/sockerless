@@ -79,8 +79,18 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 	if cfg.BootPeriod == 0 {
 		cfg.BootPeriod = 2 * time.Minute
 	}
+	workDirReady := false
 	if cfg.WorkDir == "" {
-		cfg.WorkDir = filepath.Join(os.TempDir(), "sockerless-firecracker", sanitizePathName(cfg.ID))
+		baseDir := filepath.Join(os.TempDir(), "sockerless-firecracker", sanitizePathName(cfg.ID))
+		if err := os.MkdirAll(baseDir, 0o755); err != nil {
+			return nil, err
+		}
+		workDir, err := os.MkdirTemp(baseDir, sanitizePathName(cfg.ID)+"-")
+		if err != nil {
+			return nil, err
+		}
+		cfg.WorkDir = workDir
+		workDirReady = true
 	}
 
 	assets, err := ensureFirecrackerAssets(ctx, defaultFirecrackerVersion)
@@ -88,9 +98,11 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		return nil, err
 	}
 
-	_ = os.RemoveAll(cfg.WorkDir)
-	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
-		return nil, err
+	if !workDirReady {
+		_ = os.RemoveAll(cfg.WorkDir)
+		if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	rollback := &CleanupStack{}
 	rollback.Add(func(context.Context) error {

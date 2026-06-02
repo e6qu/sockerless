@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -711,9 +712,14 @@ func startCloudRunJobContainers(execID, execShort string, taskTmpl *TaskTemplate
 	}
 
 	main := taskTmpl.Containers[0]
+	mainImage := sim.ResolveLocalImage(main.Image)
+	mainPlatform, err := localImagePlatform(context.Background(), mainImage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve main container %q image platform: %w", main.Name, err)
+	}
 	mainHandle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(main.Image),
-		Architecture: "linux/arm64",
+		Image:        mainImage,
+		Architecture: mainPlatform,
 		Command:      main.Command,
 		Args:         main.Args,
 		Env:          envFor(main),
@@ -733,9 +739,18 @@ func startCloudRunJobContainers(execID, execShort string, taskTmpl *TaskTemplate
 
 	var sidecars []*sim.ContainerHandle
 	for i, c := range taskTmpl.Containers[1:] {
+		sidecarImage := sim.ResolveLocalImage(c.Image)
+		sidecarPlatform, err := localImagePlatform(context.Background(), sidecarImage)
+		if err != nil {
+			mainHandle.Cancel()
+			for _, h := range sidecars {
+				h.Cancel()
+			}
+			return nil, nil, fmt.Errorf("resolve sidecar container %q image platform: %w", c.Name, err)
+		}
 		handle, err := sim.StartContainerSync(sim.ContainerConfig{
-			Image:        sim.ResolveLocalImage(c.Image),
-			Architecture: "linux/arm64",
+			Image:        sidecarImage,
+			Architecture: sidecarPlatform,
 			Command:      c.Command,
 			Args:         c.Args,
 			Env:          envFor(c),

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1299 filed - 1298 fixed - 4 open - 2 false positives.**
+**1301 filed - 1300 fixed - 4 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,12 +12,17 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332, #333, and #338 track the remaining real-execution program after #334/#335 were fixed: Firecracker-backed VM execution and umbrella follow-through across the real-execution substrate. |
+| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332, #333, and #338 track the remaining real-execution program after #334/#335 were fixed: guest metadata and umbrella follow-through across the real-execution substrate. |
 | 1299 | P1 | simulator VM metadata | missing guest metadata plane | Firecracker-backed VM lifecycle now boots real AWS EC2, GCP Compute Engine, and Azure VM guests, but guest-internal metadata service reachability for 169.254.169.254 / provider metadata hostnames still needs a real network-namespace data-plane implementation before #333 can be fully closed. |
 
 ## Recently Closed
 
-This phase closed BUG-1297 and BUG-1298:
+This phase closed BUG-1300 and BUG-1301:
+
+- BUG-1300: Moving VM-backed simulator SDK/CLI/Terraform CI jobs to KVM-capable `ubuntu-latest` exposed stale simulator workload execution paths that still forced Docker platform `linux/arm64`. GCP Cloud Functions/Cloud Run Jobs, AWS ECS, and Azure Functions now inspect the resolved local workload image platform before container execution. AWS Lambda translates the public Lambda `Architectures` field (`x86_64` / `arm64`) to Docker's platform strings. Simulator tests still build native Linux workload images for the runner platform, so x64 KVM CI does not require emulation and arm hosts still run arm64 images.
+- BUG-1301: Firecracker VM launches reused deterministic default scratch directories and deleted them at startup. Concurrent same-ID starts, SDK/provider retries, or lifecycle overlap could remove another launch's rootfs build and fail with `truncate .../rootfs.ext4: no such file or directory`. Default Firecracker launches now allocate a unique per-launch workdir under the instance ID; explicit caller-provided workdirs remain explicit and isolated by the caller.
+
+Previous phase closed BUG-1297 and BUG-1298:
 
 - BUG-1297 / issue #366: Simulator release-image builds and `simulators/docker-compose.yml` used per-cloud build contexts even though each per-cloud module replaces `github.com/sockerless/simulator-realexec => ../realexec`. The simulator Dockerfiles now build from the shared `simulators/` context and switch into `/src/<cloud>` before `go build`; publish-container-images, compose, and per-cloud `docker-build` Make targets all use that same context. A simulator-scoped `.dockerignore` excludes test harnesses, generated test binaries, Terraform provider caches/state, built UI assets, and locally built simulator binaries from release-image contexts. Real Docker image builds for AWS, GCP, and Azure passed from the fixed context.
 - BUG-1298 / issue #367: The explicit `SIM_RUNTIME=process` API-only startup mode existed but was undocumented, and Docker/Podman startup failures did not point operators to it. Common and per-cloud simulator docs now document `SIM_RUNTIME=process` as an explicit API-only mode for runs that do not invoke workload execution, not as a fallback. Startup comments and fatal messages now say Docker/Podman is required for workload execution and mention `SIM_RUNTIME=process` only for explicit non-execution API-only runs.

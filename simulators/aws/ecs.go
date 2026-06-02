@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"net/http"
@@ -1094,10 +1095,16 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		if i > 0 {
 			containerName = fmt.Sprintf("%s-%s", containerName, cd.Name)
 		}
+		localImage := sim.ResolveLocalImage(cd.Image)
+		platform, err := localImagePlatform(context.Background(), localImage)
+		if err != nil {
+			stopECSTaskProcesses(processes)
+			return nil, fmt.Errorf("resolve task container %q image platform: %w", cd.Name, err)
+		}
 
 		cfg := sim.ContainerConfig{
-			Image:        sim.ResolveLocalImage(cd.Image),
-			Architecture: "linux/arm64",
+			Image:        localImage,
+			Architecture: platform,
 			Command:      cd.EntryPoint,
 			Args:         cd.Command,
 			Env:          mergeEnv(cmdEnv, hostMetadataEnv(taskID)),

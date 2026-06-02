@@ -1219,12 +1219,18 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 	})
 
 	containerName := fmt.Sprintf("sockerless-sim-azure-func-%s-%d", site.Name, time.Now().UnixNano())
+	localImage := sim.ResolveLocalImage(containerImage)
+	platform, err := localImagePlatform(context.Background(), localImage)
+	if err != nil {
+		injectAppTrace(site.Name,
+			fmt.Sprintf("Function execution error: resolve image platform failed: %v", err))
+		return []byte("{}"), -1
+	}
 
-	// Architecture: sim's primary capacity is linux/arm64.
 	// Host metadata: route IMDS + identity reads via env.
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(containerImage),
-		Architecture: "linux/arm64",
+		Image:        localImage,
+		Architecture: platform,
 		Command:      entrypoint,
 		Args:         cmd,
 		Env:          mergeEnv(cmdEnv, hostMetadataEnv()),

@@ -308,15 +308,17 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 			stderr.WriteByte('\n')
 		}
 	})
+	platform, err := lambdaDockerPlatform(fn.Architectures)
+	if err != nil {
+		return lambdaErrorPayload(err.Error()), true, 1
+	}
 
-	// Architecture: sim's primary capacity is linux/arm64.
-	// fn.Architectures is not yet honoured here — sim runs a single arch.
 	// Host metadata: Lambda has its Runtime API (above) but workloads
 	// may still query EC2 IMDS for region/SA tokens via the AWS SDK.
 	// Pass empty taskID — Lambda doesn't expose ECS_CONTAINER_METADATA_URI_V4.
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
 		Image:        sim.ResolveLocalImage(fn.Code.ImageUri),
-		Architecture: "linux/arm64",
+		Architecture: platform,
 		Command:      entrypoint,
 		Args:         args,
 		Env:          mergeEnv(cmdEnv, hostMetadataEnv("")),

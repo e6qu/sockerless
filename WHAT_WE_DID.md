@@ -10,6 +10,8 @@ The PR #372 CI failure was fixed without skipping tests, adding fallbacks, or we
 
 The VM-backed simulator SDK/CLI/Terraform jobs now run on `ubuntu-latest`, the same KVM-capable hosted runner class that already passed the mandatory Firecracker microVM arithmetic smoke. The GCP simulator job installs the matching x86_64 gcloud CLI archive. Simulator SDK/CLI/Terraform harnesses now build their local workload images for the runner-native Linux Docker platform, so x64 KVM CI uses `linux/amd64` images and arm hosts still use `linux/arm64` images without requiring emulation.
 
+The x64 runner move exposed stale arm64 assumptions in simulator workload execution, which were fixed instead of worked around. GCP Cloud Functions and Cloud Run Jobs, AWS ECS, and Azure Functions now resolve the actual local Docker image platform before starting workload containers. AWS Lambda honors the public Lambda `Architectures` field by translating `x86_64`/`arm64` to Docker platform strings. Firecracker default VM workdirs are unique per launch under the instance ID, so provider retries and concurrent same-ID starts no longer remove another launch's rootfs build.
+
 The same follow-up fixed an AWS Auto Scaling lifecycle gap exposed by the failed AWS SDK shard. ASGs no longer create EC2 rows marked `running` without a guest process. Scale-out now starts the real EC2 Firecracker guest through the shared EC2 lifecycle and records `running` only after startup succeeds; scale-in stops the guest before terminating instance state, ENI state, and delete-on-termination volumes.
 
 ## 2026-06-02 - Firecracker-Backed VM Lifecycle
@@ -311,7 +313,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332, #333, and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, GCP/Azure #334/#335 packet paths were completed later, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM. Firecracker-backed public VM APIs remain.
+- BUG-1267: issues #332, #333, and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, GCP/Azure #334/#335 packet paths were completed later, Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM, and AWS/GCP/Azure public VM lifecycle now boots real Firecracker guests. Guest metadata and #338 umbrella follow-through remain.
 
 ## Continuity Rules
 
