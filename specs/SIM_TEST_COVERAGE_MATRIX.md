@@ -14,7 +14,9 @@ Legend:
 | `aws-amplify` | direct | direct | direct | `simulators/aws/sdk-tests/amplify_test.go`; `simulators/aws/cli-tests/amplify_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-autoscaling` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-cloudtrail` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudwatch` | direct | direct | direct | `simulators/aws/sdk-tests/cloudwatch_test.go`; `simulators/aws/cli-tests/cloudwatch_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-dynamodb` | direct | direct | direct | `simulators/aws/sdk-tests/dynamodb_test.go`; `simulators/aws/cli-tests/dynamodb_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-ec2` | direct | direct | direct | `simulators/aws/sdk-tests/ec2_test.go`; `simulators/aws/cli-tests/ec2_test.go`; `simulators/aws/terraform-tests/main.tf` |

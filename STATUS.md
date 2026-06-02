@@ -8,14 +8,16 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Check live open issues first; otherwise continue BUG-1104 with a focused simulator coverage audit. Versioned releases/image publishing remain deferred while the project is early. |
-| Last merged | EC2 EBS data volumes were wired into Firecracker-backed guests, closing #378. |
+| Planned next | Check live open issues first; otherwise continue BUG-1104 with another focused simulator coverage audit. Versioned releases/image publishing remain deferred while the project is early. |
+| Last merged | AWS EC2/EBS, Auto Scaling, and CloudTrail coverage docs were audited and corrected. |
 | Open GitHub issues | None at last check after this PR merged. |
-| Bugs | 1309 filed - 1309 fixed - 2 open - 3 false positives. |
+| Bugs | 1310 filed - 1310 fixed - 2 open - 3 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence. |
 | Live infra | None up. |
 
 ## Current State
+
+BUG-1310 was fixed. The BUG-1104 AWS EC2/EBS, Auto Scaling, and CloudTrail coverage audit found stale canonical coverage docs rather than a missing implementation. Auto Scaling and CloudTrail already had real AWS SDK, AWS CLI, and Terraform provider coverage, but they were absent from `specs/SIM_SURFACE_TABLES/` and therefore from `specs/SIM_TEST_COVERAGE_MATRIX.md`. The EC2 surface table also omitted the already implemented EBS volume/snapshot operations. The surface tables and matrix now list `aws-autoscaling`, `aws-cloudtrail`, and EC2 `CreateVolume`, `AttachVolume`, `DetachVolume`, `DeleteVolume`, `ModifyVolume`, `CreateSnapshot`, `DescribeSnapshots`, and `DeleteSnapshot` with evidence tied to the existing public-client tests.
 
 Issue #378 / BUG-1309 was fixed. AWS EC2 `AttachVolume` is no longer metadata-only for Firecracker-backed instances: EBS data volumes have sparse file-backed raw block images under their volume host paths, EC2 Firecracker guests boot with substrate-managed EBS drive slots, running `AttachVolume` patches the selected drive slot to the volume's real block image, `DetachVolume` patches it back to an empty slot, and `ModifyVolume` refreshes the running drive after resize. EC2 snapshots and restores copy the real volume host path, including the raw block image, so bytes written by the guest persist through `CreateSnapshot` and `CreateVolume(SnapshotId)`. The mandatory Firecracker smoke now proves the real block path by writing a payload inside the guest, copying the backing image as a snapshot, restoring it to another image, and reading the payload back inside the guest.
 
@@ -152,6 +154,7 @@ Implemented gateway surface:
 
 ## Recent Merged Work
 
+- AWS coverage audit: BUG-1310 corrected the canonical SDK/CLI/Terraform coverage docs for EC2 EBS operations, Auto Scaling, and CloudTrail after confirming the public-client implementation and tests already existed.
 - EC2 Firecracker EBS attach: issue #378 was fixed by wiring EBS data volumes to real Firecracker block-device backing images and extending the mandatory Firecracker smoke with a guest write/snapshot/restore/read regression.
 - Azure Terraform HTTPS gateway stage: the Azure Terraform harness used the local Caddy gateway end to end, and BUG-1246 fixed Azure Storage data-plane host dispatch so `azure.sockerless.localhost` metadata requests were no longer swallowed by the storage wrapper.
 - SDK/CLI HTTPS gateway audit: documented real CA/endpoint knobs for SDK and CLI clients, and fixed GCP GCS CLI coverage discovered by BUG-1104.
