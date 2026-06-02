@@ -28,6 +28,12 @@ func TestNetworkCapabilityDetectionDoesNotRequireKVM(t *testing.T) {
 	}
 }
 
+func TestFirecrackerCapabilityDetectionRequiresKVM(t *testing.T) {
+	if !commandsRequireKVM(firecrackerRequiredCommands()) {
+		t.Fatal("Firecracker capability detection does not require KVM")
+	}
+}
+
 func TestLinuxEffectiveCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "status")

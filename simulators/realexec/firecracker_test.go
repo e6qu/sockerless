@@ -1,6 +1,7 @@
 package realexec
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,5 +62,106 @@ func TestVerifyELFKernelRejectsConfigFiles(t *testing.T) {
 	}
 	if err := verifyELFKernel(configPath); err == nil {
 		t.Fatal("config file accepted as Firecracker kernel")
+	}
+}
+
+func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
+	dir := t.TempDir()
+	netplanDir := filepath.Join(dir, "etc", "netplan")
+	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(netplanDir, "50-cloud-init.yaml"), []byte("network: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureRootFSNetwork(dir, net.ParseIP("10.26.0.2"), net.ParseIP("10.26.0.1"), 24); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptPath := filepath.Join(dir, "usr", "local", "sbin", "sockerless-network")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(scriptPath); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o755 {
+		t.Fatalf("script mode = %o, want 755", info.Mode().Perm())
+	}
+	for _, want := range []string{
+		"ip addr replace 10.26.0.2/24 dev \"$dev\"",
+		"ip route replace default via 10.26.0.1 dev \"$dev\"",
+		"printf 'nameserver 1.1.1.1\\n' > /etc/resolv.conf",
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("boot configurator missing %q:\n%s", want, script)
+		}
+	}
+
+	servicePath := filepath.Join(dir, "etc", "systemd", "system", "sockerless-network.service")
+	service, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "ExecStart=/usr/local/sbin/sockerless-network") {
+		t.Fatalf("service does not execute network configurator:\n%s", service)
+	}
+	if _, err := os.Stat(filepath.Join(netplanDir, "50-cloud-init.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("stale netplan config still exists: %v", err)
+	}
+	ifupdown, err := os.ReadFile(filepath.Join(dir, "etc", "network", "interfaces.d", "sockerless-eth0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"address 10.26.0.2",
+		"netmask 255.255.255.0",
+		"gateway 10.26.0.1",
+	} {
+		if !strings.Contains(string(ifupdown), want) {
+			t.Fatalf("ifupdown config missing %q:\n%s", want, ifupdown)
+		}
+	}
+
+	link := filepath.Join(dir, "etc", "systemd", "system", "multi-user.target.wants", "sockerless-network.service")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "../sockerless-network.service" {
+		t.Fatalf("service symlink = %q, want ../sockerless-network.service", target)
+	}
+}
+
+func TestFirecrackerFailureLogsIncludeConsoleTail(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "firecracker-console.log"), []byte("boot line\nnetwork failed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := firecrackerFailureLogs(dir)
+	if !strings.Contains(got, "----- firecracker-console.log -----") {
+		t.Fatalf("missing console header: %q", got)
+	}
+	if !strings.Contains(got, "network failed") {
+		t.Fatalf("missing console body: %q", got)
+	}
+}
+
+func TestExt4RootFSImageSizeUsesMeasuredPayload(t *testing.T) {
+	const mib = uint64(1024 * 1024)
+	tests := []struct {
+		name   string
+		usedKB uint64
+		want   uint64
+	}{
+		{name: "small payload keeps one gigabyte floor", usedKB: 256 * 1024, want: 1024 * mib},
+		{name: "larger payload doubles data and adds headroom", usedKB: 700 * 1024, want: 1664 * mib},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ext4RootFSImageSizeBytes(tt.usedKB); got != tt.want {
+				t.Fatalf("size = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }

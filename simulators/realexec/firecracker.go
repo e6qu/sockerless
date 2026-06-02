@@ -153,14 +153,17 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 	})
 
 	if err := waitForUnixSocket(ctx, apiSocket, cmd, 10*time.Second); err != nil {
+		err = withFirecrackerFailureLogs(err, cfg.WorkDir)
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
 	if err := configureFirecracker(ctx, apiSocket, cfg, assets.KernelPath, rootfsPath); err != nil {
+		err = withFirecrackerFailureLogs(err, cfg.WorkDir)
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
 	if err := waitForGuestPing(ctx, cfg.Tap.NetworkNamespace(), cfg.Tap.PrivateIP, cmd, cfg.BootPeriod); err != nil {
+		err = withFirecrackerFailureLogs(err, cfg.WorkDir)
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
@@ -177,7 +180,11 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 }
 
 func DetectFirecrackerCapabilities() CapabilityReport {
-	return DetectCapabilities("cp", "firecracker", "ip", "nft", "mkfs.ext4", "ping", "unsquashfs")
+	return DetectCapabilities(firecrackerRequiredCommands()...)
+}
+
+func firecrackerRequiredCommands() []string {
+	return []string{"cp", "du", "firecracker", "ip", "nft", "mkfs.ext4", "ping", "unsquashfs"}
 }
 
 func (vm *FirecrackerVM) Stop(ctx context.Context) error {
@@ -449,6 +456,15 @@ DNS=1.1.1.1
 	if err := os.MkdirAll(netplanDir, 0o755); err != nil {
 		return err
 	}
+	if entries, err := os.ReadDir(netplanDir); err == nil {
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".yaml") || strings.HasSuffix(entry.Name(), ".yml") {
+				if err := os.Remove(filepath.Join(netplanDir, entry.Name())); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	netplan := fmt.Sprintf(`network:
   version: 2
   ethernets:
@@ -463,15 +479,95 @@ DNS=1.1.1.1
         addresses:
           - 1.1.1.1
 `, ip, prefixBits, gateway)
-	return os.WriteFile(filepath.Join(netplanDir, "10-sockerless.yaml"), []byte(netplan), 0o600)
+	if err := os.WriteFile(filepath.Join(netplanDir, "10-sockerless.yaml"), []byte(netplan), 0o600); err != nil {
+		return err
+	}
+	interfacesDir := filepath.Join(rootfsDir, "etc", "network", "interfaces.d")
+	if err := os.MkdirAll(interfacesDir, 0o755); err != nil {
+		return err
+	}
+	ifupdown := fmt.Sprintf(`auto eth0
+iface eth0 inet static
+    address %s
+    netmask %s
+    gateway %s
+    dns-nameservers 1.1.1.1
+`, ip, prefixNetmask(prefixBits), gateway)
+	if err := os.WriteFile(filepath.Join(interfacesDir, "sockerless-eth0"), []byte(ifupdown), 0o644); err != nil {
+		return err
+	}
+	sbinDir := filepath.Join(rootfsDir, "usr", "local", "sbin")
+	if err := os.MkdirAll(sbinDir, 0o755); err != nil {
+		return err
+	}
+	configureScript := fmt.Sprintf(`#!/bin/sh
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+dev="${SOCKERLESS_NET_IFACE:-eth0}"
+if [ ! -d "/sys/class/net/$dev" ]; then
+  dev=""
+  for path in /sys/class/net/*; do
+    name="${path##*/}"
+    if [ "$name" != "lo" ]; then
+      dev="$name"
+      break
+    fi
+  done
+fi
+if [ -z "$dev" ]; then
+  echo "no non-loopback network interface found" >&2
+  exit 1
+fi
+ip link set dev "$dev" up
+ip addr flush dev "$dev" scope global || true
+ip addr replace %s/%d dev "$dev"
+ip route replace default via %s dev "$dev"
+printf 'nameserver 1.1.1.1\n' > /etc/resolv.conf
+`, ip, prefixBits, gateway)
+	if err := os.WriteFile(filepath.Join(sbinDir, "sockerless-network"), []byte(configureScript), 0o755); err != nil {
+		return err
+	}
+	serviceDir := filepath.Join(rootfsDir, "etc", "systemd", "system")
+	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+		return err
+	}
+	service := `[Unit]
+Description=Sockerless cloud simulator guest networking
+After=systemd-udevd.service systemd-udev-trigger.service
+Before=network-online.target multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sockerless-network
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+`
+	if err := os.WriteFile(filepath.Join(serviceDir, "sockerless-network.service"), []byte(service), 0o644); err != nil {
+		return err
+	}
+	wantsDir := filepath.Join(serviceDir, "multi-user.target.wants")
+	if err := os.MkdirAll(wantsDir, 0o755); err != nil {
+		return err
+	}
+	link := filepath.Join(wantsDir, "sockerless-network.service")
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink("../sockerless-network.service", link)
 }
 
 func createExt4RootFS(ctx context.Context, rootfsDir, rootfsPath string) error {
+	size, err := ext4RootFSImageSize(ctx, rootfsDir)
+	if err != nil {
+		return err
+	}
 	rootfs, err := os.OpenFile(rootfsPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	if err := rootfs.Truncate(3 * 1024 * 1024 * 1024); err != nil {
+	if err := rootfs.Truncate(int64(size)); err != nil {
 		_ = rootfs.Close()
 		return err
 	}
@@ -479,6 +575,40 @@ func createExt4RootFS(ctx context.Context, rootfsDir, rootfsPath string) error {
 		return err
 	}
 	return (Runner{}).Run(ctx, "mkfs.ext4", "-q", "-d", rootfsDir, "-F", rootfsPath)
+}
+
+func ext4RootFSImageSize(ctx context.Context, rootfsDir string) (uint64, error) {
+	out, err := (Runner{}).Output(ctx, "du", "-sk", rootfsDir)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("du -sk %s returned no size", rootfsDir)
+	}
+	usedKB, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse rootfs size from du output %q: %w", out, err)
+	}
+	return ext4RootFSImageSizeBytes(usedKB), nil
+}
+
+func ext4RootFSImageSizeBytes(usedKB uint64) uint64 {
+	const (
+		kib           = uint64(1024)
+		mib           = uint64(1024 * 1024)
+		minSize       = 1024 * mib
+		extraHeadroom = 256 * mib
+		alignment     = 64 * mib
+	)
+	size := usedKB*kib*2 + extraHeadroom
+	if size < minSize {
+		size = minSize
+	}
+	if rem := size % alignment; rem != 0 {
+		size += alignment - rem
+	}
+	return size
 }
 
 func waitForUnixSocket(ctx context.Context, socket string, cmd *exec.Cmd, timeout time.Duration) error {
@@ -571,6 +701,52 @@ func waitForGuestPing(ctx context.Context, namespace string, ip net.IP, cmd *exe
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+func withFirecrackerFailureLogs(err error, workDir string) error {
+	logs := firecrackerFailureLogs(workDir)
+	if logs == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n%s", err, logs)
+}
+
+func firecrackerFailureLogs(workDir string) string {
+	var parts []string
+	for _, name := range []string{"firecracker-console.log", "firecracker.log"} {
+		path := filepath.Join(workDir, name)
+		body, err := readTail(path, 8192)
+		if err != nil || strings.TrimSpace(body) == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("----- %s -----\n%s", name, body))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func readTail(path string, limit int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	size := info.Size()
+	offset := int64(0)
+	if size > limit {
+		offset = size - limit
+	}
+	buf := make([]byte, size-offset)
+	if _, err := f.ReadAt(buf, offset); err != nil && err != io.EOF {
+		return "", err
+	}
+	if offset > 0 {
+		return "[truncated]\n" + string(buf), nil
+	}
+	return string(buf), nil
 }
 
 func prefixNetmask(prefixBits int) net.IP {

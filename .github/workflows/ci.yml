@@ -1,6 +1,7 @@
 name: CI
 
 env:
+  FIRECRACKER_VERSION: v1.15.1
   GO_CACHE_DEPENDENCY_PATHS: |
     go.work
     **/go.sum
@@ -197,10 +198,8 @@ jobs:
 
   firecracker:
     name: firecracker (microVM arithmetic)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
-    env:
-      FIRECRACKER_VERSION: v1.15.1
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-go@v6.4.0
@@ -208,6 +207,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/sockerless/firecracker-ci
+          key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install Firecracker test dependencies
         run: |
           sudo apt-get update
@@ -221,7 +224,7 @@ jobs:
 
   sim:
     # VM-backed simulator slices require /dev/kvm for real Firecracker guests.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -234,6 +237,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/sockerless/firecracker-ci
+          key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install gcloud CLI
         if: matrix.cloud == 'gcp'
         run: |
@@ -260,7 +267,7 @@ jobs:
 
   sim-aws-sdk:
     name: sim (aws sdk)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-go@v6.4.0
@@ -268,6 +275,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/sockerless/firecracker-ci
+          key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
           sudo apt-get update
@@ -281,7 +292,7 @@ jobs:
 
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -299,6 +310,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/sockerless/firecracker-ci
+          key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
           sudo apt-get update
@@ -318,7 +333,7 @@ jobs:
     # (every recent reopen — BUG-1098 / 1099 / 1142 / 1147 — surfaced
     # against a provider sequence that the SDK tests had already
     # marked green).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -331,6 +346,10 @@ jobs:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/sockerless/firecracker-ci
+          key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - uses: hashicorp/setup-terraform@v4.0.1
         with:
           terraform_wrapper: false

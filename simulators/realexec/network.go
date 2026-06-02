@@ -506,12 +506,6 @@ func (s *Subnet) AttachTapNIC(ctx context.Context, spec TapNICSpec) (*TapNIC, er
 	rollback.Add(func(cleanupCtx context.Context) error {
 		return s.network.runner.Run(cleanupCtx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "del", spec.TapName)
 	})
-	if spec.MAC != "" {
-		if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", "dev", spec.TapName, "address", spec.MAC); err != nil {
-			_ = rollback.Close(context.Background())
-			return nil, err
-		}
-	}
 	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", spec.TapName, "master", s.BridgeName); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
