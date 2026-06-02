@@ -10,9 +10,9 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: Azure SDK local portability for issue #365. On Darwin, `make sdk-test` now uses the existing Docker real-network harness and runs `make sdk-test-local` inside the privileged Linux simulator test image, so network-heavy SDK tests execute on Linux capabilities instead of failing on the macOS host. The Event Grid SDK publish path preserves the advertised `*.eventgrid.localhost` URL and Host header while resolving those hosts explicitly to loopback for the simulator port.
+Last completed phase: simulator image-context and API-only runtime documentation for issues #366 and #367. Runtime image builds now use the shared `simulators/` Docker context in publish-container-images, compose, and per-cloud `docker-build` targets, with each Dockerfile building from `/src/<cloud>` so `../realexec` is present. `simulators/.dockerignore` excludes local test/build/cache artifacts from release-image contexts. `SIM_RUNTIME=process` is documented and surfaced in fatal messages as an explicit API-only mode for non-execution simulator runs; Docker/Podman remains required for workload execution.
 
-Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Issue #363 release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
+Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Versioned release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
 
 ## Guiding Principles
 

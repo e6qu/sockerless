@@ -81,7 +81,8 @@ func NewServer(cfg Config) (*Server, error) {
 	handler = RequestIDMiddleware(cfg.Provider)(handler)
 	handler = otelhttp.NewHandler(handler, "sockerless-sim-"+cfg.Provider)
 
-	// Initialize container runtime (Docker/Podman) — required for execution
+	// Initialize Docker/Podman for workload execution. SIM_RUNTIME=process
+	// is an explicit API-only startup mode for non-execution service slices.
 	runtime := os.Getenv("SIM_RUNTIME")
 	if runtime == "" {
 		runtime = "docker"

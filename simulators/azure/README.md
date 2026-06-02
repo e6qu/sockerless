@@ -39,6 +39,11 @@ go build -o simulator-azure .
 SIM_LISTEN_ADDR=:4568 ./simulator-azure
 ```
 
+Docker or Podman is required when Container Apps or Azure Functions calls execute
+workloads. For API-only checks that do not invoke workload execution,
+`SIM_RUNTIME=process` starts the Azure simulator without initializing
+Docker/Podman.
+
 Service Bus raw AMQP/TLS is a second, optional listener because real
 Azure Service Bus exposes AMQP as a TCP/TLS transport in addition to
 HTTP/REST and WebSocket tunneling:

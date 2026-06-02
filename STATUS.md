@@ -8,14 +8,18 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for #332, #333, and #338. Issue #363 release/image publishing remains deferred while the project is early. |
-| Last merged | Azure SDK local portability for issue #365. |
-| Open GitHub issues | #332, #333, #338, and deferred release/image publishing issue #363 at last check after #365 was resolved. Number #337 is a merged PR, not an open issue. |
-| Bugs | 1296 filed - 1296 fixed - 3 open - 2 false positives. |
+| Planned next | Continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for #332, #333, and #338. Versioned releases/image publishing remain deferred while the project is early. |
+| Last merged | Simulator image-context and API-only runtime documentation fixes for issues #366 and #367. |
+| Open GitHub issues | #332, #333, and #338 at last check after #366 and #367 were resolved. Number #337 is a merged PR, not an open issue. |
+| Bugs | 1298 filed - 1298 fixed - 3 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
+
+Issues #366 and #367 were fixed. Simulator image builds now use the shared `simulators/` Docker context everywhere the runtime images are built: the publish-container-images workflow, `simulators/docker-compose.yml`, and the per-cloud `docker-build` Make targets. Each Dockerfile copies the shared context and builds from `/src/aws`, `/src/gcp`, or `/src/azure`, so each module's `../realexec` replace target is present. `simulators/.dockerignore` keeps release-image contexts focused on source by excluding test harnesses, generated test binaries, Terraform caches/state, built UI assets, and local simulator binaries. Local Docker builds for all three simulator images passed from the fixed context, and the context shrank from roughly 1.1 GB of local artifacts to roughly 3.5 MB.
+
+`SIM_RUNTIME=process` is now documented as an explicit API-only startup mode for simulator runs that do not invoke workload execution. It is not a fallback or degraded execution path. Docker/Podman remains required for workload execution, and startup fatal messages now state that requirement while pointing API-only operators to `SIM_RUNTIME=process`. Common and per-cloud README files plus the simulator command comments were updated.
 
 Issue #365 / BUG-1296 was fixed. Local Azure SDK validation on macOS now routes through the same real Linux substrate required by the network-heavy SDK tests: Darwin `make sdk-test` delegates to `docker-sdk-test`, which runs the existing privileged Linux simulator test image and invokes `make sdk-test-local` inside it. Linux direct validation remains `make sdk-test-local`. The Event Grid SDK publish path also became resolver-independent without changing the public request shape: the SDK harness maps only `eventgrid.localhost` / `*.eventgrid.localhost` for the simulator port to loopback at dial time, preserving the advertised URL and Host header for the host-dispatched data plane. `NO_PROXY` / `no_proxy` include localhost wildcard names. No tests were skipped, mocked, or weakened; full macOS `make sdk-test` passed through Docker.
 

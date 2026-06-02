@@ -4,15 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the Azure SDK local portability branch was cut.
+- Branch: `main`, synced with `origin/main` before the simulator image-context/runtime-mode branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: #332, #333, #338, and deferred release/image issue #363. Issue #365 was fixed by this PR. Issues #334, #335, #336, #356, #359, #360, and #362 were fixed and closed. Number #337 is a merged PR, not an open issue.
+- Open GitHub issues at last check after this PR merged: #332, #333, and #338. Issues #366 and #367 were fixed by this PR. Issues #334, #335, #336, #356, #359, #360, #362, and #365 were fixed and closed. Number #337 is a merged PR, not an open issue. Versioned release/image publishing remains deferred while the project is early.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: Azure SDK local portability issue #365. On Darwin, `make sdk-test` delegates to the existing privileged Linux simulator test image and runs `make sdk-test-local` inside it, so real-network SDK tests run with Linux netns/veth/nftables capabilities. The Azure SDK harness also maps only the advertised Event Grid `*.eventgrid.localhost:<simPort>` data-plane hosts to loopback at dial time, preserving the URL and Host header for host-dispatched routing.
+- Last completed work: simulator image-context and API-only runtime documentation issues #366 and #367. Simulator release-image builds now use the shared `simulators/` context everywhere, so each per-cloud module can resolve its `../realexec` replace. `simulators/.dockerignore` keeps release contexts source-focused, and `SIM_RUNTIME=process` is documented and surfaced in fatal messages as an explicit API-only mode for non-execution runs.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issues #332, #333, and #338, unless a higher-priority issue appears. Do not pick up issue #363 yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
+Continue the real-execution compute/networking track next: BUG-1267 / issues #332, #333, and #338, unless a higher-priority issue appears. Do not pick up versioned release/image publishing yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
 
 Next implementation should focus on Firecracker-backed public VM execution with full fixes and regression tests for every touched public path. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only execution, simulator-only public API knobs, or fallback execution paths.
 

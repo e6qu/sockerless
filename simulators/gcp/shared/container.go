@@ -109,7 +109,7 @@ func InitDocker() *client.Client {
 	})
 	if dockerClientErr != nil {
 		fmt.Fprintf(os.Stderr, "FATAL: Docker/Podman not available: %v\n", dockerClientErr)
-		fmt.Fprintf(os.Stderr, "Simulators require a container runtime. Install Docker or Podman.\n")
+		fmt.Fprintf(os.Stderr, "Simulators require Docker or Podman for workload execution. Install Docker/Podman, or set SIM_RUNTIME=process only for explicit API-only runs that do not execute workloads.\n")
 		os.Exit(1)
 	}
 	return dockerClient

@@ -1,7 +1,8 @@
 services:
   aws:
     build:
-      context: ./aws
+      context: .
+      dockerfile: aws/Dockerfile
     ports:
       - "4566:4566"
     environment:
@@ -15,7 +16,8 @@ services:
 
   gcp:
     build:
-      context: ./gcp
+      context: .
+      dockerfile: gcp/Dockerfile
     ports:
       - "4567:4567"
     environment:
@@ -29,7 +31,8 @@ services:
 
   azure:
     build:
-      context: ./azure
+      context: .
+      dockerfile: azure/Dockerfile
     ports:
       - "4568:4568"
     environment:
