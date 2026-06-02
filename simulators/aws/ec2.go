@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -2465,8 +2466,9 @@ func ebsRemoveDockerVolume(name string) {
 // it does not yet exist.
 func ebsCopyDockerVolumes(ctx context.Context, srcVolume, dstVolume string) error {
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:   "alpine:latest",
-		Command: []string{"sh", "-c", "cp -a /src/. /dst/"},
+		Image:        "alpine:latest",
+		Architecture: "linux/" + runtime.GOARCH,
+		Command:      []string{"sh", "-c", "cp -a /src/. /dst/"},
 		Binds: []string{
 			srcVolume + ":/src:ro",
 			dstVolume + ":/dst",
