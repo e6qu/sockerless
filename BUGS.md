@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1309 filed - 1309 fixed - 2 open - 3 false positives.**
+**1310 filed - 1310 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,7 +15,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1309 / issue #378:
+This phase closed BUG-1310:
+
+- BUG-1310: The BUG-1104 AWS EC2/EBS, Auto Scaling, and CloudTrail coverage audit found stale canonical coverage docs rather than a missing implementation. Auto Scaling and CloudTrail were implemented and exercised through real SDK, AWS CLI, and Terraform provider flows, but they had no `specs/SIM_SURFACE_TABLES/` entries and therefore no rows in `specs/SIM_TEST_COVERAGE_MATRIX.md`. The EC2 surface table also omitted the already implemented EBS volume/snapshot operations. The surface tables and matrix now list `aws-autoscaling`, `aws-cloudtrail`, and the EC2 EBS operations with evidence pointing at `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`, `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`, `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and the Terraform root stack.
+
+Previous phase closed BUG-1309 / issue #378:
 
 - BUG-1309 / issue #378: EC2 `AttachVolume` was metadata-only for Firecracker-backed instances, so guest writes to attached EBS volumes could not persist into snapshots or restored volumes. The AWS simulator now prepares sparse file-backed EBS block images under each volume host path, pre-registers Firecracker EBS drive slots for EC2 guests, patches the running microVM drive backing file on `AttachVolume`, patches back to an empty slot on `DetachVolume`, and refreshes the drive after `ModifyVolume` resize. `CreateSnapshot` and `CreateVolume(SnapshotId)` continue to copy the real EBS host path, now including the raw block image written by the guest. The mandatory Firecracker smoke now performs a real guest block-device write, snapshots/restores the backing image, and reads the payload back inside the guest.
 

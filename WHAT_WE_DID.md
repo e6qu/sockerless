@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - AWS EC2/EBS, Auto Scaling, and CloudTrail Coverage Audit
+
+BUG-1310 was fixed. The BUG-1104 audit of AWS EC2/EBS, Auto Scaling, and CloudTrail found stale coverage authority docs rather than a simulator implementation gap.
+
+Auto Scaling and CloudTrail already had public AWS SDK, AWS CLI, and Terraform provider coverage, but their canonical `specs/SIM_SURFACE_TABLES/` files and `specs/SIM_TEST_COVERAGE_MATRIX.md` rows were missing. The EC2 table also omitted the implemented EBS lifecycle and snapshot operations. The docs now list `aws-autoscaling`, `aws-cloudtrail`, and EC2 `CreateVolume`, `AttachVolume`, `DetachVolume`, `DeleteVolume`, `ModifyVolume`, `CreateSnapshot`, `DescribeSnapshots`, and `DeleteSnapshot` with evidence pointing at the existing real public-client tests.
+
 ## 2026-06-02 - EC2 EBS Firecracker Attach
 
 Issue #378 / BUG-1309 was fixed. EC2 `AttachVolume` for Firecracker-backed instances now wires data volumes into the guest instead of only recording attachment metadata.

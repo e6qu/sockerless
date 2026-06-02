@@ -63,6 +63,14 @@ Surface registered in `simulators/aws/ec2.go` (and related files grouped under t
 | `Action CreateTags` | ✓ `simulators/aws/ec2.go:353::handleCreateTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DeleteTags` | ✓ `simulators/aws/ec2.go:354::handleDeleteTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeTags` | ✓ `simulators/aws/ec2.go:355::handleDescribeTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateVolume` | ✓ `simulators/aws/ec2.go:405::handleCreateVolume` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action AttachVolume` | ✓ `simulators/aws/ec2.go:406::handleAttachVolume` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DetachVolume` | ✓ `simulators/aws/ec2.go:407::handleDetachVolume` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteVolume` | ✓ `simulators/aws/ec2.go:408::handleDeleteVolume` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action ModifyVolume` | ✓ `simulators/aws/ec2.go:409::handleModifyVolume` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action CreateSnapshot` | ✓ `simulators/aws/ec2.go:410::handleCreateSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DescribeSnapshots` | ✓ `simulators/aws/ec2.go:411::handleDescribeSnapshots` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DeleteSnapshot` | ✓ `simulators/aws/ec2.go:412::handleDeleteSnapshot` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeVolumes` | ✓ `simulators/aws/ec2.go:356::handleDescribeVolumes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeImages` | ✓ `simulators/aws/ec2.go:357::handleDescribeImages` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `Action DescribeInstanceTypes` | ✓ `simulators/aws/ec2.go:358::handleDescribeInstanceTypes` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -78,4 +86,6 @@ Surface registered in `simulators/aws/ec2.go` (and related files grouped under t
 Issue #266 closed the EC2 VM lifecycle gap. `RunInstances`, `DescribeInstances`, `StopInstances`, `StartInstances`, `TerminateInstances`, `DescribeInstanceStatus`, `DescribeInstanceAttribute`, `ModifyInstanceAttribute`, `DescribeImages`, `DescribeInstanceTypes`, `DescribeKeyPairs`, `DescribeVolumes`, `DescribeTags`, `CreateTags`, `DeleteTags`, account/region/AZ discovery, and instance-created `DescribeNetworkInterfaces` are covered by `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and `simulators/aws/terraform-tests/main.tf` through `aws_instance`.
 
 Issue #279 closed the EC2 NAT/public-IP parity pass. `AllocateAddress`, `DescribeAddresses`, `DescribeAddressesAttribute`, `ReleaseAddress`, `CreateNatGateway`, `DescribeNatGateways`, `DeleteNatGateway`, `CreateRouteTable`, `CreateRoute`, and route-table reads are covered by `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and `simulators/aws/terraform-tests/main.tf` through `aws_eip`, `aws_nat_gateway`, and NAT Gateway routes in `aws_route_table`.
+
+The AWS core-services and Firecracker EBS attach phases closed the EC2 block-storage surface. `CreateVolume`, `AttachVolume`, `DetachVolume`, `DeleteVolume`, `ModifyVolume`, `CreateSnapshot`, `DescribeSnapshots`, and `DeleteSnapshot` are covered by `simulators/aws/sdk-tests/ec2_test.go`, `simulators/aws/cli-tests/ec2_test.go`, and `simulators/aws/terraform-tests/main.tf` through `aws_ebs_volume`, `aws_volume_attachment`, `aws_ebs_snapshot`, and restored-volume resources.
 <!-- HAND-WRITTEN END -->

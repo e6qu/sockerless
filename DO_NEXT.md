@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the EC2 EBS Firecracker attach branch was cut.
+- Branch: `main`, synced with `origin/main` before the AWS coverage-audit branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: none. The EC2 EBS Firecracker attach PR closed #378.
+- Open GitHub issues at last check after this PR merged: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: issue #378 / BUG-1309 was fixed. EC2 EBS data volumes now have sparse raw block images under their volume host paths, Firecracker-backed EC2 guests boot with managed EBS drive slots, running `AttachVolume` patches a slot to the volume image, `DetachVolume` patches it back to an empty slot, and `ModifyVolume` refreshes the running drive after resize. Snapshots/restores copy the volume host path including the block image, and the mandatory Firecracker smoke writes, snapshots/restores, and reads a real guest block-device payload.
+- Last completed work: BUG-1310 corrected the AWS EC2/EBS, Auto Scaling, and CloudTrail coverage authority docs. The audit confirmed the simulator already had real SDK, CLI, and Terraform provider coverage for Auto Scaling and CloudTrail, plus EC2 EBS lifecycle/snapshot operations, and updated `specs/SIM_TEST_COVERAGE_MATRIX.md` plus `specs/SIM_SURFACE_TABLES/` so future sessions see that coverage.
 
 ## Next Task
 
