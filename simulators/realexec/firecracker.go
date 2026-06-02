@@ -116,6 +116,10 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
+	if err := ensureRootFSInit(rootfsDir); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
 	if err := configureRootFSNetwork(rootfsDir, cfg.Tap.PrivateIP, cfg.Tap.Gateway, cfg.Tap.PrefixBits); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
@@ -419,6 +423,33 @@ func copyRootFS(ctx context.Context, src, dst string) error {
 		return err
 	}
 	return (Runner{}).Run(ctx, "cp", "-a", filepath.Join(src, "."), dst)
+}
+
+func ensureRootFSInit(rootfsDir string) error {
+	for _, rel := range []string{"sbin/init", "etc/init", "bin/init", "bin/sh"} {
+		if _, err := os.Stat(filepath.Join(rootfsDir, filepath.FromSlash(rel))); err == nil {
+			return nil
+		}
+	}
+
+	const systemd = "/usr/lib/systemd/systemd"
+	systemdPath := filepath.Join(rootfsDir, filepath.FromSlash(strings.TrimPrefix(systemd, "/")))
+	if info, err := os.Stat(systemdPath); err == nil && !info.IsDir() {
+		sbinDir := filepath.Join(rootfsDir, "sbin")
+		if err := os.MkdirAll(sbinDir, 0o755); err != nil {
+			return err
+		}
+		initPath := filepath.Join(sbinDir, "init")
+		if err := os.Remove(initPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Symlink(systemd, initPath); err != nil {
+			return fmt.Errorf("link rootfs /sbin/init to systemd: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("rootfs has no kernel init candidate (/sbin/init, /etc/init, /bin/init, /bin/sh) and no %s", systemd)
 }
 
 func configureRootFSNetwork(rootfsDir string, ip, gateway net.IP, prefixBits int) error {

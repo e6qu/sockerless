@@ -65,6 +65,34 @@ func TestVerifyELFKernelRejectsConfigFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureRootFSInitLinksSystemdWhenKernelInitIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	systemdPath := filepath.Join(dir, "usr", "lib", "systemd", "systemd")
+	if err := os.MkdirAll(filepath.Dir(systemdPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemdPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureRootFSInit(dir); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Readlink(filepath.Join(dir, "sbin", "init"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "/usr/lib/systemd/systemd" {
+		t.Fatalf("/sbin/init target = %q, want /usr/lib/systemd/systemd", target)
+	}
+}
+
+func TestEnsureRootFSInitFailsWithoutInitOrSystemd(t *testing.T) {
+	if err := ensureRootFSInit(t.TempDir()); err == nil {
+		t.Fatal("rootfs without init candidate or systemd was accepted")
+	}
+}
+
 func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 	dir := t.TempDir()
 	netplanDir := filepath.Join(dir, "etc", "netplan")
