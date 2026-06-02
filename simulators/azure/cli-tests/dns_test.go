@@ -138,6 +138,49 @@ func TestPrivateDNS_DeleteZone(t *testing.T) {
 	assert.Error(t, err, "Expected GET to fail after deletion")
 }
 
+func TestPrivateDNS_RecordSetListAndDelete(t *testing.T) {
+	// Create zone
+	zoneURL := dnsURL("privateDnsZones/list-delete.local")
+	runCLI(t, azRest("PUT", zoneURL, `{"location":"global"}`))
+	defer runCLI(t, azRest("DELETE", zoneURL, ""))
+
+	// Create two A records
+	r1URL := dnsURL("privateDnsZones/list-delete.local/A/host1")
+	r2URL := dnsURL("privateDnsZones/list-delete.local/A/host2")
+	runCLI(t, azRest("PUT", r1URL, `{"properties":{"ttl":60,"aRecords":[{"ipv4Address":"10.1.0.1"}]}}`))
+	runCLI(t, azRest("PUT", r2URL, `{"properties":{"ttl":60,"aRecords":[{"ipv4Address":"10.1.0.2"}]}}`))
+
+	// List A records for this zone
+	listURL := dnsURL("privateDnsZones/list-delete.local/A")
+	out := runCLI(t, azRest("GET", listURL, ""))
+	var list struct {
+		Value []struct {
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &list)
+	names := make(map[string]bool)
+	for _, rs := range list.Value {
+		names[rs.Name] = true
+	}
+	assert.True(t, names["host1"], "expected host1 in list")
+	assert.True(t, names["host2"], "expected host2 in list")
+
+	// Delete host1 and verify it is gone
+	runCLI(t, azRest("DELETE", r1URL, ""))
+	cmd := azRest("GET", r1URL, "")
+	_, err := cmd.CombinedOutput()
+	assert.Error(t, err, "GET after DELETE should fail for host1")
+
+	// host2 must still be present
+	out = runCLI(t, azRest("GET", r2URL, ""))
+	var r2 struct {
+		Name string `json:"name"`
+	}
+	parseJSON(t, out, &r2)
+	assert.Equal(t, "host2", r2.Name)
+}
+
 func TestPublicDNS_CreateZoneAndRecordSet(t *testing.T) {
 	zoneURL := armURL("Microsoft.Network", "dnsZones/cli-public.example.com", "2018-05-01")
 	out := runCLI(t, azRest("PUT", zoneURL, `{"location":"global","tags":{"env":"cli"}}`))

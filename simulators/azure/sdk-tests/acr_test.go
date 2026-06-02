@@ -1,13 +1,118 @@
 package azure_sdk_test
 
 import (
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// acrDataPlaneClient creates an azcontainerregistry.Client pointed at the simulator.
+func acrDataPlaneClient(t *testing.T) *azcontainerregistry.Client {
+	t.Helper()
+	opts := &azcontainerregistry.ClientOptions{
+		ClientOptions: azcore.ClientOptions{
+			InsecureAllowCredentialWithHTTP: true,
+		},
+	}
+	client, err := azcontainerregistry.NewClient(baseURL, &fakeCredential{}, opts)
+	require.NoError(t, err)
+	return client
+}
+
+// sampleManifestJSON is a minimal OCI v2 manifest body — no actual layer data needed.
+const sampleManifestJSON = `{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+  "config": {
+    "mediaType": "application/vnd.docker.container.image.v1+json",
+    "size": 7023,
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "layers": []
+}`
+
+func TestACR_ImageManifestPushGetDelete(t *testing.T) {
+	const (
+		rgName       = "acr-imageops-rg"
+		registryName = "imageopsregistry"
+		imageName    = "myapp"
+		imageTag     = "v1.0"
+	)
+
+	ensureRG(t, rgName)
+
+	// Create ACR registry via ARM so it exists in the store
+	registriesClient, err := armcontainerregistry.NewRegistriesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	regPoller, err := registriesClient.BeginCreate(ctx, rgName, registryName, armcontainerregistry.Registry{
+		Location: ptrStr("eastus"),
+		SKU:      &armcontainerregistry.SKU{Name: ptrSKU(armcontainerregistry.SKUNameBasic)},
+	}, nil)
+	require.NoError(t, err)
+	_, err = regPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	dp := acrDataPlaneClient(t)
+
+	// Push manifest — UploadManifest requires io.ReadSeekCloser
+	uploadResp, err := dp.UploadManifest(ctx, imageName, imageTag,
+		azcontainerregistry.ContentTypeApplicationVndDockerDistributionManifestV2JSON,
+		nopSeekCloser(strings.NewReader(sampleManifestJSON)), nil)
+	require.NoError(t, err)
+	require.NotNil(t, uploadResp.DockerContentDigest)
+	digest := *uploadResp.DockerContentDigest
+	assert.True(t, strings.HasPrefix(digest, "sha256:"), "digest must be sha256: prefixed, got %s", digest)
+
+	// Get manifest back by tag — verify the digest matches what was pushed
+	getResp, err := dp.GetManifest(ctx, imageName, imageTag, nil)
+	require.NoError(t, err)
+	getResp.ManifestData.Close()
+	require.NotNil(t, getResp.DockerContentDigest)
+	assert.Equal(t, digest, *getResp.DockerContentDigest)
+
+	// List repositories — must include imageName
+	pager := dp.NewListRepositoriesPager(nil)
+	var foundRepo bool
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, name := range page.Names {
+			if name != nil && *name == imageName {
+				foundRepo = true
+			}
+		}
+	}
+	assert.True(t, foundRepo, "expected ListRepositories to include %q", imageName)
+
+	// List tags for the image — must include imageTag
+	tagsPager := dp.NewListTagsPager(imageName, nil)
+	var foundTag bool
+	for tagsPager.More() {
+		page, err := tagsPager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, tag := range page.Tags {
+			if tag != nil && tag.Name != nil && *tag.Name == imageTag {
+				foundTag = true
+			}
+		}
+	}
+	assert.True(t, foundTag, "expected ListTags to include tag %q", imageTag)
+
+	// Delete manifest by digest
+	_, err = dp.DeleteManifest(ctx, imageName, digest, nil)
+	require.NoError(t, err)
+
+	// Get after delete — must fail
+	_, err = dp.GetManifest(ctx, imageName, imageTag, nil)
+	assert.Error(t, err, "GetManifest after DeleteManifest should fail")
+}
 
 // TestACR_CacheRuleCRUD covers the `cacheRules` sub-resource.
 // Create + Get + List + Delete round-trip via
@@ -142,3 +247,9 @@ func TestACR_CacheRuleIdempotentUpsert(t *testing.T) {
 }
 
 func ptrSKU(s armcontainerregistry.SKUName) *armcontainerregistry.SKUName { return &s }
+
+// nopSeekCloser wraps an io.ReadSeeker with a no-op Close, satisfying io.ReadSeekCloser.
+type nopSeekCloserT struct{ io.ReadSeeker }
+
+func (nopSeekCloserT) Close() error                   { return nil }
+func nopSeekCloser(r io.ReadSeeker) io.ReadSeekCloser { return nopSeekCloserT{r} }

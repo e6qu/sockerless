@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1315 filed - 1315 fixed - 2 open - 3 false positives.**
+**1323 filed - 1323 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -14,6 +14,17 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 
 ## Recently Closed
+
+This phase closed BUG-1316 through BUG-1323:
+
+- BUG-1316: `armapplicationinsights.ComponentsClient` SDK tests were missing. Added `TestAppInsights_ComponentCRUD` and `TestAppInsights_InstrumentationKeyStableOnUpsert` in `sdk-tests/insights_test.go`. Also fixed `insights.go` to preserve the instrumentation key across upserts (was generating a new UUID each time), and corrected JSON field casing to PascalCase (`InstrumentationKey`, `ConnectionString`) which App Insights ARM API requires.
+- BUG-1317: No `az monitor app-insights component` CLI coverage. Added `TestAppInsights_CreateAndShow` and `TestAppInsights_InstrumentationKeyInConnectionString` in `cli-tests/monitor_test.go`.
+- BUG-1318: `armprivatedns.RecordSetsClient` A-record SDK tests were missing. Added `TestPrivateDNS_RecordSetsCRUD` (Create/Get/List/Delete) and `TestPrivateDNS_RecordSetsUpdate` in `sdk-tests/dns_private_test.go`.
+- BUG-1319: No Private DNS record-set list/delete CLI coverage. Added `TestPrivateDNS_RecordSetListAndDelete` in `cli-tests/dns_test.go`.
+- BUG-1320: `azcontainerregistry` data-plane SDK tests were missing. Added `TestACR_ImageManifestPushGetDelete` in `sdk-tests/acr_test.go` covering `UploadManifest` → `GetManifest` → `NewListRepositoriesPager` → `NewListTagsPager` → `DeleteManifest` full round-trip.
+- BUG-1321: ACR simulator missing `DELETE /v2/{name}/manifests/{reference}`. Added `DELETE /v2/{path...}` handler in `acr.go`; deletes the direct manifest entry and all digest aliases in the same store pass.
+- BUG-1322: ACR simulator missing `/acr/v1/_catalog` and `/acr/v1/{name}/_tags`. Added both routes in `acr.go`. Extended `OCIManifest` with `Repo` and `Ref` fields so the manifest store can enumerate distinct repositories and non-digest tags without a separate index.
+- BUG-1323: No CLI coverage for ACR image catalog/tag operations. Added `TestACR_ImageCatalogAndTags` in `cli-tests/acr_test.go`.
 
 This phase closed BUG-1315:
 
