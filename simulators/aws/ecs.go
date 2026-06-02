@@ -588,7 +588,7 @@ func ecsTaskDetail(details []ECSKeyValuePair, name string) string {
 	return ""
 }
 
-func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeConfiguration, taskID, requestedSubnet string) (map[string]string, []ECSAttachment, *ecsRequestError) {
+func ecsPrepareManagedEBSVolumes(ctx context.Context, td ECSTaskDefinition, configs []ECSTaskVolumeConfiguration, taskID, requestedSubnet string) (map[string]string, []ECSAttachment, *ecsRequestError) {
 	allowed := ecsConfiguredAtLaunchVolumes(td)
 	hosts := map[string]string{}
 	var attachments []ECSAttachment
@@ -620,6 +620,7 @@ func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeCo
 			size = 8
 		}
 		snapshotID := managed.SnapshotId
+		var snapshotDockerVolumeName string
 		var snapshotHostPath string
 		if snapshotID != "" {
 			snap, ok := ec2Snapshots.Get(snapshotID)
@@ -632,6 +633,7 @@ func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeCo
 			if size < snap.VolumeSize {
 				size = snap.VolumeSize
 			}
+			snapshotDockerVolumeName = snap.DockerVolumeName
 			snapshotHostPath = snap.HostPath
 		}
 		volumeType := managed.VolumeType
@@ -647,6 +649,7 @@ func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeCo
 		now := time.Now().UTC().Format(time.RFC3339)
 		vol := EC2Volume{
 			VolumeId:         volumeID,
+			DockerVolumeName: ebsECSDockerVolumeName(volumeID),
 			Size:             size,
 			SnapshotId:       snapshotID,
 			AvailabilityZone: az,
@@ -664,16 +667,40 @@ func ecsPrepareManagedEBSVolumes(td ECSTaskDefinition, configs []ECSTaskVolumeCo
 				DeleteOnTermination: deleteOnTermination,
 			}},
 		}
-		if err := ebsPrepareVolumeHostPath(&vol); err != nil {
-			return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not create managed EBS volume data path: %v", err), http.StatusInternalServerError}
-		}
-		if snapshotHostPath != "" {
+		// Restore snapshot data into the new Docker named volume when present.
+		// Docker auto-creates the destination volume on first container use so no
+		// explicit VolumeCreate is needed — the copy container triggers creation.
+		if snapshotDockerVolumeName != "" {
+			if err := ebsCopyDockerVolumes(ctx, snapshotDockerVolumeName, vol.DockerVolumeName); err != nil {
+				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not restore managed EBS snapshot data: %v", err), http.StatusInternalServerError}
+			}
+		} else if snapshotHostPath != "" {
+			// Snapshot came from an EC2/Firecracker volume (host-path); fall back to
+			// directory copy. Only works in on-host topology where the sim process runs
+			// on the same machine as the Docker host.
+			if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not create managed EBS volume data path: %v", err), http.StatusInternalServerError}
+			}
 			if err := ebsCopyDir(vol.HostPath, snapshotHostPath); err != nil {
 				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not restore managed EBS snapshot data: %v", err), http.StatusInternalServerError}
 			}
+			// Use host-path bind-mount for this volume since the data is on-disk.
+			ec2Volumes.Put(volumeID, vol)
+			hosts[cfg.Name] = vol.HostPath
+			attachments = append(attachments, ECSAttachment{
+				Id:     "ebs-" + volumeID,
+				Type:   "AmazonElasticBlockStorage",
+				Status: "ATTACHING",
+				Details: []ECSKeyValuePair{
+					{Name: "volumeName", Value: cfg.Name},
+					{Name: "volumeId", Value: volumeID},
+					{Name: "deleteOnTermination", Value: strconv.FormatBool(deleteOnTermination)},
+				},
+			})
+			continue
 		}
 		ec2Volumes.Put(volumeID, vol)
-		hosts[cfg.Name] = vol.HostPath
+		hosts[cfg.Name] = vol.DockerVolumeName
 		attachments = append(attachments, ECSAttachment{
 			Id:     "ebs-" + volumeID,
 			Type:   "AmazonElasticBlockStorage",
@@ -701,7 +728,11 @@ func ecsCleanupTaskManagedEBS(task *ECSTask) {
 		deleteOnTermination, _ := strconv.ParseBool(ecsTaskDetail(att.Details, "deleteOnTermination"))
 		if deleteOnTermination {
 			if vol, ok := ec2Volumes.Get(volumeID); ok {
-				_ = os.RemoveAll(vol.HostPath)
+				if vol.DockerVolumeName != "" {
+					ebsRemoveDockerVolume(vol.DockerVolumeName)
+				} else {
+					_ = os.RemoveAll(vol.HostPath)
+				}
 			}
 			ec2Volumes.Delete(volumeID)
 		} else {
@@ -850,7 +881,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		}
 		taskTags = append(taskTags, req.Tags...)
 
-		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(td, req.VolumeConfigurations, taskID, requestedSubnet)
+		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(r.Context(), td, req.VolumeConfigurations, taskID, requestedSubnet)
 		if ebsErr != nil {
 			sim.AWSError(w, ebsErr.code, ebsErr.message, ebsErr.status)
 			return
