@@ -219,6 +219,9 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
 		return err
 	}
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "daddr", link.HostIP.String(), "oifname", link.NetVethName, "accept"); err != nil {
+		return err
+	}
 	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
 }
 
