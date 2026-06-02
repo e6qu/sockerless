@@ -42,11 +42,10 @@ No other simulator code may use host process execution.
 ## VM/Network Real-Execution Extension
 
 The VM-level compute and networking surfaces are different from container/FaaS
-workloads. EC2, GCE, and Azure VM instances must eventually boot real guests,
-and VPC, load balancer, security, and NAT resources must eventually affect a
-real packet path.
+workloads. EC2, GCE, and Azure VM instances boot real guests, and VPC, load
+balancer, security, and NAT resources affect a real packet path.
 
-That work is tracked by issues #332-#336 and specified in
+That work was tracked by issues #332-#336 and is specified in
 [SIMULATOR_REAL_EXECUTION.md](SIMULATOR_REAL_EXECUTION.md). The extension uses:
 
 - Firecracker microVMs for VM instances.
@@ -80,5 +79,6 @@ with fabricated state.
 - Changing public cloud API paths, headers, or response shapes.
 - Adding simulator-specific request fields, headers, or environment variables to
   cloud API surfaces.
-- Marking issues #332-#336 closed before real guests, packet forwarding,
-  enforcement, and health checks exist and are covered by public clients.
+- Regressing issues #332-#336 back to metadata-only success after real guests,
+  packet forwarding, enforcement, and health checks were implemented and covered
+  by public clients.

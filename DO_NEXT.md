@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the Firecracker VM lifecycle branch was cut.
+- Branch: `main`, synced with `origin/main` before the real-execution umbrella audit branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: #332, #333, and #338. This PR advanced #332/#333 by moving AWS EC2, GCP Compute Engine, and Azure VM lifecycle onto real Firecracker guests and then fixed #371 by adding provider-shaped guest metadata routing. #373 was clarified as already covered by the shared KVM capability detector and gained regression coverage; #374/#375 were fixed by measured rootfs image sizing, Firecracker asset caching, and pinned VM-backed CI runners; #376 was fixed by disabling the stock Firecracker rootfs `fcnet` MAC-derived network path. Number #337 is a merged PR, not an open issue. Versioned release/image publishing remains deferred while the project is early.
-- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: Firecracker-backed public VM lifecycle plus its CI/ASG, Firecracker CI, guest metadata, and ECS StopTask latency follow-ups. The shared realexec substrate has TAP NICs and a Firecracker launcher; AWS/GCP/Azure VM create/start paths boot real guests on provider-private subnet IPs, public running state waits for real packet reachability, and stop/restart/delete actions operate on the guest process/TAP lifecycle. VM-backed simulator SDK/CLI/Terraform CI jobs now run on pinned KVM-capable `ubuntu-24.04` x86_64 runners, not `ubuntu-24.04-arm`, because the arm hosted runners lacked `/dev/kvm`. They cache official Firecracker CI assets under `~/.cache/sockerless/firecracker-ci` by Firecracker version and runner architecture. Simulator workload containers no longer hardcode arm64 where the cloud slice should use image/default architecture: GCP Cloud Functions/Cloud Run Jobs, AWS ECS, and Azure Functions inspect the local image platform, and AWS Lambda maps the public `Architectures` field to Docker platforms. Firecracker default launch workdirs are unique hash-prefixed temp dirs that keep Unix socket paths short, Firecracker kernels are selected/validated as ELF images so `.config` sidecars and poisoned caches cannot reach the boot-source API, and guest ext4 images are sized from actual rootfs usage instead of a fixed 3 GiB. Guest rootfs setup copies the extracted official rootfs contents directly into each per-VM rootfs directory, ensures the copied rootfs has a kernel-executable init path, masks/removes the stock Firecracker `fcnet` MAC-derived networking path, installs a boot-time network configurator plus systemd/netplan/ifupdown/resolver config for the assigned provider-private IP/gateway, maps GCP metadata hostnames to `169.254.169.254`, and keeps TAP host endpoints separate from the guest MAC that Firecracker owns. AWS/GCP/Azure VM startup installs real namespace DNAT for `169.254.169.254:80` to the simulator metadata handlers, preserving guest source IP for instance-specific metadata. AWS Auto Scaling Groups now start/stop the same real EC2 Firecracker guest lifecycle instead of creating metadata-only running EC2 records. AWS ECS `StopTask` initiates Docker graceful stop asynchronously so the public API response no longer waits on local container grace periods.
+- Open GitHub issues at last check after this PR merged: none. The audit PR closed #332 and #338; #333 and #371 were already closed by the Firecracker VM lifecycle and guest metadata PR.
+- Open BUG trackers: BUG-1075 and BUG-1104.
+- Last completed work: the real-execution umbrella audit closed BUG-1267 / issues #332 and #338. The audit confirmed that no #332 subfamily remained metadata-only after the merged VPC/NAT, firewall/security, managed load-balancer, VM lifecycle, and guest metadata phases. The shared realexec substrate has Linux network namespaces, subnet bridges, veth/TAP NICs, lease-based IPAM, routed egress, nftables SNAT/DNAT/filtering, load-balancer probe/proxy helpers, and a Firecracker launcher. AWS/GCP/Azure public VM lifecycle now boots Firecracker guests on provider-private subnet IPs, gates running state on real guest reachability, powers lifecycle actions through the guest/TAP process, and routes provider-shaped metadata to instance-specific handlers. AWS/GCP/Azure network fabric, NAT, firewall/security, and managed load-balancer paths all use real packet infrastructure and fail loudly when host capabilities are missing. The PR's AWS CI follow-up fixed CloudTrail lookup ordering to return newest events before page limiting and removed Docker Hub base-image resolution from AWS SDK/CLI/Terraform test workload image setup by packaging locally compiled static Linux binaries in `scratch` images.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issue #338 umbrella follow-through, unless a higher-priority issue appears. Do not pick up versioned release/image publishing yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
+Check current open GitHub issues first. If there are none, continue BUG-1104 by choosing a focused simulator coverage audit area and filing/fixing concrete SDK/CLI/Terraform gaps found by that audit. Do not pick up versioned release/image publishing yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
 
-Next implementation should re-audit the real-execution substrate and public simulator slices for remaining parity gaps now that VPC/NAT, firewall, load-balancer, VM lifecycle, and guest metadata paths all use real packet/execution infrastructure. Any new gap should either be fixed in the picked PR or filed explicitly in the project before deferral.
+Any new gap should either be fixed in the picked PR or filed explicitly in the project before deferral.
 
 ## Provider Facts To Preserve
 
@@ -124,14 +124,14 @@ Next implementation should re-audit the real-execution substrate and public simu
 
 ## Remaining Stages
 
-1. Re-audit #338 / BUG-1104 coverage claims now that VPC/NAT, firewall, load-balancer, VM lifecycle, and guest metadata paths all use real execution/packet infrastructure.
-2. File or fix any remaining concrete cross-cloud real-execution parity gaps found during that audit.
+1. Pick the next BUG-1104 audit target only after checking live open issues.
+2. File or fix concrete public-client coverage gaps found during that audit.
 
 ## Deferred Trackers
 
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
-- BUG-1267: issues #332, #333, and #338 track the compute/networking real-execution program. AWS/GCP/Azure public VM lifecycle now boots Firecracker guests, guest metadata routing landed for provider-shaped `169.254.169.254` / GCP metadata hostnames, issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS/GCP/Azure #334/#335 packet paths were completed, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
+- BUG-1267 was closed by the real-execution umbrella audit. Future VM/networking regressions should be filed as concrete issues rather than reopening the completed umbrella unless the whole architecture regresses.
 
 ## Last CI/Architecture Cleanup
 

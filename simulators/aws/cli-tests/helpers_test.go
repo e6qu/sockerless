@@ -43,43 +43,13 @@ func TestMain(m *testing.M) {
 
 	workloadPlatform := nativeDockerPlatform()
 
-	// Multi-stage Docker build for the runner-native Linux platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
-COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
-ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
-`
-	dockerBuild := exec.Command("docker", "build",
-		"--platform", workloadPlatform,
-		"-t", evalImageName, "-f", "-", evalDir)
-	dockerBuild.Stdin = strings.NewReader(dockerfile)
-	if out, err := dockerBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
 
-	// lambda-runtime-handler — multi-stage Docker build for the same platform.
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
-	lhDockerfile := `FROM golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /lambda-runtime-handler .
-FROM alpine:latest
-COPY --from=build /lambda-runtime-handler /usr/local/bin/lambda-runtime-handler
-ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
-`
-	lhDockerBuild := exec.Command("docker", "build",
-		"--platform", workloadPlatform,
-		"-t", lambdaHandlerImageName, "-f", "-", lambdaHandlerDir)
-	lhDockerBuild.Stdin = strings.NewReader(lhDockerfile)
-	if out, err := lhDockerBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build lambda-runtime-handler Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage(lambdaHandlerImageName, lambdaHandlerDir, "lambda-runtime-handler", workloadPlatform)
 
 	// Find free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -163,6 +133,38 @@ func parseJSON(t *testing.T, data string, target any) {
 
 func nativeDockerPlatform() string {
 	return "linux/" + runtime.GOARCH
+}
+
+func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
+	buildDir, err := os.MkdirTemp("", "sockerless-aws-image-*")
+	if err != nil {
+		log.Fatalf("Failed to create image build dir: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	binaryPath := filepath.Join(buildDir, binaryName)
+	build := exec.Command("go", "build", "-o", binaryPath, ".")
+	build.Dir = sourceDir
+	build.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOOS=linux",
+		"GOARCH="+runtime.GOARCH,
+	)
+	if out, err := build.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s binary: %v\n%s", binaryName, err, out)
+	}
+
+	dockerfile := fmt.Sprintf(`FROM scratch
+COPY %s /usr/local/bin/%s
+ENTRYPOINT ["/usr/local/bin/%s"]
+`, binaryName, binaryName, binaryName)
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", platform,
+		"-t", imageName, "-f", "-", buildDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s Docker image: %v\n%s", binaryName, err, out)
+	}
 }
 
 func cleanupCLIECSTask(t *testing.T, clusterName, taskArn string) {

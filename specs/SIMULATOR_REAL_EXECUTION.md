@@ -1,9 +1,10 @@
 # Simulator Real-Execution Substrate
 
 Issues #332-#338 tracked the move from metadata-only VM/network resources to
-real execution. Issue #338 is the comparison/meta issue that keeps the
-simulator scope aligned with real cloud behavior. This document is the
-implementation contract for that program.
+real execution. Issue #338 was the comparison/meta issue that kept the
+simulator scope aligned with real cloud behavior while the work was in flight.
+This document is the implementation contract and completion audit for that
+program.
 
 The first rule is unchanged: simulator public APIs must match the public cloud.
 The substrate is an implementation detail behind EC2, GCE, Azure VM, VPC,
@@ -213,8 +214,26 @@ same real-execution path as each public API is migrated.
    running state is gated on real guest packet reachability, and public
    stop/start/restart/delete actions operate on the Firecracker process and TAP
    lifecycle.
-8. Guest-visible provider metadata remains the next concrete gap. AWS EC2 IMDS,
-   GCP metadata server, and Azure IMDS must be reachable from inside the guest
-   through provider-shaped addresses/hostnames before the VM slice is complete.
+8. Guest-visible provider metadata was attached to the real guest packet path.
+   AWS EC2 IMDS, GCP metadata server, and Azure IMDS are reachable from inside
+   the guest through provider-shaped addresses/hostnames, and the metadata
+   handlers resolve the guest private source IP to return instance-specific
+   provider metadata.
 
-The open issues remain open until the corresponding real behavior exists.
+## Completion Audit
+
+Issue #332's real-execution umbrella was satisfied when all tracked subfamilies
+had real substrate backing and public-client coverage:
+
+| Family | AWS | GCP | Azure |
+|---|---|---|---|
+| VM lifecycle | EC2 instances boot Firecracker guests through `RunInstances` and lifecycle APIs operate on the guest/TAP process. | Compute Engine instances boot Firecracker guests and lifecycle APIs operate on the guest/TAP process. | Azure VMs boot Firecracker guests and lifecycle APIs operate on the guest/TAP process. |
+| Guest metadata | IMDS routes through `169.254.169.254` DNAT and returns EC2 instance-specific fields. | `169.254.169.254`, `metadata.google.internal`, and `metadata` route to instance-specific Compute metadata. | IMDS routes through `169.254.169.254` DNAT and returns VM/NIC/subnet-specific fields. |
+| Network fabric | VPCs, subnets, ENIs, EIPs, NAT gateways, route tables, and Auto Scaling ENIs use the realexec netns/bridge/veth/IPAM/SNAT substrate. | Networks, subnetworks, instance NICs, regional addresses, routers, Cloud NAT, and forwarding-rule public IPs use the realexec substrate. | VNets, subnets, NIC private IP/MAC allocation, public IPs, NAT gateway subnet programming, and route tables use the realexec substrate. |
+| Security policy | EC2 security-group ingress compiles to nftables on attached real ENI packet paths. | GCP firewall ingress compiles by priority/tags/source ranges onto real NIC packet paths. | Azure subnet/NIC NSGs compile by priority and service tags onto real NIC packet paths. |
+| Load balancing | ELBv2 target health performs real TCP/HTTP probes and data-plane requests route to healthy targets. | Backend services, unmanaged instance groups, URL maps, forwarding rules, probes, and proxying use real backend reachability. | Azure Load Balancer frontend IP dispatch, backend pools, probes, and proxying use real backend reachability. |
+
+No remaining #332 sub-issue stayed open after this audit. Future real-execution
+regressions or coverage gaps should be filed as new concrete issues/BUG entries
+instead of reopening this umbrella unless the whole architectural premise
+regresses.

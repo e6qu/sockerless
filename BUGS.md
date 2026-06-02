@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1308 filed - 1308 fixed - 3 open - 3 false positives.**
+**1308 filed - 1308 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,11 +12,14 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution follow-through | Issues #332, #333, and #338 track the remaining real-execution umbrella follow-through after the VPC/NAT, firewall, load-balancer, VM lifecycle, and guest metadata slices landed. |
 
 ## Recently Closed
 
-This phase closed BUG-1299 and BUG-1300 through BUG-1308:
+This phase closed BUG-1267:
+
+- BUG-1267 / issues #332 and #338: The cross-cloud VM/networking real-execution umbrella was audited after the VPC/NAT, firewall/security, managed load-balancer, VM lifecycle, and guest metadata phases had merged. The audit found no remaining metadata-only #332 subfamily: AWS/GCP/Azure VPC/network/NIC/public-IP/NAT paths use the realexec netns/bridge/veth/IPAM/SNAT substrate; AWS security groups, GCP firewalls, and Azure NSGs compile to nftables on the packet path; AWS ELBv2, GCP load balancing, and Azure Load Balancer use real health probes and proxying; AWS EC2, GCP Compute Engine, and Azure VMs boot Firecracker guests; and guest metadata routes through provider-shaped link-local addresses/hostnames to instance-specific metadata handlers. Issue #338's LocalStack comparison was no longer accurate where it described VM/networking as metadata-only, so it was closed as a stale meta/reference tracker rather than kept open as a deliverable.
+
+Previous phase closed BUG-1299 and BUG-1300 through BUG-1308:
 
 - BUG-1299 / issue #371: Firecracker-backed AWS EC2, GCP Compute Engine, and Azure VM guests could boot on provider-private subnet IPs but could not reach the provider metadata service from inside the guest. The realexec substrate now programs nftables DNAT for `169.254.169.254:80` inside each cloud network namespace to the simulator's existing metadata handlers, preserving the guest private source IP so handlers can resolve instance-specific metadata. AWS EC2, GCP Compute Engine, and Azure VM startup all install that metadata route before boot. GCP guest rootfs setup writes the real `metadata.google.internal` / `metadata` aliases to `169.254.169.254`. Metadata handlers return instance-specific EC2/GCE/Azure fields when the request source IP matches a running Firecracker guest, while direct SDK-route tests still receive defaults. Regression coverage exercises real namespace HTTP DNAT and the mandatory Firecracker guest smoke now reads `http://169.254.169.254/metadata-probe` from inside the microVM.
 - BUG-1300: Moving VM-backed simulator SDK/CLI/Terraform CI jobs to KVM-capable x86_64 hosted runners exposed stale simulator workload execution paths that still forced Docker platform `linux/arm64`. GCP Cloud Functions/Cloud Run Jobs, AWS ECS, and Azure Functions now inspect the resolved local workload image platform before container execution. AWS Lambda translates the public Lambda `Architectures` field (`x86_64` / `arm64`) to Docker's platform strings. Simulator tests still build native Linux workload images for the runner platform, so x64 KVM CI does not require emulation and arm hosts still run arm64 images.
