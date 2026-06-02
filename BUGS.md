@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1314 filed - 1314 fixed - 2 open - 3 false positives.**
+**1315 filed - 1315 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -14,6 +14,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 
 ## Recently Closed
+
+This phase closed BUG-1315:
+
+- BUG-1315: `GET /api/v3/user/teams` returned 404 because the route was never registered in `registerGHTeamRoutes`. The store had `AddTeamMember`/`team.MemberIDs` but no reverse query. Added `ListTeamsByUser(userID int) []*Team` and `GetOrgByID(id int) *Org` to `store_orgs.go`, wired `handleListAuthUserTeams` in `gh_teams_rest.go`, registered the route, and added `TestListUserTeams` covering the full org-create → team-create → add-member → GET /user/teams flow with embedded `organization` assertion.
 
 This phase closed BUG-1310:
 

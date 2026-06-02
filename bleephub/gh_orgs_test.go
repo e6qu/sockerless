@@ -341,6 +341,51 @@ func TestTeamRepoPermission(t *testing.T) {
 	}
 }
 
+// TestListUserTeams verifies GET /api/v3/user/teams returns teams the authenticated
+// user belongs to, with the embedded organization object real OIDC relying parties
+// require for team → role mapping.
+func TestListUserTeams(t *testing.T) {
+	// Create org and team under admin.
+	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+		"login": "testorg-userteams",
+	})
+	ghPost(t, "/api/v3/orgs/testorg-userteams/teams", defaultToken, map[string]interface{}{
+		"name":    "platform-admins",
+		"privacy": "closed",
+	})
+
+	// admin is the token owner — add them to the team.
+	resp := ghPut(t, "/api/v3/orgs/testorg-userteams/teams/platform-admins/memberships/admin", defaultToken, map[string]interface{}{})
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for add team member, got %d", resp.StatusCode)
+	}
+
+	// GET /api/v3/user/teams must return the team.
+	teamsResp := ghGet(t, "/api/v3/user/teams", defaultToken)
+	if teamsResp.StatusCode != 200 {
+		teamsResp.Body.Close()
+		t.Fatalf("expected 200 for GET /user/teams, got %d", teamsResp.StatusCode)
+	}
+	teams := decodeJSONArray(t, teamsResp)
+
+	var found map[string]interface{}
+	for _, team := range teams {
+		if team["slug"] == "platform-admins" {
+			found = team
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("platform-admins not found in GET /user/teams: %v", teams)
+	}
+	// Embedded organization field must carry org login — OIDC relying parties read this.
+	org, _ := found["organization"].(map[string]interface{})
+	if org == nil || org["login"] != "testorg-userteams" {
+		t.Fatalf("expected organization.login=testorg-userteams, got: %v", found["organization"])
+	}
+}
+
 // TestGraphQLViewerOrgs verifies viewer { organizations } query.
 func TestGraphQLViewerOrgs(t *testing.T) {
 	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{

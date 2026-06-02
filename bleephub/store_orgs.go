@@ -105,6 +105,30 @@ func (st *Store) GetOrg(login string) *Org {
 	return st.OrgsByLogin[login]
 }
 
+// GetOrgByID returns an organization by its numeric ID, or nil.
+func (st *Store) GetOrgByID(id int) *Org {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Orgs[id]
+}
+
+// ListTeamsByUser returns every team across all orgs that the given user is a member of.
+func (st *Store) ListTeamsByUser(userID int) []*Team {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var teams []*Team
+	for _, t := range st.Teams {
+		for _, mid := range t.MemberIDs {
+			if mid == userID {
+				teams = append(teams, t)
+				break
+			}
+		}
+	}
+	return teams
+}
+
 // UpdateOrg applies a mutation function to an organization.
 func (st *Store) UpdateOrg(login string, fn func(*Org)) bool {
 	st.mu.Lock()
