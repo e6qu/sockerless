@@ -431,7 +431,15 @@ DNS=1.1.1.1
 }
 
 func createExt4RootFS(ctx context.Context, rootfsDir, rootfsPath string) error {
-	if err := os.Truncate(rootfsPath, 3*1024*1024*1024); err != nil {
+	rootfs, err := os.OpenFile(rootfsPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := rootfs.Truncate(3 * 1024 * 1024 * 1024); err != nil {
+		_ = rootfs.Close()
+		return err
+	}
+	if err := rootfs.Close(); err != nil {
 		return err
 	}
 	return (Runner{}).Run(ctx, "mkfs.ext4", "-q", "-d", rootfsDir, "-F", rootfsPath)
