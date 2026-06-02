@@ -3,6 +3,8 @@ package realexec
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -81,11 +83,11 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 	}
 	workDirReady := false
 	if cfg.WorkDir == "" {
-		baseDir := filepath.Join(os.TempDir(), "sockerless-firecracker", sanitizePathName(cfg.ID))
+		baseDir := filepath.Join(os.TempDir(), "sockerless-firecracker")
 		if err := os.MkdirAll(baseDir, 0o755); err != nil {
 			return nil, err
 		}
-		workDir, err := os.MkdirTemp(baseDir, sanitizePathName(cfg.ID)+"-")
+		workDir, err := os.MkdirTemp(baseDir, shortPathName(cfg.ID)+"-")
 		if err != nil {
 			return nil, err
 		}
@@ -545,4 +547,13 @@ func prefixNetmask(prefixBits int) net.IP {
 func sanitizePathName(value string) string {
 	replacer := strings.NewReplacer("/", "-", ":", "-", " ", "-", "\t", "-", "\n", "-")
 	return replacer.Replace(value)
+}
+
+func shortPathName(value string) string {
+	sanitized := sanitizePathName(value)
+	if len(sanitized) <= 16 {
+		return sanitized
+	}
+	sum := sha256.Sum256([]byte(value))
+	return sanitized[:16] + "-" + hex.EncodeToString(sum[:6])
 }
