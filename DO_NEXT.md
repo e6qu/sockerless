@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the AWS coverage-audit branch was cut.
+- Branch: `main`, synced with `origin/main` after PR #382 merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: none.
+- Open GitHub issues: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: BUG-1310 corrected the AWS EC2/EBS, Auto Scaling, and CloudTrail coverage authority docs. The audit confirmed the simulator already had real SDK, CLI, and Terraform provider coverage for Auto Scaling and CloudTrail, plus EC2 EBS lifecycle/snapshot operations, and updated `specs/SIM_TEST_COVERAGE_MATRIX.md` plus `specs/SIM_SURFACE_TABLES/` so future sessions see that coverage.
+- Last completed work: PR #382 fixed issue #381 — ECS managed EBS volumes now use Docker named volumes (topology-independent), and `CreateVpc`/`CreateSubnet` succeed at the control-plane level without host networking capabilities.
 
 ## Next Task
 

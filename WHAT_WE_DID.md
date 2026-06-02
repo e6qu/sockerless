@@ -4,6 +4,10 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - Separate EBS and VPC Data Plane from Control Plane (PR #382)
+
+Fixed two control-plane/data-plane coupling bugs in the AWS simulator (issue #381). ECS managed EBS volumes now use Docker named volumes (`sockerless-ebs-<id>`) instead of bind-mounting paths from the sim's own filesystem, so task containers launched as Docker siblings can always reach their volume data regardless of the sim's own topology. Snapshot creation/restore between ECS volumes copies via a short-lived Alpine container. `CreateVpc` and `CreateSubnet` now store state unconditionally and attempt real Linux network-namespace fabric only when host capabilities are present, so control-plane-only callers succeed without nftables.
+
 ## 2026-06-02 - AWS EC2/EBS, Auto Scaling, and CloudTrail Coverage Audit
 
 BUG-1310 was fixed. The BUG-1104 audit of AWS EC2/EBS, Auto Scaling, and CloudTrail found stale coverage authority docs rather than a simulator implementation gap.
