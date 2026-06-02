@@ -153,3 +153,40 @@ func TestKMS_DescribeAndScheduleDeletion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "PendingDeletion", string(delOut.KeyState))
 }
+
+// TestKMS_GetKeyPolicyRoundTrip exercises GetKeyPolicy and PutKeyPolicy.
+// terraform-provider-aws calls GetKeyPolicy on every key refresh to populate
+// the `policy` attribute; PutKeyPolicy is called when the operator sets a
+// custom policy document.
+func TestKMS_GetKeyPolicyRoundTrip(t *testing.T) {
+	c := kmsClient()
+
+	createOut, err := c.CreateKey(ctx, &kms.CreateKeyInput{Description: aws.String("policy-test-key")})
+	require.NoError(t, err)
+	keyId := *createOut.KeyMetadata.KeyId
+
+	// Fresh key returns the default policy.
+	getOut, err := c.GetKeyPolicy(ctx, &kms.GetKeyPolicyInput{
+		KeyId:      aws.String(keyId),
+		PolicyName: aws.String("default"),
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, *getOut.Policy, "default policy must be non-empty")
+	assert.Equal(t, "default", *getOut.PolicyName)
+
+	// Put a custom policy and read it back.
+	customPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":"kms:*","Resource":"*"}]}`
+	_, err = c.PutKeyPolicy(ctx, &kms.PutKeyPolicyInput{
+		KeyId:      aws.String(keyId),
+		PolicyName: aws.String("default"),
+		Policy:     aws.String(customPolicy),
+	})
+	require.NoError(t, err)
+
+	getCustom, err := c.GetKeyPolicy(ctx, &kms.GetKeyPolicyInput{
+		KeyId:      aws.String(keyId),
+		PolicyName: aws.String("default"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, customPolicy, *getCustom.Policy, "GetKeyPolicy must return the stored custom policy verbatim")
+}

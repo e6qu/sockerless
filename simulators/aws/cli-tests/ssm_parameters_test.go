@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,4 +59,53 @@ func TestSSMParameterCLI_PutGetDelete(t *testing.T) {
 	runCLI(t, awsCLI("ssm", "delete-parameter",
 		"--name", name,
 		"--output", "json"))
+}
+
+func TestSSMParameterCLI_ListTagsForResource(t *testing.T) {
+	name := "/cli-tag-test/param"
+	runCLI(t, awsCLI("ssm", "put-parameter",
+		"--name", name,
+		"--type", "String",
+		"--value", "v",
+		"--output", "json"))
+	t.Cleanup(func() {
+		_ = awsCLI("ssm", "delete-parameter", "--name", name).Run()
+	})
+
+	// No tags yet — TagList must be an empty array, not absent.
+	emptyOut := runCLI(t, awsCLI("ssm", "list-tags-for-resource",
+		"--resource-type", "Parameter",
+		"--resource-id", name,
+		"--output", "json"))
+	var empty struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	parseJSON(t, emptyOut, &empty)
+	assert.NotNil(t, empty.TagList)
+	assert.Empty(t, empty.TagList)
+
+	// Add a tag then verify it appears in the list.
+	runCLI(t, awsCLI("ssm", "add-tags-to-resource",
+		"--resource-type", "Parameter",
+		"--resource-id", name,
+		"--tags", `Key=stage,Value=prod`,
+		"--output", "json"))
+
+	tagOut := runCLI(t, awsCLI("ssm", "list-tags-for-resource",
+		"--resource-type", "Parameter",
+		"--resource-id", name,
+		"--output", "json"))
+	var tagged struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	parseJSON(t, tagOut, &tagged)
+	require.Len(t, tagged.TagList, 1)
+	assert.Equal(t, "stage", tagged.TagList[0].Key)
+	assert.Equal(t, "prod", tagged.TagList[0].Value)
 }

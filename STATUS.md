@@ -9,8 +9,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | Check live open issues first; otherwise continue BUG-1104 with another focused simulator coverage audit. Versioned releases/image publishing remain deferred while the project is early. |
-| Last merged | AWS EC2/EBS, Auto Scaling, and CloudTrail coverage docs were audited and corrected. |
-| Open GitHub issues | None at last check after this PR merged. |
+| Last merged | PR #382 — separate EBS and VPC data plane from control plane in AWS sim (issue #381). |
+| Open GitHub issues | None. |
 | Bugs | 1310 filed - 1310 fixed - 2 open - 3 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence. |
 | Live infra | None up. |

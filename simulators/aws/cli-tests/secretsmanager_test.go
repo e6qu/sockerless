@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,4 +59,34 @@ func TestSecretsManagerCLI_SecretLifecycle(t *testing.T) {
 	}
 	parseJSON(t, rotatedOut, &rotatedResult)
 	require.Equal(t, "rotated", rotatedResult.SecretString)
+}
+
+func TestSecretsManagerCLI_GetResourcePolicy(t *testing.T) {
+	createOut := runCLI(t, awsCLI("secretsmanager", "create-secret",
+		"--name", "grp-cli-secret",
+		"--secret-string", "value",
+		"--output", "json"))
+	var created struct {
+		ARN  string `json:"ARN"`
+		Name string `json:"Name"`
+	}
+	parseJSON(t, createOut, &created)
+	require.NotEmpty(t, created.ARN)
+	t.Cleanup(func() {
+		_ = awsCLI("secretsmanager", "delete-secret",
+			"--secret-id", "grp-cli-secret",
+			"--force-delete-without-recovery").Run()
+	})
+
+	// No policy attached — response must have ARN and Name.
+	out := runCLI(t, awsCLI("secretsmanager", "get-resource-policy",
+		"--secret-id", "grp-cli-secret",
+		"--output", "json"))
+	var result struct {
+		ARN  string `json:"ARN"`
+		Name string `json:"Name"`
+	}
+	parseJSON(t, out, &result)
+	assert.Equal(t, created.ARN, result.ARN)
+	assert.Equal(t, "grp-cli-secret", result.Name)
 }
