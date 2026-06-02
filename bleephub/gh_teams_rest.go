@@ -7,6 +7,7 @@ import (
 )
 
 func (s *Server) registerGHTeamRoutes() {
+	s.mux.HandleFunc("GET /api/v3/user/teams", s.handleListAuthUserTeams)
 	s.mux.HandleFunc("POST /api/v3/orgs/{org}/teams", s.handleCreateTeam)
 	s.mux.HandleFunc("GET /api/v3/orgs/{org}/teams", s.handleListTeams)
 	s.mux.HandleFunc("GET /api/v3/orgs/{org}/teams/{team_slug}", s.handleGetTeam)
@@ -186,6 +187,30 @@ func (s *Server) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListAuthUserTeams — GET /api/v3/user/teams.
+// Returns every team the authenticated user belongs to, across all orgs.
+// Real GitHub shape: array of team objects, each with an embedded "organization" field.
+// OIDC relying parties call this endpoint to map team membership → roles at sign-in.
+func (s *Server) handleListAuthUserTeams(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	teams := s.store.ListTeamsByUser(user.ID)
+	result := make([]map[string]interface{}, 0, len(teams))
+	base := s.baseURL(r)
+	for _, team := range teams {
+		org := s.store.GetOrgByID(team.OrgID)
+		if org == nil {
+			continue
+		}
+		result = append(result, teamToJSON(team, org, base))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 // teamToJSON converts a Team to a JSON-compatible map with snake_case keys.
