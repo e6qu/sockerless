@@ -1769,6 +1769,7 @@ func computeZoneOp(project, zone, target, opType string) map[string]any {
 func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork], subnetworks sim.Store[ComputeSubnetwork]) {
 	instances := sim.MakeStore[ComputeInstance](srv.DB(), "compute_instances")
 	gcpInstances = instances
+	logger := srv.Logger()
 
 	instanceSelfLink := func(project, zone, name string) string {
 		return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, name)
@@ -1911,6 +1912,12 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			return
 		}
 		if err := gcpStartRealVM(r.Context(), &inst); err != nil {
+			logger.Error().
+				Err(err).
+				Str("project", project).
+				Str("zone", zone).
+				Str("instance", inst.Name).
+				Msg("failed to boot real Compute Engine instance")
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to boot real Compute Engine instance: %v", err)
 			return
 		}
@@ -2019,6 +2026,12 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			return
 		}
 		if err := gcpStartRealVM(r.Context(), &inst); err != nil {
+			logger.Error().
+				Err(err).
+				Str("project", project).
+				Str("zone", zone).
+				Str("instance", inst.Name).
+				Msg("failed to start real Compute Engine instance")
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to start real Compute Engine instance: %v", err)
 			return
 		}

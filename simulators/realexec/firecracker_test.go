@@ -74,6 +74,33 @@ func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(netplanDir, "50-cloud-init.yaml"), []byte("network: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	for _, rel := range []string{
+		"etc/init.d/fcnet",
+		"etc/network/interfaces.d/10-fcnet",
+		"etc/systemd/system/fcnet.service",
+		"lib/systemd/system/fcnet.service",
+		"usr/local/bin/fcnet-setup.sh",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("stock firecracker networking\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{
+		"etc/rc2.d/S01fcnet",
+		"etc/systemd/system/multi-user.target.wants/fcnet.service",
+	} {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../fcnet.service", path); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := configureRootFSNetwork(dir, net.ParseIP("10.26.0.2"), net.ParseIP("10.26.0.1"), 24); err != nil {
 		t.Fatal(err)
 	}
@@ -106,12 +133,40 @@ func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 	if !strings.Contains(string(service), "ExecStart=/usr/local/sbin/sockerless-network") {
 		t.Fatalf("service does not execute network configurator:\n%s", service)
 	}
+	for _, rel := range []string{
+		"etc/init.d/fcnet",
+		"etc/network/interfaces.d/10-fcnet",
+		"etc/rc2.d/S01fcnet",
+		"etc/systemd/system/multi-user.target.wants/fcnet.service",
+		"lib/systemd/system/fcnet.service",
+		"usr/local/bin/fcnet-setup.sh",
+	} {
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("stock Firecracker networking path still exists at %s: %v", rel, err)
+		}
+	}
+	for _, service := range []string{"fcnet.service", "fcnet-setup.service"} {
+		target, err := os.Readlink(filepath.Join(dir, "etc", "systemd", "system", service))
+		if err != nil {
+			t.Fatalf("stock Firecracker network service %s was not masked: %v", service, err)
+		}
+		if target != "/dev/null" {
+			t.Fatalf("stock Firecracker network service %s mask = %q, want /dev/null", service, target)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(netplanDir, "50-cloud-init.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("stale netplan config still exists: %v", err)
 	}
 	ifupdown, err := os.ReadFile(filepath.Join(dir, "etc", "network", "interfaces.d", "sockerless-eth0"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	mainIfupdown, err := os.ReadFile(filepath.Join(dir, "etc", "network", "interfaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mainIfupdown) != string(ifupdown) {
+		t.Fatalf("main interfaces config and interfaces.d config differ:\nmain:\n%s\ninterfaces.d:\n%s", mainIfupdown, ifupdown)
 	}
 	for _, want := range []string{
 		"address 10.26.0.2",
@@ -121,6 +176,13 @@ func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 		if !strings.Contains(string(ifupdown), want) {
 			t.Fatalf("ifupdown config missing %q:\n%s", want, ifupdown)
 		}
+	}
+	resolv, err := os.ReadFile(filepath.Join(dir, "etc", "resolv.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resolv) != "nameserver 1.1.1.1\n" {
+		t.Fatalf("resolv.conf = %q", resolv)
 	}
 
 	link := filepath.Join(dir, "etc", "systemd", "system", "multi-user.target.wants", "sockerless-network.service")

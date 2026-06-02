@@ -953,6 +953,8 @@ func registerNetworkInterfaces(srv *sim.Server) {
 func registerVirtualMachines(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute"
 
+	logger := srv.Logger()
+
 	srv.HandleFunc("PUT "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
@@ -976,6 +978,12 @@ func registerVirtualMachines(srv *sim.Server) {
 			vm.Properties.VMID = generateUUID()
 		}
 		if err := azureStartRealVM(r.Context(), vm); err != nil {
+			logger.Error().
+				Err(err).
+				Str("subscription", sub).
+				Str("resource_group", rg).
+				Str("vm", name).
+				Msg("failed to boot real Azure virtual machine")
 			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to boot real virtual machine: %v", err)
 			return
 		}
@@ -1050,8 +1058,11 @@ func registerVirtualMachines(srv *sim.Server) {
 	for _, action := range []string{"start", "powerOff", "restart", "deallocate"} {
 		action := action
 		srv.HandleFunc("POST "+armBase+"/virtualMachines/{vmName}/"+action, func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			name := sim.PathParam(r, "vmName")
 			id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
-				sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "vmName"))
+				sub, rg, name)
 			vm, ok := azureVMs.Get(id)
 			if !ok {
 				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
@@ -1078,12 +1089,24 @@ func registerVirtualMachines(srv *sim.Server) {
 					return
 				}
 				if err := azureStartRealVM(r.Context(), vm); err != nil {
+					logger.Error().
+						Err(err).
+						Str("subscription", sub).
+						Str("resource_group", rg).
+						Str("vm", name).
+						Msg("failed to restart real Azure virtual machine")
 					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to restart real virtual machine: %v", err)
 					return
 				}
 			}
 			if action == "start" {
 				if err := azureStartRealVM(r.Context(), vm); err != nil {
+					logger.Error().
+						Err(err).
+						Str("subscription", sub).
+						Str("resource_group", rg).
+						Str("vm", name).
+						Msg("failed to start real Azure virtual machine")
 					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to start real virtual machine: %v", err)
 					return
 				}

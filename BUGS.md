@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1304 filed - 1304 fixed - 4 open - 3 false positives.**
+**1305 filed - 1305 fixed - 4 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,13 +17,14 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1300 through BUG-1304:
+This phase closed BUG-1300 through BUG-1305:
 
 - BUG-1300: Moving VM-backed simulator SDK/CLI/Terraform CI jobs to KVM-capable x86_64 hosted runners exposed stale simulator workload execution paths that still forced Docker platform `linux/arm64`. GCP Cloud Functions/Cloud Run Jobs, AWS ECS, and Azure Functions now inspect the resolved local workload image platform before container execution. AWS Lambda translates the public Lambda `Architectures` field (`x86_64` / `arm64`) to Docker's platform strings. Simulator tests still build native Linux workload images for the runner platform, so x64 KVM CI does not require emulation and arm hosts still run arm64 images.
 - BUG-1301: Firecracker VM rootfs image creation used `os.Truncate` as if it created `rootfs.ext4`, but Go's truncate call fails when the file does not already exist. Deterministic old workdirs could mask the bug when a previous image file was present; unique launch workdirs exposed it reliably as `truncate .../rootfs.ext4: no such file or directory`. The default workdir then had to be shortened because long cloud resource IDs could exceed Firecracker's Unix socket path budget. The official Firecracker CI S3 listing also includes `vmlinux-*.config` sidecars, and the old sorter could select a config file instead of the ELF kernel. Rootfs image creation now opens the image with create/truncate flags before sizing it, default Firecracker launches allocate a unique hash-prefixed workdir under the common temp root, kernel asset selection rejects config/debug sidecars, and cached/downloaded kernels are validated as ELF images before the launcher records or reuses them. Explicit caller-provided workdirs remain explicit and isolated by the caller.
 - BUG-1302: Simulator VM boot used the Firecracker guest MAC on the host-side TAP endpoint and relied on distro network config/kernel `ip=` handling for guest addressing. The direct arithmetic Firecracker smoke passed because it configured the guest NIC after boot, while VM-backed simulator CI timed out waiting for provider-private guest reachability. TAP host endpoints no longer reuse the guest MAC, and Firecracker rootfs setup installs a deterministic boot-time network configurator for the assigned cloud-private IP, gateway, and resolver.
 - BUG-1303 / issue #374: Firecracker VM rootfs images were fixed-size 3 GiB sparse files, which risked runner disk exhaustion when a single simulator job booted multiple VMs. Rootfs image sizing now uses `du -sk` on the copied real rootfs, doubles measured payload size, adds bounded headroom, aligns the result, and keeps a 1 GiB floor.
 - BUG-1304 / issue #375: Firecracker kernel/rootfs assets were downloaded and unsquashed inside each fresh Actions run while VM-backed jobs used a floating hosted runner label. The workflow now pins VM-backed Firecracker jobs to `ubuntu-24.04` x86_64 and caches `~/.cache/sockerless/firecracker-ci` by Firecracker version plus runner architecture.
+- BUG-1305 / issue #376: The official Firecracker CI rootfs preconfigures MAC-derived guest networking through `fcnet-setup.sh`, which conflicted with AWS/GCP/Azure simulator VM paths that assign provider-private `10.x` cloud IPs. Firecracker rootfs preparation now masks/removes the stock `fcnet` systemd/SysV/script/interface paths before building the ext4 image, writes deterministic systemd/netplan/ifupdown/resolver config for the simulator-assigned IP/gateway, and logs real VM boot failures with the Firecracker failure tail before returning provider-shaped API errors.
 
 Issue #373 was clarified as a false-positive wording issue, not a missing runtime check: `DetectFirecrackerCapabilities()` already includes `firecracker`, and the shared capability detector opens `/dev/kvm` read-write for required Firecracker/jailer command sets. Regression coverage now locks that KVM-required command contract.
 

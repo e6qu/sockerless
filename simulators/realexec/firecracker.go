@@ -428,6 +428,9 @@ func configureRootFSNetwork(rootfsDir string, ip, gateway net.IP, prefixBits int
 	if gateway == nil || gateway.To4() == nil {
 		return fmt.Errorf("guest IPv4 gateway is required")
 	}
+	if err := disableStockFirecrackerNetworking(rootfsDir); err != nil {
+		return err
+	}
 	systemdDir := filepath.Join(rootfsDir, "etc", "systemd", "network")
 	if err := os.MkdirAll(systemdDir, 0o755); err != nil {
 		return err
@@ -486,6 +489,10 @@ DNS=1.1.1.1
 	if err := os.MkdirAll(interfacesDir, 0o755); err != nil {
 		return err
 	}
+	resolvDir := filepath.Join(rootfsDir, "etc")
+	if err := os.MkdirAll(resolvDir, 0o755); err != nil {
+		return err
+	}
 	ifupdown := fmt.Sprintf(`auto eth0
 iface eth0 inet static
     address %s
@@ -493,7 +500,13 @@ iface eth0 inet static
     gateway %s
     dns-nameservers 1.1.1.1
 `, ip, prefixNetmask(prefixBits), gateway)
+	if err := os.WriteFile(filepath.Join(rootfsDir, "etc", "network", "interfaces"), []byte(ifupdown), 0o644); err != nil {
+		return err
+	}
 	if err := os.WriteFile(filepath.Join(interfacesDir, "sockerless-eth0"), []byte(ifupdown), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(resolvDir, "resolv.conf"), []byte("nameserver 1.1.1.1\n"), 0o644); err != nil {
 		return err
 	}
 	sbinDir := filepath.Join(rootfsDir, "usr", "local", "sbin")
@@ -556,6 +569,82 @@ WantedBy=multi-user.target
 		return err
 	}
 	return os.Symlink("../sockerless-network.service", link)
+}
+
+func disableStockFirecrackerNetworking(rootfsDir string) error {
+	const (
+		fcnetService      = "fcnet.service"
+		fcnetSetupService = "fcnet-setup.service"
+	)
+	paths := []string{
+		"etc/init.d/fcnet",
+		"etc/init.d/fcnet-setup",
+		"etc/network/interfaces.d/fcnet",
+		"etc/network/interfaces.d/fcnet.cfg",
+		"lib/systemd/system/fcnet.service",
+		"lib/systemd/system/fcnet-setup.service",
+		"usr/lib/systemd/system/fcnet.service",
+		"usr/lib/systemd/system/fcnet-setup.service",
+		"usr/local/bin/fcnet-setup.sh",
+		"usr/local/sbin/fcnet-setup.sh",
+		"usr/bin/fcnet-setup.sh",
+		"usr/sbin/fcnet-setup.sh",
+	}
+	for _, rel := range paths {
+		if err := removeRootFSPath(rootfsDir, rel); err != nil {
+			return err
+		}
+	}
+	patterns := []string{
+		"etc/network/interfaces.d/*fcnet*",
+		"etc/rc*.d/*fcnet*",
+		"etc/systemd/system/*.wants/*fcnet*",
+		"etc/systemd/system/*.requires/*fcnet*",
+		"etc/systemd/system/*.target.wants/*fcnet*",
+		"etc/systemd/system/*.target.requires/*fcnet*",
+		"etc/systemd/network/*fcnet*.network",
+	}
+	for _, pattern := range patterns {
+		if err := removeRootFSGlob(rootfsDir, pattern); err != nil {
+			return err
+		}
+	}
+
+	serviceDir := filepath.Join(rootfsDir, "etc", "systemd", "system")
+	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+		return err
+	}
+	for _, service := range []string{fcnetService, fcnetSetupService} {
+		mask := filepath.Join(serviceDir, service)
+		if err := os.RemoveAll(mask); err != nil {
+			return fmt.Errorf("remove stock Firecracker network unit %s: %w", service, err)
+		}
+		if err := os.Symlink("/dev/null", mask); err != nil {
+			return fmt.Errorf("mask stock Firecracker network unit %s: %w", service, err)
+		}
+	}
+	return nil
+}
+
+func removeRootFSPath(rootfsDir, rel string) error {
+	path := filepath.Join(rootfsDir, filepath.FromSlash(rel))
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove stock Firecracker rootfs network path %s: %w", rel, err)
+	}
+	return nil
+}
+
+func removeRootFSGlob(rootfsDir, pattern string) error {
+	matches, err := filepath.Glob(filepath.Join(rootfsDir, filepath.FromSlash(pattern)))
+	if err != nil {
+		return fmt.Errorf("match stock Firecracker rootfs network path %s: %w", pattern, err)
+	}
+	for _, path := range matches {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove stock Firecracker rootfs network path %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func createExt4RootFS(ctx context.Context, rootfsDir, rootfsPath string) error {

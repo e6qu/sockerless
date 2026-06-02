@@ -2122,6 +2122,7 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 		prev := inst.State
 		if next == "running" {
 			if err := ec2StartRealVM(r.Context(), inst); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to start real EC2 instance %s: %v\n", id, err)
 				ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to start real EC2 instance: %v", err), http.StatusServiceUnavailable)
 				return
 			}
