@@ -50,8 +50,13 @@ aws iam create-service-linked-role --aws-service-name cloudfront.amazonaws.com
 |---|---|---|
 | `SIM_LISTEN_ADDR` | `:4566` | Listen address (`host:port`). |
 | `SIM_TLS_CERT`, `SIM_TLS_KEY` | unset | Enable HTTPS with the given cert/key. |
+| `SIM_RUNTIME` | `docker` | Initializes Docker/Podman for workload execution. Set `process` only for explicit API-only runs that do not invoke ECS/Lambda workload execution. |
 | `AWS_ENDPOINT_URL` | (client-side) | Tells the SDK / CLI / Terraform to route to the sim. |
 | `AWS_DEFAULT_REGION` | `us-east-1` | The sim accepts any region; some validation (CloudFront → ACM us-east-1 pin) is region-aware. |
+
+Docker or Podman is required for ECS and Lambda execution paths. For
+control-plane or data-plane API checks that do not start workloads,
+`SIM_RUNTIME=process` starts the AWS simulator without initializing Docker/Podman.
 
 For Terraform:
 

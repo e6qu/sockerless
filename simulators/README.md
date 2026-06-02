@@ -66,8 +66,14 @@ Environment knobs (per sim — full list in each sub-README):
 | `SIM_LISTEN_ADDR` | `:8443` (overridden per provider) | Listen address |
 | `SIM_AWS_PORT` / `SIM_GCP_PORT` / `SIM_AZURE_PORT` | `4566` / `4567` / `4568` | Provider-specific port override |
 | `SIM_TLS_CERT`, `SIM_TLS_KEY` | unset | Enable HTTPS (required by some Terraform providers — see [`simulators/azure/README.md § Special handling`](azure/README.md)) |
+| `SIM_RUNTIME` | `docker` | Workload runtime mode. The default initializes Docker/Podman for execution. Set `process` only for explicit API-only runs that do not invoke workload-execution APIs. |
 | `SIM_SERVICEBUS_AMQP_LISTEN_ADDR` | unset | Azure-only raw Service Bus AMQP/TLS listener; requires `SIM_SERVICEBUS_AMQP_TLS_CERT` / `SIM_SERVICEBUS_AMQP_TLS_KEY` or the shared TLS cert/key |
 | `SIM_LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`) |
+
+Docker or Podman is required when simulator calls execute workloads. If the
+operator intentionally needs only non-execution API surfaces, `SIM_RUNTIME=process`
+starts the simulator without initializing Docker/Podman; execution endpoints still
+require a real workload runtime when used.
 
 ## Optional local HTTPS gateway
 

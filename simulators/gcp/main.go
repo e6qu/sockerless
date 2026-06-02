@@ -10,6 +10,7 @@
 //	SIM_GCP_GRPC_PORT   — gRPC listen port for Cloud Logging (default: HTTP port + 1)
 //	SIM_TLS_CERT        — TLS certificate file (optional)
 //	SIM_TLS_KEY         — TLS key file (optional)
+//	SIM_RUNTIME         — "docker" by default; "process" starts API-only mode for runs that do not execute workloads
 //	SIM_LOG_LEVEL       — log level: trace, debug, info, warn, error (default "info")
 //
 // SDK configuration:

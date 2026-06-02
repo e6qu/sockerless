@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1296 filed - 1296 fixed - 3 open - 2 false positives.**
+**1298 filed - 1298 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,7 +16,12 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1296:
+This phase closed BUG-1297 and BUG-1298:
+
+- BUG-1297 / issue #366: Simulator release-image builds and `simulators/docker-compose.yml` used per-cloud build contexts even though each per-cloud module replaces `github.com/sockerless/simulator-realexec => ../realexec`. The simulator Dockerfiles now build from the shared `simulators/` context and switch into `/src/<cloud>` before `go build`; publish-container-images, compose, and per-cloud `docker-build` Make targets all use that same context. A simulator-scoped `.dockerignore` excludes test harnesses, generated test binaries, Terraform provider caches/state, built UI assets, and locally built simulator binaries from release-image contexts. Real Docker image builds for AWS, GCP, and Azure passed from the fixed context.
+- BUG-1298 / issue #367: The explicit `SIM_RUNTIME=process` API-only startup mode existed but was undocumented, and Docker/Podman startup failures did not point operators to it. Common and per-cloud simulator docs now document `SIM_RUNTIME=process` as an explicit API-only mode for runs that do not invoke workload execution, not as a fallback. Startup comments and fatal messages now say Docker/Podman is required for workload execution and mention `SIM_RUNTIME=process` only for explicit non-execution API-only runs.
+
+Previous phase closed BUG-1296:
 
 - BUG-1296 / issue #365: Azure SDK local validation became portable on macOS without skipping tests or weakening the data plane. On Darwin, `make sdk-test` now delegates to the existing privileged Linux simulator test image and runs `make sdk-test-local` inside that container, so real-network SDK tests execute with Linux netns/veth/nftables capabilities instead of failing on macOS host limitations. Linux direct validation remains available through `make sdk-test-local`. The Azure SDK test harness also installs an explicit Event Grid data-plane resolver for the advertised `*.eventgrid.localhost:<simPort>` endpoint; it preserves the request URL and Host header for host-dispatched public data-plane routing while dialing loopback, and sets localhost wildcard names in `NO_PROXY` / `no_proxy`. Full macOS `make sdk-test` now passes through Docker.
 

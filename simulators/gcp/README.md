@@ -48,6 +48,11 @@ gcloud run jobs list --region us-central1
 gcloud storage buckets list
 ```
 
+Docker or Podman is required when Cloud Run or Cloud Functions calls execute
+workloads. For API-only checks that do not invoke workload execution,
+`SIM_RUNTIME=process` starts the GCP simulator without initializing
+Docker/Podman.
+
 For Terraform:
 
 ```hcl

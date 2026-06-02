@@ -1,6 +1,7 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY . .
+WORKDIR /src/azure
 RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /simulator-azure .
 
 FROM alpine:3.20

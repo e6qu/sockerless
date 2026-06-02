@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - Simulator Image Context And API-Only Runtime Mode
+
+Issues #366 and #367 were fixed.
+
+Simulator runtime image builds now use the shared `simulators/` Docker context in every path that builds those images: `.github/workflows/publish-container-images.yml`, `simulators/docker-compose.yml`, and the per-cloud `docker-build` Make targets. Each cloud Dockerfile copies that shared context and switches into `/src/aws`, `/src/gcp`, or `/src/azure` before `go build`, so the per-cloud module replace for `../realexec` resolves correctly. `simulators/.dockerignore` excludes test harness directories, generated test binaries, Terraform caches/state, built UI assets, and local simulator binaries from release-image contexts.
+
+Local Docker builds for `sockerless-simulator-aws`, `sockerless-simulator-gcp`, and `sockerless-simulator-azure` passed from the fixed context. The simulator context sent to Docker dropped from roughly 1.1 GB of local artifacts to roughly 3.5 MB.
+
+`SIM_RUNTIME=process` is documented as an explicit API-only startup mode for runs that do not invoke workload-execution APIs. It is not a fallback. Docker/Podman remains required for workload execution, and simulator fatal messages now say that while pointing API-only operators to `SIM_RUNTIME=process`.
+
 ## 2026-06-02 - Azure SDK Local Portability
 
 Issue #365 was fixed. Azure SDK local validation became portable on macOS without skipping tests, mocking network behavior, or weakening the Event Grid data plane.

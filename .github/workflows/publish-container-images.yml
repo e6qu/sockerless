@@ -36,9 +36,9 @@ jobs:
       matrix:
         image:
           - { name: sockerless-bleephub, dockerfile: bleephub/Dockerfile.release, context: . }
-          - { name: sockerless-simulator-aws, dockerfile: simulators/aws/Dockerfile, context: simulators/aws }
-          - { name: sockerless-simulator-gcp, dockerfile: simulators/gcp/Dockerfile, context: simulators/gcp }
-          - { name: sockerless-simulator-azure, dockerfile: simulators/azure/Dockerfile, context: simulators/azure }
+          - { name: sockerless-simulator-aws, dockerfile: simulators/aws/Dockerfile, context: simulators }
+          - { name: sockerless-simulator-gcp, dockerfile: simulators/gcp/Dockerfile, context: simulators }
+          - { name: sockerless-simulator-azure, dockerfile: simulators/azure/Dockerfile, context: simulators }
         arch:
           - { platform: linux/amd64, runner: ubuntu-latest, suffix: amd64 }
           - { platform: linux/arm64, runner: ubuntu-24.04-arm, suffix: arm64 }

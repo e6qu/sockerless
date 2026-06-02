@@ -266,6 +266,10 @@ make simulators/aws/sdk-test    # SDK tests against the sim (sim-specific target
 
 The pattern works for any app + any standardized target.
 
+Simulator workload execution requires Docker or Podman. For explicit API-only
+simulator runs that do not invoke workload execution, set `SIM_RUNTIME=process`;
+that mode starts the cloud API surface without initializing Docker/Podman.
+
 ### Stack orchestration
 
 Two layers, both writing PID + log files under `.stack-pids/<name>.{pid,log}` so `stack-status` / `stack-down` find every component.

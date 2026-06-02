@@ -9,6 +9,7 @@
 //	SIM_LISTEN_ADDR  — listen address (default ":4568")
 //	SIM_TLS_CERT     — TLS certificate file (optional)
 //	SIM_TLS_KEY      — TLS key file (optional)
+//	SIM_RUNTIME      — "docker" by default; "process" starts API-only mode for runs that do not execute workloads
 //	SIM_SERVICEBUS_AMQP_LISTEN_ADDR — raw Service Bus AMQP/TLS listen address (optional)
 //	SIM_LOG_LEVEL    — log level: trace, debug, info, warn, error (default "info")
 //
