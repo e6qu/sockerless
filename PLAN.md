@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: Firecracker-backed public VM lifecycle for issues #332/#333. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths now boot real Firecracker guests attached to the provider subnet TAP, transition public running state only after guest packet reachability, and power off/restart/delete the real guest on public lifecycle actions. Simulator SDK/CLI/Terraform CI jobs install Firecracker and the required rootfs tooling because VM APIs now require the real substrate.
+Last completed phase: Firecracker-backed public VM lifecycle for issues #332/#333 plus the CI/ASG follow-up. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths now boot real Firecracker guests attached to the provider subnet TAP, transition public running state only after guest packet reachability, and power off/restart/delete the real guest on public lifecycle actions. Simulator SDK/CLI/Terraform CI jobs install Firecracker and the required rootfs tooling because VM APIs now require the real substrate, and the VM-backed simulator jobs run on KVM-capable `ubuntu-latest` hosted runners. AWS Auto Scaling Groups now launch and terminate EC2 instances through the same real Firecracker guest lifecycle.
 
 Next planned phase: continue BUG-1267 / BUG-1299 / issue #371 with guest metadata reachability and #338 umbrella follow-through, unless a higher-priority issue appears. Versioned release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
 

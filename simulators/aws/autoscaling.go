@@ -333,22 +333,36 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 			Tags:             asg.Tags,
 			LaunchTime:       time.Now().UTC().Format(time.RFC3339),
 			KeyName:          lc.KeyName,
-			State:            "running",
+			State:            "pending",
 		})
 		if err != nil {
 			return err
 		}
+		if err := ec2StartRealVM(context.Background(), inst); err != nil {
+			_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
+			ec2Instances.Delete(inst.InstanceId)
+			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+			ec2DeleteOnTerminationVolumes(inst.InstanceId)
+			return fmt.Errorf("failed to launch EC2 instance %s for Auto Scaling group %s: %w", inst.InstanceId, asg.Name, err)
+		}
+		inst.State = "running"
+		ec2Instances.Put(inst.InstanceId, inst)
 		asg.InstanceIds = append(asg.InstanceIds, inst.InstanceId)
 	}
 	for len(asg.InstanceIds) > asg.DesiredCapacity {
 		id := asg.InstanceIds[len(asg.InstanceIds)-1]
 		asg.InstanceIds = asg.InstanceIds[:len(asg.InstanceIds)-1]
 		if inst, ok := ec2Instances.Get(id); ok {
+			if err := ec2StopRealVM(context.Background(), id); err != nil {
+				return fmt.Errorf("failed to stop EC2 instance %s for Auto Scaling group %s: %w", id, asg.Name, err)
+			}
 			inst.State = "terminated"
 			ec2Instances.Put(id, inst)
 			if inst.NetworkInterfaceId != "" {
 				ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
-				_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
+				if err := ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId); err != nil {
+					return fmt.Errorf("failed to delete EC2 network interface %s for Auto Scaling group %s: %w", inst.NetworkInterfaceId, asg.Name, err)
+				}
 			}
 			ec2DeleteOnTerminationVolumes(id)
 		}

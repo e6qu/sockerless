@@ -4,6 +4,14 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - VM Simulator CI KVM Follow-Up
+
+The PR #372 CI failure was fixed without skipping tests, adding fallbacks, or weakening Firecracker/HTTPS behavior. The failed simulator SDK/CLI/Terraform jobs were running on `ubuntu-24.04-arm`; that runner class installed Firecracker but did not expose `/dev/kvm`, so AWS EC2, GCP Compute Engine, and Azure VM public API tests failed loudly with missing KVM, and Terraform retried until its 10-minute step budget expired.
+
+The VM-backed simulator SDK/CLI/Terraform jobs now run on `ubuntu-latest`, the same KVM-capable hosted runner class that already passed the mandatory Firecracker microVM arithmetic smoke. The GCP simulator job installs the matching x86_64 gcloud CLI archive.
+
+The same follow-up fixed an AWS Auto Scaling lifecycle gap exposed by the failed AWS SDK shard. ASGs no longer create EC2 rows marked `running` without a guest process. Scale-out now starts the real EC2 Firecracker guest through the shared EC2 lifecycle and records `running` only after startup succeeds; scale-in stops the guest before terminating instance state, ENI state, and delete-on-termination volumes.
+
 ## 2026-06-02 - Firecracker-Backed VM Lifecycle
 
 Issues #332 and #333 were advanced. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths now use real Firecracker guests instead of metadata-only running/stopped state.
