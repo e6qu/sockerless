@@ -192,6 +192,7 @@ type EC2Volume struct {
 	Tags             []EC2Tag
 	Attachments      []EC2VolumeAttachment
 	HostPath         string
+	DockerVolumeName string
 	Data             []byte
 }
 
@@ -205,18 +206,19 @@ type EC2VolumeAttachment struct {
 }
 
 type EC2Snapshot struct {
-	SnapshotId    string
-	VolumeId      string
-	VolumeSize    int
-	State         string
-	StartTime     string
-	CompletionDue string
-	Progress      string
-	Description   string
-	OwnerId       string
-	Tags          []EC2Tag
-	HostPath      string
-	VolumeData    []byte
+	SnapshotId       string
+	VolumeId         string
+	VolumeSize       int
+	State            string
+	StartTime        string
+	CompletionDue    string
+	Progress         string
+	Description      string
+	OwnerId          string
+	Tags             []EC2Tag
+	HostPath         string
+	DockerVolumeName string
+	VolumeData       []byte
 }
 
 // State stores
@@ -510,14 +512,12 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		EnableDnsSupport:   true,
 		EnableDnsHostnames: false,
 	}
-	if !ec2RequireNetworkHost(w) {
-		return
-	}
-	if err := ec2CreateRealVPC(r.Context(), vpc); err != nil {
-		ec2ErrorXML(w, "VpcLimitExceeded", fmt.Sprintf("failed to create real VPC network fabric: %v", err), http.StatusServiceUnavailable)
-		return
-	}
 	ec2Vpcs.Put(id, vpc)
+	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
+		if err2 := ec2CreateRealVPC(r.Context(), vpc); err2 != nil {
+			fmt.Fprintf(os.Stderr, "sim: real VPC %s network fabric unavailable: %v\n", id, err2)
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateVpcResponse %s>
@@ -638,14 +638,12 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 		Tags:             tags,
 		OwnerId:          ec2Owner(),
 	}
-	if !ec2RequireNetworkHost(w) {
-		return
-	}
-	if err := ec2CreateRealSubnet(r.Context(), subnet); err != nil {
-		ec2ErrorXML(w, "InvalidSubnet.Conflict", fmt.Sprintf("failed to create real subnet network fabric: %v", err), http.StatusServiceUnavailable)
-		return
-	}
 	ec2Subnets.Put(id, subnet)
+	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
+		if err2 := ec2CreateRealSubnet(r.Context(), subnet); err2 != nil {
+			fmt.Fprintf(os.Stderr, "sim: real subnet %s network fabric unavailable: %v\n", id, err2)
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateSubnetResponse %s>
@@ -2193,7 +2191,11 @@ func ec2DeleteOnTerminationVolumes(instanceID string) {
 			keep = append(keep, att)
 		}
 		if deleteVolume {
-			_ = os.RemoveAll(vol.HostPath)
+			if vol.DockerVolumeName != "" {
+				ebsRemoveDockerVolume(vol.DockerVolumeName)
+			} else {
+				_ = os.RemoveAll(vol.HostPath)
+			}
 			ec2Volumes.Delete(vol.VolumeId)
 			continue
 		}
@@ -2431,6 +2433,57 @@ func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <volumeSet>%s</volumeSet>
 </DescribeVolumesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+// ebsECSDockerVolumeName returns the Docker named volume name for an ECS-managed EBS volume.
+// ECS tasks use Docker named volumes so the data lives in the Docker daemon rather than on
+// the sim process's own filesystem, making volumes accessible to sibling task containers
+// regardless of whether the sim itself runs on the host or inside a container.
+func ebsECSDockerVolumeName(volumeID string) string {
+	return "sockerless-ebs-" + volumeID
+}
+
+// ebsSnapshotDockerVolumeName returns the Docker named volume name for a snapshot taken
+// from an ECS-managed EBS volume.
+func ebsSnapshotDockerVolumeName(snapshotID string) string {
+	return "sockerless-snap-" + snapshotID
+}
+
+// ebsRemoveDockerVolume removes a Docker named volume created for an ECS EBS volume or
+// snapshot. Errors are silently ignored (volume may already be absent).
+func ebsRemoveDockerVolume(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = sim.DockerClient().VolumeRemove(ctx, name, false)
+}
+
+// ebsCopyDockerVolumes copies all content from srcVolume into dstVolume using a
+// short-lived Alpine container. The destination volume is auto-created by Docker if
+// it does not yet exist.
+func ebsCopyDockerVolumes(ctx context.Context, srcVolume, dstVolume string) error {
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:   "alpine:latest",
+		Command: []string{"sh", "-c", "cp -a /src/. /dst/"},
+		Binds: []string{
+			srcVolume + ":/src:ro",
+			dstVolume + ":/dst",
+		},
+		Timeout: 60 * time.Second,
+	}, discardLogSink{})
+	if err != nil {
+		return fmt.Errorf("start volume copy container: %w", err)
+	}
+	res := handle.Wait()
+	if res.Error != nil {
+		return fmt.Errorf("volume copy: %w", res.Error)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("volume copy exited with code %d", res.ExitCode)
+	}
+	return nil
 }
 
 func ebsHostRoot() string {
@@ -2728,7 +2781,11 @@ func handleDeleteVolume(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "VolumeInUse", "Volume is in-use", http.StatusBadRequest)
 		return
 	}
-	_ = os.RemoveAll(vol.HostPath)
+	if vol.DockerVolumeName != "" {
+		ebsRemoveDockerVolume(vol.DockerVolumeName)
+	} else {
+		_ = os.RemoveAll(vol.HostPath)
+	}
 	ec2Volumes.Delete(volID)
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteVolumeResponse %s><requestId>%s</requestId><return>true</return></DeleteVolumeResponse>`, ec2Xmlns(), generateUUID())
@@ -2789,14 +2846,22 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		Tags:          parseTags(r),
 		VolumeData:    append([]byte(nil), vol.Data...),
 	}
-	snap.HostPath = ebsSnapshotHostDirPath(snap.SnapshotId)
-	if err := ebsPrepareVolumeHostPath(&vol); err != nil {
-		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not access volume data path: %v", err), http.StatusInternalServerError)
-		return
-	}
-	if err := ebsCopyDir(snap.HostPath, vol.HostPath); err != nil {
-		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not snapshot volume data: %v", err), http.StatusInternalServerError)
-		return
+	if vol.DockerVolumeName != "" {
+		snap.DockerVolumeName = ebsSnapshotDockerVolumeName(snap.SnapshotId)
+		if err := ebsCopyDockerVolumes(r.Context(), vol.DockerVolumeName, snap.DockerVolumeName); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not snapshot volume data: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		snap.HostPath = ebsSnapshotHostDirPath(snap.SnapshotId)
+		if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not access volume data path: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if err := ebsCopyDir(snap.HostPath, vol.HostPath); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not snapshot volume data: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 	ec2Volumes.Put(vol.VolumeId, vol)
 	ec2Snapshots.Put(snap.SnapshotId, snap)
@@ -2871,11 +2936,17 @@ func ec2SnapshotFieldsXML(snap EC2Snapshot) string {
 
 func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	snapID := r.FormValue("SnapshotId")
-	if !ec2Snapshots.Delete(snapID) {
+	snap, ok := ec2Snapshots.Get(snapID)
+	if !ok {
 		ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", snapID), http.StatusBadRequest)
 		return
 	}
-	_ = os.RemoveAll(ebsSnapshotHostDirPath(snapID))
+	ec2Snapshots.Delete(snapID)
+	if snap.DockerVolumeName != "" {
+		ebsRemoveDockerVolume(snap.DockerVolumeName)
+	} else {
+		_ = os.RemoveAll(snap.HostPath)
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteSnapshotResponse %s><requestId>%s</requestId><return>true</return></DeleteSnapshotResponse>`, ec2Xmlns(), generateUUID())
 }

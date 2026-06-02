@@ -51,12 +51,17 @@ aws iam create-service-linked-role --aws-service-name cloudfront.amazonaws.com
 | `SIM_LISTEN_ADDR` | `:4566` | Listen address (`host:port`). |
 | `SIM_TLS_CERT`, `SIM_TLS_KEY` | unset | Enable HTTPS with the given cert/key. |
 | `SIM_RUNTIME` | `docker` | Initializes Docker/Podman for workload execution. Set `process` only for explicit API-only runs that do not invoke ECS/Lambda workload execution. |
+| `SIM_EBS_DATA_DIR` | `$TMPDIR/sockerless-sim-ebs` | Root directory for EC2/Firecracker EBS block images and snapshots derived from EC2 volumes. **Not used for ECS managed EBS volumes** — those use Docker named volumes (`sockerless-ebs-*`) so they are topology-independent. |
 | `AWS_ENDPOINT_URL` | (client-side) | Tells the SDK / CLI / Terraform to route to the sim. |
 | `AWS_DEFAULT_REGION` | `us-east-1` | The sim accepts any region; some validation (CloudFront → ACM us-east-1 pin) is region-aware. |
 
 Docker or Podman is required for ECS and Lambda execution paths. For
 control-plane or data-plane API checks that do not start workloads,
 `SIM_RUNTIME=process` starts the AWS simulator without initializing Docker/Podman.
+
+**ECS managed EBS volumes** use Docker named volumes (`sockerless-ebs-<id>`) rather than bind-mounts on the sim process's filesystem. This means the sim can run in a container (with the Docker socket mounted) and task containers will see the correct volume data — no path-sharing between host and sim container is required.
+
+**VPC and Subnet creation** (`CreateVpc`, `CreateSubnet`) always succeeds at the control-plane level (API state is stored). Real Linux network-namespace fabric is set up in addition when host networking capabilities (`ip`, `nft`, `sysctl`) are present. Without those capabilities the API calls still succeed; tasks using `networkMode: none` work normally. Tasks requiring `awsvpc` mode with real packet routing need the host-networking caps to be present.
 
 For Terraform:
 
@@ -188,10 +193,11 @@ Each test package's `TestMain` builds the simulator binary, finds a free port, b
 
 ## Known issues
 
-None open for the services covered here. Closed within Phase 159:
+None open for the services covered here. Selected closed items:
 
-- **BUG-991** — `docker run --rm` against `backends/docker` (used by these sim tests for workload execution) used to fail with `No such container`. Fixed by removing the Store-direct shortcut in `handleContainerWait`. See [BUGS.md](../../BUGS.md).
+- **BUG-991** — `docker run --rm` against `backends/docker` used to fail with `No such container`. Fixed by removing the Store-direct shortcut in `handleContainerWait`.
 - **BUG-992** — `docker images` used to return empty even when the upstream daemon had images. Fixed by delegating to `s.self.ImageList`.
+- **issue #381** — ECS managed EBS volumes were stored on the sim process's own filesystem and bind-mounted by path, so task containers launched as Docker siblings couldn't see the data. `CreateVpc`/`CreateSubnet` also hard-failed without host nftables even when only control-plane API calls were needed. Fixed: ECS EBS volumes now use Docker named volumes; VPC/Subnet store state unconditionally and set up real networking fabric only when host caps are present.
 
 ## What's out of scope
 
