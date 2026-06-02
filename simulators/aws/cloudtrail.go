@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,27 +248,50 @@ func handleCloudTrailStopLogging(w http.ResponseWriter, r *http.Request) {
 
 func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LookupAttributes []struct {
-			AttributeKey   string
-			AttributeValue string
-		}
-		MaxResults int
+		LookupAttributes []cloudTrailLookupAttribute
+		MaxResults       int
 	}
 	_ = readAWSJSONAllowEmpty(r, &req)
 	max := req.MaxResults
 	if max <= 0 || max > 50 {
 		max = 50
 	}
-	events := cloudTrailEvents.List()
+	out := cloudTrailLookupEvents(cloudTrailEvents.List(), req.LookupAttributes, max)
+	writeAWSJSON(w, http.StatusOK, map[string]any{"Events": out})
+}
+
+type cloudTrailLookupAttribute struct {
+	AttributeKey   string
+	AttributeValue string
+}
+
+func cloudTrailLookupEvents(events []CloudTrailEvent, attrs []cloudTrailLookupAttribute, max int) []map[string]any {
+	if max <= 0 || max > 50 {
+		max = 50
+	}
+	ordered := append([]CloudTrailEvent(nil), events...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, leftErr := time.Parse(time.RFC3339, ordered[i].EventTime)
+		right, rightErr := time.Parse(time.RFC3339, ordered[j].EventTime)
+		if leftErr == nil && rightErr == nil && !left.Equal(right) {
+			return left.After(right)
+		}
+		if ordered[i].EventTime != ordered[j].EventTime {
+			return ordered[i].EventTime > ordered[j].EventTime
+		}
+		return ordered[i].EventId > ordered[j].EventId
+	})
 	out := make([]map[string]any, 0, len(events))
-	for i := len(events) - 1; i >= 0 && len(out) < max; i-- {
-		ev := events[i]
-		if !cloudTrailEventMatches(ev, req.LookupAttributes) {
+	for _, ev := range ordered {
+		if len(out) >= max {
+			break
+		}
+		if !cloudTrailEventMatches(ev, attrs) {
 			continue
 		}
 		out = append(out, cloudTrailEventJSON(ev))
 	}
-	writeAWSJSON(w, http.StatusOK, map[string]any{"Events": out})
+	return out
 }
 
 func handleCloudTrailDeleteTrail(w http.ResponseWriter, r *http.Request) {
@@ -544,10 +568,7 @@ func cloudTrailObjectKey(trail CloudTrailTrail, event CloudTrailEvent) string {
 		prefix, awsAccountID(), awsRegion(), t.Year(), t.Month(), t.Day(), trail.Name, event.EventId)
 }
 
-func cloudTrailEventMatches(ev CloudTrailEvent, attrs []struct {
-	AttributeKey   string
-	AttributeValue string
-}) bool {
+func cloudTrailEventMatches(ev CloudTrailEvent, attrs []cloudTrailLookupAttribute) bool {
 	for _, attr := range attrs {
 		switch attr.AttributeKey {
 		case "EventName":

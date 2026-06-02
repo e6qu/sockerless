@@ -63,21 +63,7 @@ func TestMain(m *testing.M) {
 	}
 
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
-	lambdaHandlerDockerfile := `FROM golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /lambda-runtime-handler .
-FROM alpine:latest
-COPY --from=build /lambda-runtime-handler /usr/local/bin/lambda-runtime-handler
-ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
-`
-	lambdaHandlerBuild := exec.Command("docker", "build",
-		"--platform", nativeDockerPlatform(),
-		"-t", "sockerless-lambda-runtime-handler:test", "-f", "-", lambdaHandlerDir)
-	lambdaHandlerBuild.Stdin = strings.NewReader(lambdaHandlerDockerfile)
-	if out, err := lambdaHandlerBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build lambda-runtime-handler Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage("sockerless-lambda-runtime-handler:test", lambdaHandlerDir, "lambda-runtime-handler", nativeDockerPlatform())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -184,6 +170,38 @@ func waitForHealth(url string) error {
 
 func nativeDockerPlatform() string {
 	return "linux/" + runtime.GOARCH
+}
+
+func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
+	buildDir, err := os.MkdirTemp("", "sockerless-aws-image-*")
+	if err != nil {
+		log.Fatalf("Failed to create image build dir: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	binaryPath := filepath.Join(buildDir, binaryName)
+	build := exec.Command("go", "build", "-o", binaryPath, ".")
+	build.Dir = sourceDir
+	build.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOOS=linux",
+		"GOARCH="+runtime.GOARCH,
+	)
+	if out, err := build.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s binary: %v\n%s", binaryName, err, out)
+	}
+
+	dockerfile := fmt.Sprintf(`FROM scratch
+COPY %s /usr/local/bin/%s
+ENTRYPOINT ["/usr/local/bin/%s"]
+`, binaryName, binaryName, binaryName)
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", platform,
+		"-t", imageName, "-f", "-", buildDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s Docker image: %v\n%s", binaryName, err, out)
+	}
 }
 
 func terraformCmd(args ...string) *exec.Cmd {
