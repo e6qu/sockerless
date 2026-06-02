@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -424,6 +426,29 @@ type ComputeBackendServiceBackend struct {
 	CapacityScaler float64 `json:"capacityScaler,omitempty"`
 }
 
+type ComputeInstanceGroup struct {
+	Kind              string                          `json:"kind,omitempty"`
+	Id                string                          `json:"id,omitempty"`
+	Name              string                          `json:"name"`
+	SelfLink          string                          `json:"selfLink,omitempty"`
+	CreationTimestamp string                          `json:"creationTimestamp,omitempty"`
+	Description       string                          `json:"description,omitempty"`
+	Zone              string                          `json:"zone,omitempty"`
+	Network           string                          `json:"network,omitempty"`
+	NamedPorts        []ComputeInstanceGroupNamedPort `json:"namedPorts,omitempty"`
+	Instances         []ComputeInstanceGroupInstance  `json:"instances,omitempty"`
+	Fingerprint       string                          `json:"fingerprint,omitempty"`
+}
+
+type ComputeInstanceGroupNamedPort struct {
+	Name string `json:"name,omitempty"`
+	Port int64  `json:"port,omitempty"`
+}
+
+type ComputeInstanceGroupInstance struct {
+	Instance string `json:"instance,omitempty"`
+}
+
 type ComputeURLMap struct {
 	Kind              string                     `json:"kind,omitempty"`
 	Id                string                     `json:"id,omitempty"`
@@ -479,8 +504,16 @@ type ComputeForwardingRule struct {
 }
 
 var (
-	gcpSubnetworks sim.Store[ComputeSubnetwork]
-	gcpAddresses   sim.Store[ComputeAddress]
+	gcpSubnetworks       sim.Store[ComputeSubnetwork]
+	gcpAddresses         sim.Store[ComputeAddress]
+	gcpFirewalls         sim.Store[ComputeFirewall]
+	gcpInstances         sim.Store[ComputeInstance]
+	gcpInstanceGroups    sim.Store[ComputeInstanceGroup]
+	gcpHealthChecks      sim.Store[ComputeHealthCheck]
+	gcpBackendServices   sim.Store[ComputeBackendService]
+	gcpURLMaps           sim.Store[ComputeURLMap]
+	gcpTargetHTTPProxies sim.Store[ComputeTargetHTTPProxy]
+	gcpForwardingRules   sim.Store[ComputeForwardingRule]
 )
 
 func registerCompute(srv *sim.Server) {
@@ -683,6 +716,7 @@ func registerCompute(srv *sim.Server) {
 	// terraform's `google_compute_firewall` and runner setup scripts
 	// hit a 404 against the sim.
 	firewalls := sim.MakeStore[ComputeFirewall](srv.DB(), "compute_firewalls")
+	gcpFirewalls = firewalls
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/global/firewalls", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
@@ -706,6 +740,10 @@ func registerCompute(srv *sim.Server) {
 			fw.Priority = 1000
 		}
 		firewalls.Put(fw.SelfLink, fw)
+		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
+			return
+		}
 		op := newComputeOp(project, "global", fw.SelfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
@@ -742,6 +780,10 @@ func registerCompute(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
 		firewalls.Delete(selfLink)
+		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
+			return
+		}
 		op := newComputeOp(project, "global", selfLink)
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
@@ -784,6 +826,10 @@ func registerCompute(srv *sim.Server) {
 		})
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "firewall %q not found", name)
+			return
+		}
+		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
 			return
 		}
 		op := newComputeOp(project, "global", selfLink)
@@ -1092,13 +1138,362 @@ func registerCompute(srv *sim.Server) {
 
 	registerComputeCatalog(srv)
 	registerComputeInstances(srv, networks, subnetworks)
+	registerComputeInstanceGroups(srv)
 	registerComputeDisks(srv)
 	registerComputeZones(srv)
 	registerComputeLoadBalancing(srv)
 }
 
+func gcpReapplyRealFirewalls(ctx context.Context) error {
+	if gcpInstances == nil {
+		return nil
+	}
+	for _, inst := range gcpInstances.List() {
+		for _, ni := range inst.NetworkInterfaces {
+			nicID := inst.SelfLink + "/" + ni.Name
+			gcpRealMu.Lock()
+			nic := gcpRealNICs[nicID]
+			gcpRealMu.Unlock()
+			if nic == nil {
+				continue
+			}
+			if err := nic.ConfigureIngressFilter(ctx, gcpIngressPacketRules(inst, ni)); err != nil {
+				return fmt.Errorf("configure firewall on %s: %w", nicID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func gcpIngressPacketRules(target ComputeInstance, targetNIC ComputeNetworkInterface) []realexec.PacketRule {
+	if gcpFirewalls == nil {
+		return nil
+	}
+	firewalls := gcpFirewalls.Filter(func(fw ComputeFirewall) bool {
+		if fw.Disabled || !strings.EqualFold(gcpDefaultString(fw.Direction, "INGRESS"), "INGRESS") {
+			return false
+		}
+		return gcpCanonicalComputeRef(fw.Network, gcpProjectFromSelfLink(fw.SelfLink), "global", "networks", "default") == targetNIC.Network
+	})
+	sort.SliceStable(firewalls, func(i, j int) bool {
+		if firewalls[i].Priority == firewalls[j].Priority {
+			return firewalls[i].Name < firewalls[j].Name
+		}
+		return firewalls[i].Priority < firewalls[j].Priority
+	})
+	var rules []realexec.PacketRule
+	for _, fw := range firewalls {
+		if !gcpFirewallTargetsInstance(fw, target) {
+			continue
+		}
+		sources := gcpFirewallSources(fw, targetNIC.Network)
+		for _, action := range fw.Denied {
+			rules = append(rules, gcpPacketRulesForAction(action, sources, "drop")...)
+		}
+		for _, action := range fw.Allowed {
+			rules = append(rules, gcpPacketRulesForAction(action, sources, "accept")...)
+		}
+	}
+	return rules
+}
+
+func gcpFirewallTargetsInstance(fw ComputeFirewall, inst ComputeInstance) bool {
+	if len(fw.TargetTags) == 0 {
+		return true
+	}
+	for _, want := range fw.TargetTags {
+		if gcpInstanceHasTag(inst, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func gcpFirewallSources(fw ComputeFirewall, network string) []string {
+	var out []string
+	out = append(out, fw.SourceRanges...)
+	if len(fw.SourceTags) > 0 && gcpInstances != nil {
+		for _, inst := range gcpInstances.List() {
+			if !gcpInstanceHasAnyTag(inst, fw.SourceTags) {
+				continue
+			}
+			for _, ni := range inst.NetworkInterfaces {
+				if ni.Network == network && ni.NetworkIP != "" {
+					out = append(out, ni.NetworkIP+"/32")
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return []string{"0.0.0.0/0"}
+	}
+	return out
+}
+
+func gcpPacketRulesForAction(action ComputeFirewallAction, sources []string, verdict string) []realexec.PacketRule {
+	ports := action.Ports
+	if len(ports) == 0 {
+		ports = []string{""}
+	}
+	var rules []realexec.PacketRule
+	for _, source := range sources {
+		for _, port := range ports {
+			from, to := parsePortRange(port)
+			rules = append(rules, realexec.PacketRule{
+				Protocol:   action.IPProtocol,
+				SourceCIDR: source,
+				FromPort:   from,
+				ToPort:     to,
+				Action:     verdict,
+			})
+		}
+	}
+	return rules
+}
+
+func gcpInstanceHasAnyTag(inst ComputeInstance, tags []string) bool {
+	for _, tag := range tags {
+		if gcpInstanceHasTag(inst, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func gcpInstanceHasTag(inst ComputeInstance, tag string) bool {
+	if inst.Tags == nil {
+		return false
+	}
+	for _, got := range inst.Tags.Items {
+		if got == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func gcpProjectFromSelfLink(selfLink string) string {
+	parts := strings.Split(strings.TrimPrefix(selfLink, "https://www.googleapis.com/compute/v1/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "projects" {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+func gcpCanonicalComputeRef(ref, project, scope, collection, fallbackName string) string {
+	ref = strings.TrimPrefix(ref, "https://www.googleapis.com/compute/v1/")
+	if ref == "" && fallbackName != "" {
+		ref = fallbackName
+	}
+	if strings.Contains(ref, "/") {
+		return ref
+	}
+	if project == "" {
+		return ref
+	}
+	return fmt.Sprintf("projects/%s/%s/%s/%s", project, scope, collection, ref)
+}
+
+func parsePortRange(port string) (int, int) {
+	if port == "" || port == "*" {
+		return 0, 0
+	}
+	if from, to, ok := strings.Cut(port, "-"); ok {
+		start, _ := strconv.Atoi(from)
+		end, _ := strconv.Atoi(to)
+		return start, end
+	}
+	value, _ := strconv.Atoi(port)
+	return value, value
+}
+
+func gcpDefaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func computeRegionalAddressLink(project, region, name string) string {
 	return fmt.Sprintf("projects/%s/regions/%s/addresses/%s", project, region, name)
+}
+
+func registerComputeInstanceGroups(srv *sim.Server) {
+	groups := sim.MakeStore[ComputeInstanceGroup](srv.DB(), "compute_instance_groups")
+	gcpInstanceGroups = groups
+
+	instanceGroupSelfLink := func(project, zone, name string) string {
+		return fmt.Sprintf("projects/%s/zones/%s/instanceGroups/%s", project, zone, name)
+	}
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instanceGroups", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		var group ComputeInstanceGroup
+		if err := sim.ReadJSON(r, &group); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if group.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		group.Kind = "compute#instanceGroup"
+		group.Id = computeNumericID()
+		group.SelfLink = instanceGroupSelfLink(project, zone, group.Name)
+		group.Zone = fmt.Sprintf("projects/%s/zones/%s", project, zone)
+		group.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		group.Fingerprint = computeFingerprint()
+		groups.Put(group.SelfLink, group)
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, group.SelfLink, "insert"))
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		group, ok := groups.Get(instanceGroupSelfLink(project, zone, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, group)
+	})
+
+	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/instanceGroups", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		prefix := fmt.Sprintf("projects/%s/zones/%s/instanceGroups/", project, zone)
+		items := groups.Filter(func(group ComputeInstanceGroup) bool { return strings.HasPrefix(group.SelfLink, prefix) })
+		if items == nil {
+			items = []ComputeInstanceGroup{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceGroupList", "items": items})
+	})
+
+	srv.HandleFunc("DELETE /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceGroupSelfLink(project, zone, name)
+		groups.Delete(selfLink)
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "delete"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}/addInstances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceGroupSelfLink(project, zone, name)
+		var req struct {
+			Instances []ComputeInstanceGroupInstance `json:"instances"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+			for _, inst := range req.Instances {
+				if !gcpInstanceGroupHasInstance(*group, inst.Instance) {
+					group.Instances = append(group.Instances, inst)
+				}
+			}
+			group.Fingerprint = computeFingerprint()
+		}) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "addInstances"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}/removeInstances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceGroupSelfLink(project, zone, name)
+		var req struct {
+			Instances []ComputeInstanceGroupInstance `json:"instances"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		remove := map[string]bool{}
+		for _, inst := range req.Instances {
+			remove[inst.Instance] = true
+		}
+		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+			filtered := group.Instances[:0]
+			for _, inst := range group.Instances {
+				if !remove[inst.Instance] {
+					filtered = append(filtered, inst)
+				}
+			}
+			group.Instances = filtered
+			group.Fingerprint = computeFingerprint()
+		}) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "removeInstances"))
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}/listInstances", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceGroupSelfLink(project, zone, name)
+		group, ok := groups.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		items := make([]map[string]any, 0, len(group.Instances))
+		for _, inst := range group.Instances {
+			items = append(items, map[string]any{
+				"instance": inst.Instance,
+				"status":   "RUNNING",
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":  "compute#instanceGroupsListInstances",
+			"id":    computeNumericID(),
+			"items": items,
+		})
+	})
+
+	srv.HandleFunc("POST /compute/v1/projects/{project}/zones/{zone}/instanceGroups/{name}/setNamedPorts", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		zone := sim.PathParam(r, "zone")
+		name := sim.PathParam(r, "name")
+		selfLink := instanceGroupSelfLink(project, zone, name)
+		var req struct {
+			NamedPorts []ComputeInstanceGroupNamedPort `json:"namedPorts"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+			group.NamedPorts = req.NamedPorts
+			group.Fingerprint = computeFingerprint()
+		}) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setNamedPorts"))
+	})
+}
+
+func gcpInstanceGroupHasInstance(group ComputeInstanceGroup, instance string) bool {
+	for _, got := range group.Instances {
+		if got.Instance == instance {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRouterNATAddresses(project, region string, nats []ComputeRouterNAT, addresses sim.Store[ComputeAddress]) error {
@@ -1364,6 +1759,7 @@ func computeZoneOp(project, zone, target, opType string) map[string]any {
 
 func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork], subnetworks sim.Store[ComputeSubnetwork]) {
 	instances := sim.MakeStore[ComputeInstance](srv.DB(), "compute_instances")
+	gcpInstances = instances
 
 	instanceSelfLink := func(project, zone, name string) string {
 		return fmt.Sprintf("projects/%s/zones/%s/instances/%s", project, zone, name)
@@ -1522,6 +1918,10 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			return
 		}
 		instances.Put(inst.SelfLink, inst)
+		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, inst.SelfLink, "insert"))
 	})
 
@@ -1653,6 +2053,10 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			inst.Tags.Fingerprint = generateUUID()[:8]
 		}); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
+			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setTags"))

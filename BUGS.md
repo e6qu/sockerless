@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1292 filed - 1292 fixed - 3 open - 2 false positives.**
+**1294 filed - 1294 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,11 +12,16 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332-#335 and #338 track the remaining real-execution program for Firecracker-backed VM execution, GCP/Azure firewall/NSG enforcement, and managed load balancers across AWS/GCP/Azure. Issue #336's VPC/network/subnet/route/NAT/IPAM fabric moved onto the substrate; AWS security-group ingress and ELBv2 host-dispatched health/proxy paths were the first #335/#334 migrations. |
+| 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332, #333, and #338 track the remaining real-execution program after #334/#335 were fixed: Firecracker-backed VM execution and umbrella follow-through across the real-execution substrate. |
 
 ## Recently Closed
 
-This phase closed BUG-1288 through BUG-1292:
+This phase closed BUG-1293 and BUG-1294:
+
+- BUG-1293 / issue #335: GCP firewall rules and Azure NSGs were still metadata-only on the real veth packet path. The shared realexec ingress filter now supports explicit accept/drop verdicts and clearing filters. GCP Compute firewall ingress rules compile by priority, target tags, source ranges, and source tags onto attached instance NICs with the implied deny-ingress rule enforced by nftables. Azure subnet/NIC NSGs compile inbound rules by priority, support scalar/list address and port fields plus core service tags, preserve default same-VNet inbound allowance, and remove nftables filters when no NSG is attached. Rule, tag, subnet association, NSG, and NIC mutations reapply filters to affected real NICs and fail loudly on substrate errors.
+- BUG-1294 / issue #334: GCP and Azure managed load balancers were metadata-only after the AWS ELBv2 migration. GCP now implements the unmanaged instance-group API slice needed by backend services, `backendServices.getHealth`, health probing through configured HTTP/TCP health checks, host-dispatched forwarding-rule data-plane routing by frontend IP, URL-map/backend-service resolution, and proxying to healthy instance-group members. Azure Load Balancer now persists NIC backend-pool membership, dispatches data-plane requests by frontend public IP, resolves load-balancing rules/backend pools/probes from ARM state, probes backend NICs or backend-pool addresses, and proxies to healthy backends. Regression coverage uses real local HTTP listeners and official GCP SDK compile coverage for the new instance-group surface.
+
+Previous phase closed BUG-1288 through BUG-1292:
 
 - BUG-1288: Cloud backends still had direct `BaseServer.ContainerInspect` / `BaseServer.ContainerList` delegates, and the shared list path ignored `CloudState.ListContainers` errors. Cloud backend inspect/list paths now resolve through cloud state explicitly, provider list errors fail loudly, and `scripts/check-cloud-backend-isolation.sh` fails future direct inspect/list delegates across all cloud backend Go files.
 - BUG-1289: CI logs still had warning/error-looking noise after PR #358 even when tests passed. The GCP host-dispatch allowlist test no longer emits a GitHub `##[error]` annotation for its intentional source reference, Vite package builds run under Bun's runtime instead of Node 26's deprecated `module.register()` path, `ui-core` emits declaration artifacts for Turbo output tracking, and UI router tests start from `/ui/` so they no longer print unmatched-route stderr.
@@ -27,7 +32,7 @@ This phase closed BUG-1288 through BUG-1292:
 Previous phase closed BUG-1285 through BUG-1287:
 
 - BUG-1285 / issue #336: VPC/network/subnet/NIC/public-IP/NAT routing paths were metadata-only. The shared realexec substrate now supports per-network Linux namespaces, multiple subnet bridges, veth NIC attachment with real IPAM and unique MACs, routed egress links, public IPv4 IPAM, and nftables SNAT. AWS EC2 VPC/subnet, `RunInstances`/Auto Scaling ENIs, Elastic IPs, NAT gateways, and NAT routes use the substrate. GCP Compute networks/subnetworks, instance NICs, regional addresses, and Cloud NAT use it. Azure virtual networks/subnets, NIC private IP/MAC allocation, public IPs, and NAT gateway subnet programming use it. These paths fail loudly when Linux namespace/bridge/veth/route/nftables capabilities are missing.
-- BUG-1286 / issues #334 and #335 partial: AWS ELBv2 and AWS security groups still had fabricated packet-path behavior. AWS ELBv2 target health now probes targets over real TCP/HTTP, ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without control-plane listener-port binding, and EC2 security-group ingress rules compile to nftables on attached real ENI veth peers. The remaining GCP/Azure security and cross-cloud load-balancer data-plane work stays under BUG-1267.
+- BUG-1286 / issues #334 and #335 partial: AWS ELBv2 and AWS security groups still had fabricated packet-path behavior. AWS ELBv2 target health now probes targets over real TCP/HTTP, ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without control-plane listener-port binding, and EC2 security-group ingress rules compile to nftables on attached real ENI veth peers. Later BUG-1293/BUG-1294 completed the GCP/Azure #334/#335 packet paths.
 - BUG-1287: Azure Event Grid topic ARM create/get/list leaked simulator-local data-plane plumbing by allocating per-topic `127.0.0.1:<random>` HTTP listeners when ARM was reached through localhost. Topics now always advertise the shared host-dispatched Event Grid data-plane endpoint, or the configured HTTPS gateway template, and publish requests route through the Azure simulator handler by Event Grid Host header. Regression tests verify create/get/list endpoint shape and publish fanout through the advertised host without per-topic local listener endpoints.
 
 Previous phase closed BUG-1284:

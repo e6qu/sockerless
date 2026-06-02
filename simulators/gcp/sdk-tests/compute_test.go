@@ -398,6 +398,57 @@ func TestCompute_GlobalHTTPLoadBalancerChain(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestCompute_InstanceGroups_Lifecycle(t *testing.T) {
+	svc := computeService(t)
+	const project = "test-project"
+	const zone = "us-central1-a"
+
+	group := &compute.InstanceGroup{
+		Name:    "sdk-ig",
+		Network: "projects/test-project/global/networks/default",
+	}
+	_, err := svc.InstanceGroups.Insert(project, zone, group).Context(ctx).Do()
+	require.NoError(t, err)
+	got, err := svc.InstanceGroups.Get(project, zone, group.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, group.Name, got.Name)
+
+	_, err = svc.InstanceGroups.SetNamedPorts(project, zone, group.Name, &compute.InstanceGroupsSetNamedPortsRequest{
+		NamedPorts: []*compute.NamedPort{{Name: "http", Port: 8080}},
+	}).Context(ctx).Do()
+	require.NoError(t, err)
+	got, err = svc.InstanceGroups.Get(project, zone, group.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, got.NamedPorts, 1)
+	assert.Equal(t, "http", got.NamedPorts[0].Name)
+	assert.EqualValues(t, 8080, got.NamedPorts[0].Port)
+
+	member := "projects/test-project/zones/us-central1-a/instances/sdk-member"
+	_, err = svc.InstanceGroups.AddInstances(project, zone, group.Name, &compute.InstanceGroupsAddInstancesRequest{
+		Instances: []*compute.InstanceReference{{Instance: member}},
+	}).Context(ctx).Do()
+	require.NoError(t, err)
+	members, err := svc.InstanceGroups.ListInstances(project, zone, group.Name, &compute.InstanceGroupsListInstancesRequest{}).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, members.Items, 1)
+	assert.Equal(t, member, members.Items[0].Instance)
+
+	list, err := svc.InstanceGroups.List(project, zone).Context(ctx).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, list.Items)
+
+	_, err = svc.InstanceGroups.RemoveInstances(project, zone, group.Name, &compute.InstanceGroupsRemoveInstancesRequest{
+		Instances: []*compute.InstanceReference{{Instance: member}},
+	}).Context(ctx).Do()
+	require.NoError(t, err)
+	members, err = svc.InstanceGroups.ListInstances(project, zone, group.Name, &compute.InstanceGroupsListInstancesRequest{}).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Empty(t, members.Items)
+
+	_, err = svc.InstanceGroups.Delete(project, zone, group.Name).Context(ctx).Do()
+	require.NoError(t, err)
+}
+
 func TestCompute_Instances_Lifecycle(t *testing.T) {
 	svc := computeService(t)
 	const project = "test-project"

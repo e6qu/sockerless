@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 	realexec "github.com/sockerless/simulator-realexec"
@@ -100,13 +106,14 @@ type NetworkInterfaceIPConfiguration struct {
 }
 
 type NetworkInterfaceIPConfigurationProperties struct {
-	Subnet                    *SubResource `json:"subnet,omitempty"`
-	PublicIPAddress           *SubResource `json:"publicIPAddress,omitempty"`
-	PrivateIPAddress          string       `json:"privateIPAddress,omitempty"`
-	PrivateIPAllocationMethod string       `json:"privateIPAllocationMethod,omitempty"`
-	PrivateIPAddressVersion   string       `json:"privateIPAddressVersion,omitempty"`
-	Primary                   bool         `json:"primary,omitempty"`
-	ProvisioningState         string       `json:"provisioningState,omitempty"`
+	Subnet                          *SubResource        `json:"subnet,omitempty"`
+	PublicIPAddress                 *SubResource        `json:"publicIPAddress,omitempty"`
+	LoadBalancerBackendAddressPools []LoadBalancerChild `json:"loadBalancerBackendAddressPools,omitempty"`
+	PrivateIPAddress                string              `json:"privateIPAddress,omitempty"`
+	PrivateIPAllocationMethod       string              `json:"privateIPAllocationMethod,omitempty"`
+	PrivateIPAddressVersion         string              `json:"privateIPAddressVersion,omitempty"`
+	Primary                         bool                `json:"primary,omitempty"`
+	ProvisioningState               string              `json:"provisioningState,omitempty"`
 }
 
 type VirtualMachine struct {
@@ -385,6 +392,7 @@ func azurePublicIPPrefixCIDR(prefixLength int32, index int) string {
 
 func registerLoadBalancers(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
+	registerAzureLoadBalancerDataPlane(srv)
 
 	srv.HandleFunc("PUT "+armBase+"/loadBalancers/{loadBalancerName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
@@ -547,6 +555,305 @@ func removeLoadBalancerChild(children *[]LoadBalancerChild, name string) {
 	*children = filtered
 }
 
+func registerAzureLoadBalancerDataPlane(srv *sim.Server) {
+	srv.WrapHandler(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			lb, frontend, ok := azureLoadBalancerFromDataPlaneHost(r.Host)
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			handleAzureLoadBalancerDataPlane(w, r, lb, frontend)
+		})
+	})
+}
+
+func azureLoadBalancerFromDataPlaneHost(host string) (LoadBalancer, LoadBalancerChild, bool) {
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	hostname = strings.TrimSuffix(strings.ToLower(hostname), ".")
+	for _, lb := range azureLBs.List() {
+		for _, frontend := range lb.Properties.FrontendIPConfigurations {
+			pipID := propertySubResourceID(frontend.Properties, "publicIPAddress")
+			if pipID == "" {
+				continue
+			}
+			pip, ok := azurePublicIPs.Get(pipID)
+			if ok && strings.EqualFold(pip.Properties.PublicIPAddress, hostname) {
+				return lb, frontend, true
+			}
+		}
+	}
+	return LoadBalancer{}, LoadBalancerChild{}, false
+}
+
+func handleAzureLoadBalancerDataPlane(w http.ResponseWriter, r *http.Request, lb LoadBalancer, frontend LoadBalancerChild) {
+	rule, ok := azureLoadBalancerRuleForRequest(r, lb, frontend)
+	if !ok {
+		http.Error(w, "no matching load-balancing rule", http.StatusNotFound)
+		return
+	}
+	target, ok := azureHealthyLoadBalancerTarget(r.Context(), lb, rule)
+	if !ok {
+		http.Error(w, "no healthy backends", http.StatusServiceUnavailable)
+		return
+	}
+	if err := azureProxyHTTPRequest(w, r, rule, target); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
+}
+
+func azureLoadBalancerRuleForRequest(r *http.Request, lb LoadBalancer, frontend LoadBalancerChild) (LoadBalancerChild, bool) {
+	port := 80
+	if _, p, err := net.SplitHostPort(r.Host); err == nil {
+		if parsed, perr := strconv.Atoi(p); perr == nil {
+			port = parsed
+		}
+	}
+	for _, rule := range lb.Properties.LoadBalancingRules {
+		if !strings.EqualFold(propertySubResourceID(rule.Properties, "frontendIPConfiguration"), frontend.ID) {
+			continue
+		}
+		if intProperty(rule.Properties, "frontendPort") == port {
+			return rule, true
+		}
+	}
+	return LoadBalancerChild{}, false
+}
+
+type azureLBTarget struct {
+	Address string
+	Port    int
+}
+
+func azureHealthyLoadBalancerTarget(ctx context.Context, lb LoadBalancer, rule LoadBalancerChild) (azureLBTarget, bool) {
+	for _, target := range azureLoadBalancerTargets(lb, rule) {
+		if azureProbeLoadBalancerTarget(ctx, lb, rule, target) {
+			return target, true
+		}
+	}
+	return azureLBTarget{}, false
+}
+
+func azureLoadBalancerTargets(lb LoadBalancer, rule LoadBalancerChild) []azureLBTarget {
+	backendPort := intProperty(rule.Properties, "backendPort")
+	if backendPort == 0 {
+		backendPort = intProperty(rule.Properties, "frontendPort")
+	}
+	poolIDs := propertySubResourceIDs(rule.Properties, "backendAddressPools")
+	if poolID := propertySubResourceID(rule.Properties, "backendAddressPool"); poolID != "" {
+		poolIDs = append(poolIDs, poolID)
+	}
+	var targets []azureLBTarget
+	for _, poolID := range poolIDs {
+		for _, nic := range azureNICs.List() {
+			for _, ipcfg := range nic.Properties.IPConfigurations {
+				if !azureIPConfigInBackendPool(ipcfg, poolID) || ipcfg.Properties.PrivateIPAddress == "" {
+					continue
+				}
+				targets = append(targets, azureLBTarget{
+					Address: net.JoinHostPort(ipcfg.Properties.PrivateIPAddress, strconv.Itoa(backendPort)),
+					Port:    backendPort,
+				})
+			}
+		}
+		for _, pool := range lb.Properties.BackendAddressPools {
+			if !strings.EqualFold(pool.ID, poolID) {
+				continue
+			}
+			for _, address := range propertyObjectSlice(pool.Properties, "loadBalancerBackendAddresses") {
+				ip := stringProperty(address, "ipAddress")
+				if ip == "" {
+					continue
+				}
+				targets = append(targets, azureLBTarget{
+					Address: net.JoinHostPort(ip, strconv.Itoa(backendPort)),
+					Port:    backendPort,
+				})
+			}
+		}
+	}
+	return targets
+}
+
+func azureIPConfigInBackendPool(ipcfg NetworkInterfaceIPConfiguration, poolID string) bool {
+	for _, pool := range ipcfg.Properties.LoadBalancerBackendAddressPools {
+		if strings.EqualFold(pool.ID, poolID) {
+			return true
+		}
+	}
+	return false
+}
+
+func azureProbeLoadBalancerTarget(ctx context.Context, lb LoadBalancer, rule LoadBalancerChild, target azureLBTarget) bool {
+	probeID := propertySubResourceID(rule.Properties, "probe")
+	if probeID == "" {
+		conn, err := net.DialTimeout("tcp", target.Address, 2*time.Second)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}
+	for _, probe := range lb.Properties.Probes {
+		if !strings.EqualFold(probe.ID, probeID) {
+			continue
+		}
+		port := intProperty(probe.Properties, "port")
+		if port == 0 {
+			port = target.Port
+		}
+		protocol := stringProperty(probe.Properties, "protocol")
+		path := stringProperty(probe.Properties, "requestPath")
+		if err := realexec.ProbeTarget(ctx, realexec.ProbeSpec{
+			Protocol: azureProbeProtocol(protocol),
+			Address:  replacePort(target.Address, port),
+			Path:     path,
+			Timeout:  2 * time.Second,
+		}); err != nil {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func azureProbeProtocol(protocol string) string {
+	switch strings.ToLower(protocol) {
+	case "http":
+		return "HTTP"
+	default:
+		return "TCP"
+	}
+}
+
+func azureProxyHTTPRequest(w http.ResponseWriter, r *http.Request, rule LoadBalancerChild, target azureLBTarget) error {
+	upstreamURL := url.URL{
+		Scheme:   "http",
+		Host:     target.Address,
+		Path:     r.URL.EscapedPath(),
+		RawQuery: r.URL.RawQuery,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
+	if err != nil {
+		return err
+	}
+	req.Header = r.Header.Clone()
+	client := http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("forward to backend %s: %w", target.Address, err)
+	}
+	defer resp.Body.Close()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+func propertySubResourceID(props map[string]any, key string) string {
+	value, ok := props[key]
+	if !ok {
+		return ""
+	}
+	if sub, ok := value.(SubResource); ok {
+		return sub.ID
+	}
+	if child, ok := value.(LoadBalancerChild); ok {
+		return child.ID
+	}
+	if raw, ok := value.(map[string]any); ok {
+		return stringProperty(raw, "id")
+	}
+	return ""
+}
+
+func propertySubResourceIDs(props map[string]any, key string) []string {
+	value, ok := props[key]
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, item := range anySlice(value) {
+		if raw, ok := item.(map[string]any); ok {
+			if id := stringProperty(raw, "id"); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+func propertyObjectSlice(props map[string]any, key string) []map[string]any {
+	var out []map[string]any
+	for _, item := range anySlice(props[key]) {
+		if raw, ok := item.(map[string]any); ok {
+			if nested, ok := raw["properties"].(map[string]any); ok {
+				out = append(out, nested)
+			} else {
+				out = append(out, raw)
+			}
+		}
+	}
+	return out
+}
+
+func anySlice(value any) []any {
+	switch v := value.(type) {
+	case []any:
+		return v
+	case []map[string]any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func intProperty(props map[string]any, key string) int {
+	switch v := props[key].(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		i, _ := strconv.Atoi(v.String())
+		return i
+	default:
+		return 0
+	}
+}
+
+func stringProperty(props map[string]any, key string) string {
+	if value, ok := props[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func replacePort(address string, port int) string {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return address
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 func registerNetworkInterfaces(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 
@@ -603,6 +910,10 @@ func registerNetworkInterfaces(srv *sim.Server) {
 			nic.Properties.MacAddress = mac
 		}
 		azureNICs.Put(id, nic)
+		if err := azureApplyRealNSGsToNIC(r.Context(), nic); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, nic)
 	})
 

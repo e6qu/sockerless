@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - GCP/Azure Security And Load-Balancer Packet Paths
+
+Issues #334 and #335 were fixed for GCP and Azure.
+
+The shared realexec ingress filter now supports ordered accept/drop verdicts and explicit filter clearing. GCP Compute firewall ingress rules compile by priority, target tags, source ranges, and source tags onto attached real instance NIC veth peers, with the implied deny-ingress rule enforced by nftables. Azure NSGs compile inbound subnet/NIC rules by priority onto real NIC veth peers, support scalar/list source and destination fields plus core service tags, preserve default same-VNet inbound allowance, and remove filters when no NSG is attached. Firewall, NSG, subnet association, NIC, and tag mutations reapply the relevant filters and fail loudly on substrate errors.
+
+GCP managed HTTP load balancing now implements the unmanaged instance-group API slice used by backend services, `backendServices.getHealth`, configured HTTP/TCP health probing, forwarding-rule frontend-IP dispatch, target HTTP proxy and URL map resolution, and proxying to healthy instance-group members. Azure Load Balancer now persists NIC backend-pool membership, dispatches by frontend public IP, resolves load-balancing rules/backend pools/probes from ARM state, actively probes backend NICs or backend-pool addresses, and proxies to healthy backends.
+
+Regression coverage includes real local HTTP listeners for the GCP and Azure data-plane proxy paths, compiler tests for GCP firewall and Azure NSG rule ordering, realexec filter coverage, the simulator endpoint coverage checker, and GCP SDK compile coverage for the new instance-group public surface.
+
 ## 2026-06-02 - CI Log and Cloud Backend Architecture Cleanup
 
 The cleanup after PR #358 fixed two classes of issues without skipping tests, suppressing warnings, adding fallbacks, or weakening HTTPS/gateway behavior.
@@ -30,7 +40,7 @@ Simulator Docker test targets expose the required real networking privileges to 
 
 The same PR fixed the GCP Terraform HTTPS CI failure without weakening tests. Provider public IPv4 leases now come from explicit AWS, GCP, and Azure public pools rather than a documentation block, and Terraform assertions verify the exact provider-shaped CIDRs. GCP load-balancer forwarding rules allocate and release real public IPv4 leases. GCP Linux namespace/bridge/veth names are hash-derived from the full cloud resource ID so different public resource names do not collide after Linux's 15-character truncation. GCP real network, subnet, and NIC creation is serialized with the in-memory fabric registry, so parallel Terraform operations cannot interleave duplicate substrate creation. The simulator Docker test targets preserve the real-network capabilities supplied by `--privileged`; they no longer drop to the host UID before running tests that require `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`. The Docker build context excludes local caches, Terraform state, generated simulator binaries, and local agent metadata.
 
-The same PR started the remaining BUG-1267 packet-path work without closing #333-#335. The shared substrate gained nftables ingress filtering on real NIC veth peers. AWS security-group ingress rules for EC2 ENIs now compile into that filter, and rule updates reprogram attached ENIs. AWS ELBv2 target health now performs real TCP/HTTP probes instead of returning hardcoded `healthy`, and AWS ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without the Query Protocol control plane binding listener ports. Azure Event Grid topic ARM create/get/list stopped allocating per-topic `127.0.0.1:<random>` publish listeners and now advertises the shared host-dispatched topic endpoint or the configured Caddy HTTPS gateway template. GCP/Azure security and load-balancer data-plane migrations remained for the next BUG-1267 phase, and #333 Firecracker-backed public VM lifecycle remained open.
+The same PR started the remaining BUG-1267 packet-path work without closing #333-#335. The shared substrate gained nftables ingress filtering on real NIC veth peers. AWS security-group ingress rules for EC2 ENIs now compile into that filter, and rule updates reprogram attached ENIs. AWS ELBv2 target health now performs real TCP/HTTP probes instead of returning hardcoded `healthy`, and AWS ELBv2 data-plane requests route by load-balancer DNS host to healthy targets without the Query Protocol control plane binding listener ports. Azure Event Grid topic ARM create/get/list stopped allocating per-topic `127.0.0.1:<random>` publish listeners and now advertises the shared host-dispatched topic endpoint or the configured Caddy HTTPS gateway template. GCP/Azure security and load-balancer data-plane migrations were completed in the later #334/#335 packet-path phase, while #333 Firecracker-backed public VM lifecycle remained open.
 
 ## 2026-06-01 - Azure Tables ARM Fidelity
 
@@ -247,7 +257,7 @@ Recent simulator parity work added or hardened foundational cloud slices across 
 - BUG-1104: audit cadence remains open. Every simulator phase should re-check SDK/CLI/Terraform surface claims and file concrete BUG entries before fixing; the GCP GCS CLI and VPC Access Terraform audits closed stale "not applicable" rows.
 - BUG-1254 / issue #304 and BUG-1263 / issues #309-#311 and #321-#325 were fixed in the GCP fidelity sweep.
 - BUG-1264 / issues #312, #315, and #326-#329 were fixed in the Azure API-shape and LRO sweep.
-- BUG-1267: issues #332-#335 and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM. Firecracker-backed public VM APIs, GCP/Azure security enforcement, and remaining load-balancer data-plane work remain.
+- BUG-1267: issues #332, #333, and #338 track the remaining cross-cloud compute/networking real-execution program. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, GCP/Azure #334/#335 packet paths were completed later, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM. Firecracker-backed public VM APIs remain.
 
 ## Continuity Rules
 
