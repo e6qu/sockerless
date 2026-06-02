@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1296 filed - 1295 fixed - 4 open - 2 false positives.**
+**1296 filed - 1296 fixed - 3 open - 2 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -13,11 +13,14 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1267 | P1 | cross-cloud simulator compute/networking | remaining real-execution data planes | Issues #332, #333, and #338 track the remaining real-execution program after #334/#335 were fixed: Firecracker-backed VM execution and umbrella follow-through across the real-execution substrate. |
-| 1296 | P1 | Azure simulator test harness | local portability | Issue #365: direct `make sdk-test` on macOS starts the Azure simulator on the host, so real-network SDK tests fail loudly without Linux netns/veth/nftables capabilities and Event Grid wildcard `*.eventgrid.localhost` data-plane hosts do not resolve. Fix by routing local validation through the real required substrate/DNS path, not by skipping tests or weakening fidelity. |
 
 ## Recently Closed
 
-This phase closed BUG-1295:
+This phase closed BUG-1296:
+
+- BUG-1296 / issue #365: Azure SDK local validation became portable on macOS without skipping tests or weakening the data plane. On Darwin, `make sdk-test` now delegates to the existing privileged Linux simulator test image and runs `make sdk-test-local` inside that container, so real-network SDK tests execute with Linux netns/veth/nftables capabilities instead of failing on macOS host limitations. Linux direct validation remains available through `make sdk-test-local`. The Azure SDK test harness also installs an explicit Event Grid data-plane resolver for the advertised `*.eventgrid.localhost:<simPort>` endpoint; it preserves the request URL and Host header for host-dispatched public data-plane routing while dialing loopback, and sets localhost wildcard names in `NO_PROXY` / `no_proxy`. Full macOS `make sdk-test` now passes through Docker.
+
+Previous phase closed BUG-1295:
 
 - BUG-1295 / issue #362: Azure Entra discovery advertised an `authorization_endpoint`, but the simulator did not serve `GET /{tenant}/oauth2/v2.0/authorize`, so public OIDC authorization-code clients dead-ended before login could complete. The Azure auth middleware now implements the authorization-code front half against the documented Microsoft Entra auth-code slice: absolute discovery endpoints for the served auth/token/JWKS routes, capability metadata for `code`, `query` / `fragment` / `form_post`, `authorization_code` / `client_credentials` / `refresh_token`, and `plain` / `S256`; required authorize parameters; short-lived authorization code issuance; state propagation; one-time code redemption at `/oauth2/v2.0/token`; PKCE validation; OAuth error bodies; unsupported grant rejection; access-token issuance; ID-token issuance when `openid` is in scope; and refresh-token issuance/redemption when `offline_access` is in scope. Regression coverage exercises the real simulator HTTP path through the Azure SDK test harness and verifies discovery, redirect, token exchange, ID-token claims, PKCE failure, single-use code behavior, refresh-token redemption, missing-scope rejection, hybrid-flow rejection, and unsupported-grant rejection.
 

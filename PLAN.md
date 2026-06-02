@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: Azure Entra OIDC authorization-code flow for issue #362. The simulator now serves the `authorization_endpoint` advertised by discovery, advertises simulator-local absolute auth/token/JWKS endpoints and supported auth-code capabilities, issues short-lived one-time authorization codes, redirects with code/state, redeems codes at the token endpoint with PKCE validation, rejects unsupported grants, returns signed access/ID tokens through the existing JWKS-backed signing path, and supports refresh tokens for `offline_access`.
+Last completed phase: Azure SDK local portability for issue #365. On Darwin, `make sdk-test` now uses the existing Docker real-network harness and runs `make sdk-test-local` inside the privileged Linux simulator test image, so network-heavy SDK tests execute on Linux capabilities instead of failing on the macOS host. The Event Grid SDK publish path preserves the advertised `*.eventgrid.localhost` URL and Host header while resolving those hosts explicitly to loopback for the simulator port.
 
 Next planned phase: continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for issues #332, #333, and #338, unless a higher-priority issue appears. Issue #363 release/image publishing is intentionally deferred while the project is early. Number #337 is a merged PR, not an open issue.
 
@@ -67,6 +67,7 @@ Implemented:
 - BUG-1293 / issue #335 fixed the remaining GCP/Azure security enforcement packet paths. GCP firewall ingress and Azure NSG inbound rules compile to nftables on real NIC veth peers, with rule/tag/subnet/NIC mutations reapplying filters and failing loudly on substrate errors.
 - BUG-1294 / issue #334 fixed the remaining GCP/Azure managed load-balancer packet paths. GCP backend services use unmanaged instance groups, `getHealth`, real probes, frontend-IP dispatch, URL-map resolution, and proxying to healthy members; Azure Load Balancer uses frontend public IP dispatch, ARM rule/backend/probe resolution, real probes, and proxying to healthy backend NICs or backend-pool addresses.
 - BUG-1295 / issue #362 fixed Azure Entra OIDC authorization-code flow. Discovery's advertised `authorization_endpoint` is now served with absolute simulator-local metadata for the implemented auth-code slice, authorization requests redirect with code/state, token redemption consumes codes exactly once, PKCE is validated, unsupported grants are rejected, OAuth errors use public error fields, `openid` scopes receive a signed ID token alongside the access token, and `offline_access` receives a redeemable refresh token.
+- BUG-1296 / issue #365 fixed Azure SDK local portability. Darwin `make sdk-test` uses the existing Docker real-network harness instead of the macOS host for Linux-only netns/veth/nftables tests, Linux direct runs remain available as `make sdk-test-local`, and Event Grid SDK publish tests resolve advertised `*.eventgrid.localhost` data-plane hosts explicitly while preserving Host-dispatched public routing.
 
 Remaining staged work:
 

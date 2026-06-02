@@ -22,12 +22,18 @@ include $(REPO_ROOT_REL)/make/go-app.mk
 # Each sub-tree (sdk-tests, cli-tests, terraform-tests, shared) is a
 # separate Go module; the CI calls these directly.
 
-.PHONY: shared-test sdk-test cli-test terraform-test
+.PHONY: shared-test sdk-test sdk-test-local docker-sdk-test cli-test terraform-test
 
 shared-test: ## go test the shared/ helper module
 	cd shared && $(GO_ENV) go test -v -count=1 ./...
 
-sdk-test: build ## go test the SDK-driven sim tests
+ifeq ($(shell uname -s),Darwin)
+sdk-test: docker-sdk-test ## go test the SDK-driven sim tests in the Linux real-network harness on macOS
+else
+sdk-test: sdk-test-local ## go test the SDK-driven sim tests
+endif
+
+sdk-test-local: build ## go test the SDK-driven sim tests on a Linux host with real-network capabilities
 	cd sdk-tests && $(GO_ENV) go test -v -count=1 ./...
 
 cli-test: build ## go test the CLI-driven sim tests
@@ -49,7 +55,7 @@ DOCKER_TEST_USER := $(shell id -u):$(shell id -g)
 DOCKER_SOCK_GID := $(shell stat -f '%g' /var/run/docker.sock 2>/dev/null || stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 0)
 DOCKER_TEST_GROUPS := $(DOCKER_SOCK_GID),0
 DOCKER_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e SOCKERLESS_DOCKER_TEST_UIDGID=$(DOCKER_TEST_USER) -e SOCKERLESS_DOCKER_TEST_GROUPS=$(DOCKER_TEST_GROUPS) -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
-DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER=
+DOCKER_REALNET_TEST_ENV := -e HOME=/tmp/sockerless-home -e USER=sockerless -e GOWORK=off -e CGO_ENABLED=0 -e TF_IN_AUTOMATION=1 -e CLOUDSDK_CORE_DISABLE_PROMPTS=1 -e AZURE_CORE_NO_COLOR=true -e AWS_PAGER= -e NO_PROXY=localhost,127.0.0.1,::1,.localhost,*.localhost -e no_proxy=localhost,127.0.0.1,::1,.localhost,*.localhost
 DOCKER_REALNET_FLAGS := --privileged
 
 docker-build: ## build the docker image
@@ -75,3 +81,15 @@ docker-test: docker-test-build ## run all tests inside docker
 		-w /src/simulators/azure \
 		$(DOCKER_REALNET_TEST_ENV) \
 		$(DOCKER_TEST_IMAGE) make test-all
+
+docker-sdk-test: docker-test-build ## run SDK tests inside the Linux real-network docker harness
+	docker run --rm --network host \
+		$(DOCKER_REALNET_FLAGS) \
+		--security-opt label=disable \
+		--group-add $(DOCKER_SOCK_GID) \
+		--group-add 0 \
+		-v $(REPO_ROOT):/src \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-w /src/simulators/azure \
+		$(DOCKER_REALNET_TEST_ENV) \
+		$(DOCKER_TEST_IMAGE) make sdk-test-local
