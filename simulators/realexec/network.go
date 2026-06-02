@@ -252,6 +252,7 @@ type PacketRule struct {
 	SourceCIDR string
 	FromPort   int
 	ToPort     int
+	Action     string
 }
 
 type SubnetSpec struct {
@@ -517,12 +518,30 @@ func (n *NamespaceNIC) ConfigureIngressFilter(ctx context.Context, rules []Packe
 		default:
 			return fmt.Errorf("unsupported packet filter protocol %q", rule.Protocol)
 		}
-		args = append(args, "accept")
+		action := strings.ToLower(rule.Action)
+		if action == "" {
+			action = "accept"
+		}
+		switch action {
+		case "accept", "drop":
+		default:
+			return fmt.Errorf("unsupported packet filter action %q", rule.Action)
+		}
+		args = append(args, action)
 		if err := n.network.runner.Run(ctx, args[0], args[1:]...); err != nil {
 			return err
 		}
 	}
 	return n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "add", "rule", "bridge", table, "forward", "oifname", n.HostVethName, "drop")
+}
+
+func (n *NamespaceNIC) ClearIngressFilter(ctx context.Context) error {
+	if n.network == nil {
+		return fmt.Errorf("NIC %s is not attached to a network", n.HostVethName)
+	}
+	table := deriveLinuxName("fw"+n.HostVethName, "fw")
+	_ = n.network.runner.Run(ctx, "ip", "netns", "exec", n.network.NamespaceName, "nft", "delete", "table", "bridge", table)
+	return nil
 }
 
 func validateLinuxName(label, name string) error {

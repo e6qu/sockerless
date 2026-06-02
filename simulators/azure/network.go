@@ -335,6 +335,10 @@ func registerNetwork(srv *sim.Server) {
 			return
 		}
 		subnets.Put(resourceID, sn)
+		if err := azureReapplyRealNSGs(r.Context()); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+			return
+		}
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, sn)
@@ -408,6 +412,10 @@ func registerNetwork(srv *sim.Server) {
 			},
 		}
 		nsgs.Put(resourceID, nsg)
+		if err := azureReapplyRealNSGs(r.Context()); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+			return
+		}
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, nsg)
@@ -437,6 +445,10 @@ func registerNetwork(srv *sim.Server) {
 			sub, rg, nsgName)
 
 		nsgs.Delete(resourceID)
+		if err := azureReapplyRealNSGs(r.Context()); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -516,6 +528,10 @@ func registerNetwork(srv *sim.Server) {
 				nsg.Properties.SecurityRules = append(nsg.Properties.SecurityRules, req)
 			}
 			nsgs.Put(nsgID, nsg)
+			if err := azureReapplyRealNSGs(r.Context()); err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+				return
+			}
 
 			sim.WriteJSON(w, http.StatusOK, req)
 		})
@@ -571,6 +587,10 @@ func registerNetwork(srv *sim.Server) {
 			}
 			nsg.Properties.SecurityRules = filtered
 			nsgs.Put(nsgID, nsg)
+			if err := azureReapplyRealNSGs(r.Context()); err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to apply real NSG filters: %v", err)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 		})
 

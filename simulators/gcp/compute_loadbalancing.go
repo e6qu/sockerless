@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +21,13 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 	urlMaps := sim.MakeStore[ComputeURLMap](srv.DB(), "compute_url_maps")
 	targetHTTPProxies := sim.MakeStore[ComputeTargetHTTPProxy](srv.DB(), "compute_target_http_proxies")
 	forwardingRules := sim.MakeStore[ComputeForwardingRule](srv.DB(), "compute_global_forwarding_rules")
+	gcpHealthChecks = healthChecks
+	gcpBackendServices = backendServices
+	gcpURLMaps = urlMaps
+	gcpTargetHTTPProxies = targetHTTPProxies
+	gcpForwardingRules = forwardingRules
+
+	registerGCPComputeLoadBalancerDataPlane(srv)
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/global/healthChecks", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
@@ -138,6 +149,27 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "patch"))
+	})
+	srv.HandleFunc("POST /compute/v1/projects/{project}/global/backendServices/{name}/getHealth", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "name")
+		selfLink := computeGlobalLink(project, "backendServices", name)
+		bs, ok := backendServices.Get(selfLink)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "backend service %q not found", name)
+			return
+		}
+		var req struct {
+			Group string `json:"group"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":         "compute#backendServiceGroupHealth",
+			"healthStatus": gcpBackendServiceHealth(r.Context(), bs, req.Group),
+		})
 	})
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/backendServices/{name}", func(w http.ResponseWriter, r *http.Request) {
 		computeDeleteGlobalResource(w, r, backendServices, "backendServices")
@@ -321,4 +353,311 @@ func computeDeleteGlobalResource[T computeNamedResource](w http.ResponseWriter, 
 
 func computeFingerprint() string {
 	return "c29ja2VybGVzcw=="
+}
+
+func registerGCPComputeLoadBalancerDataPlane(srv *sim.Server) {
+	srv.HandleFunc("/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		fr, ok := gcpForwardingRuleFromDataPlaneHost(r.Host)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		handleGCPComputeLoadBalancerDataPlane(w, r, fr)
+	})
+}
+
+func gcpForwardingRuleFromDataPlaneHost(host string) (ComputeForwardingRule, bool) {
+	if gcpForwardingRules == nil {
+		return ComputeForwardingRule{}, false
+	}
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	hostname = strings.TrimSuffix(strings.ToLower(hostname), ".")
+	for _, fr := range gcpForwardingRules.List() {
+		if strings.EqualFold(fr.IPAddress, hostname) {
+			return fr, true
+		}
+	}
+	return ComputeForwardingRule{}, false
+}
+
+func handleGCPComputeLoadBalancerDataPlane(w http.ResponseWriter, r *http.Request, fr ComputeForwardingRule) {
+	if !gcpForwardingRuleMatchesRequest(fr, r) {
+		http.Error(w, "no matching forwarding rule port", http.StatusNotFound)
+		return
+	}
+	bs, ok := gcpBackendServiceForForwardingRule(fr, r)
+	if !ok {
+		http.Error(w, "no backend service", http.StatusServiceUnavailable)
+		return
+	}
+	target, ok := gcpHealthyBackendTarget(r.Context(), bs)
+	if !ok {
+		http.Error(w, "no healthy backends", http.StatusServiceUnavailable)
+		return
+	}
+	if err := gcpProxyHTTPRequest(w, r, bs, target); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+	}
+}
+
+func gcpForwardingRuleMatchesRequest(fr ComputeForwardingRule, r *http.Request) bool {
+	port := 80
+	if _, p, err := net.SplitHostPort(r.Host); err == nil {
+		if parsed, perr := strconv.Atoi(p); perr == nil {
+			port = parsed
+		}
+	}
+	if fr.PortRange == "" {
+		return port == 80
+	}
+	from, to := parsePortRange(fr.PortRange)
+	if from == 0 && to == 0 {
+		return true
+	}
+	if to == 0 {
+		to = from
+	}
+	return port >= from && port <= to
+}
+
+func gcpBackendServiceForForwardingRule(fr ComputeForwardingRule, r *http.Request) (ComputeBackendService, bool) {
+	if gcpTargetHTTPProxies == nil || gcpURLMaps == nil || gcpBackendServices == nil {
+		return ComputeBackendService{}, false
+	}
+	proxy, ok := gcpTargetHTTPProxies.Get(strings.TrimPrefix(fr.Target, "https://www.googleapis.com/compute/v1/"))
+	if !ok {
+		return ComputeBackendService{}, false
+	}
+	urlMap, ok := gcpURLMaps.Get(strings.TrimPrefix(proxy.UrlMap, "https://www.googleapis.com/compute/v1/"))
+	if !ok {
+		return ComputeBackendService{}, false
+	}
+	service := gcpURLMapServiceForRequest(urlMap, r)
+	service = strings.TrimPrefix(service, "https://www.googleapis.com/compute/v1/")
+	return gcpBackendServices.Get(service)
+}
+
+func gcpURLMapServiceForRequest(urlMap ComputeURLMap, r *http.Request) string {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	for _, hostRule := range urlMap.HostRules {
+		if !gcpURLMapHostMatches(hostRule.Hosts, host) {
+			continue
+		}
+		for _, matcher := range urlMap.PathMatchers {
+			if matcher.Name != hostRule.PathMatcher {
+				continue
+			}
+			for _, pathRule := range matcher.PathRules {
+				if gcpURLMapPathMatches(pathRule.Paths, r.URL.Path) && pathRule.Service != "" {
+					return pathRule.Service
+				}
+			}
+			if matcher.DefaultService != "" {
+				return matcher.DefaultService
+			}
+		}
+	}
+	return urlMap.DefaultService
+}
+
+func gcpURLMapHostMatches(patterns []string, host string) bool {
+	for _, pattern := range patterns {
+		if pattern == "*" || strings.EqualFold(pattern, host) {
+			return true
+		}
+		if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(host, strings.TrimPrefix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+func gcpURLMapPathMatches(patterns []string, path string) bool {
+	for _, pattern := range patterns {
+		if pattern == path {
+			return true
+		}
+		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(path, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+type gcpLBTarget struct {
+	Instance ComputeInstance
+	Group    string
+	Address  string
+	Port     int64
+}
+
+func gcpHealthyBackendTarget(ctx context.Context, bs ComputeBackendService) (gcpLBTarget, bool) {
+	for _, target := range gcpBackendTargets(bs) {
+		if gcpProbeBackendTarget(ctx, bs, target) {
+			return target, true
+		}
+	}
+	return gcpLBTarget{}, false
+}
+
+func gcpBackendTargets(bs ComputeBackendService) []gcpLBTarget {
+	if gcpInstanceGroups == nil || gcpInstances == nil {
+		return nil
+	}
+	var targets []gcpLBTarget
+	for _, backend := range bs.Backends {
+		group, ok := gcpInstanceGroups.Get(strings.TrimPrefix(backend.Group, "https://www.googleapis.com/compute/v1/"))
+		if !ok {
+			continue
+		}
+		port := gcpInstanceGroupNamedPort(group, bs.PortName)
+		if port == 0 {
+			port = 80
+		}
+		for _, member := range group.Instances {
+			inst, ok := gcpInstances.Get(strings.TrimPrefix(member.Instance, "https://www.googleapis.com/compute/v1/"))
+			if !ok || len(inst.NetworkInterfaces) == 0 {
+				continue
+			}
+			ip := inst.NetworkInterfaces[0].NetworkIP
+			if ip == "" {
+				continue
+			}
+			targets = append(targets, gcpLBTarget{
+				Instance: inst,
+				Group:    group.SelfLink,
+				Address:  net.JoinHostPort(ip, strconv.FormatInt(port, 10)),
+				Port:     port,
+			})
+		}
+	}
+	return targets
+}
+
+func gcpInstanceGroupNamedPort(group ComputeInstanceGroup, name string) int64 {
+	for _, port := range group.NamedPorts {
+		if port.Name == name {
+			return port.Port
+		}
+	}
+	return 0
+}
+
+func gcpProbeBackendTarget(ctx context.Context, bs ComputeBackendService, target gcpLBTarget) bool {
+	if gcpHealthChecks == nil || len(bs.HealthChecks) == 0 {
+		conn, err := net.DialTimeout("tcp", target.Address, 2*time.Second)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}
+	for _, ref := range bs.HealthChecks {
+		hc, ok := gcpHealthChecks.Get(strings.TrimPrefix(ref, "https://www.googleapis.com/compute/v1/"))
+		if !ok {
+			return false
+		}
+		spec := gcpProbeSpec(hc, target)
+		if err := realexec.ProbeTarget(ctx, spec); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func gcpProbeSpec(hc ComputeHealthCheck, target gcpLBTarget) realexec.ProbeSpec {
+	timeout := time.Duration(hc.TimeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	switch strings.ToUpper(hc.Type) {
+	case "TCP":
+		port := target.Port
+		if hc.TcpHealthCheck != nil && hc.TcpHealthCheck.Port != 0 {
+			port = hc.TcpHealthCheck.Port
+		}
+		return realexec.ProbeSpec{Protocol: "TCP", Address: net.JoinHostPort(target.Instance.NetworkInterfaces[0].NetworkIP, strconv.FormatInt(port, 10)), Timeout: timeout}
+	default:
+		port := target.Port
+		path := "/"
+		if hc.HttpHealthCheck != nil {
+			if hc.HttpHealthCheck.Port != 0 {
+				port = hc.HttpHealthCheck.Port
+			}
+			if hc.HttpHealthCheck.RequestPath != "" {
+				path = hc.HttpHealthCheck.RequestPath
+			}
+		}
+		return realexec.ProbeSpec{Protocol: "HTTP", Address: net.JoinHostPort(target.Instance.NetworkInterfaces[0].NetworkIP, strconv.FormatInt(port, 10)), Path: path, Timeout: timeout}
+	}
+}
+
+func gcpBackendServiceHealth(ctx context.Context, bs ComputeBackendService, groupRef string) []map[string]any {
+	var out []map[string]any
+	for _, target := range gcpBackendTargets(bs) {
+		if groupRef != "" && strings.TrimPrefix(target.Group, "https://www.googleapis.com/compute/v1/") != strings.TrimPrefix(groupRef, "https://www.googleapis.com/compute/v1/") {
+			continue
+		}
+		state := "UNHEALTHY"
+		if gcpProbeBackendTarget(ctx, bs, target) {
+			state = "HEALTHY"
+		}
+		out = append(out, map[string]any{
+			"ipAddress":   target.Instance.NetworkInterfaces[0].NetworkIP,
+			"port":        target.Port,
+			"instance":    target.Instance.SelfLink,
+			"healthState": state,
+		})
+	}
+	if out == nil {
+		return []map[string]any{}
+	}
+	return out
+}
+
+func gcpProxyHTTPRequest(w http.ResponseWriter, r *http.Request, bs ComputeBackendService, target gcpLBTarget) error {
+	scheme := "http"
+	if strings.EqualFold(bs.Protocol, "HTTPS") {
+		scheme = "https"
+	}
+	upstreamURL := url.URL{
+		Scheme:   scheme,
+		Host:     target.Address,
+		Path:     r.URL.EscapedPath(),
+		RawQuery: r.URL.RawQuery,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec))*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL.String(), r.Body)
+	if err != nil {
+		return err
+	}
+	req.Header = r.Header.Clone()
+	client := http.Client{Timeout: time.Duration(gcpDefaultBackendTimeout(bs.TimeoutSec)) * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("forward to backend %s: %w", target.Address, err)
+	}
+	defer resp.Body.Close()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+func gcpDefaultBackendTimeout(timeout int64) int64 {
+	if timeout <= 0 {
+		return 30
+	}
+	return timeout
 }

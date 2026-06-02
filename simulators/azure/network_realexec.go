@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -177,6 +179,214 @@ func azureDeleteRealNIC(ctx context.Context, nicID string) error {
 		return nil
 	}
 	return nic.Close(ctx)
+}
+
+func azureReapplyRealNSGs(ctx context.Context) error {
+	if azureNICs == nil {
+		return nil
+	}
+	for _, nic := range azureNICs.List() {
+		if err := azureApplyRealNSGsToNIC(ctx, nic); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func azureApplyRealNSGsToNIC(ctx context.Context, armNIC NetworkInterface) error {
+	azureRealMu.Lock()
+	nic := azureRealNICs[armNIC.ID]
+	azureRealMu.Unlock()
+	if nic == nil {
+		return nil
+	}
+	rules, filtered := azureIngressPacketRules(armNIC)
+	if !filtered {
+		return nic.ClearIngressFilter(ctx)
+	}
+	if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
+		return fmt.Errorf("configure NSG on %s: %w", armNIC.ID, err)
+	}
+	return nil
+}
+
+func azureIngressPacketRules(nic NetworkInterface) ([]realexec.PacketRule, bool) {
+	nsgs := azureAttachedNSGs(nic)
+	if len(nsgs) == 0 {
+		return nil, false
+	}
+	var rules []realexec.PacketRule
+	for _, nsg := range nsgs {
+		securityRules := append([]SecurityRule(nil), nsg.Properties.SecurityRules...)
+		sort.SliceStable(securityRules, func(i, j int) bool {
+			if securityRules[i].Properties.Priority == securityRules[j].Properties.Priority {
+				return securityRules[i].Name < securityRules[j].Name
+			}
+			return securityRules[i].Properties.Priority < securityRules[j].Properties.Priority
+		})
+		for _, rule := range securityRules {
+			props := rule.Properties
+			if !strings.EqualFold(defaultString(props.Direction, "Inbound"), "Inbound") {
+				continue
+			}
+			verdict := "drop"
+			if strings.EqualFold(props.Access, "Allow") {
+				verdict = "accept"
+			}
+			rules = append(rules, azurePacketRulesForSecurityRule(props, verdict)...)
+		}
+		for _, cidr := range azureNICVNetCIDRs(nic) {
+			rules = append(rules, realexec.PacketRule{Protocol: "*", SourceCIDR: cidr, Action: "accept"})
+		}
+	}
+	return rules, true
+}
+
+func azureAttachedNSGs(nic NetworkInterface) []NetworkSecurityGroup {
+	seen := map[string]bool{}
+	var out []NetworkSecurityGroup
+	add := func(id string) {
+		if id == "" || seen[id] || azureNSGs == nil {
+			return
+		}
+		seen[id] = true
+		if nsg, ok := azureNSGs.Get(id); ok {
+			out = append(out, nsg)
+		}
+	}
+	if nic.Properties.NetworkSecurityGroup != nil {
+		add(nic.Properties.NetworkSecurityGroup.ID)
+	}
+	for _, ipcfg := range nic.Properties.IPConfigurations {
+		if ipcfg.Properties.Subnet == nil || azureSubnets == nil {
+			continue
+		}
+		if subnet, ok := azureSubnets.Get(ipcfg.Properties.Subnet.ID); ok && subnet.Properties.NetworkSecurityGroup != nil {
+			add(subnet.Properties.NetworkSecurityGroup.ID)
+		}
+	}
+	return out
+}
+
+func azurePacketRulesForSecurityRule(props SecurityRuleProperties, verdict string) []realexec.PacketRule {
+	sources := azureAddressPrefixes(props.SourceAddressPrefix, props.SourceAddressPrefixes)
+	ports := azurePortRanges(props.DestinationPortRange, props.DestinationPortRanges)
+	var rules []realexec.PacketRule
+	for _, source := range sources {
+		for _, port := range ports {
+			from, to := azureParsePortRange(port)
+			rules = append(rules, realexec.PacketRule{
+				Protocol:   azurePacketProtocol(props.Protocol),
+				SourceCIDR: source,
+				FromPort:   from,
+				ToPort:     to,
+				Action:     verdict,
+			})
+		}
+	}
+	return rules
+}
+
+func azureAddressPrefixes(single string, many []string) []string {
+	var values []string
+	if single != "" {
+		values = append(values, single)
+	}
+	values = append(values, many...)
+	if len(values) == 0 {
+		return []string{"0.0.0.0/0"}
+	}
+	var out []string
+	for _, value := range values {
+		switch {
+		case value == "" || value == "*" || strings.EqualFold(value, "Internet"):
+			out = append(out, "0.0.0.0/0")
+		case strings.EqualFold(value, "VirtualNetwork"):
+			out = append(out, azureAllVNetCIDRs()...)
+		case strings.EqualFold(value, "AzureLoadBalancer"):
+			out = append(out, "168.63.129.16/32")
+		default:
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func azurePortRanges(single string, many []string) []string {
+	var values []string
+	if single != "" {
+		values = append(values, single)
+	}
+	values = append(values, many...)
+	if len(values) == 0 {
+		return []string{""}
+	}
+	return values
+}
+
+func azureNICVNetCIDRs(nic NetworkInterface) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, ipcfg := range nic.Properties.IPConfigurations {
+		if ipcfg.Properties.Subnet == nil || azureSubnets == nil {
+			continue
+		}
+		subnet, ok := azureSubnets.Get(ipcfg.Properties.Subnet.ID)
+		if !ok {
+			continue
+		}
+		vnetID := strings.Split(subnet.ID, "/subnets/")[0]
+		if azureVnets == nil {
+			continue
+		}
+		vnet, ok := azureVnets.Get(vnetID)
+		if !ok {
+			continue
+		}
+		for _, cidr := range vnet.Properties.AddressSpace.AddressPrefixes {
+			if !seen[cidr] {
+				seen[cidr] = true
+				out = append(out, cidr)
+			}
+		}
+	}
+	return out
+}
+
+func azureAllVNetCIDRs() []string {
+	if azureVnets == nil {
+		return []string{"0.0.0.0/0"}
+	}
+	var out []string
+	for _, vnet := range azureVnets.List() {
+		out = append(out, vnet.Properties.AddressSpace.AddressPrefixes...)
+	}
+	if len(out) == 0 {
+		return []string{"0.0.0.0/0"}
+	}
+	return out
+}
+
+func azurePacketProtocol(protocol string) string {
+	switch strings.ToLower(protocol) {
+	case "", "*":
+		return "all"
+	default:
+		return strings.ToLower(protocol)
+	}
+}
+
+func azureParsePortRange(port string) (int, int) {
+	if port == "" || port == "*" {
+		return 0, 0
+	}
+	if from, to, ok := strings.Cut(port, "-"); ok {
+		start, _ := strconv.Atoi(from)
+		end, _ := strconv.Atoi(to)
+		return start, end
+	}
+	value, _ := strconv.Atoi(port)
+	return value, value
 }
 
 func azureConfigureRealNATGatewayForSubnet(ctx context.Context, subnet Subnet) error {
