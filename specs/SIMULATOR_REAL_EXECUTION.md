@@ -1,9 +1,9 @@
 # Simulator Real-Execution Substrate
 
-Issues #332-#336 track the move from metadata-only VM/network resources to real
-execution. Issue #338 is the comparison/meta issue that keeps the simulator
-scope aligned with real cloud behavior. This document is the implementation
-contract for that program.
+Issues #332-#338 tracked the move from metadata-only VM/network resources to
+real execution. Issue #338 is the comparison/meta issue that keeps the
+simulator scope aligned with real cloud behavior. This document is the
+implementation contract for that program.
 
 The first rule is unchanged: simulator public APIs must match the public cloud.
 The substrate is an implementation detail behind EC2, GCE, Azure VM, VPC,
@@ -205,10 +205,16 @@ same real-execution path as each public API is migrated.
    veth peers, target health uses real probes, and ELBv2 data-plane requests
    route by load-balancer DNS host to healthy targets without binding listener
    ports from the Query Protocol control plane.
-5. Attach one VM family to Firecracker using that network substrate.
-6. Add GCP/Azure security enforcement on that packet path.
-7. Add the remaining load-balancer proxying/health checks on that packet path.
-8. Repeat across AWS, GCP, and Azure, reusing the substrate rather than creating
-   separate product emulators.
+5. GCP/Azure security enforcement was migrated onto that packet path.
+6. The remaining GCP/Azure load-balancer proxying and health checks were
+   migrated onto that packet path.
+7. AWS EC2, GCP Compute Engine, and Azure VM lifecycle paths were attached to
+   Firecracker guests using TAP NICs on the real network substrate. Public
+   running state is gated on real guest packet reachability, and public
+   stop/start/restart/delete actions operate on the Firecracker process and TAP
+   lifecycle.
+8. Guest-visible provider metadata remains the next concrete gap. AWS EC2 IMDS,
+   GCP metadata server, and Azure IMDS must be reachable from inside the guest
+   through provider-shaped addresses/hostnames before the VM slice is complete.
 
 The open issues remain open until the corresponding real behavior exists.

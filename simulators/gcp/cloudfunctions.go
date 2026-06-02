@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	dockerimage "github.com/docker/docker/api/types/image"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -374,10 +375,6 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		simArch = fn.ServiceConfig.SimArchitecture
 		cmdEnv = fn.ServiceConfig.EnvironmentVariables
 	}
-	if simArch == "" {
-		// Sim policy: linux/arm64 capacity contract.
-		simArch = "linux/arm64"
-	}
 	if simImage == "" {
 		// No image to host the workload — the sim no longer os/exec's
 		// workload binaries on the host process. Tests must set
@@ -386,6 +383,16 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 		injectCloudFunctionLog(project, functionID,
 			"Function invocation error: serviceConfig.simImage required (set to a Docker image hosting the workload)")
 		return []byte(`{"error":"simImage required"}`), 1
+	}
+	localImage := sim.ResolveLocalImage(simImage)
+	if simArch == "" {
+		platform, err := localImagePlatform(context.Background(), localImage)
+		if err != nil {
+			injectCloudFunctionLog(project, functionID,
+				fmt.Sprintf("Function invocation error: resolve image platform: %v", err))
+			return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
+		}
+		simArch = platform
 	}
 
 	var stdout bytes.Buffer
@@ -398,7 +405,7 @@ func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byt
 	})
 
 	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        sim.ResolveLocalImage(simImage),
+		Image:        localImage,
 		Architecture: simArch,
 		Command:      entrypoint,
 		Args:         userCmd,
@@ -645,7 +652,21 @@ func localImagePlatform(ctx context.Context, image string) (string, error) {
 	}
 	inspect, _, err := cli.ImageInspectWithRaw(ctx, image)
 	if err != nil {
-		return "", fmt.Errorf("inspect image %q platform: %w", image, err)
+		rc, pullErr := cli.ImagePull(ctx, image, dockerimage.PullOptions{})
+		if pullErr != nil {
+			return "", fmt.Errorf("inspect image %q platform: %w; pull image: %w", image, err, pullErr)
+		}
+		if _, copyErr := io.Copy(io.Discard, rc); copyErr != nil {
+			_ = rc.Close()
+			return "", fmt.Errorf("pull image %q: %w", image, copyErr)
+		}
+		if closeErr := rc.Close(); closeErr != nil {
+			return "", fmt.Errorf("close image pull stream %q: %w", image, closeErr)
+		}
+		inspect, _, err = cli.ImageInspectWithRaw(ctx, image)
+		if err != nil {
+			return "", fmt.Errorf("inspect pulled image %q platform: %w", image, err)
+		}
 	}
 	if inspect.Os == "" || inspect.Architecture == "" {
 		return "", fmt.Errorf("inspect image %q platform: missing os/architecture", image)

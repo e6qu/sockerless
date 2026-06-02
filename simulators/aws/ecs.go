@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"net/http"
@@ -232,6 +233,17 @@ func stopECSTaskProcesses(p *ecsTaskProcesses) {
 	for _, h := range p.Handles {
 		if h != nil {
 			sim.StopContainer(h.ContainerID)
+		}
+	}
+}
+
+func requestStopECSTaskProcesses(p *ecsTaskProcesses) {
+	if p == nil {
+		return
+	}
+	for _, h := range p.Handles {
+		if h != nil {
+			go sim.StopContainer(h.ContainerID)
 		}
 	}
 }
@@ -1094,10 +1106,16 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		if i > 0 {
 			containerName = fmt.Sprintf("%s-%s", containerName, cd.Name)
 		}
+		localImage := sim.ResolveLocalImage(cd.Image)
+		platform, err := localImagePlatform(context.Background(), localImage)
+		if err != nil {
+			stopECSTaskProcesses(processes)
+			return nil, fmt.Errorf("resolve task container %q image platform: %w", cd.Name, err)
+		}
 
 		cfg := sim.ContainerConfig{
-			Image:        sim.ResolveLocalImage(cd.Image),
-			Architecture: "linux/arm64",
+			Image:        localImage,
+			Architecture: platform,
 			Command:      cd.EntryPoint,
 			Args:         cd.Command,
 			Env:          mergeEnv(cmdEnv, hostMetadataEnv(taskID)),
@@ -1199,7 +1217,7 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 
 	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
-		stopECSTaskProcesses(v.(*ecsTaskProcesses))
+		requestStopECSTaskProcesses(v.(*ecsTaskProcesses))
 	}
 
 	now := time.Now().Unix()

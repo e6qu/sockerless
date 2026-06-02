@@ -21,12 +21,22 @@ guest_mac="06:00:AC:10:00:02"
 api_socket="$workdir/firecracker.socket"
 fc_pid=""
 nat_iface=""
+metadata_port="18080"
+metadata_pid=""
+metadata_dnat_installed=0
 
 cleanup() {
   status=$?
   if [ -n "$fc_pid" ] && kill -0 "$fc_pid" >/dev/null 2>&1; then
     sudo kill "$fc_pid" >/dev/null 2>&1 || true
     wait "$fc_pid" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$metadata_pid" ] && kill -0 "$metadata_pid" >/dev/null 2>&1; then
+    kill "$metadata_pid" >/dev/null 2>&1 || true
+    wait "$metadata_pid" >/dev/null 2>&1 || true
+  fi
+  if [ "$metadata_dnat_installed" -eq 1 ]; then
+    sudo iptables -t nat -D PREROUTING -i "$tap_dev" -d 169.254.169.254 -p tcp --dport 80 -j DNAT --to-destination "$tap_ip:$metadata_port" >/dev/null 2>&1 || true
   fi
   if [ -n "$nat_iface" ]; then
     sudo iptables -t nat -D POSTROUTING -o "$nat_iface" -j MASQUERADE >/dev/null 2>&1 || true
@@ -40,6 +50,10 @@ cleanup() {
         sudo tail -200 "$log" >&2 || true
       fi
     done
+    if [ -s "$workdir/metadata-server.log" ]; then
+      echo "----- $workdir/metadata-server.log -----" >&2
+      tail -200 "$workdir/metadata-server.log" >&2 || true
+    fi
     echo "Firecracker workdir retained for inspection: $workdir" >&2
   elif [ -d "$workdir" ]; then
     sudo rm -rf "$workdir"
@@ -50,7 +64,8 @@ trap cleanup EXIT
 [ "$(uname -s)" = "Linux" ] || fail "Firecracker CI test requires Linux"
 [ -e /dev/kvm ] || fail "Firecracker CI test requires /dev/kvm"
 if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
-  sudo test -r /dev/kvm && sudo test -w /dev/kvm || fail "Firecracker CI test requires read/write access to /dev/kvm"
+  sudo test -r /dev/kvm || fail "Firecracker CI test requires read access to /dev/kvm"
+  sudo test -w /dev/kvm || fail "Firecracker CI test requires write access to /dev/kvm"
 fi
 
 need_cmd curl
@@ -132,9 +147,46 @@ check '(10 - 3) * 2' '14'
 check '100 / 5 + 1' '21'
 check '2 * (3 + 4) - 1' '13'
 check '1.5 + 2.5 * 2' '6.5'
+cat >/root/metadata-probe.go <<'EOF'
+package main
+
+import (
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+func main() {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://169.254.169.254/metadata-probe")
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	if resp.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "FIRECRACKER_METADATA_OK" {
+		os.Stderr.WriteString("unexpected metadata response: " + resp.Status + " " + string(body))
+		os.Exit(1)
+	}
+}
+EOF
+go run /root/metadata-probe.go
 echo FIRECRACKER_ARITHMETIC_OK
 GUESTSCRIPT
 chmod 755 "$rootfs_dir/root/run-firecracker-arithmetic.sh"
+
+cat > "$rootfs_dir/root/configure-firecracker-network.sh" <<GUESTNETWORK
+#!/bin/sh
+set -eu
+ip route replace default via "$tap_ip" dev eth0
+echo nameserver 1.1.1.1 >/etc/resolv.conf
+GUESTNETWORK
+chmod 755 "$rootfs_dir/root/configure-firecracker-network.sh"
 
 sudo chown -R root:root "$rootfs_dir"
 truncate -s 3G "$rootfs_ext4"
@@ -151,7 +203,41 @@ nat_iface="$(ip route show default | awk 'NR == 1 { for (i = 1; i <= NF; i++) if
 [ -n "$nat_iface" ] || fail "could not determine default network interface for guest NAT"
 sudo iptables -t nat -A POSTROUTING -o "$nat_iface" -j MASQUERADE
 
-sudo firecracker --api-sock "$api_socket" --enable-pci > "$workdir/firecracker-console.log" 2>&1 &
+cat > "$workdir/metadata-server.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+)
+
+func main() {
+	if len(os.Args) != 2 {
+		log.Fatal("usage: metadata-server <addr>")
+	}
+	http.HandleFunc("/metadata-probe", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "FIRECRACKER_METADATA_OK")
+	})
+	log.Fatal(http.ListenAndServe(os.Args[1], nil))
+}
+EOF
+go run "$workdir/metadata-server.go" "$tap_ip:$metadata_port" > "$workdir/metadata-server.log" 2>&1 &
+metadata_pid=$!
+deadline=$((SECONDS + 10))
+until curl -fsS "http://$tap_ip:$metadata_port/metadata-probe" >/dev/null 2>&1; do
+  kill -0 "$metadata_pid" >/dev/null 2>&1 || fail "metadata probe server exited before becoming reachable"
+  [ "$SECONDS" -lt "$deadline" ] || fail "timed out waiting for metadata probe server"
+  sleep 0.1
+done
+sudo iptables -t nat -A PREROUTING -i "$tap_dev" -d 169.254.169.254 -p tcp --dport 80 -j DNAT --to-destination "$tap_ip:$metadata_port"
+metadata_dnat_installed=1
+
+run_firecracker() {
+  sudo firecracker --api-sock "$api_socket" --enable-pci
+}
+run_firecracker > "$workdir/firecracker-console.log" 2>&1 &
 fc_pid=$!
 
 deadline=$((SECONDS + 10))
@@ -242,7 +328,7 @@ until ssh "${ssh_opts[@]}" "root@$guest_ip" true >/dev/null 2>&1; do
   sleep 1
 done
 
-ssh "${ssh_opts[@]}" "root@$guest_ip" "ip route replace default via $tap_ip dev eth0 && echo nameserver 1.1.1.1 >/etc/resolv.conf"
+ssh "${ssh_opts[@]}" "root@$guest_ip" /root/configure-firecracker-network.sh
 ssh "${ssh_opts[@]}" "root@$guest_ip" /root/run-firecracker-arithmetic.sh | tee "$workdir/guest-arithmetic.log"
 grep -q FIRECRACKER_ARITHMETIC_OK "$workdir/guest-arithmetic.log" || fail "guest arithmetic smoke did not print success marker"
 

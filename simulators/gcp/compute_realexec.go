@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"net"
@@ -20,6 +21,8 @@ var (
 	gcpRealSubnets        = map[string]*realexec.Subnet{}
 	gcpRealSubnetNetworks = map[string]string{}
 	gcpRealNICs           = map[string]*realexec.NamespaceNIC{}
+	gcpRealVMNICs         = map[string]*realexec.TapNIC{}
+	gcpRealVMs            = map[string]*realexec.FirecrackerVM{}
 )
 
 func gcpRequireNetworkHost(w http.ResponseWriter) bool {
@@ -66,6 +69,19 @@ func gcpDeleteRealNetwork(ctx context.Context, selfLink string) error {
 		if strings.Contains(nicID, selfLink) {
 			_ = nic.Close(ctx)
 			delete(gcpRealNICs, nicID)
+		}
+	}
+	for nicID, nic := range gcpRealVMNICs {
+		if strings.Contains(nicID, selfLink) {
+			gcpMetadataInstancesByIP.Delete(nic.PrivateIP.String())
+			_ = nic.Close(ctx)
+			delete(gcpRealVMNICs, nicID)
+		}
+	}
+	for instanceID, vm := range gcpRealVMs {
+		if strings.Contains(instanceID, selfLink) {
+			_ = vm.Stop(ctx)
+			delete(gcpRealVMs, instanceID)
 		}
 	}
 	for subnetLink, subnet := range gcpRealSubnets {
@@ -131,60 +147,128 @@ func gcpDeleteRealSubnetwork(ctx context.Context, selfLink string) error {
 	return subnet.Close(ctx)
 }
 
-func gcpCreateRealNIC(ctx context.Context, nicID, subnetLink, requestedIP string) (string, error) {
-	gcpRealMu.Lock()
-	if existing, ok := gcpRealNICs[nicID]; ok {
-		gcpRealMu.Unlock()
-		return existing.PrivateIP.String(), nil
-	}
-	subnet := gcpRealSubnets[subnetLink]
-	gcpRealMu.Unlock()
-	if subnet == nil {
-		sn, ok := gcpSubnetworks.Get(subnetLink)
-		if !ok {
-			return "", fmt.Errorf("subnetwork %s not found", subnetLink)
-		}
-		if err := gcpCreateRealSubnetwork(ctx, sn); err != nil {
-			return "", err
-		}
-		gcpRealMu.Lock()
-		if existing, ok := gcpRealNICs[nicID]; ok {
-			gcpRealMu.Unlock()
-			return existing.PrivateIP.String(), nil
-		}
-		subnet = gcpRealSubnets[subnetLink]
-	} else {
-		gcpRealMu.Lock()
-	}
-	privateIP := net.ParseIP(requestedIP)
-	if requestedIP == "" {
-		privateIP = nil
-	}
-	nic, err := subnet.AttachNamespaceNIC(ctx, realexec.NamespaceNICSpec{
-		NamespaceName: gcpRealName("gi", nicID),
-		HostVethName:  gcpRealName("gh", nicID),
-		GuestVethName: gcpRealName("gg", nicID),
-		PrivateIP:     privateIP,
-		MAC:           gcpNICMAC(nicID),
-	})
-	if err != nil {
-		gcpRealMu.Unlock()
-		return "", err
-	}
-	gcpRealNICs[nicID] = nic
-	gcpRealMu.Unlock()
-	return nic.PrivateIP.String(), nil
-}
-
 func gcpDeleteRealNIC(ctx context.Context, nicID string) error {
 	gcpRealMu.Lock()
 	nic := gcpRealNICs[nicID]
 	delete(gcpRealNICs, nicID)
+	tap := gcpRealVMNICs[nicID]
+	delete(gcpRealVMNICs, nicID)
 	gcpRealMu.Unlock()
-	if nic == nil {
+	var errs []error
+	if nic != nil {
+		errs = append(errs, nic.Close(ctx))
+	}
+	if tap != nil {
+		gcpMetadataInstancesByIP.Delete(tap.PrivateIP.String())
+		errs = append(errs, tap.Close(ctx))
+	}
+	return errors.Join(errs...)
+}
+
+func gcpStartRealVM(ctx context.Context, inst *ComputeInstance) error {
+	if inst == nil {
+		return fmt.Errorf("compute instance is required")
+	}
+	if len(inst.NetworkInterfaces) != 1 {
+		return fmt.Errorf("firecracker-backed Compute Engine slice requires exactly one network interface, got %d", len(inst.NetworkInterfaces))
+	}
+	ni := &inst.NetworkInterfaces[0]
+	nicID := inst.SelfLink + "/" + ni.Name
+	gcpRealMu.Lock()
+	if vm := gcpRealVMs[inst.SelfLink]; vm != nil && vm.Alive() {
+		if tap := gcpRealVMNICs[nicID]; tap != nil {
+			ni.NetworkIP = tap.PrivateIP.String()
+		}
+		gcpRealMu.Unlock()
 		return nil
 	}
-	return nic.Close(ctx)
+	tap := gcpRealVMNICs[nicID]
+	subnet := gcpRealSubnets[ni.Subnetwork]
+	gcpRealMu.Unlock()
+	if subnet == nil {
+		sn, ok := gcpSubnetworks.Get(ni.Subnetwork)
+		if !ok {
+			return fmt.Errorf("subnetwork %s not found", ni.Subnetwork)
+		}
+		if err := gcpCreateRealSubnetwork(ctx, sn); err != nil {
+			return err
+		}
+		gcpRealMu.Lock()
+		subnet = gcpRealSubnets[ni.Subnetwork]
+		gcpRealMu.Unlock()
+	}
+	if tap == nil {
+		privateIP := net.ParseIP(ni.NetworkIP)
+		if ni.NetworkIP == "" {
+			privateIP = nil
+		}
+		created, err := subnet.AttachTapNIC(ctx, realexec.TapNICSpec{
+			TapName:   gcpRealName("gt", nicID),
+			PrivateIP: privateIP,
+			MAC:       gcpNICMAC(nicID),
+		})
+		if err != nil {
+			return err
+		}
+		tap = created
+		gcpRealMu.Lock()
+		gcpRealVMNICs[nicID] = tap
+		gcpRealMu.Unlock()
+	}
+	ni.NetworkIP = tap.PrivateIP.String()
+	gcpMetadataInstancesByIP.Store(tap.PrivateIP.String(), *inst)
+	metadataPort, err := hostMetadataPort()
+	if err != nil {
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, gcpRealName("gmd", ni.Network)); err != nil {
+		return fmt.Errorf("configure Compute Engine metadata routing for %s: %w", inst.SelfLink, err)
+	}
+	vm, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
+		ID:            "gcp-" + inst.SelfLink,
+		Tap:           tap,
+		MAC:           gcpNICMAC(nicID),
+		VCPUCount:     1,
+		MemoryMiB:     512,
+		MetadataHosts: []string{"metadata.google.internal", "metadata"},
+	})
+	if err != nil {
+		return err
+	}
+	gcpRealMu.Lock()
+	if old := gcpRealVMs[inst.SelfLink]; old != nil {
+		_ = old.Stop(context.Background())
+	}
+	gcpRealVMs[inst.SelfLink] = vm
+	gcpRealMu.Unlock()
+	return nil
+}
+
+func gcpStopRealVM(ctx context.Context, selfLink string) error {
+	gcpRealMu.Lock()
+	vm := gcpRealVMs[selfLink]
+	delete(gcpRealVMs, selfLink)
+	gcpRealMu.Unlock()
+	if vm == nil {
+		return nil
+	}
+	return vm.Stop(ctx)
+}
+
+func gcpDeleteRealVM(ctx context.Context, inst ComputeInstance) error {
+	var errs []error
+	errs = append(errs, gcpStopRealVM(ctx, inst.SelfLink))
+	for _, ni := range inst.NetworkInterfaces {
+		errs = append(errs, gcpDeleteRealNIC(ctx, inst.SelfLink+"/"+ni.Name))
+	}
+	return errors.Join(errs...)
+}
+
+func gcpRealVMAlive(selfLink string) bool {
+	gcpRealMu.Lock()
+	vm := gcpRealVMs[selfLink]
+	gcpRealMu.Unlock()
+	return vm != nil && vm.Alive()
 }
 
 func gcpConfigureRealRouterNAT(ctx context.Context, router ComputeRouter) error {

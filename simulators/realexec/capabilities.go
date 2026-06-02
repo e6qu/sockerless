@@ -50,13 +50,7 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 	if len(requiredCommands) == 0 {
 		requiredCommands = []string{"firecracker", "jailer", "ip", "nft"}
 	}
-	requiresKVM := false
-	for _, name := range requiredCommands {
-		if name == "firecracker" || name == "jailer" {
-			requiresKVM = true
-			break
-		}
-	}
+	requiresKVM := commandsRequireKVM(requiredCommands)
 
 	report := CapabilityReport{
 		GOOS:     runtime.GOOS,
@@ -108,6 +102,15 @@ func DetectCapabilities(requiredCommands ...string) CapabilityReport {
 
 func DetectNetworkCapabilities() CapabilityReport {
 	return DetectCapabilities("ip", "nft", "sysctl")
+}
+
+func commandsRequireKVM(requiredCommands []string) bool {
+	for _, name := range requiredCommands {
+		if name == "firecracker" || name == "jailer" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r CapabilityReport) Require() error {

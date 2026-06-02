@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,6 +21,8 @@ var (
 	azureRealVnets   = map[string]*realexec.Network{}
 	azureRealSubnets = map[string]*realexec.Subnet{}
 	azureRealNICs    = map[string]*realexec.NamespaceNIC{}
+	azureRealVMNICs  = map[string]*realexec.TapNIC{}
+	azureRealVMs     = map[string]*realexec.FirecrackerVM{}
 	azureRealNatIPs  = map[string]net.IP{}
 )
 
@@ -69,6 +72,33 @@ func azureDeleteRealVnet(ctx context.Context, vnetID string) error {
 		if strings.HasPrefix(subnetID, vnetID+"/subnets/") {
 			_ = subnet.Close(ctx)
 			delete(azureRealSubnets, subnetID)
+		}
+	}
+	for nicID, nic := range azureRealVMNICs {
+		if armNIC, ok := azureNICs.Get(nicID); ok {
+			for _, ipconf := range armNIC.Properties.IPConfigurations {
+				if ipconf.Properties.Subnet != nil && strings.HasPrefix(ipconf.Properties.Subnet.ID, vnetID+"/subnets/") {
+					azureMetadataVMsByIP.Delete(nic.PrivateIP.String())
+					_ = nic.Close(ctx)
+					delete(azureRealVMNICs, nicID)
+					break
+				}
+			}
+		}
+	}
+	for vmID, vm := range azureRealVMs {
+		if armVM, ok := azureVMs.Get(vmID); ok {
+			for _, ref := range armVM.Properties.NetworkProfile.NetworkInterfaces {
+				if armNIC, ok := azureNICs.Get(ref.ID); ok {
+					for _, ipconf := range armNIC.Properties.IPConfigurations {
+						if ipconf.Properties.Subnet != nil && strings.HasPrefix(ipconf.Properties.Subnet.ID, vnetID+"/subnets/") {
+							_ = vm.Stop(ctx)
+							delete(azureRealVMs, vmID)
+							break
+						}
+					}
+				}
+			}
 		}
 	}
 	azureRealMu.Unlock()
@@ -171,14 +201,38 @@ func azureCreateRealNIC(ctx context.Context, nicID, subnetID, requestedIP, mac s
 }
 
 func azureDeleteRealNIC(ctx context.Context, nicID string) error {
+	vmIDForNIC := ""
+	for _, vm := range azureVMs.List() {
+		for _, ref := range vm.Properties.NetworkProfile.NetworkInterfaces {
+			if strings.EqualFold(ref.ID, nicID) {
+				vmIDForNIC = vm.ID
+				break
+			}
+		}
+	}
 	azureRealMu.Lock()
 	nic := azureRealNICs[nicID]
 	delete(azureRealNICs, nicID)
-	azureRealMu.Unlock()
-	if nic == nil {
-		return nil
+	tap := azureRealVMNICs[nicID]
+	delete(azureRealVMNICs, nicID)
+	var vm *realexec.FirecrackerVM
+	if vmIDForNIC != "" {
+		vm = azureRealVMs[vmIDForNIC]
+		delete(azureRealVMs, vmIDForNIC)
 	}
-	return nic.Close(ctx)
+	azureRealMu.Unlock()
+	var errs []error
+	if vm != nil {
+		errs = append(errs, vm.Stop(ctx))
+	}
+	if nic != nil {
+		errs = append(errs, nic.Close(ctx))
+	}
+	if tap != nil {
+		azureMetadataVMsByIP.Delete(tap.PrivateIP.String())
+		errs = append(errs, tap.Close(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 func azureReapplyRealNSGs(ctx context.Context) error {
@@ -196,18 +250,160 @@ func azureReapplyRealNSGs(ctx context.Context) error {
 func azureApplyRealNSGsToNIC(ctx context.Context, armNIC NetworkInterface) error {
 	azureRealMu.Lock()
 	nic := azureRealNICs[armNIC.ID]
+	tap := azureRealVMNICs[armNIC.ID]
 	azureRealMu.Unlock()
-	if nic == nil {
+	if nic == nil && tap == nil {
 		return nil
 	}
 	rules, filtered := azureIngressPacketRules(armNIC)
 	if !filtered {
-		return nic.ClearIngressFilter(ctx)
+		var errs []error
+		if nic != nil {
+			errs = append(errs, nic.ClearIngressFilter(ctx))
+		}
+		if tap != nil {
+			errs = append(errs, tap.ClearIngressFilter(ctx))
+		}
+		return errors.Join(errs...)
 	}
-	if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
-		return fmt.Errorf("configure NSG on %s: %w", armNIC.ID, err)
+	if nic != nil {
+		if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
+			return fmt.Errorf("configure NSG on %s: %w", armNIC.ID, err)
+		}
+	}
+	if tap != nil {
+		if err := tap.ConfigureIngressFilter(ctx, rules); err != nil {
+			return fmt.Errorf("configure NSG on %s: %w", armNIC.ID, err)
+		}
 	}
 	return nil
+}
+
+func azureStartRealVM(ctx context.Context, vm VirtualMachine) error {
+	if len(vm.Properties.NetworkProfile.NetworkInterfaces) != 1 {
+		return fmt.Errorf("firecracker-backed Azure VM slice requires exactly one network interface, got %d", len(vm.Properties.NetworkProfile.NetworkInterfaces))
+	}
+	nicID := vm.Properties.NetworkProfile.NetworkInterfaces[0].ID
+	armNIC, ok := azureNICs.Get(nicID)
+	if !ok {
+		return fmt.Errorf("network interface %s not found", nicID)
+	}
+	if len(armNIC.Properties.IPConfigurations) == 0 || armNIC.Properties.IPConfigurations[0].Properties.Subnet == nil {
+		return fmt.Errorf("network interface %s requires a primary IP configuration with a subnet", nicID)
+	}
+	ipconf := armNIC.Properties.IPConfigurations[0]
+	subnetID := ipconf.Properties.Subnet.ID
+	requestedIP := ipconf.Properties.PrivateIPAddress
+
+	azureRealMu.Lock()
+	if existing := azureRealVMs[vm.ID]; existing != nil && existing.Alive() {
+		azureRealMu.Unlock()
+		return nil
+	}
+	legacyNIC := azureRealNICs[nicID]
+	delete(azureRealNICs, nicID)
+	tap := azureRealVMNICs[nicID]
+	subnet := azureRealSubnets[subnetID]
+	azureRealMu.Unlock()
+	if legacyNIC != nil {
+		_ = legacyNIC.Close(ctx)
+	}
+	if subnet == nil {
+		sn, ok := azureSubnets.Get(subnetID)
+		if !ok {
+			return fmt.Errorf("subnet %s not found", subnetID)
+		}
+		if err := azureCreateRealSubnet(ctx, sn); err != nil {
+			return err
+		}
+		azureRealMu.Lock()
+		subnet = azureRealSubnets[subnetID]
+		azureRealMu.Unlock()
+	}
+	if tap == nil {
+		privateIP := net.ParseIP(requestedIP)
+		if requestedIP == "" {
+			privateIP = nil
+		}
+		created, err := subnet.AttachTapNIC(ctx, realexec.TapNICSpec{
+			TapName:   azureRealName("zt", nicID),
+			PrivateIP: privateIP,
+			MAC:       azureNICMAC(nicID),
+		})
+		if err != nil {
+			return err
+		}
+		tap = created
+		azureRealMu.Lock()
+		azureRealVMNICs[nicID] = tap
+		azureRealMu.Unlock()
+		armNIC.Properties.IPConfigurations[0].Properties.PrivateIPAddress = tap.PrivateIP.String()
+		armNIC.Properties.MacAddress = formatAzureMAC(azureNICMAC(nicID))
+		azureNICs.Put(nicID, armNIC)
+	}
+	azureMetadataVMsByIP.Store(tap.PrivateIP.String(), azureMetadataVM{
+		VM:       vm,
+		NIC:      armNIC,
+		SubnetID: subnetID,
+	})
+	metadataPort, err := simHostMetadataPort()
+	if err != nil {
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, azureRealName("zmd", subnetID)); err != nil {
+		return fmt.Errorf("configure Azure IMDS routing for %s: %w", vm.ID, err)
+	}
+	vmProc, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
+		ID:        "azure-" + vm.ID,
+		Tap:       tap,
+		MAC:       azureNICMAC(nicID),
+		VCPUCount: 1,
+		MemoryMiB: 512,
+	})
+	if err != nil {
+		return err
+	}
+	azureRealMu.Lock()
+	if old := azureRealVMs[vm.ID]; old != nil {
+		_ = old.Stop(context.Background())
+	}
+	azureRealVMs[vm.ID] = vmProc
+	azureRealMu.Unlock()
+	return azureApplyRealNSGsToNIC(ctx, armNIC)
+}
+
+func azureStopRealVM(ctx context.Context, vmID string) error {
+	azureRealMu.Lock()
+	vm := azureRealVMs[vmID]
+	delete(azureRealVMs, vmID)
+	azureRealMu.Unlock()
+	if vm == nil {
+		return nil
+	}
+	return vm.Stop(ctx)
+}
+
+func azureDeleteRealVM(ctx context.Context, vm VirtualMachine) error {
+	var errs []error
+	errs = append(errs, azureStopRealVM(ctx, vm.ID))
+	for _, ref := range vm.Properties.NetworkProfile.NetworkInterfaces {
+		azureRealMu.Lock()
+		tap := azureRealVMNICs[ref.ID]
+		delete(azureRealVMNICs, ref.ID)
+		azureRealMu.Unlock()
+		if tap != nil {
+			azureMetadataVMsByIP.Delete(tap.PrivateIP.String())
+			errs = append(errs, tap.Close(ctx))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func azureRealVMAlive(vmID string) bool {
+	azureRealMu.Lock()
+	vm := azureRealVMs[vmID]
+	azureRealMu.Unlock()
+	return vm != nil && vm.Alive()
 }
 
 func azureIngressPacketRules(nic NetworkInterface) ([]realexec.PacketRule, bool) {

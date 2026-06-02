@@ -36,7 +36,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.8
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.3
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.72.0
-	github.com/aws/smithy-go v1.26.0
+	github.com/aws/smithy-go v1.27.0
 	github.com/stretchr/testify v1.11.1
 )
 

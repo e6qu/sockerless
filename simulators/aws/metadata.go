@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +37,10 @@ import (
 // per-instance + per-TTL; the sim accepts any presented token that was
 // previously issued, mirroring the API contract without enforcing the
 // per-instance binding.
-var imdsTokens sync.Map // map[string]time.Time (issued-at)
+var (
+	imdsTokens        sync.Map // map[string]time.Time (issued-at)
+	imdsInstancesByIP sync.Map // map[string]EC2Instance
+)
 
 func registerHostMetadata(srv *sim.Server) {
 	// PUT /latest/api/token — IMDSv2 token request.
@@ -83,16 +88,28 @@ func registerHostMetadata(srv *sim.Server) {
 		if !mustToken(w, r) {
 			return
 		}
+		if inst, ok := imdsInstanceForRequest(r); ok {
+			writeText(w, inst.InstanceId)
+			return
+		}
 		writeText(w, "i-0abcdef1234567890")
 	})
 	srv.HandleFunc("GET /latest/meta-data/instance-type", func(w http.ResponseWriter, r *http.Request) {
 		if !mustToken(w, r) {
 			return
 		}
+		if inst, ok := imdsInstanceForRequest(r); ok && inst.InstanceType != "" {
+			writeText(w, inst.InstanceType)
+			return
+		}
 		writeText(w, "t3.micro")
 	})
 	srv.HandleFunc("GET /latest/meta-data/ami-id", func(w http.ResponseWriter, r *http.Request) {
 		if !mustToken(w, r) {
+			return
+		}
+		if inst, ok := imdsInstanceForRequest(r); ok && inst.ImageId != "" {
+			writeText(w, inst.ImageId)
 			return
 		}
 		writeText(w, "ami-0123456789abcdef0")
@@ -140,16 +157,28 @@ func registerHostMetadata(srv *sim.Server) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		region := defaultIMDSRegion(r)
+		instanceID := "i-0abcdef1234567890"
+		instanceType := "t3.micro"
+		imageID := "ami-0123456789abcdef0"
+		arch := "x86_64"
+		if inst, ok := imdsInstanceForRequest(r); ok {
+			instanceID = inst.InstanceId
+			instanceType = inst.InstanceType
+			imageID = inst.ImageId
+			if inst.Architecture != "" {
+				arch = inst.Architecture
+			}
+		}
 		_, _ = fmt.Fprintf(w, `{
 			"accountId": "000000000000",
-			"architecture": "arm64",
+			"architecture": %q,
 			"availabilityZone": %q,
-			"imageId": "ami-0123456789abcdef0",
-			"instanceId": "i-0abcdef1234567890",
-			"instanceType": "t3.micro",
+			"imageId": %q,
+			"instanceId": %q,
+			"instanceType": %q,
 			"region": %q,
 			"version": "2017-09-30"
-		}`, region+"a", region)
+		}`, arch, region+"a", imageID, instanceID, instanceType, region)
 	})
 
 	// ECS task metadata v4. Real ECS sets ECS_CONTAINER_METADATA_URI_V4
@@ -177,6 +206,19 @@ func registerHostMetadata(srv *sim.Server) {
 	})
 }
 
+func imdsInstanceForRequest(r *http.Request) (EC2Instance, bool) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	v, ok := imdsInstancesByIP.Load(host)
+	if !ok {
+		return EC2Instance{}, false
+	}
+	inst, ok := v.(EC2Instance)
+	return inst, ok
+}
+
 func defaultIMDSRegion(r *http.Request) string {
 	if v := r.URL.Query().Get("region"); v != "" {
 		return v
@@ -194,6 +236,18 @@ func simHostMetadataAddr() string {
 		port = simListenAddr[idx+1:]
 	}
 	return workloadCallbackHost() + ":" + port
+}
+
+func simHostMetadataPort() (int, error) {
+	port := simListenAddr
+	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
+		port = simListenAddr[idx+1:]
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, fmt.Errorf("invalid simulator metadata listen port %q", port)
+	}
+	return n, nil
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the

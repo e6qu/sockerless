@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,8 +45,10 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
 	}
 
-	// Build the Docker image hosting eval-arithmetic. Multi-stage Docker
-	// build forced to linux/arm64 — sim's primary capacity contract.
+	workloadPlatform := nativeDockerPlatform()
+
+	// Build the Docker image hosting eval-arithmetic for the runner-native
+	// Linux platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	dockerfile := `FROM golang:1.25-alpine AS build
@@ -57,15 +60,15 @@ COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	dockerBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", workloadPlatform,
 		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
 	}
 
-	// lambda-runtime-handler image — multi-stage Docker build forced to
-	// linux/arm64 (matches eval-arithmetic; sim's primary capacity).
+	// lambda-runtime-handler image — multi-stage Docker build for the same
+	// platform as eval-arithmetic.
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
 	lhDockerfile := `FROM golang:1.25-alpine AS build
@@ -77,7 +80,7 @@ COPY --from=build /lambda-runtime-handler /usr/local/bin/lambda-runtime-handler
 ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
 `
 	lhDockerBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
+		"--platform", workloadPlatform,
 		"-t", lambdaHandlerImageName, "-f", "-", lambdaHandlerDir)
 	lhDockerBuild.Stdin = strings.NewReader(lhDockerfile)
 	if out, err := lhDockerBuild.CombinedOutput(); err != nil {
@@ -110,6 +113,10 @@ ENTRYPOINT ["/usr/local/bin/lambda-runtime-handler"]
 	simCmd.Process.Kill()
 	simCmd.Wait()
 	os.Exit(code)
+}
+
+func nativeDockerPlatform() string {
+	return "linux/" + runtime.GOARCH
 }
 
 func waitForHealth(url string) error {

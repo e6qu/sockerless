@@ -953,6 +953,8 @@ func registerNetworkInterfaces(srv *sim.Server) {
 func registerVirtualMachines(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute"
 
+	logger := srv.Logger()
+
 	srv.HandleFunc("PUT "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
@@ -975,6 +977,16 @@ func registerVirtualMachines(srv *sim.Server) {
 		if vm.Properties.VMID == "" {
 			vm.Properties.VMID = generateUUID()
 		}
+		if err := azureStartRealVM(r.Context(), vm); err != nil {
+			logger.Error().
+				Err(err).
+				Str("subscription", sub).
+				Str("resource_group", rg).
+				Str("vm", name).
+				Msg("failed to boot real Azure virtual machine")
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to boot real virtual machine: %v", err)
+			return
+		}
 		azureVMs.Put(id, vm)
 		azureVMStates.Put(id, "PowerState/running")
 		for _, nicRef := range vm.Properties.NetworkProfile.NetworkInterfaces {
@@ -993,6 +1005,9 @@ func registerVirtualMachines(srv *sim.Server) {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
 			return
 		}
+		if state, _ := azureVMStates.Get(id); state == "PowerState/running" && !azureRealVMAlive(id) {
+			azureVMStates.Put(id, "PowerState/stopped")
+		}
 		if strings.EqualFold(r.URL.Query().Get("$expand"), "instanceView") {
 			vm = virtualMachineWithInstanceView(vm)
 		}
@@ -1006,6 +1021,9 @@ func registerVirtualMachines(srv *sim.Server) {
 		if !ok {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
 			return
+		}
+		if state, _ := azureVMStates.Get(id); state == "PowerState/running" && !azureRealVMAlive(id) {
+			azureVMStates.Put(id, "PowerState/stopped")
 		}
 		sim.WriteJSON(w, http.StatusOK, virtualMachineWithInstanceView(vm).Properties.InstanceView)
 	})
@@ -1023,6 +1041,15 @@ func registerVirtualMachines(srv *sim.Server) {
 	srv.HandleFunc("DELETE "+armBase+"/virtualMachines/{vmName}", func(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
 			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "vmName"))
+		vm, ok := azureVMs.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
+			return
+		}
+		if err := azureDeleteRealVM(r.Context(), vm); err != nil {
+			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to delete real virtual machine: %v", err)
+			return
+		}
 		azureVMs.Delete(id)
 		azureVMStates.Delete(id)
 		w.WriteHeader(http.StatusOK)
@@ -1031,18 +1058,58 @@ func registerVirtualMachines(srv *sim.Server) {
 	for _, action := range []string{"start", "powerOff", "restart", "deallocate"} {
 		action := action
 		srv.HandleFunc("POST "+armBase+"/virtualMachines/{vmName}/"+action, func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			name := sim.PathParam(r, "vmName")
 			id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s",
-				sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "vmName"))
-			if _, ok := azureVMs.Get(id); !ok {
+				sub, rg, name)
+			vm, ok := azureVMs.Get(id)
+			if !ok {
 				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", id)
 				return
 			}
 			state := "PowerState/running"
 			if action == "powerOff" {
+				if err := azureStopRealVM(r.Context(), id); err != nil {
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to power off real virtual machine: %v", err)
+					return
+				}
 				state = "PowerState/stopped"
 			}
 			if action == "deallocate" {
+				if err := azureStopRealVM(r.Context(), id); err != nil {
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to deallocate real virtual machine: %v", err)
+					return
+				}
 				state = "PowerState/deallocated"
+			}
+			if action == "restart" {
+				if err := azureStopRealVM(r.Context(), id); err != nil {
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to restart real virtual machine: %v", err)
+					return
+				}
+				if err := azureStartRealVM(r.Context(), vm); err != nil {
+					logger.Error().
+						Err(err).
+						Str("subscription", sub).
+						Str("resource_group", rg).
+						Str("vm", name).
+						Msg("failed to restart real Azure virtual machine")
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to restart real virtual machine: %v", err)
+					return
+				}
+			}
+			if action == "start" {
+				if err := azureStartRealVM(r.Context(), vm); err != nil {
+					logger.Error().
+						Err(err).
+						Str("subscription", sub).
+						Str("resource_group", rg).
+						Str("vm", name).
+						Msg("failed to start real Azure virtual machine")
+					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to start real virtual machine: %v", err)
+					return
+				}
 			}
 			azureVMStates.Put(id, state)
 			sim.WriteJSON(w, http.StatusOK, map[string]any{"status": "Succeeded"})
