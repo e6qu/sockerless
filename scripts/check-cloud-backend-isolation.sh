@@ -41,6 +41,9 @@ forbidden_patterns=(
   'BaseServer\.ContainerPause'
   'BaseServer\.ContainerUnpause'
   'BaseServer\.ContainerLogs'
+  # Cloud backends must query container state through CloudStateProvider paths.
+  'BaseServer\.ContainerInspect'
+  'BaseServer\.ContainerList'
   # Store container state methods
   'Store\.StopContainer'
   'Store\.ForceStopContainer'
@@ -71,8 +74,6 @@ guarded_patterns=(
   'BaseServer\.ContainerResize'
   'BaseServer\.ExecCreate'
   'BaseServer\.ContainerUpdate'
-  'BaseServer\.ContainerInspect'
-  'BaseServer\.ContainerList'
   'BaseServer\.ContainerWait'
   'BaseServer\.ContainerRename'
   'BaseServer\.ContainerStats'
@@ -98,20 +99,25 @@ for backend in "${cloud_backends[@]}"; do
     failed=1
   fi
 
-  # Check guarded patterns in delegate files
+  # Check guarded patterns in backend files
   for pattern in "${guarded_patterns[@]}"; do
-    matches=$(grep -Hrn "$pattern" "$backend"/backend_delegates.go 2>/dev/null || true)
+    matches=$(grep -Hrn "$pattern" "$backend"/*.go 2>/dev/null | grep -v '_test\.go' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
     if [ -n "$matches" ]; then
       # Verify the delegate resolves the container first
-      for line_num in $(echo "$matches" | cut -d: -f2); do
-        # Check that ResolveContainerIDAuto or ResolveContainerAuto appears nearby
-        context=$(sed -n "$((line_num-5)),$((line_num))p" "$backend"/backend_delegates.go 2>/dev/null || true)
-        if ! echo "$context" | grep -q 'ResolveContainer'; then
-          echo "WARNING: $backend delegates '$pattern' without container resolution:"
-          echo "$matches"
-          echo ""
+      while IFS=: read -r file line_num _; do
+        # Check that ResolveContainerIDAuto or ResolveContainerAuto appears nearby.
+        start=$((line_num - 20))
+        if [ "$start" -lt 1 ]; then
+          start=1
         fi
-      done
+        context=$(sed -n "${start},${line_num}p" "$file" 2>/dev/null || true)
+        if ! echo "$context" | grep -q 'ResolveContainer'; then
+          echo "ERROR: $backend delegates '$pattern' without container resolution:"
+          echo "$file:$line_num"
+          echo ""
+          failed=1
+        fi
+      done <<< "$matches"
     fi
   done
 done

@@ -20,6 +20,7 @@ function jsonResponse(data: unknown) {
 }
 
 function renderApp(title: string, navItems: { label: string; to: string }[]) {
+  window.history.pushState({}, "", "/ui/");
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

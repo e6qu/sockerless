@@ -73,14 +73,15 @@ func (s *Server) ContainerGetArchive(id string, path string) (*api.ContainerArch
 }
 
 func (s *Server) ContainerInspect(id string) (*api.Container, error) {
-	if _, ok := s.ResolveContainerIDAuto(context.Background(), id); !ok {
+	c, ok := s.ResolveContainerAuto(context.Background(), id)
+	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	return s.BaseServer.ContainerInspect(id)
+	return &c, nil
 }
 
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	return s.BaseServer.ContainerList(opts)
+	return s.CloudContainerList(context.Background(), opts)
 }
 
 // ContainerPutArchive extracts the incoming tar body via the

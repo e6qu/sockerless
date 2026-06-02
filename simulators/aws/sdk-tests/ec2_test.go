@@ -379,6 +379,55 @@ func TestEC2_RunInstancesHonorsMaxCount(t *testing.T) {
 	}
 }
 
+func TestEC2_EBSSnapshotCompletesWithoutVPCSDK(t *testing.T) {
+	client := ec2Client()
+
+	created, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(1),
+		VolumeType:       types.VolumeTypeGp3,
+	})
+	require.NoError(t, err)
+	volumeID := aws.ToString(created.VolumeId)
+	require.NotEmpty(t, volumeID)
+	defer client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)})
+
+	snapshotOut, err := client.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volumeID),
+		Description: aws.String("standalone sdk snapshot"),
+	})
+	require.NoError(t, err)
+	snapshotID := aws.ToString(snapshotOut.SnapshotId)
+	require.NotEmpty(t, snapshotID)
+	assert.Equal(t, types.SnapshotStatePending, snapshotOut.State)
+	defer client.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(snapshotID)})
+
+	filtered := waitForEC2SnapshotState(t, client, snapshotID, types.SnapshotStateCompleted)
+	require.Len(t, filtered.Snapshots, 1)
+
+	unfiltered, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{})
+	require.NoError(t, err)
+	foundCompleted := false
+	for _, snap := range unfiltered.Snapshots {
+		if aws.ToString(snap.SnapshotId) == snapshotID && snap.State == types.SnapshotStateCompleted {
+			foundCompleted = true
+			break
+		}
+	}
+	require.True(t, foundCompleted, "unfiltered DescribeSnapshots must expose completed state for %s", snapshotID)
+
+	restored, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		SnapshotId:       aws.String(snapshotID),
+		VolumeType:       types.VolumeTypeGp3,
+	})
+	require.NoError(t, err)
+	restoredID := aws.ToString(restored.VolumeId)
+	require.NotEmpty(t, restoredID)
+	assert.Equal(t, snapshotID, aws.ToString(restored.SnapshotId))
+	defer client.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(restoredID)})
+}
+
 func TestEC2_EBSVolumeSnapshotLifecycleSDK(t *testing.T) {
 	client := ec2Client()
 	vpcOut, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.68.0.0/16")})

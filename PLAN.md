@@ -10,7 +10,7 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 Idle on `main`. No implementation branch is active.
 
-Last completed phase: issue #336 VPC fabric/NAT/IPAM paths were moved onto the real-execution substrate, AWS became the first migrated #334/#335 packet path with real ELBv2 host-dispatched probes/proxying plus nftables security-group ingress, and Azure Event Grid topic endpoints stopped leaking per-topic localhost listeners.
+Last completed phase: the CI log/architecture cleanup after PR #358 removed direct cloud-backend inspect/list delegates into core local-state handlers, made cloud list errors fail loudly, hardened the cloud-backend isolation lint, removed pass-green warning/error noise from GCP host-dispatch and UI build/test output, and fixed newly opened AWS simulator issues #359 and #360.
 
 Next planned phase: continue BUG-1267 with Firecracker-backed VM execution, GCP/Azure security enforcement, and the remaining managed load-balancer data-plane work for issues #332-#335 and #338, unless a higher-priority issue appears. Number #337 is a merged PR, not an open issue.
 

@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` after the issue #336 real network fabric PR merged.
+- Branch: `main`, synced with `origin/main` after the CI log/architecture cleanup PR merged.
 - Active implementation branch: none.
-- Open GitHub issues at last check: #332-#335 and #338. Issues #336 and #356 were fixed and closed. Number #337 is a merged PR, not an open issue.
+- Open GitHub issues at last check: #332-#335 and #338. Issues #336, #356, #359, and #360 were fixed and closed. Number #337 is a merged PR, not an open issue.
 - Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
-- Last completed work: issue #336 moved AWS/GCP/Azure VPC/network/subnet/NIC/public-IP/NAT routing paths onto the shared real-execution substrate; AWS security-group ingress and ELBv2 host-dispatched health/proxy paths became the first real #335/#334 packet-path migrations; Azure Event Grid topic endpoints stopped leaking simulator-local per-topic publish listeners.
+- Last completed work: the CI log/architecture cleanup after PR #358 removed direct cloud-backend `BaseServer.ContainerInspect` / `BaseServer.ContainerList` delegates, made cloud list errors fail loudly, hardened the isolation lint against regressions, removed pass-green CI warning/error noise from GCP host-dispatch and UI build/test output, fixed newly opened AWS simulator issues #359 and #360, and updated stale live-test AWS credential action pins.
 - The PR #358 CI fix preserved real-network capabilities in simulator Docker tests, fixed provider-shaped public IPv4 pools and GCP public-IP assertions, made GCP real fabric creation atomic, and avoided Linux-name collisions with hash-derived names.
 
 ## Next Task
@@ -135,6 +135,16 @@ Next implementation should focus on Firecracker-backed VM execution, GCP/Azure n
 - BUG-1075: live-cloud validation remains deferred by user direction. Do not mark cloud cells green without authenticated real-cloud runs.
 - BUG-1104: audit-cadence meta tracker remains open. Every simulator phase should audit SDK/CLI/Terraform surface claims and file concrete BUGs before fixing.
 - BUG-1267: issues #332-#335 and #338 track the remaining compute/networking real-execution program: Firecracker-backed VM instances, remaining nftables security enforcement, and real L4/L7 load balancing with health checks. Issue #336's VPC/network/subnet/NIC/public-IP/NAT routing fabric landed on the real substrate, AWS security-group ingress plus ELBv2 host-dispatched health/proxying were the first #335/#334 packet-path migrations, and Azure Event Grid stopped leaking simulator-local publish listener plumbing from ARM.
+
+## Last CI/Architecture Cleanup
+
+- Cloud backend inspect/list paths use cloud-state resolution/listing directly instead of delegating into core local-state `BaseServer` handlers.
+- `BaseServer.ContainerList` no longer ignores `CloudState.ListContainers` failures; provider errors are returned loudly.
+- `scripts/check-cloud-backend-isolation.sh` scans all cloud backend Go files and fails future direct `BaseServer.ContainerInspect` / `BaseServer.ContainerList` calls.
+- GCP host-dispatch allowlist coverage no longer writes an error-looking GitHub annotation.
+- UI Vite builds run under Bun's runtime, `ui-core` emits declaration build output, and router tests start from `/ui/` to avoid unmatched-route stderr.
+- AWS EC2 EBS snapshots settle pending rows on public describe/restore paths, and DynamoDB `DeleteItem` honors `ReturnValues=ALL_OLD`.
+- Live ECS and Lambda workflows use `aws-actions/configure-aws-credentials@v6.2.0`.
 
 ## Start Checklist
 

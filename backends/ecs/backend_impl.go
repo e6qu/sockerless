@@ -1173,20 +1173,9 @@ func (s *Server) Info() (*api.BackendInfo, error) {
 
 // ContainerInspect returns container details from CloudState.
 func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
-	// Check PendingCreates first (container created but not yet started)
-	if c, ok := s.PendingCreates.Get(ref); ok {
-		return &c, nil
-	}
-	for _, c := range s.PendingCreates.List() {
-		if c.Name == ref || c.Name == "/"+ref || (len(ref) >= 3 && strings.HasPrefix(c.ID, ref)) {
-			return &c, nil
-		}
-	}
-
-	// Delegate to CloudState via BaseServer (which uses ResolveContainerAuto)
-	c, err := s.BaseServer.ContainerInspect(ref)
-	if err != nil {
-		return nil, err
+	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
 
 	// Deferred-stdin path: a fresh /start has spawned `launchAfterStdin`
@@ -1214,13 +1203,12 @@ func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
 		}
 	}
 
-	return c, nil
+	return &c, nil
 }
 
 // ContainerList lists containers from CloudState, plus PendingCreates.
 func (s *Server) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	// Delegate to BaseServer which uses CloudState when set
-	return s.BaseServer.ContainerList(opts)
+	return s.CloudContainerList(context.Background(), opts)
 }
 
 // ExecCreate creates an exec instance. Validates that an ECS task is running

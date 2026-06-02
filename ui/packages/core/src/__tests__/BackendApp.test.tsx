@@ -21,6 +21,7 @@ afterEach(() => {
 });
 
 function renderApp(title: string) {
+  window.history.pushState({}, "", "/ui/");
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

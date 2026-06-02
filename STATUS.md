@@ -9,13 +9,21 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | Continue BUG-1267 with Firecracker-backed VM execution, nftables security enforcement, and managed load-balancer data planes. |
-| Last merged | Issue #336 VPC fabric and NAT/IPAM paths on the real-execution substrate. |
-| Open GitHub issues | #332-#335 and #338 at last check after #336 and #356 were resolved. Number #337 is a merged PR, not an open issue. |
-| Bugs | 1286 filed - 1286 fixed - 3 open - 2 false positives. |
+| Last merged | CI log/architecture cleanup plus AWS EBS/DynamoDB issue fixes after PR #358. |
+| Open GitHub issues | #332-#335 and #338 at last check after #336, #356, #359, and #360 were resolved. Number #337 is a merged PR, not an open issue. |
+| Bugs | 1292 filed - 1292 fixed - 3 open - 2 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
+
+The CI log/architecture cleanup after PR #358 was completed. Cloud backend `ContainerInspect` and `ContainerList` paths no longer delegate into the core `BaseServer` local-state implementations. They resolve/list through cloud state explicitly, and cloud list failures now return provider errors instead of silently falling back to partial local/pending data. The cloud-backend isolation lint now scans all backend Go files, ignores comment-only matches, and fails future direct `BaseServer.ContainerInspect` / `BaseServer.ContainerList` use in cloud backends.
+
+The same cleanup removed pass-green CI noise without suppressing warnings. The GCP host-dispatch allowlist test no longer emits a GitHub error annotation for its intentional source reference. Vite package builds run under Bun's runtime so Node 26's Tailwind `module.register()` deprecation does not appear, `ui-core` emits declaration artifacts for Turbo output tracking, and UI route tests start from `/ui/` so React Router no longer prints unmatched-route stderr.
+
+Recently opened AWS simulator issues #359 and #360 were fixed in the same PR. EC2 EBS snapshots now settle pending rows deterministically on `DescribeSnapshots` and `CreateVolume(SnapshotId)`, so standard snapshot -> restore flows see `completed` through both filtered and unfiltered public reads. DynamoDB `DeleteItem` now honors `ReturnValues=ALL_OLD` by returning the pre-delete attributes when the item existed and no attributes when it did not. Both fixes shipped with real AWS SDK regression coverage.
+
+The pre-push dependency freshness gate also found stale live-test AWS credential action pins. The live ECS and Lambda workflows now use `aws-actions/configure-aws-credentials@v6.2.0`, matching the latest published semantic tag at the time of the PR.
 
 Issue #336 was fixed. The shared [simulators/realexec](simulators/realexec) network object creates a dedicated Linux network namespace per simulated cloud network/VPC implementation object, supports multiple subnet bridges inside that namespace, attaches veth NICs with lease-based private IPAM and unique MACs, creates routed egress links, and programs nftables SNAT for NAT egress. Public address allocation uses the shared real IPAM pool rather than store-length counters. The mandatory realexec host-network smoke test verifies bridge placement, guest-to-gateway and guest-to-guest reachability, routed egress reachability, SNAT programming, nftables cleanup, and namespace cleanup.
 

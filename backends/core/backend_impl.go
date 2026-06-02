@@ -179,25 +179,39 @@ func (s *BaseServer) ContainerInspect(ref string) (*api.Container, error) {
 
 // ContainerList lists containers matching options.
 func (s *BaseServer) ContainerList(opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
-	// Collect containers from CloudState or Store
 	var containers []api.Container
 	if s.CloudState != nil {
-		cloudContainers, err := s.CloudState.ListContainers(context.Background(), opts.All, opts.Filters)
-		if err == nil {
-			containers = cloudContainers
-		}
-		// Include pending creates (not yet in cloud)
-		if s.PendingCreates != nil {
-			for _, pc := range s.PendingCreates.List() {
-				if opts.All || pc.State.Running {
-					containers = append(containers, pc)
-				}
-			}
-		}
-	} else {
-		containers = s.Store.Containers.List()
+		return s.CloudContainerList(context.Background(), opts)
+	}
+	containers = s.Store.Containers.List()
+
+	return s.ContainerSummaries(containers, opts), nil
+}
+
+// CloudContainerList lists cloud-backed containers and pending creates without
+// consulting Store.Containers as a fallback.
+func (s *BaseServer) CloudContainerList(ctx context.Context, opts api.ContainerListOptions) ([]*api.ContainerSummary, error) {
+	if s.CloudState == nil {
+		return nil, &api.ServerError{Message: "cloud container list requires CloudStateProvider"}
 	}
 
+	containers, err := s.CloudState.ListContainers(ctx, opts.All, opts.Filters)
+	if err != nil {
+		return nil, err
+	}
+	if s.PendingCreates != nil {
+		for _, pc := range s.PendingCreates.List() {
+			if opts.All || pc.State.Running {
+				containers = append(containers, pc)
+			}
+		}
+	}
+
+	return s.ContainerSummaries(containers, opts), nil
+}
+
+// ContainerSummaries projects full container records into Docker's list shape.
+func (s *BaseServer) ContainerSummaries(containers []api.Container, opts api.ContainerListOptions) []*api.ContainerSummary {
 	var result []*api.ContainerSummary
 	for _, c := range containers {
 		if !opts.All && !c.State.Running {
@@ -266,7 +280,7 @@ func (s *BaseServer) ContainerList(opts api.ContainerListOptions) ([]*api.Contai
 	if result == nil {
 		result = []*api.ContainerSummary{}
 	}
-	return result, nil
+	return result
 }
 
 // ContainerStart starts a container.

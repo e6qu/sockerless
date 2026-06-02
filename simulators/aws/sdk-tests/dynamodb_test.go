@@ -131,6 +131,55 @@ func TestDynamoDB_TerraformStateLockSemantics(t *testing.T) {
 	require.NoError(t, err, "PutItem after Delete must succeed")
 }
 
+func TestDynamoDB_DeleteItemReturnValuesAllOld(t *testing.T) {
+	c := ddbClient()
+	tableName := "delete-all-old-test"
+
+	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(tableName)})
+
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]ddbtypes.AttributeValue{
+			"PK":   &ddbtypes.AttributeValueMemberS{Value: "key-1"},
+			"Data": &ddbtypes.AttributeValueMemberS{Value: "hello"},
+		},
+	})
+	require.NoError(t, err)
+
+	deleted, err := c.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]ddbtypes.AttributeValue{
+			"PK": &ddbtypes.AttributeValueMemberS{Value: "key-1"},
+		},
+		ReturnValues: ddbtypes.ReturnValueAllOld,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, deleted.Attributes)
+	require.Equal(t, "key-1", deleted.Attributes["PK"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Equal(t, "hello", deleted.Attributes["Data"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	missing, err := c.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]ddbtypes.AttributeValue{
+			"PK": &ddbtypes.AttributeValueMemberS{Value: "key-1"},
+		},
+		ReturnValues: ddbtypes.ReturnValueAllOld,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, missing.Attributes)
+}
+
 func TestDynamoDB_QueryAndScan(t *testing.T) {
 	c := ddbClient()
 	tableName := "query-scan-test"
