@@ -4,15 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the Azure Entra auth-code branch was cut.
+- Branch: `main`, synced with `origin/main` before the Azure SDK local portability branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: #332, #333, #338, deferred release/image issue #363, and Azure SDK test portability issue #365. Issue #362 was fixed by this PR. Issues #334, #335, #336, #356, #359, and #360 were fixed and closed. Number #337 is a merged PR, not an open issue.
-- Open BUG trackers: BUG-1075, BUG-1104, BUG-1267, and BUG-1296.
-- Last completed work: Azure Entra issue #362. The simulator serves the advertised OIDC authorization endpoint, returns absolute simulator-local discovery metadata for the implemented auth-code slice, issues short-lived one-time authorization codes, redirects with code/state, redeems codes at the token endpoint with tenant/client/redirect matching and PKCE validation, rejects unsupported grants, and returns signed RS256 access/ID tokens plus refresh tokens for `offline_access` through the existing JWKS-backed signing path.
+- Open GitHub issues at last check after this PR merged: #332, #333, #338, and deferred release/image issue #363. Issue #365 was fixed by this PR. Issues #334, #335, #336, #356, #359, #360, and #362 were fixed and closed. Number #337 is a merged PR, not an open issue.
+- Open BUG trackers: BUG-1075, BUG-1104, and BUG-1267.
+- Last completed work: Azure SDK local portability issue #365. On Darwin, `make sdk-test` delegates to the existing privileged Linux simulator test image and runs `make sdk-test-local` inside it, so real-network SDK tests run with Linux netns/veth/nftables capabilities. The Azure SDK harness also maps only the advertised Event Grid `*.eventgrid.localhost:<simPort>` data-plane hosts to loopback at dial time, preserving the URL and Host header for host-dispatched routing.
 
 ## Next Task
 
-Continue the real-execution compute/networking track next: BUG-1267 / issues #332, #333, and #338, unless a higher-priority issue appears. BUG-1296 / issue #365 is also open from this phase and should be picked up soon: make Azure SDK local validation route real-network and Event Grid wildcard data-plane tests through the correct Linux/DNS substrate instead of failing on macOS host limitations. Do not pick up issue #363 yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
+Continue the real-execution compute/networking track next: BUG-1267 / issues #332, #333, and #338, unless a higher-priority issue appears. Do not pick up issue #363 yet: release tags, artifacts, GHCR images, and daemon image publishing were intentionally deferred while the project is still early.
 
 Next implementation should focus on Firecracker-backed public VM execution with full fixes and regression tests for every touched public path. The implementation must use the cloud's public API shape, create the real Linux/Firecracker host objects required by that API, and fail loudly when host capabilities are missing. It must not add fakes, metadata-only execution, simulator-only public API knobs, or fallback execution paths.
 

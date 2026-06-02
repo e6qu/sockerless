@@ -8,20 +8,20 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
-| Planned next | Continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for #332, #333, and #338; then address local Azure SDK test portability issue #365. Issue #363 release/image publishing remains deferred while the project is early. |
-| Last merged | Azure Entra OIDC authorization-code flow for issue #362. |
-| Open GitHub issues | #332, #333, #338, deferred release/image publishing issue #363, and local Azure SDK test portability issue #365 at last check after #362 was resolved. Number #337 is a merged PR, not an open issue. |
-| Bugs | 1296 filed - 1295 fixed - 4 open - 2 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution; BUG-1296 local Azure SDK target portability. |
+| Planned next | Continue BUG-1267 with Firecracker-backed VM execution and umbrella follow-through for #332, #333, and #338. Issue #363 release/image publishing remains deferred while the project is early. |
+| Last merged | Azure SDK local portability for issue #365. |
+| Open GitHub issues | #332, #333, #338, and deferred release/image publishing issue #363 at last check after #365 was resolved. Number #337 is a merged PR, not an open issue. |
+| Bugs | 1296 filed - 1296 fixed - 3 open - 2 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1267 compute/networking real execution. |
 | Live infra | None up. |
 
 ## Current State
 
+Issue #365 / BUG-1296 was fixed. Local Azure SDK validation on macOS now routes through the same real Linux substrate required by the network-heavy SDK tests: Darwin `make sdk-test` delegates to `docker-sdk-test`, which runs the existing privileged Linux simulator test image and invokes `make sdk-test-local` inside it. Linux direct validation remains `make sdk-test-local`. The Event Grid SDK publish path also became resolver-independent without changing the public request shape: the SDK harness maps only `eventgrid.localhost` / `*.eventgrid.localhost` for the simulator port to loopback at dial time, preserving the advertised URL and Host header for the host-dispatched data plane. `NO_PROXY` / `no_proxy` include localhost wildcard names. No tests were skipped, mocked, or weakened; full macOS `make sdk-test` passed through Docker.
+
 Issue #362 was fixed. The Azure Entra simulator now serves the `GET /{tenant}/oauth2/v2.0/authorize` endpoint advertised by discovery. Discovery returns simulator-local absolute URLs for the served auth/token/JWKS endpoints plus supported response types/modes, grant types, PKCE methods, and signing algorithm metadata. Authorization-code requests validate the documented public OAuth/OIDC parameters, issue short-lived one-time codes, preserve `state`, support `query`, `fragment`, and `form_post` response modes, and redeem codes at `/oauth2/v2.0/token` with matching tenant/client/redirect URI plus PKCE validation. The token endpoint now rejects unsupported grant types, returns signed RS256 access tokens through the existing JWKS path, returns an ID token when `openid` is in scope, and issues/redeems refresh tokens when `offline_access` is in scope. Regression coverage runs through the real Azure simulator SDK-test harness and verifies discovery, redirect, code redemption, ID-token claims, PKCE failure, single-use code behavior, refresh-token redemption, missing-scope rejection, hybrid-flow rejection, and unsupported-grant rejection.
 
 Issue #363, the request to cut versioned releases and publish GHCR images, was intentionally deferred by user direction because the project is still early. Do not cut release tags or add artifact/image publishing work until that deferral is lifted.
-
-Issue #365 / BUG-1296 was filed during local validation of the Entra PR. `make sdk-test` for the Azure simulator failed on macOS for unrelated harness reasons: real-network SDK tests correctly returned `OperationNotAllowed` without Linux netns/bridge/veth/route/nftables capabilities, and the Event Grid SDK publish test could not resolve `sdk-topic.eventgrid.localhost`. This remains open and must be fixed through a real substrate/DNS harness path, not by skipping tests or weakening public API/data-plane fidelity.
 
 The prior GCP/Azure security and load-balancer phase fixed issues #334 and #335. The realexec nftables ingress filter supports explicit accept/drop rules and clearing filters. GCP firewall ingress rules now compile by priority, target tags, source ranges, and source tags onto real instance NIC veth paths, and instance/tag/firewall mutations reapply the filters. Azure subnet/NIC NSGs now compile inbound rules by priority onto real NIC veth paths, preserve default same-VNet allowance, support core source prefixes/service tags, and clear filters when no NSG is attached.
 

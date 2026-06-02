@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - Azure SDK Local Portability
+
+Issue #365 was fixed. Azure SDK local validation became portable on macOS without skipping tests, mocking network behavior, or weakening the Event Grid data plane.
+
+On Darwin, `make sdk-test` now delegates to the existing `docker-sdk-test` target. That target runs the shared privileged Linux simulator test image and invokes `make sdk-test-local` inside the container, so the real-network SDK tests use Linux netns/veth/nftables capabilities instead of trying to create those objects on the macOS host. Linux direct validation remains available through `make sdk-test-local`.
+
+The Event Grid SDK publish test now installs a resolver in the SDK harness for the simulator's advertised `eventgrid.localhost` and `*.eventgrid.localhost` names. The resolver maps only the simulator port to loopback at dial time, while preserving the original request URL and Host header so the Azure simulator still routes through the host-dispatched Event Grid data-plane shape. `NO_PROXY` and `no_proxy` include localhost wildcard names so local proxy settings do not intercept those simulator calls.
+
+Validation passed with a focused Event Grid SDK publish test on the host and full macOS `make sdk-test` through Docker. The fix did not add a fallback path; it made the local command use the required real substrate explicitly.
+
 ## 2026-06-02 - Azure Entra Authorization-Code Flow
 
 Issue #362 was fixed. The Azure Entra simulator now implements the interactive OIDC authorization-code front half that its discovery document already advertised.

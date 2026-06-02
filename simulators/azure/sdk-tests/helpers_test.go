@@ -94,6 +94,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
+	installAzureSDKTestResolver(port)
 
 	amqpLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -138,6 +139,46 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	simCmd.Process.Kill()
 	simCmd.Wait()
 	os.Exit(code)
+}
+
+func installAzureSDKTestResolver(simPort int) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err == nil && port == fmt.Sprint(simPort) && (host == "eventgrid.localhost" || strings.HasSuffix(host, ".eventgrid.localhost")) {
+			address = net.JoinHostPort("127.0.0.1", port)
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+	http.DefaultTransport = transport
+	http.DefaultClient.Transport = transport
+	os.Setenv("NO_PROXY", mergeNoProxy(os.Getenv("NO_PROXY"), "localhost", "127.0.0.1", "::1", ".localhost", "*.localhost"))
+	os.Setenv("no_proxy", mergeNoProxy(os.Getenv("no_proxy"), "localhost", "127.0.0.1", "::1", ".localhost", "*.localhost"))
+}
+
+func mergeNoProxy(existing string, entries ...string) string {
+	seen := map[string]bool{}
+	var merged []string
+	for _, part := range strings.Split(existing, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || seen[part] {
+			continue
+		}
+		seen[part] = true
+		merged = append(merged, part)
+	}
+	for _, entry := range entries {
+		if entry == "" || seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		merged = append(merged, entry)
+	}
+	return strings.Join(merged, ",")
 }
 
 func writeServiceBusAMQPCert(dir string) (string, string) {
