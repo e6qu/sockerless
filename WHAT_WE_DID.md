@@ -4,6 +4,14 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - EC2 EBS Firecracker Attach
+
+Issue #378 / BUG-1309 was fixed. EC2 `AttachVolume` for Firecracker-backed instances now wires data volumes into the guest instead of only recording attachment metadata.
+
+EBS data volumes now maintain sparse raw block images under their existing volume host paths. The realexec Firecracker launcher can pre-register non-root block drives, and AWS EC2 starts Firecracker guests with managed EBS drive slots. Running `AttachVolume` patches a slot to the attached volume's block image, `DetachVolume` patches the slot back to an empty backing file, and `ModifyVolume` refreshes the running drive after resizing. If the running VM substrate is missing, these public paths fail loudly instead of claiming a successful attach.
+
+Snapshot and restore continue to copy the volume host path, now including the raw block image, so guest-written bytes survive `CreateSnapshot` and `CreateVolume(SnapshotId)`. The mandatory Firecracker smoke now validates the same substrate behavior by writing a payload through a guest block device, copying the backing image as a snapshot, restoring it to another image, and reading the payload back inside the guest.
+
 ## 2026-06-02 - Real-Execution Umbrella Audit
 
 Issues #332 and #338 were closed. The post-Firecracker audit found that the original VM/networking metadata-only umbrella no longer had an open subfamily after the VPC/NAT, firewall/security, managed load-balancer, VM lifecycle, and guest metadata phases merged.

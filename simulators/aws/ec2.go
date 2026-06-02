@@ -2444,6 +2444,14 @@ func ebsVolumeHostDirPath(volumeID string) string {
 	return filepath.Join(ebsHostRoot(), "volumes", volumeID)
 }
 
+func ebsVolumeBlockImagePath(vol EC2Volume) string {
+	hostPath := vol.HostPath
+	if hostPath == "" {
+		hostPath = ebsVolumeHostDirPath(vol.VolumeId)
+	}
+	return filepath.Join(hostPath, "ebs.raw")
+}
+
 func ebsSnapshotHostDirPath(snapshotID string) string {
 	return filepath.Join(ebsHostRoot(), "snapshots", snapshotID)
 }
@@ -2459,6 +2467,33 @@ func ebsPrepareVolumeHostPath(vol *EC2Volume) error {
 		vol.HostPath = ebsVolumeHostDirPath(vol.VolumeId)
 	}
 	return os.MkdirAll(vol.HostPath, 0o777)
+}
+
+func ebsEnsureVolumeBlockImage(vol *EC2Volume) (string, error) {
+	if err := ebsPrepareVolumeHostPath(vol); err != nil {
+		return "", err
+	}
+	path := ebsVolumeBlockImagePath(*vol)
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o666)
+		if err != nil {
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+	}
+	sizeBytes := int64(vol.Size) * 1024 * 1024 * 1024
+	if sizeBytes < 1024*1024 {
+		sizeBytes = 1024 * 1024
+	}
+	if err := os.Truncate(path, sizeBytes); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func ebsCopyDir(dst, src string) error {
@@ -2632,6 +2667,14 @@ func handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "IncorrectState", "Volume is already attached", http.StatusBadRequest)
 		return
 	}
+	if _, err := ebsEnsureVolumeBlockImage(&vol); err != nil {
+		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not prepare volume block image: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := ec2AttachRealVolume(r.Context(), instanceID, &vol); err != nil {
+		ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to attach real EBS volume: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 	att := EC2VolumeAttachment{
 		VolumeId:   volID,
 		InstanceId: instanceID,
@@ -2657,6 +2700,10 @@ func handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att := vol.Attachments[0]
+	if err := ec2DetachRealVolume(r.Context(), att.InstanceId, volID); err != nil {
+		ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to detach real EBS volume: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 	att.State = "detached"
 	vol.Attachments = nil
 	vol.State = "available"
@@ -2704,6 +2751,16 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.FormValue("VolumeType"); v != "" {
 		vol.VolumeType = v
+	}
+	if len(vol.Attachments) > 0 {
+		if _, err := ebsEnsureVolumeBlockImage(&vol); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not resize volume block image: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if err := ec2RefreshRealVolume(r.Context(), vol); err != nil {
+			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to refresh real EBS volume: %v", err), http.StatusServiceUnavailable)
+			return
+		}
 	}
 	ec2Volumes.Put(volID, vol)
 	w.Header().Set("Content-Type", "text/xml")

@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, synced with `origin/main` before the real-execution umbrella audit branch was cut.
+- Branch: `main`, synced with `origin/main` before the EC2 EBS Firecracker attach branch was cut.
 - Active implementation branch: none.
-- Open GitHub issues at last check after this PR merged: none. The audit PR closed #332 and #338; #333 and #371 were already closed by the Firecracker VM lifecycle and guest metadata PR.
+- Open GitHub issues at last check after this PR merged: none. The EC2 EBS Firecracker attach PR closed #378.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- Last completed work: the real-execution umbrella audit closed BUG-1267 / issues #332 and #338. The audit confirmed that no #332 subfamily remained metadata-only after the merged VPC/NAT, firewall/security, managed load-balancer, VM lifecycle, and guest metadata phases. The shared realexec substrate has Linux network namespaces, subnet bridges, veth/TAP NICs, lease-based IPAM, routed egress, nftables SNAT/DNAT/filtering, load-balancer probe/proxy helpers, and a Firecracker launcher. AWS/GCP/Azure public VM lifecycle now boots Firecracker guests on provider-private subnet IPs, gates running state on real guest reachability, powers lifecycle actions through the guest/TAP process, and routes provider-shaped metadata to instance-specific handlers. AWS/GCP/Azure network fabric, NAT, firewall/security, and managed load-balancer paths all use real packet infrastructure and fail loudly when host capabilities are missing. The PR's AWS CI follow-up fixed CloudTrail lookup ordering to return newest events before page limiting and removed Docker Hub base-image resolution from AWS SDK/CLI/Terraform test workload image setup by packaging locally compiled static Linux binaries in `scratch` images.
+- Last completed work: issue #378 / BUG-1309 was fixed. EC2 EBS data volumes now have sparse raw block images under their volume host paths, Firecracker-backed EC2 guests boot with managed EBS drive slots, running `AttachVolume` patches a slot to the volume image, `DetachVolume` patches it back to an empty slot, and `ModifyVolume` refreshes the running drive after resize. Snapshots/restores copy the volume host path including the block image, and the mandatory Firecracker smoke writes, snapshots/restores, and reads a real guest block-device payload.
 
 ## Next Task
 

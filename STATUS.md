@@ -9,13 +9,15 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Active branch | `main` - no implementation branch active. |
 | In-flight | None. |
 | Planned next | Check live open issues first; otherwise continue BUG-1104 with a focused simulator coverage audit. Versioned releases/image publishing remain deferred while the project is early. |
-| Last merged | Real-execution umbrella audit for #332/#338 after Firecracker VM lifecycle, guest metadata, VPC/NAT, firewall/security, and load-balancer packet paths landed. |
+| Last merged | EC2 EBS data volumes were wired into Firecracker-backed guests, closing #378. |
 | Open GitHub issues | None at last check after this PR merged. |
-| Bugs | 1308 filed - 1308 fixed - 2 open - 3 false positives. |
+| Bugs | 1309 filed - 1309 fixed - 2 open - 3 false positives. |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence. |
 | Live infra | None up. |
 
 ## Current State
+
+Issue #378 / BUG-1309 was fixed. AWS EC2 `AttachVolume` is no longer metadata-only for Firecracker-backed instances: EBS data volumes have sparse file-backed raw block images under their volume host paths, EC2 Firecracker guests boot with substrate-managed EBS drive slots, running `AttachVolume` patches the selected drive slot to the volume's real block image, `DetachVolume` patches it back to an empty slot, and `ModifyVolume` refreshes the running drive after resize. EC2 snapshots and restores copy the real volume host path, including the raw block image, so bytes written by the guest persist through `CreateSnapshot` and `CreateVolume(SnapshotId)`. The mandatory Firecracker smoke now proves the real block path by writing a payload inside the guest, copying the backing image as a snapshot, restoring it to another image, and reading the payload back inside the guest.
 
 The real-execution umbrella audit closed issues #332 and #338 after the Firecracker-backed VM lifecycle and guest metadata phase merged. The shared `simulators/realexec` substrate now supports TAP NICs attached to cloud subnet bridges and a Firecracker launcher that downloads the pinned official Firecracker CI kernel/rootfs assets, prepares per-VM Ubuntu ext4 root filesystems with the cloud-private IPv4 address/gateway, starts the real Firecracker process inside the cloud network namespace, configures the Firecracker API over its Unix socket, and waits for real guest packet reachability before public VM state becomes running.
 
@@ -150,6 +152,7 @@ Implemented gateway surface:
 
 ## Recent Merged Work
 
+- EC2 Firecracker EBS attach: issue #378 was fixed by wiring EBS data volumes to real Firecracker block-device backing images and extending the mandatory Firecracker smoke with a guest write/snapshot/restore/read regression.
 - Azure Terraform HTTPS gateway stage: the Azure Terraform harness used the local Caddy gateway end to end, and BUG-1246 fixed Azure Storage data-plane host dispatch so `azure.sockerless.localhost` metadata requests were no longer swallowed by the storage wrapper.
 - SDK/CLI HTTPS gateway audit: documented real CA/endpoint knobs for SDK and CLI clients, and fixed GCP GCS CLI coverage discovered by BUG-1104.
 - Terraform HTTPS gateway audit: AWS/GCP got optional HTTPS provider harnesses and GCP VPC Access Terraform coverage; issue #304 was opened for larger GCP client-surface gaps.

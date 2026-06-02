@@ -102,6 +102,10 @@ kernel="$workdir/$(basename "$kernel_key")"
 rootfs_squash="$workdir/$(basename "$rootfs_key")"
 rootfs_dir="$workdir/rootfs"
 rootfs_ext4="$workdir/rootfs.ext4"
+ebs_placeholder="$workdir/ebs-placeholder.raw"
+ebs_volume="$workdir/ebs-volume.raw"
+ebs_snapshot="$workdir/ebs-snapshot.raw"
+ebs_restored="$workdir/ebs-restored.raw"
 
 curl -fsSLo "$kernel" "https://s3.amazonaws.com/spec.ccfc.min/${kernel_key}"
 curl -fsSLo "$rootfs_squash" "https://s3.amazonaws.com/spec.ccfc.min/${rootfs_key}"
@@ -223,7 +227,8 @@ func main() {
 	log.Fatal(http.ListenAndServe(os.Args[1], nil))
 }
 EOF
-go run "$workdir/metadata-server.go" "$tap_ip:$metadata_port" > "$workdir/metadata-server.log" 2>&1 &
+go build -o "$workdir/metadata-server" "$workdir/metadata-server.go"
+"$workdir/metadata-server" "$tap_ip:$metadata_port" > "$workdir/metadata-server.log" 2>&1 &
 metadata_pid=$!
 deadline=$((SECONDS + 10))
 until curl -fsS "http://$tap_ip:$metadata_port/metadata-probe" >/dev/null 2>&1; do
@@ -273,6 +278,29 @@ fc_put() {
   fi
 }
 
+fc_patch() {
+  path="$1"
+  payload="$2"
+  response="$workdir/firecracker-api-response.txt"
+  http_status="$(sudo curl -sS -X PATCH --unix-socket "$api_socket" --data "$payload" -o "$response" -w "%{http_code}" "http://localhost${path}")" || {
+    echo "Firecracker API PATCH $path failed before receiving an HTTP response" >&2
+    if sudo test -s "$response"; then
+      sudo cat "$response" >&2
+    fi
+    return 1
+  }
+  case "$http_status" in
+    2*) ;;
+    *)
+      echo "Firecracker API PATCH $path returned HTTP $http_status" >&2
+      if sudo test -s "$response"; then
+        sudo cat "$response" >&2
+      fi
+      return 1
+      ;;
+  esac
+}
+
 fc_put /logger "{
   \"log_path\": \"$workdir/firecracker.log\",
   \"level\": \"Info\",
@@ -299,6 +327,14 @@ fc_put /drives/rootfs "{
   \"drive_id\": \"rootfs\",
   \"path_on_host\": \"$rootfs_ext4\",
   \"is_root_device\": true,
+  \"is_read_only\": false
+}"
+
+touch "$ebs_placeholder"
+fc_put /drives/ebs1 "{
+  \"drive_id\": \"ebs1\",
+  \"path_on_host\": \"$ebs_placeholder\",
+  \"is_root_device\": false,
   \"is_read_only\": false
 }"
 
@@ -329,6 +365,72 @@ until ssh "${ssh_opts[@]}" "root@$guest_ip" true >/dev/null 2>&1; do
 done
 
 ssh "${ssh_opts[@]}" "root@$guest_ip" /root/configure-firecracker-network.sh
+truncate -s 64M "$ebs_volume"
+fc_patch /drives/ebs1 "{
+  \"drive_id\": \"ebs1\",
+  \"path_on_host\": \"$ebs_volume\"
+}"
+ssh "${ssh_opts[@]}" "root@$guest_ip" '
+set -eu
+find_data_dev() {
+  remaining=20
+  while [ "$remaining" -gt 0 ]; do
+    for sysdev in /sys/block/vd* /sys/block/nvme*n1; do
+      [ -e "$sysdev" ] || continue
+      name="${sysdev##*/}"
+      [ "$name" = "vda" ] && continue
+      sectors="$(cat "$sysdev/size")"
+      if [ "$sectors" -gt 0 ]; then
+        printf "/dev/%s\n" "$name"
+        return 0
+      fi
+    done
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+  return 1
+}
+dev="$(find_data_dev)"
+mkfs.ext4 -q -F "$dev"
+mkdir -p /mnt/sockerless-ebs
+mount "$dev" /mnt/sockerless-ebs
+printf "%s\n" "FIRECRACKER_EBS_PERSISTED" >/mnt/sockerless-ebs/payload.txt
+sync
+umount /mnt/sockerless-ebs
+'
+cp "$ebs_volume" "$ebs_snapshot"
+cp "$ebs_snapshot" "$ebs_restored"
+fc_patch /drives/ebs1 "{
+  \"drive_id\": \"ebs1\",
+  \"path_on_host\": \"$ebs_restored\"
+}"
+ssh "${ssh_opts[@]}" "root@$guest_ip" '
+set -eu
+find_data_dev() {
+  remaining=20
+  while [ "$remaining" -gt 0 ]; do
+    for sysdev in /sys/block/vd* /sys/block/nvme*n1; do
+      [ -e "$sysdev" ] || continue
+      name="${sysdev##*/}"
+      [ "$name" = "vda" ] && continue
+      sectors="$(cat "$sysdev/size")"
+      if [ "$sectors" -gt 0 ]; then
+        printf "/dev/%s\n" "$name"
+        return 0
+      fi
+    done
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+  return 1
+}
+dev="$(find_data_dev)"
+mkdir -p /mnt/sockerless-ebs
+mount "$dev" /mnt/sockerless-ebs
+grep -q FIRECRACKER_EBS_PERSISTED /mnt/sockerless-ebs/payload.txt
+umount /mnt/sockerless-ebs
+echo FIRECRACKER_EBS_PERSISTENCE_OK
+'
 ssh "${ssh_opts[@]}" "root@$guest_ip" /root/run-firecracker-arithmetic.sh | tee "$workdir/guest-arithmetic.log"
 grep -q FIRECRACKER_ARITHMETIC_OK "$workdir/guest-arithmetic.log" || fail "guest arithmetic smoke did not print success marker"
 
