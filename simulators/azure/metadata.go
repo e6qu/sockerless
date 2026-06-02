@@ -5,10 +5,20 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
+
+type azureMetadataVM struct {
+	VM       VirtualMachine
+	NIC      NetworkInterface
+	SubnetID string
+}
+
+var azureMetadataVMsByIP sync.Map // map[string]azureMetadataVM
 
 // registerMetadata serves the Azure cloud metadata endpoint used by both:
 //   - azurestack provider (via ARM_METADATA_HOST): expects JSON array, api-version=2020-06-01
@@ -98,11 +108,45 @@ func registerMetadata(srv *sim.Server) {
 		if loc == "" {
 			loc = "westeurope"
 		}
+		vmMeta, ok := azureMetadataVMForRequest(r)
+		if ok {
+			sub = azureSubscriptionFromID(vmMeta.VM.ID, sub)
+			loc = vmMeta.VM.Location
+		}
+		computeName := "sim-vm-1"
+		resourceGroup := "sim-rg"
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/sim-rg/providers/Microsoft.Compute/virtualMachines/sim-vm-1", sub)
+		vmID := "sim-vm-id-0001"
+		vmSize := "Standard_DS1_v2"
+		privateIP := "10.0.0.4"
+		macAddress := "00155DEADBEE"
+		subnetAddress := "10.0.0.0"
+		subnetPrefix := "24"
+		if ok {
+			computeName = vmMeta.VM.Name
+			resourceGroup = azureResourceGroupFromID(vmMeta.VM.ID, resourceGroup)
+			resourceID = vmMeta.VM.ID
+			if vmMeta.VM.Properties.VMID != "" {
+				vmID = vmMeta.VM.Properties.VMID
+			}
+			if size, _ := vmMeta.VM.Properties.HardwareProfile["vmSize"].(string); size != "" {
+				vmSize = size
+			}
+			if vmMeta.NIC.Properties.MacAddress != "" {
+				macAddress = strings.ReplaceAll(vmMeta.NIC.Properties.MacAddress, "-", "")
+			}
+			if len(vmMeta.NIC.Properties.IPConfigurations) > 0 {
+				privateIP = vmMeta.NIC.Properties.IPConfigurations[0].Properties.PrivateIPAddress
+			}
+			if subnet, ok := azureSubnets.Get(vmMeta.SubnetID); ok {
+				subnetAddress, subnetPrefix = azureCIDRAddressPrefix(subnet.Properties.AddressPrefix, subnetAddress, subnetPrefix)
+			}
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"compute": map[string]any{
 				"azEnvironment":        "AzurePublicCloud",
 				"location":             loc,
-				"name":                 "sim-vm-1",
+				"name":                 computeName,
 				"offer":                "UbuntuServer",
 				"osType":               "Linux",
 				"placementGroupId":     "",
@@ -110,36 +154,48 @@ func registerMetadata(srv *sim.Server) {
 				"platformUpdateDomain": "0",
 				"provider":             "Microsoft.Compute",
 				"publisher":            "Canonical",
-				"resourceGroupName":    "sim-rg",
-				"resourceId":           fmt.Sprintf("/subscriptions/%s/resourceGroups/sim-rg/providers/Microsoft.Compute/virtualMachines/sim-vm-1", sub),
+				"resourceGroupName":    resourceGroup,
+				"resourceId":           resourceID,
 				"sku":                  "22_04-lts",
 				"subscriptionId":       sub,
 				"tags":                 "",
 				"version":              "22.04.202401010",
-				"vmId":                 "sim-vm-id-0001",
+				"vmId":                 vmID,
 				"vmScaleSetName":       "",
-				"vmSize":               "Standard_DS1_v2",
+				"vmSize":               vmSize,
 				"zone":                 "1",
 			},
 			"network": map[string]any{
 				"interface": []map[string]any{{
 					"ipv4": map[string]any{
 						"ipAddress": []map[string]any{{
-							"privateIpAddress": "10.0.0.4",
+							"privateIpAddress": privateIP,
 							"publicIpAddress":  "",
 						}},
 						"subnet": []map[string]any{{
-							"address": "10.0.0.0",
-							"prefix":  "24",
+							"address": subnetAddress,
+							"prefix":  subnetPrefix,
 						}},
 					},
-					"macAddress": "00155DEADBEE",
+					"macAddress": macAddress,
 				}},
 			},
 		})
 	})
 	srv.HandleFunc("GET /metadata/instance/compute", func(w http.ResponseWriter, r *http.Request) {
 		if !mustMetadataHeader(w, r) {
+			return
+		}
+		if vmMeta, ok := azureMetadataVMForRequest(r); ok {
+			sub := azureSubscriptionFromID(vmMeta.VM.ID, "00000000-0000-0000-0000-000000000001")
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"location":          vmMeta.VM.Location,
+				"subscriptionId":    sub,
+				"resourceGroupName": azureResourceGroupFromID(vmMeta.VM.ID, "sim-rg"),
+				"name":              vmMeta.VM.Name,
+				"vmId":              vmMeta.VM.Properties.VMID,
+				"azEnvironment":     "AzurePublicCloud",
+			})
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -153,6 +209,47 @@ func registerMetadata(srv *sim.Server) {
 	})
 }
 
+func azureMetadataVMForRequest(r *http.Request) (azureMetadataVM, bool) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	v, ok := azureMetadataVMsByIP.Load(host)
+	if !ok {
+		return azureMetadataVM{}, false
+	}
+	vm, ok := v.(azureMetadataVM)
+	return vm, ok
+}
+
+func azureSubscriptionFromID(id, defaultSubscription string) string {
+	parts := strings.Split(id, "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], "subscriptions") {
+			return parts[i+1]
+		}
+	}
+	return defaultSubscription
+}
+
+func azureResourceGroupFromID(id, defaultResourceGroup string) string {
+	parts := strings.Split(id, "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], "resourceGroups") {
+			return parts[i+1]
+		}
+	}
+	return defaultResourceGroup
+}
+
+func azureCIDRAddressPrefix(cidr, defaultAddress, defaultPrefix string) (string, string) {
+	parts := strings.Split(cidr, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return defaultAddress, defaultPrefix
+	}
+	return parts[0], parts[1]
+}
+
 // simListenAddr is captured by main() so host translators can wire it
 // into workload-host env. Workloads in Docker reach the sim host via
 // host.docker.internal.
@@ -164,6 +261,18 @@ func simHostMetadataAddr() string {
 		port = simListenAddr[idx+1:]
 	}
 	return workloadCallbackHost() + ":" + port
+}
+
+func simHostMetadataPort() (int, error) {
+	port := simListenAddr
+	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
+		port = simListenAddr[idx+1:]
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, fmt.Errorf("invalid simulator metadata listen port %q", port)
+	}
+	return n, nil
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the

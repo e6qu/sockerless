@@ -5,11 +5,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+var gcpMetadataInstancesByIP sync.Map // map[string]ComputeInstance
 
 // registerComputeMetadata serves the GCE metadata server endpoints used
 // by every GCP compute primitive that runs a workload (GCE, Cloud Run,
@@ -50,6 +54,10 @@ func registerComputeMetadata(srv *sim.Server) {
 		if !mustFlavor(w, r) {
 			return
 		}
+		if inst, ok := gcpMetadataInstanceForRequest(r); ok {
+			writeText(w, gcpMetadataProject(inst.SelfLink, defaultMetadataProject(r)))
+			return
+		}
 		writeText(w, defaultMetadataProject(r))
 	})
 
@@ -71,16 +79,33 @@ func registerComputeMetadata(srv *sim.Server) {
 		if !mustFlavor(w, r) {
 			return
 		}
+		if inst, ok := gcpMetadataInstanceForRequest(r); ok && inst.Zone != "" {
+			writeText(w, inst.Zone)
+			return
+		}
 		writeText(w, fmt.Sprintf("projects/%s/zones/%s", defaultMetadataProject(r), defaultMetadataZone(r)))
 	})
 	srv.HandleFunc("GET /computeMetadata/v1/instance/name", func(w http.ResponseWriter, r *http.Request) {
 		if !mustFlavor(w, r) {
 			return
 		}
+		if inst, ok := gcpMetadataInstanceForRequest(r); ok && inst.Name != "" {
+			writeText(w, inst.Name)
+			return
+		}
 		writeText(w, "sim-instance-1")
 	})
 	srv.HandleFunc("GET /computeMetadata/v1/instance/hostname", func(w http.ResponseWriter, r *http.Request) {
 		if !mustFlavor(w, r) {
+			return
+		}
+		if inst, ok := gcpMetadataInstanceForRequest(r); ok && inst.Name != "" {
+			project := gcpMetadataProject(inst.SelfLink, defaultMetadataProject(r))
+			zone := defaultMetadataZone(r)
+			if inst.Zone != "" {
+				zone = inst.Zone[strings.LastIndex(inst.Zone, "/")+1:]
+			}
+			writeText(w, fmt.Sprintf("%s.%s.c.%s.internal", inst.Name, zone, project))
 			return
 		}
 		writeText(w, fmt.Sprintf("sim-instance-1.%s.c.%s.internal", defaultMetadataZone(r), defaultMetadataProject(r)))
@@ -152,6 +177,26 @@ func registerComputeMetadata(srv *sim.Server) {
 	})
 }
 
+func gcpMetadataInstanceForRequest(r *http.Request) (ComputeInstance, bool) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	v, ok := gcpMetadataInstancesByIP.Load(host)
+	if !ok {
+		return ComputeInstance{}, false
+	}
+	inst, ok := v.(ComputeInstance)
+	return inst, ok
+}
+
+func gcpMetadataProject(selfLink, defaultProject string) string {
+	if project := gcpProjectFromSelfLink(selfLink); project != "" {
+		return project
+	}
+	return defaultProject
+}
+
 func defaultMetadataProject(r *http.Request) string {
 	if v := r.URL.Query().Get("project"); v != "" {
 		return v
@@ -181,6 +226,18 @@ func hostMetadataAddr() string {
 		port = simListenAddr[idx+1:]
 	}
 	return workloadCallbackHost() + ":" + port
+}
+
+func hostMetadataPort() (int, error) {
+	port := simListenAddr
+	if idx := strings.LastIndex(simListenAddr, ":"); idx >= 0 {
+		port = simListenAddr[idx+1:]
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, fmt.Errorf("invalid simulator metadata listen port %q", port)
+	}
+	return n, nil
 }
 
 // hostMetadataExtraHosts returns ExtraHosts entries needed for the

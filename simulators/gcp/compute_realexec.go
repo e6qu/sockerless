@@ -73,6 +73,7 @@ func gcpDeleteRealNetwork(ctx context.Context, selfLink string) error {
 	}
 	for nicID, nic := range gcpRealVMNICs {
 		if strings.Contains(nicID, selfLink) {
+			gcpMetadataInstancesByIP.Delete(nic.PrivateIP.String())
 			_ = nic.Close(ctx)
 			delete(gcpRealVMNICs, nicID)
 		}
@@ -158,6 +159,7 @@ func gcpDeleteRealNIC(ctx context.Context, nicID string) error {
 		errs = append(errs, nic.Close(ctx))
 	}
 	if tap != nil {
+		gcpMetadataInstancesByIP.Delete(tap.PrivateIP.String())
 		errs = append(errs, tap.Close(ctx))
 	}
 	return errors.Join(errs...)
@@ -214,12 +216,21 @@ func gcpStartRealVM(ctx context.Context, inst *ComputeInstance) error {
 		gcpRealMu.Unlock()
 	}
 	ni.NetworkIP = tap.PrivateIP.String()
+	gcpMetadataInstancesByIP.Store(tap.PrivateIP.String(), *inst)
+	metadataPort, err := hostMetadataPort()
+	if err != nil {
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, gcpRealName("gmd", ni.Network)); err != nil {
+		return fmt.Errorf("configure Compute Engine metadata routing for %s: %w", inst.SelfLink, err)
+	}
 	vm, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
-		ID:        "gcp-" + inst.SelfLink,
-		Tap:       tap,
-		MAC:       gcpNICMAC(nicID),
-		VCPUCount: 1,
-		MemoryMiB: 512,
+		ID:            "gcp-" + inst.SelfLink,
+		Tap:           tap,
+		MAC:           gcpNICMAC(nicID),
+		VCPUCount:     1,
+		MemoryMiB:     512,
+		MetadataHosts: []string{"metadata.google.internal", "metadata"},
 	})
 	if err != nil {
 		return err

@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 This file is intentionally compact. Detailed phase history lives in PR descriptions, `git log`, and issue threads. Keep this file focused on facts that a fresh session needs after context compaction.
 
+## 2026-06-02 - VM Guest Metadata And StopTask Latency
+
+Issue #371 / BUG-1299 was fixed in PR #372. Firecracker-backed AWS EC2, GCP Compute Engine, and Azure VM guests now reach the provider metadata service through the provider-shaped link-local address `169.254.169.254:80`. The shared realexec network substrate programs nftables DNAT inside each cloud network namespace to the simulator's existing metadata handlers, preserving the guest private source IP so handlers can return instance-specific metadata. AWS EC2, GCP Compute Engine, and Azure VM startup install that route before booting the guest. GCP guest rootfs setup also maps `metadata.google.internal` and `metadata` to `169.254.169.254`.
+
+The AWS, GCP, and Azure metadata handlers now use guest source-IP ownership maps for Firecracker VM callers while preserving the existing direct default responses for SDK-route tests. AWS IMDS returns the instance ID/type/image and identity document for the matching EC2 instance. GCP metadata returns project/name/zone/hostname for the matching Compute instance. Azure IMDS returns VM, resource group, subscription, private IP, MAC, and subnet data from the matching VM/NIC stores.
+
+Regression coverage was added without mocks or fallbacks. `make realexec-network-test` now curls `http://169.254.169.254/...` through a real Linux network namespace and asserts the metadata server sees the guest private IP. The mandatory Firecracker smoke now boots a real microVM and runs a Go HTTP probe from inside the guest against `http://169.254.169.254/metadata-probe`.
+
+The AWS SDK CI timeout was also fixed at the simulator behavior layer. ECS `StopTask` now initiates Docker graceful stop asynchronously after recording public stopped state, so the public API response no longer waits on the local Docker grace period. Internal startup-failure and process-exit cleanup still use synchronous cleanup where they own the lifecycle.
+
 ## 2026-06-02 - VM Simulator CI KVM Follow-Up
 
 The PR #372 CI failure was fixed without skipping tests, adding fallbacks, or weakening Firecracker/HTTPS behavior. The failed simulator SDK/CLI/Terraform jobs were running on `ubuntu-24.04-arm`; that runner class installed Firecracker but did not expose `/dev/kvm`, so AWS EC2, GCP Compute Engine, and Azure VM public API tests failed loudly with missing KVM, and Terraform retried until its 10-minute step budget expired.
@@ -26,9 +36,7 @@ The shared `simulators/realexec` module now supports TAP NIC attachment to cloud
 
 AWS EC2 `RunInstances` still returns public `pending` state, but the transition to `running` occurs only after the Firecracker guest boots on the instance private IP. `StopInstances`, `StartInstances`, and `TerminateInstances` stop, restart, or delete the real guest/TAP lifecycle, and stale persisted `running` state is reconciled against the live guest process. GCP Compute Engine insert/start/stop/delete and Azure VM PUT/start/powerOff/restart/deallocate/delete use the same real guest lifecycle while preserving provider status names. GCP firewall rules and Azure NSGs apply to Firecracker TAP NICs as well as the existing namespace NIC paths.
 
-Simulator CI SDK/CLI/Terraform jobs install Firecracker plus the required rootfs/network tooling because VM public APIs now require the real substrate. Local package compile checks passed for `simulators/realexec`, `simulators/aws`, `simulators/gcp`, and `simulators/azure`. Full AWS SDK/CLI harnesses could not run in the local sandbox because their `TestMain` Docker builds need Docker socket access.
-
-BUG-1299 / issue #371 remains open: guest-visible metadata service reachability from inside Firecracker VMs still needs a real provider-shaped metadata data plane before issue #333 can be fully closed.
+Simulator CI SDK/CLI/Terraform jobs install Firecracker plus the required rootfs/network tooling because VM public APIs now require the real substrate. Local package compile checks passed for `simulators/realexec`, `simulators/aws`, `simulators/gcp`, and `simulators/azure`. The later VM guest metadata follow-up added provider-shaped metadata reachability from inside Firecracker guests.
 
 ## 2026-06-02 - Simulator Image Context And API-Only Runtime Mode
 

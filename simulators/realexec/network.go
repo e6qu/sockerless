@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -37,6 +38,8 @@ type Network struct {
 	cleanup       *CleanupStack
 	runner        Runner
 }
+
+const MetadataIPv4 = "169.254.169.254"
 
 type EgressLink struct {
 	HostVethName string
@@ -217,6 +220,38 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 		return err
 	}
 	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
+}
+
+func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
+	if targetPort <= 0 || targetPort > 65535 {
+		return fmt.Errorf("metadata target port must be 1..65535, got %d", targetPort)
+	}
+	if tableName == "" {
+		tableName = deriveLinuxName("md"+n.NamespaceName, "md")
+	}
+	link, err := n.EnsureEgress(ctx)
+	if err != nil {
+		return err
+	}
+	_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "ip", tableName); err != nil {
+		return err
+	}
+	n.cleanup.Add(func(cleanupCtx context.Context) error {
+		_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+		return nil
+	})
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "ip", tableName, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"); err != nil {
+		return err
+	}
+	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", MetadataIPv4, "tcp", "dport", "80", "dnat", "to", net.JoinHostPort(link.HostIP.String(), strconv.Itoa(targetPort)))
+}
+
+func (s *Subnet) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
+	if s == nil || s.network == nil {
+		return fmt.Errorf("subnet is not attached to a network")
+	}
+	return s.network.ConfigureMetadataDNAT(ctx, targetPort, tableName)
 }
 
 func egressIPs(namespaceName string) (hostIP, netIP net.IP, prefixBits int) {

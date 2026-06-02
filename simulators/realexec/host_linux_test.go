@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -148,6 +150,41 @@ func TestNetworkNamespaceNICRoundTrip(t *testing.T) {
 	}
 	if err := runner.Run(ctx, "ip", "netns", "exec", first.NamespaceName, "ping", "-c", "1", "-W", "1", egress.HostIP.String()); err != nil {
 		t.Fatalf("first namespace cannot reach egress host peer %s through routed fabric: %v", egress.HostIP, err)
+	}
+	metadataListener, err := net.Listen("tcp", net.JoinHostPort(egress.HostIP.String(), "0"))
+	if err != nil {
+		t.Fatalf("listen on egress host peer for metadata probe: %v", err)
+	}
+	defer metadataListener.Close()
+	metadataRemote := make(chan string, 1)
+	metadataServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		metadataRemote <- host
+		_, _ = w.Write([]byte("METADATA_OK\n"))
+	})}
+	defer metadataServer.Close()
+	go func() { _ = metadataServer.Serve(metadataListener) }()
+	metadataPort := metadataListener.Addr().(*net.TCPAddr).Port
+	if err := network.ConfigureMetadataDNAT(ctx, metadataPort, prefix+"md"); err != nil {
+		t.Fatalf("configure metadata DNAT: %v", err)
+	}
+	out, err := runner.Output(ctx, "ip", "netns", "exec", first.NamespaceName, "curl", "-fsS", "--max-time", "2", "http://"+MetadataIPv4+"/metadata-probe")
+	if err != nil {
+		t.Fatalf("first namespace cannot reach provider metadata address: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "METADATA_OK" {
+		t.Fatalf("metadata probe response = %q", out)
+	}
+	select {
+	case remote := <-metadataRemote:
+		if remote != first.PrivateIP.String() {
+			t.Fatalf("metadata server saw remote %s, want guest private IP %s", remote, first.PrivateIP)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("metadata server did not receive probe")
 	}
 
 	table := prefix + "tbl"

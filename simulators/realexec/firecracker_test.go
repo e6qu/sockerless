@@ -166,7 +166,7 @@ func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := configureRootFSNetwork(dir, net.ParseIP("10.26.0.2"), net.ParseIP("10.26.0.1"), 24); err != nil {
+	if err := configureRootFSNetwork(dir, net.ParseIP("10.26.0.2"), net.ParseIP("10.26.0.1"), 24, []string{"metadata.google.internal", "metadata"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,6 +248,13 @@ func TestConfigureRootFSNetworkInstallsBootConfigurator(t *testing.T) {
 	}
 	if string(resolv) != "nameserver 1.1.1.1\n" {
 		t.Fatalf("resolv.conf = %q", resolv)
+	}
+	hosts, err := os.ReadFile(filepath.Join(dir, "etc", "hosts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hosts), "169.254.169.254 metadata.google.internal metadata") {
+		t.Fatalf("hosts does not contain provider metadata aliases:\n%s", hosts)
 	}
 
 	link := filepath.Join(dir, "etc", "systemd", "system", "multi-user.target.wants", "sockerless-network.service")

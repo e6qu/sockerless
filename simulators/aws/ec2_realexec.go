@@ -92,6 +92,7 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 	for eniID, nic := range ec2RealVMNICs {
 		if eni, ok := ec2NetworkInterfaces.Get(eniID); ok && eni.VpcId == vpcID {
 			delete(ec2RealVMNICs, eniID)
+			imdsInstancesByIP.Delete(nic.PrivateIP.String())
 			_ = nic.Close(ctx)
 		}
 	}
@@ -185,12 +186,14 @@ func ec2DeleteRealNIC(ctx context.Context, eniID string) error {
 	}
 	if nic == nil {
 		if tap != nil {
+			imdsInstancesByIP.Delete(tap.PrivateIP.String())
 			errs = append(errs, tap.Close(ctx))
 		}
 		return errors.Join(errs...)
 	}
 	errs = append(errs, nic.Close(ctx))
 	if tap != nil {
+		imdsInstancesByIP.Delete(tap.PrivateIP.String())
 		errs = append(errs, tap.Close(ctx))
 	}
 	return errors.Join(errs...)
@@ -280,6 +283,14 @@ func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
 		ec2RealMu.Lock()
 		ec2RealVMNICs[inst.NetworkInterfaceId] = tap
 		ec2RealMu.Unlock()
+	}
+	imdsInstancesByIP.Store(tap.PrivateIP.String(), inst)
+	metadataPort, err := simHostMetadataPort()
+	if err != nil {
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, ec2RealName("amd", inst.VpcId)); err != nil {
+		return fmt.Errorf("configure EC2 IMDS routing for %s: %w", inst.InstanceId, err)
 	}
 	vm, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
 		ID:        "aws-" + inst.InstanceId,

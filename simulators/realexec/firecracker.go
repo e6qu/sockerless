@@ -27,13 +27,14 @@ const defaultFirecrackerVersion = "v1.15.1"
 var firecrackerAssetsMu sync.Mutex
 
 type FirecrackerVMConfig struct {
-	ID         string
-	Tap        *TapNIC
-	MAC        string
-	VCPUCount  int
-	MemoryMiB  int
-	WorkDir    string
-	BootPeriod time.Duration
+	ID            string
+	Tap           *TapNIC
+	MAC           string
+	VCPUCount     int
+	MemoryMiB     int
+	WorkDir       string
+	BootPeriod    time.Duration
+	MetadataHosts []string
 }
 
 type FirecrackerVM struct {
@@ -120,7 +121,7 @@ func StartFirecrackerVM(ctx context.Context, cfg FirecrackerVMConfig) (*Firecrac
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
-	if err := configureRootFSNetwork(rootfsDir, cfg.Tap.PrivateIP, cfg.Tap.Gateway, cfg.Tap.PrefixBits); err != nil {
+	if err := configureRootFSNetwork(rootfsDir, cfg.Tap.PrivateIP, cfg.Tap.Gateway, cfg.Tap.PrefixBits, cfg.MetadataHosts); err != nil {
 		_ = rollback.Close(context.Background())
 		return nil, err
 	}
@@ -452,7 +453,7 @@ func ensureRootFSInit(rootfsDir string) error {
 	return fmt.Errorf("rootfs has no kernel init candidate (/sbin/init, /etc/init, /bin/init, /bin/sh) and no %s", systemd)
 }
 
-func configureRootFSNetwork(rootfsDir string, ip, gateway net.IP, prefixBits int) error {
+func configureRootFSNetwork(rootfsDir string, ip, gateway net.IP, prefixBits int, metadataHosts []string) error {
 	if ip == nil || ip.To4() == nil {
 		return fmt.Errorf("guest IPv4 address is required")
 	}
@@ -540,6 +541,9 @@ iface eth0 inet static
 	if err := os.WriteFile(filepath.Join(resolvDir, "resolv.conf"), []byte("nameserver 1.1.1.1\n"), 0o644); err != nil {
 		return err
 	}
+	if err := configureRootFSMetadataHosts(rootfsDir, metadataHosts); err != nil {
+		return err
+	}
 	sbinDir := filepath.Join(rootfsDir, "usr", "local", "sbin")
 	if err := os.MkdirAll(sbinDir, 0o755); err != nil {
 		return err
@@ -600,6 +604,40 @@ WantedBy=multi-user.target
 		return err
 	}
 	return os.Symlink("../sockerless-network.service", link)
+}
+
+func configureRootFSMetadataHosts(rootfsDir string, metadataHosts []string) error {
+	if len(metadataHosts) == 0 {
+		return nil
+	}
+	hostsPath := filepath.Join(rootfsDir, "etc", "hosts")
+	existing, err := os.ReadFile(hostsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var hosts []string
+	for _, host := range metadataHosts {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	if len(hosts) == 0 {
+		return nil
+	}
+	line := MetadataIPv4 + " " + strings.Join(hosts, " ")
+	if strings.Contains(string(existing), line) {
+		return nil
+	}
+	var out strings.Builder
+	out.Write(existing)
+	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
+		out.WriteByte('\n')
+	}
+	out.WriteString(line)
+	out.WriteByte('\n')
+	return os.WriteFile(hostsPath, []byte(out.String()), 0o644)
 }
 
 func disableStockFirecrackerNetworking(rootfsDir string) error {

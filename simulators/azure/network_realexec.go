@@ -78,6 +78,7 @@ func azureDeleteRealVnet(ctx context.Context, vnetID string) error {
 		if armNIC, ok := azureNICs.Get(nicID); ok {
 			for _, ipconf := range armNIC.Properties.IPConfigurations {
 				if ipconf.Properties.Subnet != nil && strings.HasPrefix(ipconf.Properties.Subnet.ID, vnetID+"/subnets/") {
+					azureMetadataVMsByIP.Delete(nic.PrivateIP.String())
 					_ = nic.Close(ctx)
 					delete(azureRealVMNICs, nicID)
 					break
@@ -228,6 +229,7 @@ func azureDeleteRealNIC(ctx context.Context, nicID string) error {
 		errs = append(errs, nic.Close(ctx))
 	}
 	if tap != nil {
+		azureMetadataVMsByIP.Delete(tap.PrivateIP.String())
 		errs = append(errs, tap.Close(ctx))
 	}
 	return errors.Join(errs...)
@@ -339,6 +341,18 @@ func azureStartRealVM(ctx context.Context, vm VirtualMachine) error {
 		armNIC.Properties.MacAddress = formatAzureMAC(azureNICMAC(nicID))
 		azureNICs.Put(nicID, armNIC)
 	}
+	azureMetadataVMsByIP.Store(tap.PrivateIP.String(), azureMetadataVM{
+		VM:       vm,
+		NIC:      armNIC,
+		SubnetID: subnetID,
+	})
+	metadataPort, err := simHostMetadataPort()
+	if err != nil {
+		return err
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, azureRealName("zmd", subnetID)); err != nil {
+		return fmt.Errorf("configure Azure IMDS routing for %s: %w", vm.ID, err)
+	}
 	vmProc, err := realexec.StartFirecrackerVM(ctx, realexec.FirecrackerVMConfig{
 		ID:        "azure-" + vm.ID,
 		Tap:       tap,
@@ -378,6 +392,7 @@ func azureDeleteRealVM(ctx context.Context, vm VirtualMachine) error {
 		delete(azureRealVMNICs, ref.ID)
 		azureRealMu.Unlock()
 		if tap != nil {
+			azureMetadataVMsByIP.Delete(tap.PrivateIP.String())
 			errs = append(errs, tap.Close(ctx))
 		}
 	}

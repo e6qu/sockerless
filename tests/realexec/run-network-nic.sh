@@ -13,6 +13,7 @@ need_cmd() {
 [ "$(uname -s)" = "Linux" ] || fail "real-execution network/NIC test requires Linux"
 
 need_cmd firecracker
+need_cmd curl
 need_cmd jailer
 need_cmd go
 need_cmd ip
@@ -22,7 +23,8 @@ need_cmd sudo
 
 [ -e /dev/kvm ] || fail "real-execution capability test requires /dev/kvm"
 if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
-  sudo test -r /dev/kvm && sudo test -w /dev/kvm || fail "real-execution capability test requires read/write access to /dev/kvm"
+  sudo test -r /dev/kvm || fail "real-execution capability test requires read access to /dev/kvm"
+  sudo test -w /dev/kvm || fail "real-execution capability test requires write access to /dev/kvm"
 fi
 
 repo_root="$(git rev-parse --show-toplevel)"
