@@ -609,6 +609,14 @@ resource "google_service_account" "tf_sa" {
   display_name = "tf-test runner service account"
 }
 
+# Project IAM binding — exercises getIamPolicy / setIamPolicy on
+# POST /v1/projects/{project}:{action} in the GCP sim.
+resource "google_project_iam_member" "tf_sa_viewer" {
+  project = "test-project"
+  role    = "roles/viewer"
+  member  = "serviceAccount:${google_service_account.tf_sa.email}"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "compute_disk_self_link" {

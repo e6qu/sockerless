@@ -518,3 +518,53 @@ func TestCompute_Instances_Lifecycle(t *testing.T) {
 	_, err = svc.Instances.Get(project, zone, "sdk-vm-1").Context(ctx).Do()
 	require.Error(t, err, "get after delete must fail")
 }
+
+func TestCompute_InstanceTemplateCRUD(t *testing.T) {
+	svc := computeService(t)
+	project := "tmpl-test-project"
+
+	tmpl := &compute.InstanceTemplate{
+		Name: "sdk-instance-tmpl",
+		Properties: &compute.InstanceProperties{
+			MachineType: "n1-standard-2",
+			Disks: []*compute.AttachedDisk{
+				{
+					Boot:             true,
+					AutoDelete:       true,
+					InitializeParams: &compute.AttachedDiskInitializeParams{DiskSizeGb: 20},
+				},
+			},
+		},
+	}
+
+	// Insert (create) instance template — returns an Operation.
+	op, err := svc.InstanceTemplates.Insert(project, tmpl).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DONE", op.Status)
+
+	// Get instance template.
+	got, err := svc.InstanceTemplates.Get(project, "sdk-instance-tmpl").Context(ctx).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-instance-tmpl", got.Name)
+	assert.Equal(t, "compute#instanceTemplate", got.Kind)
+	require.NotNil(t, got.Properties)
+
+	// List instance templates — must contain created template.
+	list, err := svc.InstanceTemplates.List(project).Context(ctx).Do()
+	require.NoError(t, err)
+	found := false
+	for _, t := range list.Items {
+		if t.Name == "sdk-instance-tmpl" {
+			found = true
+		}
+	}
+	assert.True(t, found, "created template must appear in list")
+
+	// Delete instance template.
+	_, err = svc.InstanceTemplates.Delete(project, "sdk-instance-tmpl").Context(ctx).Do()
+	require.NoError(t, err)
+
+	// Get after delete must fail.
+	_, err = svc.InstanceTemplates.Get(project, "sdk-instance-tmpl").Context(ctx).Do()
+	require.Error(t, err, "get after delete must fail")
+}

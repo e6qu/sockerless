@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1326 filed - 1326 fixed - 2 open - 3 false positives.**
+**1334 filed - 1334 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,7 +15,18 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1324 through BUG-1326 (issue #387):
+This phase closed BUG-1327 through BUG-1334:
+
+- BUG-1327: SA key routes added to `iam.go` — `POST/GET/LIST/DELETE /v1/projects/{p}/serviceAccounts/{email}/keys`; gcloud's project=`-` wildcard resolved by extracting project from email; `gcpMakeSAKeyJSON` generates a real RSA-2048 PKCS8 key returned as base64-encoded JSON credential file (privateKeyData only on create, absent on get/list per real GCP spec).
+- BUG-1328: Compute instance template routes added to `compute.go` — `POST/GET/LIST/DELETE /compute/v1/projects/{p}/global/instanceTemplates` plus `GET .../aggregated/instanceTemplates` (used by `gcloud compute instance-templates list`); DELETE uses `operationType: "delete"` so gcloud does not re-fetch the deleted resource.
+- BUG-1329: Cloud Build trigger CRUD SDK tests added to `build_test.go` via `google.golang.org/api/cloudbuild/v1` — Create/Get/List/Patch/Delete.
+- BUG-1330: Cloud Logging sink CRUD SDK tests added to `logging_test.go` via `google.golang.org/api/logging/v2` REST client — Create/Get/List/Update/Delete; assertions use full resource name `projects/{p}/sinks/{id}` matching real GCP wire shape.
+- BUG-1331: Cloud Logging metric CRUD SDK tests added to `logging_test.go` — Create/Get/List/Update/Delete; same full resource name convention.
+- BUG-1332: Project IAM SDK tests added to `iam_test.go` via `google.golang.org/api/cloudresourcemanager/v1` — GetIamPolicy (empty) and SetIamPolicy/GetIamPolicy round-trip.
+- BUG-1333: CLI tests added to `client_surface_audit_test.go` for logging sinks (`gcloud logging sinks`), logging metrics (`gcloud logging metrics`), project IAM (`gcloud projects get-iam-policy` + `add-iam-policy-binding`), SA keys (`gcloud iam service-accounts keys`), and compute instance templates (`gcloud compute instance-templates`); added `CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDRESOURCEMANAGER` to `gcloudCLI` env.
+- BUG-1334: `google_project_iam_member "tf_sa_viewer"` added to GCP Terraform test stack — binds the existing `google_service_account.tf_sa` to `roles/viewer`.
+
+Earlier phase closed BUG-1324 through BUG-1326 (issue #387):
 
 - BUG-1324: `mintAzureSimIDToken` emitted fixed static claims with no `groups` field. Fixed by reading the active seeded user from `entraUsersStore` and including `groups: [id, ...]` in the id_token claims when the user has seeded groups.
 - BUG-1325: No Microsoft Graph `GET /v1.0/me/memberOf` or `transitiveMemberOf` endpoint in the Azure sim. Fixed by adding both routes in `entra.go`; they parse the bearer token's `oid` claim and return the seeded user's groups as OData `directoryObjects`.

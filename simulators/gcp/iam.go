@@ -1,6 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"strings"
@@ -37,8 +43,21 @@ type IAMBinding struct {
 // resource-specific handlers can process :getIamPolicy / :setIamPolicy requests.
 var gcpResourcePolicies sim.Store[IAMPolicy]
 
+// GCPServiceAccountKey mirrors the `iam#ServiceAccountKey` resource. Real GCP
+// only returns privateKeyData on creation; subsequent Gets omit it.
+type GCPServiceAccountKey struct {
+	Name            string `json:"name"`
+	KeyAlgorithm    string `json:"keyAlgorithm"`
+	ValidAfterTime  string `json:"validAfterTime"`
+	ValidBeforeTime string `json:"validBeforeTime"`
+	KeyType         string `json:"keyType"`
+	PrivateKeyData  string `json:"privateKeyData,omitempty"` // only on Create response
+	PrivateKeyType  string `json:"privateKeyType,omitempty"` // only on Create response
+}
+
 func registerIAM(srv *sim.Server) {
 	serviceAccounts := sim.MakeStore[GCPServiceAccount](srv.DB(), "iam_service_accounts")
+	saKeys := sim.MakeStore[GCPServiceAccountKey](srv.DB(), "iam_sa_keys")
 	projectPolicies := sim.MakeStore[IAMPolicy](srv.DB(), "iam_project_policies")
 	gcpResourcePolicies = sim.MakeStore[IAMPolicy](srv.DB(), "iam_resource_policies")
 	resourcePolicies := gcpResourcePolicies
@@ -118,6 +137,93 @@ func registerIAM(srv *sim.Server) {
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 
 		serviceAccounts.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// Create service account key — returns full key on creation only.
+	// Real GCP wire: POST /v1/projects/{p}/serviceAccounts/{email}/keys
+	// project="-" is the GCP wildcard: extract the project from the email.
+	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts/{email}/keys", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
+		saName := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
+		if _, ok := serviceAccounts.Get(saName); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
+			return
+		}
+		keyID := generateUUID()
+		keyName := fmt.Sprintf("%s/keys/%s", saName, keyID)
+		now := time.Now().UTC()
+		key := GCPServiceAccountKey{
+			Name:            keyName,
+			KeyAlgorithm:    "KEY_ALG_RSA_2048",
+			ValidAfterTime:  now.Format(time.RFC3339),
+			ValidBeforeTime: now.AddDate(10, 0, 0).Format(time.RFC3339),
+			KeyType:         "USER_MANAGED",
+		}
+		saKeys.Put(keyName, key)
+
+		privateKeyData, err := gcpMakeSAKeyJSON(project, keyID, email, key.ValidAfterTime, key.ValidBeforeTime)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "generate key: %v", err)
+			return
+		}
+		resp := key
+		resp.PrivateKeyData = privateKeyData
+		resp.PrivateKeyType = "TYPE_GOOGLE_CREDENTIALS_FILE"
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	// Get service account key (no private key data after creation).
+	srv.HandleFunc("GET /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
+		keyID := sim.PathParam(r, "keyId")
+		keyName := fmt.Sprintf("projects/%s/serviceAccounts/%s/keys/%s", project, email, keyID)
+		key, ok := saKeys.Get(keyName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "key %s not found", keyID)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, key)
+	})
+
+	// List service account keys.
+	srv.HandleFunc("GET /v1/projects/{project}/serviceAccounts/{email}/keys", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
+		prefix := fmt.Sprintf("projects/%s/serviceAccounts/%s/keys/", project, email)
+		keys := saKeys.Filter(func(k GCPServiceAccountKey) bool {
+			return strings.HasPrefix(k.Name, prefix)
+		})
+		if keys == nil {
+			keys = []GCPServiceAccountKey{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"keys": keys})
+	})
+
+	// Delete service account key.
+	srv.HandleFunc("DELETE /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
+		keyID := sim.PathParam(r, "keyId")
+		keyName := fmt.Sprintf("projects/%s/serviceAccounts/%s/keys/%s", project, email, keyID)
+		if !saKeys.Delete(keyName) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "key %s not found", keyID)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 	})
 
@@ -344,3 +450,49 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 // policy persistence so getIamPolicy / setIamPolicy round-trips
 // match regardless of which resource type registered the policy.
 func gcpResourceIAMStore() sim.Store[IAMPolicy] { return gcpResourcePolicies }
+
+// gcpProjectFromEmail extracts the project ID from a GCP service account email.
+// When the GCP API receives project="-" (a valid wildcard), the SDK resolves the
+// project from the account email: {accountId}@{project}.iam.gserviceaccount.com.
+func gcpProjectFromEmail(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return ""
+	}
+	host := email[at+1:]
+	return strings.TrimSuffix(host, ".iam.gserviceaccount.com")
+}
+
+// gcpMakeSAKeyJSON generates a real RSA-2048 key pair and returns it encoded
+// as a base64 GCP service-account JSON credential file — matching the exact
+// shape real GCP returns for CreateServiceAccountKey.
+func gcpMakeSAKeyJSON(project, keyID, email, validAfter, validBefore string) (string, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", fmt.Errorf("generate RSA key: %w", err)
+	}
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", fmt.Errorf("marshal private key: %w", err)
+	}
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+
+	payload := map[string]string{
+		"type":                        "service_account",
+		"project_id":                  project,
+		"private_key_id":              keyID,
+		"private_key":                 string(privPEM),
+		"client_email":                email,
+		"client_id":                   generateUUID()[:20],
+		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
+		"token_uri":                   "https://oauth2.googleapis.com/token",
+		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/" + email,
+		"universe_domain":             "googleapis.com",
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal JSON key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
