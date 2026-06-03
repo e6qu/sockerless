@@ -556,3 +556,37 @@ func TestCreateOrgRepo(t *testing.T) {
 		t.Fatalf("expected full_name=testorg-repo/org-repo, got %v", data["full_name"])
 	}
 }
+
+// TestAdminCreateOrg_RequiresSiteAdmin verifies that POST /admin/organizations
+// returns 403 for unauthenticated callers and non-site-admin users — matching
+// real GHES behaviour.
+func TestAdminCreateOrg_RequiresSiteAdmin(t *testing.T) {
+	// No token — unauthenticated → 403.
+	resp := ghPost(t, "/api/v3/admin/organizations", "", map[string]interface{}{
+		"login": "org-no-auth",
+		"admin": "admin",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unauthenticated: got %d, want 403", resp.StatusCode)
+	}
+
+	// Token for a non-site-admin user → 403.
+	testServer.store.mu.Lock()
+	regularUser := &User{ID: testServer.store.NextUser, Login: "regular", Type: "User", SiteAdmin: false}
+	testServer.store.NextUser++
+	testServer.store.Users[regularUser.ID] = regularUser
+	testServer.store.UsersByLogin[regularUser.Login] = regularUser
+	regularTok := &Token{Value: "ghp_regularusertoken0000000000000000000000", UserID: regularUser.ID, Scopes: "repo"}
+	testServer.store.Tokens[regularTok.Value] = regularTok
+	testServer.store.mu.Unlock()
+
+	resp2 := ghPost(t, "/api/v3/admin/organizations", regularTok.Value, map[string]interface{}{
+		"login": "org-non-admin",
+		"admin": "admin",
+	})
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-site-admin: got %d, want 403", resp2.StatusCode)
+	}
+}

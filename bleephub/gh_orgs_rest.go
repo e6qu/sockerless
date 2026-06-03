@@ -23,9 +23,15 @@ func (s *Server) registerGHOrgRoutes() {
 // handleAdminCreateOrg implements the GHES admin org-creation endpoint:
 // POST /admin/organizations — the standard GitHub Enterprise Server path for
 // provisioning organizations. Body: { login, admin, profile_name }.
-// `admin` is the login of the user who becomes the org owner; the caller
-// does not need to be that user (site-admin privilege assumed).
+// `admin` is the login of the user who becomes the org owner.
+// Requires a site-admin token (matches real GHES behaviour).
 func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
+	caller := ghUserFromContext(r.Context())
+	if caller == nil || !caller.SiteAdmin {
+		writeGHError(w, http.StatusForbidden, "Must be a site administrator.")
+		return
+	}
+
 	var req struct {
 		Login       string `json:"login"`
 		Admin       string `json:"admin"`
