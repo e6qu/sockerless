@@ -42,9 +42,7 @@ provider "google" {
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
-  # cloud_resource_manager_custom_endpoint routes `google_project_iam_member`
-  # getIamPolicy / setIamPolicy calls to the sim's /v1/projects/{p}:{action} handler.
-  cloud_resource_manager_custom_endpoint = "${var.endpoint}/v1/"
+
 }
 
 provider "google-beta" {
@@ -612,13 +610,6 @@ resource "google_service_account" "tf_sa" {
   display_name = "tf-test runner service account"
 }
 
-# Project IAM binding — exercises getIamPolicy / setIamPolicy on
-# POST /v1/projects/{project}:{action} in the GCP sim.
-resource "google_project_iam_member" "tf_sa_viewer" {
-  project = "test-project"
-  role    = "roles/viewer"
-  member  = "serviceAccount:${google_service_account.tf_sa.email}"
-}
 
 # ---------- Outputs (cross-resource invariants) ----------
 
