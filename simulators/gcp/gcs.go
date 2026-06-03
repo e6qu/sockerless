@@ -559,17 +559,24 @@ func registerGCS(srv *sim.Server) {
 	// List buckets
 	srv.HandleFunc("GET /storage/v1/b", func(w http.ResponseWriter, r *http.Request) {
 		all := buckets.List()
-		var items []map[string]any
+		sort.Slice(all, func(i, j int) bool {
+			ni, _ := all[i].Data["name"].(string)
+			nj, _ := all[j].Data["name"].(string)
+			return ni < nj
+		})
+		items := make([]map[string]any, 0, len(all))
 		for _, b := range all {
 			items = append(items, b.Data)
 		}
-		if items == nil {
-			items = []map[string]any{}
+		page, next, ok := paginateList(w, r, items)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "storage#buckets",
-			"items": items,
-		})
+		resp := map[string]any{"kind": "storage#buckets", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// List objects
@@ -630,14 +637,17 @@ func registerGCS(srv *sim.Server) {
 		})
 		sort.Strings(prefixes)
 
-		resp := map[string]any{
-			"kind":  "storage#objects",
-			"items": items,
+		page, next, ok := paginateList(w, r, items)
+		if !ok {
+			return
 		}
+		resp := map[string]any{"kind": "storage#objects", "items": page}
 		if len(prefixes) > 0 {
 			resp["prefixes"] = prefixes
 		}
-
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
 		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 

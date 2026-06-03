@@ -446,3 +446,90 @@ func TestGCS_ObjectMetadataValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestGCS_ListBuckets_Pagination(t *testing.T) {
+	names := []string{"pag-bucket-a", "pag-bucket-b", "pag-bucket-c"}
+	for _, n := range names {
+		gcsRESTCreate(t, n)
+		t.Cleanup(func() {
+			req, _ := http.NewRequest("DELETE", baseURL+"/storage/v1/b/"+n, nil)
+			http.DefaultClient.Do(req)
+		})
+	}
+
+	seen := map[string]bool{}
+	var pageToken string
+	for {
+		u := baseURL + "/storage/v1/b?project=p&pageSize=1"
+		if pageToken != "" {
+			u += "&pageToken=" + url.QueryEscape(pageToken)
+		}
+		req, _ := http.NewRequest("GET", u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		var body struct {
+			Items         []map[string]any `json:"items"`
+			NextPageToken string           `json:"nextPageToken"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		resp.Body.Close()
+		for _, item := range body.Items {
+			if n, ok := item["name"].(string); ok {
+				seen[n] = true
+			}
+		}
+		pageToken = body.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "bucket %s should appear via pagination", n)
+	}
+}
+
+func TestGCS_ListObjects_Pagination(t *testing.T) {
+	bucket := "pag-obj-bucket"
+	gcsRESTCreate(t, bucket)
+	t.Cleanup(func() {
+		req, _ := http.NewRequest("DELETE", baseURL+"/storage/v1/b/"+bucket, nil)
+		http.DefaultClient.Do(req)
+	})
+
+	for _, name := range []string{"obj-a", "obj-b", "obj-c"} {
+		body := bytes.NewReader([]byte("data"))
+		req, _ := http.NewRequest("POST", fmt.Sprintf("%s/upload/storage/v1/b/%s/o?uploadType=media&name=%s", baseURL, bucket, name), body)
+		req.Header.Set("Content-Type", "text/plain")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+	}
+
+	seen := map[string]bool{}
+	var pageToken string
+	for {
+		u := fmt.Sprintf("%s/storage/v1/b/%s/o?pageSize=1", baseURL, bucket)
+		if pageToken != "" {
+			u += "&pageToken=" + url.QueryEscape(pageToken)
+		}
+		req, _ := http.NewRequest("GET", u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		var body struct {
+			Items         []map[string]any `json:"items"`
+			NextPageToken string           `json:"nextPageToken"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		resp.Body.Close()
+		for _, item := range body.Items {
+			if n, ok := item["name"].(string); ok {
+				seen[n] = true
+			}
+		}
+		pageToken = body.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	assert.Equal(t, map[string]bool{"obj-a": true, "obj-b": true, "obj-c": true}, seen)
+}

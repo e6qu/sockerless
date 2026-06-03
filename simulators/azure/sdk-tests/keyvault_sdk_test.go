@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -8,8 +9,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -460,4 +463,110 @@ func testCertificateDER(t *testing.T, commonName string) []byte {
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	require.NoError(t, err)
 	return der
+}
+
+// kvDataPlaneHost returns the vault-specific Host header value for sim data-plane requests.
+func kvDataPlaneHost(vault string) string {
+	return vault + ".vault." + strings.TrimPrefix(baseURL, "http://")
+}
+
+// kvGET makes a raw HTTP GET to the KV data-plane, following the sim's subdomain routing.
+func kvGET(t *testing.T, host, path string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest("GET", baseURL+path, nil)
+	req.Host = host
+	req.Header.Set("Authorization", "Bearer fake-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, body
+}
+
+// followKVNextLink parses a nextLink URL and fetches the next page from the sim.
+func followKVNextLink(t *testing.T, nextLink, host string) (int, []byte) {
+	t.Helper()
+	parsed, err := url.Parse(nextLink)
+	require.NoError(t, err)
+	pathAndQuery := parsed.Path
+	if parsed.RawQuery != "" {
+		pathAndQuery += "?" + parsed.RawQuery
+	}
+	return kvGET(t, host, pathAndQuery)
+}
+
+func TestKV_ListSecrets_Pagination(t *testing.T) {
+	rg := "kv-pag-rg"
+	vault := "pag-secret-vault"
+	createKVViaARM(t, rg, vault)
+	host := kvDataPlaneHost(vault)
+
+	for _, name := range []string{"pag-sec-a", "pag-sec-b", "pag-sec-c"} {
+		body, _ := json.Marshal(map[string]any{"value": "val"})
+		req, _ := http.NewRequest("PUT", baseURL+"/secrets/"+name+"?api-version=7.4", bytes.NewReader(body))
+		req.Host = host
+		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+	}
+
+	seen := map[string]bool{}
+	_, raw := kvGET(t, host, "/secrets?maxresults=1&api-version=7.4")
+	for {
+		var page struct {
+			Value    []map[string]any `json:"value"`
+			NextLink string           `json:"nextLink"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &page))
+		for _, s := range page.Value {
+			if id, ok := s["id"].(string); ok {
+				seen[id] = true
+			}
+		}
+		if page.NextLink == "" {
+			break
+		}
+		_, raw = followKVNextLink(t, page.NextLink, host)
+	}
+	assert.Equal(t, 3, len(seen), "all 3 secrets should appear via pagination")
+}
+
+func TestKV_ListKeys_Pagination(t *testing.T) {
+	rg := "kv-key-pag-rg"
+	vault := "pag-key-vault"
+	createKVViaARM(t, rg, vault)
+	host := kvDataPlaneHost(vault)
+
+	for _, name := range []string{"pag-key-a", "pag-key-b", "pag-key-c"} {
+		body, _ := json.Marshal(map[string]any{"kty": "RSA", "key_size": 2048})
+		req, _ := http.NewRequest("POST", baseURL+"/keys/"+name+"/create?api-version=7.4", bytes.NewReader(body))
+		req.Host = host
+		req.Header.Set("Authorization", "Bearer fake-token")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+	}
+
+	seen := map[string]bool{}
+	_, raw := kvGET(t, host, "/keys?maxresults=1&api-version=7.4")
+	for {
+		var page struct {
+			Value    []map[string]any `json:"value"`
+			NextLink string           `json:"nextLink"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &page))
+		for _, k := range page.Value {
+			if id, ok := k["kid"].(string); ok {
+				seen[id] = true
+			}
+		}
+		if page.NextLink == "" {
+			break
+		}
+		_, raw = followKVNextLink(t, page.NextLink, host)
+	}
+	assert.Equal(t, 3, len(seen), "all 3 keys should appear via pagination")
 }

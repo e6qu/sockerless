@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -272,10 +273,16 @@ func handleListBuildTriggers(w http.ResponseWriter, r *http.Request) {
 	triggers := cbTriggers.Filter(func(t BuildTrigger) bool {
 		return strings.HasPrefix(t.ResourceName, prefix)
 	})
-	if triggers == nil {
-		triggers = []BuildTrigger{}
+	sort.Slice(triggers, func(i, j int) bool { return triggers[i].Name < triggers[j].Name })
+	page, next, ok := paginateList(w, r, triggers)
+	if !ok {
+		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"triggers": triggers})
+	resp := map[string]any{"triggers": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleGetBuildTrigger(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -224,10 +225,16 @@ func registerPrivateDNS(srv *sim.Server) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/privateDnsZones/", sub, rg)
-		filtered := zones.Filter(func(z PrivateDnsZone) bool {
+		all := zones.Filter(func(z PrivateDnsZone) bool {
 			return strings.HasPrefix(z.ID, prefix)
 		})
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next := armPage(r, all)
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
 	})
 
 	// GET - Get zone

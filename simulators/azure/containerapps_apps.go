@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -299,10 +300,16 @@ func registerContainerAppsApps(srv *sim.Server) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/", sub, rg)
-		filtered := apps.Filter(func(a ContainerApp) bool {
+		all := apps.Filter(func(a ContainerApp) bool {
 			return strings.HasPrefix(a.ID, prefix)
 		})
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next := armPage(r, all)
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
 	})
 
 	// POST /containerApps/{appName}/listsecrets — real ACA keeps

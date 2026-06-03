@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -284,10 +285,16 @@ func handleListLoggingSinks(w http.ResponseWriter, r *http.Request) {
 	sinks := logSinks.Filter(func(s LoggingSink) bool {
 		return strings.HasPrefix(s.Name, prefix)
 	})
-	if sinks == nil {
-		sinks = []LoggingSink{}
+	sort.Slice(sinks, func(i, j int) bool { return sinks[i].Name < sinks[j].Name })
+	page, next, ok := paginateList(w, r, sinks)
+	if !ok {
+		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"sinks": sinks})
+	resp := map[string]any{"sinks": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleGetLoggingSink(w http.ResponseWriter, r *http.Request) {
@@ -337,10 +344,16 @@ func handleListLoggingMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := logMetrics.Filter(func(m LoggingMetric) bool {
 		return strings.HasPrefix(m.Name, prefix)
 	})
-	if metrics == nil {
-		metrics = []LoggingMetric{}
+	sort.Slice(metrics, func(i, j int) bool { return metrics[i].Name < metrics[j].Name })
+	page, next, ok := paginateList(w, r, metrics)
+	if !ok {
+		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"metrics": metrics})
+	resp := map[string]any{"metrics": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleGetLoggingMetric(w http.ResponseWriter, r *http.Request) {

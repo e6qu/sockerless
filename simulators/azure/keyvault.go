@@ -18,6 +18,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -1164,20 +1165,24 @@ func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
 		Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
 		Tags       map[string]string `json:"tags,omitempty"`
 	}
-	var out []keyItem
-	for _, k := range keyVaultKeys.List() {
+	all := keyVaultKeys.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	items := make([]keyItem, 0, len(all))
+	for _, k := range all {
 		if k.Vault == vault && !k.isDeleted() {
 			v, ok := k.latest()
 			if !ok {
 				continue
 			}
-			out = append(out, keyItem{ID: buildKVURL(r, vault, "keys", k.Name, ""), Attributes: v.Attributes, Tags: v.Tags})
+			items = append(items, keyItem{ID: buildKVURL(r, vault, "keys", k.Name, ""), Attributes: v.Attributes, Tags: v.Tags})
 		}
 	}
-	if out == nil {
-		out = []keyItem{}
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVListKeyVersions(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1192,17 +1197,23 @@ func handleKVListKeyVersions(w http.ResponseWriter, r *http.Request, vault, name
 		Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
 		Tags       map[string]string `json:"tags,omitempty"`
 	}
-	out := []keyItem{}
 	versions := rec.Versions
 	if len(versions) == 0 {
 		if v, ok := rec.latest(); ok {
 			versions = []kvKeyVersion{v}
 		}
 	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
+	items := make([]keyItem, 0, len(versions))
 	for _, v := range versions {
-		out = append(out, keyItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags})
+		items = append(items, keyItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVUpdateKey(w http.ResponseWriter, r *http.Request, vault, name, version string) {
@@ -1276,14 +1287,21 @@ func handleKVGetDeletedKey(w http.ResponseWriter, r *http.Request, vault, name s
 }
 
 func handleKVListDeletedKeys(w http.ResponseWriter, r *http.Request, vault string) {
-	out := []map[string]any{}
-	for _, rec := range keyVaultKeys.List() {
+	all := keyVaultKeys.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	items := []map[string]any{}
+	for _, rec := range all {
 		if rec.Vault != vault || !rec.isDeleted() {
 			continue
 		}
-		out = append(out, deletedKeyBundle(rec))
+		items = append(items, deletedKeyBundle(rec))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVPurgeDeletedKey(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1700,20 +1718,24 @@ func handleKVListCertificates(w http.ResponseWriter, r *http.Request, vault stri
 		Tags           map[string]string `json:"tags,omitempty"`
 		X509Thumbprint string            `json:"x5t,omitempty"`
 	}
-	var out []certItem
-	for _, c := range keyVaultCertificates.List() {
+	all := keyVaultCertificates.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	items := make([]certItem, 0, len(all))
+	for _, c := range all {
 		if c.Vault == vault && !c.isDeleted() {
 			v, ok := c.latest()
 			if !ok {
 				continue
 			}
-			out = append(out, certItem{ID: buildKVURL(r, vault, "certificates", c.Name, ""), Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
+			items = append(items, certItem{ID: buildKVURL(r, vault, "certificates", c.Name, ""), Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
 		}
 	}
-	if out == nil {
-		out = []certItem{}
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVListCertificateVersions(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1729,17 +1751,23 @@ func handleKVListCertificateVersions(w http.ResponseWriter, r *http.Request, vau
 		Tags           map[string]string `json:"tags,omitempty"`
 		X509Thumbprint string            `json:"x5t,omitempty"`
 	}
-	out := []certItem{}
 	versions := rec.Versions
 	if len(versions) == 0 {
 		if v, ok := rec.latest(); ok {
 			versions = []kvCertVersion{v}
 		}
 	}
+	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
+	items := make([]certItem, 0, len(versions))
 	for _, v := range versions {
-		out = append(out, certItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
+		items = append(items, certItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVUpdateCertificate(w http.ResponseWriter, r *http.Request, vault, name, version string) {
@@ -1852,14 +1880,21 @@ func handleKVGetDeletedCertificate(w http.ResponseWriter, r *http.Request, vault
 }
 
 func handleKVListDeletedCertificates(w http.ResponseWriter, r *http.Request, vault string) {
-	out := []map[string]any{}
-	for _, rec := range keyVaultCertificates.List() {
+	all := keyVaultCertificates.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	items := []map[string]any{}
+	for _, rec := range all {
 		if rec.Vault != vault || !rec.isDeleted() {
 			continue
 		}
-		out = append(out, deletedCertificateBundle(rec))
+		items = append(items, deletedCertificateBundle(rec))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	page, next := kvPage(r, items)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = kvNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleKVPurgeDeletedCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -2455,21 +2490,24 @@ func handleKVListSecrets(w http.ResponseWriter, r *http.Request, vault string) {
 	all := keyVaultData.Filter(func(s kvSecretStored) bool {
 		return s.Vault == vault && !s.isDeleted()
 	})
-	if all == nil {
-		all = []kvSecretStored{}
-	}
-	out := kvSecretListResult{Value: make([]kvSecretItem, 0, len(all))}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	items := make([]kvSecretItem, 0, len(all))
 	for _, s := range all {
 		if len(s.Versions) == 0 {
 			continue
 		}
 		latest := s.latest()
-		out.Value = append(out.Value, kvSecretItem{
+		items = append(items, kvSecretItem{
 			ID:          buildKVURL(r, s.Vault, "secrets", s.Name, ""),
 			Attributes:  latest.Attributes,
 			Tags:        latest.Tags,
 			ContentType: latest.ContentType,
 		})
+	}
+	page, next := kvPage(r, items)
+	out := kvSecretListResult{Value: page}
+	if next != "" {
+		out.NextLink = kvNextLink(r, next)
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }
@@ -2484,14 +2522,21 @@ func handleKVListSecretVersions(w http.ResponseWriter, r *http.Request, vault, n
 			"A secret with (name/id) %q was not found in this key vault.", name)
 		return
 	}
-	out := kvSecretListResult{Value: make([]kvSecretItem, 0, len(rec.Versions))}
-	for _, v := range rec.Versions {
-		out.Value = append(out.Value, kvSecretItem{
+	versions := rec.Versions
+	sort.Slice(versions, func(i, j int) bool { return versions[i].Version < versions[j].Version })
+	items := make([]kvSecretItem, 0, len(versions))
+	for _, v := range versions {
+		items = append(items, kvSecretItem{
 			ID:          buildKVURL(r, vault, "secrets", name, v.Version),
 			Attributes:  v.Attributes,
 			Tags:        v.Tags,
 			ContentType: v.ContentType,
 		})
+	}
+	page, next := kvPage(r, items)
+	out := kvSecretListResult{Value: page}
+	if next != "" {
+		out.NextLink = kvNextLink(r, next)
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }
@@ -2514,25 +2559,20 @@ func handleKVListDeletedSecrets(w http.ResponseWriter, r *http.Request, vault st
 	all := keyVaultData.Filter(func(s kvSecretStored) bool {
 		return s.Vault == vault && s.isDeleted()
 	})
-	if all == nil {
-		all = []kvSecretStored{}
-	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
 	type deletedItem struct {
 		kvSecretItem
 		RecoveryID         string `json:"recoveryId"`
 		DeletedDate        int64  `json:"deletedDate"`
 		ScheduledPurgeDate int64  `json:"scheduledPurgeDate"`
 	}
-	out := struct {
-		Value    []deletedItem `json:"value"`
-		NextLink string        `json:"nextLink,omitempty"`
-	}{Value: make([]deletedItem, 0, len(all))}
+	items := make([]deletedItem, 0, len(all))
 	for _, s := range all {
 		if len(s.Versions) == 0 {
 			continue
 		}
 		latest := s.latest()
-		out.Value = append(out.Value, deletedItem{
+		items = append(items, deletedItem{
 			kvSecretItem: kvSecretItem{
 				ID:          buildKVURL(r, s.Vault, "secrets", s.Name, ""),
 				Attributes:  latest.Attributes,
@@ -2543,6 +2583,14 @@ func handleKVListDeletedSecrets(w http.ResponseWriter, r *http.Request, vault st
 			DeletedDate:        s.DeletedAt,
 			ScheduledPurgeDate: s.ScheduledPurgeAt,
 		})
+	}
+	page, next := kvPage(r, items)
+	out := struct {
+		Value    []deletedItem `json:"value"`
+		NextLink string        `json:"nextLink,omitempty"`
+	}{Value: page}
+	if next != "" {
+		out.NextLink = kvNextLink(r, next)
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }

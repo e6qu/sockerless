@@ -568,3 +568,35 @@ func TestCompute_InstanceTemplateCRUD(t *testing.T) {
 	_, err = svc.InstanceTemplates.Get(project, "sdk-instance-tmpl").Context(ctx).Do()
 	require.Error(t, err, "get after delete must fail")
 }
+
+func TestCompute_ListNetworks_Pagination(t *testing.T) {
+	const project = "test-project"
+	svc := computeService(t)
+	names := []string{"pag-net-a", "pag-net-b", "pag-net-c"}
+	for _, n := range names {
+		_, err := svc.Networks.Insert(project, &compute.Network{Name: n, AutoCreateSubnetworks: false}).Do()
+		require.NoError(t, err)
+		t.Cleanup(func() { svc.Networks.Delete(project, n).Do() })
+	}
+
+	seen := map[string]bool{}
+	var pageToken string
+	for {
+		call := svc.Networks.List(project).MaxResults(1)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		page, err := call.Do()
+		require.NoError(t, err)
+		for _, n := range page.Items {
+			seen[n.Name] = true
+		}
+		pageToken = page.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "network %s should appear via pagination", n)
+	}
+}

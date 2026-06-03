@@ -1,7 +1,10 @@
 package gcp_sdk_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -316,4 +319,58 @@ func TestLogging_MetricCRUD(t *testing.T) {
 	// Get after delete must fail.
 	_, err = svc.Projects.Metrics.Get(metricResourceName).Do()
 	require.Error(t, err)
+}
+
+func TestLogging_ListSinks_Pagination(t *testing.T) {
+	const project = "test-project"
+	for _, name := range []string{"pag-sink-a", "pag-sink-b", "pag-sink-c"} {
+		body, _ := json.Marshal(map[string]any{
+			"name":        name,
+			"destination": "storage.googleapis.com/my-bucket",
+			"filter":      `severity="ERROR"`,
+		})
+		req, _ := http.NewRequest("POST",
+			fmt.Sprintf("%s/v2/projects/%s/sinks", baseURL, project),
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		n := name
+		t.Cleanup(func() {
+			req, _ := http.NewRequest("DELETE",
+				fmt.Sprintf("%s/v2/projects/%s/sinks/%s", baseURL, project, n), nil)
+			http.DefaultClient.Do(req)
+		})
+	}
+
+	seen := map[string]bool{}
+	var pageToken string
+	for {
+		u := fmt.Sprintf("%s/v2/projects/%s/sinks?pageSize=1", baseURL, project)
+		if pageToken != "" {
+			u += "&pageToken=" + pageToken
+		}
+		req, _ := http.NewRequest("GET", u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		var body struct {
+			Sinks         []map[string]any `json:"sinks"`
+			NextPageToken string           `json:"nextPageToken"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		resp.Body.Close()
+		for _, s := range body.Sinks {
+			if n, ok := s["name"].(string); ok {
+				seen[n] = true
+			}
+		}
+		pageToken = body.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	for _, n := range []string{"pag-sink-a", "pag-sink-b", "pag-sink-c"} {
+		assert.True(t, seen[n], "sink %s should appear via pagination", n)
+	}
 }

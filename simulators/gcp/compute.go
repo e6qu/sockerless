@@ -595,18 +595,19 @@ func registerCompute(srv *sim.Server) {
 	srv.HandleFunc("GET /compute/v1/projects/{project}/global/networks", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		prefix := fmt.Sprintf("projects/%s/global/networks/", project)
-
-		items := networks.Filter(func(n ComputeNetwork) bool {
+		all := networks.Filter(func(n ComputeNetwork) bool {
 			return strings.HasPrefix(n.SelfLink, prefix)
 		})
-		if items == nil {
-			items = []ComputeNetwork{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "compute#networkList",
-			"items": items,
-		})
+		resp := map[string]any{"kind": "compute#networkList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Delete network
@@ -694,13 +695,16 @@ func registerCompute(srv *sim.Server) {
 		all := instanceTemplates.Filter(func(t ComputeInstanceTemplate) bool {
 			return strings.HasPrefix(t.SelfLink, "https://www.googleapis.com/compute/v1/"+prefix)
 		})
-		if all == nil {
-			all = []ComputeInstanceTemplate{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "compute#instanceTemplateList",
-			"items": all,
-		})
+		resp := map[string]any{"kind": "compute#instanceTemplateList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/instanceTemplates/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -862,13 +866,16 @@ func registerCompute(srv *sim.Server) {
 		all := firewalls.Filter(func(f ComputeFirewall) bool {
 			return strings.HasPrefix(f.SelfLink, prefix)
 		})
-		if all == nil {
-			all = []ComputeFirewall{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "compute#firewallList",
-			"items": all,
-		})
+		resp := map[string]any{"kind": "compute#firewallList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/global/firewalls/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -1006,13 +1013,16 @@ func registerCompute(srv *sim.Server) {
 		all := addresses.Filter(func(addr ComputeAddress) bool {
 			return strings.HasPrefix(addr.SelfLink, prefix)
 		})
-		if all == nil {
-			all = []ComputeAddress{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "compute#addressList",
-			"items": all,
-		})
+		resp := map[string]any{"kind": "compute#addressList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/addresses/{name}/setLabels", func(w http.ResponseWriter, r *http.Request) {
@@ -1106,13 +1116,16 @@ func registerCompute(srv *sim.Server) {
 		all := routers.Filter(func(rt ComputeRouter) bool {
 			return strings.HasPrefix(rt.SelfLink, prefix)
 		})
-		if all == nil {
-			all = []ComputeRouter{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":  "compute#routerList",
-			"items": all,
-		})
+		resp := map[string]any{"kind": "compute#routerList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("DELETE /compute/v1/projects/{project}/regions/{region}/routers/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -2047,13 +2060,19 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		project := sim.PathParam(r, "project")
 		zone := sim.PathParam(r, "zone")
 		prefix := fmt.Sprintf("projects/%s/zones/%s/instances/", project, zone)
-		items := instances.Filter(func(inst ComputeInstance) bool {
+		all := instances.Filter(func(inst ComputeInstance) bool {
 			return strings.HasPrefix(inst.SelfLink, prefix)
 		})
-		if items == nil {
-			items = []ComputeInstance{}
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceList", "items": items})
+		resp := map[string]any{"kind": "compute#instanceList", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("GET /compute/v1/projects/{project}/aggregated/instances", func(w http.ResponseWriter, r *http.Request) {

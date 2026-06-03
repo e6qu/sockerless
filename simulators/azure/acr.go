@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -596,12 +595,18 @@ func registerACR(srv *sim.Server) {
 				repos = append(repos, m.Repo)
 			}
 		}
-		if repos == nil {
-			repos = []string{}
+		page, last := acrCatalogPage(r, repos)
+		if page == nil {
+			page = []string{}
 		}
-		sort.Strings(repos)
+		if last != "" {
+			q := r.URL.Query()
+			q.Set("last", last)
+			link := fmt.Sprintf("</acr/v1/_catalog?%s>; rel=\"next\"", q.Encode())
+			w.Header().Set("Link", link)
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"repositories": repos,
+			"repositories": page,
 		})
 	})
 
