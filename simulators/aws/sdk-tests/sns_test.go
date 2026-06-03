@@ -204,3 +204,33 @@ func TestSNS_NonExistentTopic(t *testing.T) {
 			strings.Contains(err.Error(), "does not exist"),
 		"expected NotFound error, got %v", err)
 }
+
+func TestSNS_ListTopics_Pagination(t *testing.T) {
+	client := snsClient()
+	var arns []string
+	for _, n := range []string{"pag-topic-a", "pag-topic-b", "pag-topic-c"} {
+		out, err := client.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String(n)})
+		require.NoError(t, err)
+		arns = append(arns, aws.ToString(out.TopicArn))
+		arn := aws.ToString(out.TopicArn)
+		t.Cleanup(func() { client.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: aws.String(arn)}) })
+	}
+
+	// SNS SDK v2 has no built-in paginator for ListTopics; iterate manually via NextToken.
+	seen := map[string]bool{}
+	var token *string
+	for {
+		out, err := client.ListTopics(ctx, &sns.ListTopicsInput{NextToken: token})
+		require.NoError(t, err)
+		for _, t := range out.Topics {
+			seen[aws.ToString(t.TopicArn)] = true
+		}
+		if out.NextToken == nil || *out.NextToken == "" {
+			break
+		}
+		token = out.NextToken
+	}
+	for _, arn := range arns {
+		assert.True(t, seen[arn], "topic %s should appear via pagination", arn)
+	}
+}

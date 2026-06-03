@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -522,12 +524,41 @@ func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDDBListTables(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExclusiveStartTableName string `json:"ExclusiveStartTableName"`
+		Limit                   int    `json:"Limit"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	all := ddbTables.List()
-	names := make([]string, 0, len(all))
-	for _, t := range all {
+	sortBy(all, func(t DDBTable) string { return t.TableName })
+
+	// ExclusiveStartTableName is a name-based cursor; convert to offset token.
+	token := ""
+	if req.ExclusiveStartTableName != "" {
+		for i, t := range all {
+			if t.TableName == req.ExclusiveStartTableName {
+				token = strconv.Itoa(i + 1)
+				break
+			}
+		}
+	}
+	page, next := awsPage(all, token, req.Limit, 100)
+	names := make([]string, 0, len(page))
+	for _, t := range page {
 		names = append(names, t.TableName)
 	}
-	writeDDBJSON(w, http.StatusOK, map[string]any{"TableNames": names})
+	out := map[string]any{"TableNames": names}
+	if next != "" {
+		// Convert token back to a table name for LastEvaluatedTableName.
+		idx, _ := strconv.Atoi(next)
+		if idx > 0 && idx <= len(all) {
+			out["LastEvaluatedTableName"] = all[idx-1].TableName
+		}
+	}
+	writeDDBJSON(w, http.StatusOK, out)
 }
 
 // ddbItemKey encodes the primary-key attribute values into a stable
@@ -721,6 +752,8 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		Limit                     int               `json:"Limit"`
+		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -733,21 +766,43 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := req.TableName + "/"
+	keys := ddbItemKeys(prefix)
+	sort.Strings(keys)
+
+	// Advance past ExclusiveStartKey if provided.
+	startKey := ddbItemKey(t, req.ExclusiveStartKey)
+	startIdx := 0
+	if startKey != prefix && startKey != t.TableName+"/" {
+		for i, k := range keys {
+			if k == startKey {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
 	var items []map[string]any
-	for _, k := range ddbItemKeys(prefix) {
-		if it, ok := ddbItems.Get(k); ok {
+	for _, k := range keys[startIdx:] {
+		if it, ok2 := ddbItems.Get(k); ok2 {
 			if ddbMatchesExpression(t, it, req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
 				items = append(items, it)
 			}
+		}
+		if req.Limit > 0 && len(items) >= req.Limit {
+			break
 		}
 	}
 	if items == nil {
 		items = []map[string]any{}
 	}
-	writeDDBJSON(w, http.StatusOK, map[string]any{
-		"Items": items,
-		"Count": len(items),
-	})
+
+	out := map[string]any{"Items": items, "Count": len(items)}
+	// Emit LastEvaluatedKey if we hit the Limit and more items may exist.
+	if req.Limit > 0 && len(items) == req.Limit {
+		last := items[len(items)-1]
+		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+	}
+	writeDDBJSON(w, http.StatusOK, out)
 }
 
 func handleDDBScan(w http.ResponseWriter, r *http.Request) {
@@ -756,32 +811,66 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		FilterExpression          string            `json:"FilterExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		Limit                     int               `json:"Limit"`
+		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
-	if _, ok := ddbTables.Get(req.TableName); !ok {
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
 	prefix := req.TableName + "/"
+	keys := ddbItemKeys(prefix)
+	sort.Strings(keys)
+
+	startKey := ddbItemKey(t, req.ExclusiveStartKey)
+	startIdx := 0
+	if startKey != prefix && startKey != t.TableName+"/" {
+		for i, k := range keys {
+			if k == startKey {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
 	var items []map[string]any
-	for _, k := range ddbItemKeys(prefix) {
-		if it, ok := ddbItems.Get(k); ok {
+	for _, k := range keys[startIdx:] {
+		if it, ok2 := ddbItems.Get(k); ok2 {
 			if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
 				items = append(items, it)
 			}
+		}
+		if req.Limit > 0 && len(items) >= req.Limit {
+			break
 		}
 	}
 	if items == nil {
 		items = []map[string]any{}
 	}
-	writeDDBJSON(w, http.StatusOK, map[string]any{
-		"Items": items,
-		"Count": len(items),
-	})
+
+	out := map[string]any{"Items": items, "Count": len(items)}
+	if req.Limit > 0 && len(items) == req.Limit {
+		last := items[len(items)-1]
+		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+	}
+	writeDDBJSON(w, http.StatusOK, out)
+}
+
+// ddbExtractKey builds a DynamoDB key AttributeValue map from an item's primary key attributes.
+func ddbExtractKey(t DDBTable, item map[string]any) map[string]any {
+	key := map[string]any{}
+	for _, k := range t.KeySchema {
+		if v, ok := item[k.AttributeName]; ok {
+			key[k.AttributeName] = v
+		}
+	}
+	return key
 }
 
 // ddbItemKeys returns all item keys with the given prefix. The Store

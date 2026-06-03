@@ -177,3 +177,31 @@ func TestCloudWatch_DescribeLogStreamsOrdering(t *testing.T) {
 	assert.Equal(t, "stream-b", *byName.LogStreams[1].LogStreamName)
 	assert.Equal(t, "stream-c", *byName.LogStreams[2].LogStreamName)
 }
+
+func TestCW_DescribeLogGroups_Pagination(t *testing.T) {
+	cw := cwLogsClient()
+	names := []string{"/pag/cw/a", "/pag/cw/b", "/pag/cw/c"}
+	for _, n := range names {
+		_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(n)})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(n)})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := cloudwatchlogs.NewDescribeLogGroupsPaginator(cw, &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String("/pag/cw/"),
+		Limit:              aws.Int32(1),
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, g := range page.LogGroups {
+			seen[aws.ToString(g.LogGroupName)] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "log group %s should appear via pagination", n)
+	}
+}

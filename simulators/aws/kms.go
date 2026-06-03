@@ -318,15 +318,29 @@ func handleKMSDescribeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleKMSListKeys(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Marker string `json:"Marker"`
+		Limit  int    `json:"Limit"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidMarkerException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	all := kmsKeys.List()
-	out := make([]map[string]any, 0, len(all))
-	for _, k := range all {
+	sortBy(all, func(k KMSKey) string { return k.KeyId })
+	page, next := awsPage(all, req.Marker, req.Limit, 100)
+	out := make([]map[string]any, 0, len(page))
+	for _, k := range page {
 		out = append(out, map[string]any{
 			"KeyId":  k.KeyId,
 			"KeyArn": k.Arn,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Keys": out})
+	resp := map[string]any{"Keys": out, "Truncated": next != ""}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleKMSScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {

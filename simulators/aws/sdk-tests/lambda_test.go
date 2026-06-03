@@ -465,3 +465,34 @@ func TestLambda_VpcConfig_RejectsUnknownSubnet(t *testing.T) {
 	})
 	require.Error(t, err, "CreateFunction with an unknown subnet must fail like real Lambda")
 }
+
+func TestLambda_ListFunctions_Pagination(t *testing.T) {
+	client := lambdaClient()
+	names := []string{"pag-fn-a", "pag-fn-b", "pag-fn-c"}
+	for _, n := range names {
+		_, err := client.CreateFunction(ctx, &lambda.CreateFunctionInput{
+			FunctionName: aws.String(n),
+			Runtime:      lambdatypes.RuntimeProvidedal2023,
+			Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+			Handler:      aws.String("bootstrap"),
+			Code:         &lambdatypes.FunctionCode{ZipFile: []byte("placeholder")},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			client.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(n)})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := lambda.NewListFunctionsPaginator(client, &lambda.ListFunctionsInput{MaxItems: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, f := range page.Functions {
+			seen[aws.ToString(f.FunctionName)] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "function %s should appear via pagination", n)
+	}
+}

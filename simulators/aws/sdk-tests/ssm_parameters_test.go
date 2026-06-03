@@ -199,3 +199,33 @@ func TestSSMParameter_ListTagsForResource(t *testing.T) {
 	assert.Equal(t, "test", tagMap["env"])
 	assert.Equal(t, "ci", tagMap["owner"])
 }
+
+func TestSSM_DescribeParameters_Pagination(t *testing.T) {
+	client := ssmClient()
+	names := []string{"/pag/ssm/a", "/pag/ssm/b", "/pag/ssm/c"}
+	for _, n := range names {
+		_, err := client.PutParameter(ctx, &ssm.PutParameterInput{
+			Name:      aws.String(n),
+			Value:     aws.String("v"),
+			Type:      ssmtypes.ParameterTypeString,
+			Overwrite: aws.Bool(true),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			client.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(n)})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := ssm.NewDescribeParametersPaginator(client, &ssm.DescribeParametersInput{MaxResults: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, p := range page.Parameters {
+			seen[aws.ToString(p.Name)] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "parameter %s should appear via pagination", n)
+	}
+}

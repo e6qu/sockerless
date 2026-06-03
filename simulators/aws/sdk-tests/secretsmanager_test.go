@@ -194,3 +194,34 @@ func TestSecretsManager_GetResourcePolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, secretArn, *outByArn.ARN)
 }
+
+func TestSM_ListSecrets_Pagination(t *testing.T) {
+	client := smClient()
+	names := []string{"pag-sm-a", "pag-sm-b", "pag-sm-c"}
+	for _, n := range names {
+		_, err := client.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+			Name:         aws.String(n),
+			SecretString: aws.String("val"),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+				SecretId:                   aws.String(n),
+				ForceDeleteWithoutRecovery: aws.Bool(true),
+			})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := secretsmanager.NewListSecretsPaginator(client, &secretsmanager.ListSecretsInput{MaxResults: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, s := range page.SecretList {
+			seen[aws.ToString(s.Name)] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "secret %s should appear via pagination", n)
+	}
+}

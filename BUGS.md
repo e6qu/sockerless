@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1354 filed - 1346 fixed - 8 open - 3 false positives.**
+**1366 filed - 1358 fixed - 8 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -204,6 +204,18 @@ Earlier recent phases closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298
 - BUG-1253: The `gcp-vpcaccess` Terraform matrix row was marked not applicable even though terraform-provider-google exposes `google_vpc_access_connector`. The GCP Terraform stack now provisions a real connector through `vpc_access_custom_endpoint`, asserts its canonical ID, and marks the matrix row direct.
 - BUG-1353: bleephub OAuth authorize flow had no session or CSRF: `GET /login/oauth/authorize` rendered a form with no session check; `POST /login/oauth/authorize` validated no session cookie and no `authenticity_token`; code was always bound to seed admin regardless of which user was "logging in". Fixed: added `POST /login` + `GET /login` session endpoints, `_gh_sess` session cookie, `authenticity_token` CSRF field in consent form, session + CSRF validation on approve POST, and code binding to the session user. Closes issue #399.
 - BUG-1354: `POST /api/v3/admin/organizations` accepted any caller (including unauthenticated) without checking site-admin privilege. Real GHES returns 403 for non-site-admin callers. Fixed: handler now reads `ghUserFromContext` and checks `user.SiteAdmin`; returns 403 otherwise. Closes issue #400.
+- BUG-1355: `handleECSListTasks` ignored `nextToken`/`maxResults`; returned all task ARNs unconditionally. Fixed: reads both params, sorts by task ARN, pages with default 100.
+- BUG-1356: `handleECRDescribeRepositories` ignored `nextToken`/`maxResults`; returned all repositories. Fixed: sorts by repo name, pages with default 1000.
+- BUG-1357: `handleSQSListQueues` ignored `NextToken`/`MaxResults`; returned all queue URLs. Fixed: sorts by URL, pages with default 1000.
+- BUG-1358: `handleSSMDescribeParameters` ignored `NextToken`/`MaxResults`; returned all parameters. Fixed: reads request body, sorts by name, pages with default 50.
+- BUG-1359: `handleKMSListKeys` ignored `Marker`/`Limit`; returned all keys with no `Truncated`/`NextMarker` fields. Fixed: sorts by key ID, pages with default 100; sets `Truncated` and `NextMarker`.
+- BUG-1360: `handleSMListSecrets` ignored `NextToken`/`MaxResults`; returned all secrets. Fixed: reads request, sorts by name, pages with default 100.
+- BUG-1361: `handleLambdaListFunctions` ignored `Marker`/`MaxItems` query params; returned all functions. Fixed: reads query params, sorts by function name, pages with default 50; returns `NextMarker`.
+- BUG-1362: `handleCWDescribeLogGroups` read `limit` but ignored `nextToken`; never returned `nextToken` in response. Fixed: adds `nextToken` round-trip; uses `awsPage()` for consistent slicing.
+- BUG-1363: `handleCWDescribeLogStreams` read `limit` but ignored `nextToken`; never returned `nextToken`. Fixed: same as BUG-1362.
+- BUG-1364: `handleSNSListTopics` returned all topics in a single XML response; ignored `NextToken` form value. Fixed: reads `NextToken`, sorts by ARN, pages 100 per page; emits `<NextToken>` in XML when more pages follow.
+- BUG-1365: `handleDDBQuery` and `handleDDBScan` ignored `Limit` and `ExclusiveStartKey`; returned all matching items. Fixed: reads both, applies limit, returns `LastEvaluatedKey` when truncated.
+- BUG-1366: `handleDDBListTables` ignored `Limit` and `ExclusiveStartTableName`; returned all table names. Fixed: sorts by name, pages by limit, returns `LastEvaluatedTableName`.
 
 Older closed bugs are intentionally not repeated here. Use PR descriptions and `git log` for exact fix details.
 

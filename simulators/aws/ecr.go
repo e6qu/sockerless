@@ -278,6 +278,8 @@ func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 func handleECRDescribeRepositories(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepositoryNames []string `json:"repositoryNames"`
+		NextToken       string   `json:"nextToken"`
+		MaxResults      int      `json:"maxResults"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -287,6 +289,7 @@ func handleECRDescribeRepositories(w http.ResponseWriter, r *http.Request) {
 	var repos []ECRRepository
 	if len(req.RepositoryNames) == 0 {
 		repos = ecrRepositories.List()
+		sortBy(repos, func(r ECRRepository) string { return r.RepositoryName })
 	} else {
 		for _, name := range req.RepositoryNames {
 			repo, ok := ecrRepositories.Get(name)
@@ -299,9 +302,12 @@ func handleECRDescribeRepositories(w http.ResponseWriter, r *http.Request) {
 		repos = []ECRRepository{}
 	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"repositories": repos,
-	})
+	page, next := awsPage(repos, req.NextToken, req.MaxResults, 1000)
+	out := map[string]any{"repositories": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleECRDeleteRepository(w http.ResponseWriter, r *http.Request) {

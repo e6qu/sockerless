@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -524,14 +525,26 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 
 func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
 	stored := lambdaFunctions.List()
-	functions := make([]lambdaFunctionConfiguration, 0, len(stored))
-	for _, fn := range stored {
+	sortBy(stored, func(f LambdaFunction) string { return f.FunctionName })
+
+	marker := r.URL.Query().Get("Marker")
+	maxItems := 50
+	if raw := r.URL.Query().Get("MaxItems"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			maxItems = n
+		}
+	}
+	page, next := awsPage(stored, marker, maxItems, 50)
+
+	functions := make([]lambdaFunctionConfiguration, 0, len(page))
+	for _, fn := range page {
 		functions = append(functions, lambdaConfiguration(fn))
 	}
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Functions": functions,
-	})
+	out := map[string]any{"Functions": functions}
+	if next != "" {
+		out["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 // injectLambdaLogs creates a CloudWatch log group, stream, and initial log

@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,4 +195,35 @@ func TestSQS_VisibilityTimeoutExpiry(t *testing.T) {
 	require.Len(t, recv.Messages, 1,
 		"message should be visible again after the visibility-timeout window elapsed")
 	assert.Equal(t, "vt", aws.ToString(recv.Messages[0].Body))
+}
+
+func TestSQS_ListQueues_Pagination(t *testing.T) {
+	client := sqsClient()
+	names := []string{"pag-sqs-a", "pag-sqs-b", "pag-sqs-c"}
+	for _, n := range names {
+		out, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(n)})
+		require.NoError(t, err)
+		url := aws.ToString(out.QueueUrl)
+		t.Cleanup(func() { client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) })
+	}
+
+	seen := map[string]bool{}
+	pager := sqs.NewListQueuesPaginator(client, &sqs.ListQueuesInput{MaxResults: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, u := range page.QueueUrls {
+			seen[u] = true
+		}
+	}
+	for _, n := range names {
+		found := false
+		for u := range seen {
+			if strings.Contains(u, n) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "queue %s should appear via pagination", n)
+	}
 }

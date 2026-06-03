@@ -194,3 +194,30 @@ func TestECR_LifecyclePolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, *getOut.LifecyclePolicyText)
 }
+
+func TestECR_DescribeRepositories_Pagination(t *testing.T) {
+	client := ecrClient()
+	names := []string{"pag-ecr-repo-a", "pag-ecr-repo-b", "pag-ecr-repo-c"}
+	for _, n := range names {
+		_, err := client.CreateRepository(ctx, &ecr.CreateRepositoryInput{
+			RepositoryName: aws.String(n),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			client.DeleteRepository(ctx, &ecr.DeleteRepositoryInput{RepositoryName: aws.String(n), Force: true})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := ecr.NewDescribeRepositoriesPaginator(client, &ecr.DescribeRepositoriesInput{MaxResults: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, r := range page.Repositories {
+			seen[aws.ToString(r.RepositoryName)] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "repo %s should appear via pagination", n)
+	}
+}
