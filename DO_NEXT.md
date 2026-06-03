@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main`, HEAD `ea8c79d` (PR #385 merged — bleephub GET /api/v3/user/teams).
-- Active implementation branch: none.
+- Branch: `feat/azure-coverage-gaps-pr-a` (PR A in progress — Azure coverage gaps).
+- Last merged: PR #386 (continuity doc compression), HEAD `37c9bb9`.
 - Open GitHub issues: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- BUG counters: 1315 filed · 1315 fixed · 2 open · 3 false positives.
+- BUG counters: 1323 filed · 1323 fixed · 2 open · 3 false positives.
 
 ## Next Two PRs
 

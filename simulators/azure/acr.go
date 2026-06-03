@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -41,6 +42,8 @@ type OCIManifest struct {
 	ContentType string `json:"contentType"`
 	Digest      string `json:"digest"`
 	Data        []byte `json:"data"`
+	Repo        string `json:"repo,omitempty"` // repository name extracted at push time
+	Ref         string `json:"ref,omitempty"`  // tag or digest reference used as the store key
 }
 
 // BlobData represents a stored blob.
@@ -479,12 +482,16 @@ func registerACR(srv *sim.Server) {
 				ContentType: contentType,
 				Digest:      digest,
 				Data:        body,
+				Repo:        repo,
+				Ref:         ref,
 			}
 
 			// Store by tag reference
 			manifests.Put(repo+":"+ref, manifest)
-			// Also store by digest
-			manifests.Put(repo+":"+digest, manifest)
+			// Also store by digest (Ref field reflects the digest key)
+			byDigest := manifest
+			byDigest.Ref = digest
+			manifests.Put(repo+":"+digest, byDigest)
 
 			w.Header().Set("Docker-Content-Digest", digest)
 			w.Header().Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", repo, digest))
@@ -552,6 +559,86 @@ func registerACR(srv *sim.Server) {
 			return
 		}
 		http.NotFound(w, r)
+	})
+
+	// DELETE /v2/{name}/manifests/{reference} - Delete manifest by tag or digest
+	srv.HandleFunc("DELETE /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		fullPath := sim.PathParam(r, "path")
+		if repo, ref, ok := parseManifestPath(fullPath); ok {
+			entry, exists := manifests.Get(repo + ":" + ref)
+			if !exists {
+				writeOCIError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest %q not found", ref), http.StatusNotFound)
+				return
+			}
+			manifests.Delete(repo + ":" + ref)
+			// Delete all aliases for the same repo+digest (tag entry when deleting by digest, or vice-versa).
+			digestToClean := entry.Digest
+			aliases := manifests.Filter(func(m OCIManifest) bool {
+				return m.Repo == repo && m.Digest == digestToClean
+			})
+			for _, alias := range aliases {
+				manifests.Delete(repo + ":" + alias.Ref)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	// GET /acr/v1/_catalog - List all repositories (ACR data-plane catalog API)
+	srv.HandleFunc("GET /acr/v1/_catalog", func(w http.ResponseWriter, r *http.Request) {
+		all := manifests.List()
+		seen := map[string]bool{}
+		var repos []string
+		for _, m := range all {
+			if m.Repo != "" && !seen[m.Repo] {
+				seen[m.Repo] = true
+				repos = append(repos, m.Repo)
+			}
+		}
+		if repos == nil {
+			repos = []string{}
+		}
+		sort.Strings(repos)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"repositories": repos,
+		})
+	})
+
+	// GET /acr/v1/{name}/_tags - List tags for a repository (ACR data-plane tags API)
+	// {name} can contain slashes (e.g. "myrepo/myimage"), so matched via {path...}.
+	srv.HandleFunc("GET /acr/v1/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		fullPath := sim.PathParam(r, "path")
+		const tagsSuffix = "/_tags"
+		if !strings.HasSuffix(fullPath, tagsSuffix) {
+			http.NotFound(w, r)
+			return
+		}
+		repoName := fullPath[:len(fullPath)-len(tagsSuffix)]
+		if repoName == "" {
+			http.NotFound(w, r)
+			return
+		}
+		tags := manifests.Filter(func(m OCIManifest) bool {
+			return m.Repo == repoName && m.Ref != "" && !strings.HasPrefix(m.Ref, "sha256:")
+		})
+		tagList := make([]map[string]any, 0, len(tags))
+		for _, m := range tags {
+			tagList = append(tagList, map[string]any{
+				"name":   m.Ref,
+				"digest": m.Digest,
+				"changeableAttributes": map[string]any{
+					"deleteEnabled": true,
+					"writeEnabled":  true,
+					"readEnabled":   true,
+					"listEnabled":   true,
+				},
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"imageName": repoName,
+			"tags":      tagList,
+		})
 	})
 
 	// PATCH /v2/{name}/blobs/uploads/{uuid} - Chunked upload

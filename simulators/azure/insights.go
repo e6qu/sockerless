@@ -19,10 +19,12 @@ type AppInsightsComponent struct {
 }
 
 // AppInsightsComponentProperties holds the properties of an Application Insights component.
+// App Insights uses PascalCase for some property names (InstrumentationKey, ConnectionString)
+// unlike most ARM APIs which use camelCase — the SDK serde reflects this.
 type AppInsightsComponentProperties struct {
-	ApplicationID      string `json:"applicationId,omitempty"`
-	InstrumentationKey string `json:"instrumentationKey,omitempty"`
-	ConnectionString   string `json:"connectionString,omitempty"`
+	ApplicationID      string `json:"ApplicationId,omitempty"`
+	InstrumentationKey string `json:"InstrumentationKey,omitempty"`
+	ConnectionString   string `json:"ConnectionString,omitempty"`
 	ProvisioningState  string `json:"provisioningState"`
 }
 
@@ -53,15 +55,18 @@ func registerApplicationInsights(srv *sim.Server) {
 
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Insights/components/%s", sub, rg, name)
 
-		_, exists := components.Get(resourceID)
-
 		kind := req.Kind
 		if kind == "" {
 			kind = "web"
 		}
 
+		// Preserve stable IDs across upserts (real App Insights keeps the same instrumentation key).
 		appID := generateUUID()
 		instrumentationKey := generateUUID()
+		if existing, exists := components.Get(resourceID); exists {
+			appID = existing.Properties.ApplicationID
+			instrumentationKey = existing.Properties.InstrumentationKey
+		}
 
 		comp := AppInsightsComponent{
 			ID:       resourceID,
@@ -81,8 +86,6 @@ func registerApplicationInsights(srv *sim.Server) {
 		}
 
 		components.Put(resourceID, comp)
-
-		_ = exists
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, comp)
 	})

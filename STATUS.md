@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `main` — no implementation branch active |
-| In-flight | None |
-| Last merged | PR #385 — bleephub `GET /api/v3/user/teams` (fixes GitHub issue #384) |
-| Also merged this session | PR #383 — AWS SDK/CLI coverage gaps (KMS GetKeyPolicy, SM GetResourcePolicy, SSM ListTagsForResource, DynamoDB DescribeTable shape); PR #382 — AWS EBS/VPC control-plane/data-plane separation (issue #381) |
+| Active branch | `feat/azure-coverage-gaps-pr-a` — Azure simulator coverage gaps PR |
+| In-flight | PR A: Azure App Insights SDK/CLI, Private DNS RecordSets SDK/CLI, ACR image ops SDK/CLI |
+| Last merged | PR #386 — continuity doc compression |
+| Also merged this session | PR #385 bleephub `GET /api/v3/user/teams`; PR #383 AWS SDK/CLI gaps; PR #382 AWS EBS/VPC |
 | Open GitHub issues | None |
-| Bugs | 1315 filed · 1315 fixed · 2 open · 3 false positives |
+| Bugs | 1323 filed · 1323 fixed · 2 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence |
-| Planned next | PR A: Azure simulator coverage gaps (App Insights SDK/CLI, Private DNS A-records SDK, ACR image ops SDK) — then PR B: GCP gaps (SA keys + instance templates implementation; CF Gen2 / Cloud Build trigger / Logging sink+metric / project IAM SDK tests) |
+| Planned next | PR B: GCP gaps (SA keys + instance templates implementation; CF Gen2 / Cloud Build trigger / Logging sink+metric / project IAM SDK tests) |
 | Live infra | None up |
 
 ## Invariants
