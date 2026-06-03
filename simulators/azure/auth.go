@@ -146,7 +146,7 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 				"jwks_uri":                              fmt.Sprintf("%s/%s/discovery/v2.0/keys", baseURL, tenantId),
 				"response_types_supported":              []string{"code"},
 				"response_modes_supported":              []string{"query", "fragment", "form_post"},
-				"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
+				"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "password"},
 				"code_challenge_methods_supported":      []string{"plain", "S256"},
 				"id_token_signing_alg_values_supported": []string{"RS256"},
 				"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
@@ -283,6 +283,10 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	if r.Form.Get("grant_type") == "refresh_token" {
 		handleAzureRefreshToken(w, r, tenantId)
+		return
+	}
+	if r.Form.Get("grant_type") == "password" {
+		handleAzureROPC(w, r, tenantId)
 		return
 	}
 	if grantType := r.Form.Get("grant_type"); grantType != "" && grantType != "client_credentials" {
@@ -531,13 +535,9 @@ func azureScopeIsOIDC(scope string) bool {
 	}
 }
 
-// mintAzureSimJWT produces a real-shape Azure AD access token JWT
-// (`header.payload.signature`) signed with RS256 against the sim's
-// per-process private key. The claims set matches what azure-identity / the
-// Azure SDK round-trip on token introspection (tid, oid, sub, aud,
-// iss, iat, exp, nbf, ver, appid).
-func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
-	u := getEntraSimActiveUser()
+// mintAzureSimJWTForUser produces a real-shape Azure AD access token JWT for
+// a specific user. mintAzureSimJWT uses the current sim-active user.
+func mintAzureSimJWTForUser(u EntraUser, tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
 	return mintAzureSimSignedJWT(map[string]any{
 		"tid":   tenantId,
 		"oid":   u.OID,
@@ -552,8 +552,15 @@ func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (
 	})
 }
 
-func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
-	u := getEntraSimActiveUser()
+func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
+	return mintAzureSimJWTForUser(getEntraSimActiveUser(), tenantId, audience, issuedAt, expiresAt)
+}
+
+// mintAzureSimIDTokenForUser produces a real-shape Azure AD id_token for a
+// specific user. Groups are populated from both the inline sim-seed Groups
+// field and the standard membership store. mintAzureSimIDToken uses the
+// current sim-active user.
+func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
 	email := u.Email
 	if email == "" {
 		email = u.PreferredUsername
@@ -571,13 +578,26 @@ func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expi
 		"name":               u.Name,
 		"preferred_username": u.PreferredUsername,
 	}
-	if len(u.Groups) > 0 {
-		groupIDs := make([]string, len(u.Groups))
-		for i, g := range u.Groups {
-			groupIDs[i] = g.ID
+
+	// Collect group IDs from both provisioning paths.
+	groupIDSet := map[string]bool{}
+	for _, g := range u.Groups {
+		groupIDSet[g.ID] = true
+	}
+	memberships := entraGroupMembershipStore.Filter(func(m entraGroupMembership) bool {
+		return m.UserID == u.OID
+	})
+	for _, m := range memberships {
+		groupIDSet[m.GroupID] = true
+	}
+	if len(groupIDSet) > 0 {
+		groupIDs := make([]string, 0, len(groupIDSet))
+		for id := range groupIDSet {
+			groupIDs = append(groupIDs, id)
 		}
 		claims["groups"] = groupIDs
 	}
+
 	if nonce != "" {
 		claims["nonce"] = nonce
 	}
@@ -585,6 +605,61 @@ func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expi
 		claims["email"] = email
 	}
 	return mintAzureSimSignedJWT(claims)
+}
+
+func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
+	return mintAzureSimIDTokenForUser(getEntraSimActiveUser(), tenantID, clientID, nonce, scope, issuedAt, expiresAt)
+}
+
+// handleAzureROPC implements the Resource Owner Password Credentials grant
+// (grant_type=password). Real Entra supports this for non-interactive test
+// flows where a specific user's id_token is needed without a browser.
+// The sim looks up the user by userPrincipalName (the username field) and
+// mints tokens carrying that user's identity and group memberships.
+func handleAzureROPC(w http.ResponseWriter, r *http.Request, tenantID string) {
+	username := strings.TrimSpace(r.Form.Get("username"))
+	clientID := strings.TrimSpace(r.Form.Get("client_id"))
+	scope := strings.TrimSpace(r.Form.Get("scope"))
+	if username == "" {
+		azureOAuthError(w, "invalid_request", "username is required for grant_type=password", http.StatusBadRequest)
+		return
+	}
+
+	users := entraUsersStore.Filter(func(u EntraUser) bool {
+		return u.PreferredUsername == username
+	})
+	if len(users) == 0 {
+		azureOAuthError(w, "invalid_grant", "user not found: "+username, http.StatusBadRequest)
+		return
+	}
+	u := users[0]
+
+	if scope == "" {
+		scope = "openid profile"
+	}
+	now := time.Now()
+	audience := azureAudienceFromScope(scope)
+	accessToken, err := mintAzureSimJWTForUser(u, tenantID, audience, now, now.Add(time.Hour))
+	if err != nil {
+		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+		return
+	}
+	body := map[string]any{
+		"access_token":   accessToken,
+		"token_type":     "Bearer",
+		"expires_in":     3600,
+		"ext_expires_in": 3600,
+		"scope":          scope,
+	}
+	if azureScopeIncludes(scope, "openid") {
+		idToken, err := mintAzureSimIDTokenForUser(u, tenantID, clientID, "", scope, now, now.Add(time.Hour))
+		if err != nil {
+			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
+			return
+		}
+		body["id_token"] = idToken
+	}
+	sim.WriteJSON(w, http.StatusOK, body)
 }
 
 func mintAzureSimSignedJWT(claims map[string]any) (string, error) {

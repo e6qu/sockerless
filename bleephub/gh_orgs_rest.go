@@ -7,6 +7,7 @@ import (
 )
 
 func (s *Server) registerGHOrgRoutes() {
+	s.mux.HandleFunc("POST /api/v3/admin/organizations", s.handleAdminCreateOrg)
 	s.mux.HandleFunc("POST /api/v3/user/orgs", s.handleCreateOrg)
 	s.mux.HandleFunc("GET /api/v3/user/orgs", s.handleListAuthUserOrgs)
 	s.mux.HandleFunc("GET /api/v3/orgs/{org}", s.handleGetOrg)
@@ -17,6 +18,50 @@ func (s *Server) registerGHOrgRoutes() {
 
 	s.registerGHTeamRoutes()
 	s.registerGHMemberRoutes()
+}
+
+// handleAdminCreateOrg implements the GHES admin org-creation endpoint:
+// POST /admin/organizations — the standard GitHub Enterprise Server path for
+// provisioning organizations. Body: { login, admin, profile_name }.
+// `admin` is the login of the user who becomes the org owner; the caller
+// does not need to be that user (site-admin privilege assumed).
+func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Login       string `json:"login"`
+		Admin       string `json:"admin"`
+		ProfileName string `json:"profile_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
+	if req.Login == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
+		return
+	}
+	if req.Admin == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "Admin login is required")
+		return
+	}
+
+	adminUser := s.store.LookupUserByLogin(req.Admin)
+	if adminUser == nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Admin user not found")
+		return
+	}
+
+	name := req.ProfileName
+	if name == "" {
+		name = req.Login
+	}
+
+	org := s.store.CreateOrg(adminUser, req.Login, name, "")
+	if org == nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Organization creation failed.")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, orgToJSON(org, s.baseURL(r)))
 }
 
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {

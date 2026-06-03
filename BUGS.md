@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1334 filed - 1334 fixed - 2 open - 3 false positives.**
+**1337 filed - 1334 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,6 +12,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
+| 1335 | P1 | bleephub | non-standard surface | `POST /api/v3/user/orgs` is not a real GitHub or GHES endpoint; GHES uses `POST /admin/organizations` for org creation. Consumers that provision orgs through `POST /user/orgs` cannot run unchanged against real GHES. |
+| 1336 | P1 | azure-entra | non-standard surface | Entra group/user provisioning is only possible through the sim-internal `PUT /sim/v1/entra/users/{oid}` endpoint. Standard Microsoft Graph admin endpoints (`POST /v1.0/groups`, `POST /v1.0/users`, `POST /v1.0/groups/{id}/members/$ref`) are not implemented; consumers cannot provision identity without using the sim-specific surface. |
+| 1337 | P1 | azure-entra | non-standard surface | No non-interactive user token grant exists. Real Entra supports ROPC (`grant_type=password`) so a test can obtain an id_token for a specific user without a browser. The sim only supports `authorization_code`, `refresh_token`, and `client_credentials`; ROPC is missing, blocking swappable auth-test flows. |
 
 ## Recently Closed
 
