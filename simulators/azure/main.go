@@ -108,6 +108,9 @@ func main() {
 	registerAppServicePlan(srv)
 	registerSubscription(srv)
 
+	// Entra identity seeding and Microsoft Graph delegated endpoints
+	registerEntra(srv)
+
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)
 

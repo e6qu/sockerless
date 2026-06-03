@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1323 filed - 1323 fixed - 2 open - 3 false positives.**
+**1326 filed - 1326 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -15,7 +15,13 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 ## Recently Closed
 
-This phase closed BUG-1316 through BUG-1323:
+This phase closed BUG-1324 through BUG-1326 (issue #387):
+
+- BUG-1324: `mintAzureSimIDToken` emitted fixed static claims with no `groups` field. Fixed by reading the active seeded user from `entraUsersStore` and including `groups: [id, ...]` in the id_token claims when the user has seeded groups.
+- BUG-1325: No Microsoft Graph `GET /v1.0/me/memberOf` or `transitiveMemberOf` endpoint in the Azure sim. Fixed by adding both routes in `entra.go`; they parse the bearer token's `oid` claim and return the seeded user's groups as OData `directoryObjects`.
+- BUG-1326: No user/group seeding endpoint; `oid`/`sub`/`preferred_username`/`name` were hardcoded constants. Fixed by adding `PUT /sim/v1/entra/users/{oid}` (seed/replace), `GET /sim/v1/entra/users/{oid}` (read), and `DELETE /sim/v1/entra/users/{oid}` (reset to defaults); the last PUT also sets the active oid so future auth flows mint tokens with the seeded identity.
+
+Earlier phase closed BUG-1316 through BUG-1323:
 
 - BUG-1316: `armapplicationinsights.ComponentsClient` SDK tests were missing. Added `TestAppInsights_ComponentCRUD` and `TestAppInsights_InstrumentationKeyStableOnUpsert` in `sdk-tests/insights_test.go`. Also fixed `insights.go` to preserve the instrumentation key across upserts (was generating a new UUID each time), and corrected JSON field casing to PascalCase (`InstrumentationKey`, `ConnectionString`) which App Insights ARM API requires.
 - BUG-1317: No `az monitor app-insights component` CLI coverage. Added `TestAppInsights_CreateAndShow` and `TestAppInsights_InstrumentationKeyInConnectionString` in `cli-tests/monitor_test.go`.

@@ -152,7 +152,7 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 				"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
 				"subject_types_supported":               []string{"pairwise"},
 				"scopes_supported":                      []string{"openid", "profile", "email", "offline_access"},
-				"claims_supported":                      []string{"aud", "exp", "iat", "iss", "name", "nonce", "oid", "preferred_username", "sub", "tid", "ver"},
+				"claims_supported":                      []string{"aud", "exp", "groups", "iat", "iss", "name", "nonce", "oid", "preferred_username", "sub", "tid", "ver"},
 				"request_uri_parameter_supported":       false,
 			})
 			return
@@ -537,10 +537,11 @@ func azureScopeIsOIDC(scope string) bool {
 // Azure SDK round-trip on token introspection (tid, oid, sub, aud,
 // iss, iat, exp, nbf, ver, appid).
 func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (string, error) {
+	u := getEntraSimActiveUser()
 	return mintAzureSimSignedJWT(map[string]any{
 		"tid":   tenantId,
-		"oid":   "test-oid",
-		"sub":   "test-sub",
+		"oid":   u.OID,
+		"sub":   u.Sub,
 		"aud":   audience,
 		"iss":   fmt.Sprintf("https://sts.windows.net/%s/", tenantId),
 		"iat":   issuedAt.Unix(),
@@ -552,24 +553,36 @@ func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (
 }
 
 func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
+	u := getEntraSimActiveUser()
+	email := u.Email
+	if email == "" {
+		email = u.PreferredUsername
+	}
 	claims := map[string]any{
 		"tid":                tenantID,
-		"oid":                "test-oid",
-		"sub":                "test-sub",
+		"oid":                u.OID,
+		"sub":                u.Sub,
 		"aud":                clientID,
 		"iss":                fmt.Sprintf("https://sts.windows.net/%s/", tenantID),
 		"iat":                issuedAt.Unix(),
 		"exp":                expiresAt.Unix(),
 		"nbf":                issuedAt.Unix(),
 		"ver":                "2.0",
-		"name":               "Sockerless Test User",
-		"preferred_username": "sockerless-test@example.com",
+		"name":               u.Name,
+		"preferred_username": u.PreferredUsername,
+	}
+	if len(u.Groups) > 0 {
+		groupIDs := make([]string, len(u.Groups))
+		for i, g := range u.Groups {
+			groupIDs[i] = g.ID
+		}
+		claims["groups"] = groupIDs
 	}
 	if nonce != "" {
 		claims["nonce"] = nonce
 	}
 	if azureScopeIncludes(scope, "email") {
-		claims["email"] = "sockerless-test@example.com"
+		claims["email"] = email
 	}
 	return mintAzureSimSignedJWT(claims)
 }

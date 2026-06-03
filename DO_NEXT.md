@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/azure-coverage-gaps-pr-a` (PR A in progress — Azure coverage gaps).
-- Last merged: PR #386 (continuity doc compression), HEAD `37c9bb9`.
-- Open GitHub issues: none.
+- Branch: `feat/azure-entra-groups-issue-387` (Entra groups + Graph memberOf).
+- Last merged: PR #388 (Azure coverage gaps — App Insights, Private DNS A-records, ACR image ops).
+- Open GitHub issues: #387 (in progress this branch).
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- BUG counters: 1323 filed · 1323 fixed · 2 open · 3 false positives.
+- BUG counters: 1326 filed · 1326 fixed · 2 open · 3 false positives.
 
 ## Next Two PRs
 
