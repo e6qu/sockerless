@@ -10,6 +10,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// pollECSTaskStopped polls describe-tasks until lastStatus is STOPPED or 60s
+// elapses. Returns the final describe-tasks JSON output. A fixed sleep before
+// the describe was the original approach, but it races on slow CI runners.
+func pollECSTaskStopped(t *testing.T, cluster, taskArn string) string {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		out := runCLI(t, awsCLI("ecs", "describe-tasks",
+			"--cluster", cluster,
+			"--tasks", taskArn,
+			"--output", "json",
+		))
+		var result struct {
+			Tasks []struct {
+				LastStatus string `json:"lastStatus"`
+			} `json:"tasks"`
+		}
+		parseJSON(t, out, &result)
+		if len(result.Tasks) > 0 && result.Tasks[0].LastStatus == "STOPPED" {
+			return out
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ECS task %s did not reach STOPPED within 60s", taskArn)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 func TestECS_CLI_ArithmeticEval(t *testing.T) {
 	// Create cluster
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-arith-cluster"))
@@ -63,15 +91,8 @@ func TestECS_CLI_ArithmeticEval(t *testing.T) {
 	require.Len(t, runResult.Tasks, 1)
 	taskArn := runResult.Tasks[0].TaskArn
 
-	// Wait for process to complete
-	time.Sleep(3 * time.Second)
-
-	// Describe task — should be STOPPED with exit code 0
-	out = runCLI(t, awsCLI("ecs", "describe-tasks",
-		"--cluster", "cli-arith-cluster",
-		"--tasks", taskArn,
-		"--output", "json",
-	))
+	// Poll until the task reaches STOPPED (or timeout).
+	out = pollECSTaskStopped(t, "cli-arith-cluster", taskArn)
 
 	var descResult struct {
 		Tasks []struct {
@@ -163,15 +184,8 @@ func TestECS_CLI_ArithmeticInvalid(t *testing.T) {
 	require.Len(t, runResult.Tasks, 1)
 	taskArn := runResult.Tasks[0].TaskArn
 
-	// Wait for process to complete
-	time.Sleep(3 * time.Second)
-
-	// Describe task — should be STOPPED with exit code 1
-	out = runCLI(t, awsCLI("ecs", "describe-tasks",
-		"--cluster", "cli-arith-fail-cluster",
-		"--tasks", taskArn,
-		"--output", "json",
-	))
+	// Poll until the task reaches STOPPED (or timeout).
+	out = pollECSTaskStopped(t, "cli-arith-fail-cluster", taskArn)
 
 	var descResult struct {
 		Tasks []struct {
