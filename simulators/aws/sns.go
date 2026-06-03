@@ -144,12 +144,22 @@ func snsTopicNameFromARN(arn string) string {
 }
 
 func handleSNSListTopics(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	token := r.FormValue("NextToken")
+	all := snsTopics.List()
+	sortBy(all, func(t SNSTopic) string { return t.ARN })
+	page, next := awsPage(all, token, 0, 100)
+
 	var b strings.Builder
 	b.WriteString("<ListTopicsResult><Topics>")
-	for _, t := range snsTopics.List() {
+	for _, t := range page {
 		fmt.Fprintf(&b, "<member><TopicArn>%s</TopicArn></member>", xmlEscape(t.ARN))
 	}
-	b.WriteString("</Topics></ListTopicsResult>")
+	b.WriteString("</Topics>")
+	if next != "" {
+		fmt.Fprintf(&b, "<NextToken>%s</NextToken>", xmlEscape(next))
+	}
+	b.WriteString("</ListTopicsResult>")
 	snsXMLResponse(w, "ListTopics", b.String(), sim.RequestID(r.Context()))
 }
 

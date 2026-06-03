@@ -222,19 +222,32 @@ func handleSQSGetQueueURL(w http.ResponseWriter, r *http.Request) {
 func handleSQSListQueues(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueNamePrefix string `json:"QueueNamePrefix"`
+		NextToken       string `json:"NextToken"`
+		MaxResults      int    `json:"MaxResults"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
 		return
 	}
-	var urls []string
-	for _, q := range sqsQueues.List() {
+	all := sqsQueues.List()
+	sortBy(all, func(q SQSQueue) string { return q.URL })
+	var filtered []SQSQueue
+	for _, q := range all {
 		if req.QueueNamePrefix != "" && !strings.HasPrefix(q.Name, req.QueueNamePrefix) {
 			continue
 		}
+		filtered = append(filtered, q)
+	}
+	page, next := awsPage(filtered, req.NextToken, req.MaxResults, 1000)
+	urls := make([]string, 0, len(page))
+	for _, q := range page {
 		urls = append(urls, q.URL)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"QueueUrls": urls})
+	out := map[string]any{"QueueUrls": urls}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleSQSGetQueueAttributes(w http.ResponseWriter, r *http.Request) {

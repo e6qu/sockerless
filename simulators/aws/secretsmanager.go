@@ -453,12 +453,22 @@ func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults int    `json:"MaxResults"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	all := smSecrets.List()
 	if all == nil {
 		all = []SMSecret{}
 	}
-	out := make([]map[string]any, 0, len(all))
-	for _, s := range all {
+	sortBy(all, func(s SMSecret) string { return s.Name })
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
+	out := make([]map[string]any, 0, len(page))
+	for _, s := range page {
 		out = append(out, map[string]any{
 			"ARN":              s.ARN,
 			"Name":             s.Name,
@@ -470,7 +480,11 @@ func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 			"Tags":             s.Tags,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"SecretList": out})
+	resp := map[string]any{"SecretList": out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleSMTagResource(w http.ResponseWriter, r *http.Request) {

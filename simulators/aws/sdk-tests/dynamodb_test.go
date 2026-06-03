@@ -250,3 +250,76 @@ func TestDynamoDB_QueryAndScan(t *testing.T) {
 	require.Equal(t, int32(1), filtered.Count)
 	assert.Equal(t, "c", filtered.Items[0]["ID"].(*ddbtypes.AttributeValueMemberS).Value)
 }
+
+func TestDDB_Scan_Pagination(t *testing.T) {
+	client := ddbClient()
+	table := "pag-scan-table"
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   aws.String(table),
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("pk"), KeyType: ddbtypes.KeyTypeHash},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(table)}) })
+
+	for _, v := range []string{"a", "b", "c"} {
+		_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String(table),
+			Item:      map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: v}},
+		})
+		require.NoError(t, err)
+	}
+
+	seen := map[string]bool{}
+	pager := dynamodb.NewScanPaginator(client, &dynamodb.ScanInput{
+		TableName: aws.String(table),
+		Limit:     aws.Int32(1),
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, item := range page.Items {
+			if pk, ok := item["pk"].(*ddbtypes.AttributeValueMemberS); ok {
+				seen[pk.Value] = true
+			}
+		}
+	}
+	assert.Equal(t, map[string]bool{"a": true, "b": true, "c": true}, seen, "all items should be visible via paginated scan")
+}
+
+func TestDDB_ListTables_Pagination(t *testing.T) {
+	client := ddbClient()
+	names := []string{"pag-tbl-a", "pag-tbl-b", "pag-tbl-c"}
+	for _, n := range names {
+		_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+			TableName:   aws.String(n),
+			BillingMode: ddbtypes.BillingModePayPerRequest,
+			AttributeDefinitions: []ddbtypes.AttributeDefinition{
+				{AttributeName: aws.String("pk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			},
+			KeySchema: []ddbtypes.KeySchemaElement{
+				{AttributeName: aws.String("pk"), KeyType: ddbtypes.KeyTypeHash},
+			},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(n)}) })
+	}
+
+	seen := map[string]bool{}
+	pager := dynamodb.NewListTablesPaginator(client, &dynamodb.ListTablesInput{Limit: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, n := range page.TableNames {
+			seen[n] = true
+		}
+	}
+	for _, n := range names {
+		assert.True(t, seen[n], "table %s should appear via pagination", n)
+	}
+}

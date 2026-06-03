@@ -1285,6 +1285,8 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 		Cluster       string `json:"cluster"`
 		Family        string `json:"family"`
 		DesiredStatus string `json:"desiredStatus"`
+		NextToken     string `json:"nextToken"`
+		MaxResults    int    `json:"maxResults"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -1309,7 +1311,6 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 			return false
 		}
 		if req.Family != "" {
-			// Check if task definition family matches
 			td, ok := ecsTaskDefinitions.Get(extractTDKey(t.TaskDefinitionArn))
 			if !ok || td.Family != req.Family {
 				return false
@@ -1320,18 +1321,20 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	})
+	sortBy(tasks, func(t ECSTask) string { return t.TaskArn })
 
-	var taskArns []string
-	for _, t := range tasks {
+	page, next := awsPage(tasks, req.NextToken, req.MaxResults, 100)
+
+	taskArns := make([]string, 0, len(page))
+	for _, t := range page {
 		taskArns = append(taskArns, t.TaskArn)
 	}
-	if taskArns == nil {
-		taskArns = []string{}
-	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskArns": taskArns,
-	})
+	out := map[string]any{"taskArns": taskArns}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleECSDeleteCluster(w http.ResponseWriter, r *http.Request) {

@@ -777,3 +777,52 @@ func TestECS_TagResource_RejectsStoppedTask(t *testing.T) {
 	})
 	require.Error(t, err, "TagResource on a STOPPED task should fail with InvalidParameterException")
 }
+
+func TestECS_ListTasks_Pagination(t *testing.T) {
+	client := ecsClient()
+	cluster := "pag-cluster"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)})
+	})
+
+	td, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family: aws.String("pag-family"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{
+			{Name: aws.String("app"), Image: aws.String("alpine:latest")},
+		},
+		NetworkMode: ecstypes.NetworkModeAwsvpc,
+	})
+	require.NoError(t, err)
+	tdArn := aws.ToString(td.TaskDefinition.TaskDefinitionArn)
+
+	// Run 3 tasks.
+	for i := 0; i < 3; i++ {
+		_, err = client.RunTask(ctx, &ecs.RunTaskInput{
+			Cluster:        aws.String(cluster),
+			TaskDefinition: aws.String(tdArn),
+		})
+		require.NoError(t, err)
+	}
+
+	// Page with MaxResults=1 — should need 3 pages to see all tasks.
+	seen := map[string]bool{}
+	var token *string
+	for {
+		out, err := client.ListTasks(ctx, &ecs.ListTasksInput{
+			Cluster:    aws.String(cluster),
+			MaxResults: aws.Int32(1),
+			NextToken:  token,
+		})
+		require.NoError(t, err)
+		for _, arn := range out.TaskArns {
+			seen[arn] = true
+		}
+		if out.NextToken == nil {
+			break
+		}
+		token = out.NextToken
+	}
+	assert.Equal(t, 3, len(seen), "should see all 3 task ARNs via pagination")
+}

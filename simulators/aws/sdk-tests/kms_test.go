@@ -190,3 +190,34 @@ func TestKMS_GetKeyPolicyRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, customPolicy, *getCustom.Policy, "GetKeyPolicy must return the stored custom policy verbatim")
 }
+
+func TestKMS_ListKeys_Pagination(t *testing.T) {
+	client := kmsClient()
+	var created []string
+	for i := 0; i < 3; i++ {
+		out, err := client.CreateKey(ctx, &kms.CreateKeyInput{
+			Description: aws.String("pag-key"),
+		})
+		require.NoError(t, err)
+		created = append(created, aws.ToString(out.KeyMetadata.KeyId))
+		keyID := aws.ToString(out.KeyMetadata.KeyId)
+		t.Cleanup(func() {
+			client.ScheduleKeyDeletion(ctx, &kms.ScheduleKeyDeletionInput{
+				KeyId: aws.String(keyID), PendingWindowInDays: aws.Int32(7),
+			})
+		})
+	}
+
+	seen := map[string]bool{}
+	pager := kms.NewListKeysPaginator(client, &kms.ListKeysInput{Limit: aws.Int32(1)})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, k := range page.Keys {
+			seen[aws.ToString(k.KeyId)] = true
+		}
+	}
+	for _, id := range created {
+		assert.True(t, seen[id], "key %s should appear via pagination", id)
+	}
+}

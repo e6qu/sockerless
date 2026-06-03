@@ -114,6 +114,7 @@ func handleCWDescribeLogGroups(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LogGroupNamePrefix string `json:"logGroupNamePrefix"`
 		Limit              int    `json:"limit"`
+		NextToken          string `json:"nextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -131,14 +132,14 @@ func handleCWDescribeLogGroups(w http.ResponseWriter, r *http.Request) {
 	if groups == nil {
 		groups = []CWLogGroup{}
 	}
+	sortBy(groups, func(g CWLogGroup) string { return g.LogGroupName })
 
-	if req.Limit > 0 && len(groups) > req.Limit {
-		groups = groups[:req.Limit]
+	page, next := awsPage(groups, req.NextToken, req.Limit, 50)
+	out := map[string]any{"logGroups": page}
+	if next != "" {
+		out["nextToken"] = next
 	}
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"logGroups": groups,
-	})
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCWDeleteLogGroup(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +226,7 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 		OrderBy             string `json:"orderBy"`
 		Descending          *bool  `json:"descending"`
 		Limit               int    `json:"limit"`
+		NextToken           string `json:"nextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -248,7 +250,6 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 		streams = []CWLogStream{}
 	}
 
-	// Sort by OrderBy + Descending
 	if req.OrderBy == "LastEventTime" {
 		desc := req.Descending != nil && *req.Descending
 		sort.Slice(streams, func(i, j int) bool {
@@ -258,7 +259,6 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 			return streams[i].LastEventTimestamp < streams[j].LastEventTimestamp
 		})
 	} else {
-		// Default: sort by LogStreamName ascending
 		desc := req.Descending != nil && *req.Descending
 		sort.Slice(streams, func(i, j int) bool {
 			if desc {
@@ -268,13 +268,12 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if req.Limit > 0 && len(streams) > req.Limit {
-		streams = streams[:req.Limit]
+	page, next := awsPage(streams, req.NextToken, req.Limit, 50)
+	out := map[string]any{"logStreams": page}
+	if next != "" {
+		out["nextToken"] = next
 	}
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"logStreams": streams,
-	})
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {

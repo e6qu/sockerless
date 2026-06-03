@@ -340,12 +340,22 @@ func handleSSMGetParametersByPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSSMDescribeParameters(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults int    `json:"MaxResults"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	all := ssmParams.List()
 	if all == nil {
 		all = []SSMParameter{}
 	}
-	out := make([]map[string]any, 0, len(all))
-	for _, p := range all {
+	sortBy(all, func(p SSMParameter) string { return p.Name })
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 50)
+	out := make([]map[string]any, 0, len(page))
+	for _, p := range page {
 		out = append(out, map[string]any{
 			"Name":             p.Name,
 			"Type":             p.Type,
@@ -356,7 +366,11 @@ func handleSSMDescribeParameters(w http.ResponseWriter, r *http.Request) {
 			"DataType":         p.DataType,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Parameters": out})
+	resp := map[string]any{"Parameters": out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleSSMDeleteParameter(w http.ResponseWriter, r *http.Request) {
