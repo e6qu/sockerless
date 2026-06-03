@@ -202,3 +202,96 @@ func TestPubSub_PatchTopic(t *testing.T) {
 	assert.Equal(t, "after", got.Labels["env"])
 	assert.Equal(t, "platform", got.Labels["team"])
 }
+
+func TestPubSub_TopicListPagination(t *testing.T) {
+	svc := pubsubService(t)
+	proj := "pagination-ps-project"
+
+	// Create 3 topics.
+	topics := []string{
+		"projects/" + proj + "/topics/topic-a",
+		"projects/" + proj + "/topics/topic-b",
+		"projects/" + proj + "/topics/topic-c",
+	}
+	for _, name := range topics {
+		_, err := svc.Projects.Topics.Create(name, &pubsub.Topic{Name: name}).Do()
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		for _, name := range topics {
+			_, _ = svc.Projects.Topics.Delete(name).Do()
+		}
+	})
+
+	// Page through with pageSize=1.
+	var got []string
+	pageToken := ""
+	for {
+		call := svc.Projects.Topics.List("projects/" + proj).PageSize(1)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		resp, err := call.Do()
+		require.NoError(t, err)
+		require.Len(t, resp.Topics, 1, "each page must have exactly 1 topic with pageSize=1")
+		got = append(got, resp.Topics[0].Name)
+		pageToken = resp.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	require.Len(t, got, 3)
+	for _, name := range topics {
+		require.Contains(t, got, name)
+	}
+}
+
+func TestPubSub_SubscriptionListPagination(t *testing.T) {
+	svc := pubsubService(t)
+	proj := "pagination-ps-sub-project"
+	topicName := "projects/" + proj + "/topics/pagination-topic"
+
+	_, err := svc.Projects.Topics.Create(topicName, &pubsub.Topic{Name: topicName}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Topics.Delete(topicName).Do() })
+
+	subs := []string{
+		"projects/" + proj + "/subscriptions/sub-a",
+		"projects/" + proj + "/subscriptions/sub-b",
+		"projects/" + proj + "/subscriptions/sub-c",
+	}
+	for _, name := range subs {
+		_, err = svc.Projects.Subscriptions.Create(name, &pubsub.Subscription{
+			Name:  name,
+			Topic: topicName,
+		}).Do()
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		for _, name := range subs {
+			_, _ = svc.Projects.Subscriptions.Delete(name).Do()
+		}
+	})
+
+	// Page through with pageSize=1.
+	var got []string
+	pageToken := ""
+	for {
+		call := svc.Projects.Subscriptions.List("projects/" + proj).PageSize(1)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		resp, err := call.Do()
+		require.NoError(t, err)
+		require.Len(t, resp.Subscriptions, 1, "each page must have exactly 1 subscription with pageSize=1")
+		got = append(got, resp.Subscriptions[0].Name)
+		pageToken = resp.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	require.Len(t, got, 3)
+	for _, name := range subs {
+		require.Contains(t, got, name)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -244,16 +245,25 @@ func handlePSGetTopic(w http.ResponseWriter, r *http.Request) {
 func handlePSListTopics(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	prefix := fmt.Sprintf("projects/%s/topics/", project)
-	var out []PSTopic
+	var all []PSTopic
 	for _, t := range psTopics.List() {
 		if strings.HasPrefix(t.Name, prefix) {
-			out = append(out, t)
+			all = append(all, t)
 		}
 	}
-	if out == nil {
-		out = []PSTopic{}
+	if all == nil {
+		all = []PSTopic{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"topics": out})
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	page, next, ok := paginateList(w, r, all)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"topics": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handlePSDeleteTopic(w http.ResponseWriter, r *http.Request) {
@@ -480,16 +490,25 @@ func splitMask(mask string) []string {
 func handlePSListSubscriptions(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	prefix := fmt.Sprintf("projects/%s/subscriptions/", project)
-	var out []PSSubscription
+	var all []PSSubscription
 	for _, s := range psSubscriptions.List() {
 		if strings.HasPrefix(s.Name, prefix) {
-			out = append(out, s)
+			all = append(all, s)
 		}
 	}
-	if out == nil {
-		out = []PSSubscription{}
+	if all == nil {
+		all = []PSSubscription{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"subscriptions": out})
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	page, next, ok := paginateList(w, r, all)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"subscriptions": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handlePSDeleteSubscription(w http.ResponseWriter, r *http.Request) {

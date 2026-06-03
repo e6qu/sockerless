@@ -104,16 +104,25 @@ func registerSecretManager(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		prefix := fmt.Sprintf("projects/%s/secrets/", project)
-		var out []Secret
+		var all []Secret
 		for _, s := range smSecrets.List() {
 			if strings.HasPrefix(s.Name, prefix) {
-				out = append(out, s)
+				all = append(all, s)
 			}
 		}
-		if out == nil {
-			out = []Secret{}
+		if all == nil {
+			all = []Secret{}
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"secrets": out})
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next, ok := paginateList(w, r, all)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"secrets": page, "totalSize": len(all)}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {

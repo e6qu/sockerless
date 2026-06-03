@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -251,6 +252,37 @@ func isNonStorageFirstSegment(s string) bool {
 	return false
 }
 
+// blobStoragePage applies Azure Storage list pagination to an already-sorted
+// slice. It reads ?maxresults=N (page size, default unlimited) and
+// ?marker=NAME (continuation token = name of first item to include) from the
+// request query, slices the items, and returns the page plus a NextMarker
+// value (empty when the page is the last one). The name func extracts the
+// sortable name from each item.
+func blobStoragePage[T any](r *http.Request, items []T, name func(T) string) ([]T, string) {
+	// Apply marker: skip items whose name is <= marker.
+	marker := r.URL.Query().Get("marker")
+	start := 0
+	if marker != "" {
+		for start < len(items) && name(items[start]) <= marker {
+			start++
+		}
+	}
+	items = items[start:]
+
+	// Apply maxresults.
+	if raw := r.URL.Query().Get("maxresults"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n < len(items) {
+			// NextMarker is the name of the last returned item. The next
+			// request passes it as ?marker=NAME and the skip loop above
+			// advances past all items whose name is <= marker, landing on
+			// the first item of the next page.
+			next := name(items[n-1])
+			return items[:n], next
+		}
+	}
+	return items, ""
+}
+
 func blobObjectKey(account, container, name string) string {
 	return account + "/" + container + "/" + name
 }
@@ -404,11 +436,11 @@ func handleListContainers(w http.ResponseWriter, r *http.Request, account string
 		Containers      []containerEntry `xml:"Containers>Container"`
 		NextMarker      string           `xml:"NextMarker"`
 	}
-	out := enum{ServiceEndpoint: azureStorageEndpointURL(r, account, "blob")}
 	prefix := account + "/"
+	var all []containerEntry
 	for _, c := range blobContainersData.List() {
 		if strings.HasPrefix(blobContainerKey(c.Account, c.Name), prefix) {
-			out.Containers = append(out.Containers, containerEntry{
+			all = append(all, containerEntry{
 				Name: c.Name,
 				Properties: containerProperties{
 					LastModified: c.Created,
@@ -417,9 +449,14 @@ func handleListContainers(w http.ResponseWriter, r *http.Request, account string
 			})
 		}
 	}
-	sort.Slice(out.Containers, func(i, j int) bool {
-		return out.Containers[i].Name < out.Containers[j].Name
-	})
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+
+	page, marker := blobStoragePage(r, all, func(e containerEntry) string { return e.Name })
+	out := enum{
+		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
+		Containers:      page,
+		NextMarker:      marker,
+	}
 	writeStorageXML(w, http.StatusOK, out)
 }
 
@@ -444,19 +481,25 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 		Blobs           []blobEntry `xml:"Blobs>Blob"`
 		NextMarker      string      `xml:"NextMarker"`
 	}
-	out := enum{
-		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
-		ContainerName:   container,
-	}
 	prefix := account + "/" + container + "/"
+	var all []blobEntry
 	for _, b := range blobObjects.List() {
 		if strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), prefix) {
 			be := blobEntry{Name: b.Name}
 			be.Properties.ContentLength = len(b.Data)
 			be.Properties.ETag = b.ETag
 			be.Properties.LastModified = b.LastModified
-			out.Blobs = append(out.Blobs, be)
+			all = append(all, be)
 		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+
+	page, marker := blobStoragePage(r, all, func(e blobEntry) string { return e.Name })
+	out := enum{
+		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
+		ContainerName:   container,
+		Blobs:           page,
+		NextMarker:      marker,
 	}
 	writeStorageXML(w, http.StatusOK, out)
 }
