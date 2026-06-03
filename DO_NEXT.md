@@ -4,51 +4,36 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/gcp-coverage-gaps-pr-b` (GCP PR B — SA keys, instance templates, SDK+CLI+Terraform gaps).
-- Last merged: PR #389 (Entra id_token groups + Graph memberOf).
-- Open GitHub issues: none.
-- Open BUG trackers: BUG-1075 and BUG-1104.
-- BUG counters: 1334 filed · 1334 fixed · 2 open · 3 false positives.
+- Branch: `main` (clean).
+- Last merged: PR #395 (BUG-1104 coverage audit — surface tables and matrix backfill).
+- Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
+- Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
+- BUG counters: 1347 filed · 1344 fixed · 5 open · 3 false positives.
 
-## Next Two PRs
+## Recently Completed
 
-### PR A — Azure simulator coverage gaps (test-only; implementations already exist)
+| PR | Description |
+|----|-------------|
+| #392 | GCP SA keys, instance templates, Cloud Build/Logging/IAM SDK+CLI tests |
+| #393 | bleephub POST /admin/organizations; Azure Entra Graph provisioning + ROPC |
+| #394 | (issue) azuread Terraform provider upstream blocker documented |
+| #395 | BUG-1104 audit: surface tables and matrix backfill for PRs #388/392/393 |
 
-All three gaps are missing SDK/CLI tests for live implementations. File BUG numbers for each before writing code.
+## Deferred / Blocked
 
-| Gap | File | What to add |
-|-----|------|------------|
-| Application Insights | `simulators/azure/sdk-tests/monitor_test.go` (or new `insights_test.go`) | SDK tests: create component → get → assert instrumentation key + workspace link; delete; all via `armappinsights.ComponentsClient` |
-| Private DNS A-record CRUD | `simulators/azure/sdk-tests/dns_private_test.go` | SDK tests: create A record → list → get → delete via `armprivatedns.RecordSetsClient` |
-| ACR image operations | `simulators/azure/sdk-tests/acr_test.go` | SDK tests: push image manifest → list repositories → list tags → delete via `azcontainerregistry` data-plane client |
+| Item | Blocker |
+|------|---------|
+| `azuread_group` / `azuread_user` Terraform tests (BUG-1345) | Upstream: no `microsoft_graph_endpoint` override in `hashicorp/terraform-provider-azuread` (issue #1837 upstream, issue #394 here) |
+| Live-cloud validation (BUG-1075) | Requires authenticated real-cloud runs; no timeline |
 
-All three must also have CLI coverage (`az monitor app-insights component`, `az network private-dns record-set a`, `az acr repository`) and Terraform coverage if the resource is already in `simulators/azure/terraform-tests/main.tf` (App Insights and Private DNS zone already are; extend them).
+## What to Work On Next
 
-Matrix rows to update: `azure-monitor` (add App Insights evidence), `azure-acr` (add image ops evidence). Check that `azure-private-dns` or `azure-dns` row exists; add if not.
+No queued work items. The simulator coverage is current for all implemented slices, all surface tables are up to date, and the only open issue (#394) is blocked upstream.
 
-### PR B — GCP simulator coverage gaps (two missing implementations + missing tests)
-
-File BUG numbers before writing code. Larger scope — two routes are genuinely missing.
-
-**Implementation gaps (new routes needed):**
-
-| Gap | File | What to add |
-|-----|------|------------|
-| Service account keys | `simulators/gcp/iam.go` | POST/GET(list)/GET(single)/DELETE at `/v1/projects/{p}/serviceAccounts/{email}/keys`; return `ServiceAccountKey` shape with `keyId`, `privateKeyData` (base64 JSON key), `validAfterTime`, `validBeforeTime`, `keyAlgorithm` |
-| Compute instance templates | `simulators/gcp/compute.go` | POST/GET/LIST/DELETE at `/compute/v1/projects/{p}/global/instanceTemplates`; store in new `InstanceTemplates` map; return minimal `compute#instanceTemplate` shape with `name`, `selfLink`, `properties` |
-
-**Test gaps (routes exist, clients untested):**
-
-| Gap | SDK test file | What to add |
-|-----|--------------|------------|
-| Cloud Functions Gen2 CRUD | `simulators/gcp/sdk-tests/functions_test.go` | `functions2.NewCloudFunctionsClient` → Create → Get → List → Delete (Terraform already exercises Gen2; SDK test suite only has invoke tests) |
-| Cloud Build trigger CRUD | `simulators/gcp/sdk-tests/build_test.go` | `cloudbuild.NewCloudBuildClient` → CreateBuildTrigger → GetBuildTrigger → ListBuildTriggers → DeleteBuildTrigger |
-| Cloud Logging sink+metric CRUD | `simulators/gcp/sdk-tests/logging_test.go` | `logging.NewConfigClient` → CreateSink → GetSink → ListSinks → UpdateSink → DeleteSink; same for Metrics |
-| Project IAM policy | `simulators/gcp/sdk-tests/iam_test.go` | `resourcemanager.NewProjectsClient` → GetIamPolicy → SetIamPolicy (add `google_project_iam_member` to Terraform stack too) |
-
-All test gaps also need CLI coverage (`gcloud functions`, `gcloud builds triggers`, `gcloud logging sinks`, `gcloud logging metrics`, `gcloud projects get-iam-policy`).
-
-Matrix rows to update: `gcp-iam` (add SA keys), `gcp-compute` (add instance templates), `gcp-cloudfunctions` (add Gen2 SDK evidence), `gcp-cloudbuild` (add trigger SDK evidence), `gcp-logging` (add sink/metric SDK evidence).
+Potential directions (discuss with user before starting):
+- New simulator slices for any cloud area not yet covered (check `specs/SIM_TEST_COVERAGE_MATRIX.md` for gaps).
+- Hardening existing surfaces (e.g., pagination shape verification for any `n/a` rows).
+- Picking up live-cloud validation for any backend (BUG-1075).
 
 ## Start Checklist (every session)
 

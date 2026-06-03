@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/gcp-coverage-gaps-pr-b` — GCP simulator coverage gaps PR B |
-| In-flight | PR B: SA keys + instance templates impl; Cloud Build trigger / Logging sink+metric / project IAM SDK+CLI tests; google_project_iam_member Terraform |
-| Last merged | PR #389 — Entra id_token groups + Graph memberOf (issue #387) |
-| Also merged this session | PR #388 Azure coverage gaps; PR #386 continuity doc compression |
-| Open GitHub issues | none |
-| Bugs | 1334 filed · 1334 fixed · 2 open · 3 false positives |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence |
-| Planned next | Further coverage gaps or open issues |
+| Active branch | `main` (clean) |
+| In-flight | Nothing — no open PRs |
+| Last merged | PR #395 — BUG-1104 audit: surface tables + matrix backfill for PRs #388/392/393 |
+| Also merged recently | PR #393 bleephub admin org + Azure Entra Graph/ROPC; PR #392 GCP SA keys + instance templates |
+| Open GitHub issues | #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
+| Bugs | 1347 filed · 1344 fixed · 5 open · 3 false positives |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
+| Planned next | No queued work; discuss direction with user |
 | Live infra | None up |
 
 ## Invariants
@@ -42,4 +42,6 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 - **BUG-1075**: live-cloud validation. Do not mark cloud cells green without authenticated real-cloud runs. No timeline set.
 - **BUG-1104**: audit cadence. Keep open while simulator work continues. Every simulator phase re-checks stale SDK/CLI/Terraform claims.
+- **BUG-1345**: azuread Terraform provider has no `microsoft_graph_endpoint` override. Tracked as issue #394. Unblock when upstream resolves https://github.com/hashicorp/terraform-provider-azuread/issues/1837.
 - **Issue #363**: versioned releases and GHCR image publishing. Intentionally deferred while the project is early.
+- **Issue #394**: azuread upstream blocker (same as BUG-1345).
