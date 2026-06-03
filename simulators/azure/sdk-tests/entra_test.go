@@ -2,8 +2,6 @@ package azure_sdk_test
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -13,163 +11,238 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// entraGroup mirrors the EntraGroup struct in the sim for seeding.
-type entraGroup struct {
+// --- Graph provisioning helpers ---
+
+type graphGroup struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 }
 
-// entraUserSeed is the request body for PUT /sim/v1/entra/users/{oid}.
-type entraUserSeed struct {
-	OID               string       `json:"oid"`
-	Sub               string       `json:"sub"`
-	PreferredUsername string       `json:"preferredUsername"`
-	Name              string       `json:"name"`
-	Email             string       `json:"email,omitempty"`
-	Groups            []entraGroup `json:"groups"`
+type graphUser struct {
+	ID                string `json:"id"`
+	DisplayName       string `json:"displayName"`
+	UserPrincipalName string `json:"userPrincipalName"`
 }
 
-func seedEntraUser(t *testing.T, oid string, user entraUserSeed) {
+func createGraphGroup(t *testing.T, displayName string) graphGroup {
 	t.Helper()
-	user.OID = oid
-	body, err := json.Marshal(user)
+	body, _ := json.Marshal(map[string]any{
+		"displayName":     displayName,
+		"mailNickname":    displayName,
+		"securityEnabled": true,
+		"mailEnabled":     false,
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/groups", bytes.NewReader(body))
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPut, baseURL+"/sim/v1/entra/users/"+oid, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var grp graphGroup
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&grp))
+	require.NotEmpty(t, grp.ID)
+	t.Cleanup(func() { deleteGraphGroup(t, grp.ID) })
+	return grp
+}
+
+func deleteGraphGroup(t *testing.T, id string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/groups/"+id, nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+}
+
+func createGraphUser(t *testing.T, displayName, upn string) graphUser {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"displayName":       displayName,
+		"userPrincipalName": upn,
+		"mailNickname":      displayName,
+		"accountEnabled":    true,
+		"passwordProfile": map[string]any{
+			"password":                      "Test1234!",
+			"forceChangePasswordNextSignIn": false,
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/users", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var u graphUser
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&u))
+	require.NotEmpty(t, u.ID)
+	t.Cleanup(func() { deleteGraphUser(t, u.ID) })
+	return u
+}
+
+func deleteGraphUser(t *testing.T, id string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/users/"+id, nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+}
+
+func addGroupMember(t *testing.T, groupID, userID string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"@odata.id": baseURL + "/v1.0/directoryObjects/" + userID,
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/groups/"+groupID+"/members/$ref", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
-func deleteEntraUser(t *testing.T, oid string) {
+// doROPC exchanges username+password for tokens and returns the decoded id_token payload.
+func doROPC(t *testing.T, tenant, clientID, username string) map[string]any {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodDelete, baseURL+"/sim/v1/entra/users/"+oid, nil)
-	require.NoError(t, err)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-}
-
-// doEntraAuthCodeFlow runs the PKCE authorization code flow and returns the
-// decoded id_token payload.
-func doEntraAuthCodeFlow(t *testing.T, tenant, clientID string) map[string]any {
-	t.Helper()
-	redirectURI := "http://127.0.0.1/callback"
-	verifier := "ThisIsntRandomButItNeedsToBe43CharactersLong"
-	digest := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(digest[:])
-
-	authURL := baseURL + "/" + tenant + "/oauth2/v2.0/authorize?" + url.Values{
-		"client_id":             {clientID},
-		"response_type":         {"code"},
-		"redirect_uri":          {redirectURI},
-		"scope":                 {"openid profile email"},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-	}.Encode()
-	noRedirect := http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
-	authResp, err := noRedirect.Get(authURL)
-	require.NoError(t, err)
-	authResp.Body.Close()
-	require.Equal(t, http.StatusFound, authResp.StatusCode)
-	callback, err := url.Parse(authResp.Header.Get("Location"))
-	require.NoError(t, err)
-	code := callback.Query().Get("code")
-	require.NotEmpty(t, code)
-
 	tokenBody := requestAzureToken(t, tenant, "oauth2/v2.0/token", url.Values{
-		"grant_type":    {"authorization_code"},
-		"client_id":     {clientID},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"code_verifier": {verifier},
+		"grant_type": {"password"},
+		"client_id":  {clientID},
+		"username":   {username},
+		"password":   {"irrelevant"},
+		"scope":      {"openid profile email"},
 	})
-	require.NotEmpty(t, tokenBody.IDToken)
+	require.NotEmpty(t, tokenBody.IDToken, "ROPC must return id_token when scope includes openid")
 	return azureTokenPayload(t, tokenBody.IDToken)
 }
 
-func TestEntra_IDTokenGroupsClaim(t *testing.T) {
-	oid := "entra-groups-oid"
-	seedEntraUser(t, oid, entraUserSeed{
-		Sub:               "entra-groups-sub",
-		PreferredUsername: "groups-user@example.com",
-		Name:              "Groups User",
-		Groups: []entraGroup{
-			{ID: "group-admin-id", DisplayName: "Admins"},
-			{ID: "group-dev-id", DisplayName: "Developers"},
-		},
-	})
-	defer deleteEntraUser(t, oid)
+// --- Standard provisioning + ROPC tests ---
 
-	payload := doEntraAuthCodeFlow(t, "tenant-entra-groups", "client-entra-groups")
+func TestEntra_GraphGroupCRUD(t *testing.T) {
+	grp := createGraphGroup(t, "SDK-Test-Group")
 
-	assert.Equal(t, oid, payload["oid"])
-	assert.Equal(t, "entra-groups-sub", payload["sub"])
-	assert.Equal(t, "Groups User", payload["name"])
+	// GET by ID
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1.0/groups/"+grp.ID, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got graphGroup
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, grp.ID, got.ID)
+	assert.Equal(t, "SDK-Test-Group", got.DisplayName)
+}
+
+func TestEntra_GraphUserCRUD(t *testing.T) {
+	u := createGraphUser(t, "SDK Test User", "sdktest@example.com")
+
+	// GET by ID
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1.0/users/"+u.ID, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got graphUser
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	assert.Equal(t, u.ID, got.ID)
+	assert.Equal(t, "sdktest@example.com", got.UserPrincipalName)
+}
+
+func TestEntra_GraphGroupMembership(t *testing.T) {
+	grp := createGraphGroup(t, "SDK-Membership-Group")
+	u := createGraphUser(t, "Member User", "member@example.com")
+	addGroupMember(t, grp.ID, u.ID)
+
+	// GET members
+	resp, err := http.Get(baseURL + "/v1.0/groups/" + grp.ID + "/members")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Value []graphUser `json:"value"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Len(t, body.Value, 1)
+	assert.Equal(t, u.ID, body.Value[0].ID)
+
+	// DELETE member
+	req, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/groups/"+grp.ID+"/members/"+u.ID+"/$ref", nil)
+	delResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	delResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, delResp.StatusCode)
+}
+
+func TestEntra_ROPCIDTokenGroupsClaim(t *testing.T) {
+	grp := createGraphGroup(t, "ROPC-Admins")
+	u := createGraphUser(t, "ROPC User", "ropc-user@example.com")
+	addGroupMember(t, grp.ID, u.ID)
+
+	payload := doROPC(t, "tenant-ropc", "client-ropc", "ropc-user@example.com")
+
+	assert.Equal(t, u.ID, payload["oid"])
+	assert.Equal(t, "ROPC User", payload["name"])
 	groupsRaw, ok := payload["groups"]
 	require.True(t, ok, "id_token must contain groups claim")
 	groups, ok := groupsRaw.([]any)
 	require.True(t, ok)
-	require.Len(t, groups, 2)
-	assert.Contains(t, groups, "group-admin-id")
-	assert.Contains(t, groups, "group-dev-id")
+	assert.Contains(t, groups, grp.ID)
 }
 
-func TestEntra_IDTokenNoGroupsClaimWhenUnseeded(t *testing.T) {
-	// Ensure the default user (test-oid) has no seeded groups in store.
-	deleteEntraUser(t, "test-oid")
-
-	payload := doEntraAuthCodeFlow(t, "tenant-entra-nogroups", "client-entra-nogroups")
-
-	assert.Equal(t, "test-oid", payload["oid"])
-	assert.Equal(t, "Sockerless Test User", payload["name"])
-	_, hasGroups := payload["groups"]
-	assert.False(t, hasGroups, "id_token must not contain groups claim for unseeded default user")
-}
-
-func TestEntra_IDTokenUsesSeededIdentity(t *testing.T) {
-	oid := "entra-identity-oid"
-	seedEntraUser(t, oid, entraUserSeed{
-		Sub:               "entra-identity-sub",
-		PreferredUsername: "alice@example.com",
-		Name:              "Alice",
-		Email:             "alice@example.com",
-		Groups:            []entraGroup{},
+func TestEntra_ROPCUnknownUserReturns400(t *testing.T) {
+	tokenResp, err := http.PostForm(baseURL+"/tenant-ropc-unknown/oauth2/v2.0/token", url.Values{
+		"grant_type": {"password"},
+		"client_id":  {"client-ropc"},
+		"username":   {"nobody@example.com"},
+		"password":   {"x"},
+		"scope":      {"openid"},
 	})
-	defer deleteEntraUser(t, oid)
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, tokenResp.StatusCode)
+}
 
-	payload := doEntraAuthCodeFlow(t, "tenant-entra-identity", "client-entra-identity")
+func TestEntra_IDTokenGroupsClaim(t *testing.T) {
+	grp := createGraphGroup(t, "Auth-Admins")
+	u := createGraphUser(t, "Auth Groups User", "authgroups@example.com")
+	addGroupMember(t, grp.ID, u.ID)
 
-	assert.Equal(t, oid, payload["oid"])
-	assert.Equal(t, "entra-identity-sub", payload["sub"])
-	assert.Equal(t, "Alice", payload["name"])
-	assert.Equal(t, "alice@example.com", payload["preferred_username"])
-	assert.Equal(t, "alice@example.com", payload["email"])
+	// Auth code flow uses the sim-active user (default). Provision via ROPC
+	// which targets the specific user.
+	payload := doROPC(t, "tenant-entra-groups", "client-entra-groups", "authgroups@example.com")
+
+	assert.Equal(t, u.ID, payload["oid"])
+	groupsRaw, ok := payload["groups"]
+	require.True(t, ok, "id_token must contain groups claim")
+	groups, ok := groupsRaw.([]any)
+	require.True(t, ok)
+	assert.Contains(t, groups, grp.ID)
+}
+
+func TestEntra_IDTokenNoGroupsClaimWhenUserHasNoGroups(t *testing.T) {
+	u := createGraphUser(t, "No Groups User", "nogroups@example.com")
+	payload := doROPC(t, "tenant-entra-nogroups", "client-entra-nogroups", "nogroups@example.com")
+	assert.Equal(t, u.ID, payload["oid"])
+	_, hasGroups := payload["groups"]
+	assert.False(t, hasGroups, "id_token must not contain groups claim when user has no groups")
 }
 
 func TestEntra_GraphMemberOf(t *testing.T) {
-	oid := "entra-graph-oid"
-	seedEntraUser(t, oid, entraUserSeed{
-		Sub:               "entra-graph-sub",
-		PreferredUsername: "graph-user@example.com",
-		Name:              "Graph User",
-		Groups: []entraGroup{
-			{ID: "grp-engineering", DisplayName: "Engineering"},
-			{ID: "grp-platform", DisplayName: "Platform"},
-		},
-	})
-	defer deleteEntraUser(t, oid)
+	grp1 := createGraphGroup(t, "Engineering")
+	grp2 := createGraphGroup(t, "Platform")
+	u := createGraphUser(t, "Graph User", "graph-user@example.com")
+	addGroupMember(t, grp1.ID, u.ID)
+	addGroupMember(t, grp2.ID, u.ID)
 
-	// Get an access token (oid in the token will be the seeded oid).
+	// Get an access token via ROPC (oid in the token will be the created user's oid).
 	tokenBody := requestAzureToken(t, "tenant-entra-graph", "oauth2/v2.0/token", url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {"client-entra-graph"},
-		"client_secret": {"secret"},
-		"scope":         {"https://graph.microsoft.com/.default"},
+		"grant_type": {"password"},
+		"client_id":  {"client-entra-graph"},
+		"username":   {"graph-user@example.com"},
+		"password":   {"x"},
+		"scope":      {"https://graph.microsoft.com/.default"},
 	})
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1.0/me/memberOf", nil)
@@ -194,25 +267,21 @@ func TestEntra_GraphMemberOf(t *testing.T) {
 		assert.Equal(t, "#microsoft.graph.group", g.ODataType)
 		ids[g.ID] = g.DisplayName
 	}
-	assert.Equal(t, "Engineering", ids["grp-engineering"])
-	assert.Equal(t, "Platform", ids["grp-platform"])
+	assert.Equal(t, "Engineering", ids[grp1.ID])
+	assert.Equal(t, "Platform", ids[grp2.ID])
 }
 
 func TestEntra_GraphTransitiveMemberOf(t *testing.T) {
-	oid := "entra-transitive-oid"
-	seedEntraUser(t, oid, entraUserSeed{
-		Sub:               "entra-transitive-sub",
-		PreferredUsername: "transitive@example.com",
-		Name:              "Transitive User",
-		Groups:            []entraGroup{{ID: "grp-infra", DisplayName: "Infra"}},
-	})
-	defer deleteEntraUser(t, oid)
+	grp := createGraphGroup(t, "Infra")
+	u := createGraphUser(t, "Transitive User", "transitive@example.com")
+	addGroupMember(t, grp.ID, u.ID)
 
 	tokenBody := requestAzureToken(t, "tenant-entra-transitive", "oauth2/v2.0/token", url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {"client-entra-transitive"},
-		"client_secret": {"secret"},
-		"scope":         {"https://graph.microsoft.com/.default"},
+		"grant_type": {"password"},
+		"client_id":  {"client-entra-transitive"},
+		"username":   {"transitive@example.com"},
+		"password":   {"x"},
+		"scope":      {"https://graph.microsoft.com/.default"},
 	})
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1.0/me/transitiveMemberOf", nil)
@@ -230,17 +299,19 @@ func TestEntra_GraphTransitiveMemberOf(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.Len(t, body.Value, 1)
-	assert.Equal(t, "grp-infra", body.Value[0].ID)
+	assert.Equal(t, grp.ID, body.Value[0].ID)
 }
 
-func TestEntra_DiscoveryAdvertisesGroupsClaim(t *testing.T) {
+func TestEntra_DiscoveryAdvertisesGroupsClaimAndROPC(t *testing.T) {
 	resp, err := http.Get(baseURL + "/tenant-groups-discovery/.well-known/openid-configuration")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var body struct {
-		ClaimsSupported []string `json:"claims_supported"`
+		ClaimsSupported     []string `json:"claims_supported"`
+		GrantTypesSupported []string `json:"grant_types_supported"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	assert.Contains(t, body.ClaimsSupported, "groups")
+	assert.Contains(t, body.GrantTypesSupported, "password")
 }

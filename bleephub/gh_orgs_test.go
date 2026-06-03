@@ -80,6 +80,61 @@ func TestCreateOrgNoAuth(t *testing.T) {
 	}
 }
 
+// TestAdminCreateOrg verifies POST /api/v3/admin/organizations → 201.
+// This is the standard GHES admin endpoint for org provisioning, where the
+// caller specifies the admin user explicitly rather than using the
+// authenticated user as the creator.
+func TestAdminCreateOrg(t *testing.T) {
+	resp := ghPost(t, "/api/v3/admin/organizations", defaultToken, map[string]interface{}{
+		"login":        "admin-org-create",
+		"admin":        "admin",
+		"profile_name": "Admin Created Org",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+
+	if data["login"] != "admin-org-create" {
+		t.Fatalf("expected login=admin-org-create, got %v", data["login"])
+	}
+	if data["name"] != "Admin Created Org" {
+		t.Fatalf("expected name='Admin Created Org', got %v", data["name"])
+	}
+	if data["type"] != "Organization" {
+		t.Fatalf("expected type=Organization, got %v", data["type"])
+	}
+}
+
+// TestAdminCreateOrgUnknownAdmin verifies that specifying a non-existent admin user → 422.
+func TestAdminCreateOrgUnknownAdmin(t *testing.T) {
+	resp := ghPost(t, "/api/v3/admin/organizations", defaultToken, map[string]interface{}{
+		"login": "admin-org-bad-admin",
+		"admin": "no-such-user",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != 422 {
+		t.Fatalf("expected 422, got %d", resp.StatusCode)
+	}
+}
+
+// TestAdminCreateOrgDefaultsProfileName verifies that profile_name defaults to login.
+func TestAdminCreateOrgDefaultsProfileName(t *testing.T) {
+	resp := ghPost(t, "/api/v3/admin/organizations", defaultToken, map[string]interface{}{
+		"login": "admin-org-no-name",
+		"admin": "admin",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["name"] != "admin-org-no-name" {
+		t.Fatalf("expected name to default to login, got %v", data["name"])
+	}
+}
+
 // TestGetOrg verifies GET /api/v3/orgs/{org} → 200.
 func TestGetOrg(t *testing.T) {
 	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{

@@ -212,7 +212,7 @@ func TestAzureEntra_AuthorizeRejectsUnsupportedAndMissingFields(t *testing.T) {
 
 func TestAzureEntra_TokenRejectsUnsupportedGrantType(t *testing.T) {
 	resp, err := http.PostForm(baseURL+"/tenant-grant/oauth2/v2.0/token", url.Values{
-		"grant_type": {"password"},
+		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		"client_id":  {"client"},
 		"scope":      {"https://graph.microsoft.com/User.Read"},
 	})

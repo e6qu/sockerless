@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1334 filed - 1334 fixed - 2 open - 3 false positives.**
+**1337 filed - 1337 fixed - 2 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,10 +12,15 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
-
 ## Recently Closed
 
-This phase closed BUG-1327 through BUG-1334:
+This phase closed BUG-1335 through BUG-1337:
+
+- BUG-1335: bleephub `POST /user/orgs` non-standard surface. Added `POST /api/v3/admin/organizations` — the real GHES endpoint for org provisioning where the admin user is specified explicitly in the body (`login`, `admin`, `profile_name`).
+- BUG-1336: Azure/Entra group and user provisioning was only possible via `PUT /sim/v1/entra/users/{oid}`. Added standard Microsoft Graph provisioning: `POST/GET/DELETE /v1.0/groups`, `POST/GET/DELETE /v1.0/users`, `POST/GET/DELETE /v1.0/groups/{id}/members[/{userId}/$ref]`. `handleGraphMemberOf` updated to return groups from both the standard membership store and the legacy inline sim-seed path.
+- BUG-1337: No ROPC grant in the Azure/Entra sim. Added `handleAzureROPC`: looks up user by `userPrincipalName`, mints `access_token` + `id_token` carrying that user's identity and group memberships; 400 for unknown user. `mintAzureSimJWTForUser` / `mintAzureSimIDTokenForUser` added as explicit-user variants. OIDC discovery updated to advertise `"password"` in `grant_types_supported`.
+
+Earlier phase closed BUG-1327 through BUG-1334:
 
 - BUG-1327: SA key routes added to `iam.go` — `POST/GET/LIST/DELETE /v1/projects/{p}/serviceAccounts/{email}/keys`; gcloud's project=`-` wildcard resolved by extracting project from email; `gcpMakeSAKeyJSON` generates a real RSA-2048 PKCS8 key returned as base64-encoded JSON credential file (privateKeyData only on create, absent on get/list per real GCP spec).
 - BUG-1328: Compute instance template routes added to `compute.go` — `POST/GET/LIST/DELETE /compute/v1/projects/{p}/global/instanceTemplates` plus `GET .../aggregated/instanceTemplates` (used by `gcloud compute instance-templates list`); DELETE uses `operationType: "delete"` so gcloud does not re-fetch the deleted resource.
