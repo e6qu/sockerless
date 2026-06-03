@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/iam/v1"
 	iamcredentials "google.golang.org/api/iamcredentials/v1"
 	"google.golang.org/api/option"
@@ -166,4 +167,106 @@ func TestIAMCredentials_GenerateIdToken_RequiresAudience(t *testing.T) {
 		&iamcredentials.GenerateIdTokenRequest{}, // no audience
 	).Do()
 	require.Error(t, err)
+}
+
+func TestIAM_ServiceAccountKeysCRUD(t *testing.T) {
+	svc := iamService(t)
+
+	// Create a parent service account.
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/sa-keys-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "key-owner-sa",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "Key Owner"},
+		}).Do()
+	require.NoError(t, err)
+
+	// Create a key — response must include privateKeyData.
+	key, err := svc.Projects.ServiceAccounts.Keys.Create(sa.Name,
+		&iam.CreateServiceAccountKeyRequest{}).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, key.Name, "key name must be set")
+	require.NotEmpty(t, key.PrivateKeyData, "privateKeyData must be non-empty on create")
+	assert.Equal(t, "KEY_ALG_RSA_2048", key.KeyAlgorithm)
+
+	// Decode privateKeyData: must be base64-encoded JSON with correct fields.
+	raw, err := base64.StdEncoding.DecodeString(key.PrivateKeyData)
+	require.NoError(t, err)
+	var keyFile map[string]string
+	require.NoError(t, json.Unmarshal(raw, &keyFile))
+	assert.Equal(t, "service_account", keyFile["type"])
+	assert.NotEmpty(t, keyFile["private_key"])
+	assert.Equal(t, "sa-keys-project", keyFile["project_id"])
+
+	// Extract key ID from the resource name (…/keys/{keyId}).
+	keyID := key.Name[strings.LastIndex(key.Name, "/")+1:]
+
+	// Get key — no privateKeyData.
+	got, err := svc.Projects.ServiceAccounts.Keys.Get(key.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, key.Name, got.Name)
+	assert.Empty(t, got.PrivateKeyData, "GET must not return privateKeyData")
+
+	// List keys — must include the created key.
+	list, err := svc.Projects.ServiceAccounts.Keys.List(sa.Name).Do()
+	require.NoError(t, err)
+	found := false
+	for _, k := range list.Keys {
+		if strings.HasSuffix(k.Name, "/"+keyID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "created key must appear in list")
+
+	// Delete the key.
+	_, err = svc.Projects.ServiceAccounts.Keys.Delete(key.Name).Do()
+	require.NoError(t, err)
+
+	// Get after delete must fail.
+	_, err = svc.Projects.ServiceAccounts.Keys.Get(key.Name).Do()
+	require.Error(t, err)
+}
+
+func crmService(t *testing.T) *cloudresourcemanager.Service {
+	t.Helper()
+	svc, err := cloudresourcemanager.NewService(ctx,
+		option.WithEndpoint(baseURL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+	return svc
+}
+
+func TestIAM_ProjectIAMPolicy(t *testing.T) {
+	svc := crmService(t)
+	project := "iam-policy-project"
+
+	// GetIamPolicy on a fresh project returns empty bindings.
+	policy, err := svc.Projects.GetIamPolicy(project,
+		&cloudresourcemanager.GetIamPolicyRequest{}).Do()
+	require.NoError(t, err)
+	assert.NotEmpty(t, policy.Etag)
+
+	// SetIamPolicy — add a binding.
+	updated, err := svc.Projects.SetIamPolicy(project,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: &cloudresourcemanager.Policy{
+				Bindings: []*cloudresourcemanager.Binding{
+					{
+						Role:    "roles/viewer",
+						Members: []string{"serviceAccount:robot@iam-policy-project.iam.gserviceaccount.com"},
+					},
+				},
+			},
+		}).Do()
+	require.NoError(t, err)
+	require.Len(t, updated.Bindings, 1)
+	assert.Equal(t, "roles/viewer", updated.Bindings[0].Role)
+
+	// GetIamPolicy must reflect the set policy.
+	got, err := svc.Projects.GetIamPolicy(project,
+		&cloudresourcemanager.GetIamPolicyRequest{}).Do()
+	require.NoError(t, err)
+	require.Len(t, got.Bindings, 1)
+	assert.Equal(t, "roles/viewer", got.Bindings[0].Role)
+	assert.Contains(t, got.Bindings[0].Members, "serviceAccount:robot@iam-policy-project.iam.gserviceaccount.com")
 }

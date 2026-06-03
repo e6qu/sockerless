@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/azure-entra-groups-issue-387` (Entra groups + Graph memberOf).
-- Last merged: PR #388 (Azure coverage gaps — App Insights, Private DNS A-records, ACR image ops).
-- Open GitHub issues: #387 (in progress this branch).
+- Branch: `feat/gcp-coverage-gaps-pr-b` (GCP PR B — SA keys, instance templates, SDK+CLI+Terraform gaps).
+- Last merged: PR #389 (Entra id_token groups + Graph memberOf).
+- Open GitHub issues: none.
 - Open BUG trackers: BUG-1075 and BUG-1104.
-- BUG counters: 1326 filed · 1326 fixed · 2 open · 3 false positives.
+- BUG counters: 1334 filed · 1334 fixed · 2 open · 3 false positives.
 
 ## Next Two PRs
 

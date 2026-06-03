@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/azure-entra-groups-issue-387` — Entra id_token groups + Graph memberOf |
-| In-flight | issue #387: seed endpoint + groups claim in id_token + Graph GET /v1.0/me/memberOf |
-| Last merged | PR #388 — Azure coverage gaps (App Insights, Private DNS A-records, ACR image ops) |
-| Also merged this session | PR #386 continuity doc compression; PR #385 bleephub teams |
-| Open GitHub issues | #387 (in progress this branch) |
-| Bugs | 1326 filed · 1326 fixed · 2 open · 3 false positives |
+| Active branch | `feat/gcp-coverage-gaps-pr-b` — GCP simulator coverage gaps PR B |
+| In-flight | PR B: SA keys + instance templates impl; Cloud Build trigger / Logging sink+metric / project IAM SDK+CLI tests; google_project_iam_member Terraform |
+| Last merged | PR #389 — Entra id_token groups + Graph memberOf (issue #387) |
+| Also merged this session | PR #388 Azure coverage gaps; PR #386 continuity doc compression |
+| Open GitHub issues | none |
+| Bugs | 1334 filed · 1334 fixed · 2 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence |
-| Planned next | PR B: GCP gaps (SA keys + instance templates implementation; CF Gen2 / Cloud Build trigger / Logging sink+metric / project IAM SDK tests) |
+| Planned next | Further coverage gaps or open issues |
 | Live infra | None up |
 
 ## Invariants

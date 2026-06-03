@@ -42,6 +42,7 @@ provider "google" {
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
+
 }
 
 provider "google-beta" {
@@ -608,6 +609,7 @@ resource "google_service_account" "tf_sa" {
   account_id   = "tf-test-runner-sa"
   display_name = "tf-test runner service account"
 }
+
 
 # ---------- Outputs (cross-resource invariants) ----------
 

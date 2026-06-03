@@ -1,6 +1,7 @@
 package gcp_cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -139,6 +140,7 @@ func gcloudCLI(args ...string) *exec.Cmd {
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_APIGATEWAY="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_API_GATEWAY="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDBUILD="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDRESOURCEMANAGER="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_IAM="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_LOGGING="+baseURL+"/",
@@ -192,11 +194,29 @@ func httpDoJSON(t *testing.T, method, url, body string) string {
 
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("CLI command failed: %v\nCommand: %s\nOutput: %s", err, strings.Join(cmd.Args, " "), string(out))
+
+	const perCmdTimeout = 30 * time.Second
+
+	var combined bytes.Buffer
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("CLI command failed to start: %v\nCommand: %s", err, strings.Join(cmd.Args, " "))
 	}
-	return string(out)
+
+	// Kill the process if it has not exited within the per-command budget.
+	// This prevents a single hanging gcloud call from consuming the whole
+	// suite timeout and masking the actual failure in the error message.
+	timer := time.AfterFunc(perCmdTimeout, func() {
+		_ = cmd.Process.Kill()
+	})
+	defer timer.Stop()
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("CLI command failed: %v\nCommand: %s\nOutput: %s", err, strings.Join(cmd.Args, " "), combined.String())
+	}
+	return combined.String()
 }
 
 func nativeDockerPlatform() string {

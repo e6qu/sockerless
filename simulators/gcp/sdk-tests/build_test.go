@@ -16,6 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/cloudbuild/v1"
+	"google.golang.org/api/option"
 )
 
 // TestCloudBuild_DockerBuildAndPush exercises the Cloud Build slice:
@@ -216,4 +218,68 @@ func httpPOST(t *testing.T, url, body string) string {
 	data, _ := io.ReadAll(resp.Body)
 	require.Less(t, resp.StatusCode, 400, "POST %s: %d %s", url, resp.StatusCode, string(data))
 	return string(data)
+}
+
+func cloudbuildService(t *testing.T) *cloudbuild.Service {
+	t.Helper()
+	svc, err := cloudbuild.NewService(ctx,
+		option.WithEndpoint(baseURL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+	return svc
+}
+
+func TestCloudBuild_TriggerCRUD(t *testing.T) {
+	svc := cloudbuildService(t)
+	project := "cb-trigger-project"
+
+	// Create a trigger.
+	trigger := &cloudbuild.BuildTrigger{
+		Name:     "sdk-test-trigger",
+		Filename: "cloudbuild.yaml",
+		TriggerTemplate: &cloudbuild.RepoSource{
+			RepoName:   "sdk-repo",
+			BranchName: "main",
+		},
+	}
+	created, err := svc.Projects.Triggers.Create(project, trigger).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-test-trigger", created.Name)
+	require.NotEmpty(t, created.Id)
+
+	// Get trigger.
+	got, err := svc.Projects.Triggers.Get(project, created.Id).Do()
+	require.NoError(t, err)
+	assert.Equal(t, created.Id, got.Id)
+	assert.Equal(t, "sdk-test-trigger", got.Name)
+	assert.Equal(t, "cloudbuild.yaml", got.Filename)
+
+	// List triggers — must contain created trigger.
+	list, err := svc.Projects.Triggers.List(project).Do()
+	require.NoError(t, err)
+	found := false
+	for _, tr := range list.Triggers {
+		if tr.Id == created.Id {
+			found = true
+		}
+	}
+	assert.True(t, found, "created trigger must appear in list")
+
+	// Patch — update the filename.
+	patched, err := svc.Projects.Triggers.Patch(project, created.Id,
+		&cloudbuild.BuildTrigger{
+			Name:     "sdk-test-trigger",
+			Filename: "ci/cloudbuild.yaml",
+		}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "ci/cloudbuild.yaml", patched.Filename)
+
+	// Delete trigger.
+	_, err = svc.Projects.Triggers.Delete(project, created.Id).Do()
+	require.NoError(t, err)
+
+	// Get after delete must fail.
+	_, err = svc.Projects.Triggers.Get(project, created.Id).Do()
+	require.Error(t, err)
 }
