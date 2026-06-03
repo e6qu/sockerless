@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1352 filed - 1344 fixed - 10 open - 3 false positives.**
+**1354 filed - 1346 fixed - 8 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -202,6 +202,8 @@ Earlier recent phases closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298
 - BUG-1251: GCS object and bucket timestamps used RFC3339 nanosecond precision, which caused current Linux gcloud Storage to emit timestamp truncation warnings into command output. GCS timestamps now use Cloud Storage-style millisecond precision.
 - BUG-1252: AWS/GCP Terraform had direct HTTP simulator harnesses even though the optional Caddy gateway existed. AWS/GCP now have `make terraform-https-test` targets that run the real providers through Caddy HTTPS with CA trust while preserving direct HTTP `make terraform-test`; AWS covers both the root stack and the RDS/ElastiCache Terraform subpackages through the HTTPS path.
 - BUG-1253: The `gcp-vpcaccess` Terraform matrix row was marked not applicable even though terraform-provider-google exposes `google_vpc_access_connector`. The GCP Terraform stack now provisions a real connector through `vpc_access_custom_endpoint`, asserts its canonical ID, and marks the matrix row direct.
+- BUG-1353: bleephub OAuth authorize flow had no session or CSRF: `GET /login/oauth/authorize` rendered a form with no session check; `POST /login/oauth/authorize` validated no session cookie and no `authenticity_token`; code was always bound to seed admin regardless of which user was "logging in". Fixed: added `POST /login` + `GET /login` session endpoints, `_gh_sess` session cookie, `authenticity_token` CSRF field in consent form, session + CSRF validation on approve POST, and code binding to the session user. Closes issue #399.
+- BUG-1354: `POST /api/v3/admin/organizations` accepted any caller (including unauthenticated) without checking site-admin privilege. Real GHES returns 403 for non-site-admin callers. Fixed: handler now reads `ghUserFromContext` and checks `user.SiteAdmin`; returns 403 otherwise. Closes issue #400.
 
 Older closed bugs are intentionally not repeated here. Use PR descriptions and `git log` for exact fix details.
 

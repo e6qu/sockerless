@@ -47,6 +47,15 @@ type DeviceCode struct {
 	ExpiresAt time.Time
 }
 
+// LoginSession is a browser session created by POST /login.
+// It binds a session cookie to a user and carries the CSRF token
+// embedded in the OAuth authorize consent form.
+type LoginSession struct {
+	UserID    int
+	CSRFToken string
+	ExpiresAt time.Time
+}
+
 // Store holds all in-memory state for bleephub.
 type Store struct {
 	Agents             map[int]*Agent
@@ -56,7 +65,8 @@ type Store struct {
 	UsersByLogin       map[string]*User
 	Tokens             map[string]*Token
 	DeviceCodes        map[string]*DeviceCode
-	AuthCodes          map[string]*authCode // OAuth web-flow codes
+	AuthCodes          map[string]*authCode     // OAuth web-flow codes
+	LoginSessions      map[string]*LoginSession // _gh_sess cookie value → session
 	Repos              map[int]*Repo
 	ReposByName        map[string]*Repo              // "owner/name" → repo
 	GitStorages        map[string]*memory.Storage    // "owner/name" → go-git memory storage
@@ -198,6 +208,7 @@ func NewStore() *Store {
 		Tokens:             make(map[string]*Token),
 		DeviceCodes:        make(map[string]*DeviceCode),
 		AuthCodes:          make(map[string]*authCode),
+		LoginSessions:      make(map[string]*LoginSession),
 		Repos:              make(map[int]*Repo),
 		ReposByName:        make(map[string]*Repo),
 		GitStorages:        make(map[string]*memory.Storage),
