@@ -19,6 +19,10 @@ Surface registered in `simulators/gcp/iam.go` (and related files grouped under t
 | `GET /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:99::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `DELETE /v1/projects/{project}/serviceAccounts/{email}` | ✓ `simulators/gcp/iam.go:113::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/projects/{project}/serviceAccounts/{emailAction}` | ✓ `simulators/gcp/iam.go:134::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:146::func` | ✓ (direct; see coverage matrix) | n/a | n/a | generates real RSA-2048 key; returns base64 JSON credential as `privateKeyData` on create only |
+| `GET /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:181::func` | ✓ (direct; see coverage matrix) | n/a | n/a | `privateKeyData` absent on get/list (real GCP spec) |
+| `GET /v1/projects/{project}/serviceAccounts/{email}/keys` | ✓ `simulators/gcp/iam.go:198::func` | ✓ (direct; see coverage matrix) | n/a | n/a | |
+| `DELETE /v1/projects/{project}/serviceAccounts/{email}/keys/{keyId}` | ✓ `simulators/gcp/iam.go:215::func` | ✓ (direct; see coverage matrix) | n/a | n/a | |
 | `GET /v1/projects/{project}/serviceAccounts` | ✓ `simulators/gcp/iam.go:182::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/projects/{projectAction}` | ✓ `simulators/gcp/iam.go:196::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/{resource...}` | ✓ `simulators/gcp/iam.go:236::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -31,4 +35,5 @@ Surface registered in `simulators/gcp/iam.go` (and related files grouped under t
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+PR #392 added service account key CRUD (`POST/GET(single)/GET(list)/DELETE /v1/projects/{p}/serviceAccounts/{email}/keys`). The create handler generates a real RSA-2048 private key and returns it base64-encoded as a JSON credential file in `privateKeyData` (absent on get/list, matching real GCP spec). gcloud uses `project="-"` as a wildcard; the handler resolves the project by parsing the email (`{acct}@{project}.iam.gserviceaccount.com`). Tested by `simulators/gcp/sdk-tests/iam_test.go` (`TestIAM_ServiceAccountKeysCRUD`) and `simulators/gcp/cli-tests/client_surface_audit_test.go` (`TestCLI_IAMServiceAccountKeys`). Terraform does not create SA keys directly; `google_service_account_key` is not in the test stack.
 <!-- HAND-WRITTEN END -->

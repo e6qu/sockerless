@@ -13,6 +13,11 @@ Surface registered in `simulators/azure/insights.go` (and related files grouped 
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
+| `PUT /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:40::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | upsert; preserves instrumentation key across updates |
+| `GET /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:94::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}` | ✓ `simulators/azure/insights.go:112::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}/currentbillingfeatures` | ✓ `simulators/azure/insights.go:138::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}/currentbillingfeatures` | ✓ `simulators/azure/insights.go:141::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/apps/{appId}/query` | ✓ `simulators/azure/insights.go:143::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v1/workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:381::queryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /workspaces/{workspaceId}/query` | ✓ `simulators/azure/monitor.go:382::queryHandler` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -24,4 +29,5 @@ Surface registered in `simulators/azure/insights.go` (and related files grouped 
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+PR #388 (BUG-1316/1317) added Application Insights component CRUD (`PUT/GET/DELETE .../Microsoft.Insights/components/{name}`) and billing features. The upsert handler preserves the instrumentation key across updates (real App Insights keeps the same key). SDK coverage: `simulators/azure/sdk-tests/insights_test.go`. CLI coverage: `simulators/azure/cli-tests/monitor_test.go`. Terraform coverage: `simulators/azure/terraform-tests/main.tf` (`azurerm_application_insights`).
 <!-- HAND-WRITTEN END -->

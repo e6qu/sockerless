@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1337 filed - 1337 fixed - 2 open - 3 false positives.**
+**1347 filed - 1344 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,9 +12,22 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
+| 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 ## Recently Closed
 
-This phase closed BUG-1335 through BUG-1337:
+This phase closed BUG-1338 through BUG-1344 and BUG-1346/1347 (coverage audit):
+
+- BUG-1338: `gcp-compute.md` missing instance template routes. Added 5 rows: POST/GET(single)/GET(list)/DELETE `/compute/v1/projects/{p}/global/instanceTemplates` and `GET .../aggregated/instanceTemplates`.
+- BUG-1339: `gcp-iam.md` missing SA key routes. Added 4 rows: POST/GET(single)/GET(list)/DELETE `/v1/projects/{p}/serviceAccounts/{email}/keys`.
+- BUG-1340: No `azure-entra.md` surface table. Created with Graph group/user provisioning, membership CRUD, `memberOf` delegated read, ROPC grant, and sim-seed back-compat endpoints.
+- BUG-1341: No `azure-private-dns.md` surface table. Created with zone CRUD, A-record CRUD, generic record types (AAAA/CNAME/MX/PTR/SRV/TXT), virtual network links.
+- BUG-1342: `azure-acr.md` missing `DELETE /v2/{path...}`, `GET /acr/v1/_catalog`, `GET /acr/v1/{path...}`, `PATCH /v2/{path...}`.
+- BUG-1343: `azure-monitor.md` missing App Insights component routes (`PUT/GET/DELETE .../Microsoft.Insights/components/{name}`).
+- BUG-1344: Coverage matrix `gcp-compute` row missing `client_surface_audit_test.go`; no `azure-entra` row; no `azure-private-dns` row. All fixed.
+- BUG-1346: Same as BUG-1344 (gcp-compute evidence). Closed together.
+- BUG-1347: Subsumed by BUG-1339 fix. Closed together.
+
+Earlier phase closed BUG-1335 through BUG-1337:
 
 - BUG-1335: bleephub `POST /user/orgs` non-standard surface. Added `POST /api/v3/admin/organizations` — the real GHES endpoint for org provisioning where the admin user is specified explicitly in the body (`login`, `admin`, `profile_name`).
 - BUG-1336: Azure/Entra group and user provisioning was only possible via `PUT /sim/v1/entra/users/{oid}`. Added standard Microsoft Graph provisioning: `POST/GET/DELETE /v1.0/groups`, `POST/GET/DELETE /v1.0/users`, `POST/GET/DELETE /v1.0/groups/{id}/members[/{userId}/$ref]`. `handleGraphMemberOf` updated to return groups from both the standard membership store and the legacy inline sim-seed path.
