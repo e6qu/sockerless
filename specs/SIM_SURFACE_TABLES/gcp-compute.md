@@ -47,6 +47,11 @@ Surface registered in `simulators/gcp/compute.go` (and related files grouped und
 | `GET /compute/v1/projects/{project}/zones/{zone}/diskTypes/{diskType}` | ✓ `simulators/gcp/compute.go:1111::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /compute/v1/projects/{project}/global/images/{image}` | ✓ `simulators/gcp/compute.go:1137::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /compute/v1/projects/{project}/global/images/family/{family}` | ✓ `simulators/gcp/compute.go:1140::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /compute/v1/projects/{project}/global/instanceTemplates` | ✓ `simulators/gcp/compute.go:654::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /compute/v1/projects/{project}/global/instanceTemplates/{name}` | ✓ `simulators/gcp/compute.go:679::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /compute/v1/projects/{project}/global/instanceTemplates` | ✓ `simulators/gcp/compute.go:691::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /compute/v1/projects/{project}/global/instanceTemplates/{name}` | ✓ `simulators/gcp/compute.go:706::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /compute/v1/projects/{project}/aggregated/instanceTemplates` | ✓ `simulators/gcp/compute.go:718::func` | ✓ (direct; see coverage matrix) | n/a | n/a | used by `gcloud compute instance-templates list` |
 | `POST /compute/v1/projects/{project}/zones/{zone}/instances` | ✓ `simulators/gcp/compute.go:1291::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /compute/v1/projects/{project}/zones/{zone}/instances/{name}` | ✓ `simulators/gcp/compute.go:1308::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /compute/v1/projects/{project}/zones/{zone}/instances` | ✓ `simulators/gcp/compute.go:1321::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
@@ -73,6 +78,8 @@ Surface registered in `simulators/gcp/compute.go` (and related files grouped und
 
 <!-- HAND-WRITTEN BEGIN -->
 Issue #266 closed the Compute Engine VM lifecycle gap. Zonal instance insert/get/list/delete/start/stop, aggregated instances, labels/tags, machine types, disk types, images, attached disks, and NIC metadata are covered by `simulators/gcp/sdk-tests/compute_test.go`, `simulators/gcp/cli-tests/compute_instances_test.go`, and `simulators/gcp/terraform-tests/main.tf` through `google_compute_instance`.
+
+PR #392 added global instance template CRUD (`POST/GET/LIST/DELETE /compute/v1/projects/{p}/global/instanceTemplates`) plus the aggregated list endpoint used by `gcloud compute instance-templates list`. Tested by `simulators/gcp/sdk-tests/compute_test.go` (`TestCompute_InstanceTemplateCRUD`) and `simulators/gcp/cli-tests/client_surface_audit_test.go` (`TestCLI_ComputeInstanceTemplate`).
 
 Issue #279 closed the Compute NAT/public-IP parity pass. Regional address insert/get/list/delete, address `setLabels`, manual Cloud NAT router patch/validation, router status, and regional operation wait are covered by `simulators/gcp/sdk-tests/compute_test.go`, `simulators/gcp/cli-tests/compute_nat_test.go`, and `simulators/gcp/terraform-tests/main.tf` through `google_compute_address`, `google_compute_router`, and `google_compute_router_nat`.
 <!-- HAND-WRITTEN END -->

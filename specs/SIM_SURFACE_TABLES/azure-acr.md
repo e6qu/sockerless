@@ -18,7 +18,10 @@ Surface registered in `simulators/azure/acr.go` (and related files grouped under
 | `HEAD /v2/{path...}` | ✓ `simulators/azure/acr.go:425::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `PUT /v2/{path...}` | ✓ `simulators/azure/acr.go:457::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v2/{path...}` | ✓ `simulators/azure/acr.go:540::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PATCH /v2/{path...}` | ✓ `simulators/azure/acr.go:558::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /v2/{path...}` | ✓ `simulators/azure/acr.go:565::func` | ✓ (direct; see coverage matrix) | n/a | n/a | manifest delete; removes digest aliases |
+| `GET /acr/v1/_catalog` | ✓ `simulators/azure/acr.go:589::func` | ✓ (direct; see coverage matrix) | n/a | n/a | lists distinct repository names |
+| `GET /acr/v1/{path...}` | ✓ `simulators/azure/acr.go:610::func` | ✓ (direct; see coverage matrix) | n/a | n/a | handles `{name}/_tags` and similar ACR data-plane paths |
+| `PATCH /v2/{path...}` | ✓ `simulators/azure/acr.go:645::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 
@@ -26,4 +29,5 @@ Surface registered in `simulators/azure/acr.go` (and related files grouped under
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+PR #388 (BUG-1320/1321/1322) added manifest delete (`DELETE /v2/{path...}`), catalog listing (`GET /acr/v1/_catalog`), and tag listing (`GET /acr/v1/{name}/_tags`) to support the `azcontainerregistry` data-plane SDK (`UploadManifest` → `GetManifest` → `NewListRepositoriesPager` → `NewListTagsPager` → `DeleteManifest`). SDK coverage: `simulators/azure/sdk-tests/acr_test.go` (`TestACR_ImageManifestPushGetDelete`). CLI coverage: `simulators/azure/cli-tests/acr_test.go` (`TestACR_ImageCatalogAndTags`).
 <!-- HAND-WRITTEN END -->
