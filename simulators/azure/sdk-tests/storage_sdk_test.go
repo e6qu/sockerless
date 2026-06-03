@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,6 +162,68 @@ func assertStorageXMLError(t *testing.T, resp *http.Response, status int, code s
 	assert.True(t, strings.HasPrefix(string(body), "<?xml"), string(body))
 	assert.Contains(t, string(body), "<Error>")
 	assert.Contains(t, string(body), "<Code>"+code+"</Code>")
+}
+
+func TestBlobDataPlane_Pagination(t *testing.T) {
+	account := "sdkblobpaginate"
+	container := "paginate-container"
+
+	client, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
+		&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = client.CreateContainer(ctx, container, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = client.DeleteContainer(ctx, container, nil) })
+
+	// Upload 3 blobs with sorted names so pagination order is deterministic.
+	blobs := []string{"aaa.txt", "bbb.txt", "ccc.txt"}
+	for _, b := range blobs {
+		_, err = client.UploadBuffer(ctx, container, b, []byte(b), nil)
+		require.NoError(t, err)
+	}
+
+	// Page through with maxresults=1 via raw XML — verifies the wire shape directly.
+	var gotBlobs []string
+	marker := ""
+	for {
+		target := "/" + container + "?restype=container&comp=list&maxresults=1"
+		if marker != "" {
+			target += "&marker=" + marker
+		}
+		resp := storageRawRequest(t, http.MethodGet, account, "blob", target)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var result struct {
+			Blobs []struct {
+				Name string `xml:"Name"`
+			} `xml:"Blobs>Blob"`
+			NextMarker string `xml:"NextMarker"`
+		}
+		require.NoError(t, xml.Unmarshal(body, &result), string(body))
+		require.Len(t, result.Blobs, 1, "each page must have exactly 1 blob with maxresults=1")
+		gotBlobs = append(gotBlobs, result.Blobs[0].Name)
+
+		if result.NextMarker == "" {
+			break
+		}
+		marker = result.NextMarker
+	}
+	require.Equal(t, blobs, gotBlobs, "all blobs must be returned across pages in sorted order")
+
+	// Also verify via the SDK pager.
+	pager := client.NewListBlobsFlatPager(container, &azblob.ListBlobsFlatOptions{MaxResults: to.Ptr(int32(2))})
+	var sdkBlobs []string
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, b := range page.Segment.BlobItems {
+			sdkBlobs = append(sdkBlobs, *b.Name)
+		}
+	}
+	require.Equal(t, blobs, sdkBlobs)
 }
 
 func TestStorageSDK_BlobStartCopyFromURL(t *testing.T) {

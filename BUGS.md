@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1347 filed - 1344 fixed - 5 open - 3 false positives.**
+**1352 filed - 1344 fixed - 10 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -13,6 +13,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
+| 1348 | P1 | azure-storage | pagination missing | `handleListBlobs` ignores `?maxresults=N` and `?marker=TOKEN`; returns all blobs in one page regardless. `NextMarker` XML field is always empty. SDK tests pass `MaxResults=1` and assert `<NextMarker>` tag presence — they pass only because the empty tag is serialized; they do not verify pagination works. |
+| 1349 | P1 | azure-storage | pagination missing | `handleListContainers` (container enumeration) has the same gap as BUG-1348: ignores `?maxresults` and `?marker`; `NextMarker` always empty. |
+| 1350 | P1 | gcp-secretmanager | pagination missing | `GET /v1/projects/{project}/secrets` returns all secrets in one response. `paginateList()` helper exists in the GCP sim but is not wired to this endpoint. |
+| 1351 | P1 | gcp-pubsub | pagination missing | `handlePSListTopics` and `handlePSListSubscriptions` return all topics/subscriptions in one response. `paginateList()` helper is not wired to either endpoint. |
+| 1352 | P1 | gcp-secretmanager | pagination missing | `GET /v1/projects/{project}/secrets/{secret}/versions` returns all versions in one response. Same gap as BUG-1350. |
 ## Recently Closed
 
 This phase closed BUG-1338 through BUG-1344 and BUG-1346/1347 (coverage audit):

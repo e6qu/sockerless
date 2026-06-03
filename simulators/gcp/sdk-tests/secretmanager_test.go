@@ -77,3 +77,49 @@ func TestSecretManagerSecretLifecycleSDK(t *testing.T) {
 	require.True(t, errors.As(err, &apiErr), "expected googleapi.Error, got %T: %v", err, err)
 	require.Equal(t, 404, apiErr.Code)
 }
+
+func TestSecretManager_ListPagination(t *testing.T) {
+	svc := secretManagerService(t)
+	proj := "pagination-sm-project"
+
+	// Create 3 secrets.
+	names := []string{
+		"projects/" + proj + "/secrets/alpha",
+		"projects/" + proj + "/secrets/beta",
+		"projects/" + proj + "/secrets/gamma",
+	}
+	for _, n := range names {
+		_, err := svc.Projects.Secrets.Create("projects/"+proj, &secretmanager.Secret{
+			Replication: &secretmanager.Replication{Automatic: &secretmanager.Automatic{}},
+		}).SecretId(n[len("projects/"+proj+"/secrets/"):]).Do()
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() {
+		for _, n := range names {
+			_, _ = svc.Projects.Secrets.Delete(n).Do()
+		}
+	})
+
+	// Page through with pageSize=1 and collect all secrets.
+	var got []string
+	pageToken := ""
+	for {
+		call := svc.Projects.Secrets.List("projects/" + proj).PageSize(1)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		resp, err := call.Do()
+		require.NoError(t, err)
+		require.Len(t, resp.Secrets, 1, "each page must have exactly 1 secret with pageSize=1")
+		got = append(got, resp.Secrets[0].Name)
+		pageToken = resp.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	require.Len(t, got, 3, "all 3 secrets must be returned across pages")
+	// All 3 names must appear (order may vary by store iteration).
+	for _, n := range names {
+		require.Contains(t, got, n)
+	}
+}
