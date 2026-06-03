@@ -42,6 +42,9 @@ provider "google" {
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
   iam_beta_custom_endpoint = "${var.endpoint}/v1/"
+  # cloud_resource_manager_custom_endpoint routes `google_project_iam_member`
+  # getIamPolicy / setIamPolicy calls to the sim's /v1/projects/{p}:{action} handler.
+  cloud_resource_manager_custom_endpoint = "${var.endpoint}/v1/"
 }
 
 provider "google-beta" {
