@@ -11,9 +11,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.4
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.4
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.2
+	github.com/aws/aws-sdk-go-v2/service/batch v1.65.4
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.0
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.75.0
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.2
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.8
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.305.1
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.2
@@ -22,6 +24,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.54.1
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.2
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.46.4
+	github.com/aws/aws-sdk-go-v2/service/glue v1.142.4
 	github.com/aws/aws-sdk-go-v2/service/iam v1.54.2
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.44.0
 	github.com/aws/aws-sdk-go-v2/service/kms v1.53.2
@@ -31,6 +34,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.1
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.4
+	github.com/aws/aws-sdk-go-v2/service/sfn v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.21
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.43.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.69.1

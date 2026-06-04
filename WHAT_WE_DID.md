@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-04 — Phase E+F: KV data-plane CLI tests, bleephub surface tables, hooks schema fix (PR #405)
+
+Added Azure Key Vault data-plane CLI tests (`simulators/azure/cli-tests/keyvault_dataplane_test.go`) — secrets, keys, and certificates CRUD via `az rest` with explicit `Host` header routing to bypass DNS/TLS requirements. Updated coverage matrix `azure-kv-data-plane` CLI cell from `not applicable` to `direct`.
+
+Created 12 `specs/SIM_SURFACE_TABLES/bleephub-*.md` files (actions, apps, checks, deployments, hooks, issues, orgs, pulls, releases, repos, teams, users) with full `HandleFunc` audit + coverage status per operation. Added 12 corresponding rows to `SIM_TEST_COVERAGE_MATRIX.md`.
+
+Fixed three webhook schema gaps against GitHub's published REST API (BUG-1396–1398): `hookToJSON` now includes `url`, `test_url`, `ping_url`, `deliveries_url`, `last_response`; `deliveryToJSON` now includes `status` (human-readable string), `url` (target URL), `installation_id`, `repository_id`; `WebhookDelivery` carries `TargetURL` field. Added `deliveryStatus()` helper. Added `bleephub/gh_hooks_test.go` with 5 tests (`TestHooks_CRUD`, `TestHooks_Ping`, `TestHooks_Deliveries_Redeliver`, `TestHooks_NotFound`, `TestHooks_ValidationErrors`) covering full webhook lifecycle against the GitHub schema shape.
+
+## 2026-06-03 — Phase D: error shape fidelity (PR #404)
+
+Added negative-path SDK tests that assert on parsed error types rather than raw HTTP status across all three simulators. Fixed GCP Cloud Run service 404 handler URL (V1→V2), fixed Azure KV secret client missing `DisableChallengeResourceVerification: true`. BUG-1386–1395 filed and closed.
+
+## 2026-06-02 — Phase C: pagination shape verification (PRs #402, #403)
+
+Added token-based pagination to 12 AWS list endpoints and pagination support across GCP/Azure simulator list endpoints. SDK/CLI tests exhaust 2+ pages. BUG-1371–1385 filed and closed.
+
 ## 2026-06-03 — bleephub GET /api/v3/user/teams (PR #385, fixes issue #384)
 
 `GET /api/v3/user/teams` was unregistered — requests returned 404. OIDC relying parties call this endpoint at sign-in to map team membership → roles. Added `ListTeamsByUser(userID int) []*Team` and `GetOrgByID(id int) *Org` to `store_orgs.go`, wired `handleListAuthUserTeams` in `gh_teams_rest.go`, and registered the route. `TestListUserTeams` covers the full org-create → team-create → add-member → GET /user/teams flow with `organization.login` assertion. BUG-1315 filed and closed.

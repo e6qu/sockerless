@@ -49,6 +49,10 @@ provider "aws" {
     secretsmanager   = var.endpoint
     sqs              = var.endpoint
     ssm              = var.endpoint
+    sfn              = var.endpoint
+    codebuild        = var.endpoint
+    glue             = var.endpoint
+    batch            = var.endpoint
   }
 }
 
@@ -1246,4 +1250,158 @@ output "s3_bucket_analytics_name" {
 }
 output "s3_bucket_metric_name" {
   value = aws_s3_bucket_metric.tf_bucket_metric.name
+}
+
+# ── Step Functions ──────────────────────────────────────────────────────────
+
+resource "aws_sfn_state_machine" "tf_sfn_sm" {
+  name     = "tf-sfn-state-machine"
+  role_arn = "arn:aws:iam::123456789012:role/sfn-role"
+
+  definition = jsonencode({
+    Comment = "Terraform test"
+    StartAt = "Pass"
+    States = {
+      Pass = {
+        Type = "Pass"
+        End  = true
+      }
+    }
+  })
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+output "sfn_state_machine_arn" {
+  value = aws_sfn_state_machine.tf_sfn_sm.arn
+}
+
+# ── CodeBuild ───────────────────────────────────────────────────────────────
+
+resource "aws_codebuild_project" "tf_cb_project" {
+  name         = "tf-codebuild-project"
+  service_role = "arn:aws:iam::123456789012:role/cb-role"
+
+  source {
+    type      = "NO_SOURCE"
+    buildspec = "version: 0.2\nphases:\n  build:\n    commands:\n      - echo done\n"
+  }
+
+  artifacts {
+    type = "NO_ARTIFACTS"
+  }
+
+  environment {
+    type         = "LINUX_CONTAINER"
+    image        = "aws/codebuild/standard:7.0"
+    compute_type = "BUILD_GENERAL1_SMALL"
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+output "codebuild_project_arn" {
+  value = aws_codebuild_project.tf_cb_project.arn
+}
+
+# ── Glue ────────────────────────────────────────────────────────────────────
+
+resource "aws_glue_catalog_database" "tf_glue_db" {
+  name       = "tf-glue-database"
+  catalog_id = data.aws_caller_identity.current.account_id
+}
+
+resource "aws_glue_catalog_table" "tf_glue_table" {
+  name          = "tf-glue-table"
+  catalog_id    = data.aws_caller_identity.current.account_id
+  database_name = aws_glue_catalog_database.tf_glue_db.name
+
+  storage_descriptor {
+    location      = "s3://tf-bucket/prefix/"
+    input_format  = "org.apache.hadoop.mapred.TextInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
+  }
+}
+
+resource "aws_glue_job" "tf_glue_job" {
+  name     = "tf-glue-job"
+  role_arn = "arn:aws:iam::123456789012:role/glue-role"
+
+  command {
+    script_location = "s3://tf-bucket/script.py"
+  }
+
+  glue_version      = "4.0"
+  worker_type       = "G.1X"
+  number_of_workers = 2
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+output "glue_database_id" {
+  value = aws_glue_catalog_database.tf_glue_db.id
+}
+
+output "glue_job_name" {
+  value = aws_glue_job.tf_glue_job.name
+}
+
+# ── Batch ───────────────────────────────────────────────────────────────────
+
+resource "aws_batch_compute_environment" "tf_batch_ce" {
+  name  = "tf-batch-compute-env"
+  type  = "UNMANAGED"
+  state = "ENABLED"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_batch_job_queue" "tf_batch_jq" {
+  name     = "tf-batch-job-queue"
+  state    = "ENABLED"
+  priority = 10
+
+  compute_environment_order {
+    order               = 1
+    compute_environment = aws_batch_compute_environment.tf_batch_ce.arn
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_batch_job_definition" "tf_batch_jd" {
+  name = "tf-batch-job-definition"
+  type = "container"
+
+  container_properties = jsonencode({
+    image  = "public.ecr.aws/docker/library/alpine:3"
+    vcpus  = 1
+    memory = 512
+  })
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+output "batch_compute_env_arn" {
+  value = aws_batch_compute_environment.tf_batch_ce.arn
+}
+
+output "batch_job_queue_arn" {
+  value = aws_batch_job_queue.tf_batch_jq.arn
+}
+
+output "batch_job_definition_arn" {
+  value = aws_batch_job_definition.tf_batch_jd.arn
 }

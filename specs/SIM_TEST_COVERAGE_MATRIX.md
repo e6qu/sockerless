@@ -41,6 +41,10 @@ Legend:
 | `aws-ssm_parameters` | direct | direct | direct | `simulators/aws/sdk-tests/ssm_parameters_test.go`; `simulators/aws/cli-tests/ssm_parameters_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-sts` | direct | direct | direct | `simulators/aws/sdk-tests/sts_test.go`; `simulators/aws/cli-tests/sts_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-wafv2` | direct | direct | direct | `simulators/aws/sdk-tests/wafv2_test.go`; `simulators/aws/cli-tests/wafv2_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-stepfunctions` | direct | direct | direct | `simulators/aws/sdk-tests/stepfunctions_test.go`; `simulators/aws/cli-tests/stepfunctions_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-codebuild` | direct | direct | direct | `simulators/aws/sdk-tests/codebuild_test.go`; `simulators/aws/cli-tests/codebuild_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-glue` | direct | direct | direct | `simulators/aws/sdk-tests/glue_test.go`; `simulators/aws/cli-tests/glue_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-batch` | direct | direct | direct | `simulators/aws/sdk-tests/batch_test.go`; `simulators/aws/cli-tests/batch_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cache_redis` | direct | direct | direct | `simulators/azure/sdk-tests/redis_pg_test.go`; `simulators/azure/cli-tests/redis_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/sdk-tests/network_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/cli-tests/loadbalancer_test.go`; `simulators/azure/cli-tests/nat_test.go`; `simulators/azure/terraform-tests/main.tf` |

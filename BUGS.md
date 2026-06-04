@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1398 filed - 1390 fixed - 5 open - 3 false positives.**
+**1411 filed - 1403 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,20 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1396~~ | P1 | bleephub webhooks | schema gap | Fixed: `hookToJSON` now includes `url`, `test_url`, `ping_url`, `deliveries_url`, `last_response`. API URLs derived from `r.Host`. |
 | ~~1397~~ | P1 | bleephub webhooks | schema gap | Fixed: `deliveryToJSON` now includes `status`, `url` (target), `installation_id`, `repository_id`; `deliveryFullJSON` no longer double-sets the fields. |
 | ~~1398~~ | P1 | bleephub webhooks | schema gap | Fixed: `WebhookDelivery.TargetURL` field added; set in `doDeliverAttempt` from `hook.URL`. |
+| ~~1399~~ | P1 | aws-glue simulator | wrong X-Amz-Target prefix | Fixed: registered `AmazonWebServiceGlue.<Op>` but SDK sends `AWSGlue.<Op>`; changed all registrations to `AWSGlue.*`. |
+| ~~1400~~ | P1 | aws-batch simulator | wrong HTTP routing | Fixed: implemented as REST paths (`POST /v1/computeenvironments`) but SDK sends operation-specific POST paths (`POST /v1/createcomputeenvironment`); rewrote all route registrations. |
+| ~~1401~~ | P2 | aws-codebuild SDK test | TagResource not in SDK client | Fixed: `codebuild.Client` in SDK v2 does not expose `TagResource`/`ListTagsForResource`/`UntagResource` as separate methods; SDK test now verifies tags via `BatchGetProjects` instead. |
+| ~~1402~~ | P1 | aws-batch terraform | wrong HCL attribute name | Fixed: `aws_batch_compute_environment` uses `name =` not `compute_environment_name =` in hashicorp/aws provider v6. CI failed with "An argument named 'compute_environment_name' is not expected here." |
+| ~~1403~~ | P1 | aws-stepfunctions sim | missing ValidateStateMachineDefinition | Fixed: TF provider calls `AWSStepFunctions.ValidateStateMachineDefinition` before CreateStateMachine; sim returned 400 UnknownOperationException. Added handler that always returns `{"result":"OK"}`. |
+| ~~1404~~ | P1 | aws-stepfunctions sim | missing ListStateMachineVersions | Fixed: TF provider calls `AWSStepFunctions.ListStateMachineVersions` after CreateStateMachine; added handler returning empty versions list. |
+| ~~1405~~ | P1 | aws-codebuild terraform | buildspec required for NO_SOURCE | Fixed: TF provider v6 requires `buildspec` in source block when `type = "NO_SOURCE"`; added placeholder buildspec to `aws_codebuild_project` TF resource. |
+| ~~1406~~ | P1 | aws-glue terraform | empty catalog_id in resource ID | Fixed: `aws_glue_catalog_database` ID format is `catalog-id:database-name`; when `catalog_id` is not explicit the provider stored empty string. Added `catalog_id = data.aws_caller_identity.current.account_id` to TF resource. |
+| ~~1407~~ | P1 | aws-batch sim | ARN vs name in describe operations | Fixed: TF provider passes ARNs to DescribeJobQueues/DescribeComputeEnvironments/Update/Delete after creation; sim was looking up by name only. All handlers now resolve name via `batchNameFromARN()`. |
+| ~~1408~~ | P1 | aws-codebuild sim | BatchGetProjects receives ARN not name | Fixed: TF provider calls `BatchGetProjects` with project ARN after creation; handler only did direct name lookup. Fixed: resolve via `cbNameFromARN()` when direct lookup misses. |
+| ~~1409~~ | P1 | aws-glue sim | GetTags/TagResource only handle job ARNs | Fixed: TF provider calls `AWSGlue.GetTags` with database ARN (`arn:...:database/name`); handler looked in `glueJobs` only. Fixed: `glueResourceFromARN()` detects resource type; `handleGlueGetTags`, `handleGlueTagResource`, `handleGlueUntagResource` dispatch to database or job by type. `GlueDatabase` gains `Tags map[string]string`. |
+| ~~1410~~ | P1 | aws-glue terraform | empty catalog_id in glue table resource ID | Fixed: `aws_glue_catalog_table` ID format is `catalog-id:database-name:table-name`; without explicit `catalog_id` the provider stored empty string. Added `catalog_id = data.aws_caller_identity.current.account_id` to TF resource (same fix as BUG-1406 for database). |
+| ~~1411~~ | P1 | aws-glue sim | missing GetPartitionIndexes handler | Fixed: TF provider calls `AWSGlue.GetPartitionIndexes` on catalog table refresh; sim returned 400 UnknownOperationException. Added handler returning empty `PartitionIndexDescriptorList`. Added to tests-exempt.txt (TF-only, no SDK/CLI test shape). |
+
 ## Recently Closed
 
 This phase closed BUG-1338 through BUG-1344 and BUG-1346/1347 (coverage audit):

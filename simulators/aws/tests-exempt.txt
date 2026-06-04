@@ -1,0 +1,3 @@
+AWSStepFunctions.ValidateStateMachineDefinition
+AWSStepFunctions.ListStateMachineVersions
+AWSGlue.GetPartitionIndexes

@@ -71,6 +71,9 @@ func main() {
 	registerEventBridge(awsRouter, srv)
 	registerKinesis(awsRouter, srv)
 	registerCloudTrail(awsRouter, srv)
+	registerStepFunctions(awsRouter, srv)
+	registerCodeBuild(awsRouter, srv)
+	registerGlue(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
@@ -117,6 +120,9 @@ func main() {
 	registerAPIGateway(srv)
 	registerAPIGatewayV2(srv)
 	registerHostMetadata(srv)
+
+	// Batch — REST/JSON protocol (path-based, no X-Amz-Target)
+	registerBatch(srv)
 
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)
