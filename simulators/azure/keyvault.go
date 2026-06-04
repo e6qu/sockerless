@@ -1203,7 +1203,11 @@ func handleKVListKeyVersions(w http.ResponseWriter, r *http.Request, vault, name
 			versions = []kvKeyVersion{v}
 		}
 	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
+	// Oldest-first by creation order (stable sort over append-ordered versions),
+	// matching real Azure — not by random version UUID. See issue #407.
+	sort.SliceStable(versions, func(i, j int) bool {
+		return versions[i].Attributes.Created < versions[j].Attributes.Created
+	})
 	items := make([]keyItem, 0, len(versions))
 	for _, v := range versions {
 		items = append(items, keyItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags})
@@ -1757,7 +1761,11 @@ func handleKVListCertificateVersions(w http.ResponseWriter, r *http.Request, vau
 			versions = []kvCertVersion{v}
 		}
 	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })
+	// Oldest-first by creation order (stable sort over append-ordered versions),
+	// matching real Azure — not by random version UUID. See issue #407.
+	sort.SliceStable(versions, func(i, j int) bool {
+		return versions[i].Attributes.Created < versions[j].Attributes.Created
+	})
 	items := make([]certItem, 0, len(versions))
 	for _, v := range versions {
 		items = append(items, certItem{ID: v.ID, Attributes: v.Attributes, Tags: v.Tags, X509Thumbprint: v.X509Thumbprint})
@@ -2523,7 +2531,14 @@ func handleKVListSecretVersions(w http.ResponseWriter, r *http.Request, vault, n
 		return
 	}
 	versions := rec.Versions
-	sort.Slice(versions, func(i, j int) bool { return versions[i].Version < versions[j].Version })
+	// Oldest-first, matching real Azure. Versions are stored in creation
+	// (append) order; a stable sort by Created preserves that order for the
+	// common case where rapid same-second writes share a Created timestamp.
+	// (Sorting by the random version UUID — the old behaviour — bore no
+	// relation to creation order. See issue #407.)
+	sort.SliceStable(versions, func(i, j int) bool {
+		return versions[i].Attributes.Created < versions[j].Attributes.Created
+	})
 	items := make([]kvSecretItem, 0, len(versions))
 	for _, v := range versions {
 		items = append(items, kvSecretItem{
