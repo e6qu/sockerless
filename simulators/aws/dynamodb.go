@@ -52,6 +52,8 @@ type DDBTable struct {
 	CreationDateTime          float64                   `json:"CreationDateTime"`
 	AttributeDefinitions      []DDBAttributeDef         `json:"AttributeDefinitions"`
 	KeySchema                 []DDBKeySchemaEntry       `json:"KeySchema"`
+	GlobalSecondaryIndexes    []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes,omitempty"`
+	LocalSecondaryIndexes     []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes,omitempty"`
 	BillingModeSummary        *DDBBillingModeSummary    `json:"BillingModeSummary,omitempty"`
 	ProvisionedThroughput     *DDBProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
 	ItemCount                 int64                     `json:"ItemCount"`
@@ -113,6 +115,40 @@ type DDBKeySchemaEntry struct {
 	KeyType       string `json:"KeyType"` // HASH / RANGE
 }
 
+// DDBProjection is a secondary index's attribute projection.
+type DDBProjection struct {
+	ProjectionType   string   `json:"ProjectionType"` // ALL / KEYS_ONLY / INCLUDE
+	NonKeyAttributes []string `json:"NonKeyAttributes,omitempty"`
+}
+
+// DDBGlobalSecondaryIndex mirrors the GSI shape. The CreateTable request
+// carries IndexName/KeySchema/Projection/ProvisionedThroughput; the
+// Create/Describe responses additionally carry IndexStatus (ACTIVE),
+// IndexArn, ItemCount, and IndexSizeBytes — terraform-provider-aws waits for
+// IndexStatus==ACTIVE on every GSI before the table converges.
+type DDBGlobalSecondaryIndex struct {
+	IndexName             string                    `json:"IndexName"`
+	KeySchema             []DDBKeySchemaEntry       `json:"KeySchema"`
+	Projection            *DDBProjection            `json:"Projection,omitempty"`
+	IndexStatus           string                    `json:"IndexStatus,omitempty"`
+	IndexArn              string                    `json:"IndexArn,omitempty"`
+	ItemCount             int64                     `json:"ItemCount"`
+	IndexSizeBytes        int64                     `json:"IndexSizeBytes"`
+	ProvisionedThroughput *DDBProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
+	WarmThroughput        *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
+}
+
+// DDBLocalSecondaryIndex mirrors the LSI shape. LSIs are created with the
+// table and have no independent status (no IndexStatus field).
+type DDBLocalSecondaryIndex struct {
+	IndexName      string              `json:"IndexName"`
+	KeySchema      []DDBKeySchemaEntry `json:"KeySchema"`
+	Projection     *DDBProjection      `json:"Projection,omitempty"`
+	IndexArn       string              `json:"IndexArn,omitempty"`
+	ItemCount      int64               `json:"ItemCount"`
+	IndexSizeBytes int64               `json:"IndexSizeBytes"`
+}
+
 // DDBBillingModeSummary mirrors the SDK shape — `PAY_PER_REQUEST` or
 // `PROVISIONED`. The sim accepts both; tests don't exercise actual
 // throughput throttling.
@@ -143,6 +179,10 @@ func writeDDBJSON(w http.ResponseWriter, status int, v any) {
 
 func ddbTableArn(name string) string {
 	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", awsRegion(), awsAccountID(), name)
+}
+
+func ddbIndexArn(table, index string) string {
+	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s/index/%s", awsRegion(), awsAccountID(), table, index)
 }
 
 // ddbTableByArn locates a stored table by its full ARN. Tag CRUD takes
@@ -430,10 +470,12 @@ func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 
 func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName            string              `json:"TableName"`
-		AttributeDefinitions []DDBAttributeDef   `json:"AttributeDefinitions"`
-		KeySchema            []DDBKeySchemaEntry `json:"KeySchema"`
-		BillingMode          string              `json:"BillingMode"`
+		TableName              string                    `json:"TableName"`
+		AttributeDefinitions   []DDBAttributeDef         `json:"AttributeDefinitions"`
+		KeySchema              []DDBKeySchemaEntry       `json:"KeySchema"`
+		BillingMode            string                    `json:"BillingMode"`
+		GlobalSecondaryIndexes []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes"`
+		LocalSecondaryIndexes  []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -453,6 +495,30 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 		billingMode = "PROVISIONED"
 	}
 	now := float64(time.Now().Unix())
+
+	// Model secondary indexes as immediately ACTIVE. terraform-provider-aws
+	// waits for every GSI's IndexStatus to reach ACTIVE before the table
+	// converges; pre-fix the indexes were dropped entirely (returned null).
+	gsis := make([]DDBGlobalSecondaryIndex, 0, len(req.GlobalSecondaryIndexes))
+	for _, g := range req.GlobalSecondaryIndexes {
+		g.IndexStatus = "ACTIVE"
+		g.IndexArn = ddbIndexArn(req.TableName, g.IndexName)
+		if g.ProvisionedThroughput == nil {
+			g.ProvisionedThroughput = &DDBProvisionedThroughput{}
+		}
+		g.WarmThroughput = &DDBWarmThroughput{
+			ReadUnitsPerSecond:  12000,
+			WriteUnitsPerSecond: 4000,
+			Status:              "ACTIVE",
+		}
+		gsis = append(gsis, g)
+	}
+	lsis := make([]DDBLocalSecondaryIndex, 0, len(req.LocalSecondaryIndexes))
+	for _, l := range req.LocalSecondaryIndexes {
+		l.IndexArn = ddbIndexArn(req.TableName, l.IndexName)
+		lsis = append(lsis, l)
+	}
+
 	table := DDBTable{
 		TableName:            req.TableName,
 		TableId:              generateUUID(),
@@ -483,6 +549,12 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			WriteUnitsPerSecond: 4000,
 			Status:              "ACTIVE",
 		},
+	}
+	if len(gsis) > 0 {
+		table.GlobalSecondaryIndexes = gsis
+	}
+	if len(lsis) > 0 {
+		table.LocalSecondaryIndexes = lsis
 	}
 	ddbTables.Put(req.TableName, table)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,13 +22,15 @@ import (
 // ECS types
 
 type ECSCluster struct {
-	ClusterArn                        string `json:"clusterArn"`
-	ClusterName                       string `json:"clusterName"`
-	Status                            string `json:"status"`
-	RunningTasksCount                 int    `json:"runningTasksCount"`
-	PendingTasksCount                 int    `json:"pendingTasksCount"`
-	ActiveServicesCount               int    `json:"activeServicesCount"`
-	RegisteredContainerInstancesCount int    `json:"registeredContainerInstancesCount"`
+	ClusterArn                        string          `json:"clusterArn"`
+	ClusterName                       string          `json:"clusterName"`
+	Status                            string          `json:"status"`
+	RunningTasksCount                 int             `json:"runningTasksCount"`
+	PendingTasksCount                 int             `json:"pendingTasksCount"`
+	ActiveServicesCount               int             `json:"activeServicesCount"`
+	RegisteredContainerInstancesCount int             `json:"registeredContainerInstancesCount"`
+	CapacityProviders                 []string        `json:"capacityProviders,omitempty"`
+	DefaultCapacityProviderStrategy   json.RawMessage `json:"defaultCapacityProviderStrategy,omitempty"`
 }
 
 type ECSContainerDefinition struct {
@@ -279,6 +282,10 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.UntagResource", handleECSUntagResource)
 	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
 
+	// ECS Service family + cluster capacity providers (aws_ecs_service /
+	// aws_ecs_cluster_capacity_providers).
+	registerECSServices(r, srv)
+
 	// Static WebSocket route for ECS exec sessions (session ID is a path param)
 	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
@@ -390,6 +397,13 @@ func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			cluster.RunningTasksCount = runningCount
+			activeServices := 0
+			for _, s := range ecsServices.List() {
+				if s.ClusterArn == cluster.ClusterArn && s.Status == "ACTIVE" {
+					activeServices++
+				}
+			}
+			cluster.ActiveServicesCount = activeServices
 			clusters = append(clusters, cluster)
 		} else {
 			failures = append(failures, map[string]string{

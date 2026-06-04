@@ -266,6 +266,49 @@ resource "aws_ecs_cluster" "main" {
   name = "tf-test-cluster"
 }
 
+# Cluster capacity providers — exercises PutClusterCapacityProviders; the
+# provider reads them back via DescribeClusters.
+resource "aws_ecs_cluster_capacity_providers" "main" {
+  cluster_name       = aws_ecs_cluster.main.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+
+  default_capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = 1
+    base              = 1
+  }
+}
+
+# Fargate task definition + long-lived service — exercises the ECS Service
+# family (CreateService/DescribeServices/UpdateService/DeleteService). The
+# provider waits for the service to reach ACTIVE with runningCount==desiredCount.
+resource "aws_ecs_task_definition" "tf_runner" {
+  family                   = "tf-runner"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+
+  container_definitions = jsonencode([{
+    name      = "app"
+    image     = "public.ecr.aws/docker/library/alpine:latest"
+    essential = true
+  }])
+}
+
+resource "aws_ecs_service" "tf_runner" {
+  name            = "tf-runner-svc"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.tf_runner.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets         = [aws_subnet.tf_ec2_subnet.id]
+    security_groups = [aws_security_group.tf_ec2_sg.id]
+  }
+}
+
 # Application Auto Scaling — autoscale the ECS service that backs the runner.
 # Exercises RegisterScalableTarget + PutScalingPolicy (AnyScaleFrontendService),
 # distinct from EC2 Auto Scaling above.
@@ -1074,6 +1117,18 @@ resource "aws_dynamodb_table" "tf_table" {
     name = "LockID"
     type = "S"
   }
+  attribute {
+    name = "GSI1PK"
+    type = "S"
+  }
+
+  # The provider waits for the GSI's IndexStatus to reach ACTIVE; broken GSI
+  # modeling hangs apply for ~21 retries then fails.
+  global_secondary_index {
+    name            = "GSI1"
+    hash_key        = "GSI1PK"
+    projection_type = "ALL"
+  }
 }
 
 # KMS key — encrypts SecretsManager secrets and S3 objects.
@@ -1169,6 +1224,12 @@ output "appautoscaling_policy_arn" {
 }
 output "scheduler_schedule_arn" {
   value = aws_scheduler_schedule.tf_schedule.arn
+}
+output "ecs_service_name" {
+  value = aws_ecs_service.tf_runner.name
+}
+output "ecs_cluster_capacity_providers" {
+  value = join(",", sort(aws_ecs_cluster_capacity_providers.main.capacity_providers))
 }
 output "lambda_function_arn" {
   value = aws_lambda_function.tf_lambda.arn

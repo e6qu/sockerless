@@ -68,6 +68,69 @@ func TestDynamoDB_TableLifecycle(t *testing.T) {
 	assert.Contains(t, list.TableNames, tableName)
 }
 
+// TestDynamoDB_GlobalSecondaryIndexes pins the issue #416 fix: CreateTable
+// must echo each GSI in TableDescription with IndexStatus==ACTIVE, and
+// DescribeTable must report the same. Pre-fix the sim dropped all GSIs
+// (returned null), so terraform-provider-aws waited for GSI ACTIVE forever.
+func TestDynamoDB_GlobalSecondaryIndexes(t *testing.T) {
+	c := ddbClient()
+	tableName := "gsi-probe"
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(tableName)})
+
+	createOut, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("SK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI1PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI2PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash},
+			{AttributeName: aws.String("SK"), KeyType: ddbtypes.KeyTypeRange},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{
+			{
+				IndexName:  aws.String("GSI1"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSI1PK"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+			{
+				IndexName:  aws.String("GSI2"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSI2PK"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeKeysOnly},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.TableDescription)
+
+	// gsiStatus maps index name -> status, requiring the projection to round-trip.
+	gsiStatus := func(gsis []ddbtypes.GlobalSecondaryIndexDescription) map[string]string {
+		m := map[string]string{}
+		for _, g := range gsis {
+			m[aws.ToString(g.IndexName)] = string(g.IndexStatus)
+			require.NotNil(t, g.Projection, "GSI %s must carry its Projection", aws.ToString(g.IndexName))
+			assert.Contains(t, aws.ToString(g.IndexArn), ":table/"+tableName+"/index/"+aws.ToString(g.IndexName))
+		}
+		return m
+	}
+
+	created := gsiStatus(createOut.TableDescription.GlobalSecondaryIndexes)
+	require.Len(t, created, 2, "CreateTable response must echo both GSIs (was null pre-fix)")
+	assert.Equal(t, "ACTIVE", created["GSI1"])
+	assert.Equal(t, "ACTIVE", created["GSI2"])
+
+	desc, err := c.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(tableName)})
+	require.NoError(t, err)
+	require.NotNil(t, desc.Table)
+	described := gsiStatus(desc.Table.GlobalSecondaryIndexes)
+	require.Len(t, described, 2, "DescribeTable must report both GSIs")
+	assert.Equal(t, "ACTIVE", described["GSI1"])
+	assert.Equal(t, "ACTIVE", described["GSI2"])
+}
+
 // TestDynamoDB_TerraformStateLockSemantics pins the canonical
 // state-lock acquire/release flow that terraform uses with
 // `backend "s3" { dynamodb_table = "..." }` — PutItem with

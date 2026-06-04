@@ -7,6 +7,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDynamoDBCLI_GlobalSecondaryIndexes(t *testing.T) {
+	table := "cli-ddb-gsi"
+	runCLI(t, awsCLI("dynamodb", "create-table",
+		"--table-name", table,
+		"--attribute-definitions",
+		"AttributeName=pk,AttributeType=S", "AttributeName=gsipk,AttributeType=S",
+		"--key-schema", "AttributeName=pk,KeyType=HASH",
+		"--billing-mode", "PAY_PER_REQUEST",
+		"--global-secondary-indexes",
+		"IndexName=GSI1,KeySchema=[{AttributeName=gsipk,KeyType=HASH}],Projection={ProjectionType=ALL}"))
+	t.Cleanup(func() {
+		_ = awsCLI("dynamodb", "delete-table", "--table-name", table).Run()
+	})
+
+	out := runCLI(t, awsCLI("dynamodb", "describe-table", "--table-name", table, "--output", "json"))
+	var desc struct {
+		Table struct {
+			GlobalSecondaryIndexes []struct {
+				IndexName   string `json:"IndexName"`
+				IndexStatus string `json:"IndexStatus"`
+			} `json:"GlobalSecondaryIndexes"`
+		} `json:"Table"`
+	}
+	parseJSON(t, out, &desc)
+	require.Len(t, desc.Table.GlobalSecondaryIndexes, 1, "describe-table must report the GSI (was null pre-fix)")
+	assert.Equal(t, "GSI1", desc.Table.GlobalSecondaryIndexes[0].IndexName)
+	assert.Equal(t, "ACTIVE", desc.Table.GlobalSecondaryIndexes[0].IndexStatus)
+}
+
 func TestDynamoDBCLI_TableAndItems(t *testing.T) {
 	table := "cli-ddb-table"
 
