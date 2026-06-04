@@ -20,6 +20,7 @@ type GlueDatabase struct {
 	CreateTime  float64           `json:"CreateTime"`
 	LocationUri string            `json:"LocationUri,omitempty"`
 	Description string            `json:"Description,omitempty"`
+	Tags        map[string]string `json:"Tags,omitempty"`
 }
 
 type GlueTable struct {
@@ -513,6 +514,20 @@ func handleGlueGetJobRuns(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Tags ----------
 
+// glueResourceFromARN splits the last colon-segment of a Glue ARN into resource type and name.
+// e.g. arn:aws:glue:us-east-1::database/my-db → ("database", "my-db")
+//
+//	arn:aws:glue:us-east-1:123:job/my-job  → ("job", "my-job")
+func glueResourceFromARN(arn string) (resType, name string) {
+	idx := strings.LastIndex(arn, ":")
+	resource := arn[idx+1:]
+	slash := strings.Index(resource, "/")
+	if slash < 0 {
+		return "job", resource
+	}
+	return resource[:slash], resource[slash+1:]
+}
+
 func handleGlueTagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string            `json:"ResourceArn"`
@@ -526,19 +541,35 @@ func handleGlueTagResource(w http.ResponseWriter, r *http.Request) {
 	glueMu.Lock()
 	defer glueMu.Unlock()
 
-	name := glueNameFromARN(req.ResourceArn)
-	job, ok := glueJobs.Get(name)
-	if !ok {
-		glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
+	resType, name := glueResourceFromARN(req.ResourceArn)
+	switch resType {
+	case "database":
+		db, ok := glueDatabases.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		if db.Tags == nil {
+			db.Tags = make(map[string]string)
+		}
+		for k, v := range req.TagsToAdd {
+			db.Tags[k] = v
+		}
+		glueDatabases.Put(name, db)
+	default:
+		job, ok := glueJobs.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		if job.Tags == nil {
+			job.Tags = make(map[string]string)
+		}
+		for k, v := range req.TagsToAdd {
+			job.Tags[k] = v
+		}
+		glueJobs.Put(name, job)
 	}
-	if job.Tags == nil {
-		job.Tags = make(map[string]string)
-	}
-	for k, v := range req.TagsToAdd {
-		job.Tags[k] = v
-	}
-	glueJobs.Put(name, job)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -555,16 +586,29 @@ func handleGlueUntagResource(w http.ResponseWriter, r *http.Request) {
 	glueMu.Lock()
 	defer glueMu.Unlock()
 
-	name := glueNameFromARN(req.ResourceArn)
-	job, ok := glueJobs.Get(name)
-	if !ok {
-		glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
+	resType, name := glueResourceFromARN(req.ResourceArn)
+	switch resType {
+	case "database":
+		db, ok := glueDatabases.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		for _, k := range req.TagsToRemove {
+			delete(db.Tags, k)
+		}
+		glueDatabases.Put(name, db)
+	default:
+		job, ok := glueJobs.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		for _, k := range req.TagsToRemove {
+			delete(job.Tags, k)
+		}
+		glueJobs.Put(name, job)
 	}
-	for _, k := range req.TagsToRemove {
-		delete(job.Tags, k)
-	}
-	glueJobs.Put(name, job)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -577,24 +621,26 @@ func handleGlueGetTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := glueNameFromARN(req.ResourceArn)
-	job, ok := glueJobs.Get(name)
-	if !ok {
-		glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
+	resType, name := glueResourceFromARN(req.ResourceArn)
+	var tags map[string]string
+	switch resType {
+	case "database":
+		db, ok := glueDatabases.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		tags = db.Tags
+	default:
+		job, ok := glueJobs.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		tags = job.Tags
 	}
-	tags := job.Tags
 	if tags == nil {
 		tags = map[string]string{}
 	}
 	glueWriteJSON(w, http.StatusOK, map[string]any{"Tags": tags})
-}
-
-func glueNameFromARN(arn string) string {
-	// arn:aws:glue:us-east-1:123456789012:job/name
-	parts := strings.Split(arn, "/")
-	if len(parts) >= 2 {
-		return parts[len(parts)-1]
-	}
-	return arn
 }

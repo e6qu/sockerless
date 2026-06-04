@@ -166,11 +166,15 @@ func handleCBBatchGetProjects(w http.ResponseWriter, r *http.Request) {
 
 	var found []CBProject
 	var notFound []string
-	for _, name := range req.Names {
-		if p, ok := cbProjects.Get(name); ok {
+	for _, nameOrARN := range req.Names {
+		p, ok := cbProjects.Get(nameOrARN)
+		if !ok {
+			p, ok = cbProjects.Get(cbNameFromARN(nameOrARN))
+		}
+		if ok {
 			found = append(found, p)
 		} else {
-			notFound = append(notFound, name)
+			notFound = append(notFound, nameOrARN)
 		}
 	}
 	if found == nil {
