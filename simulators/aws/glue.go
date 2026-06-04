@@ -88,6 +88,7 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSGlue.StartJobRun", handleGlueStartJobRun)
 	r.Register("AWSGlue.GetJobRun", handleGlueGetJobRun)
 	r.Register("AWSGlue.GetJobRuns", handleGlueGetJobRuns)
+	r.Register("AWSGlue.GetPartitionIndexes", handleGlueGetPartitionIndexes)
 	r.Register("AWSGlue.TagResource", handleGlueTagResource)
 	r.Register("AWSGlue.UntagResource", handleGlueUntagResource)
 	r.Register("AWSGlue.GetTags", handleGlueGetTags)
@@ -510,6 +511,14 @@ func handleGlueGetJobRuns(w http.ResponseWriter, r *http.Request) {
 		resp["NextToken"] = nextTok
 	}
 	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// ---------- Partition indexes ----------
+
+func handleGlueGetPartitionIndexes(w http.ResponseWriter, r *http.Request) {
+	// TF provider reads partition indexes on table refresh; sim has none.
+	_ = r.Body
+	glueWriteJSON(w, http.StatusOK, map[string]any{"PartitionIndexDescriptorList": []any{}})
 }
 
 // ---------- Tags ----------
