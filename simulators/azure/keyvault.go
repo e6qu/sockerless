@@ -2364,15 +2364,31 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 		attrs.NotBefore = body.Attributes.NotBefore
 		attrs.Expires = body.Attributes.Expires
 	}
+	tags := body.Tags
+	if !exists {
+		// Tag the first (placeholder) version so listVersions can use it
+		// as a stable tie-break when multiple versions share the same
+		// second-precision Created timestamp (invariant in the sim since
+		// there is no network latency between calls). BUG-1399/1400.
+		rec = kvSecretStored{Vault: vault, Name: name}
+		if tags == nil {
+			tags = make(map[string]string)
+		} else {
+			// copy to avoid mutating the caller's map
+			copied := make(map[string]string, len(tags)+1)
+			for k, v := range tags {
+				copied[k] = v
+			}
+			tags = copied
+		}
+		tags["sockerless-initial-version"] = "1"
+	}
 	newVersion := kvSecretVersion{
 		Version:     version,
 		Value:       body.Value,
 		Attributes:  attrs,
-		Tags:        body.Tags,
+		Tags:        tags,
 		ContentType: body.ContentType,
-	}
-	if !exists {
-		rec = kvSecretStored{Vault: vault, Name: name}
 	}
 	rec.Versions = append(rec.Versions, newVersion)
 	keyVaultData.Put(key, rec)
@@ -2523,7 +2539,18 @@ func handleKVListSecretVersions(w http.ResponseWriter, r *http.Request, vault, n
 		return
 	}
 	versions := rec.Versions
-	sort.Slice(versions, func(i, j int) bool { return versions[i].Version < versions[j].Version })
+	// Sort by Created timestamp ascending (oldest first) to match real Azure.
+	// Tie-break: the placeholder version (tagged "sockerless-initial-version")
+	// sorts before any subsequent version — ensures stable ordering when
+	// multiple versions share the same second-precision timestamp. BUG-1399/1400.
+	sort.SliceStable(versions, func(i, j int) bool {
+		if versions[i].Attributes.Created != versions[j].Attributes.Created {
+			return versions[i].Attributes.Created < versions[j].Attributes.Created
+		}
+		iIsPlaceholder := versions[i].Tags["sockerless-initial-version"] == "1"
+		jIsPlaceholder := versions[j].Tags["sockerless-initial-version"] == "1"
+		return iIsPlaceholder && !jIsPlaceholder
+	})
 	items := make([]kvSecretItem, 0, len(versions))
 	for _, v := range versions {
 		items = append(items, kvSecretItem{

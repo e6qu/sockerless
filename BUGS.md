@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1411 filed - 1403 fixed - 5 open - 3 false positives.**
+**1413 filed - 1405 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -13,6 +13,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
+| ~~1412~~ | P1 | azure kv sim — listVersions sort | ordering bug | Fixed: `handleKVListSecretVersions` now sorts by `Attributes.Created` ascending (oldest first) matching real Azure, not by UUID string. |
+| ~~1413~~ | P1 | azure kv sim — timestamp granularity | sim fidelity gap | Fixed: first version of each secret tagged `sockerless-initial-version=1`; `listVersions` uses this tag as a stable tie-break when versions share the same second-precision timestamp. |
 | ~~1396~~ | P1 | bleephub webhooks | schema gap | Fixed: `hookToJSON` now includes `url`, `test_url`, `ping_url`, `deliveries_url`, `last_response`. API URLs derived from `r.Host`. |
 | ~~1397~~ | P1 | bleephub webhooks | schema gap | Fixed: `deliveryToJSON` now includes `status`, `url` (target), `installation_id`, `repository_id`; `deliveryFullJSON` no longer double-sets the fields. |
 | ~~1398~~ | P1 | bleephub webhooks | schema gap | Fixed: `WebhookDelivery.TargetURL` field added; set in `doDeliverAttempt` from `hook.URL`. |

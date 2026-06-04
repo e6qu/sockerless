@@ -75,6 +75,59 @@ func TestKeyVault_State_FullVersionChain(t *testing.T) {
 		"paged List must surface all PUT versions")
 }
 
+// TestKeyVault_State_VersionListOrder locks the BUG-1399/1400 version
+// ordering invariant: listVersions must return versions oldest-first
+// regardless of UUID lexicographic order. In the sim, multiple SetSecret
+// calls within the same second share an identical Created timestamp; the
+// placeholder tag on the first version acts as a stable tie-break so
+// the ordering is deterministic.
+func TestKeyVault_State_VersionListOrder(t *testing.T) {
+	rg := "kv-state-order-rg"
+	vault := "kv-state-order"
+	createKVViaARM(t, rg, vault)
+
+	c, err := azsecrets.NewClient(kvVaultURL(vault), &fakeCredential{},
+		&azsecrets.ClientOptions{
+			ClientOptions:                        kvClientOptions(),
+			DisableChallengeResourceVerification: true,
+		})
+	require.NoError(t, err)
+
+	// Write three versions in sequence. Sim creates them within the same
+	// second so Created timestamps are identical; ordering must still be
+	// deterministic (placeholder first, then insertion order).
+	values := []string{"first", "second", "third"}
+	var setVersionIDs []string
+	for _, val := range values {
+		resp, setErr := c.SetSecret(ctx, "ordered-secret",
+			azsecrets.SetSecretParameters{Value: stringPtr(val)}, nil)
+		require.NoError(t, setErr)
+		setVersionIDs = append(setVersionIDs, resp.ID.Version())
+	}
+
+	// List versions — must come back in creation order (oldest first).
+	pager := c.NewListSecretPropertiesVersionsPager("ordered-secret", nil)
+	var listedIDs []string
+	for pager.More() {
+		page, pageErr := pager.NextPage(ctx)
+		require.NoError(t, pageErr)
+		for _, item := range page.Value {
+			require.NotNil(t, item.ID)
+			listedIDs = append(listedIDs, item.ID.Version())
+		}
+	}
+	require.Len(t, listedIDs, 3)
+	// The list order must match insertion order (oldest → newest).
+	assert.Equal(t, setVersionIDs, listedIDs,
+		"listVersions must return versions in creation order (oldest first)")
+
+	// GetSecret (no version) must return the last written value.
+	got, err := c.GetSecret(ctx, "ordered-secret", "", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "third", *got.Value,
+		"GetSecret must return the most recently written version")
+}
+
 // TestKeyVault_State_SoftDeleteRoundTrip locks the BUG-1151 soft-
 // delete state machine: active → deleted → recovered → deleted →
 // purged. Each transition must be observable via the SDK's canonical
