@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1402 filed - 1394 fixed - 5 open - 3 false positives.**
+**1403 filed - 1395 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1400~~ | P1 | aws-batch simulator | wrong HTTP routing | Fixed: implemented as REST paths (`POST /v1/computeenvironments`) but SDK sends operation-specific POST paths (`POST /v1/createcomputeenvironment`); rewrote all route registrations. |
 | ~~1401~~ | P2 | aws-codebuild SDK test | TagResource not in SDK client | Fixed: `codebuild.Client` in SDK v2 does not expose `TagResource`/`ListTagsForResource`/`UntagResource` as separate methods; SDK test now verifies tags via `BatchGetProjects` instead. |
 | ~~1402~~ | P1 | aws-batch terraform | wrong HCL attribute name | Fixed: `aws_batch_compute_environment` uses `name =` not `compute_environment_name =` in hashicorp/aws provider v6. CI failed with "An argument named 'compute_environment_name' is not expected here." |
+| ~~1403~~ | P1 | aws-stepfunctions sim | missing ValidateStateMachineDefinition | Fixed: TF provider calls `AWSStepFunctions.ValidateStateMachineDefinition` before CreateStateMachine; sim returned 400 UnknownOperationException. Added handler that always returns `{"result":"OK"}`. |
 
 ## Recently Closed
 
