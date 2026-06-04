@@ -1352,9 +1352,9 @@ output "glue_job_name" {
 # ── Batch ───────────────────────────────────────────────────────────────────
 
 resource "aws_batch_compute_environment" "tf_batch_ce" {
-  compute_environment_name = "tf-batch-compute-env"
-  type                     = "UNMANAGED"
-  state                    = "ENABLED"
+  name  = "tf-batch-compute-env"
+  type  = "UNMANAGED"
+  state = "ENABLED"
 
   tags = {
     env = "terraform"
