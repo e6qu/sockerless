@@ -191,7 +191,8 @@ func handleBatchDescribeComputeEnvironments(w http.ResponseWriter, r *http.Reque
 
 	var result []BatchComputeEnvironment
 	if len(req.ComputeEnvironments) > 0 {
-		for _, name := range req.ComputeEnvironments {
+		for _, nameOrARN := range req.ComputeEnvironments {
+			name := batchNameFromARN(nameOrARN)
 			if ce, ok := batchComputeEnvs.Get(name); ok {
 				result = append(result, ce)
 			}
@@ -220,7 +221,7 @@ func handleBatchUpdateComputeEnvironment(w http.ResponseWriter, r *http.Request)
 	batchMu.Lock()
 	defer batchMu.Unlock()
 
-	name := req.ComputeEnvironment
+	name := batchNameFromARN(req.ComputeEnvironment)
 	ce, ok := batchComputeEnvs.Get(name)
 	if !ok {
 		batchWriteError(w, http.StatusBadRequest, "Compute environment not found: "+name)
@@ -254,7 +255,7 @@ func handleBatchDeleteComputeEnvironment(w http.ResponseWriter, r *http.Request)
 	batchMu.Lock()
 	defer batchMu.Unlock()
 
-	batchComputeEnvs.Delete(req.ComputeEnvironment)
+	batchComputeEnvs.Delete(batchNameFromARN(req.ComputeEnvironment))
 	batchWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -318,7 +319,8 @@ func handleBatchDescribeJobQueues(w http.ResponseWriter, r *http.Request) {
 
 	var result []BatchJobQueue
 	if len(req.JobQueues) > 0 {
-		for _, name := range req.JobQueues {
+		for _, nameOrARN := range req.JobQueues {
+			name := batchNameFromARN(nameOrARN)
 			if q, ok := batchJobQueues.Get(name); ok {
 				result = append(result, q)
 			}
@@ -347,7 +349,8 @@ func handleBatchUpdateJobQueue(w http.ResponseWriter, r *http.Request) {
 	batchMu.Lock()
 	defer batchMu.Unlock()
 
-	q, ok := batchJobQueues.Get(req.JobQueue)
+	name := batchNameFromARN(req.JobQueue)
+	q, ok := batchJobQueues.Get(name)
 	if !ok {
 		batchWriteError(w, http.StatusBadRequest, "Job queue not found: "+req.JobQueue)
 		return
@@ -361,7 +364,7 @@ func handleBatchUpdateJobQueue(w http.ResponseWriter, r *http.Request) {
 	if req.ComputeEnvironmentOrder != nil {
 		q.ComputeEnvironmentOrder = req.ComputeEnvironmentOrder
 	}
-	batchJobQueues.Put(req.JobQueue, q)
+	batchJobQueues.Put(name, q)
 	batchWriteJSON(w, http.StatusOK, map[string]any{
 		"jobQueueArn":  q.JobQueueArn,
 		"jobQueueName": q.JobQueueName,
@@ -380,7 +383,7 @@ func handleBatchDeleteJobQueue(w http.ResponseWriter, r *http.Request) {
 	batchMu.Lock()
 	defer batchMu.Unlock()
 
-	batchJobQueues.Delete(req.JobQueue)
+	batchJobQueues.Delete(batchNameFromARN(req.JobQueue))
 	batchWriteJSON(w, http.StatusOK, map[string]any{})
 }
 

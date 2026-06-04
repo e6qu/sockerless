@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1403 filed - 1395 fixed - 5 open - 3 false positives.**
+**1407 filed - 1399 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -21,6 +21,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1401~~ | P2 | aws-codebuild SDK test | TagResource not in SDK client | Fixed: `codebuild.Client` in SDK v2 does not expose `TagResource`/`ListTagsForResource`/`UntagResource` as separate methods; SDK test now verifies tags via `BatchGetProjects` instead. |
 | ~~1402~~ | P1 | aws-batch terraform | wrong HCL attribute name | Fixed: `aws_batch_compute_environment` uses `name =` not `compute_environment_name =` in hashicorp/aws provider v6. CI failed with "An argument named 'compute_environment_name' is not expected here." |
 | ~~1403~~ | P1 | aws-stepfunctions sim | missing ValidateStateMachineDefinition | Fixed: TF provider calls `AWSStepFunctions.ValidateStateMachineDefinition` before CreateStateMachine; sim returned 400 UnknownOperationException. Added handler that always returns `{"result":"OK"}`. |
+| ~~1404~~ | P1 | aws-stepfunctions sim | missing ListStateMachineVersions | Fixed: TF provider calls `AWSStepFunctions.ListStateMachineVersions` after CreateStateMachine; added handler returning empty versions list. |
+| ~~1405~~ | P1 | aws-codebuild terraform | buildspec required for NO_SOURCE | Fixed: TF provider v6 requires `buildspec` in source block when `type = "NO_SOURCE"`; added placeholder buildspec to `aws_codebuild_project` TF resource. |
+| ~~1406~~ | P1 | aws-glue terraform | empty catalog_id in resource ID | Fixed: `aws_glue_catalog_database` ID format is `catalog-id:database-name`; when `catalog_id` is not explicit the provider stored empty string. Added `catalog_id = data.aws_caller_identity.current.account_id` to TF resource. |
+| ~~1407~~ | P1 | aws-batch sim | ARN vs name in describe operations | Fixed: TF provider passes ARNs to DescribeJobQueues/DescribeComputeEnvironments/Update/Delete after creation; sim was looking up by name only. All handlers now resolve name via `batchNameFromARN()`. |
 
 ## Recently Closed
 

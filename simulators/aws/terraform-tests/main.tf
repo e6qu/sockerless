@@ -1285,7 +1285,8 @@ resource "aws_codebuild_project" "tf_cb_project" {
   service_role = "arn:aws:iam::123456789012:role/cb-role"
 
   source {
-    type = "NO_SOURCE"
+    type      = "NO_SOURCE"
+    buildspec = "version: 0.2\nphases:\n  build:\n    commands:\n      - echo done\n"
   }
 
   artifacts {
@@ -1310,7 +1311,8 @@ output "codebuild_project_arn" {
 # ── Glue ────────────────────────────────────────────────────────────────────
 
 resource "aws_glue_catalog_database" "tf_glue_db" {
-  name = "tf-glue-database"
+  name       = "tf-glue-database"
+  catalog_id = data.aws_caller_identity.current.account_id
 }
 
 resource "aws_glue_catalog_table" "tf_glue_table" {

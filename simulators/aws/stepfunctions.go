@@ -61,6 +61,7 @@ func registerStepFunctions(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSStepFunctions.UntagResource", handleSFNUntagResource)
 	r.Register("AWSStepFunctions.ListTagsForResource", handleSFNListTagsForResource)
 	r.Register("AWSStepFunctions.ValidateStateMachineDefinition", handleSFNValidateStateMachineDefinition)
+	r.Register("AWSStepFunctions.ListStateMachineVersions", handleSFNListStateMachineVersions)
 	r.Register("AWSStepFunctions.StartExecution", handleSFNStartExecution)
 	r.Register("AWSStepFunctions.DescribeExecution", handleSFNDescribeExecution)
 	r.Register("AWSStepFunctions.ListExecutions", handleSFNListExecutions)
@@ -311,6 +312,12 @@ func handleSFNListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		tags = []SFNTag{}
 	}
 	sfnWriteJSON(w, http.StatusOK, map[string]any{"tags": tags})
+}
+
+func handleSFNListStateMachineVersions(w http.ResponseWriter, r *http.Request) {
+	// TF provider calls this after CreateStateMachine. Sim doesn't track
+	// versions separately — return empty list.
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"stateMachineVersions": []any{}})
 }
 
 func handleSFNValidateStateMachineDefinition(w http.ResponseWriter, r *http.Request) {
