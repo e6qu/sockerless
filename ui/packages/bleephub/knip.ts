@@ -1,12 +1,11 @@
 import type { KnipConfig } from "knip";
 
 const config: KnipConfig = {
-  // Ignore build output — not source files.
-  ignore: ["dist/**"],
-  // BleephubAgent and BleephubLabel are referenced via embedding inside
-  // BleephubSession (field: agent: BleephubAgent | null). Knip doesn't
-  // trace intra-file type references as "used exports", so suppress these.
-  ignoreDependencies: [],
+  // Scope analysis to source. Restricting the project universe to src/** keeps
+  // build output (dist/) out of scope entirely, so it is never reported as an
+  // "unused file" — without needing a dist/** ignore that would dangle (and emit
+  // an unused-ignore hint) in a clean checkout where dist/ has not been built.
+  project: ["src/**/*.{ts,tsx}"],
   ignoreExportsUsedInFile: true,
 };
 
