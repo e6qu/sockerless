@@ -56,7 +56,7 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret, events, active)
-	writeJSON(w, http.StatusCreated, hookToJSON(hook))
+	writeJSON(w, http.StatusCreated, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
@@ -69,9 +69,10 @@ func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
 	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
 	hooks := s.store.ListHooks(repoKey)
 
+	owner, repo := r.PathValue("owner"), r.PathValue("repo")
 	result := make([]map[string]interface{}, 0, len(hooks))
 	for _, h := range hooks {
-		result = append(result, hookToJSON(h))
+		result = append(result, hookToJSON(h, r, owner, repo))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -96,7 +97,7 @@ func (s *Server) handleGetHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, hookToJSON(hook))
+	writeJSON(w, http.StatusOK, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +150,7 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hook := s.store.GetHook(repoKey, hookID)
-	writeJSON(w, http.StatusOK, hookToJSON(hook))
+	writeJSON(w, http.StatusOK, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleDeleteHook(w http.ResponseWriter, r *http.Request) {
@@ -316,10 +317,14 @@ func (s *Server) handleRedeliverHookDelivery(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": deliveryID, "redelivery": true})
 }
 
-func hookToJSON(h *Webhook) map[string]interface{} {
+// hookToJSON serialises a Webhook to GitHub's published hook object shape.
+// r and owner/repo are needed to construct the self-referential API URLs.
+func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]interface{} {
+	base := "http://" + r.Host
+	hookBase := base + "/api/v3/repos/" + owner + "/" + repo + "/hooks/" + strconv.Itoa(h.ID)
 	return map[string]interface{}{
-		"id":     h.ID,
 		"type":   "Repository",
+		"id":     h.ID,
 		"name":   "web",
 		"active": h.Active,
 		"events": h.Events,
@@ -328,20 +333,44 @@ func hookToJSON(h *Webhook) map[string]interface{} {
 			"content_type": "json",
 			"insecure_ssl": "0",
 		},
-		"created_at": h.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at": h.UpdatedAt.UTC().Format(time.RFC3339),
+		"updated_at":     h.UpdatedAt.UTC().Format(time.RFC3339),
+		"created_at":     h.CreatedAt.UTC().Format(time.RFC3339),
+		"url":            hookBase,
+		"test_url":       hookBase + "/test",
+		"ping_url":       hookBase + "/pings",
+		"deliveries_url": hookBase + "/deliveries",
+		"last_response": map[string]interface{}{
+			"code":    nil,
+			"status":  "unused",
+			"message": nil,
+		},
 	}
+}
+
+// deliveryStatus returns the human-readable status string GitHub uses.
+func deliveryStatus(statusCode int) string {
+	if statusCode >= 200 && statusCode < 300 {
+		return "OK"
+	}
+	if statusCode == 0 {
+		return "failed to connect"
+	}
+	return strconv.Itoa(statusCode) + " " + http.StatusText(statusCode)
 }
 
 func deliveryToJSON(d *WebhookDelivery) map[string]interface{} {
 	return map[string]interface{}{
-		"id":           d.ID,
-		"guid":         d.GUID,
-		"event":        d.Event,
-		"action":       d.Action,
-		"status_code":  d.StatusCode,
-		"duration":     d.Duration,
-		"redelivery":   d.Redelivery,
-		"delivered_at": d.DeliveredAt.UTC().Format(time.RFC3339),
+		"id":              d.ID,
+		"guid":            d.GUID,
+		"delivered_at":    d.DeliveredAt.UTC().Format(time.RFC3339),
+		"redelivery":      d.Redelivery,
+		"duration":        d.Duration,
+		"status":          deliveryStatus(d.StatusCode),
+		"status_code":     d.StatusCode,
+		"event":           d.Event,
+		"action":          d.Action,
+		"installation_id": d.InstallationID,
+		"repository_id":   d.RepositoryID,
+		"url":             d.TargetURL,
 	}
 }

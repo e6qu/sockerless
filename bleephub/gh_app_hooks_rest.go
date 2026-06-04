@@ -132,8 +132,6 @@ func appHookConfigJSON(app *App) map[string]interface{} {
 
 func deliveryFullJSON(d *WebhookDelivery) map[string]interface{} {
 	out := deliveryToJSON(d)
-	out["installation_id"] = d.InstallationID
-	out["repository_id"] = d.RepositoryID
 	if d.Request != nil {
 		out["request"] = map[string]interface{}{
 			"headers": d.Request.Headers,
