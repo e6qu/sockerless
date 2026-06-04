@@ -289,8 +289,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		Permissions map[string]string `json:"permissions"`
 		Events      []string          `json:"events"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -326,8 +325,7 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 		Permissions map[string]string `json:"permissions"`
 		Events      []string          `json:"events"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.TargetType == "" {

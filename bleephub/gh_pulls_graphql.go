@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1096,7 +1097,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	repo := st.Repos[pr.RepoID]
 	url := ""
 	if repo != nil {
-		url = "/" + repo.FullName + "/pull/" + fmt.Sprintf("%d", pr.Number)
+		url = "/" + repo.FullName + "/pull/" + strconv.Itoa(pr.Number)
 	}
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", pr.ID))))[:40]

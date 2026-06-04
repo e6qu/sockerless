@@ -43,8 +43,7 @@ func (s *Server) handleCreateCheckRun(w http.ResponseWriter, r *http.Request) {
 		CompletedAt *time.Time      `json:"completed_at"`
 		Output      *CheckRunOutput `json:"output"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -110,8 +109,7 @@ func (s *Server) handleUpdateCheckRun(w http.ResponseWriter, r *http.Request) {
 		CompletedAt *time.Time      `json:"completed_at"`
 		Output      *CheckRunOutput `json:"output"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	found := s.store.UpdateCheckRun(id, func(cr *CheckRun) {
@@ -218,8 +216,7 @@ func (s *Server) handleUpdateCheckSuitePrefs(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		AutoTriggerChecks []*CheckSuitePref `json:"auto_trigger_checks"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	s.store.SetCheckSuitePreferences(repoKey, req.AutoTriggerChecks)

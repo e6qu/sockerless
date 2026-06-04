@@ -11,6 +11,11 @@ import type {
   BleephubInstallation,
   BleephubOAuthApp,
   BleephubOAuthState,
+  GithubIssue,
+  GithubComment,
+  GithubPR,
+  GithubBranch,
+  GithubCommit,
 } from "./types.js";
 
 async function fetchJSON<T>(url: string): Promise<T> {
@@ -183,37 +188,37 @@ async function ghFetch<T>(path: string): Promise<T> {
 }
 
 export const fetchRepoDetail = (owner: string, repo: string) =>
-  ghFetch<import("./types.js").BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
+  ghFetch<BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
 
 export const fetchRepoIssues = (owner: string, repo: string, state = "open") =>
-  ghFetch<import("./types.js").GithubIssue[]>(
+  ghFetch<GithubIssue[]>(
     `/api/v3/repos/${owner}/${repo}/issues?state=${state}&per_page=50`
   );
 
 export const fetchIssueDetail = (owner: string, repo: string, number: number) =>
-  ghFetch<import("./types.js").GithubIssue>(`/api/v3/repos/${owner}/${repo}/issues/${number}`);
+  ghFetch<GithubIssue>(`/api/v3/repos/${owner}/${repo}/issues/${number}`);
 
 export const fetchIssueComments = (owner: string, repo: string, number: number) =>
-  ghFetch<import("./types.js").GithubComment[]>(
+  ghFetch<GithubComment[]>(
     `/api/v3/repos/${owner}/${repo}/issues/${number}/comments`
   );
 
 export const fetchRepoPRs = (owner: string, repo: string, state = "open") =>
-  ghFetch<import("./types.js").GithubPR[]>(
+  ghFetch<GithubPR[]>(
     `/api/v3/repos/${owner}/${repo}/pulls?state=${state}&per_page=50`
   );
 
 export const fetchRepoBranches = (owner: string, repo: string) =>
-  ghFetch<import("./types.js").GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
+  ghFetch<GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
 
 export const fetchRepoCommits = (owner: string, repo: string) =>
-  ghFetch<import("./types.js").GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/commits`);
+  ghFetch<GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/commits`);
 
 export async function createIssue(
   owner: string,
   repo: string,
   payload: { title: string; body?: string },
-): Promise<import("./types.js").GithubIssue> {
+): Promise<GithubIssue> {
   const res = await fetch(`/api/v3/repos/${owner}/${repo}/issues`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: AUTH },

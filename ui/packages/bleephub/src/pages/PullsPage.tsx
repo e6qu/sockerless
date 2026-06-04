@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PageHeading, Spinner, Button } from "@sockerless/ui-core/components";
+import { PageHeading, Spinner, Button, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepoPRs, fetchIssueComments, mergePR } from "../api.js";
+import type { GithubPR } from "../types.js";
+import { CommentList } from "../components/CommentCard.js";
+import { rowHoverProps } from "../components/RowHover.js";
 
 export function PullsPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -20,13 +23,14 @@ export function PullsPage() {
 function PRList({ owner, repo }: { owner: string; repo: string }) {
   const [state, setState] = useState<"open" | "closed">("open");
 
-  const { data: prs = [], isLoading } = useQuery({
+  const { data: prs = [], isLoading, isError, error } = useQuery({
     queryKey: ["prs", owner, repo, state],
     queryFn: () => fetchRepoPRs(owner, repo, state),
     enabled: !!owner && !!repo,
   });
 
   if (isLoading) return <Spinner label="loading pull requests" />;
+  if (isError) return <InlineError title="Failed to load pull requests" detail={String(error)} />;
 
   return (
     <div>
@@ -96,8 +100,7 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
                 background: "var(--color-surface-raised)",
                 transition: "background 0.1s",
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-bg-subtle)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-raised)"; }}
+              {...rowHoverProps}
             >
               <span
                 style={{
@@ -137,7 +140,7 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
     queryKey: ["prs", owner, repo, "all"],
     queryFn: () => fetchRepoPRs(owner, repo, "all"),
   });
-  const pr = prs.find((p) => p.number === number);
+  const pr: GithubPR | undefined = prs.find((p) => p.number === number);
   const { data: comments = [] } = useQuery({
     queryKey: ["pr-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
@@ -232,34 +235,7 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
       </div>
 
       {/* Comments */}
-      {comments.map((c) => (
-        <div
-          key={c.id}
-          style={{
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-md)",
-            marginBottom: "0.75rem",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "0.5rem 0.85rem",
-              background: "var(--color-bg-subtle)",
-              borderBottom: "1px solid var(--color-border)",
-              fontSize: "0.75rem",
-              fontFamily: "var(--font-mono)",
-              color: "var(--color-fg-muted)",
-            }}
-          >
-            <span style={{ color: "var(--color-fg)", fontWeight: 600 }}>{c.user?.login}</span>
-            {" · "}{new Date(c.created_at).toLocaleString()}
-          </div>
-          <div style={{ padding: "0.75rem 1rem", fontSize: "0.875rem", lineHeight: 1.6, color: "var(--color-fg)", whiteSpace: "pre-wrap" }}>
-            {c.body}
-          </div>
-        </div>
-      ))}
+      <CommentList comments={comments} />
     </div>
   );
 }

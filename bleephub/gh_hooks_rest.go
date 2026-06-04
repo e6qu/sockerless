@@ -36,8 +36,7 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 		Events []string  `json:"events"`
 		Active *flexBool `json:"active"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -122,8 +121,7 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 		Events []string  `json:"events"`
 		Active *flexBool `json:"active"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

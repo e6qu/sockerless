@@ -44,8 +44,7 @@ func (s *Server) handleUpdateAppHookConfig(w http.ResponseWriter, r *http.Reques
 		ContentType string `json:"content_type"`
 		InsecureSSL string `json:"insecure_ssl"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	s.store.UpdateAppHookConfig(app.ID, func(a *App) {

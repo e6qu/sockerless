@@ -6,14 +6,13 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { createColumnHelper } from "@tanstack/react-table";
+import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
 import { fetchRepos } from "../api.js";
 import type { BleephubRepo } from "../types.js";
 
 const col = createColumnHelper<BleephubRepo>();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const columns: any[] = [
+const columns: ColumnDef<BleephubRepo>[] = [
   col.accessor("full_name", {
     header: "Repository",
     cell: (info) => {

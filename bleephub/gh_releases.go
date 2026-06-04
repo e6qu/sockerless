@@ -277,8 +277,7 @@ func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 		Draft           flexBool `json:"draft"`
 		Prerelease      flexBool `json:"prerelease"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.TagName == "" {
@@ -375,8 +374,7 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 		Draft           *flexBool `json:"draft"`
 		Prerelease      *flexBool `json:"prerelease"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	ok := s.store.Releases.Update(id, func(rel *Release) {

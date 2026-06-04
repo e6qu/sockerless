@@ -3,6 +3,7 @@ package bleephub
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1040,7 +1041,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	repo := st.Repos[issue.RepoID]
 	url := ""
 	if repo != nil {
-		url = "/" + repo.FullName + "/issues/" + fmt.Sprintf("%d", issue.Number)
+		url = "/" + repo.FullName + "/issues/" + strconv.Itoa(issue.Number)
 	}
 
 	var closedAt interface{}

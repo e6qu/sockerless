@@ -40,8 +40,7 @@ type SubmitStep struct {
 
 func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	var req SubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -131,8 +130,7 @@ type WorkflowSubmitRequest struct {
 
 func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 	var req WorkflowSubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

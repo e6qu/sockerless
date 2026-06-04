@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1423 filed - 1403 fixed - 5 open - 3 false positives.**
+**1435 filed - 1403 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -39,6 +39,18 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1421~~ | P1 | bleephub git HTTP | `listWorkflowFiles` takes concrete `*memory.Storage` | Fixed: `listWorkflowFiles(stor *memory.Storage)` leaks the concrete storage type; breaks when `GetGitStorage` returns filesystem storage. Changed parameter to `gitStorer.Storer` interface. |
 | ~~1422~~ | P2 | bleephub Playwright | no coverage for AppsPage or OAuthPage | Fixed: Added Playwright tests for AppsPage (list apps, open create-app modal) and OAuthPage (device flow, web flow fields). |
 | ~~1423~~ | P1 | bleephub git persistence | loaded repos have no git storage after restart | Fixed: `loadFromPersistence` for the "repos" bucket populated `st.Repos` + `st.ReposByName` but never called `openOrInitGitStorage`, leaving `st.GitStorages` empty for all loaded repos. `GetGitStorage` returned nil for every repo after restart. Added storage re-open in the repos loader. |
+| ~~1424~~ | P1 | bleephub oauth | `r.ParseForm()` errors silenced | Fixed: `gh_oauth.go` used `_ = r.ParseForm()` in 3 login/token handlers; parse failures were silently swallowed and subsequent form field reads returned empty strings, causing auth to always fail with misleading "incorrect password" instead of surfacing a real error. |
+| ~~1425~~ | P2 | bleephub Go duplication | 52 identical JSON-decode boilerplate blocks | Fixed: extracted `decodeJSONBody(w, r, &req) bool` helper in `gh_rest.go`; all 52 handlers now call it instead of repeating `json.NewDecoder(r.Body).Decode`+error check+response. |
+| ~~1426~~ | P3 | bleephub Go dead code | `_ = slug` dead assignment in `store.go` | Fixed: removed the immediately-discarded assignment. |
+| ~~1427~~ | P3 | bleephub Go style | `fmt.Sprintf("%d", id)` scattered 34 times | Fixed: replaced all 34 instances with `strconv.Itoa(id)` which is idiomatic and avoids a format string parse. |
+| ~~1428~~ | P2 | bleephub TypeScript | dynamic type imports in `api.ts` | Fixed: `api.ts` used `import("./types.js").GithubIssue` inline instead of a static import. Added the six missing types to the top-level import group. |
+| ~~1429~~ | P2 | bleephub TypeScript | dynamic type imports in `RepoDetailPage.tsx` | Fixed: three prop types used `import("../types.js").T` inline. Replaced with static `import type { ... }` at the top. |
+| ~~1430~~ | P2 | bleephub TypeScript | `any[]` column definitions in all 6 DataTable pages | Fixed: replaced `// eslint-disable ... any[]\nconst columns: any[]` with properly typed `ColumnDef<T>[]` in ReposPage, RunnersPage, WorkflowDetailPage, OverviewPage, AppsPage (3×), WorkflowsPage (2×). |
+| ~~1431~~ | P2 | bleephub UI duplication | `CommentCard` copy-pasted in PullsPage | Fixed: `PullsPage.tsx` reimplemented comment rendering inline instead of importing the `CommentCard` component from IssuesPage. Extracted `CommentCard` to `src/components/CommentCard.tsx`, imported in both pages. |
+| ~~1432~~ | P2 | bleephub UI duplication | hover style handlers duplicated 6× across pages | Fixed: extracted `rowHoverProps` constant in `src/components/RowHover.ts`; all 6 call sites now spread it instead of repeating the `onMouseEnter`/`onMouseLeave` inline. |
+| ~~1433~~ | P2 | bleephub UI | useQuery calls have no error display | Fixed: IssuesPage, PullsPage, RepoDetailPage all showed a blank/empty list on query failure with no user feedback. Added `isError` + error message rendering for all data fetches. |
+| ~~1434~~ | P2 | bleephub TypeScript | missing `GithubPR` type import in PullsPage | Fixed: `PullsPage.tsx` used PR data without importing the type; parameter typed implicitly as `any`. Added `import type { GithubPR, GithubComment }` at the top. |
+| ~~1435~~ | P2 | bleephub TypeScript | `(e.currentTarget as HTMLElement)` casts on every hover | Fixed: the HTMLElement cast was required because React's event type isn't narrowed. The extracted `rowHoverProps` in RowHover.ts is typed as `{ onMouseEnter: React.MouseEventHandler<HTMLAnchorElement>; onMouseLeave: React.MouseEventHandler<HTMLAnchorElement> }` so no cast is needed at call sites. |
 
 ## Recently Closed
 

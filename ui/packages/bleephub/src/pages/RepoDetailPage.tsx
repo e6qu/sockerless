@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { PageHeading, Spinner, StatusBadge } from "@sockerless/ui-core/components";
+import { PageHeading, Spinner, StatusBadge, InlineError } from "@sockerless/ui-core/components";
 import {
   fetchRepoDetail,
   fetchRepoBranches,
@@ -9,12 +9,14 @@ import {
   fetchRepoIssues,
   fetchRepoPRs,
 } from "../api.js";
+import type { GithubIssue, GithubPR, GithubCommit } from "../types.js";
+import { rowHoverProps } from "../components/RowHover.js";
 
 export function RepoDetailPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
   const [tab, setTab] = useState<"code" | "issues" | "pulls" | "commits">("code");
 
-  const { data: repoData, isLoading: repoLoading } = useQuery({
+  const { data: repoData, isLoading: repoLoading, isError: repoError, error: repoErr } = useQuery({
     queryKey: ["repo", owner, repo],
     queryFn: () => fetchRepoDetail(owner, repo),
     enabled: !!owner && !!repo,
@@ -44,7 +46,8 @@ export function RepoDetailPage() {
     enabled: !!owner && !!repo,
   });
 
-  if (repoLoading || !repoData) return <Spinner label={`loading ${owner}/${repo}`} />;
+  if (repoLoading) return <Spinner label={`loading ${owner}/${repo}`} />;
+  if (repoError || !repoData) return <InlineError title={`Failed to load ${owner}/${repo}`} detail={String(repoErr)} />;
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: "0.4rem 0.85rem",
@@ -204,7 +207,7 @@ function IssuesList({
 }: {
   owner: string;
   repo: string;
-  issues: import("../types.js").GithubIssue[];
+  issues: GithubIssue[];
 }) {
   if (issues.length === 0) {
     return (
@@ -229,8 +232,7 @@ function IssuesList({
             background: "var(--color-surface-raised)",
             transition: "background 0.1s",
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-bg-subtle)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-raised)"; }}
+          {...rowHoverProps}
         >
           <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>○</span>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -271,7 +273,7 @@ function PRsList({
 }: {
   owner: string;
   repo: string;
-  prs: import("../types.js").GithubPR[];
+  prs: GithubPR[];
 }) {
   if (prs.length === 0) {
     return (
@@ -296,8 +298,7 @@ function PRsList({
             background: "var(--color-surface-raised)",
             transition: "background 0.1s",
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-bg-subtle)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-raised)"; }}
+          {...rowHoverProps}
         >
           <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>↯</span>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -318,7 +319,7 @@ function CommitsList({
   commits,
   isLoading,
 }: {
-  commits: import("../types.js").GithubCommit[];
+  commits: GithubCommit[];
   isLoading: boolean;
 }) {
   if (isLoading) return <Spinner label="loading commits" />;

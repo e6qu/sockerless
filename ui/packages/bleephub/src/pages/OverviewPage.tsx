@@ -6,7 +6,7 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { createColumnHelper } from "@tanstack/react-table";
+import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { fetchHealth, fetchMetrics, fetchWorkflows } from "../api.js";
 import type { BleephubWorkflow } from "../types.js";
@@ -43,8 +43,7 @@ export function OverviewPage() {
 
   const recent = (workflows ?? []).slice(0, 10);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns: ColumnDef<BleephubWorkflow>[] = [
     col.accessor("name", {
       header: "Name",
       cell: (info) => (

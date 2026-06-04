@@ -2,7 +2,6 @@ package bleephub
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,8 +43,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		Base  string   `json:"base"`
 		Draft flexBool `json:"draft"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Head == "" {
@@ -183,8 +181,7 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -320,8 +317,7 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 		Body  string `json:"body"`
 		Event string `json:"event"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

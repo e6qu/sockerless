@@ -104,8 +104,7 @@ func (s *Server) handleWebConsoleLog(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("recordId")
 
 	var lines []string
-	if err := json.NewDecoder(r.Body).Decode(&lines); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &lines) {
 		return
 	}
 

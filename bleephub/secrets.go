@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -90,8 +89,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Value string `json:"value"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 

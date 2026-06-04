@@ -122,8 +122,7 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 	planID := r.PathValue("planId")
 
 	var body map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &body) {
 		return
 	}
 

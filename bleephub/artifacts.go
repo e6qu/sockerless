@@ -140,8 +140,7 @@ func (s *Server) handleCreateArtifact(w http.ResponseWriter, r *http.Request) {
 		Name                 string `json:"name"`
 		Version              int    `json:"version"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -208,8 +207,7 @@ func (s *Server) handleFinalizeArtifact(w http.ResponseWriter, r *http.Request) 
 		Name string `json:"name"`
 		Size int64  `json:"size"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -266,8 +264,7 @@ func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

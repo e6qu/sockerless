@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { PageHeading, Spinner, Button } from "@sockerless/ui-core/components";
+import { PageHeading, Spinner, Button, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepoIssues, fetchIssueDetail, fetchIssueComments, createIssue } from "../api.js";
 import type { GithubIssue } from "../types.js";
+import { CommentCard, CommentList } from "../components/CommentCard.js";
+import { rowHoverProps } from "../components/RowHover.js";
 
 export function IssuesPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -26,7 +28,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
 
-  const { data: issues = [], isLoading } = useQuery({
+  const { data: issues = [], isLoading, isError, error } = useQuery({
     queryKey: ["issues", owner, repo, state],
     queryFn: () => fetchRepoIssues(owner, repo, state),
     enabled: !!owner && !!repo,
@@ -44,6 +46,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
   });
 
   if (isLoading) return <Spinner label="loading issues" />;
+  if (isError) return <InlineError title="Failed to load issues" detail={String(error)} />;
 
   return (
     <div>
@@ -205,8 +208,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
                 background: "var(--color-surface-raised)",
                 transition: "background 0.1s",
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-bg-subtle)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--color-surface-raised)"; }}
+              {...rowHoverProps}
             >
               <span
                 style={{
@@ -293,86 +295,12 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
       />
 
       {/* Comments */}
-      {comments.map((c) => (
-        <CommentCard
-          key={c.id}
-          login={c.user?.login}
-          body={c.body}
-          date={c.created_at}
-        />
-      ))}
-
+      <CommentList comments={comments} />
       {comments.length === 0 && (
         <div style={{ padding: "1rem 0", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.82rem" }}>
           No comments yet.
         </div>
       )}
-    </div>
-  );
-}
-
-function CommentCard({
-  login,
-  body,
-  date,
-  isOp = false,
-}: {
-  login?: string;
-  body?: string;
-  date: string;
-  isOp?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        border: `1px solid ${isOp ? "var(--color-accent)" : "var(--color-border)"}`,
-        borderRadius: "var(--radius-md)",
-        marginBottom: "1rem",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5rem",
-          padding: "0.6rem 0.85rem",
-          background: "var(--color-bg-subtle)",
-          borderBottom: "1px solid var(--color-border)",
-          fontSize: "0.78rem",
-          fontFamily: "var(--font-mono)",
-          color: "var(--color-fg-muted)",
-        }}
-      >
-        <span style={{ color: "var(--color-fg)", fontWeight: 600 }}>{login}</span>
-        <span>commented {new Date(date).toLocaleString()}</span>
-        {isOp && (
-          <span
-            style={{
-              marginLeft: "auto",
-              padding: "0.1rem 0.4rem",
-              border: "1px solid var(--color-accent)",
-              borderRadius: "var(--radius-sm)",
-              fontSize: "0.68rem",
-              color: "var(--color-accent)",
-            }}
-          >
-            Author
-          </span>
-        )}
-      </div>
-      <div
-        style={{
-          padding: "0.85rem 1rem",
-          fontSize: "0.875rem",
-          lineHeight: 1.6,
-          color: "var(--color-fg)",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-        }}
-      >
-        {body || <span style={{ color: "var(--color-fg-muted)" }}>No description.</span>}
-      </div>
     </div>
   );
 }

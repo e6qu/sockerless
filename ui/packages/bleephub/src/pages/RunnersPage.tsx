@@ -6,14 +6,13 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { createColumnHelper } from "@tanstack/react-table";
+import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
 import { fetchSessions } from "../api.js";
 import type { BleephubSession } from "../types.js";
 
 const col = createColumnHelper<BleephubSession>();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const columns: any[] = [
+const columns: ColumnDef<BleephubSession>[] = [
   col.display({
     id: "agentName",
     header: "Agent name",

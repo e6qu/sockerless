@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -444,8 +445,6 @@ func (st *Store) loadFromPersistence() error {
 			return err
 		}
 		st.Teams[t.ID] = &t
-		slug := teamSlugKey("", t.Slug) // slug stored without org prefix; re-key below
-		_ = slug
 		// Rebuild TeamsBySlug by looking up the org.
 		if org := st.Orgs[t.OrgID]; org != nil {
 			st.TeamsBySlug[teamSlugKey(org.Login, t.Slug)] = &t
@@ -574,7 +573,7 @@ func (st *Store) SeedDefaultUser() {
 	st.UsersByLogin[u.Login] = u
 	st.NextUser++
 	if st.persist != nil {
-		st.persist.MustPut("users", fmt.Sprintf("%d", u.ID), u)
+		st.persist.MustPut("users", strconv.Itoa(u.ID), u)
 	}
 
 	t := &Token{
