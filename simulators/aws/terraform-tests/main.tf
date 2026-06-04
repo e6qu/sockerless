@@ -1317,6 +1317,7 @@ resource "aws_glue_catalog_database" "tf_glue_db" {
 
 resource "aws_glue_catalog_table" "tf_glue_table" {
   name          = "tf-glue-table"
+  catalog_id    = data.aws_caller_identity.current.account_id
   database_name = aws_glue_catalog_database.tf_glue_db.name
 
   storage_descriptor {
