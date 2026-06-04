@@ -579,7 +579,10 @@ func TestKV_GetSecret_NotFound_ErrorClassification(t *testing.T) {
 
 	vaultURL := kvVaultURL(vault)
 	cred := &fakeCredential{}
-	client, err := azsecrets.NewClient(vaultURL, cred, &azsecrets.ClientOptions{ClientOptions: kvClientOptions()})
+	client, err := azsecrets.NewClient(vaultURL, cred, &azsecrets.ClientOptions{
+		ClientOptions:                        kvClientOptions(),
+		DisableChallengeResourceVerification: true,
+	})
 	require.NoError(t, err)
 
 	_, err = client.GetSecret(ctx, "nonexistent-secret", "", nil)

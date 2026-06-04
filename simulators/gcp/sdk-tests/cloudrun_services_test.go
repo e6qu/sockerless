@@ -158,7 +158,7 @@ func doKnative(t *testing.T, method, path, body string) string {
 func TestCloudRun_GetService_NotFound_ErrorClassification(t *testing.T) {
 	const project = "test-project"
 	const region = "us-central1"
-	resp, err := http.Get(baseURL + "/v1/projects/" + project + "/locations/" + region + "/services/nonexistent-service")
+	resp, err := http.Get(baseURL + "/v2/projects/" + project + "/locations/" + region + "/services/nonexistent-service")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	if resp.StatusCode != 404 {
