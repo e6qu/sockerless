@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router";
 import {
   DataTable,
   PageHeading,
@@ -14,12 +15,21 @@ const col = createColumnHelper<BleephubRepo>();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const columns: any[] = [
   col.accessor("full_name", {
-    header: "Full name",
-    cell: (info) => (
-      <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-        {info.getValue()}
-      </span>
-    ),
+    header: "Repository",
+    cell: (info) => {
+      const fullName = info.getValue() as string;
+      const [owner, repo] = fullName.split("/");
+      return (
+        <Link
+          to={`/ui/repos/${owner}/${repo}`}
+          style={{ color: "var(--color-accent)", fontWeight: 500, textDecoration: "none" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.textDecoration = "underline"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.textDecoration = "none"; }}
+        >
+          {fullName}
+        </Link>
+      );
+    },
   }),
   col.accessor("description", {
     header: "Description",

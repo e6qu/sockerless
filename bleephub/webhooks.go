@@ -17,7 +17,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/memory"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"gopkg.in/yaml.v3"
@@ -233,7 +233,7 @@ func splitRepoKeyParts(repoKey string) [2]string {
 	return [2]string{repoKey, ""}
 }
 
-func listWorkflowFiles(stor *memory.Storage) map[string][]byte {
+func listWorkflowFiles(stor gitStorage.Storer) map[string][]byte {
 	headRef, err := stor.Reference(plumbing.HEAD)
 	if err != nil {
 		return nil

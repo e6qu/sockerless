@@ -88,11 +88,17 @@ func (st *Store) CreateOrg(creator *User, login, name, description string) *Org 
 
 	// Add creator as admin
 	key := membershipKey(login, creator.ID)
-	st.Memberships[key] = &Membership{
+	m := &Membership{
 		OrgID:  org.ID,
 		UserID: creator.ID,
 		Role:   "admin",
 		State:  "active",
+	}
+	st.Memberships[key] = m
+
+	if st.persist != nil {
+		st.persist.MustPut("orgs", fmt.Sprintf("%d", org.ID), org)
+		st.persist.MustPut("memberships", key, m)
 	}
 
 	return org
@@ -140,6 +146,9 @@ func (st *Store) UpdateOrg(login string, fn func(*Org)) bool {
 	}
 	fn(org)
 	org.UpdatedAt = time.Now()
+	if st.persist != nil {
+		st.persist.MustPut("orgs", fmt.Sprintf("%d", org.ID), org)
+	}
 	return true
 }
 
@@ -157,6 +166,9 @@ func (st *Store) DeleteOrg(login string) bool {
 	for k, m := range st.Memberships {
 		if m.OrgID == org.ID {
 			delete(st.Memberships, k)
+			if st.persist != nil {
+				st.persist.MustDelete("memberships", k)
+			}
 		}
 	}
 
@@ -165,11 +177,17 @@ func (st *Store) DeleteOrg(login string) bool {
 		if t.OrgID == org.ID {
 			delete(st.Teams, t.ID)
 			delete(st.TeamsBySlug, k)
+			if st.persist != nil {
+				st.persist.MustDelete("teams", fmt.Sprintf("%d", t.ID))
+			}
 		}
 	}
 
 	delete(st.Orgs, org.ID)
 	delete(st.OrgsByLogin, login)
+	if st.persist != nil {
+		st.persist.MustDelete("orgs", fmt.Sprintf("%d", org.ID))
+	}
 	return true
 }
 
@@ -308,6 +326,9 @@ func (st *Store) CreateTeam(orgLogin, name, description, privacy, permission str
 
 	st.Teams[team.ID] = team
 	st.TeamsBySlug[key] = team
+	if st.persist != nil {
+		st.persist.MustPut("teams", fmt.Sprintf("%d", team.ID), team)
+	}
 	return team
 }
 
@@ -330,6 +351,9 @@ func (st *Store) UpdateTeam(orgLogin, slug string, fn func(*Team)) bool {
 	}
 	fn(team)
 	team.UpdatedAt = time.Now()
+	if st.persist != nil {
+		st.persist.MustPut("teams", fmt.Sprintf("%d", team.ID), team)
+	}
 	return true
 }
 
@@ -346,6 +370,9 @@ func (st *Store) DeleteTeam(orgLogin, slug string) bool {
 
 	delete(st.Teams, team.ID)
 	delete(st.TeamsBySlug, key)
+	if st.persist != nil {
+		st.persist.MustDelete("teams", fmt.Sprintf("%d", team.ID))
+	}
 	return true
 }
 

@@ -9,6 +9,8 @@ export default defineConfig({
     proxy: {
       "/internal": "http://localhost:5555",
       "/health": "http://localhost:5555",
+      "/api": "http://localhost:5555",
+      "/login": "http://localhost:5555",
     },
   },
 });

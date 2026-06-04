@@ -11,7 +11,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gitserver "github.com/go-git/go-git/v5/plumbing/transport/server"
-	"github.com/go-git/go-git/v5/storage/memory"
 )
 
 // storeLoader implements transport.Loader to look up go-git storages from the Store.
@@ -85,7 +84,7 @@ func splitRepoPath(path string) (string, string) {
 	return parts[0], repo
 }
 
-func (s *Server) resolveGitRepo(owner, repoName string) *memory.Storage {
+func (s *Server) resolveGitRepo(owner, repoName string) storer.Storer { //nolint:ireturn
 	return s.store.GetGitStorage(owner, repoName)
 }
 

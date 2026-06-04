@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-git/go-git/v5/storage/memory"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 // loadJSON is a thin wrapper to keep error wrapping uniform across persistence loaders.
@@ -69,7 +69,7 @@ type Store struct {
 	LoginSessions      map[string]*LoginSession // _gh_sess cookie value → session
 	Repos              map[int]*Repo
 	ReposByName        map[string]*Repo              // "owner/name" → repo
-	GitStorages        map[string]*memory.Storage    // "owner/name" → go-git memory storage
+	GitStorages        map[string]gitStorage.Storer  // "owner/name" → go-git storage (memory or filesystem)
 	Orgs               map[int]*Org                  // id → org
 	OrgsByLogin        map[string]*Org               // login → org
 	Teams              map[int]*Team                 // id → team
@@ -211,7 +211,7 @@ func NewStore() *Store {
 		LoginSessions:      make(map[string]*LoginSession),
 		Repos:              make(map[int]*Repo),
 		ReposByName:        make(map[string]*Repo),
-		GitStorages:        make(map[string]*memory.Storage),
+		GitStorages:        make(map[string]gitStorage.Storer),
 		Orgs:               make(map[int]*Org),
 		OrgsByLogin:        make(map[string]*Org),
 		Teams:              make(map[int]*Team),
@@ -412,6 +412,124 @@ func (st *Store) loadFromPersistence() error {
 		st.ReposByName[r.FullName] = &r
 		if r.ID >= st.NextRepo {
 			st.NextRepo = r.ID + 1
+		}
+		// Re-open (or create) the git storage for this repo so git operations
+		// work immediately after restart (BUG-1423).
+		stor, err := openOrInitGitStorage(GitDataDir(), r.FullName)
+		if err == nil {
+			st.GitStorages[r.FullName] = stor
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// Load orgs, teams, memberships.
+	if err := st.loadBucket("orgs", func(raw []byte) error {
+		var o Org
+		if err := loadJSON(raw, &o); err != nil {
+			return err
+		}
+		st.Orgs[o.ID] = &o
+		st.OrgsByLogin[o.Login] = &o
+		if o.ID >= st.NextOrg {
+			st.NextOrg = o.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("teams", func(raw []byte) error {
+		var t Team
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.Teams[t.ID] = &t
+		slug := teamSlugKey("", t.Slug) // slug stored without org prefix; re-key below
+		_ = slug
+		// Rebuild TeamsBySlug by looking up the org.
+		if org := st.Orgs[t.OrgID]; org != nil {
+			st.TeamsBySlug[teamSlugKey(org.Login, t.Slug)] = &t
+		}
+		if t.ID >= st.NextTeam {
+			st.NextTeam = t.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("memberships", func(raw []byte) error {
+		var m Membership
+		if err := loadJSON(raw, &m); err != nil {
+			return err
+		}
+		if org := st.Orgs[m.OrgID]; org != nil {
+			st.Memberships[membershipKey(org.Login, m.UserID)] = &m
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// Load issues, labels, milestones, comments.
+	if err := st.loadBucket("labels", func(raw []byte) error {
+		var l IssueLabel
+		if err := loadJSON(raw, &l); err != nil {
+			return err
+		}
+		st.Labels[l.ID] = &l
+		if l.ID >= st.NextLabel {
+			st.NextLabel = l.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("milestones", func(raw []byte) error {
+		var m Milestone
+		if err := loadJSON(raw, &m); err != nil {
+			return err
+		}
+		st.Milestones[m.ID] = &m
+		if m.ID >= st.NextMilestone {
+			st.NextMilestone = m.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("issues", func(raw []byte) error {
+		var i Issue
+		if err := loadJSON(raw, &i); err != nil {
+			return err
+		}
+		st.Issues[i.ID] = &i
+		if i.ID >= st.NextIssue {
+			st.NextIssue = i.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("comments", func(raw []byte) error {
+		var c Comment
+		if err := loadJSON(raw, &c); err != nil {
+			return err
+		}
+		st.Comments[c.ID] = &c
+		if c.ID >= st.NextComment {
+			st.NextComment = c.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("pull_requests", func(raw []byte) error {
+		var pr PullRequest
+		if err := loadJSON(raw, &pr); err != nil {
+			return err
+		}
+		st.PullRequests[pr.ID] = &pr
+		if pr.ID >= st.NextPR {
+			st.NextPR = pr.ID + 1
 		}
 		return nil
 	}); err != nil {

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1411 filed - 1403 fixed - 5 open - 3 false positives.**
+**1423 filed - 1403 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -29,6 +29,16 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1409~~ | P1 | aws-glue sim | GetTags/TagResource only handle job ARNs | Fixed: TF provider calls `AWSGlue.GetTags` with database ARN (`arn:...:database/name`); handler looked in `glueJobs` only. Fixed: `glueResourceFromARN()` detects resource type; `handleGlueGetTags`, `handleGlueTagResource`, `handleGlueUntagResource` dispatch to database or job by type. `GlueDatabase` gains `Tags map[string]string`. |
 | ~~1410~~ | P1 | aws-glue terraform | empty catalog_id in glue table resource ID | Fixed: `aws_glue_catalog_table` ID format is `catalog-id:database-name:table-name`; without explicit `catalog_id` the provider stored empty string. Added `catalog_id = data.aws_caller_identity.current.account_id` to TF resource (same fix as BUG-1406 for database). |
 | ~~1411~~ | P1 | aws-glue sim | missing GetPartitionIndexes handler | Fixed: TF provider calls `AWSGlue.GetPartitionIndexes` on catalog table refresh; sim returned 400 UnknownOperationException. Added handler returning empty `PartitionIndexDescriptorList`. Added to tests-exempt.txt (TF-only, no SDK/CLI test shape). |
+| ~~1414~~ | P1 | bleephub git persistence | volatile in-memory git storage | Fixed: `GitStorages` used `*memory.Storage`; git repos were lost on every restart. Replaced with `gitStorer.Storer` interface + `filesystem.Storage` backend when `BLEEPHUB_GIT_DIR` is set, so repos survive restarts and can be backed by Docker volumes. |
+| ~~1415~~ | P1 | bleephub SQLite persistence | orgs/teams/issues/PRs/releases/webhooks not persisted | Fixed: SQLite write-through only covered user/token/app/installation. Extended to orgs, teams, memberships, issues, labels, milestones, comments, pull requests, releases, webhooks + all load-from-disk at startup. |
+| ~~1416~~ | P2 | bleephub UI | no repo detail page | Fixed: Repos list rows are not clickable; no route for repo detail. Added `RepoDetailPage` with code browser (tree/file view), README renderer, branch picker, and commit history. |
+| ~~1417~~ | P2 | bleephub UI | no issues UI | Fixed: GitHub Issues REST + GraphQL fully implemented but no UI. Added `IssuesPage` (list + create) and `IssueDetailPage` (detail + comments + reactions). |
+| ~~1418~~ | P2 | bleephub UI | no pull requests UI | Fixed: GitHub PRs REST + GraphQL fully implemented but no UI. Added `PullsPage` (list) and `PullDetailPage` (detail + reviews + merge). |
+| ~~1419~~ | P2 | bleephub Playwright | nav-link test misses Apps and OAuth | Fixed: `bleephub.spec.ts` "sidebar has all nav links" checked only 5 of 7 nav items. Extended to check all 7 (Overview, Workflows, Runners, Repos, Apps, OAuth, Metrics). |
+| ~~1420~~ | P2 | bleephub Playwright | no screenshot capture | Fixed: Playwright test suite had no `page.screenshot()` calls. Added screenshots at every page and state, saved to `temp/screenshots/`. |
+| ~~1421~~ | P1 | bleephub git HTTP | `listWorkflowFiles` takes concrete `*memory.Storage` | Fixed: `listWorkflowFiles(stor *memory.Storage)` leaks the concrete storage type; breaks when `GetGitStorage` returns filesystem storage. Changed parameter to `gitStorer.Storer` interface. |
+| ~~1422~~ | P2 | bleephub Playwright | no coverage for AppsPage or OAuthPage | Fixed: Added Playwright tests for AppsPage (list apps, open create-app modal) and OAuthPage (device flow, web flow fields). |
+| ~~1423~~ | P1 | bleephub git persistence | loaded repos have no git storage after restart | Fixed: `loadFromPersistence` for the "repos" bucket populated `st.Repos` + `st.ReposByName` but never called `openOrInitGitStorage`, leaving `st.GitStorages` empty for all loaded repos. `GetGitStorage` returned nil for every repo after restart. Added storage re-open in the repos loader. |
 
 ## Recently Closed
 

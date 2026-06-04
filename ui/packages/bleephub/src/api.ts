@@ -171,3 +171,68 @@ export async function dispatchWorkflow(
     throw new Error(`dispatch ${res.status}: ${text || res.statusText}`);
   }
 }
+
+// --- GitHub REST API calls (same origin in production; proxied in dev) ---
+
+const AUTH = "Bearer ghp_0000000000000000000000000000000000000000";
+
+async function ghFetch<T>(path: string): Promise<T> {
+  const res = await fetch(path, { headers: { Authorization: AUTH } });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
+export const fetchRepoDetail = (owner: string, repo: string) =>
+  ghFetch<import("./types.js").BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
+
+export const fetchRepoIssues = (owner: string, repo: string, state = "open") =>
+  ghFetch<import("./types.js").GithubIssue[]>(
+    `/api/v3/repos/${owner}/${repo}/issues?state=${state}&per_page=50`
+  );
+
+export const fetchIssueDetail = (owner: string, repo: string, number: number) =>
+  ghFetch<import("./types.js").GithubIssue>(`/api/v3/repos/${owner}/${repo}/issues/${number}`);
+
+export const fetchIssueComments = (owner: string, repo: string, number: number) =>
+  ghFetch<import("./types.js").GithubComment[]>(
+    `/api/v3/repos/${owner}/${repo}/issues/${number}/comments`
+  );
+
+export const fetchRepoPRs = (owner: string, repo: string, state = "open") =>
+  ghFetch<import("./types.js").GithubPR[]>(
+    `/api/v3/repos/${owner}/${repo}/pulls?state=${state}&per_page=50`
+  );
+
+export const fetchRepoBranches = (owner: string, repo: string) =>
+  ghFetch<import("./types.js").GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
+
+export const fetchRepoCommits = (owner: string, repo: string) =>
+  ghFetch<import("./types.js").GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/commits`);
+
+export async function createIssue(
+  owner: string,
+  repo: string,
+  payload: { title: string; body?: string },
+): Promise<import("./types.js").GithubIssue> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/issues`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: AUTH },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`createIssue ${res.status}`);
+  return res.json();
+}
+
+export async function mergePR(
+  owner: string,
+  repo: string,
+  number: number,
+  mergeMethod = "merge",
+): Promise<void> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/pulls/${number}/merge`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: AUTH },
+    body: JSON.stringify({ merge_method: mergeMethod }),
+  });
+  if (!res.ok && res.status !== 405) throw new Error(`merge ${res.status}`);
+}

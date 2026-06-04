@@ -91,6 +91,9 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 	repo.NextIssueNumber++
 	st.NextPR++
 	st.PullRequests[pr.ID] = pr
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", fmt.Sprintf("%d", pr.ID), pr)
+	}
 	return pr
 }
 
@@ -148,6 +151,9 @@ func (st *Store) UpdatePullRequest(id int, fn func(*PullRequest)) bool {
 	}
 	fn(pr)
 	pr.UpdatedAt = time.Now()
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", fmt.Sprintf("%d", pr.ID), pr)
+	}
 	return true
 }
 
