@@ -11,6 +11,9 @@ import { WorkflowsPage } from "./pages/WorkflowsPage.js";
 import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
 import { RunnersPage } from "./pages/RunnersPage.js";
 import { ReposPage } from "./pages/ReposPage.js";
+import { RepoDetailPage } from "./pages/RepoDetailPage.js";
+import { IssuesPage } from "./pages/IssuesPage.js";
+import { PullsPage } from "./pages/PullsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
 import { OAuthPage } from "./pages/OAuthPage.js";
@@ -50,6 +53,11 @@ export function App() {
               <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
               <Route path="/ui/runners" element={<RunnersPage />} />
               <Route path="/ui/repos" element={<ReposPage />} />
+              <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
+              <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
+              <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
+              <Route path="/ui/repos/:owner/:repo/pulls" element={<PullsPage />} />
+              <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />

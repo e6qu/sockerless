@@ -5,8 +5,7 @@ import (
 	"strings"
 	"time"
 
-	git "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/storage/memory"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 type Repo struct {
@@ -68,9 +67,8 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
 
-	storer := memory.NewStorage()
-	st.GitStorages[fullName] = storer
-	_, _ = git.Init(storer, nil)
+	stor, _ := openOrInitGitStorage(GitDataDir(), fullName)
+	st.GitStorages[fullName] = stor
 
 	if st.persist != nil {
 		st.persist.MustPut("repos", fmt.Sprintf("%d", repo.ID), repo)
@@ -134,7 +132,7 @@ func (st *Store) ListReposByOwner(login string) []*Repo {
 	return repos
 }
 
-func (st *Store) GetGitStorage(owner, name string) *memory.Storage {
+func (st *Store) GetGitStorage(owner, name string) gitStorage.Storer {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.GitStorages[owner+"/"+name]

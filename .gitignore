@@ -154,3 +154,4 @@ agent/sockerless-azf-bootstrap-test
 backends/*/dist/
 simulators/*/dist/
 .stack-pids/
+temp/

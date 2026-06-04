@@ -100,6 +100,9 @@ func (st *Store) CreateLabel(repoID int, name, description, color string) *Issue
 	}
 	st.NextLabel++
 	st.Labels[label.ID] = label
+	if st.persist != nil {
+		st.persist.MustPut("labels", fmt.Sprintf("%d", label.ID), label)
+	}
 	return label
 }
 
@@ -144,6 +147,9 @@ func (st *Store) UpdateLabel(id int, fn func(*IssueLabel)) bool {
 		return false
 	}
 	fn(l)
+	if st.persist != nil {
+		st.persist.MustPut("labels", fmt.Sprintf("%d", l.ID), l)
+	}
 	return true
 }
 
@@ -155,11 +161,17 @@ func (st *Store) DeleteLabel(id int) bool {
 		return false
 	}
 	delete(st.Labels, id)
+	if st.persist != nil {
+		st.persist.MustDelete("labels", fmt.Sprintf("%d", id))
+	}
 	// Remove from any issues
 	for _, issue := range st.Issues {
 		for i, lid := range issue.LabelIDs {
 			if lid == id {
 				issue.LabelIDs = append(issue.LabelIDs[:i], issue.LabelIDs[i+1:]...)
+				if st.persist != nil {
+					st.persist.MustPut("issues", fmt.Sprintf("%d", issue.ID), issue)
+				}
 				break
 			}
 		}
@@ -199,6 +211,9 @@ func (st *Store) CreateMilestone(repoID int, title, description, state string, d
 	repo.NextMilestoneNumber++
 	st.NextMilestone++
 	st.Milestones[ms.ID] = ms
+	if st.persist != nil {
+		st.persist.MustPut("milestones", fmt.Sprintf("%d", ms.ID), ms)
+	}
 	return ms
 }
 
@@ -248,6 +263,9 @@ func (st *Store) UpdateMilestone(id int, fn func(*Milestone)) bool {
 	}
 	fn(ms)
 	ms.UpdatedAt = time.Now()
+	if st.persist != nil {
+		st.persist.MustPut("milestones", fmt.Sprintf("%d", ms.ID), ms)
+	}
 	return true
 }
 
@@ -259,10 +277,16 @@ func (st *Store) DeleteMilestone(id int) bool {
 		return false
 	}
 	delete(st.Milestones, id)
+	if st.persist != nil {
+		st.persist.MustDelete("milestones", fmt.Sprintf("%d", id))
+	}
 	// Detach from issues
 	for _, issue := range st.Issues {
 		if issue.MilestoneID == id {
 			issue.MilestoneID = 0
+			if st.persist != nil {
+				st.persist.MustPut("issues", fmt.Sprintf("%d", issue.ID), issue)
+			}
 		}
 	}
 	return true
@@ -306,6 +330,9 @@ func (st *Store) CreateIssue(repoID, authorID int, title, body string, labelIDs,
 	repo.NextIssueNumber++
 	st.NextIssue++
 	st.Issues[issue.ID] = issue
+	if st.persist != nil {
+		st.persist.MustPut("issues", fmt.Sprintf("%d", issue.ID), issue)
+	}
 	return issue
 }
 
@@ -358,6 +385,9 @@ func (st *Store) UpdateIssue(id int, fn func(*Issue)) bool {
 	}
 	fn(issue)
 	issue.UpdatedAt = time.Now()
+	if st.persist != nil {
+		st.persist.MustPut("issues", fmt.Sprintf("%d", issue.ID), issue)
+	}
 	return true
 }
 
@@ -402,6 +432,9 @@ func (st *Store) CreateCommentFor(parentType string, parentID, authorID int, bod
 	}
 	st.NextComment++
 	st.Comments[c.ID] = c
+	if st.persist != nil {
+		st.persist.MustPut("comments", fmt.Sprintf("%d", c.ID), c)
+	}
 	return c
 }
 
@@ -418,6 +451,9 @@ func (st *Store) DeleteComment(id int) bool {
 		return false
 	}
 	delete(st.Comments, id)
+	if st.persist != nil {
+		st.persist.MustDelete("comments", fmt.Sprintf("%d", id))
+	}
 	return true
 }
 
@@ -468,6 +504,9 @@ func (st *Store) UpdateCommentBody(id, editorID int, body string) *Comment {
 	c.UpdatedAt = now
 	c.LastEditedAt = &now
 	c.EditorID = editorID
+	if st.persist != nil {
+		st.persist.MustPut("comments", fmt.Sprintf("%d", c.ID), c)
+	}
 	return c
 }
 

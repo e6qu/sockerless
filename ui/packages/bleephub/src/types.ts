@@ -175,3 +175,69 @@ export interface BleephubOAuthState {
   deviceCodes: BleephubDeviceCode[];
   authCodes: BleephubAuthCode[];
 }
+
+/** GitHub Issue. */
+export interface GithubIssue {
+  id: number;
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  user: { login: string; avatar_url: string };
+  labels: { name: string; color: string }[];
+  assignees: { login: string }[];
+  comments: number;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+/** GitHub Pull Request. */
+export interface GithubPR {
+  id: number;
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  draft: boolean;
+  user: { login: string; avatar_url: string };
+  head: { ref: string; sha: string };
+  base: { ref: string; sha: string };
+  labels: { name: string; color: string }[];
+  created_at: string;
+  updated_at: string;
+  merged_at: string | null;
+  merged: boolean;
+}
+
+/** GitHub comment. */
+export interface GithubComment {
+  id: number;
+  user: { login: string; avatar_url: string };
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Git commit. */
+export interface GithubCommit {
+  sha: string;
+  commit: {
+    message: string;
+    author: { name: string; email: string; date: string };
+  };
+}
+
+/** Git branch. */
+export interface GithubBranch {
+  name: string;
+  commit: { sha: string };
+}
+
+/** Git tree entry. */
+export interface GithubTreeEntry {
+  path: string;
+  type: "blob" | "tree";
+  sha: string;
+  size?: number;
+}
