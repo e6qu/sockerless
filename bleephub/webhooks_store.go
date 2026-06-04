@@ -34,6 +34,7 @@ type WebhookDelivery struct {
 	AppID          int               `json:"app_id,omitempty"`
 	InstallationID int               `json:"installation_id,omitempty"`
 	RepositoryID   int               `json:"repository_id,omitempty"`
+	TargetURL      string            `json:"url"`
 	GUID           string            `json:"guid"`
 	Event          string            `json:"event"`
 	Action         string            `json:"action"`

@@ -112,6 +112,7 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 	if err != nil {
 		return &WebhookDelivery{
 			HookID:      hook.ID,
+			TargetURL:   hook.URL,
 			GUID:        guid,
 			Event:       event,
 			Action:      action,
@@ -134,6 +135,7 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 
 	delivery := &WebhookDelivery{
 		HookID:      hook.ID,
+		TargetURL:   hook.URL,
 		GUID:        guid,
 		Event:       event,
 		Action:      action,

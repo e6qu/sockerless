@@ -50,7 +50,7 @@ Legend:
 | `azure-eventhubs` | direct | direct | direct | `simulators/azure/sdk-tests/eventhub_test.go`; `simulators/azure/cli-tests/eventhub_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-functions` | direct | direct | direct | `simulators/azure/sdk-tests/functions_test.go`; `simulators/azure/cli-tests/functions_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-keyvault` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
-| `azure-kv-data-plane` | direct | not applicable | direct | `simulators/azure/sdk-tests/keyvault_sdk_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-kv-data-plane` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_sdk_test.go`; `simulators/azure/cli-tests/keyvault_dataplane_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-monitor` | direct | direct | direct | `simulators/azure/sdk-tests/monitor_test.go`; `simulators/azure/cli-tests/monitor_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-resourcegroups` | direct | direct | direct | `simulators/azure/sdk-tests/resourcegroup_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-admin` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_admin_test.go` |
@@ -80,3 +80,15 @@ Legend:
 | `gcp-secretmanager` | direct | direct | direct | `simulators/gcp/sdk-tests/secretmanager_test.go`; `simulators/gcp/cli-tests/secretmanager_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-sqladmin` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudsql_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-vpcaccess` | direct | direct | direct | `simulators/gcp/sdk-tests/integration_test.go`; `simulators/gcp/cli-tests/vpcaccess_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `bleephub-actions` | direct | direct | not applicable | `bleephub/gh_actions_test.go`; `bleephub/gh_workflows_test.go` |
+| `bleephub-apps` | direct | direct | not applicable | `bleephub/gh_apps_test.go`; `bleephub/gh_apps_more_test.go`; `bleephub/gh_apps_events_test.go`; `bleephub/gh_apps_oauth_mgmt_test.go`; `bleephub/gh_apps_perms_test.go`; `bleephub/gh_app_hooks_test.go`; `bleephub/gh_oauth_test.go`; `bleephub/gh_user_installations_test.go` |
+| `bleephub-checks` | direct | direct | not applicable | `bleephub/gh_checks_test.go` |
+| `bleephub-deployments` | direct | direct | not applicable | `bleephub/gh_deployments_test.go` |
+| `bleephub-hooks` | direct | direct | not applicable | `bleephub/gh_hooks_test.go` |
+| `bleephub-issues` | direct | direct | not applicable | `bleephub/gh_issues_test.go`; `bleephub/gh_reactions_test.go` |
+| `bleephub-orgs` | direct | direct | not applicable | `bleephub/gh_orgs_test.go` |
+| `bleephub-pulls` | direct | direct | not applicable | `bleephub/gh_pulls_test.go`; `bleephub/gh_pr_comments_test.go` |
+| `bleephub-releases` | direct | direct | not applicable | `bleephub/gh_releases_test.go` |
+| `bleephub-repos` | direct | direct | not applicable | `bleephub/gh_repos_test.go` |
+| `bleephub-teams` | direct | direct | not applicable | `bleephub/gh_orgs_test.go` |
+| `bleephub-users` | direct | direct | not applicable | `bleephub/gh_test.go`; `bleephub/gh_misc_endpoints_decode_test.go`; `bleephub/gh_actions_test.go` |
