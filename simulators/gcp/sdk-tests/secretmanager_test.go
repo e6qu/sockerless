@@ -123,3 +123,16 @@ func TestSecretManager_ListPagination(t *testing.T) {
 		require.Contains(t, got, n)
 	}
 }
+
+func TestSecretManager_GetSecret_NotFound_ErrorClassification(t *testing.T) {
+	svc := secretManagerService(t)
+	_, err := svc.Projects.Secrets.Get("projects/test-project/secrets/nonexistent-secret").Do()
+	require.Error(t, err)
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *googleapi.Error; got %T: %v", err, err)
+	}
+	if apiErr.Code != 404 {
+		t.Errorf("expected HTTP 404, got %d", apiErr.Code)
+	}
+}

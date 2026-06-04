@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -825,4 +826,18 @@ func TestECS_ListTasks_Pagination(t *testing.T) {
 		token = out.NextToken
 	}
 	assert.Equal(t, 3, len(seen), "should see all 3 task ARNs via pagination")
+}
+
+func TestECS_RunTask_ClusterNotFound_ErrorClassification(t *testing.T) {
+	client := ecsClient()
+	// DescribeClusters returns 200 with a Failures list for missing clusters.
+	// RunTask is the reliable path to ClusterNotFoundException.
+	_, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String("nonexistent-cluster"),
+		TaskDefinition: aws.String("nonexistent-td"),
+	})
+	require.Error(t, err)
+	var notFound *ecstypes.ClusterNotFoundException
+	assert.True(t, errors.As(err, &notFound),
+		"ECS ClusterNotFoundException must be parsed by SDK errors.As; got %T: %v", err, err)
 }

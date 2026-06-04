@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -322,4 +323,18 @@ func TestDDB_ListTables_Pagination(t *testing.T) {
 	for _, n := range names {
 		assert.True(t, seen[n], "table %s should appear via pagination", n)
 	}
+}
+
+func TestDDB_GetItem_TableNotFound_ErrorClassification(t *testing.T) {
+	client := ddbClient()
+	_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String("nonexistent-table"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"pk": &ddbtypes.AttributeValueMemberS{Value: "k"},
+		},
+	})
+	require.Error(t, err)
+	var notFound *ddbtypes.ResourceNotFoundException
+	assert.True(t, errors.As(err, &notFound),
+		"DynamoDB ResourceNotFoundException must be classified by SDK errors.As; got %T: %v", err, err)
 }

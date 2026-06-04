@@ -30,7 +30,7 @@ func AWSErrorf(w http.ResponseWriter, code string, statusCode int, format string
 //
 // GCP error format:
 //
-//	{"error": {"code": 404, "message": "details", "status": "NOT_FOUND"}}
+//	{"error": {"code": 404, "message": "details", "status": "NOT_FOUND", "details": []}}
 func GCPError(w http.ResponseWriter, code int, message string, status string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -39,6 +39,7 @@ func GCPError(w http.ResponseWriter, code int, message string, status string) {
 			"code":    code,
 			"message": message,
 			"status":  status,
+			"details": []any{},
 		},
 	})
 }
@@ -99,10 +100,24 @@ func S3ErrorXML(w http.ResponseWriter, code string, message string, resource str
 //
 //	<Response><Errors><Error><Code>...</Code><Message>...</Message></Error></Errors><RequestId>...</RequestId></Response>
 func EC2ErrorXML(w http.ResponseWriter, code string, message string, requestID string, statusCode int) {
+	type item struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	}
+	type errList struct {
+		Error item `xml:"Error"`
+	}
+	type resp struct {
+		XMLName   xml.Name `xml:"Response"`
+		Errors    errList  `xml:"Errors"`
+		RequestID string   `xml:"RequestId"`
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(statusCode)
-	fmt.Fprintf(w, `<Response><Errors><Error><Code>%s</Code><Message>%s</Message></Error></Errors><RequestId>%s</RequestId></Response>`,
-		code, message, requestID)
+	_ = xml.NewEncoder(w).Encode(resp{
+		Errors:    errList{Error: item{Code: code, Message: message}},
+		RequestID: requestID,
+	})
 }
 
 // WriteJSON writes a JSON response with the given status code.

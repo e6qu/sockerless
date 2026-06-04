@@ -1,10 +1,12 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,4 +222,15 @@ func TestKMS_ListKeys_Pagination(t *testing.T) {
 	for _, id := range created {
 		assert.True(t, seen[id], "key %s should appear via pagination", id)
 	}
+}
+
+func TestKMS_DescribeKey_NotFound_ErrorClassification(t *testing.T) {
+	client := kmsClient()
+	_, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{
+		KeyId: aws.String("nonexistent-key-id"),
+	})
+	require.Error(t, err)
+	var notFound *kmstypes.NotFoundException
+	assert.True(t, errors.As(err, &notFound),
+		"KMS NotFoundException must be classified by SDK errors.As; got %T: %v", err, err)
 }
