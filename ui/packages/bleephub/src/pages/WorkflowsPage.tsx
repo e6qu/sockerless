@@ -97,8 +97,7 @@ function WorkflowsTab() {
 
   if (isLoading || !data) return <Spinner label="loading workflows" />;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     filesCol.accessor("name", {
       header: "Name",
       cell: (info) => (
@@ -188,8 +187,7 @@ function RunsTab() {
 
   if (isLoading || !data) return <Spinner label="loading runs" />;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     runsCol.accessor("name", {
       header: "Name",
       cell: (info) => (

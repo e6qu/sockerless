@@ -1,6 +1,7 @@
 package aws_cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -117,11 +118,21 @@ func awsCLI(args ...string) *exec.Cmd {
 
 func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	t.Helper()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("CLI command failed: %v\nCommand: %s\nOutput: %s", err, strings.Join(cmd.Args, " "), string(out))
+	const perCmdTimeout = 60 * time.Second
+	var combined bytes.Buffer
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("CLI command failed to start: %v\nCommand: %s", err, strings.Join(cmd.Args, " "))
 	}
-	return string(out)
+	// Kill a hung CLI call so it can't consume the whole suite timeout and mask
+	// the real failure in the error message.
+	timer := time.AfterFunc(perCmdTimeout, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("CLI command failed: %v\nCommand: %s\nOutput: %s", err, strings.Join(cmd.Args, " "), combined.String())
+	}
+	return combined.String()
 }
 
 func parseJSON(t *testing.T, data string, target any) {

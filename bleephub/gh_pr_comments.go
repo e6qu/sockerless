@@ -406,8 +406,7 @@ func (s *Server) handleUpdatePRComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if !s.store.PRReviewComments.Update(id, req.Body) {

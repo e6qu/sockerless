@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.GitStorages[fullName] = stor
 
 	if st.persist != nil {
-		st.persist.MustPut("repos", fmt.Sprintf("%d", repo.ID), repo)
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
 
 	return repo
@@ -94,7 +95,7 @@ func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	fn(repo)
 	repo.UpdatedAt = time.Now()
 	if st.persist != nil {
-		st.persist.MustPut("repos", fmt.Sprintf("%d", repo.ID), repo)
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
 	return true
 }
@@ -113,7 +114,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.ReposByName, fullName)
 	delete(st.GitStorages, fullName)
 	if st.persist != nil {
-		st.persist.MustDelete("repos", fmt.Sprintf("%d", repo.ID))
+		st.persist.MustDelete("repos", strconv.Itoa(repo.ID))
 	}
 	return true
 }

@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -139,8 +140,8 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		matrixCtx = dictContextData(matrixPairs...)
 	}
 
-	runID := fmt.Sprintf("%d", wf.RunID)
-	runNumber := fmt.Sprintf("%d", wf.RunNumber)
+	runID := strconv.Itoa(wf.RunID)
+	runNumber := strconv.Itoa(wf.RunNumber)
 
 	// Use event metadata from workflow, with defaults
 	eventName := wf.EventName

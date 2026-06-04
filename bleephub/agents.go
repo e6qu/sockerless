@@ -176,8 +176,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var update Agent
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONBody(w, r, &update) {
 		return
 	}
 

@@ -95,6 +95,39 @@ repos:
         pass_filenames: false
         always_run: true
 
+      # bleephub code-quality: dead code + copy-paste detection
+      - id: bleephub-deadcode
+        name: bleephub dead code (deadcode)
+        entry: bash scripts/bleephub-deadcode.sh
+        language: system
+        pass_filenames: false
+        files: ^bleephub/
+        always_run: false
+
+      - id: bleephub-dupl
+        name: bleephub copy-paste Go (dupl ≥200 tokens)
+        entry: bash scripts/bleephub-dupl.sh
+        language: system
+        pass_filenames: false
+        files: ^bleephub/.*\.go$
+        always_run: false
+
+      - id: bleephub-knip
+        name: bleephub dead TS exports (knip)
+        entry: bash scripts/bleephub-knip.sh
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/bleephub/src/
+        always_run: false
+
+      - id: bleephub-jscpd
+        name: bleephub copy-paste UI (jscpd ≥200 tokens)
+        entry: bash scripts/bleephub-jscpd.sh
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/bleephub/src/
+        always_run: false
+
       # Commit-msg: strip AI attribution
       - id: strip-ai-attribution
         name: Strip AI attribution from commit messages

@@ -47,14 +47,10 @@ import (
 //   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
 	cleanTerraformWorkspace(t)
-	init := terraformCmd("init")
-	init.Stdout = nil
-	init.Stderr = nil
-	out, err := init.CombinedOutput()
+	out, err := runTimed(t, "terraform init", terraformCmd("init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
-	apply := terraformCmd("apply", "-auto-approve")
-	out, err = apply.CombinedOutput()
+	out, err = runTimed(t, "terraform apply", terraformCmd("apply", "-auto-approve"))
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
 	outputs := readOutputs(t)
@@ -256,8 +252,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
 		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)
 
-	destroy := terraformCmd("destroy", "-auto-approve")
-	out, err = destroy.CombinedOutput()
+	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
 

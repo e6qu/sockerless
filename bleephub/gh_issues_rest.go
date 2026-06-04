@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,8 +31,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		Assignees []string `json:"assignees"`
 		Milestone int      `json:"milestone"` // milestone number
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Title == "" {
@@ -200,8 +198,7 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -294,8 +291,7 @@ func (s *Server) handleCreateIssueComment(w http.ResponseWriter, r *http.Request
 	var req struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Body == "" {
@@ -382,8 +378,7 @@ func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Labels []string `json:"labels"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

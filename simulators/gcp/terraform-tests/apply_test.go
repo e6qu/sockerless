@@ -46,14 +46,10 @@ import (
 //     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
 func TestTerraformApplyDestroy(t *testing.T) {
 	cleanTerraformWorkspace(t)
-	init := terraformCmd("init")
-	init.Stdout = nil
-	init.Stderr = nil
-	out, err := init.CombinedOutput()
+	out, err := runTimed(t, "terraform init", terraformCmd("init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
 
-	apply := terraformCmd("apply", "-auto-approve", "-var", "secret_label_env=dev")
-	out, err = apply.CombinedOutput()
+	out, err = runTimed(t, "terraform apply", terraformCmd("apply", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
 	outputs := readOutputs(t)
@@ -207,8 +203,7 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Equal(t, "appuser", sqlUserName,
 		"Cloud SQL user name must round-trip through terraform state; got %s", sqlUserName)
 
-	destroy := terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev")
-	out, err = destroy.CombinedOutput()
+	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
 

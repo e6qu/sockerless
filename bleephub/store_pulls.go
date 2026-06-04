@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -92,7 +93,7 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 	st.NextPR++
 	st.PullRequests[pr.ID] = pr
 	if st.persist != nil {
-		st.persist.MustPut("pull_requests", fmt.Sprintf("%d", pr.ID), pr)
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
 	}
 	return pr
 }
@@ -152,7 +153,7 @@ func (st *Store) UpdatePullRequest(id int, fn func(*PullRequest)) bool {
 	fn(pr)
 	pr.UpdatedAt = time.Now()
 	if st.persist != nil {
-		st.persist.MustPut("pull_requests", fmt.Sprintf("%d", pr.ID), pr)
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
 	}
 	return true
 }

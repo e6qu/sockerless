@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -97,7 +98,7 @@ func (st *Store) CreateOrg(creator *User, login, name, description string) *Org 
 	st.Memberships[key] = m
 
 	if st.persist != nil {
-		st.persist.MustPut("orgs", fmt.Sprintf("%d", org.ID), org)
+		st.persist.MustPut("orgs", strconv.Itoa(org.ID), org)
 		st.persist.MustPut("memberships", key, m)
 	}
 
@@ -147,7 +148,7 @@ func (st *Store) UpdateOrg(login string, fn func(*Org)) bool {
 	fn(org)
 	org.UpdatedAt = time.Now()
 	if st.persist != nil {
-		st.persist.MustPut("orgs", fmt.Sprintf("%d", org.ID), org)
+		st.persist.MustPut("orgs", strconv.Itoa(org.ID), org)
 	}
 	return true
 }
@@ -178,7 +179,7 @@ func (st *Store) DeleteOrg(login string) bool {
 			delete(st.Teams, t.ID)
 			delete(st.TeamsBySlug, k)
 			if st.persist != nil {
-				st.persist.MustDelete("teams", fmt.Sprintf("%d", t.ID))
+				st.persist.MustDelete("teams", strconv.Itoa(t.ID))
 			}
 		}
 	}
@@ -186,7 +187,7 @@ func (st *Store) DeleteOrg(login string) bool {
 	delete(st.Orgs, org.ID)
 	delete(st.OrgsByLogin, login)
 	if st.persist != nil {
-		st.persist.MustDelete("orgs", fmt.Sprintf("%d", org.ID))
+		st.persist.MustDelete("orgs", strconv.Itoa(org.ID))
 	}
 	return true
 }
@@ -327,7 +328,7 @@ func (st *Store) CreateTeam(orgLogin, name, description, privacy, permission str
 	st.Teams[team.ID] = team
 	st.TeamsBySlug[key] = team
 	if st.persist != nil {
-		st.persist.MustPut("teams", fmt.Sprintf("%d", team.ID), team)
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
 	}
 	return team
 }
@@ -352,7 +353,7 @@ func (st *Store) UpdateTeam(orgLogin, slug string, fn func(*Team)) bool {
 	fn(team)
 	team.UpdatedAt = time.Now()
 	if st.persist != nil {
-		st.persist.MustPut("teams", fmt.Sprintf("%d", team.ID), team)
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
 	}
 	return true
 }
@@ -371,7 +372,7 @@ func (st *Store) DeleteTeam(orgLogin, slug string) bool {
 	delete(st.Teams, team.ID)
 	delete(st.TeamsBySlug, key)
 	if st.persist != nil {
-		st.persist.MustDelete("teams", fmt.Sprintf("%d", team.ID))
+		st.persist.MustDelete("teams", strconv.Itoa(team.ID))
 	}
 	return true
 }

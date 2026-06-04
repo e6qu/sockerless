@@ -84,9 +84,6 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	return s
 }
 
-// Store returns the server's in-memory store (for tests).
-func (s *Server) Store() *Store { return s.store }
-
 func (s *Server) registerRoutes() {
 	// Health check
 	s.mux.HandleFunc("GET /health", s.handleHealth)

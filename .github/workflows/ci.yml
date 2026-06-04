@@ -298,11 +298,11 @@ jobs:
       matrix:
         include:
           - suite: edge
-            run: '^Test(ACM|Amplify|APIGateway|AutoScaling|CloudFront|CloudTrail)'
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|CloudFront|CloudTrail)'
           - suite: compute
             run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECS|EFS|ELBv2|Logs)'
           - suite: appdata
-            run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
+            run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|Scheduler|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: actions/setup-go@v6.4.0
@@ -390,6 +390,35 @@ jobs:
       - run: cd ui && bun install --frozen-lockfile
       - run: cd ui && bunx turbo run build
       - run: cd ui && bunx turbo run test
+
+  bleephub-quality:
+    name: bleephub (dead code + copy-paste)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions/setup-go@v6.4.0
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: '1.3'
+      - name: Install deadcode
+        run: go install golang.org/x/tools/cmd/deadcode@latest
+      - name: Install dupl
+        run: go install github.com/mibk/dupl@latest
+      - name: Install UI deps
+        run: cd ui/packages/bleephub && bun install --frozen-lockfile
+      - name: bleephub deadcode
+        run: bash scripts/bleephub-deadcode.sh
+      - name: bleephub dupl (Go ≥200 tokens)
+        run: bash scripts/bleephub-dupl.sh
+      - name: bleephub knip (dead TS exports)
+        run: bash scripts/bleephub-knip.sh
+      - name: bleephub jscpd (UI ≥200 tokens)
+        run: bash scripts/bleephub-jscpd.sh
 
   sim-bleephub-e2e:
     name: sim (bleephub e2e)

@@ -59,7 +59,10 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 // sim policy) and sets a _gh_sess session cookie. Mirrors the POST /login
 // endpoint on real GitHub / GHES.
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+		return
+	}
 	login := r.FormValue("login")
 	returnTo := r.FormValue("return_to")
 
@@ -112,7 +115,10 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceCode initiates the device authorization flow.
 func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+		return
+	}
 	scope := r.FormValue("scope")
 
 	s.store.mu.Lock()
@@ -150,7 +156,10 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 // Both return `{access_token, token_type, scope}` on success and
 // `{error: ...}` on failure (200 OK with an error body, matching real GitHub).
 func (s *Server) handleOAuthAccessToken(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+		return
+	}
 	if r.FormValue("device_code") != "" {
 		s.handleDeviceTokenForm(w, r)
 		return
@@ -332,7 +341,10 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 // submits. Validates the session cookie and the authenticity_token (CSRF), then
 // issues the auth code and 302s to redirect_uri.
 func (s *Server) handleOAuthAuthorizeApprove(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+		return
+	}
 
 	sess := s.sessionFromRequest(r)
 	if sess == nil {

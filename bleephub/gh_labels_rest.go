@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -68,8 +67,7 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		Color       string `json:"color"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -146,8 +144,7 @@ func (s *Server) handleUpdateLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -216,8 +213,7 @@ func (s *Server) handleCreateMilestone(w http.ResponseWriter, r *http.Request) {
 		State       string `json:"state"`
 		DueOn       string `json:"due_on"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Title == "" {
@@ -319,8 +315,7 @@ func (s *Server) handleUpdateMilestone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

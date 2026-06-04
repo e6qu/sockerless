@@ -12,8 +12,7 @@ import type { BleephubRepo } from "../types.js";
 
 const col = createColumnHelper<BleephubRepo>();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const columns: any[] = [
+const columns = [
   col.accessor("full_name", {
     header: "Repository",
     cell: (info) => {

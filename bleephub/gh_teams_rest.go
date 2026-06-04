@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -40,8 +39,7 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		Privacy     string `json:"privacy"`
 		Permission  string `json:"permission"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -132,8 +130,7 @@ func (s *Server) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

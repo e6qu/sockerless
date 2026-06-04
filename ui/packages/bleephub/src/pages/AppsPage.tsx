@@ -114,8 +114,7 @@ function AppsTab() {
   });
   if (isLoading || !data) return <Spinner label="loading apps" />;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     appsCol.accessor("id", {
       header: "ID",
       cell: (info) => (
@@ -182,8 +181,7 @@ function InstallationsTab() {
 
   if (isLoading || !data) return <Spinner label="loading installations" />;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     installsCol.accessor("id", {
       header: "ID",
       cell: (info) => (
@@ -300,8 +298,7 @@ function OAuthAppsTab() {
   });
   if (isLoading || !data) return <Spinner label="loading oauth apps" />;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     oauthCol.accessor("clientId", {
       header: "Client ID",
       cell: (info) => (

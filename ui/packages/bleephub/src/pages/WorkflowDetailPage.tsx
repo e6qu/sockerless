@@ -64,8 +64,7 @@ export function WorkflowDetailPage() {
 
   const jobs = Object.values(wf.jobs).sort((a, b) => a.key.localeCompare(b.key));
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: any[] = [
+  const columns = [
     col.accessor("key", {
       header: "Key",
       cell: (info) => (

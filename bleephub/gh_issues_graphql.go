@@ -3,6 +3,7 @@ package bleephub
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1040,7 +1041,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	repo := st.Repos[issue.RepoID]
 	url := ""
 	if repo != nil {
-		url = "/" + repo.FullName + "/issues/" + fmt.Sprintf("%d", issue.Number)
+		url = "/" + repo.FullName + "/issues/" + strconv.Itoa(issue.Number)
 	}
 
 	var closedAt interface{}
@@ -1267,52 +1268,9 @@ func findUserByNodeID(st *Store, nodeID string) *User {
 
 // paginateIssuesGQL implements Relay-style cursor pagination for issues.
 func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[string]interface{} {
-	total := len(issues)
-
-	startIdx := 0
-	if after != "" {
-		startIdx = decodeCursor(after) + 1
-	}
-	if startIdx > total {
-		startIdx = total
-	}
-
-	endIdx := startIdx + first
-	if endIdx > total {
-		endIdx = total
-	}
-
-	page := issues[startIdx:endIdx]
-
-	nodes := make([]map[string]interface{}, 0, len(page))
-	edges := make([]map[string]interface{}, 0, len(page))
-	for idx, i := range page {
-		gql := issueToGQL(i, st)
-		cursor := encodeCursor(startIdx + idx)
-		nodes = append(nodes, gql)
-		edges = append(edges, map[string]interface{}{
-			"node":   gql,
-			"cursor": cursor,
-		})
-	}
-
-	var startCursor, endCursor interface{}
-	if len(edges) > 0 {
-		startCursor = edges[0]["cursor"]
-		endCursor = edges[len(edges)-1]["cursor"]
-	}
-
-	return map[string]interface{}{
-		"nodes":      nodes,
-		"edges":      edges,
-		"totalCount": total,
-		"pageInfo": map[string]interface{}{
-			"hasNextPage":     endIdx < total,
-			"hasPreviousPage": startIdx > 0,
-			"startCursor":     startCursor,
-			"endCursor":       endCursor,
-		},
-	}
+	return paginateGQL(issues, first, after, func(i *Issue) map[string]interface{} {
+		return issueToGQL(i, st)
+	})
 }
 
 // Schema-stub resolvers — return a default for fields that gh CLI queries

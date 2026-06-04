@@ -20,6 +20,8 @@ github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.4 h1:/FFVidybMWp05iSr6ACBU
 github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.4/go.mod h1:4CCXdZ0JwCnuW1MzTVPyi+U48RpsRdaKXK/0ORwNC+g=
 github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.4 h1:G8rEURq2sc3FaaU7w+CLolnu59SqwodBrX5fYCuSvxs=
 github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.4/go.mod h1:p7MdQ7lAwYj8nqa5loDffJrzC+5lmyghJuaW4kDIOwk=
+github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.42.0 h1:PZiJz44PQr0W72ygNvb5cn4xbTKLRoCNTOkyBvmosk4=
+github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.42.0/go.mod h1:KeS0JXc+tLzfbILVTs+Vn1jlZIJxpGnmBzIBM8xcDMQ=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.2 h1:3QZkayCfDIC03Sdvo7xSMmdM/Csd28Ot/GhHhMoHA74=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.2/go.mod h1:WZZJIhz58ct8LxomV7By8/+kFCRCMQ4BccQhIywHg9A=
 github.com/aws/aws-sdk-go-v2/service/batch v1.65.4 h1:r10UsinUyPr3MCRZ6WLwPTz9iBAI6R0FAkY5Qv1qvM8=
@@ -74,6 +76,8 @@ github.com/aws/aws-sdk-go-v2/service/route53 v1.63.1 h1:E30ElJCg7Ec3WDo/YrzoVIYR
 github.com/aws/aws-sdk-go-v2/service/route53 v1.63.1/go.mod h1:/Yaj8pZoAyECpdFFnFFOIVCfDt6QIwi7t4nOssbsdxg=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.103.1 h1:WkX5IXwcxgO/WPTvhEqoSW2L1GB1OyIxk0vuzzdTftc=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.103.1/go.mod h1:9Q9ZHyiTItraw8BXpO48pk398Mou0YCSI+xvFcaGgxU=
+github.com/aws/aws-sdk-go-v2/service/scheduler v1.18.4 h1:XT3iOsArmDzWsjNfwhU6cbSoXapvPYhzEjGsJ1SvjlI=
+github.com/aws/aws-sdk-go-v2/service/scheduler v1.18.4/go.mod h1:Rv0MltVBrlZ+U2fGq/PU7Yp3qvGf72LAPDnzrGgXm+Y=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.1 h1:AH4hyaVe/2+p7zx/GkmjQLXOfVTul6EFMTRy8QVl71Q=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.1/go.mod h1:BXtBSoY9TdCQwc46RZtaxNb+kKfcCbHOvk4h8drQUqM=
 github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.4 h1:5Defttx/IYci7XTAgfJdLbGAMFFuxa6sKYYRBwkkmf4=
@@ -90,8 +94,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.43.1 h1:r/vUkpLilfCA3sxbRnkHbJejaoVH
 github.com/aws/aws-sdk-go-v2/service/sts v1.43.1/go.mod h1:t01JURC8Fe5M+7R1K0vzIZ2NT04HqvZR+FjlHrHDT2A=
 github.com/aws/aws-sdk-go-v2/service/wafv2 v1.72.2 h1:lW0sRrMvNzxem7sg64NA6wTyj3FY/QXQpuM0K7py3hc=
 github.com/aws/aws-sdk-go-v2/service/wafv2 v1.72.2/go.mod h1:yGV7GB/uJGO+qyFsMdH+P4DOE5sNPly2RN9yXwNfOWM=
-github.com/aws/smithy-go v1.27.0 h1:ZoFioDKJxkSIW2otF9T0aPtNlUwhdVCcuZh/rzH9Hus=
-github.com/aws/smithy-go v1.27.0/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
+github.com/aws/smithy-go v1.27.1 h1:4T340VFndXtADGF52gYa1POyL7s9E4Z1OeZ1hCscIw8=
+github.com/aws/smithy-go v1.27.1/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

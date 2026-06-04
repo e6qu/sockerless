@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// decodeJSONBody decodes the JSON request body into v.
+// On failure it writes a GitHub-style 400 response and returns false.
+// Usage: if !decodeJSONBody(w, r, &req) { return }
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return false
+	}
+	return true
+}
+
 func (s *Server) registerGHRestRoutes() {
 	s.mux.HandleFunc("GET /api/v3/", s.handleGHApiRoot)
 	s.mux.HandleFunc("GET /api/v3/user", s.handleGHUser)

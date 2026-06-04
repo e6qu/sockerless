@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -88,8 +87,7 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		Variables     map[string]interface{} `json:"variables"`
 		OperationName string                 `json:"operationName"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1096,7 +1097,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	repo := st.Repos[pr.RepoID]
 	url := ""
 	if repo != nil {
-		url = "/" + repo.FullName + "/pull/" + fmt.Sprintf("%d", pr.Number)
+		url = "/" + repo.FullName + "/pull/" + strconv.Itoa(pr.Number)
 	}
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", pr.ID))))[:40]
@@ -1362,50 +1363,7 @@ func prHasAllLabels(st *Store, pr *PullRequest, labelNames []string) bool {
 
 // paginatePullRequestsGQL implements Relay-style cursor pagination for PRs.
 func paginatePullRequestsGQL(prs []*PullRequest, st *Store, first int, after string) map[string]interface{} {
-	total := len(prs)
-
-	startIdx := 0
-	if after != "" {
-		startIdx = decodeCursor(after) + 1
-	}
-	if startIdx > total {
-		startIdx = total
-	}
-
-	endIdx := startIdx + first
-	if endIdx > total {
-		endIdx = total
-	}
-
-	page := prs[startIdx:endIdx]
-
-	nodes := make([]map[string]interface{}, 0, len(page))
-	edges := make([]map[string]interface{}, 0, len(page))
-	for idx, pr := range page {
-		gql := pullRequestToGQL(pr, st)
-		cursor := encodeCursor(startIdx + idx)
-		nodes = append(nodes, gql)
-		edges = append(edges, map[string]interface{}{
-			"node":   gql,
-			"cursor": cursor,
-		})
-	}
-
-	var startCursor, endCursor interface{}
-	if len(edges) > 0 {
-		startCursor = edges[0]["cursor"]
-		endCursor = edges[len(edges)-1]["cursor"]
-	}
-
-	return map[string]interface{}{
-		"nodes":      nodes,
-		"edges":      edges,
-		"totalCount": total,
-		"pageInfo": map[string]interface{}{
-			"hasNextPage":     endIdx < total,
-			"hasPreviousPage": startIdx > 0,
-			"startCursor":     startCursor,
-			"endCursor":       endCursor,
-		},
-	}
+	return paginateGQL(prs, first, after, func(pr *PullRequest) map[string]interface{} {
+		return pullRequestToGQL(pr, st)
+	})
 }

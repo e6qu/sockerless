@@ -12,8 +12,7 @@ import type { BleephubSession } from "../types.js";
 
 const col = createColumnHelper<BleephubSession>();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const columns: any[] = [
+const columns = [
   col.display({
     id: "agentName",
     header: "Agent name",

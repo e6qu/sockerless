@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -37,8 +36,7 @@ func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 		Admin       string `json:"admin"`
 		ProfileName string `json:"profile_name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Login == "" {
@@ -82,8 +80,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Login == "" {
@@ -130,8 +127,7 @@ func (s *Server) handleUpdateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
@@ -232,8 +228,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		Private     bool   `json:"private"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {

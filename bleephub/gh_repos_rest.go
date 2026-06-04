@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -30,8 +29,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		Private     flexBool `json:"private"`
 		AutoInit    flexBool `json:"auto_init"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -84,8 +82,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
