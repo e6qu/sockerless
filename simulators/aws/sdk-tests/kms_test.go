@@ -224,6 +224,58 @@ func TestKMS_ListKeys_Pagination(t *testing.T) {
 	}
 }
 
+// TestKMS_KeyRotation pins the automatic-rotation lifecycle that
+// terraform-provider-aws drives for `aws_kms_key { enable_key_rotation
+// = true }`: GetKeyRotationStatus defaults false, EnableKeyRotation flips
+// it true and reports the rotation period, DisableKeyRotation reverts it.
+func TestKMS_KeyRotation(t *testing.T) {
+	c := kmsClient()
+
+	createOut, err := c.CreateKey(ctx, &kms.CreateKeyInput{Description: aws.String("rotation-key")})
+	require.NoError(t, err)
+	keyId := *createOut.KeyMetadata.KeyId
+
+	// Fresh key: rotation disabled.
+	st, err := c.GetKeyRotationStatus(ctx, &kms.GetKeyRotationStatusInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+	assert.False(t, st.KeyRotationEnabled, "new key must default to rotation disabled")
+
+	// Enable with the default annual cadence.
+	_, err = c.EnableKeyRotation(ctx, &kms.EnableKeyRotationInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+
+	st, err = c.GetKeyRotationStatus(ctx, &kms.GetKeyRotationStatusInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+	assert.True(t, st.KeyRotationEnabled, "rotation must report enabled after EnableKeyRotation")
+	require.NotNil(t, st.RotationPeriodInDays)
+	assert.EqualValues(t, 365, *st.RotationPeriodInDays, "default rotation cadence must be 365 days")
+
+	// Re-enable with a custom period.
+	_, err = c.EnableKeyRotation(ctx, &kms.EnableKeyRotationInput{
+		KeyId:                aws.String(keyId),
+		RotationPeriodInDays: aws.Int32(90),
+	})
+	require.NoError(t, err)
+	st, err = c.GetKeyRotationStatus(ctx, &kms.GetKeyRotationStatusInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+	require.NotNil(t, st.RotationPeriodInDays)
+	assert.EqualValues(t, 90, *st.RotationPeriodInDays)
+
+	// An out-of-range period is rejected.
+	_, err = c.EnableKeyRotation(ctx, &kms.EnableKeyRotationInput{
+		KeyId:                aws.String(keyId),
+		RotationPeriodInDays: aws.Int32(10),
+	})
+	require.Error(t, err, "RotationPeriodInDays below 90 must be rejected")
+
+	// Disable reverts to false.
+	_, err = c.DisableKeyRotation(ctx, &kms.DisableKeyRotationInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+	st, err = c.GetKeyRotationStatus(ctx, &kms.GetKeyRotationStatusInput{KeyId: aws.String(keyId)})
+	require.NoError(t, err)
+	assert.False(t, st.KeyRotationEnabled, "rotation must report disabled after DisableKeyRotation")
+}
+
 func TestKMS_DescribeKey_NotFound_ErrorClassification(t *testing.T) {
 	client := kmsClient()
 	_, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{

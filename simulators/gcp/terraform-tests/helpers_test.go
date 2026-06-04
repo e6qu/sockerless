@@ -1,6 +1,7 @@
 package gcp_tf_test
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -13,8 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -170,6 +174,10 @@ func waitForHealth(url string) error {
 func terraformCmd(args ...string) *exec.Cmd {
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = filepath.Dir(mustAbs("main.tf"))
+	// Own process group so runTimed can reap terraform + its provider-plugin
+	// grandchildren with one kill(-pgid); otherwise a timed-out command leaves
+	// orphaned, spinning plugins that starve later runs into cascading timeouts.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("TF_VAR_endpoint=%s", tfEndpoint),
 	)
@@ -177,6 +185,55 @@ func terraformCmd(args ...string) *exec.Cmd {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("SSL_CERT_FILE=%s", caCertFile))
 	}
 	return cmd
+}
+
+// runTimed runs a terraform command, capturing combined output, with a
+// watchdog that fires just before the test's own deadline. terraform spawns
+// provider-plugin grandchildren; if go test's hard timeout (SIGQUIT) fired
+// while a plain CombinedOutput() was in flight it would orphan that whole tree
+// (t.Cleanup does NOT run on the test-binary timeout), leaving spinning
+// provider processes that starve later runs into cascading timeouts. The
+// watchdog instead kills the process group (Setpgid'd in terraformCmd) and
+// returns a clean error with captured output.
+func runTimed(t *testing.T, label string, cmd *exec.Cmd) ([]byte, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	start := time.Now()
+	require.NoError(t, cmd.Start(), "%s: failed to start", label)
+
+	killGroup := func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	t.Cleanup(killGroup)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	var watchdog <-chan time.Time
+	if dl, ok := t.Deadline(); ok {
+		if d := time.Until(dl) - 20*time.Second; d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			watchdog = timer.C
+		}
+	}
+
+	select {
+	case err := <-done:
+		t.Logf("%s duration=%s", label, time.Since(start).Round(time.Millisecond))
+		return buf.Bytes(), err
+	case <-watchdog:
+		killGroup()
+		<-done
+		t.Logf("%s TIMED OUT after %s (process group killed to avoid orphans)",
+			label, time.Since(start).Round(time.Millisecond))
+		return buf.Bytes(), fmt.Errorf("%s timed out near the test deadline", label)
+	}
 }
 
 func mustAbs(name string) string {

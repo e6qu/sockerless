@@ -74,6 +74,7 @@ func main() {
 	registerStepFunctions(awsRouter, srv)
 	registerCodeBuild(awsRouter, srv)
 	registerGlue(awsRouter, srv)
+	registerApplicationAutoScaling(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()
@@ -123,6 +124,9 @@ func main() {
 
 	// Batch — REST/JSON protocol (path-based, no X-Amz-Target)
 	registerBatch(srv)
+
+	// EventBridge Scheduler — REST/JSON protocol (path-based, no X-Amz-Target)
+	registerScheduler(srv)
 
 	// Dashboard summary endpoints for UI
 	registerDashboard(srv)

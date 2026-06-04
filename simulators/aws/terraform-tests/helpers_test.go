@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -208,6 +209,12 @@ func terraformCmd(args ...string) *exec.Cmd {
 	args = terraformArgs(args...)
 	cmd := exec.Command("terraform", args...)
 	cmd.Dir = filepath.Dir(mustAbs("main.tf"))
+	// Put terraform and the provider-plugin subprocesses it spawns into their
+	// own process group so runTimed can reap the whole tree with one
+	// kill(-pgid). Without this, a timed-out command leaves orphaned, spinning
+	// provider plugins (reparented to init) that starve later runs into
+	// cascading timeouts.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("TF_VAR_endpoint=%s", tfEndpoint),
 	)

@@ -59,6 +59,43 @@ func TestKMSCLI_KeyAliasAndCrypto(t *testing.T) {
 	require.Contains(t, decryptResult.KeyId, createResult.KeyMetadata.KeyId)
 }
 
+func TestKMSCLI_KeyRotation(t *testing.T) {
+	createOut := runCLI(t, awsCLI("kms", "create-key", "--output", "json"))
+	var created struct {
+		KeyMetadata struct {
+			KeyId string `json:"KeyId"`
+		} `json:"KeyMetadata"`
+	}
+	parseJSON(t, createOut, &created)
+	keyId := created.KeyMetadata.KeyId
+	require.NotEmpty(t, keyId)
+
+	// Default: rotation disabled.
+	statusOut := runCLI(t, awsCLI("kms", "get-key-rotation-status",
+		"--key-id", keyId, "--output", "json"))
+	var status struct {
+		KeyRotationEnabled   bool `json:"KeyRotationEnabled"`
+		RotationPeriodInDays int  `json:"RotationPeriodInDays"`
+	}
+	parseJSON(t, statusOut, &status)
+	assert.False(t, status.KeyRotationEnabled)
+
+	// Enable, then verify the reported cadence.
+	runCLI(t, awsCLI("kms", "enable-key-rotation", "--key-id", keyId))
+	statusOut = runCLI(t, awsCLI("kms", "get-key-rotation-status",
+		"--key-id", keyId, "--output", "json"))
+	parseJSON(t, statusOut, &status)
+	assert.True(t, status.KeyRotationEnabled)
+	assert.Equal(t, 365, status.RotationPeriodInDays)
+
+	// Disable reverts to false.
+	runCLI(t, awsCLI("kms", "disable-key-rotation", "--key-id", keyId))
+	statusOut = runCLI(t, awsCLI("kms", "get-key-rotation-status",
+		"--key-id", keyId, "--output", "json"))
+	parseJSON(t, statusOut, &status)
+	assert.False(t, status.KeyRotationEnabled)
+}
+
 func TestKMSCLI_GetKeyPolicy(t *testing.T) {
 	createOut := runCLI(t, awsCLI("kms", "create-key", "--output", "json"))
 	var created struct {

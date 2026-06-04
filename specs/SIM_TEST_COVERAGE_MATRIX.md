@@ -14,6 +14,7 @@ Legend:
 | `aws-amplify` | direct | direct | direct | `simulators/aws/sdk-tests/amplify_test.go`; `simulators/aws/cli-tests/amplify_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigateway` | direct | direct | direct | `simulators/aws/sdk-tests/apigateway_test.go`; `simulators/aws/sdk-tests/apigateway_method_response_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-apigatewayv2` | direct | direct | direct | `simulators/aws/sdk-tests/apigatewayv2_deployment_test.go`; `simulators/aws/cli-tests/apigateway_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-application-autoscaling` | direct | direct | direct | `simulators/aws/sdk-tests/application_autoscaling_test.go`; `simulators/aws/cli-tests/application_autoscaling_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-autoscaling` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudmap` | direct | direct | direct | `simulators/aws/sdk-tests/cloudmap_test.go`; `simulators/aws/cli-tests/cloudmap_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-cloudtrail` | direct | direct | direct | `simulators/aws/sdk-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/cli-tests/autoscaling_cloudtrail_test.go`; `simulators/aws/terraform-tests/main.tf` |
@@ -34,6 +35,7 @@ Legend:
 | `aws-route53` | direct | direct | direct | `simulators/aws/sdk-tests/route53_test.go`; `simulators/aws/cli-tests/route53_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3` | direct | direct | direct | `simulators/aws/sdk-tests/s3_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-bucket-subresources` | direct | direct | direct | `simulators/aws/sdk-tests/s3_bucket_subresources_test.go`; `simulators/aws/cli-tests/s3_test.go`; `simulators/aws/terraform-tests/main.tf` |
+| `aws-scheduler` | direct | direct | direct | `simulators/aws/sdk-tests/scheduler_test.go`; `simulators/aws/cli-tests/scheduler_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-s3-multipart` | direct | direct | not applicable | `simulators/aws/sdk-tests/s3_list_parts_test.go`; `simulators/aws/cli-tests/s3_test.go` |
 | `aws-secretsmanager` | direct | direct | direct | `simulators/aws/sdk-tests/secretsmanager_test.go`; `simulators/aws/cli-tests/secretsmanager_test.go`; `simulators/aws/terraform-tests/main.tf` |
 | `aws-sns` | direct | direct | direct | `simulators/aws/sdk-tests/sns_sqs_ops_test.go`; `simulators/aws/cli-tests/sqs_sns_test.go`; `simulators/aws/terraform-tests/main.tf` |

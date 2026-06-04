@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1446 filed - 1403 fixed - 5 open - 3 false positives.**
+**1450 filed - 1407 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -61,7 +61,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1443~~ | P2 | bleephub UI duplication | OverviewPage and MetricsPage share identical `useQuery` loading skeleton — `jscpd` confirmed | Fixed: extracted `useMetricsData()` hook returning `{ metrics, status, isLoading, isError }`; both pages use it. |
 | ~~1444~~ | P2 | bleephub tooling | No automated dead-code check in pre-commit or CI | Fixed: added `deadcode` hook in `.pre-commit-config.yaml` (runs on Go file changes in bleephub) and a `bleephub-quality` CI job running `deadcode`, `dupl`, and `knip`. |
 | ~~1445~~ | P2 | bleephub tooling | No copy-paste detection in pre-commit or CI | Fixed: added `dupl -t 60` for Go and `jscpd --min-tokens 50` for TypeScript to the new `bleephub-quality` CI job. |
-| ~~1446~~ | P3 | bleephub knip config | `knip` flagged `dist/` build artifacts as unused files | Fixed: added `knip.ts` config excluding `dist/` and marking `BleephubAgent`/`BleephubLabel` as used-via-embedding (internal types referenced inside another exported interface). |
+| ~~1446~~ | P3 | bleephub knip config | `knip` flagged `dist/` build artifacts as unused files | Fixed: scoped knip's `project` universe to `src/**` so build output (`dist/`) is never a candidate for "unused file" — no `dist/**` ignore that would dangle (and emit an unused-ignore config hint the CI check treated as failure) in a clean checkout with no build output. |
+| ~~1447~~ | P1 | aws-kms simulator | unimplemented op (issue #411) | Fixed: `EnableKeyRotation`/`DisableKeyRotation` returned `UnknownOperationException` and `GetKeyRotationStatus` was hardcoded `false`, so `aws_kms_key { enable_key_rotation = true }` (the common case) could not apply. Added `EnableKeyRotation` (with `RotationPeriodInDays` default 365, 90–2560 validation) + `DisableKeyRotation`; `GetKeyRotationStatus` now returns real per-key state. |
+| ~~1448~~ | P1 | aws application-autoscaling simulator | entire service missing (issue #411) | Fixed: the `AnyScaleFrontendService` API (distinct from EC2 Auto Scaling) was absent, so `aws_appautoscaling_target` returned `UnknownOperationException`, blocking ECS-service autoscaling. Added `application_autoscaling.go` with RegisterScalableTarget, DeregisterScalableTarget, DescribeScalableTargets, PutScalingPolicy, DeleteScalingPolicy, DescribeScalingPolicies, and Tag/Untag/ListTagsForResource. |
+| ~~1449~~ | P1 | aws eventbridge-scheduler simulator | service unrouted, bare 404 (issue #411) | Fixed: EventBridge Scheduler (`scheduler.amazonaws.com`, REST-JSON, distinct from EventBridge rules/buses) was unrouted; `aws_scheduler_schedule` got a bare 404 the SDK could not decode. Added `scheduler.go` with CreateSchedule/GetSchedule/UpdateSchedule/DeleteSchedule/ListSchedules + schedule-group CRUD, path-addressed with the implicit `default` group. |
+| ~~1450~~ | P1 | terraform-tests harness flakiness | orphaned subprocess leak | Fixed: `terraformCmd`/`runTimed` ran terraform via `CombinedOutput()` with no process group and no per-command timeout. When `go test -timeout` fired (SIGQUIT, which skips `t.Cleanup`), terraform and its provider-plugin grandchildren were orphaned (reparented to init) and kept spinning, starving later runs into cascading timeouts (observed directly: 3 orphaned `terraform-provider-aws` processes; the AWS stack test passed once they were killed). Fixed across aws/azure/gcp `terraform-tests` and `terraform/modules/ecs/test`: `Setpgid` puts terraform in its own process group and a deadline watchdog kills the whole group ~20s before the test deadline, returning a clean error instead of leaking orphans. Also brought aws/azure CLI `runCLI` to parity with gcp's existing per-command kill-timer. |
 
 ## Recently Closed
 

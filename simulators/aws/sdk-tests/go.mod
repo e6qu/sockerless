@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/amplify v1.39.2
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.4
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.4
+	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.42.0
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.2
 	github.com/aws/aws-sdk-go-v2/service/batch v1.65.4
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.0
@@ -32,6 +33,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/rds v1.119.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.63.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.1
+	github.com/aws/aws-sdk-go-v2/service/scheduler v1.18.4
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.4
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.42.1

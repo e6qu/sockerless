@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -152,8 +154,44 @@ func runTerraform(t *testing.T, dir string, args ...string) (string, error) {
 		"AWS_DEFAULT_REGION=us-east-1",
 		"TF_LOG=", // disable verbose logging unless debugging
 	)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// Own process group so the watchdog below can reap terraform + its
+	// provider-plugin grandchildren with one kill(-pgid). Without this, a
+	// timed-out command leaves orphaned, spinning plugins that starve later
+	// runs into cascading timeouts.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	require.NoError(t, cmd.Start(), "terraform %s: failed to start", strings.Join(args, " "))
+
+	killGroup := func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	t.Cleanup(killGroup)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	var watchdog <-chan time.Time
+	if dl, ok := t.Deadline(); ok {
+		if d := time.Until(dl) - 20*time.Second; d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			watchdog = timer.C
+		}
+	}
+
+	select {
+	case err := <-done:
+		return buf.String(), err
+	case <-watchdog:
+		killGroup()
+		<-done
+		return buf.String(), fmt.Errorf("terraform %s timed out near the test deadline", strings.Join(args, " "))
+	}
 }
 
 func TestECSModule_Validate(t *testing.T) {

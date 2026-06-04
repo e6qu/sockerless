@@ -53,6 +53,8 @@ provider "aws" {
     codebuild        = var.endpoint
     glue             = var.endpoint
     batch            = var.endpoint
+    appautoscaling   = var.endpoint
+    scheduler        = var.endpoint
   }
 }
 
@@ -262,6 +264,32 @@ resource "aws_autoscaling_group" "tf_asg" {
 
 resource "aws_ecs_cluster" "main" {
   name = "tf-test-cluster"
+}
+
+# Application Auto Scaling — autoscale the ECS service that backs the runner.
+# Exercises RegisterScalableTarget + PutScalingPolicy (AnyScaleFrontendService),
+# distinct from EC2 Auto Scaling above.
+resource "aws_appautoscaling_target" "ecs" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/tf-runner-svc"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 4
+}
+
+resource "aws_appautoscaling_policy" "ecs_cpu" {
+  name               = "tf-runner-cpu-tt"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    target_value = 60
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+  }
 }
 
 # Exercise the pull-through-cache APIs added to the simulator in
@@ -636,6 +664,25 @@ resource "aws_lambda_permission" "tf_lambda_events" {
 resource "aws_lambda_function_url" "tf_lambda_url" {
   function_name      = aws_lambda_function.tf_lambda.function_name
   authorization_type = "NONE"
+}
+
+# EventBridge Scheduler — cron/rate-driven invocation of the runner Lambda.
+# Exercises the REST-JSON Scheduler surface (CreateSchedule / GetSchedule),
+# distinct from the EventBridge rule above.
+resource "aws_scheduler_schedule" "tf_schedule" {
+  name       = "tf-runner-schedule"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression = "rate(1 hour)"
+
+  target {
+    arn      = aws_lambda_function.tf_lambda.arn
+    role_arn = "arn:aws:iam::123456789012:role/tf-scheduler"
+  }
 }
 
 data "aws_lambda_invocation" "tf_lambda_echo" {
@@ -1030,9 +1077,12 @@ resource "aws_dynamodb_table" "tf_table" {
 }
 
 # KMS key — encrypts SecretsManager secrets and S3 objects.
+# enable_key_rotation drives EnableKeyRotation + GetKeyRotationStatus, which
+# nearly every real-world KMS key sets.
 resource "aws_kms_key" "tf_kms" {
   description             = "tf-test runner KMS key"
   deletion_window_in_days = 7
+  enable_key_rotation     = true
 }
 
 resource "aws_kms_alias" "tf_kms_alias" {
@@ -1103,6 +1153,15 @@ output "apigatewayv2_route_key" {
 }
 output "apigatewayv2_stage_name" {
   value = aws_apigatewayv2_stage.tf_http_stage.name
+}
+output "appautoscaling_target_resource_id" {
+  value = aws_appautoscaling_target.ecs.resource_id
+}
+output "appautoscaling_policy_arn" {
+  value = aws_appautoscaling_policy.ecs_cpu.arn
+}
+output "scheduler_schedule_arn" {
+  value = aws_scheduler_schedule.tf_schedule.arn
 }
 output "lambda_function_arn" {
   value = aws_lambda_function.tf_lambda.arn
@@ -1184,6 +1243,9 @@ output "dynamodb_table_arn" {
 }
 output "kms_key_arn" {
   value = aws_kms_key.tf_kms.arn
+}
+output "kms_key_rotation_enabled" {
+  value = aws_kms_key.tf_kms.enable_key_rotation
 }
 output "kms_alias_arn" {
   value = aws_kms_alias.tf_kms_alias.arn

@@ -40,6 +40,12 @@ type KMSKey struct {
 	PolicyJSON string           `json:"-"`
 	Grants     []map[string]any `json:"Grants,omitempty"`
 	Spec       string           `json:"KeySpec,omitempty"`
+	// RotationEnabled tracks automatic key rotation (EnableKeyRotation /
+	// DisableKeyRotation). RotationPeriodInDays is the rotation cadence,
+	// defaulting to 365 when rotation is turned on. Real KMS reports both
+	// via GetKeyRotationStatus.
+	RotationEnabled      bool `json:"RotationEnabled,omitempty"`
+	RotationPeriodInDays int  `json:"RotationPeriodInDays,omitempty"`
 }
 
 var (
@@ -70,6 +76,8 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.PutKeyPolicy", handleKMSPutKeyPolicy)
 	r.Register("TrentService.ListResourceTags", handleKMSListResourceTags)
 	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
+	r.Register("TrentService.EnableKeyRotation", handleKMSEnableKeyRotation)
+	r.Register("TrentService.DisableKeyRotation", handleKMSDisableKeyRotation)
 }
 
 // kmsDefaultKeyPolicyJSON returns the default key policy that real AWS KMS
@@ -199,14 +207,81 @@ func handleKMSGetKeyRotationStatus(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if _, ok := resolveKMSKey(req.KeyId); !ok {
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
 		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
 			"Key %q does not exist", req.KeyId)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"KeyRotationEnabled": false,
+	key, _ := kmsKeys.Get(keyId)
+	resp := map[string]any{
+		"KeyId":              key.KeyId,
+		"KeyRotationEnabled": key.RotationEnabled,
+	}
+	if key.RotationEnabled {
+		resp["RotationPeriodInDays"] = key.RotationPeriodInDays
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// kmsDefaultRotationPeriodDays is the rotation cadence AWS applies when
+// EnableKeyRotation is called without RotationPeriodInDays.
+const kmsDefaultRotationPeriodDays = 365
+
+// handleKMSEnableKeyRotation turns on automatic annual rotation for a key.
+// terraform-provider-aws calls this for `aws_kms_key { enable_key_rotation
+// = true }`. RotationPeriodInDays is optional (default 365, range 90–2560).
+func handleKMSEnableKeyRotation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId                string `json:"KeyId"`
+		RotationPeriodInDays *int   `json:"RotationPeriodInDays"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	period := kmsDefaultRotationPeriodDays
+	if req.RotationPeriodInDays != nil {
+		period = *req.RotationPeriodInDays
+		if period < 90 || period > 2560 {
+			sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+				"RotationPeriodInDays must be between 90 and 2560, got %d", period)
+			return
+		}
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.RotationEnabled = true
+		k.RotationPeriodInDays = period
 	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSDisableKeyRotation turns off automatic rotation for a key.
+func handleKMSDisableKeyRotation(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.RotationEnabled = false
+		k.RotationPeriodInDays = 0
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {

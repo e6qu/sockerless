@@ -1,9 +1,13 @@
 package aws_tf_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -23,7 +27,13 @@ import (
 //     DescribeContinuousBackups, UpdateContinuousBackups,
 //     DescribeTimeToLive, UpdateTimeToLive,
 //     ListTagsOfResource, TagResource, UntagResource
-//   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus
+//   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus,
+//     EnableKeyRotation
+//   - Application Auto Scaling: RegisterScalableTarget, DescribeScalableTargets,
+//     PutScalingPolicy, DescribeScalingPolicies, DeleteScalingPolicy,
+//     DeregisterScalableTarget
+//   - EventBridge Scheduler: CreateSchedule, GetSchedule, UpdateSchedule,
+//     DeleteSchedule
 //   - Secrets Manager: GetResourcePolicy
 //   - SSM: AddTagsToResource, RemoveTagsFromResource, ListTagsForResource
 //   - CloudWatch Logs: CreateLogGroup, DescribeLogGroups,
@@ -232,6 +242,20 @@ func TestStackProductionShape(t *testing.T) {
 	require.True(t, strings.HasPrefix(kmsKeyARN, "arn:aws:kms:"),
 		"KMS key ARN must include arn:aws:kms; got %s", kmsKeyARN)
 
+	require.Equal(t, "true", outputs.must(t, "kms_key_rotation_enabled"),
+		"enable_key_rotation must round-trip through EnableKeyRotation + GetKeyRotationStatus")
+
+	aasResourceID := outputs.must(t, "appautoscaling_target_resource_id")
+	require.Contains(t, aasResourceID, "service/tf-test-cluster/",
+		"Application Auto Scaling target resource_id must reference the ECS service")
+	aasPolicyARN := outputs.must(t, "appautoscaling_policy_arn")
+	require.Contains(t, aasPolicyARN, ":scalingPolicy:",
+		"PutScalingPolicy must return a scalingPolicy ARN; got %s", aasPolicyARN)
+
+	schedARN := outputs.must(t, "scheduler_schedule_arn")
+	require.Contains(t, schedARN, ":schedule/default/tf-runner-schedule",
+		"CreateSchedule must return a schedule ARN scoped to its group; got %s", schedARN)
+
 	kmsAliasARN := outputs.must(t, "kms_alias_arn")
 	require.Contains(t, kmsAliasARN, ":alias/tf-test-runner",
 		"KMS alias ARN must include the alias path; got %s", kmsAliasARN)
@@ -293,14 +317,59 @@ func TestStackProductionShape(t *testing.T) {
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }
 
-func runTimed(t *testing.T, label string, cmd interface {
-	CombinedOutput() ([]byte, error)
-}) ([]byte, error) {
+// runTimed runs a terraform command, capturing combined output, with a
+// watchdog that fires just before the test's own deadline. terraform spawns
+// provider-plugin grandchildren; if go test's hard timeout (SIGQUIT) fired
+// while a plain CombinedOutput() was in flight it would orphan that whole tree
+// (t.Cleanup does NOT run on the test-binary timeout), leaving spinning
+// provider processes that starve later runs into cascading timeouts. The
+// watchdog instead kills the process group (terraform put itself in its own
+// group via Setpgid) and returns a clean error with the captured output, so a
+// stuck command fails diagnosably and never leaks orphans.
+func runTimed(t *testing.T, label string, cmd *exec.Cmd) ([]byte, error) {
 	t.Helper()
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
-	t.Logf("%s duration=%s", label, time.Since(start).Round(time.Millisecond))
-	return out, err
+	require.NoError(t, cmd.Start(), "%s: failed to start", label)
+
+	killGroup := func() {
+		if cmd.Process != nil {
+			// Negative pid targets the whole process group (Setpgid'd tree).
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+	}
+	// Safety net for the pass/fail/panic paths (cleanup does not run on the
+	// test-binary SIGQUIT timeout — the watchdog below covers that case).
+	t.Cleanup(killGroup)
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// Fire ~20s before the test deadline so we reap the tree and fail cleanly
+	// rather than letting the hard SIGQUIT orphan it.
+	var watchdog <-chan time.Time
+	if dl, ok := t.Deadline(); ok {
+		if d := time.Until(dl) - 20*time.Second; d > 0 {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			watchdog = timer.C
+		}
+	}
+
+	select {
+	case err := <-done:
+		t.Logf("%s duration=%s", label, time.Since(start).Round(time.Millisecond))
+		return buf.Bytes(), err
+	case <-watchdog:
+		killGroup()
+		<-done // reap the killed process so no zombie/orphan remains
+		t.Logf("%s TIMED OUT after %s (process group killed to avoid orphans)",
+			label, time.Since(start).Round(time.Millisecond))
+		return buf.Bytes(), fmt.Errorf("%s timed out near the test deadline", label)
+	}
 }
 
 func requireIPv4InCIDR(t *testing.T, value, cidr string, msgAndArgs ...any) {
