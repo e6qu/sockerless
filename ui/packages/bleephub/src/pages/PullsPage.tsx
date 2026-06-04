@@ -1,11 +1,13 @@
-import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeading, Spinner, Button, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepoPRs, fetchIssueComments, mergePR } from "../api.js";
+import { useRepoItemList } from "../hooks/useRepoItemList.js";
 import type { GithubPR } from "../types.js";
 import { CommentList } from "../components/CommentCard.js";
 import { rowHoverProps } from "../components/RowHover.js";
+import { EmptyListPlaceholder } from "../components/StateToggle.js";
+import { ListPageHeader } from "../components/ListPageHeader.js";
 
 export function PullsPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -21,69 +23,28 @@ export function PullsPage() {
 }
 
 function PRList({ owner, repo }: { owner: string; repo: string }) {
-  const [state, setState] = useState<"open" | "closed">("open");
-
-  const { data: prs = [], isLoading, isError, error } = useQuery({
-    queryKey: ["prs", owner, repo, state],
-    queryFn: () => fetchRepoPRs(owner, repo, state),
-    enabled: !!owner && !!repo,
-  });
+  const { state, setState, items: prs, isLoading, isError, error } = useRepoItemList(
+    "prs", owner, repo, fetchRepoPRs,
+  );
 
   if (isLoading) return <Spinner label="loading pull requests" />;
   if (isError) return <InlineError title="Failed to load pull requests" detail={String(error)} />;
 
   return (
     <div>
-      <div style={{ marginBottom: "0.25rem" }}>
-        <Link
-          to={`/ui/repos/${owner}/${repo}`}
-          style={{ color: "var(--color-fg-muted)", fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}
-        >
-          ← {owner}/{repo}
-        </Link>
-      </div>
-      <PageHeading
-        kicker={`${owner}/${repo}`}
+      <ListPageHeader
+        owner={owner}
+        repo={repo}
+        backTo={`/ui/repos/${owner}/${repo}`}
         title={<>Pull Requests</>}
         meta={`${prs.length} ${state} PR${prs.length !== 1 ? "s" : ""}`}
+        state={state}
+        stateLabels={{ open: "↯ Open", closed: "✓ Merged / Closed" }}
+        onStateChange={setState}
       />
 
-      {/* State toggle */}
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-        {(["open", "closed"] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => setState(s)}
-            style={{
-              padding: "0.3rem 0.75rem",
-              fontSize: "0.8rem",
-              fontFamily: "var(--font-mono)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-sm)",
-              background: state === s ? "var(--color-accent-soft)" : "transparent",
-              color: state === s ? "var(--color-accent)" : "var(--color-fg-muted)",
-              cursor: "pointer",
-            }}
-          >
-            {s === "open" ? "↯ Open" : "✓ Merged / Closed"}
-          </button>
-        ))}
-      </div>
-
       {prs.length === 0 ? (
-        <div
-          style={{
-            padding: "2.5rem",
-            textAlign: "center",
-            border: "1px dashed var(--color-border)",
-            borderRadius: "var(--radius-md)",
-            color: "var(--color-fg-muted)",
-            fontFamily: "var(--font-mono)",
-            fontSize: "0.85rem",
-          }}
-        >
-          No {state} pull requests.
-        </div>
+        <EmptyListPlaceholder message={`No ${state} pull requests.`} />
       ) : (
         <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
           {prs.map((pr, i) => (

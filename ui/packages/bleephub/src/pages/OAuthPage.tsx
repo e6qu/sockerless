@@ -4,9 +4,65 @@ import {
   PageHeading,
   Spinner,
 } from "@sockerless/ui-core/components";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { fetchOAuthState } from "../api.js";
 import type { BleephubAuthCode, BleephubDeviceCode } from "../types.js";
+
+/** Shared table shell used by DeviceCodesCard and AuthCodesCard. */
+function OAuthCodesTable<T>({
+  cardTitle,
+  count,
+  items,
+  headers,
+  rowKey,
+  renderRow,
+}: {
+  cardTitle: string;
+  count: number;
+  items: T[];
+  headers: string[];
+  rowKey: (item: T) => string;
+  renderRow: (item: T) => ReactNode;
+}) {
+  return (
+    <CardShell title={cardTitle} count={count}>
+      {items.length === 0 ? (
+        <div
+          className="py-6 text-center font-mono uppercase tracking-[0.2em]"
+          style={{ fontSize: "0.7rem", color: "var(--color-fg-subtle)" }}
+        >
+          — none —
+        </div>
+      ) : (
+        <table className="w-full font-mono" style={{ fontSize: "0.72rem" }}>
+          <thead>
+            <tr
+              className="text-left uppercase tracking-[0.15em]"
+              style={{ fontSize: "0.6rem", color: "var(--color-fg-subtle)" }}
+            >
+              {headers.map((h) => (
+                <th key={h} className="py-1.5 font-medium">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr
+                key={rowKey(item)}
+                style={{
+                  borderTop:
+                    "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
+                }}
+              >
+                {renderRow(item)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </CardShell>
+  );
+}
 
 export function OAuthPage() {
   const { data, isLoading, refetch } = useQuery({
@@ -233,106 +289,40 @@ function CardShell({
 
 function DeviceCodesCard({ codes }: { codes: BleephubDeviceCode[] }) {
   return (
-    <CardShell title="Active device codes" count={codes.length}>
-      {codes.length === 0 ? (
-        <div
-          className="py-6 text-center font-mono uppercase tracking-[0.2em]"
-          style={{ fontSize: "0.7rem", color: "var(--color-fg-subtle)" }}
-        >
-          — none —
-        </div>
-      ) : (
-        <table className="w-full font-mono" style={{ fontSize: "0.72rem" }}>
-          <thead>
-            <tr
-              className="text-left uppercase tracking-[0.15em]"
-              style={{ fontSize: "0.6rem", color: "var(--color-fg-subtle)" }}
-            >
-              <th className="py-1.5 font-medium">user_code</th>
-              <th className="py-1.5 font-medium">code</th>
-              <th className="py-1.5 font-medium">scopes</th>
-              <th className="py-1.5 font-medium text-right">expires</th>
-            </tr>
-          </thead>
-          <tbody>
-            {codes.map((c) => (
-              <tr
-                key={c.code}
-                style={{
-                  borderTop:
-                    "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
-                }}
-              >
-                <td className="py-1.5" style={{ color: "var(--color-accent)" }}>
-                  {c.userCode}
-                </td>
-                <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>
-                  {c.code.slice(0, 8)}…
-                </td>
-                <td className="py-1.5" style={{ color: "var(--color-fg)" }}>
-                  {c.scopes}
-                </td>
-                <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>
-                  {new Date(c.expiresAt).toLocaleTimeString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <OAuthCodesTable
+      cardTitle="Active device codes"
+      count={codes.length}
+      items={codes}
+      headers={["user_code", "code", "scopes", "expires"]}
+      rowKey={(c) => c.code}
+      renderRow={(c) => (
+        <>
+          <td className="py-1.5" style={{ color: "var(--color-accent)" }}>{c.userCode}</td>
+          <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>{c.code.slice(0, 8)}…</td>
+          <td className="py-1.5" style={{ color: "var(--color-fg)" }}>{c.scopes}</td>
+          <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
+        </>
       )}
-    </CardShell>
+    />
   );
 }
 
 function AuthCodesCard({ codes }: { codes: BleephubAuthCode[] }) {
   return (
-    <CardShell title="Active authorization codes" count={codes.length}>
-      {codes.length === 0 ? (
-        <div
-          className="py-6 text-center font-mono uppercase tracking-[0.2em]"
-          style={{ fontSize: "0.7rem", color: "var(--color-fg-subtle)" }}
-        >
-          — none —
-        </div>
-      ) : (
-        <table className="w-full font-mono" style={{ fontSize: "0.72rem" }}>
-          <thead>
-            <tr
-              className="text-left uppercase tracking-[0.15em]"
-              style={{ fontSize: "0.6rem", color: "var(--color-fg-subtle)" }}
-            >
-              <th className="py-1.5 font-medium">client_id</th>
-              <th className="py-1.5 font-medium">redirect</th>
-              <th className="py-1.5 font-medium">state</th>
-              <th className="py-1.5 font-medium text-right">expires</th>
-            </tr>
-          </thead>
-          <tbody>
-            {codes.map((c) => (
-              <tr
-                key={c.code}
-                style={{
-                  borderTop:
-                    "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
-                }}
-              >
-                <td className="py-1.5" style={{ color: "var(--color-accent)" }}>
-                  {c.clientId}
-                </td>
-                <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>
-                  {c.redirectUri}
-                </td>
-                <td className="py-1.5" style={{ color: "var(--color-fg)" }}>
-                  {c.state || "—"}
-                </td>
-                <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>
-                  {new Date(c.expiresAt).toLocaleTimeString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <OAuthCodesTable
+      cardTitle="Active authorization codes"
+      count={codes.length}
+      items={codes}
+      headers={["client_id", "redirect", "state", "expires"]}
+      rowKey={(c) => c.code}
+      renderRow={(c) => (
+        <>
+          <td className="py-1.5" style={{ color: "var(--color-accent)" }}>{c.clientId}</td>
+          <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>{c.redirectUri}</td>
+          <td className="py-1.5" style={{ color: "var(--color-fg)" }}>{c.state || "—"}</td>
+          <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
+        </>
       )}
-    </CardShell>
+    />
   );
 }

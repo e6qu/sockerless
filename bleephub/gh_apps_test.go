@@ -218,16 +218,16 @@ func TestJWTTooLongLifetime(t *testing.T) {
 		t.Fatal("failed to decode PEM")
 	}
 
-	header := base64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	header := testBase64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	payload := fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, app.ID, now.Unix(), now.Unix()+601)
-	payloadEnc := base64urlEncode([]byte(payload))
+	payloadEnc := testBase64urlEncode([]byte(payload))
 	signInput := header + "." + payloadEnc
 
 	privKey, _ := parseRSAKey(block)
 	hash := sha256Sum([]byte(signInput))
 	sig := rsaSign(privKey, hash)
 
-	jwt := signInput + "." + base64urlEncode(sig)
+	jwt := signInput + "." + testBase64urlEncode(sig)
 	_, err := st.parseAndVerifyAppJWT(jwt)
 	if err == nil {
 		t.Fatal("expected error for too-long JWT lifetime")
@@ -274,7 +274,7 @@ func TestJWTInvalidSignature(t *testing.T) {
 		t.Fatalf("decode JWT signature: %v", err)
 	}
 	sig[0] ^= 0xff
-	tampered := parts[0] + "." + parts[1] + "." + base64urlEncode(sig)
+	tampered := parts[0] + "." + parts[1] + "." + testBase64urlEncode(sig)
 
 	_, err = st.parseAndVerifyAppJWT(tampered)
 	if err == nil {

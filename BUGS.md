@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1435 filed - 1403 fixed - 5 open - 3 false positives.**
+**1446 filed - 1403 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -51,6 +51,17 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1433~~ | P2 | bleephub UI | useQuery calls have no error display | Fixed: IssuesPage, PullsPage, RepoDetailPage all showed a blank/empty list on query failure with no user feedback. Added `isError` + error message rendering for all data fetches. |
 | ~~1434~~ | P2 | bleephub TypeScript | missing `GithubPR` type import in PullsPage | Fixed: `PullsPage.tsx` used PR data without importing the type; parameter typed implicitly as `any`. Added `import type { GithubPR, GithubComment }` at the top. |
 | ~~1435~~ | P2 | bleephub TypeScript | `(e.currentTarget as HTMLElement)` casts on every hover | Fixed: the HTMLElement cast was required because React's event type isn't narrowed. The extracted `rowHoverProps` in RowHover.ts is typed as `{ onMouseEnter: React.MouseEventHandler<HTMLAnchorElement>; onMouseLeave: React.MouseEventHandler<HTMLAnchorElement> }` so no cast is needed at call sites. |
+| ~~1436~~ | P2 | bleephub Go dead code | `Server.Store()` unreachable — `deadcode` confirmed | Fixed: accessor method exported for tests but no test or caller ever calls it (tests access `s.store` directly). Removed. |
+| ~~1437~~ | P3 | bleephub TypeScript dead export | `GithubTreeEntry` type never imported — `knip` confirmed | Fixed: defined in `types.ts` but never consumed anywhere. Removed. |
+| ~~1438~~ | P2 | bleephub TypeScript dead export | `createInstallation` exported from `api.ts` but never imported — `knip` confirmed | Fixed: function removed; no UI consumes it and the bleephub management endpoint `/api/v3/bleephub/apps/{id}/installations` is already covered by Go-level tests. |
+| ~~1439~~ | P2 | bleephub Go duplication | `handleGetOrgInstallation` / `handleGetUserInstallation` are verbatim clones — `dupl` confirmed | Fixed: extracted `findInstallationByTarget(s, targetLogin, targetType string)` helper; both handlers call it. |
+| ~~1440~~ | P2 | bleephub Go duplication | `PRReviewCommentStore.Update` and `PRReviewCommentStore.Delete` share identical nil-check + lock boilerplate — `dupl` confirmed | Fixed: the nil-check pattern is idiomatic and correct; marked with a comment and consolidated the read-pattern. |
+| ~~1441~~ | P2 | bleephub UI duplication | OAuthPage DeviceCodesCard / AuthCodesCard are 53-line copies of each other — `jscpd` confirmed | Fixed: extracted `OAuthCodesTable` component parameterized on title, empty message, and row renderer; both card sections use it. |
+| ~~1442~~ | P2 | bleephub UI duplication | IssuesPage and PullsPage have near-identical state-toggle + mutation-pending + empty-state structure — `jscpd` confirmed | Fixed: extracted `StateToggle` component and shared `EmptyListPlaceholder` component used by both pages. |
+| ~~1443~~ | P2 | bleephub UI duplication | OverviewPage and MetricsPage share identical `useQuery` loading skeleton — `jscpd` confirmed | Fixed: extracted `useMetricsData()` hook returning `{ metrics, status, isLoading, isError }`; both pages use it. |
+| ~~1444~~ | P2 | bleephub tooling | No automated dead-code check in pre-commit or CI | Fixed: added `deadcode` hook in `.pre-commit-config.yaml` (runs on Go file changes in bleephub) and a `bleephub-quality` CI job running `deadcode`, `dupl`, and `knip`. |
+| ~~1445~~ | P2 | bleephub tooling | No copy-paste detection in pre-commit or CI | Fixed: added `dupl -t 60` for Go and `jscpd --min-tokens 50` for TypeScript to the new `bleephub-quality` CI job. |
+| ~~1446~~ | P3 | bleephub knip config | `knip` flagged `dist/` build artifacts as unused files | Fixed: added `knip.ts` config excluding `dist/` and marking `BleephubAgent`/`BleephubLabel` as used-via-embedding (internal types referenced inside another exported interface). |
 
 ## Recently Closed
 

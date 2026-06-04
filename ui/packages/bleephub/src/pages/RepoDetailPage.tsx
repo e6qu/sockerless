@@ -11,6 +11,7 @@ import {
 } from "../api.js";
 import type { GithubIssue, GithubPR, GithubCommit } from "../types.js";
 import { rowHoverProps } from "../components/RowHover.js";
+import { LabelPills } from "../components/LabelPills.js";
 
 export function RepoDetailPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
@@ -200,118 +201,93 @@ export function RepoDetailPage() {
   );
 }
 
-function IssuesList({
-  owner,
-  repo,
-  issues,
+/** Shared bordered list for repo-scoped items (issues or PRs). */
+function RepoItemList<T extends { id: number }>({
+  items,
+  emptyMessage,
+  toPath,
+  renderIcon,
+  renderContent,
 }: {
-  owner: string;
-  repo: string;
-  issues: GithubIssue[];
+  items: T[];
+  emptyMessage: string;
+  toPath: (item: T) => string;
+  renderIcon: (item: T) => React.ReactNode;
+  renderContent: (item: T) => React.ReactNode;
 }) {
-  if (issues.length === 0) {
+  if (items.length === 0) {
     return (
       <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
-        No open issues.
+        {emptyMessage}
       </div>
     );
   }
   return (
     <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-      {issues.map((issue, i) => (
+      {items.map((item, i) => (
         <Link
-          key={issue.id}
-          to={`/ui/repos/${owner}/${repo}/issues/${issue.number}`}
+          key={item.id}
+          to={toPath(item)}
           style={{
             display: "flex",
             alignItems: "flex-start",
             gap: "0.75rem",
             padding: "0.85rem 1rem",
-            borderBottom: i < issues.length - 1 ? "1px solid var(--color-border)" : "none",
+            borderBottom: i < items.length - 1 ? "1px solid var(--color-border)" : "none",
             textDecoration: "none",
             background: "var(--color-surface-raised)",
             transition: "background 0.1s",
           }}
           {...rowHoverProps}
         >
-          <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>○</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
-              {issue.title}
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", marginTop: "0.2rem" }}>
-              #{issue.number} opened by {issue.user?.login} · {issue.comments} comments
-            </div>
-          </div>
-          {issue.labels?.map((l) => (
-            <span
-              key={l.name}
-              style={{
-                padding: "0.15rem 0.5rem",
-                borderRadius: "1rem",
-                fontSize: "0.7rem",
-                fontFamily: "var(--font-mono)",
-                background: `#${l.color}22`,
-                color: `#${l.color}`,
-                border: `1px solid #${l.color}44`,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {l.name}
-            </span>
-          ))}
+          {renderIcon(item)}
+          {renderContent(item)}
         </Link>
       ))}
     </div>
   );
 }
 
-function PRsList({
-  owner,
-  repo,
-  prs,
-}: {
-  owner: string;
-  repo: string;
-  prs: GithubPR[];
-}) {
-  if (prs.length === 0) {
-    return (
-      <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
-        No open pull requests.
-      </div>
-    );
-  }
+function IssuesList({ owner, repo, issues }: { owner: string; repo: string; issues: GithubIssue[] }) {
   return (
-    <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-      {prs.map((pr, i) => (
-        <Link
-          key={pr.id}
-          to={`/ui/repos/${owner}/${repo}/pulls/${pr.number}`}
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: "0.75rem",
-            padding: "0.85rem 1rem",
-            borderBottom: i < prs.length - 1 ? "1px solid var(--color-border)" : "none",
-            textDecoration: "none",
-            background: "var(--color-surface-raised)",
-            transition: "background 0.1s",
-          }}
-          {...rowHoverProps}
-        >
-          <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>↯</span>
+    <RepoItemList
+      items={issues}
+      emptyMessage="No open issues."
+      toPath={(issue) => `/ui/repos/${owner}/${repo}/issues/${issue.number}`}
+      renderIcon={() => <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>○</span>}
+      renderContent={(issue) => (
+        <>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
-              {pr.title} {pr.draft && <span style={{ color: "var(--color-fg-subtle)", fontSize: "0.75rem" }}>[draft]</span>}
-            </div>
+            <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>{issue.title}</div>
             <div style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", marginTop: "0.2rem" }}>
-              #{pr.number} · {pr.head.ref} → {pr.base.ref} · opened by {pr.user?.login}
+              #{issue.number} opened by {issue.user?.login} · {issue.comments} comments
             </div>
           </div>
-        </Link>
-      ))}
-    </div>
+          <LabelPills labels={issue.labels} />
+        </>
+      )}
+    />
+  );
+}
+
+function PRsList({ owner, repo, prs }: { owner: string; repo: string; prs: GithubPR[] }) {
+  return (
+    <RepoItemList
+      items={prs}
+      emptyMessage="No open pull requests."
+      toPath={(pr) => `/ui/repos/${owner}/${repo}/pulls/${pr.number}`}
+      renderIcon={() => <span style={{ color: "var(--color-status-ok)", marginTop: "0.1rem" }}>↯</span>}
+      renderContent={(pr) => (
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
+            {pr.title}{pr.draft && <span style={{ color: "var(--color-fg-subtle)", fontSize: "0.75rem" }}> [draft]</span>}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", marginTop: "0.2rem" }}>
+            #{pr.number} · {pr.head.ref} → {pr.base.ref} · opened by {pr.user?.login}
+          </div>
+        </div>
+      )}
+    />
   );
 }
 

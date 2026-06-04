@@ -60,6 +60,55 @@ func paginateAndLink[T any](w http.ResponseWriter, r *http.Request, items []T) [
 	return page
 }
 
+// paginateGQL implements Relay-style cursor pagination for GraphQL connections.
+// toGQL converts each item into a map[string]interface{} that becomes the
+// GraphQL node. Use a closure to thread extra state (e.g. *Store) into toGQL.
+func paginateGQL[T any](items []T, first int, after string, toGQL func(T) map[string]interface{}) map[string]interface{} {
+	total := len(items)
+
+	startIdx := 0
+	if after != "" {
+		startIdx = decodeCursor(after) + 1
+	}
+	if startIdx > total {
+		startIdx = total
+	}
+	endIdx := startIdx + first
+	if endIdx > total {
+		endIdx = total
+	}
+
+	page := items[startIdx:endIdx]
+	nodes := make([]map[string]interface{}, 0, len(page))
+	edges := make([]map[string]interface{}, 0, len(page))
+	for i, item := range page {
+		gql := toGQL(item)
+		cursor := encodeCursor(startIdx + i)
+		nodes = append(nodes, gql)
+		edges = append(edges, map[string]interface{}{
+			"node":   gql,
+			"cursor": cursor,
+		})
+	}
+
+	var startCursor, endCursor interface{}
+	if len(edges) > 0 {
+		startCursor = edges[0]["cursor"]
+		endCursor = edges[len(edges)-1]["cursor"]
+	}
+	return map[string]interface{}{
+		"nodes":      nodes,
+		"edges":      edges,
+		"totalCount": total,
+		"pageInfo": map[string]interface{}{
+			"hasNextPage":     endIdx < total,
+			"hasPreviousPage": startIdx > 0,
+			"startCursor":     startCursor,
+			"endCursor":       endCursor,
+		},
+	}
+}
+
 // buildLinkHeader constructs an RFC 5988 Link header.
 func buildLinkHeader(r *http.Request, page, perPage, lastPage int) string {
 	if lastPage <= 1 {

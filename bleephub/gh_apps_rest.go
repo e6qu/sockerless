@@ -566,41 +566,35 @@ func (s *Server) handleUnsuspendInstallation(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleGetOrgInstallation — GET /api/v3/orgs/{org}/installation.
-// User-auth. Returns the installation associated with the org (any App's installation
-// where target_login = {org}, target_type = "Organization").
-func (s *Server) handleGetOrgInstallation(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
-		return
-	}
-	org := r.PathValue("org")
+// findInstallationByTarget returns the JSON for the first installation matching
+// targetLogin + targetType, or writes 404 and returns false.
+func (s *Server) findInstallationByTarget(w http.ResponseWriter, targetLogin, targetType string) bool {
 	for _, inst := range s.snapshotInstallations() {
-		if inst.TargetLogin == org && inst.TargetType == "Organization" {
+		if inst.TargetLogin == targetLogin && inst.TargetType == targetType {
 			writeJSON(w, http.StatusOK, installationToJSON(inst))
-			return
+			return true
 		}
 	}
 	writeGHError(w, http.StatusNotFound, "Not Found")
+	return false
+}
+
+// handleGetOrgInstallation — GET /api/v3/orgs/{org}/installation.
+func (s *Server) handleGetOrgInstallation(w http.ResponseWriter, r *http.Request) {
+	if ghUserFromContext(r.Context()) == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	s.findInstallationByTarget(w, r.PathValue("org"), "Organization")
 }
 
 // handleGetUserInstallation — GET /api/v3/users/{username}/installation.
-// User-auth. Returns the installation associated with the user (target_type = "User").
 func (s *Server) handleGetUserInstallation(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
+	if ghUserFromContext(r.Context()) == nil {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
-	username := r.PathValue("username")
-	for _, inst := range s.snapshotInstallations() {
-		if inst.TargetLogin == username && inst.TargetType == "User" {
-			writeJSON(w, http.StatusOK, installationToJSON(inst))
-			return
-		}
-	}
-	writeGHError(w, http.StatusNotFound, "Not Found")
+	s.findInstallationByTarget(w, r.PathValue("username"), "User")
 }
 
 // handleAddUserInstallationRepo — PUT /api/v3/user/installations/{id}/repositories/{repo_id}.

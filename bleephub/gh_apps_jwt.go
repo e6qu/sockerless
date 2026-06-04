@@ -97,31 +97,6 @@ func (st *Store) parseAndVerifyAppJWT(tokenStr string) (*App, error) {
 	return app, nil
 }
 
-// signAppJWT creates an RS256 JWT for testing.
-func signAppJWT(privateKeyPEM string, appID int, now time.Time) (string, error) {
-	block, _ := pem.Decode([]byte(privateKeyPEM))
-	if block == nil {
-		return "", fmt.Errorf("failed to decode PEM")
-	}
-	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	header := base64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	payload := fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, appID, now.Unix(), now.Unix()+600)
-	payloadEnc := base64urlEncode([]byte(payload))
-
-	signInput := header + "." + payloadEnc
-	hash := sha256.Sum256([]byte(signInput))
-	sig, err := rsa.SignPKCS1v15(nil, privKey, crypto.SHA256, hash[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to sign: %w", err)
-	}
-
-	return signInput + "." + base64urlEncode(sig), nil
-}
-
 // base64urlDecode handles JWT's unpadded base64url encoding.
 func base64urlDecode(s string) ([]byte, error) {
 	// Add padding if needed
@@ -132,11 +107,6 @@ func base64urlDecode(s string) ([]byte, error) {
 		s += "="
 	}
 	return base64.URLEncoding.DecodeString(s)
-}
-
-// base64urlEncode encodes bytes as unpadded base64url.
-func base64urlEncode(b []byte) string {
-	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // looksLikeJWT returns true if the string has the structure of a JWT.

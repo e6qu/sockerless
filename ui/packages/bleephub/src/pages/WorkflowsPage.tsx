@@ -6,7 +6,7 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
+import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { useState } from "react";
 import {
@@ -97,7 +97,7 @@ function WorkflowsTab() {
 
   if (isLoading || !data) return <Spinner label="loading workflows" />;
 
-  const columns: ColumnDef<BleephubWorkflowFile>[] = [
+  const columns = [
     filesCol.accessor("name", {
       header: "Name",
       cell: (info) => (
@@ -187,7 +187,7 @@ function RunsTab() {
 
   if (isLoading || !data) return <Spinner label="loading runs" />;
 
-  const columns: ColumnDef<BleephubWorkflowFile>[] = [
+  const columns = [
     runsCol.accessor("name", {
       header: "Name",
       cell: (info) => (

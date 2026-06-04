@@ -6,18 +6,11 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
+import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { fetchHealth, fetchMetrics, fetchWorkflows } from "../api.js";
 import type { BleephubWorkflow } from "../types.js";
-
-function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
+import { formatUptime } from "../utils/format.js";
 
 const col = createColumnHelper<BleephubWorkflow>();
 
@@ -43,7 +36,7 @@ export function OverviewPage() {
 
   const recent = (workflows ?? []).slice(0, 10);
 
-  const columns: ColumnDef<BleephubWorkflow>[] = [
+  const columns = [
     col.accessor("name", {
       header: "Name",
       cell: (info) => (

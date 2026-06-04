@@ -1,30 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
 import { MetricsCard, PageHeading, Spinner } from "@sockerless/ui-core/components";
-import { fetchMetrics, fetchStatus } from "../api.js";
-
-function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
+import { useMetricsData } from "../hooks/useMetricsData.js";
+import { formatUptime } from "../utils/format.js";
 
 export function MetricsPage() {
-  const { data: metrics, isLoading: metricsLoading } = useQuery({
-    queryKey: ["metrics"],
-    queryFn: fetchMetrics,
-    refetchInterval: 5000,
-  });
-  const { data: status, isLoading: statusLoading } = useQuery({
-    queryKey: ["status"],
-    queryFn: fetchStatus,
-    refetchInterval: 5000,
-  });
+  const { metrics, status, isLoading } = useMetricsData();
 
-  if ((metricsLoading && !metrics) || (statusLoading && !status)) {
-    return <Spinner label="loading metrics" />;
-  }
+  if (isLoading && !metrics) return <Spinner label="loading metrics" />;
 
   return (
     <div>

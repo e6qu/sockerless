@@ -7,7 +7,7 @@ import {
   Spinner,
   StatusBadge,
 } from "@sockerless/ui-core/components";
-import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
+import { createColumnHelper } from "@tanstack/react-table";
 import { fetchWorkflowDetail, fetchWorkflowLogs } from "../api.js";
 import type { BleephubWorkflowJob } from "../types.js";
 
@@ -64,7 +64,7 @@ export function WorkflowDetailPage() {
 
   const jobs = Object.values(wf.jobs).sort((a, b) => a.key.localeCompare(b.key));
 
-  const columns: ColumnDef<BleephubWorkflowJob>[] = [
+  const columns = [
     col.accessor("key", {
       header: "Key",
       cell: (info) => (

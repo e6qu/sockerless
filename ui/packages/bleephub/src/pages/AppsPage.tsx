@@ -5,7 +5,7 @@ import {
   PageHeading,
   Spinner,
 } from "@sockerless/ui-core/components";
-import { type ColumnDef, createColumnHelper } from "@tanstack/react-table";
+import { createColumnHelper } from "@tanstack/react-table";
 import { useState } from "react";
 import {
   createApp,
@@ -114,7 +114,7 @@ function AppsTab() {
   });
   if (isLoading || !data) return <Spinner label="loading apps" />;
 
-  const columns: ColumnDef<BleephubApp>[] = [
+  const columns = [
     appsCol.accessor("id", {
       header: "ID",
       cell: (info) => (
@@ -181,7 +181,7 @@ function InstallationsTab() {
 
   if (isLoading || !data) return <Spinner label="loading installations" />;
 
-  const columns: ColumnDef<BleephubApp>[] = [
+  const columns = [
     installsCol.accessor("id", {
       header: "ID",
       cell: (info) => (
@@ -298,7 +298,7 @@ function OAuthAppsTab() {
   });
   if (isLoading || !data) return <Spinner label="loading oauth apps" />;
 
-  const columns: ColumnDef<BleephubApp>[] = [
+  const columns = [
     oauthCol.accessor("clientId", {
       header: "Client ID",
       cell: (info) => (

@@ -111,25 +111,6 @@ export async function createOAuthApp(payload: {
   return res.json();
 }
 
-export async function createInstallation(
-  appId: number,
-  payload: { target_type: string; target_id: number; target_login: string; permissions?: Record<string, string>; events?: string[] },
-): Promise<BleephubInstallation> {
-  const res = await fetch(`/api/v3/bleephub/apps/${appId}/installations`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Bearer ghp_0000000000000000000000000000000000000000",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`createInstallation ${res.status}: ${text || res.statusText}`);
-  }
-  return res.json();
-}
-
 export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
   const verb = suspend ? "suspend" : "unsuspend";
   const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {

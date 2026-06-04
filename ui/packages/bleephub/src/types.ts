@@ -233,11 +233,3 @@ export interface GithubBranch {
   name: string;
   commit: { sha: string };
 }
-
-/** Git tree entry. */
-export interface GithubTreeEntry {
-  path: string;
-  type: "blob" | "tree";
-  sha: string;
-  size?: number;
-}
