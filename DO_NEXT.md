@@ -4,11 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main` (clean).
-- Last merged: PR #405 (Phase E+F — Azure KV data-plane CLI tests, bleephub surface tables, webhook schema fixes).
-- Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
+- Branch: `fix/aws-sim-ecs-service-ddb-gsi` (PR #418, closes #416/#417), being expanded with ECS/DynamoDB audit follow-ups.
+- Last merged: PR #415 (KMS tagging #413, EC2 API-only control-plane modeling #414, Podman container image fix).
+- ECS+DynamoDB audit follow-ups (all done, folded into PR #418, BUG-1457–1460): DDB UpdateTable (GSI lifecycle/throughput/billing/deletion-protection), Query/Scan IndexName validation + ScannedCount, Batch/Transact ops, richer ConditionExpression + ReturnValues; ECS tags on cluster/service, ListServices pagination, ListClusters/ListTaskDefinitions. (GSI queries were already working via the generic matcher — audit false-positive.)
+- Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp). #416/#417 closing via PR #418.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1398 filed · 1393 fixed · 5 open · 3 false positives.
+- BUG counters: 1460 filed · 1417 fixed · 5 open · 3 false positives.
 
 ## Recently Completed
 

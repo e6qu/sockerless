@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `main` (clean) |
-| In-flight | Nothing — no open PRs |
-| Last merged | PR #405 — Phase E+F: KV data-plane CLI tests, bleephub surface tables, hooks schema fix |
-| Also merged recently | PR #404 (Phase D error fidelity); PR #403/#402 (Phase C pagination); PR #401 (bleephub auth conformance) |
-| Open GitHub issues | #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
-| Bugs | 1398 filed · 1393 fixed · 5 open · 3 false positives |
+| Active branch | `fix/aws-sim-ecs-service-ddb-gsi` (PR #418 open + audit follow-up in progress) |
+| In-flight | PR #418 — DynamoDB GSIs (#416) + ECS Service family & capacity providers (#417), plus ECS/DynamoDB audit follow-ups (BUG-1457–1460: DDB UpdateTable / batch+transact / richer conditions; ECS tags / pagination / list ops) |
+| Last merged | PR #415 — KMS tagging (#413), EC2 control-plane modeling in API-only mode (#414), Podman container image fix |
+| Also merged recently | PR #412 (Azure KV version ordering, #407); PR #410 (bleephub quality tooling + AWS sim KMS rotation / app-autoscaling / scheduler + terraform-test orphan-leak fix) |
+| Open GitHub issues | #394 — azuread TF provider upstream blocker (waiting on hashicorp). #416/#417 closing via PR #418 |
+| Bugs | 1460 filed · 1417 fixed · 5 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Phase G — New cloud service slices |
+| Planned next | Finish ECS/DynamoDB audit follow-ups; then await new sim-fidelity issues |
 | Live infra | None up |
 
 ## Invariants

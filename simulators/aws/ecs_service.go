@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,6 +72,8 @@ func registerECSServices(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.UpdateService", handleECSUpdateService)
 	r.Register("AmazonEC2ContainerServiceV20141113.DeleteService", handleECSDeleteService)
 	r.Register("AmazonEC2ContainerServiceV20141113.PutClusterCapacityProviders", handleECSPutClusterCapacityProviders)
+	r.Register("AmazonEC2ContainerServiceV20141113.ListClusters", handleECSListClusters)
+	r.Register("AmazonEC2ContainerServiceV20141113.ListTaskDefinitions", handleECSListTaskDefinitions)
 }
 
 // ecsClusterNameFromRef extracts the cluster name from a name or ARN,
@@ -96,6 +99,23 @@ func ecsServiceNameFromRef(ref string) string {
 }
 
 func ecsServiceKey(cluster, service string) string { return cluster + "/" + service }
+
+// ecsServiceFromARN resolves a service ARN (arn:...:service/<cluster>/<name>,
+// or the older arn:...:service/<name> form) to its stored service.
+func ecsServiceFromARN(arn string) (clusterName, key string, svc ECSService, ok bool) {
+	idx := strings.Index(arn, ":service/")
+	if idx < 0 {
+		return "", "", ECSService{}, false
+	}
+	rest := arn[idx+len(":service/"):]
+	if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 {
+		clusterName, key = parts[0], ecsServiceKey(parts[0], parts[1])
+	} else {
+		clusterName, key = "default", ecsServiceKey("default", parts[0])
+	}
+	svc, ok = ecsServices.Get(key)
+	return clusterName, key, svc, ok
+}
 
 func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -224,20 +244,70 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 
 func handleECSListServices(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Cluster string `json:"cluster"`
+		Cluster    string `json:"cluster"`
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)
-	arns := make([]string, 0)
+	all := make([]string, 0)
 	for _, svc := range ecsServices.List() {
 		if ecsClusterNameFromRef(svc.ClusterArn) == clusterName && svc.Status == "ACTIVE" {
-			arns = append(arns, svc.ServiceArn)
+			all = append(all, svc.ServiceArn)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"serviceArns": arns})
+	sort.Strings(all)
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
+	out := map[string]any{"serviceArns": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+func handleECSListClusters(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	all := make([]string, 0)
+	for _, c := range ecsClusters.List() {
+		all = append(all, c.ClusterArn)
+	}
+	sort.Strings(all)
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
+	out := map[string]any{"clusterArns": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+func handleECSListTaskDefinitions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FamilyPrefix string `json:"familyPrefix"`
+		MaxResults   int    `json:"maxResults"`
+		NextToken    string `json:"nextToken"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	all := make([]string, 0)
+	for _, td := range ecsTaskDefinitions.List() {
+		if req.FamilyPrefix != "" && !strings.HasPrefix(td.Family, req.FamilyPrefix) {
+			continue
+		}
+		all = append(all, td.TaskDefinitionArn)
+	}
+	sort.Strings(all)
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
+	out := map[string]any{"taskDefinitionArns": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {

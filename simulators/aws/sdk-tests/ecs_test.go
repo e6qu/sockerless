@@ -126,6 +126,79 @@ func TestECS_ServiceLifecycle(t *testing.T) {
 	assert.Equal(t, "INACTIVE", aws.ToString(delOut.Service.Status))
 }
 
+// TestECS_TagsAndListOps covers tagging clusters and services (previously
+// errored with "tag-target type not implemented"), plus ListClusters /
+// ListTaskDefinitions / ListServices.
+func TestECS_TagsAndListOps(t *testing.T) {
+	c := ecsClient()
+	cluster := "tag-ops-cluster"
+	_, err := c.CreateCluster(ctx, &ecs.CreateClusterInput{
+		ClusterName: aws.String(cluster),
+		Tags:        []ecstypes.Tag{{Key: aws.String("env"), Value: aws.String("test")}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { c.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)}) })
+
+	// Cluster ARN.
+	descCl, err := c.DescribeClusters(ctx, &ecs.DescribeClustersInput{Clusters: []string{cluster}})
+	require.NoError(t, err)
+	clusterArn := aws.ToString(descCl.Clusters[0].ClusterArn)
+
+	// CreateCluster tags must round-trip via ListTagsForResource.
+	lt, err := c.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{ResourceArn: aws.String(clusterArn)})
+	require.NoError(t, err)
+	require.Len(t, lt.Tags, 1)
+	assert.Equal(t, "env", aws.ToString(lt.Tags[0].Key))
+
+	// TagResource on the cluster.
+	_, err = c.TagResource(ctx, &ecs.TagResourceInput{
+		ResourceArn: aws.String(clusterArn),
+		Tags:        []ecstypes.Tag{{Key: aws.String("team"), Value: aws.String("platform")}},
+	})
+	require.NoError(t, err)
+	lt, err = c.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{ResourceArn: aws.String(clusterArn)})
+	require.NoError(t, err)
+	assert.Len(t, lt.Tags, 2)
+
+	// Service with tags.
+	_, err = c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:               aws.String("tag-svc-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+	})
+	require.NoError(t, err)
+	svcOut, err := c.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster: aws.String(cluster), ServiceName: aws.String("tagged-svc"),
+		TaskDefinition: aws.String("tag-svc-task"), DesiredCount: aws.Int32(1),
+		Tags: []ecstypes.Tag{{Key: aws.String("svc"), Value: aws.String("yes")}},
+	})
+	require.NoError(t, err)
+	svcArn := aws.ToString(svcOut.Service.ServiceArn)
+	lt, err = c.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{ResourceArn: aws.String(svcArn)})
+	require.NoError(t, err)
+	require.Len(t, lt.Tags, 1)
+	assert.Equal(t, "svc", aws.ToString(lt.Tags[0].Key))
+
+	// UntagResource on the service.
+	_, err = c.UntagResource(ctx, &ecs.UntagResourceInput{ResourceArn: aws.String(svcArn), TagKeys: []string{"svc"}})
+	require.NoError(t, err)
+	lt, err = c.ListTagsForResource(ctx, &ecs.ListTagsForResourceInput{ResourceArn: aws.String(svcArn)})
+	require.NoError(t, err)
+	assert.Empty(t, lt.Tags)
+
+	// List ops.
+	lc, err := c.ListClusters(ctx, &ecs.ListClustersInput{})
+	require.NoError(t, err)
+	assert.Contains(t, lc.ClusterArns, clusterArn)
+
+	ltd, err := c.ListTaskDefinitions(ctx, &ecs.ListTaskDefinitionsInput{FamilyPrefix: aws.String("tag-svc-task")})
+	require.NoError(t, err)
+	assert.NotEmpty(t, ltd.TaskDefinitionArns)
+
+	ls, err := c.ListServices(ctx, &ecs.ListServicesInput{Cluster: aws.String(cluster)})
+	require.NoError(t, err)
+	assert.Contains(t, ls.ServiceArns, svcArn)
+}
+
 func TestECS_RegisterTaskDefinition(t *testing.T) {
 	client := ecsClient()
 	out, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
