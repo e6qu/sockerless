@@ -276,6 +276,66 @@ func TestKMS_KeyRotation(t *testing.T) {
 	assert.False(t, st.KeyRotationEnabled, "rotation must report disabled after DisableKeyRotation")
 }
 
+// TestKMS_Tagging pins the tag round-trip that terraform-provider-aws drives
+// for `aws_kms_key { tags = {...} }`: CreateKey --tags must be readable via
+// ListResourceTags (the provider polls it until tags propagate), and
+// TagResource / UntagResource must mutate them. Pre-fix, CreateKey stored tags
+// under the Secrets Manager Key/Value shape so KMS TagKey/TagValue came back
+// empty, and TagResource/UntagResource were unregistered.
+func TestKMS_Tagging(t *testing.T) {
+	c := kmsClient()
+
+	createOut, err := c.CreateKey(ctx, &kms.CreateKeyInput{
+		Description: aws.String("tagged-key"),
+		Tags: []kmstypes.Tag{
+			{TagKey: aws.String("edd:managed"), TagValue: aws.String("true")},
+			{TagKey: aws.String("env"), TagValue: aws.String("dev")},
+		},
+	})
+	require.NoError(t, err)
+	keyId := *createOut.KeyMetadata.KeyId
+
+	tagMap := func() map[string]string {
+		out, lerr := c.ListResourceTags(ctx, &kms.ListResourceTagsInput{KeyId: aws.String(keyId)})
+		require.NoError(t, lerr)
+		m := map[string]string{}
+		for _, tg := range out.Tags {
+			m[aws.ToString(tg.TagKey)] = aws.ToString(tg.TagValue)
+		}
+		return m
+	}
+
+	// CreateKey --tags must round-trip (the bug: came back as "").
+	got := tagMap()
+	assert.Equal(t, "true", got["edd:managed"], "CreateKey tags must round-trip through ListResourceTags")
+	assert.Equal(t, "dev", got["env"])
+
+	// TagResource adds/overwrites.
+	_, err = c.TagResource(ctx, &kms.TagResourceInput{
+		KeyId: aws.String(keyId),
+		Tags: []kmstypes.Tag{
+			{TagKey: aws.String("team"), TagValue: aws.String("platform")},
+			{TagKey: aws.String("env"), TagValue: aws.String("prod")}, // overwrite
+		},
+	})
+	require.NoError(t, err)
+	got = tagMap()
+	assert.Equal(t, "platform", got["team"])
+	assert.Equal(t, "prod", got["env"], "TagResource must overwrite an existing key")
+	assert.Equal(t, "true", got["edd:managed"], "TagResource must preserve untouched tags")
+
+	// UntagResource removes by key.
+	_, err = c.UntagResource(ctx, &kms.UntagResourceInput{
+		KeyId:   aws.String(keyId),
+		TagKeys: []string{"edd:managed"},
+	})
+	require.NoError(t, err)
+	got = tagMap()
+	_, present := got["edd:managed"]
+	assert.False(t, present, "UntagResource must remove the named tag")
+	assert.Equal(t, "platform", got["team"], "UntagResource must leave other tags intact")
+}
+
 func TestKMS_DescribeKey_NotFound_ErrorClassification(t *testing.T) {
 	client := kmsClient()
 	_, err := client.DescribeKey(ctx, &kms.DescribeKeyInput{

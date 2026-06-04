@@ -33,3 +33,11 @@ mkdir -p "$cache_dir"
 
 cd "$repo_root/simulators/realexec"
 sudo env "PATH=$PATH" "GOCACHE=$cache_dir" "HOME=${HOME:-/root}" GOWORK=off go test -tags realexec_host -v -count=1 ./...
+
+# AWS sim NAT gateway data plane: exercises the sim's CreateNatGateway /
+# CreateRoute real-fabric wiring (real namespace NIC + nftables SNAT), proving
+# the gateway is fully implemented end-to-end on a real-execution host, not
+# just modeled at the API.
+echo "=== aws sim: real NAT gateway data-plane wiring ==="
+cd "$repo_root/simulators/aws"
+sudo env "PATH=$PATH" "GOCACHE=$cache_dir" "HOME=${HOME:-/root}" GOWORK=off go test -tags 'realexec_host noui' -run TestEC2RealNATGatewayDataPlane -v -count=1 .

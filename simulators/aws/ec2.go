@@ -955,14 +955,18 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 		}},
 		CreateTime: time.Now().UTC().Format(time.RFC3339),
 	}
-	if !ec2RequireNetworkHost(w) {
-		return
-	}
-	if err := ec2CreateRealNATGateway(r.Context(), natgw); err != nil {
-		ec2ErrorXML(w, "NatGatewayLimitExceeded", fmt.Sprintf("failed to create real NAT gateway fabric: %v", err), http.StatusServiceUnavailable)
-		return
-	}
+	// A NAT gateway is a pure control-plane object from the API's perspective,
+	// so it is always modeled (State:"available", describable) — exactly like
+	// handleCreateVpc. Real NAT fabric is programmed opportunistically, only
+	// when the host actually has the network capabilities; its absence must not
+	// fail the API call (IaC/control-plane testing in SIM_RUNTIME=process runs
+	// on hosts without CAP_NET_ADMIN/nft). See issue #414.
 	ec2NatGateways.Put(id, natgw)
+	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
+		if err2 := ec2CreateRealNATGateway(r.Context(), natgw); err2 != nil {
+			fmt.Fprintf(os.Stderr, "sim: real NAT gateway %s network fabric unavailable: %v\n", id, err2)
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateNatGatewayResponse %s>
@@ -1172,12 +1176,13 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	gwId := r.FormValue("GatewayId")
 	natId := r.FormValue("NatGatewayId")
 	if natId != "" {
-		if !ec2RequireNetworkHost(w) {
-			return
-		}
-		if err := ec2ConfigureRealNATRoute(r.Context(), rtId, destCidr, natId); err != nil {
-			ec2ErrorXML(w, "RouteLimitExceeded", fmt.Sprintf("failed to program real NAT route: %v", err), http.StatusServiceUnavailable)
-			return
+		// The route is always modeled below; programming the real NAT route is
+		// opportunistic (only when the host has network capabilities) and must
+		// not fail the API call. Mirrors handleCreateNatGateway. See issue #414.
+		if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
+			if err2 := ec2ConfigureRealNATRoute(r.Context(), rtId, destCidr, natId); err2 != nil {
+				fmt.Fprintf(os.Stderr, "sim: real NAT route to %s unavailable: %v\n", natId, err2)
+			}
 		}
 	}
 
@@ -1772,9 +1777,11 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "InvalidSubnetID.NotFound", http.StatusBadRequest, "The subnet ID %q does not exist", subnetID)
 		return
 	}
-	if !ec2RequireVMHost(w) {
-		return
-	}
+	// The instance is always modeled at the control plane (reaches "running",
+	// describable) — like VPC/subnet/NAT. A real Firecracker VM is booted
+	// opportunistically in ec2TransitionInstanceToRunning only when the host
+	// has VM capabilities; their absence must not fail RunInstances, so
+	// IaC/control-plane testing works in SIM_RUNTIME=process. See issue #414.
 	reservationID := ec2ID("r")
 	sgIDs := runInstancesSecurityGroups(r)
 	if len(sgIDs) == 0 {
@@ -1953,14 +1960,21 @@ func ec2TransitionInstanceToRunning(instanceID string) {
 	if !ok {
 		return
 	}
-	if err := ec2StartRealVM(context.Background(), inst); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
-		ec2Instances.Update(instanceID, func(inst *EC2Instance) {
-			if inst.State == "pending" {
-				inst.State = "stopped"
-			}
-		})
-		return
+	// On a real-execution host, boot a real Firecracker VM; a boot failure
+	// there is a genuine error, so the instance settles to "stopped". On an
+	// API-only host (no VM capabilities) the instance is modeled as "running"
+	// at the control plane — the same modeling tier VPC/subnet/NAT use. See
+	// issue #414.
+	if ec2RealVMHostAvailable() {
+		if err := ec2StartRealVM(context.Background(), inst); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
+			ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+				if inst.State == "pending" {
+					inst.State = "stopped"
+				}
+			})
+			return
+		}
 	}
 	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
 		if inst.State == "pending" {
@@ -1984,10 +1998,15 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 	} else {
 		instances = ec2Instances.List()
 	}
-	for i := range instances {
-		if instances[i].State == "running" && !ec2RealVMAlive(instances[i].InstanceId) {
-			instances[i].State = "stopped"
-			ec2Instances.Put(instances[i].InstanceId, instances[i])
+	// Reconcile reported state against real VM liveness only on a real-execution
+	// host. On an API-only host there is no real VM behind a modeled "running"
+	// instance, so the stored control-plane state is authoritative (issue #414).
+	if ec2RealVMHostAvailable() {
+		for i := range instances {
+			if instances[i].State == "running" && !ec2RealVMAlive(instances[i].InstanceId) {
+				instances[i].State = "stopped"
+				ec2Instances.Put(instances[i].InstanceId, instances[i])
+			}
 		}
 	}
 	filters := ec2Filters(r)
@@ -2119,17 +2138,21 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 			return
 		}
 		prev := inst.State
-		if next == "running" {
-			if err := ec2StartRealVM(r.Context(), inst); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to start real EC2 instance %s: %v\n", id, err)
-				ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to start real EC2 instance: %v", err), http.StatusServiceUnavailable)
-				return
+		// Real VM start/stop only on a real-execution host; on an API-only host
+		// the state change is purely modeled (issue #414).
+		if ec2RealVMHostAvailable() {
+			if next == "running" {
+				if err := ec2StartRealVM(r.Context(), inst); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to start real EC2 instance %s: %v\n", id, err)
+					ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to start real EC2 instance: %v", err), http.StatusServiceUnavailable)
+					return
+				}
 			}
-		}
-		if next == "stopped" || next == "terminated" {
-			if err := ec2StopRealVM(r.Context(), id); err != nil {
-				ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to stop real EC2 instance: %v", err), http.StatusServiceUnavailable)
-				return
+			if next == "stopped" || next == "terminated" {
+				if err := ec2StopRealVM(r.Context(), id); err != nil {
+					ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to stop real EC2 instance: %v", err), http.StatusServiceUnavailable)
+					return
+				}
 			}
 		}
 		inst.State = next
@@ -2142,9 +2165,11 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 		}
 		if deleteENI && inst.NetworkInterfaceId != "" {
 			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
-			if err := ec2DeleteRealNIC(r.Context(), inst.NetworkInterfaceId); err != nil {
-				ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real EC2 network interface: %v", err), http.StatusServiceUnavailable)
-				return
+			if ec2RealNetHostAvailable() {
+				if err := ec2DeleteRealNIC(r.Context(), inst.NetworkInterfaceId); err != nil {
+					ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real EC2 network interface: %v", err), http.StatusServiceUnavailable)
+					return
+				}
 			}
 			ec2DeleteOnTerminationVolumes(id)
 		}
@@ -2726,9 +2751,14 @@ func handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not prepare volume block image: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := ec2AttachRealVolume(r.Context(), instanceID, &vol); err != nil {
-		ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to attach real EBS volume: %v", err), http.StatusServiceUnavailable)
-		return
+	// Real block-device attach only on a real-execution host (the volume binds
+	// to the instance's Firecracker VM); modeled at the control plane otherwise
+	// (issue #414).
+	if ec2RealVMHostAvailable() {
+		if err := ec2AttachRealVolume(r.Context(), instanceID, &vol); err != nil {
+			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to attach real EBS volume: %v", err), http.StatusServiceUnavailable)
+			return
+		}
 	}
 	att := EC2VolumeAttachment{
 		VolumeId:   volID,
@@ -2755,9 +2785,11 @@ func handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att := vol.Attachments[0]
-	if err := ec2DetachRealVolume(r.Context(), att.InstanceId, volID); err != nil {
-		ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to detach real EBS volume: %v", err), http.StatusServiceUnavailable)
-		return
+	if ec2RealVMHostAvailable() {
+		if err := ec2DetachRealVolume(r.Context(), att.InstanceId, volID); err != nil {
+			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to detach real EBS volume: %v", err), http.StatusServiceUnavailable)
+			return
+		}
 	}
 	att.State = "detached"
 	vol.Attachments = nil
@@ -2811,7 +2843,7 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 	if v := r.FormValue("VolumeType"); v != "" {
 		vol.VolumeType = v
 	}
-	if len(vol.Attachments) > 0 {
+	if len(vol.Attachments) > 0 && ec2RealVMHostAvailable() {
 		if _, err := ebsEnsureVolumeBlockImage(&vol); err != nil {
 			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not resize volume block image: %v", err), http.StatusInternalServerError)
 			return

@@ -281,6 +281,15 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		_ = reader.Close()
 	}
 
+	// Resolve the image to its ID for ContainerCreate. Podman's docker-compat
+	// API resolves a short name ("name:tag") on inspect/pull but not on create:
+	// a locally-built image inspects fine yet create reports "no such image".
+	// The image ID is unambiguous on both Docker and Podman, so create by ID.
+	imageRef := cfg.Image
+	if inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image); err == nil && inspect.ID != "" {
+		imageRef = inspect.ID
+	}
+
 	// Build container config
 	var env []string
 	for k, v := range cfg.Env {
@@ -295,7 +304,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	containerCfg := &container.Config{
-		Image:       cfg.Image,
+		Image:       imageRef,
 		Env:         env,
 		Labels:      labels,
 		Tty:         cfg.Tty,

@@ -338,12 +338,17 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 		if err != nil {
 			return err
 		}
-		if err := ec2StartRealVM(context.Background(), inst); err != nil {
-			_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
-			ec2Instances.Delete(inst.InstanceId)
-			ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
-			ec2DeleteOnTerminationVolumes(inst.InstanceId)
-			return fmt.Errorf("failed to launch EC2 instance %s for Auto Scaling group %s: %w", inst.InstanceId, asg.Name, err)
+		// Boot a real Firecracker VM only on a real-execution host; on an
+		// API-only host the launched instance is modeled as "running" at the
+		// control plane, like a direct RunInstances (issue #414).
+		if ec2RealVMHostAvailable() {
+			if err := ec2StartRealVM(context.Background(), inst); err != nil {
+				_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
+				ec2Instances.Delete(inst.InstanceId)
+				ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+				ec2DeleteOnTerminationVolumes(inst.InstanceId)
+				return fmt.Errorf("failed to launch EC2 instance %s for Auto Scaling group %s: %w", inst.InstanceId, asg.Name, err)
+			}
 		}
 		inst.State = "running"
 		ec2Instances.Put(inst.InstanceId, inst)

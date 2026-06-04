@@ -28,7 +28,7 @@ import (
 //     DescribeTimeToLive, UpdateTimeToLive,
 //     ListTagsOfResource, TagResource, UntagResource
 //   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus,
-//     EnableKeyRotation
+//     EnableKeyRotation, TagResource, UntagResource
 //   - Application Auto Scaling: RegisterScalableTarget, DescribeScalableTargets,
 //     PutScalingPolicy, DescribeScalingPolicies, DeleteScalingPolicy,
 //     DeregisterScalableTarget
@@ -244,6 +244,9 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.Equal(t, "true", outputs.must(t, "kms_key_rotation_enabled"),
 		"enable_key_rotation must round-trip through EnableKeyRotation + GetKeyRotationStatus")
+
+	require.Equal(t, "terraform", outputs.must(t, "kms_key_tag_env"),
+		"KMS key tags must round-trip through TagResource + ListResourceTags (else the provider hangs)")
 
 	aasResourceID := outputs.must(t, "appautoscaling_target_resource_id")
 	require.Contains(t, aasResourceID, "service/tf-test-cluster/",

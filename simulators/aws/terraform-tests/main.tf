@@ -1083,6 +1083,13 @@ resource "aws_kms_key" "tf_kms" {
   description             = "tf-test runner KMS key"
   deletion_window_in_days = 7
   enable_key_rotation     = true
+
+  # Tags drive TagResource + ListResourceTags; the provider polls
+  # ListResourceTags until they propagate, so broken KMS tagging hangs apply.
+  tags = {
+    env        = "terraform"
+    managed-by = "sockerless"
+  }
 }
 
 resource "aws_kms_alias" "tf_kms_alias" {
@@ -1248,6 +1255,10 @@ output "kms_key_rotation_enabled" {
   # tostring so the test's string-typed output reader (outputs.must) can read it;
   # enable_key_rotation is a bool attribute.
   value = tostring(aws_kms_key.tf_kms.enable_key_rotation)
+}
+output "kms_key_tag_env" {
+  # Reads back through ListResourceTags; empty/missing means KMS tagging is broken.
+  value = aws_kms_key.tf_kms.tags["env"]
 }
 output "kms_alias_arn" {
   value = aws_kms_alias.tf_kms_alias.arn
