@@ -1245,7 +1245,9 @@ output "kms_key_arn" {
   value = aws_kms_key.tf_kms.arn
 }
 output "kms_key_rotation_enabled" {
-  value = aws_kms_key.tf_kms.enable_key_rotation
+  # tostring so the test's string-typed output reader (outputs.must) can read it;
+  # enable_key_rotation is a bool attribute.
+  value = tostring(aws_kms_key.tf_kms.enable_key_rotation)
 }
 output "kms_alias_arn" {
   value = aws_kms_alias.tf_kms_alias.arn
