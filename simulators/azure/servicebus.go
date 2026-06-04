@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -437,16 +438,20 @@ func handleSBDeleteQueue(w http.ResponseWriter, r *http.Request) {
 
 func handleSBListQueues(w http.ResponseWriter, r *http.Request) {
 	prefix := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/queues/"
-	var out []SBQueue
-	for _, q := range sbQueues.List() {
+	all := sbQueues.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	filtered := make([]SBQueue, 0, len(all))
+	for _, q := range all {
 		if strings.HasPrefix(q.ID, prefix) {
-			out = append(out, q)
+			filtered = append(filtered, q)
 		}
 	}
-	if out == nil {
-		out = []SBQueue{}
+	page, next := armPage(r, filtered)
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleSBCreateTopic(w http.ResponseWriter, r *http.Request) {

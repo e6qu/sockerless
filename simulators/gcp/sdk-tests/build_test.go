@@ -283,3 +283,60 @@ func TestCloudBuild_TriggerCRUD(t *testing.T) {
 	_, err = svc.Projects.Triggers.Get(project, created.Id).Do()
 	require.Error(t, err)
 }
+
+func TestCloudBuild_ListTriggers_Pagination(t *testing.T) {
+	const project = "test-project"
+	for _, name := range []string{"pag-trig-a", "pag-trig-b", "pag-trig-c"} {
+		body, _ := json.Marshal(map[string]any{
+			"name": name,
+			"github": map[string]any{
+				"owner": "owner",
+				"name":  "repo",
+				"push":  map[string]any{"branch": "main"},
+			},
+		})
+		req, _ := http.NewRequest("POST",
+			fmt.Sprintf("%s/v1/projects/%s/locations/global/triggers", baseURL, project),
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		n := name
+		t.Cleanup(func() {
+			req, _ := http.NewRequest("DELETE",
+				fmt.Sprintf("%s/v1/projects/%s/locations/global/triggers/%s", baseURL, project, n), nil)
+			http.DefaultClient.Do(req)
+		})
+	}
+
+	seen := map[string]bool{}
+	var pageToken string
+	for {
+		u := fmt.Sprintf("%s/v1/projects/%s/locations/global/triggers?pageSize=1", baseURL, project)
+		if pageToken != "" {
+			u += "&pageToken=" + pageToken
+		}
+		req, _ := http.NewRequest("GET", u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		var body struct {
+			Triggers      []map[string]any `json:"triggers"`
+			NextPageToken string           `json:"nextPageToken"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		resp.Body.Close()
+		for _, trig := range body.Triggers {
+			if n, ok := trig["name"].(string); ok {
+				seen[n] = true
+			}
+		}
+		pageToken = body.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	for _, n := range []string{"pag-trig-a", "pag-trig-b", "pag-trig-c"} {
+		assert.True(t, seen[n], "trigger %s should appear via pagination", n)
+	}
+}
