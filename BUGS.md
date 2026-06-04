@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1393 filed - 1385 fixed - 5 open - 3 false positives.**
+**1395 filed - 1387 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -243,6 +243,8 @@ Earlier recent phases closed BUG-1242, BUG-1243, BUG-1244, BUG-1245 / issue #298
 - BUG-1391: New `simulators/azure/pagination.go` providing `kvPage`, `kvNextLink`, `armPage`, `armNextLink`, `acrCatalogPage` helpers for consistent Azure pagination.
 - BUG-1392: GCP paginateList was already in shared/pagination.go but not wired to GCS/Compute/CloudBuild/Logging handlers (see BUG-1367 through BUG-1377).
 - BUG-1393: New `simulators/gcp/shared/pagination.go` sort helpers wired to all previously unpaged GCP list handlers.
+- BUG-1394: `EC2ErrorXML` in all three shared/errors.go files used `fmt.Fprintf` for XML body construction, bypassing XML escaping. User-controlled strings in error messages could produce malformed XML. Fixed: rewritten to use `xml.NewEncoder` with a typed struct, identical to S3ErrorXML.
+- BUG-1395: GCP `GCPError` response omitted the `"details"` array that real GCP REST APIs always include. The Google API Go client's `*googleapi.Error` struct has a `Details` field; without `"details": []` the field is always nil, making the wire shape diverge. Fixed: added `"details": []any{}` to all GCP error responses across all three shared/errors.go copies.
 
 Older closed bugs are intentionally not repeated here. Use PR descriptions and `git log` for exact fix details.
 

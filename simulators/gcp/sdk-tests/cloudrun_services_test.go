@@ -154,3 +154,31 @@ func doKnative(t *testing.T, method, path, body string) string {
 	require.Less(t, resp.StatusCode, 400, "%s %s failed: %d %s", method, path, resp.StatusCode, string(data))
 	return string(data)
 }
+
+func TestCloudRun_GetService_NotFound_ErrorClassification(t *testing.T) {
+	const project = "test-project"
+	const region = "us-central1"
+	resp, err := http.Get(baseURL + "/v2/projects/" + project + "/locations/" + region + "/services/nonexistent-service")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected HTTP 404 for missing Cloud Run service, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    int    `json:"code"`
+			Status  string `json:"status"`
+			Details []any  `json:"details"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	if body.Error.Code != 404 {
+		t.Errorf("error.code = %d, want 404", body.Error.Code)
+	}
+	if body.Error.Status == "" {
+		t.Errorf("error.status must be present (e.g. NOT_FOUND), got empty")
+	}
+	if body.Error.Details == nil {
+		t.Errorf("error.details must be present (even if empty)")
+	}
+}

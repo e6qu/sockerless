@@ -2,12 +2,14 @@ package aws_sdk_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"slices"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -207,4 +209,32 @@ func TestS3_DeleteObject(t *testing.T) {
 		Key:    aws.String("to-delete.txt"),
 	})
 	require.NoError(t, err)
+}
+
+func TestS3_GetObject_NoSuchKey_ErrorClassification(t *testing.T) {
+	client := s3Client()
+	bucket := "error-class-bucket"
+	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	t.Cleanup(func() { client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)}) })
+
+	_, err = client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String("nonexistent-key"),
+	})
+	require.Error(t, err)
+	var noSuchKey *s3types.NoSuchKey
+	assert.True(t, errors.As(err, &noSuchKey),
+		"S3 NoSuchKey must be classified by SDK errors.As; got %T: %v", err, err)
+}
+
+func TestS3_HeadBucket_NoSuchBucket_ErrorClassification(t *testing.T) {
+	client := s3Client()
+	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String("totally-nonexistent-bucket-xyz"),
+	})
+	require.Error(t, err)
+	var notFound *s3types.NotFound
+	assert.True(t, errors.As(err, &notFound),
+		"S3 NotFound (HeadBucket) must be classified by SDK errors.As; got %T: %v", err, err)
 }

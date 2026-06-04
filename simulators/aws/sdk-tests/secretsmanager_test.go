@@ -1,6 +1,7 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -224,4 +225,15 @@ func TestSM_ListSecrets_Pagination(t *testing.T) {
 	for _, n := range names {
 		assert.True(t, seen[n], "secret %s should appear via pagination", n)
 	}
+}
+
+func TestSM_GetSecret_NotFound_ErrorClassification(t *testing.T) {
+	client := smClient()
+	_, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String("nonexistent-secret"),
+	})
+	require.Error(t, err)
+	var notFound *types.ResourceNotFoundException
+	assert.True(t, errors.As(err, &notFound),
+		"SecretsManager ResourceNotFoundException must be classified by SDK errors.As; got %T: %v", err, err)
 }

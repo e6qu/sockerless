@@ -3,6 +3,7 @@ package aws_sdk_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -495,4 +496,15 @@ func TestLambda_ListFunctions_Pagination(t *testing.T) {
 	for _, n := range names {
 		assert.True(t, seen[n], "function %s should appear via pagination", n)
 	}
+}
+
+func TestLambda_GetFunction_NotFound_ErrorClassification(t *testing.T) {
+	client := lambdaClient()
+	_, err := client.GetFunction(ctx, &lambda.GetFunctionInput{
+		FunctionName: aws.String("nonexistent-function"),
+	})
+	require.Error(t, err)
+	var notFound *lambdatypes.ResourceNotFoundException
+	assert.True(t, errors.As(err, &notFound),
+		"Lambda ResourceNotFoundException must be classified by SDK errors.As; got %T: %v", err, err)
 }

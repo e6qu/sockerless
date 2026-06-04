@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -569,4 +570,32 @@ func TestKV_ListKeys_Pagination(t *testing.T) {
 		_, raw = followKVNextLink(t, page.NextLink, host)
 	}
 	assert.Equal(t, 3, len(seen), "all 3 keys should appear via pagination")
+}
+
+func TestKV_GetSecret_NotFound_ErrorClassification(t *testing.T) {
+	rg := "kv-err-rg"
+	vault := "kv-err-vault"
+	createKVViaARM(t, rg, vault)
+
+	vaultURL := kvVaultURL(vault)
+	cred := &fakeCredential{}
+	client, err := azsecrets.NewClient(vaultURL, cred, &azsecrets.ClientOptions{
+		ClientOptions:                        kvClientOptions(),
+		DisableChallengeResourceVerification: true,
+	})
+	require.NoError(t, err)
+
+	_, err = client.GetSecret(ctx, "nonexistent-secret", "", nil)
+	require.Error(t, err)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) {
+		t.Fatalf("expected *azcore.ResponseError; got %T: %v", err, err)
+	}
+	if respErr.StatusCode != 404 {
+		t.Errorf("expected HTTP 404, got %d", respErr.StatusCode)
+	}
+	if respErr.ErrorCode == "" {
+		t.Errorf("ErrorCode must be set (e.g. SecretNotFound), got empty")
+	}
 }
