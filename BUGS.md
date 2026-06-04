@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1398 filed - 1390 fixed - 5 open - 3 false positives.**
+**1401 filed - 1393 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1396~~ | P1 | bleephub webhooks | schema gap | Fixed: `hookToJSON` now includes `url`, `test_url`, `ping_url`, `deliveries_url`, `last_response`. API URLs derived from `r.Host`. |
 | ~~1397~~ | P1 | bleephub webhooks | schema gap | Fixed: `deliveryToJSON` now includes `status`, `url` (target), `installation_id`, `repository_id`; `deliveryFullJSON` no longer double-sets the fields. |
 | ~~1398~~ | P1 | bleephub webhooks | schema gap | Fixed: `WebhookDelivery.TargetURL` field added; set in `doDeliverAttempt` from `hook.URL`. |
+| ~~1399~~ | P1 | aws-glue simulator | wrong X-Amz-Target prefix | Fixed: registered `AmazonWebServiceGlue.<Op>` but SDK sends `AWSGlue.<Op>`; changed all registrations to `AWSGlue.*`. |
+| ~~1400~~ | P1 | aws-batch simulator | wrong HTTP routing | Fixed: implemented as REST paths (`POST /v1/computeenvironments`) but SDK sends operation-specific POST paths (`POST /v1/createcomputeenvironment`); rewrote all route registrations. |
+| ~~1401~~ | P2 | aws-codebuild SDK test | TagResource not in SDK client | Fixed: `codebuild.Client` in SDK v2 does not expose `TagResource`/`ListTagsForResource`/`UntagResource` as separate methods; SDK test now verifies tags via `BatchGetProjects` instead. |
+
 ## Recently Closed
 
 This phase closed BUG-1338 through BUG-1344 and BUG-1346/1347 (coverage audit):

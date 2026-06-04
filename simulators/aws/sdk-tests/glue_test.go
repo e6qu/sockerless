@@ -1,0 +1,199 @@
+package aws_sdk_test
+
+import (
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
+	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func glueClient() *glue.Client {
+	return glue.NewFromConfig(sdkConfig(), func(o *glue.Options) {
+		o.BaseEndpoint = aws.String(baseURL)
+	})
+}
+
+func TestGlue_DatabaseCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{
+			Name:        aws.String("glue-sdk-db"),
+			Description: aws.String("sdk test database"),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-db")})
+	})
+
+	get, err := c.GetDatabase(ctx, &glue.GetDatabaseInput{Name: aws.String("glue-sdk-db")})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-db", aws.ToString(get.Database.Name))
+
+	list, err := c.GetDatabases(ctx, &glue.GetDatabasesInput{})
+	require.NoError(t, err)
+	found := false
+	for _, db := range list.DatabaseList {
+		if aws.ToString(db.Name) == "glue-sdk-db" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_TableCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{
+			Name: aws.String("glue-sdk-tbl-db"),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &glue.DeleteTableInput{
+			DatabaseName: aws.String("glue-sdk-tbl-db"),
+			Name:         aws.String("glue-sdk-table"),
+		})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-tbl-db")})
+	})
+
+	_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+		DatabaseName: aws.String("glue-sdk-tbl-db"),
+		TableInput: &gluetypes.TableInput{
+			Name: aws.String("glue-sdk-table"),
+			StorageDescriptor: &gluetypes.StorageDescriptor{
+				Location:     aws.String("s3://bucket/prefix/"),
+				InputFormat:  aws.String("org.apache.hadoop.mapred.TextInputFormat"),
+				OutputFormat: aws.String("org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	get, err := c.GetTable(ctx, &glue.GetTableInput{
+		DatabaseName: aws.String("glue-sdk-tbl-db"),
+		Name:         aws.String("glue-sdk-table"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-table", aws.ToString(get.Table.Name))
+	assert.Equal(t, "glue-sdk-tbl-db", aws.ToString(get.Table.DatabaseName))
+
+	tables, err := c.GetTables(ctx, &glue.GetTablesInput{
+		DatabaseName: aws.String("glue-sdk-tbl-db"),
+	})
+	require.NoError(t, err)
+	require.Len(t, tables.TableList, 1)
+	assert.Equal(t, "glue-sdk-table", aws.ToString(tables.TableList[0].Name))
+}
+
+func TestGlue_JobCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	workers := 2
+	create, err := c.CreateJob(ctx, &glue.CreateJobInput{
+		Name:            aws.String("glue-sdk-job"),
+		Description:     aws.String("sdk test job"),
+		Role:            aws.String("arn:aws:iam::123456789012:role/glue-role"),
+		GlueVersion:     aws.String("4.0"),
+		WorkerType:      gluetypes.WorkerTypeG1x,
+		NumberOfWorkers: aws.Int32(int32(workers)),
+		Command: &gluetypes.JobCommand{
+			Name:           aws.String("glueetl"),
+			ScriptLocation: aws.String("s3://bucket/script.py"),
+		},
+		DefaultArguments: map[string]string{
+			"--job-language": "python",
+		},
+		Tags: map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-job", aws.ToString(create.Name))
+	t.Cleanup(func() {
+		_, _ = c.DeleteJob(ctx, &glue.DeleteJobInput{JobName: aws.String("glue-sdk-job")})
+	})
+
+	get, err := c.GetJob(ctx, &glue.GetJobInput{JobName: aws.String("glue-sdk-job")})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-job", aws.ToString(get.Job.Name))
+	assert.Equal(t, "sdk test job", aws.ToString(get.Job.Description))
+
+	list, err := c.GetJobs(ctx, &glue.GetJobsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, j := range list.Jobs {
+		if aws.ToString(j.Name) == "glue-sdk-job" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	runResp, err := c.StartJobRun(ctx, &glue.StartJobRunInput{
+		JobName: aws.String("glue-sdk-job"),
+		Arguments: map[string]string{
+			"--input": "s3://bucket/data/",
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(runResp.JobRunId))
+
+	run, err := c.GetJobRun(ctx, &glue.GetJobRunInput{
+		JobName: aws.String("glue-sdk-job"),
+		RunId:   runResp.JobRunId,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(runResp.JobRunId), aws.ToString(run.JobRun.Id))
+	assert.Equal(t, gluetypes.JobRunStateSucceeded, run.JobRun.JobRunState)
+
+	runs, err := c.GetJobRuns(ctx, &glue.GetJobRunsInput{
+		JobName: aws.String("glue-sdk-job"),
+	})
+	require.NoError(t, err)
+	require.Len(t, runs.JobRuns, 1)
+}
+
+func TestGlue_Tags_SDK(t *testing.T) {
+	c := glueClient()
+
+	create, err := c.CreateJob(ctx, &glue.CreateJobInput{
+		Name: aws.String("glue-sdk-tag-job"),
+		Role: aws.String("arn:aws:iam::123456789012:role/glue-role"),
+		Command: &gluetypes.JobCommand{
+			Name:           aws.String("glueetl"),
+			ScriptLocation: aws.String("s3://bucket/script.py"),
+		},
+	})
+	require.NoError(t, err)
+	_ = create
+	t.Cleanup(func() {
+		_, _ = c.DeleteJob(ctx, &glue.DeleteJobInput{JobName: aws.String("glue-sdk-tag-job")})
+	})
+
+	jobARN := "arn:aws:glue:us-east-1:123456789012:job/glue-sdk-tag-job"
+
+	_, err = c.TagResource(ctx, &glue.TagResourceInput{
+		ResourceArn: aws.String(jobARN),
+		TagsToAdd:   map[string]string{"tier": "gold"},
+	})
+	require.NoError(t, err)
+
+	tags, err := c.GetTags(ctx, &glue.GetTagsInput{
+		ResourceArn: aws.String(jobARN),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "gold", tags.Tags["tier"])
+
+	_, err = c.UntagResource(ctx, &glue.UntagResourceInput{
+		ResourceArn:  aws.String(jobARN),
+		TagsToRemove: []string{"tier"},
+	})
+	require.NoError(t, err)
+
+	tags, err = c.GetTags(ctx, &glue.GetTagsInput{ResourceArn: aws.String(jobARN)})
+	require.NoError(t, err)
+	assert.Empty(t, tags.Tags["tier"])
+}

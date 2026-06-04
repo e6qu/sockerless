@@ -5,19 +5,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 ## Current State
 
 - Branch: `main` (clean).
-- Last merged: PR #395 (BUG-1104 coverage audit — surface tables and matrix backfill).
+- Last merged: PR #405 (Phase E+F — Azure KV data-plane CLI tests, bleephub surface tables, webhook schema fixes).
 - Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1347 filed · 1344 fixed · 5 open · 3 false positives.
+- BUG counters: 1398 filed · 1393 fixed · 5 open · 3 false positives.
 
 ## Recently Completed
 
 | PR | Description |
 |----|-------------|
-| #392 | GCP SA keys, instance templates, Cloud Build/Logging/IAM SDK+CLI tests |
-| #393 | bleephub POST /admin/organizations; Azure Entra Graph provisioning + ROPC |
-| #394 | (issue) azuread Terraform provider upstream blocker documented |
-| #395 | BUG-1104 audit: surface tables and matrix backfill for PRs #388/392/393 |
+| #401 | bleephub auth conformance: session/CSRF OAuth flow + site-admin org endpoint |
+| #402 | Phase C (AWS): pagination on 12 list endpoints |
+| #403 | Phase C (GCP/Azure): pagination on GCP/Azure list endpoints |
+| #404 | Phase D: error envelope fidelity + negative-path SDK error classification tests |
+| #405 | Phase E+F: Azure KV data-plane CLI tests; 12 bleephub surface table files; webhook schema fixes (BUG-1396–1398) |
 
 ## Deferred / Blocked
 
@@ -28,12 +29,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## What to Work On Next
 
-No queued work items. The simulator coverage is current for all implemented slices, all surface tables are up to date, and the only open issue (#394) is blocked upstream.
-
-Potential directions (discuss with user before starting):
-- New simulator slices for any cloud area not yet covered (check `specs/SIM_TEST_COVERAGE_MATRIX.md` for gaps).
-- Hardening existing surfaces (e.g., pagination shape verification for any `n/a` rows).
-- Picking up live-cloud validation for any backend (BUG-1075).
+**Phase G — New cloud service slices** (see PLAN.md for candidates). Each new slice ships with SDK + CLI + Terraform coverage per standard contract. No scope finalised yet — discuss with user before starting.
 
 ## Start Checklist (every session)
 

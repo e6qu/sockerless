@@ -18,87 +18,54 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Phase
 
-Idle on `main` after PR #396 (continuity doc update). All surface tables and the coverage
-matrix are current. No in-flight PRs.
+Phase G-AWS in progress on branch `feat/phase-g-aws-new-slices`. Step Functions, CodeBuild, Glue, and Batch implemented with full SDK + CLI + Terraform coverage.
 
-## Upcoming Phases
+## Completed Phases
 
-### Phase C — Pagination shape verification
+- **Phase C** (PRs #402, #403): Token-based pagination on AWS/GCP/Azure list endpoints.
+- **Phase D** (PR #404): Error envelope fidelity + negative-path SDK error classification tests.
+- **Phase E** (PR #405): Azure KV data-plane CLI tests via `az rest` + Host header routing.
+- **Phase F** (PR #405): 12 bleephub surface table files + coverage matrix rows.
 
-Many simulator list endpoints return all results in a single page rather than the paged
-shape the real cloud uses. This is invisible to simple tests but breaks production clients
-that page through results.
+### Phase G — New cloud service slices (one PR per cloud)
 
-Scope (one PR per cloud, or combined if small):
-- Audit all `GET .../list` handlers across `simulators/aws`, `simulators/gcp`,
-  `simulators/azure` for missing `nextPageToken` / `NextToken` / `nextLink` responses.
-- Add token-based pagination to any handler that real cloud paginating (use real default
-  page sizes from the cloud spec).
-- Add SDK/CLI tests that explicitly exhaust two+ pages (create N > page-size resources,
-  assert all are returned via paging).
-- Update `paged-shape verified` cells in `specs/SIM_SURFACE_TABLES/` from `n/a` to `✓`
-  as each handler is fixed.
+Three sequential PRs. Each new slice ships with SDK + CLI + Terraform coverage per the
+standard contract. Surface table file(s) and coverage matrix row(s) ship in the same PR.
 
-### Phase D — Error shape fidelity
+#### Phase G-AWS
 
-Simulators return meaningful HTTP status codes, but error envelopes (JSON body shape,
-field names, error codes) sometimes diverge from what the real cloud sends. SDKs that
-parse error codes (e.g., `ResourceNotFoundException`, `ResourceNotFound`,
-`RESOURCE_NOT_FOUND`) will fail to classify errors correctly.
+- **Step Functions**: state machine CRUD (`CreateStateMachine`, `DescribeStateMachine`,
+  `ListStateMachines`, `DeleteStateMachine`) + execution lifecycle (`StartExecution`,
+  `DescribeExecution`, `ListExecutions`, `StopExecution`).
+- **Batch**: job definitions (`RegisterJobDefinition`, `DescribeJobDefinitions`,
+  `DeregisterJobDefinition`), job queues (`CreateJobQueue`, `DescribeJobQueues`,
+  `DeleteJobQueue`), compute environments (`CreateComputeEnvironment`,
+  `DescribeComputeEnvironments`, `DeleteComputeEnvironment`), job submission
+  (`SubmitJob`, `DescribeJobs`, `CancelJob`).
+- **CodeBuild**: build project CRUD (`CreateProject`, `BatchGetProjects`, `ListProjects`,
+  `DeleteProject`) + start build (`StartBuild`, `BatchGetBuilds`).
+- **Glue**: database CRUD (`CreateDatabase`, `GetDatabase`, `GetDatabases`,
+  `DeleteDatabase`), table CRUD (`CreateTable`, `GetTable`, `GetTables`, `DeleteTable`),
+  job CRUD (`CreateJob`, `GetJob`, `GetJobs`, `DeleteJob`, `StartJobRun`,
+  `GetJobRun`).
 
-Scope:
-- Audit error responses across all three simulators against real cloud wire shapes.
-- Fix body shapes so error classification in official SDKs works correctly.
-- Add negative-path SDK tests that assert on parsed error types, not raw HTTP status.
+#### Phase G-GCP
 
-### Phase E — azure-kv-data-plane CLI coverage
+- **Cloud Spanner**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
+  database CRUD (`projects.instances.databases` Create/Get/List/Delete) + session
+  management (Create/Delete/List).
+- **Cloud Dataflow**: job submission (`projects.locations.jobs.create`) + status
+  (`projects.locations.jobs.get`, `projects.locations.jobs.list`).
+- **Bigtable**: instance CRUD (`projects.instances` Create/Get/List/Delete) + cluster
+  CRUD + table CRUD (`projects.instances.tables` Create/Get/List/Delete).
 
-The coverage matrix marks `azure-kv-data-plane` CLI as `not applicable`, but the `az`
-CLI does expose Key Vault data-plane operations:
-- `az keyvault secret set/show/list/delete`
-- `az keyvault key create/show/list/delete`
-- `az keyvault certificate create/show/list/delete`
+#### Phase G-Azure
 
-All three are exercised by `az keyvault` commands that point at the sim's custom endpoint.
-Add CLI tests to `simulators/azure/cli-tests/` and update the coverage matrix cell.
-
-### Phase F — Bleephub surface tables
-
-`specs/SIM_SURFACE_TABLES/` has no bleephub entries. bleephub implements a significant
-GitHub Enterprise Server REST API surface (orgs, repos, teams, members, PRs, issues,
-actions, apps, OAuth/OIDC, Projects v2, checks, deployments, releases, reactions,
-webhooks, runners, packages). This surface is exercised by tests but undocumented in the
-coverage authorities.
-
-Scope:
-- Run a HandleFunc audit across all `bleephub/gh_*.go` files.
-- Create surface table files per logical group (e.g., `bleephub-orgs.md`,
-  `bleephub-repos.md`, `bleephub-actions.md`, etc.).
-- Add corresponding rows to `specs/SIM_TEST_COVERAGE_MATRIX.md`.
-- Update `scripts/check-simulator-coverage-matrix.sh` if it needs to include bleephub
-  tables (currently it only checks `specs/SIM_SURFACE_TABLES/`).
-
-### Phase G — New cloud service slices
-
-Extend the simulators to cover high-value services not yet implemented. Exact services TBD
-based on user priorities and consumer need. Candidates (not exhaustive):
-
-**AWS:**
-- AWS Step Functions (state machine CRUD + start/stop execution)
-- AWS Batch (job definitions, job queues, compute environments, job submission)
-- AWS CodeBuild (build project CRUD + start build) — complements the CI/CD story
-- AWS Glue (database/table/job CRUD for ETL pipelines)
-
-**GCP:**
-- Cloud Spanner (instance + database CRUD, session management)
-- Cloud Dataflow (job submission + status)
-- BigTable (instance + table CRUD)
-
-**Azure:**
-- Azure Logic Apps (workflow CRUD + run trigger)
-- Azure Container Instances (ACI) — if not already covered
-
-Each new slice ships with SDK + CLI + Terraform coverage per the standard contract.
+- **Logic Apps**: workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + run trigger
+  (`POST workflows/{name}/triggers/{trigger}/run`) + run history
+  (`GET workflows/{name}/runs`).
+- **Azure Container Instances (ACI)**: container group CRUD
+  (`PUT/GET/DELETE/LIST containerGroups`) + container exec + logs.
 
 ### Phase H — azuread Terraform provider (blocked upstream, BUG-1345)
 

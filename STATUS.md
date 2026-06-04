@@ -8,12 +8,12 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 |---|---|
 | Active branch | `main` (clean) |
 | In-flight | Nothing — no open PRs |
-| Last merged | PR #395 — BUG-1104 audit: surface tables + matrix backfill for PRs #388/392/393 |
-| Also merged recently | PR #393 bleephub admin org + Azure Entra Graph/ROPC; PR #392 GCP SA keys + instance templates |
+| Last merged | PR #405 — Phase E+F: KV data-plane CLI tests, bleephub surface tables, hooks schema fix |
+| Also merged recently | PR #404 (Phase D error fidelity); PR #403/#402 (Phase C pagination); PR #401 (bleephub auth conformance) |
 | Open GitHub issues | #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
-| Bugs | 1347 filed · 1344 fixed · 5 open · 3 false positives |
+| Bugs | 1398 filed · 1393 fixed · 5 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | No queued work; discuss direction with user |
+| Planned next | Phase G — New cloud service slices |
 | Live infra | None up |
 
 ## Invariants
