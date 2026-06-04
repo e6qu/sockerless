@@ -370,7 +370,9 @@ func TestLogging_ListSinks_Pagination(t *testing.T) {
 			break
 		}
 	}
+	// Sink names are stored as full resource paths: "projects/{p}/sinks/{name}".
 	for _, n := range []string{"pag-sink-a", "pag-sink-b", "pag-sink-c"} {
-		assert.True(t, seen[n], "sink %s should appear via pagination", n)
+		full := fmt.Sprintf("projects/%s/sinks/%s", project, n)
+		assert.True(t, seen[full], "sink %s should appear via pagination", n)
 	}
 }
