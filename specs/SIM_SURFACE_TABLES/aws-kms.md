@@ -13,22 +13,24 @@ Surface registered in `simulators/aws/kms.go` (and related files grouped under t
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action TrentService.CreateKey` | ✓ `simulators/aws/kms.go:65::handleKMSCreateKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DescribeKey` | ✓ `simulators/aws/kms.go:66::handleKMSDescribeKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ListKeys` | ✓ `simulators/aws/kms.go:67::handleKMSListKeys` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ScheduleKeyDeletion` | ✓ `simulators/aws/kms.go:68::handleKMSScheduleKeyDeletion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.Encrypt` | ✓ `simulators/aws/kms.go:69::handleKMSEncrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.Decrypt` | ✓ `simulators/aws/kms.go:70::handleKMSDecrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GenerateDataKey` | ✓ `simulators/aws/kms.go:71::handleKMSGenerateDataKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.CreateAlias` | ✓ `simulators/aws/kms.go:72::handleKMSCreateAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DeleteAlias` | ✓ `simulators/aws/kms.go:73::handleKMSDeleteAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ListAliases` | ✓ `simulators/aws/kms.go:74::handleKMSListAliases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GetKeyPolicy` | ✓ `simulators/aws/kms.go:75::handleKMSGetKeyPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.PutKeyPolicy` | ✓ `simulators/aws/kms.go:76::handleKMSPutKeyPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.ListResourceTags` | ✓ `simulators/aws/kms.go:77::handleKMSListResourceTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.GetKeyRotationStatus` | ✓ `simulators/aws/kms.go:78::handleKMSGetKeyRotationStatus` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.EnableKeyRotation` | ✓ `simulators/aws/kms.go:79::handleKMSEnableKeyRotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action TrentService.DisableKeyRotation` | ✓ `simulators/aws/kms.go:80::handleKMSDisableKeyRotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.CreateKey` | ✓ `simulators/aws/kms.go:74::handleKMSCreateKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DescribeKey` | ✓ `simulators/aws/kms.go:75::handleKMSDescribeKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ListKeys` | ✓ `simulators/aws/kms.go:76::handleKMSListKeys` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ScheduleKeyDeletion` | ✓ `simulators/aws/kms.go:77::handleKMSScheduleKeyDeletion` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.Encrypt` | ✓ `simulators/aws/kms.go:78::handleKMSEncrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.Decrypt` | ✓ `simulators/aws/kms.go:79::handleKMSDecrypt` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GenerateDataKey` | ✓ `simulators/aws/kms.go:80::handleKMSGenerateDataKey` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.CreateAlias` | ✓ `simulators/aws/kms.go:81::handleKMSCreateAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DeleteAlias` | ✓ `simulators/aws/kms.go:82::handleKMSDeleteAlias` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ListAliases` | ✓ `simulators/aws/kms.go:83::handleKMSListAliases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GetKeyPolicy` | ✓ `simulators/aws/kms.go:84::handleKMSGetKeyPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.PutKeyPolicy` | ✓ `simulators/aws/kms.go:85::handleKMSPutKeyPolicy` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.ListResourceTags` | ✓ `simulators/aws/kms.go:86::handleKMSListResourceTags` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.TagResource` | ✓ `simulators/aws/kms.go:87::handleKMSTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.UntagResource` | ✓ `simulators/aws/kms.go:88::handleKMSUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.GetKeyRotationStatus` | ✓ `simulators/aws/kms.go:89::handleKMSGetKeyRotationStatus` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.EnableKeyRotation` | ✓ `simulators/aws/kms.go:90::handleKMSEnableKeyRotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action TrentService.DisableKeyRotation` | ✓ `simulators/aws/kms.go:91::handleKMSDisableKeyRotation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

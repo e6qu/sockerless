@@ -22,6 +22,15 @@ import (
 // "encryption" is a deterministic envelope (`<keyId>:<base64(plain)>`)
 // — opaque to SDK callers (treated as bytes), reversible by the sim,
 // and round-tripped exactly through the wire shape callers expect.
+// KMSTag is the KMS tag wire shape (`TagKey`/`TagValue`), distinct from the
+// Secrets Manager tag shape (`Key`/`Value`). CreateKey `--tags`, TagResource,
+// and ListResourceTags all speak this shape — reusing SMTag here silently
+// dropped tags because the JSON field names don't match.
+type KMSTag struct {
+	TagKey   string `json:"TagKey"`
+	TagValue string `json:"TagValue"`
+}
+
 type KMSKey struct {
 	KeyId        string   `json:"KeyId"`
 	Arn          string   `json:"Arn"`
@@ -32,7 +41,7 @@ type KMSKey struct {
 	Origin       string   `json:"Origin,omitempty"`
 	CreationDate float64  `json:"CreationDate,omitempty"`
 	Aliases      []string `json:"Aliases,omitempty"`
-	Tags         []SMTag  `json:"Tags,omitempty"`
+	Tags         []KMSTag `json:"Tags,omitempty"`
 	// PolicyJSON holds the JSON-encoded key policy document. Real KMS
 	// stores + returns this as a string (not a parsed object); the sim
 	// follows so GetKeyPolicy round-trips byte-identical to what
@@ -75,6 +84,8 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.GetKeyPolicy", handleKMSGetKeyPolicy)
 	r.Register("TrentService.PutKeyPolicy", handleKMSPutKeyPolicy)
 	r.Register("TrentService.ListResourceTags", handleKMSListResourceTags)
+	r.Register("TrentService.TagResource", handleKMSTagResource)
+	r.Register("TrentService.UntagResource", handleKMSUntagResource)
 	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
 	r.Register("TrentService.EnableKeyRotation", handleKMSEnableKeyRotation)
 	r.Register("TrentService.DisableKeyRotation", handleKMSDisableKeyRotation)
@@ -183,17 +194,89 @@ func handleKMSListResourceTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, _ := kmsKeys.Get(keyId)
-	tags := make([]map[string]any, 0, len(key.Tags))
-	for _, t := range key.Tags {
-		tags = append(tags, map[string]any{
-			"TagKey":   t.Key,
-			"TagValue": t.Value,
-		})
-	}
+	tags := make([]KMSTag, 0, len(key.Tags))
+	tags = append(tags, key.Tags...)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"Tags":      tags,
 		"Truncated": false,
 	})
+}
+
+// handleKMSTagResource adds or overwrites tags on a key. terraform-provider-aws
+// calls this when `aws_kms_key { tags = {...} }` changes after creation, then
+// polls ListResourceTags until the tags propagate.
+func handleKMSTagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string   `json:"KeyId"`
+		Tags  []KMSTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.Tags = mergeKMSTags(k.Tags, req.Tags)
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSUntagResource removes the named tag keys from a key.
+func handleKMSUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId   string   `json:"KeyId"`
+		TagKeys []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.KeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", req.KeyId)
+		return
+	}
+	remove := make(map[string]bool, len(req.TagKeys))
+	for _, k := range req.TagKeys {
+		remove[k] = true
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		kept := k.Tags[:0:0]
+		for _, t := range k.Tags {
+			if !remove[t.TagKey] {
+				kept = append(kept, t)
+			}
+		}
+		k.Tags = kept
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// mergeKMSTags overlays new tags onto existing ones, replacing values for
+// duplicate keys (real KMS TagResource semantics).
+func mergeKMSTags(existing, incoming []KMSTag) []KMSTag {
+	out := make([]KMSTag, 0, len(existing)+len(incoming))
+	out = append(out, existing...)
+	for _, nt := range incoming {
+		replaced := false
+		for i := range out {
+			if out[i].TagKey == nt.TagKey {
+				out[i].TagValue = nt.TagValue
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, nt)
+		}
+	}
+	return out
 }
 
 // handleKMSGetKeyRotationStatus returns whether automatic key rotation is
@@ -286,12 +369,12 @@ func handleKMSDisableKeyRotation(w http.ResponseWriter, r *http.Request) {
 
 func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Description string  `json:"Description"`
-		KeyUsage    string  `json:"KeyUsage"`
-		Origin      string  `json:"Origin"`
-		KeySpec     string  `json:"KeySpec"`
-		Policy      string  `json:"Policy"`
-		Tags        []SMTag `json:"Tags"`
+		Description string   `json:"Description"`
+		KeyUsage    string   `json:"KeyUsage"`
+		Origin      string   `json:"Origin"`
+		KeySpec     string   `json:"KeySpec"`
+		Policy      string   `json:"Policy"`
+		Tags        []KMSTag `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)

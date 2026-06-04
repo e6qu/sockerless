@@ -249,8 +249,17 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 		return "", fmt.Errorf("docker client not initialized")
 	}
 
-	if _, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image); err != nil {
+	// Resolve to the image ID for ContainerCreate: Podman's docker-compat API
+	// resolves a short name on inspect but not on create, so a locally-built
+	// "name:tag" inspects fine yet create reports "no such image". The ID is
+	// unambiguous on both Docker and Podman.
+	inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image)
+	if err != nil {
 		return "", fmt.Errorf("image %q not present locally: %w", cfg.Image, err)
+	}
+	imageRef := cfg.Image
+	if inspect.ID != "" {
+		imageRef = inspect.ID
 	}
 
 	var env []string
@@ -265,7 +274,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 
 	exposedPort := nat.Port("8080/tcp")
 	containerCfg := &container.Config{
-		Image:        cfg.Image,
+		Image:        imageRef,
 		Env:          env,
 		Labels:       labels,
 		ExposedPorts: nat.PortSet{exposedPort: struct{}{}},
@@ -397,6 +406,14 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		_ = reader.Close()
 	}
 
+	// Create by image ID — Podman's docker-compat API resolves a short name on
+	// inspect/pull but not on create (locally-built "name:tag" reports "no such
+	// image"). The ID is unambiguous on both Docker and Podman.
+	imageRef := cfg.Image
+	if inspect, _, err := cli.ImageInspectWithRaw(ctx, cfg.Image); err == nil && inspect.ID != "" {
+		imageRef = inspect.ID
+	}
+
 	// Build container config
 	var env []string
 	for k, v := range cfg.Env {
@@ -411,7 +428,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	containerCfg := &container.Config{
-		Image:       cfg.Image,
+		Image:       imageRef,
 		Env:         env,
 		Labels:      labels,
 		Tty:         cfg.Tty,

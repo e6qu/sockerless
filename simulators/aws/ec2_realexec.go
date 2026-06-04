@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,24 +28,18 @@ var (
 
 const ec2RealEBSMaxSlots = 15
 
-func ec2RequireNetworkHost(w http.ResponseWriter) bool {
-	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
-		ec2ErrorXML(w, "UnsupportedOperation",
-			fmt.Sprintf("real EC2 networking requires Linux network namespace, bridge, veth, route, and nftables host capabilities: %v", err),
-			http.StatusServiceUnavailable)
-		return false
-	}
-	return true
+// ec2RealNetHostAvailable reports whether the host can build real EC2 network
+// fabric (namespaces, bridges, veth, nftables). ec2RealVMHostAvailable reports
+// whether it can run real Firecracker VMs. When false, the sim is in the
+// API-only tier (issue #414): the corresponding operations are modeled at the
+// control plane without real execution, so IaC/control-plane testing works on
+// hosts lacking CAP_NET_ADMIN/nft/KVM.
+func ec2RealNetHostAvailable() bool {
+	return realexec.DetectNetworkCapabilities().Require() == nil
 }
 
-func ec2RequireVMHost(w http.ResponseWriter) bool {
-	if err := realexec.DetectFirecrackerCapabilities().Require(); err != nil {
-		ec2ErrorXML(w, "UnsupportedOperation",
-			fmt.Sprintf("real EC2 instances require Linux Firecracker, KVM, TAP, network namespace, bridge, route, and nftables host capabilities: %v", err),
-			http.StatusServiceUnavailable)
-		return false
-	}
-	return true
+func ec2RealVMHostAvailable() bool {
+	return realexec.DetectFirecrackerCapabilities().Require() == nil
 }
 
 func ec2RealName(prefix, id string) string {

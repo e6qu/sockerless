@@ -96,6 +96,49 @@ func TestKMSCLI_KeyRotation(t *testing.T) {
 	assert.False(t, status.KeyRotationEnabled)
 }
 
+func TestKMSCLI_Tagging(t *testing.T) {
+	createOut := runCLI(t, awsCLI("kms", "create-key",
+		"--tags", "TagKey=edd:managed,TagValue=true",
+		"--output", "json"))
+	var created struct {
+		KeyMetadata struct {
+			KeyId string `json:"KeyId"`
+		} `json:"KeyMetadata"`
+	}
+	parseJSON(t, createOut, &created)
+	keyId := created.KeyMetadata.KeyId
+	require.NotEmpty(t, keyId)
+
+	listTags := func() map[string]string {
+		out := runCLI(t, awsCLI("kms", "list-resource-tags", "--key-id", keyId, "--output", "json"))
+		var res struct {
+			Tags []struct {
+				TagKey   string `json:"TagKey"`
+				TagValue string `json:"TagValue"`
+			} `json:"Tags"`
+		}
+		parseJSON(t, out, &res)
+		m := map[string]string{}
+		for _, tg := range res.Tags {
+			m[tg.TagKey] = tg.TagValue
+		}
+		return m
+	}
+
+	// CreateKey --tags must round-trip (not come back empty).
+	assert.Equal(t, "true", listTags()["edd:managed"],
+		"create-key --tags must round-trip through list-resource-tags")
+
+	runCLI(t, awsCLI("kms", "tag-resource", "--key-id", keyId,
+		"--tags", "TagKey=team,TagValue=platform"))
+	assert.Equal(t, "platform", listTags()["team"])
+
+	runCLI(t, awsCLI("kms", "untag-resource", "--key-id", keyId,
+		"--tag-keys", "edd:managed"))
+	_, present := listTags()["edd:managed"]
+	assert.False(t, present, "untag-resource must remove the tag")
+}
+
 func TestKMSCLI_GetKeyPolicy(t *testing.T) {
 	createOut := runCLI(t, awsCLI("kms", "create-key", "--output", "json"))
 	var created struct {
