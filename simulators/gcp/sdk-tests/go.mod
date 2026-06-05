@@ -9,6 +9,7 @@ require (
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0
 	cloud.google.com/go/storage v1.62.3
+	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.283.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
@@ -63,3 +64,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/sockerless/simulator-realexec => ../../realexec

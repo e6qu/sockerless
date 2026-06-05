@@ -135,6 +135,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule", handleECRDeletePullThroughCacheRule)
 
 	registerECRLayers(r, srv)
+	registerECROCI(srv)
 }
 
 // handleECRCreatePullThroughCacheRule registers a pull-through cache

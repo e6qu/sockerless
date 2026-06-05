@@ -40,25 +40,6 @@ type DockerImage struct {
 	BuildTime  string   `json:"buildTime,omitempty"`
 }
 
-// OCI Distribution types
-
-// OCIManifest represents a stored OCI manifest.
-type OCIManifest struct {
-	ContentType string
-	Data        []byte
-}
-
-// OCIBlob represents a stored OCI blob.
-type OCIBlob struct {
-	Data        []byte
-	ContentType string
-}
-
-// OCIUpload tracks an in-progress blob upload.
-type OCIUpload struct {
-	Data []byte
-}
-
 // Package-level store for dashboard access.
 var arRepos sim.Store[Repository]
 
@@ -67,10 +48,27 @@ func registerArtifactRegistry(srv *sim.Server) {
 	arRepos = repos
 	dockerImages := sim.MakeStore[DockerImage](srv.DB(), "ar_docker_images")
 
-	// OCI Distribution stores
-	manifests := sim.MakeStore[OCIManifest](srv.DB(), "ar_manifests")
-	blobs := sim.MakeStore[OCIBlob](srv.DB(), "ar_blobs")
-	uploads := sim.MakeStore[OCIUpload](srv.DB(), "ar_uploads")
+	// OCI Distribution data plane (shared registry library). Cloud-specifics:
+	// AR serves its control-plane API under /v2/projects/ (SkipPath), registers
+	// a DockerImage row on manifest push (OnManifestPut), and hydrates docker-hub
+	// remote repos from the local Docker daemon on a pull miss (HydrateManifest).
+	dockerImagesForHooks := dockerImages
+	reg := &sim.OCIRegistry{
+		Manifests: sim.MakeStore[sim.OCIManifest](srv.DB(), "ar_manifests"),
+		Blobs:     sim.MakeStore[sim.OCIBlob](srv.DB(), "ar_blobs"),
+		Uploads:   sim.MakeStore[sim.OCIUpload](srv.DB(), "ar_uploads"),
+		SkipPath:  func(path string) bool { return strings.HasPrefix(path, "/v2/projects/") },
+		OnManifestPut: func(repo, ref, contentType string, data []byte) {
+			registerDockerImageFromManifest(dockerImagesForHooks, repo, ref, contentType, data)
+		},
+		HydrateManifest: func(reg *sim.OCIRegistry, repo, ref string) bool {
+			if err := hydrateOCIImageFromLocalDocker(reg, dockerImagesForHooks, repo, ref); err != nil {
+				fmt.Fprintf(os.Stderr, "[sim-gcp-ar] local docker cache miss for %s:%s: %v\n", repo, ref, err)
+				return false
+			}
+			return true
+		},
+	}
 
 	// Create repository
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories", func(w http.ResponseWriter, r *http.Request) {
@@ -229,127 +227,14 @@ func registerArtifactRegistry(srv *sim.Server) {
 		})
 	})
 
-	// OCI Distribution API — single catch-all handler under /v2/ that manually
-	// parses the path. OCI image names can span multiple segments (e.g.
-	// project/repo/image) and Go 1.22+ ServeMux only supports {wildcard...} as
-	// the last path element.
-	srv.Handle("/v2/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-
-		// API version check: GET /v2/
-		if path == "/v2/" && r.Method == http.MethodGet {
-			sim.WriteJSON(w, http.StatusOK, map[string]any{})
-			return
-		}
-
-		// Skip paths that are GCP API routes (Cloud Run, Cloud Functions, operations)
-		// These start with /v2/projects/
-		if strings.HasPrefix(path, "/v2/projects/") {
-			// Not an OCI route; let the default mux 404 handle it
-			http.NotFound(w, r)
-			return
-		}
-
-		// Strip /v2/ prefix
-		rest := strings.TrimPrefix(path, "/v2/")
-		if rest == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Parse OCI paths: /v2/{name}/manifests/{reference}
-		//                   v2/{name}/blobs/{digest}
-		//                   v2/{name}/blobs/uploads/
-		//                   v2/{name}/blobs/uploads/{uuid}
-		if idx := strings.Index(rest, "/manifests/"); idx >= 0 {
-			imageName := rest[:idx]
-			reference := rest[idx+len("/manifests/"):]
-			handleOCIManifest(w, r, manifests, blobs, dockerImages, imageName, reference)
-			return
-		}
-
-		if idx := strings.Index(rest, "/blobs/uploads/"); idx >= 0 {
-			imageName := rest[:idx]
-			uploadPart := rest[idx+len("/blobs/uploads/"):]
-			handleOCIBlobUpload(w, r, blobs, uploads, imageName, uploadPart)
-			return
-		}
-
-		if idx := strings.Index(rest, "/blobs/"); idx >= 0 {
-			imageName := rest[:idx]
-			digest := rest[idx+len("/blobs/"):]
-			handleOCIBlob(w, r, blobs, imageName, digest)
-			return
-		}
-
-		http.NotFound(w, r)
-	}))
+	// OCI Distribution data plane — mounted from the shared registry library.
+	reg.Register(srv)
 }
 
-func handleOCIManifest(w http.ResponseWriter, r *http.Request, manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], dockerImages sim.Store[DockerImage], imageName, reference string) {
-	key := imageName + "/manifests/" + reference
-
-	switch r.Method {
-	case http.MethodGet, http.MethodHead:
-		manifest, ok := manifests.Get(key)
-		if !ok {
-			if err := hydrateOCIImageFromLocalDocker(manifests, blobs, dockerImages, imageName, reference); err == nil {
-				manifest, ok = manifests.Get(key)
-			} else {
-				fmt.Fprintf(os.Stderr, "[sim-gcp-ar] local docker cache miss for %s:%s: %v\n", imageName, reference, err)
-			}
-		}
-		if !ok {
-			sim.WriteJSON(w, http.StatusNotFound, map[string]any{
-				"errors": []map[string]any{
-					{"code": "MANIFEST_UNKNOWN", "message": "manifest unknown"},
-				},
-			})
-			return
-		}
-
-		w.Header().Set("Content-Type", manifest.ContentType)
-		w.Header().Set("Docker-Content-Digest", reference)
-		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodGet {
-			w.Write(manifest.Data)
-		}
-
-	case http.MethodPut:
-		rc, err := openStreamingBody(r)
-		if err != nil {
-			sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
-			return
-		}
-		data, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
-			return
-		}
-
-		contentType := r.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = "application/vnd.docker.distribution.manifest.v2+json"
-		}
-
-		manifests.Put(key, OCIManifest{
-			ContentType: contentType,
-			Data:        data,
-		})
-
-		registerDockerImageFromManifest(dockerImages, imageName, reference, contentType, data)
-
-		w.Header().Set("Docker-Content-Digest", reference)
-		w.WriteHeader(http.StatusCreated)
-
-	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func hydrateOCIImageFromLocalDocker(manifests sim.Store[OCIManifest], blobs sim.Store[OCIBlob], dockerImages sim.Store[DockerImage], imageName, reference string) error {
+// hydrateOCIImageFromLocalDocker is the AR pull-through cache: on a manifest
+// miss for a docker-hub remote repo it saves the image from the local Docker
+// daemon and populates the shared registry's blobs + manifest.
+func hydrateOCIImageFromLocalDocker(reg *sim.OCIRegistry, dockerImages sim.Store[DockerImage], imageName, reference string) error {
 	if !strings.Contains(imageName, "/docker-hub/") {
 		return fmt.Errorf("repository is not a docker-hub remote repository")
 	}
@@ -393,10 +278,7 @@ func hydrateOCIImageFromLocalDocker(manifests sim.Store[OCIManifest], blobs sim.
 	}
 
 	configDigest := digestBytes(configData)
-	blobs.Put(imageName+"/blobs/"+configDigest, OCIBlob{
-		Data:        configData,
-		ContentType: "application/vnd.docker.container.image.v1+json",
-	})
+	reg.PutBlob(imageName, configDigest, "application/vnd.docker.container.image.v1+json", configData)
 
 	type descriptor struct {
 		MediaType string `json:"mediaType"`
@@ -410,10 +292,7 @@ func hydrateOCIImageFromLocalDocker(manifests sim.Store[OCIManifest], blobs sim.
 			return fmt.Errorf("docker save layer %q missing", layerPath)
 		}
 		layerDigest := digestBytes(layerData)
-		blobs.Put(imageName+"/blobs/"+layerDigest, OCIBlob{
-			Data:        layerData,
-			ContentType: "application/vnd.oci.image.layer.v1.tar",
-		})
+		reg.PutBlob(imageName, layerDigest, "application/vnd.oci.image.layer.v1.tar", layerData)
 		layerDescriptors = append(layerDescriptors, descriptor{
 			MediaType: "application/vnd.oci.image.layer.v1.tar",
 			Size:      int64(len(layerData)),
@@ -435,11 +314,7 @@ func hydrateOCIImageFromLocalDocker(manifests sim.Store[OCIManifest], blobs sim.
 	if err != nil {
 		return fmt.Errorf("encode OCI manifest: %w", err)
 	}
-	manifestKey := imageName + "/manifests/" + reference
-	manifests.Put(manifestKey, OCIManifest{
-		ContentType: "application/vnd.oci.image.manifest.v1+json",
-		Data:        ociManifest,
-	})
+	reg.PutManifest(imageName, reference, "application/vnd.oci.image.manifest.v1+json", ociManifest)
 	registerDockerImageFromManifest(dockerImages, imageName, reference, "application/vnd.oci.image.manifest.v1+json", ociManifest)
 	return nil
 }
@@ -480,112 +355,6 @@ func digestBytes(data []byte) string {
 	return fmt.Sprintf("sha256:%x", sum)
 }
 
-func handleOCIBlob(w http.ResponseWriter, r *http.Request, blobs sim.Store[OCIBlob], imageName, digest string) {
-	key := imageName + "/blobs/" + digest
-
-	switch r.Method {
-	case http.MethodGet:
-		blob, ok := blobs.Get(key)
-		if !ok {
-			sim.WriteJSON(w, http.StatusNotFound, map[string]any{
-				"errors": []map[string]any{
-					{"code": "BLOB_UNKNOWN", "message": "blob unknown"},
-				},
-			})
-			return
-		}
-
-		w.Header().Set("Content-Type", blob.ContentType)
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.WriteHeader(http.StatusOK)
-		w.Write(blob.Data)
-
-	case http.MethodHead:
-		blob, ok := blobs.Get(key)
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(blob.Data)))
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.WriteHeader(http.StatusOK)
-
-	default:
-		w.Header().Set("Allow", "GET, HEAD")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func handleOCIBlobUpload(w http.ResponseWriter, r *http.Request, blobs sim.Store[OCIBlob], uploads sim.Store[OCIUpload], imageName, uploadPart string) {
-	switch r.Method {
-	case http.MethodPost:
-		// Initiate blob upload: POST /v2/{name}/blobs/uploads/
-		uploadID := generateUUID()
-		uploads.Put(uploadID, OCIUpload{})
-
-		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", imageName, uploadID))
-		w.Header().Set("Docker-Upload-UUID", uploadID)
-		w.WriteHeader(http.StatusAccepted)
-
-	case http.MethodPut:
-		// Complete blob upload: PUT /v2/{name}/blobs/uploads/{uuid}?digest=...
-		uploadID := uploadPart
-		digest := r.URL.Query().Get("digest")
-
-		if _, ok := uploads.Get(uploadID); !ok {
-			sim.WriteJSON(w, http.StatusNotFound, map[string]any{
-				"errors": []map[string]any{
-					{"code": "BLOB_UPLOAD_UNKNOWN", "message": "upload not found"},
-				},
-			})
-			return
-		}
-
-		rc, err := openStreamingBody(r)
-		if err != nil {
-			sim.GCPErrorf(w, http.StatusUnsupportedMediaType, "INVALID_ARGUMENT", "%s", err.Error())
-			return
-		}
-		data, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "failed to read body: %v", err)
-			return
-		}
-
-		contentType := r.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		key := imageName + "/blobs/" + digest
-		blobs.Put(key, OCIBlob{
-			Data:        data,
-			ContentType: contentType,
-		})
-
-		uploads.Delete(uploadID)
-
-		w.Header().Set("Docker-Content-Digest", digest)
-		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/%s", imageName, digest))
-		w.WriteHeader(http.StatusCreated)
-
-	default:
-		w.Header().Set("Allow", "POST, PUT")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// registerDockerImageFromManifest registers a docker image in the Artifact Registry
-// docker images store when a manifest is pushed.
-//
-// The manifest is a docker manifest v2 / OCI image manifest already validated
-// upstream by the manifest-PUT handler; we re-read the embedded mediaType
-// here only to populate the AR DockerImage row. A genuinely malformed manifest
-// would have failed the upload — but if the JSON decode does fail we log it
-// and fall back to contentType from the request header rather than silently
-// recording an empty mediaType.
 func registerDockerImageFromManifest(dockerImages sim.Store[DockerImage], imageName, reference, contentType string, data []byte) {
 	var manifest struct {
 		MediaType string `json:"mediaType"`

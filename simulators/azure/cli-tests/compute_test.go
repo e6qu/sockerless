@@ -7,6 +7,7 @@ import (
 )
 
 func TestComputeVirtualMachineLifecycleCLI(t *testing.T) {
+	requireNetworkHost(t)
 	sizesURL := fmt.Sprintf("%s/subscriptions/%s/providers/Microsoft.Compute/locations/eastus/vmSizes?api-version=2022-03-01", baseURL, subscriptionID)
 	if out := runCLI(t, azRest("GET", sizesURL, "")); !strings.Contains(out, "Standard_B1s") {
 		t.Fatalf("expected VM size discovery, got %s", out)

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -71,7 +72,14 @@ func TestEventGridCLI_TopicSubscriptionPublish(t *testing.T) {
 	assert.Equal(t, "cli-sub", list.Value[0].Name)
 
 	publishBody := `[{"id":"cli-evt","eventType":"sockerless.cli","subject":"/cli","eventTime":"2026-05-27T00:00:00Z","data":{"ok":true},"dataVersion":"1"}]`
-	runCLI(t, azRest("POST", topic.Properties.Endpoint+"?api-version=2018-01-01", publishBody, "--headers", "Content-Type=application/json"))
+	// The topic endpoint is a `<topic>.eventgrid.localhost` subdomain URL; the
+	// sim routes /api/events by the Host header (.eventgrid.), so publish to the
+	// loopback base URL with Host set to the subdomain. This avoids depending on
+	// `*.localhost` resolving to 127.0.0.1, which Linux does but macOS does not.
+	ep, err := url.Parse(topic.Properties.Endpoint)
+	require.NoError(t, err)
+	runCLI(t, azRest("POST", baseURL+ep.Path+"?api-version=2018-01-01", publishBody,
+		"--headers", "Content-Type=application/json", "Host="+ep.Host))
 
 	select {
 	case events := <-deliveries:

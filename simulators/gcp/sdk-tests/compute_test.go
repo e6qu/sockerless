@@ -20,6 +20,7 @@ func computeService(t *testing.T) *compute.Service {
 }
 
 func TestCompute_CreateNetwork(t *testing.T) {
+	requireNetworkHost(t)
 	svc := computeService(t)
 
 	network := &compute.Network{
@@ -35,6 +36,7 @@ func TestCompute_CreateNetwork(t *testing.T) {
 }
 
 func TestCompute_CreateSubnetwork(t *testing.T) {
+	requireNetworkHost(t)
 	svc := computeService(t)
 
 	// Create network first
@@ -60,6 +62,7 @@ func TestCompute_CreateSubnetwork(t *testing.T) {
 }
 
 func TestCompute_ListNetworks(t *testing.T) {
+	requireNetworkHost(t)
 	svc := computeService(t)
 
 	network := &compute.Network{
@@ -75,6 +78,7 @@ func TestCompute_ListNetworks(t *testing.T) {
 }
 
 func TestCompute_RegionalAddressAndManualRouterNAT(t *testing.T) {
+	requireNetworkHost(t)
 	svc := computeService(t)
 	const project = "test-project"
 	const region = "us-central1"
@@ -450,6 +454,7 @@ func TestCompute_InstanceGroups_Lifecycle(t *testing.T) {
 }
 
 func TestCompute_Instances_Lifecycle(t *testing.T) {
+	requireNetworkHost(t)
 	svc := computeService(t)
 	const project = "test-project"
 	const zone = "us-central1-a"
@@ -570,6 +575,7 @@ func TestCompute_InstanceTemplateCRUD(t *testing.T) {
 }
 
 func TestCompute_ListNetworks_Pagination(t *testing.T) {
+	requireNetworkHost(t)
 	const project = "test-project"
 	svc := computeService(t)
 	names := []string{"pag-net-a", "pag-net-b", "pag-net-c"}

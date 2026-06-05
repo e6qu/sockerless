@@ -7,6 +7,7 @@ import (
 )
 
 func TestNetworkNatGatewayPublicIPPrefixCLI(t *testing.T) {
+	requireNetworkHost(t)
 	prefixURL := armURL("Microsoft.Network", "publicIPPrefixes/cli-nat-prefix", "2024-05-01")
 	prefixBody := `{"location":"eastus","sku":{"name":"Standard"},"properties":{"prefixLength":28,"publicIPAddressVersion":"IPv4"}}`
 	out := runCLI(t, azRest("PUT", prefixURL, prefixBody))
