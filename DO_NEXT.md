@@ -4,8 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-flagged-followups` (PR pending — three flagged follow-ups, BUG-1482–1484).
-- Last merged: PR #440 (five AWS sim gaps, BUG-1477–1481, #434–#438).
+- Branch: `feat/aws-sim-consumer-batch-441` (PR pending — six consumer issues, BUG-1485–1490).
+- Last merged: PR #448 (three flagged follow-ups, BUG-1482–1484).
+- Consumer batch (#441–#447; #444 already fixed by #448, #394 upstream-blocked):
+  - **#441 (BUG-1485)** IAM `ListPolicyVersions` — returns the policy's single `v1` (the aws_iam_policy destroy path).
+  - **#442 (BUG-1486)** EC2 `DescribeVpcs` — multi-id + `ec2Filters` (vpc-id/cidr/tag) + render `cidrBlockAssociationSet`. New helpers `ec2VpcMatchesFilters`, `ec2TagFilterMatch`.
+  - **#443 (BUG-1487)** EC2 `DescribeSecurityGroups` — route through `ec2Filters` (vpc-id/group-name/group-id/tag) + `ec2SecurityGroupMatchesFilters`.
+  - **#445 (BUG-1488)** Logs `CreateLogGroup` kmsKeyId stored + echoed; `AssociateKmsKey`/`DisassociateKmsKey` added.
+  - **#446 (BUG-1489)** ECS `DescribeClusters` — store Settings/Configuration on the cluster, surface them only when `include` has SETTINGS/CONFIGURATIONS.
+  - **#447 (BUG-1490)** IAM `ListRoles` (path-prefix + paging) + tag storage (parse `Tags.member.N` at CreateRole/CreatePolicy, render in role/policy XML) + `ListRoleTags`/`ListPolicyTags`. (`ListPolicies` already existed.) New file `iam_lists.go`.
+- Coverage: SDK + CLI for all six; TF stack augmented with aws_iam_policy (destroy → ListPolicyVersions), data.aws_vpc by-filter, ecs cluster settings/config, log-group kms_key_id.
 - Flagged follow-ups closed (user asked to tie off the deferreds I noted in recent PRs):
   - **#433 follow-up (BUG-1482)** — EC2 launch-template in-place update: `CreateLaunchTemplateVersion` (appends a version, becomes latest not default) + `ModifyLaunchTemplate` (moves the default; numeric/`$Latest`/`$Default`). Gotcha: the wire param for the default selector is `SetDefaultVersion`, NOT `DefaultVersion`.
   - **#435 follow-up (BUG-1483)** — ECR `aws_ecr_repository` read-back: `CreateRepository`/`DescribeRepositories` now echo imageTagMutability (default MUTABLE), encryptionConfiguration (default AES256), imageScanningConfiguration (default scanOnPush=false); `aws_ecr_repository` added to the TF stack (the resource deferred from #435).
@@ -22,9 +30,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
 - **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained.
+- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained by this PR.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1484 filed · 1440 fixed · 5 open · 4 false positives.
+- BUG counters: 1490 filed · 1446 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

@@ -546,25 +546,34 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 }
 
 func vpcItemXML(vpc EC2Vpc) string {
-	return fmt.Sprintf(`<item>
-    <vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state>
-    <ownerId>%s</ownerId><isDefault>%t</isDefault>
-    %s
-  </item>`, vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, writeTagSetXML(vpc.Tags))
+	// Real DescribeVpcs lists the primary CIDR in cidrBlockAssociationSet as
+	// well as in cidrBlock; data.aws_vpc reads cidr_block_associations from it.
+	// The sim synthesizes a stable association id from the VPC id.
+	assocID := "vpc-cidr-assoc-" + strings.TrimPrefix(vpc.VpcId, "vpc-")
+	cidrAssoc := fmt.Sprintf(`<cidrBlockAssociationSet><item><associationId>%s</associationId><cidrBlock>%s</cidrBlock><cidrBlockState><state>associated</state></cidrBlockState></item></cidrBlockAssociationSet>`,
+		assocID, vpc.CidrBlock)
+	return fmt.Sprintf(`<item><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>default</instanceTenancy>%s%s</item>`,
+		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, cidrAssoc, writeTagSetXML(vpc.Tags))
 }
 
 func handleDescribeVpcs(w http.ResponseWriter, r *http.Request) {
-	var vpcs []EC2Vpc
-	if id := r.FormValue("VpcId.1"); id != "" {
-		if v, ok := ec2Vpcs.Get(id); ok {
-			vpcs = append(vpcs, v)
+	ids := ec2ParamList(r, "VpcId")
+	for _, id := range ids {
+		if _, ok := ec2Vpcs.Get(id); !ok {
+			ec2ErrorXML(w, "InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", id), http.StatusBadRequest)
+			return
 		}
-	} else {
-		vpcs = ec2Vpcs.List()
 	}
+	filters := ec2Filters(r)
 
 	var items strings.Builder
-	for _, v := range vpcs {
+	for _, v := range ec2Vpcs.List() {
+		if len(ids) > 0 && !ec2StrInValues(v.VpcId, ids) {
+			continue
+		}
+		if !ec2VpcMatchesFilters(v, filters) {
+			continue
+		}
 		items.WriteString(vpcItemXML(v))
 	}
 
@@ -573,6 +582,58 @@ func handleDescribeVpcs(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <vpcSet>%s</vpcSet>
 </DescribeVpcsResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func ec2VpcMatchesFilters(v EC2Vpc, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "vpc-id":
+			if !ec2StrInValues(v.VpcId, vals) {
+				return false
+			}
+		case "cidr", "cidr-block-association.cidr-block":
+			if !ec2StrInValues(v.CidrBlock, vals) {
+				return false
+			}
+		case "state":
+			if !ec2StrInValues(v.State, vals) {
+				return false
+			}
+		case "is-default":
+			if v.IsDefault != ec2StrInValues("true", vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, v.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ec2TagFilterMatch evaluates the EC2 tag filter forms (`tag:<Key>` and
+// `tag-key`). Returns (handled, match): handled=false means the filter name
+// isn't a tag filter and the caller should decide.
+func ec2TagFilterMatch(name string, vals []string, tags []EC2Tag) (handled, match bool) {
+	switch {
+	case strings.HasPrefix(name, "tag:"):
+		key := strings.TrimPrefix(name, "tag:")
+		for _, t := range tags {
+			if t.Key == key && ec2StrInValues(t.Value, vals) {
+				return true, true
+			}
+		}
+		return true, false
+	case name == "tag-key":
+		for _, t := range tags {
+			if ec2StrInValues(t.Key, vals) {
+				return true, true
+			}
+		}
+		return true, false
+	}
+	return false, false
 }
 
 func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
@@ -1367,17 +1428,21 @@ func ipPermsXML(element string, perms []EC2IpPermission) string {
 }
 
 func handleDescribeSecurityGroups(w http.ResponseWriter, r *http.Request) {
-	var sgs []EC2SecurityGroup
-	if id := r.FormValue("GroupId.1"); id != "" {
-		if sg, ok := ec2SecurityGroups.Get(id); ok {
-			sgs = append(sgs, sg)
-		}
-	} else {
-		sgs = ec2SecurityGroups.List()
-	}
+	ids := ec2ParamList(r, "GroupId")
+	names := ec2ParamList(r, "GroupName")
+	filters := ec2Filters(r)
 
 	var items strings.Builder
-	for _, sg := range sgs {
+	for _, sg := range ec2SecurityGroups.List() {
+		if len(ids) > 0 && !ec2StrInValues(sg.GroupId, ids) {
+			continue
+		}
+		if len(names) > 0 && !ec2StrInValues(sg.GroupName, names) {
+			continue
+		}
+		if !ec2SecurityGroupMatchesFilters(sg, filters) {
+			continue
+		}
 		items.WriteString(sgItemXML(sg))
 	}
 
@@ -1386,6 +1451,34 @@ func handleDescribeSecurityGroups(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <securityGroupInfo>%s</securityGroupInfo>
 </DescribeSecurityGroupsResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+func ec2SecurityGroupMatchesFilters(sg EC2SecurityGroup, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "vpc-id":
+			if !ec2StrInValues(sg.VpcId, vals) {
+				return false
+			}
+		case "group-id":
+			if !ec2StrInValues(sg.GroupId, vals) {
+				return false
+			}
+		case "group-name":
+			if !ec2StrInValues(sg.GroupName, vals) {
+				return false
+			}
+		case "description":
+			if !ec2StrInValues(sg.Description, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, sg.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func handleDeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {

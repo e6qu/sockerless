@@ -32,6 +32,11 @@ type ECSCluster struct {
 	CapacityProviders                 []string        `json:"capacityProviders,omitempty"`
 	DefaultCapacityProviderStrategy   json.RawMessage `json:"defaultCapacityProviderStrategy,omitempty"`
 	Tags                              []ECSTag        `json:"tags,omitempty"`
+	// Settings (containerInsights) and Configuration (executeCommandConfiguration)
+	// are stored raw so they round-trip exactly; DescribeClusters only surfaces
+	// them when SETTINGS / CONFIGURATIONS is in the `include` list.
+	Settings      json.RawMessage `json:"settings,omitempty"`
+	Configuration json.RawMessage `json:"configuration,omitempty"`
 }
 
 type ECSContainerDefinition struct {
@@ -348,6 +353,8 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 		Tags                            []ECSTag        `json:"tags"`
 		CapacityProviders               []string        `json:"capacityProviders"`
 		DefaultCapacityProviderStrategy json.RawMessage `json:"defaultCapacityProviderStrategy"`
+		Settings                        json.RawMessage `json:"settings"`
+		Configuration                   json.RawMessage `json:"configuration"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -364,6 +371,8 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 		Tags:                            req.Tags,
 		CapacityProviders:               req.CapacityProviders,
 		DefaultCapacityProviderStrategy: req.DefaultCapacityProviderStrategy,
+		Settings:                        req.Settings,
+		Configuration:                   req.Configuration,
 	}
 	ecsClusters.Put(req.ClusterName, cluster)
 
@@ -375,10 +384,20 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Clusters []string `json:"clusters"`
+		Include  []string `json:"include"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
 		return
+	}
+	includeSettings, includeConfig := false, false
+	for _, inc := range req.Include {
+		switch inc {
+		case "SETTINGS":
+			includeSettings = true
+		case "CONFIGURATIONS":
+			includeConfig = true
+		}
 	}
 
 	var clusters []ECSCluster
@@ -411,6 +430,14 @@ func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			cluster.ActiveServicesCount = activeServices
+			// settings / configuration only surface when explicitly included,
+			// matching real DescribeClusters.
+			if !includeSettings {
+				cluster.Settings = nil
+			}
+			if !includeConfig {
+				cluster.Configuration = nil
+			}
 			clusters = append(clusters, cluster)
 		} else {
 			failures = append(failures, map[string]string{

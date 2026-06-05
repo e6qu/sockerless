@@ -18,6 +18,7 @@ type IAMRole struct {
 	AssumeRolePolicyDocument string
 	CreateDate               string
 	MaxSessionDuration       int
+	Tags                     []IAMTag
 }
 
 type IAMRolePolicy struct {
@@ -34,14 +35,15 @@ type IAMAttachedPolicy struct {
 
 // IAMPolicy is a managed policy (Microsoft.IAM/policies).
 type IAMPolicy struct {
-	PolicyName       string `json:"policyName"`
-	PolicyId         string `json:"policyId"`
-	Arn              string `json:"arn"`
-	Path             string `json:"path"`
-	Description      string `json:"description"`
-	PolicyDocument   string `json:"policyDocument"` // URL-decoded JSON
-	DefaultVersionId string `json:"defaultVersionId"`
-	CreateDate       string `json:"createDate"`
+	PolicyName       string   `json:"policyName"`
+	PolicyId         string   `json:"policyId"`
+	Arn              string   `json:"arn"`
+	Path             string   `json:"path"`
+	Description      string   `json:"description"`
+	PolicyDocument   string   `json:"policyDocument"` // URL-decoded JSON
+	DefaultVersionId string   `json:"defaultVersionId"`
+	CreateDate       string   `json:"createDate"`
+	Tags             []IAMTag `json:"tags,omitempty"`
 }
 
 // IAMInstanceProfile is a Microsoft.IAM/instanceProfiles resource. Each
@@ -104,6 +106,7 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	// Service-linked roles + OIDC providers (iam_slr_oidc.go)
 	registerIAMPolicySimulation(r)
 	registerIAMSLRandOIDC(r, srv)
+	registerIAMLists(r)
 }
 
 // iamRoleFieldsXML emits the inner role fields without the `<Role>`
@@ -116,8 +119,8 @@ func iamRoleFieldsXML(role IAMRole) string {
 	if maxSession == 0 {
 		maxSession = 3600
 	}
-	return fmt.Sprintf(`<RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration>`,
-		role.RoleName, role.RoleId, role.Arn, role.Path, doc, role.CreateDate, maxSession)
+	return fmt.Sprintf(`<RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration>%s`,
+		role.RoleName, role.RoleId, role.Arn, role.Path, doc, role.CreateDate, maxSession, iamTagsXML(role.Tags))
 }
 
 func iamRoleXML(role IAMRole) string {
@@ -142,6 +145,7 @@ func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 		Path:                     path,
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               time.Now().UTC().Format(time.RFC3339),
+		Tags:                     iamParseTags(r),
 	}
 	iamRoles.Put(name, role)
 
@@ -360,8 +364,8 @@ func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
 // provider-aws fails at step 2 (CreatePolicy InvalidAction).
 
 func iamPolicyXML(p IAMPolicy) string {
-	return fmt.Sprintf(`<PolicyName>%s</PolicyName><PolicyId>%s</PolicyId><Arn>%s</Arn><Path>%s</Path><DefaultVersionId>%s</DefaultVersionId><CreateDate>%s</CreateDate><AttachmentCount>0</AttachmentCount><PermissionsBoundaryUsageCount>0</PermissionsBoundaryUsageCount><IsAttachable>true</IsAttachable><Description>%s</Description>`,
-		p.PolicyName, p.PolicyId, p.Arn, p.Path, p.DefaultVersionId, p.CreateDate, p.Description)
+	return fmt.Sprintf(`<PolicyName>%s</PolicyName><PolicyId>%s</PolicyId><Arn>%s</Arn><Path>%s</Path><DefaultVersionId>%s</DefaultVersionId><CreateDate>%s</CreateDate><AttachmentCount>0</AttachmentCount><PermissionsBoundaryUsageCount>0</PermissionsBoundaryUsageCount><IsAttachable>true</IsAttachable><Description>%s</Description>%s`,
+		p.PolicyName, p.PolicyId, p.Arn, p.Path, p.DefaultVersionId, p.CreateDate, p.Description, iamTagsXML(p.Tags))
 }
 
 func iamInstanceProfileXML(ip IAMInstanceProfile) string {
@@ -402,6 +406,7 @@ func handleIAMCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		PolicyDocument:   doc,
 		DefaultVersionId: "v1",
 		CreateDate:       time.Now().UTC().Format(time.RFC3339),
+		Tags:             iamParseTags(r),
 	}
 	iamPolicies.Put(policy.Arn, policy)
 	w.Header().Set("Content-Type", "text/xml")

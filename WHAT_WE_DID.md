@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — AWS sim: six consumer issues (BUG-1485–1490, PR pending)
+
+The consumer filed a fresh batch (#441–#447). #444 (ECR scan/encryption config) turned out already-fixed by #448 — verified and closed. #394 stays upstream-blocked. The other six, bundled (briefs gathered via parallel Explore agents; query-protocol XML verified against the `ec2@v1.305.2` / `iam@v1.54.3` deserializers):
+
+- **#441 IAM ListPolicyVersions (BUG-1485)**: returned InvalidAction; terraform-provider-aws calls it on `aws_iam_policy` plan/refresh/**destroy**, so `terraform destroy` failed and stranded the fck-nat NAT policy in state. The sim's policy model stores a single default version — `ListPolicyVersions` now returns it (`v1`, IsDefaultVersion=true, CreateDate), NotFound for an unknown ARN.
+- **#442 EC2 DescribeVpcs filtering (BUG-1486)**: only honoured `VpcId.1` — multi-id and the `Name=vpc-id`/tag filters were ignored (often returning the default `vpc-sim`), and `cidrBlockAssociationSet` was always null, so `data.aws_vpc` read the wrong VPC and fck-nat's `cidr_block_associations[*].cidr_block` ingress rule got an empty CIDR. Fixed: multi-id `VpcId.N` + a real `ec2VpcMatchesFilters` (vpc-id/cidr/state/is-default + the `tag:`/`tag-key` forms via a shared `ec2TagFilterMatch`), and render `cidrBlockAssociationSet` (associationId + cidrBlock + associated state) from the primary CIDR.
+- **#443 EC2 DescribeSecurityGroups vpc-id filter (BUG-1487)**: same shape — no filter handling at all, so `Name=vpc-id` returned SGs from every VPC (cross-VPC contamination across sequential CI runs). Routed through `ec2Filters` with `ec2SecurityGroupMatchesFilters` (vpc-id/group-id/group-name/description/tags) + multi-id GroupId/GroupName.
+- **#445 CloudWatch Logs kmsKeyId (BUG-1488)**: `CreateLogGroup --kms-key-id` succeeded but the struct had no field and the request wasn't parsed, so `DescribeLogGroups` returned null — masking an encryption-at-rest control on `aws_cloudwatch_log_group`. Added `KmsKeyId` to `CWLogGroup`, parse at create, echo on describe, and registered `AssociateKmsKey`/`DisassociateKmsKey` for the post-create path.
+- **#446 ECS DescribeClusters settings/configuration (BUG-1489)**: `CreateCluster` dropped `settings` (containerInsights) and `configuration` (executeCommand KMS); `DescribeClusters --include SETTINGS CONFIGURATIONS` returned null for both. Store both raw on `ECSCluster` at create; `DescribeClusters` parses `include` and surfaces each only when requested (matching real AWS).
+- **#447 IAM ListRoles + tag reads (BUG-1490)**: `ListRoles` was InvalidAction (blocks `aws iam list-roles` audit enumeration + `data.aws_iam_roles`), and roles/policies didn't store tags so `ListRoleTags`/`ListPolicyTags` had nothing to return. New `iam_lists.go`: `ListRoles` (path-prefix filter + Marker/MaxItems paging), tag storage parsed from `Tags.member.N` at CreateRole/CreatePolicy and rendered in the role/policy XML, plus `ListRoleTags`/`ListPolicyTags`. (`ListPolicies` already existed.)
+
+Coverage: SDK + CLI for all six. Terraform stack augmented and green (apply+destroy): `aws_iam_policy` (its destroy exercises ListPolicyVersions — the actual #441 bug), `data.aws_vpc` by vpc-id filter (asserts the right CIDR — #442), `containerInsights` + execute-command KMS on `aws_ecs_cluster` (#446), and `kms_key_id` on `aws_cloudwatch_log_group` (#445).
+
 ## 2026-06-05 — AWS sim: three flagged follow-ups (BUG-1482–1484, PR pending)
 
 With the consumer issue queue drained, tied off the concrete deferreds flagged in recent PRs (one bundled PR):
