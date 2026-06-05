@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/batch v1.65.5
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.56.3
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.58.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.75.1
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.3
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.9

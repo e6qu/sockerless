@@ -1,15 +1,41 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
-	"math"
+	"io"
 	"net/http"
-	"strconv"
+	"sort"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	sim "github.com/sockerless/simulator"
 )
+
+// cwEncMode emits time.Time values as CBOR tag-1 (epoch), which is what the
+// smithy rpc-v2-cbor protocol expects for timestamps (a bare integer is
+// rejected by the SDK).
+var cwEncMode, _ = cbor.EncOptions{Time: cbor.TimeUnixDynamic, TimeTag: cbor.EncTagRequired}.EncMode()
+
+// cwReadBody reads the request body, transparently decompressing it when the
+// SDK sends gzip — aws-sdk-go-v2 request-compresses PutMetricData (and may
+// compress GetMetricData), so the CBOR lives behind a gzip wrapper.
+func cwReadBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+		gz, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = gz.Close() }()
+		return io.ReadAll(gz)
+	}
+	return body, nil
+}
 
 // CloudWatch Metrics types
 
@@ -40,8 +66,8 @@ func registerCloudWatchMetrics(srv *sim.Server) {
 
 // GetMetricData request/response types (CBOR)
 type getMetricDataRequest struct {
-	StartTime         float64           `cbor:"StartTime"`
-	EndTime           float64           `cbor:"EndTime"`
+	StartTime         time.Time         `cbor:"StartTime"`
+	EndTime           time.Time         `cbor:"EndTime"`
 	MetricDataQueries []metricDataQuery `cbor:"MetricDataQueries"`
 }
 
@@ -67,20 +93,24 @@ type getMetricDataResponse struct {
 }
 
 type metricDataResult struct {
-	Id         string    `cbor:"Id"`
-	StatusCode string    `cbor:"StatusCode"`
-	Values     []float64 `cbor:"Values"`
-	Timestamps []float64 `cbor:"Timestamps"`
+	Id         string      `cbor:"Id"`
+	StatusCode string      `cbor:"StatusCode"`
+	Values     []float64   `cbor:"Values"`
+	Timestamps []time.Time `cbor:"Timestamps"`
 }
 
 func handleCWGetMetricData(w http.ResponseWriter, r *http.Request) {
+	raw, err := cwReadBody(r)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	var req getMetricDataRequest
-	if err := cbor.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := cbor.Unmarshal(raw, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 
-	now := time.Now().UTC()
 	var results []metricDataResult
 
 	for _, q := range req.MetricDataQueries {
@@ -88,50 +118,24 @@ func handleCWGetMetricData(w http.ResponseWriter, r *http.Request) {
 			Id:         q.Id,
 			StatusCode: "Complete",
 		}
-
 		if q.MetricStat != nil && q.MetricStat.Metric != nil {
 			m := q.MetricStat.Metric
-
-			// For ECS/ContainerInsights, compute metrics from running task state
-			if m.Namespace == "ECS/ContainerInsights" {
-				var taskID, clusterName string
-				for _, d := range m.Dimensions {
-					switch d.Name {
-					case "TaskId":
-						taskID = d.Value
-					case "ClusterName":
-						clusterName = d.Value
-					}
-				}
-
-				if taskID != "" {
-					value := computeECSMetric(m.MetricName, clusterName, taskID)
-					if value >= 0 {
-						result.Values = []float64{value}
-						result.Timestamps = []float64{float64(now.Unix())}
-					}
-				}
-			} else {
-				// Look up stored metrics
-				key := metricsKey(m.Namespace, m.MetricName, m.Dimensions)
-				if data, ok := cwMetrics.Get(key); ok {
-					startSec := req.StartTime
-					endSec := req.EndTime
-					for _, d := range data {
-						if d.Timestamp >= startSec && d.Timestamp <= endSec {
-							result.Values = append(result.Values, d.Value)
-							result.Timestamps = append(result.Timestamps, d.Timestamp)
-						}
-					}
-				}
+			// Serve the actual datapoints recorded via PutMetricData, bucketed by
+			// Period and reduced by the requested statistic — the real CloudWatch
+			// behaviour, for every namespace (ECS/ContainerInsights included). If
+			// nothing was pushed there are no datapoints: the API-only sim does
+			// not measure live container utilization, so it reports none rather
+			// than fabricating a value.
+			if data, ok := cwMetrics.Get(metricsKey(m.Namespace, m.MetricName, m.Dimensions)); ok {
+				result.Values, result.Timestamps = cwAggregate(data,
+					float64(req.StartTime.Unix()), float64(req.EndTime.Unix()), q.MetricStat.Period, q.MetricStat.Stat)
 			}
 		}
-
 		results = append(results, result)
 	}
 
 	resp := getMetricDataResponse{MetricDataResults: results}
-	data, err := cbor.Marshal(resp)
+	data, err := cwEncMode.Marshal(resp)
 	if err != nil {
 		sim.AWSError(w, "InternalFailure", "Failed to encode response", http.StatusInternalServerError)
 		return
@@ -143,39 +147,71 @@ func handleCWGetMetricData(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// computeECSMetric returns a realistic metric value for a running ECS task.
-func computeECSMetric(metricName, clusterName, taskID string) float64 {
-	// Look up the task to see if it's running
-	task, ok := ecsTasks.Get(taskID)
-	if !ok || task.LastStatus != "RUNNING" {
-		return -1
+// cwAggregate buckets datapoints into Period-second windows within
+// [startSec, endSec) and reduces each bucket with the requested statistic,
+// returning one value per bucket. Buckets are ordered newest-first to match
+// CloudWatch's default ScanBy=TimestampDescending.
+func cwAggregate(data []CWMetricDatum, startSec, endSec float64, period int32, stat string) (values []float64, timestamps []time.Time) {
+	if period <= 0 {
+		period = 60
 	}
-
-	// Compute realistic values based on task definition
-	cpuUnits := 256.0
-	memMB := 512.0
-	if task.Cpu != "" {
-		if v, err := strconv.ParseFloat(task.Cpu, 64); err == nil {
-			cpuUnits = v
+	p := int64(period)
+	buckets := map[int64][]float64{}
+	for _, d := range data {
+		if d.Timestamp < startSec || d.Timestamp >= endSec {
+			continue
 		}
+		b := (int64(d.Timestamp) / p) * p
+		buckets[b] = append(buckets[b], d.Value)
 	}
-	if task.Memory != "" {
-		if v, err := strconv.ParseFloat(task.Memory, 64); err == nil {
-			memMB = v
-		}
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
 	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] > keys[j] })
+	for _, k := range keys {
+		values = append(values, cwApplyStat(stat, buckets[k]))
+		timestamps = append(timestamps, time.Unix(k, 0).UTC())
+	}
+	return values, timestamps
+}
 
-	switch metricName {
-	case "CpuUtilized":
-		// Return a fraction of allocated CPU (10-30% typical for idle containers)
-		return math.Round(cpuUnits*0.15*100) / 100
-	case "MemoryUtilized":
-		// Return a fraction of allocated memory (20-40% typical)
-		return math.Round(memMB*0.25*100) / 100
-	case "RunningTaskCount":
-		return 1
-	default:
+// cwApplyStat reduces a bucket of datapoints by a CloudWatch statistic.
+func cwApplyStat(stat string, vals []float64) float64 {
+	if len(vals) == 0 {
 		return 0
+	}
+	switch stat {
+	case "Sum":
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		return sum
+	case "Minimum":
+		m := vals[0]
+		for _, v := range vals {
+			if v < m {
+				m = v
+			}
+		}
+		return m
+	case "Maximum":
+		m := vals[0]
+		for _, v := range vals {
+			if v > m {
+				m = v
+			}
+		}
+		return m
+	case "SampleCount":
+		return float64(len(vals))
+	default: // Average
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		return sum / float64(len(vals))
 	}
 }
 
@@ -189,25 +225,34 @@ type putMetricItem struct {
 	MetricName string        `cbor:"MetricName"`
 	Dimensions []CWDimension `cbor:"Dimensions,omitempty"`
 	Value      float64       `cbor:"Value"`
-	Timestamp  float64       `cbor:"Timestamp"`
+	Timestamp  time.Time     `cbor:"Timestamp"`
 	Unit       string        `cbor:"Unit,omitempty"`
 }
 
 func handleCWPutMetricData(w http.ResponseWriter, r *http.Request) {
+	raw, err := cwReadBody(r)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	var req putMetricDataRequest
-	if err := cbor.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := cbor.Unmarshal(raw, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 
 	for _, item := range req.MetricData {
 		key := metricsKey(req.Namespace, item.MetricName, item.Dimensions)
+		ts := item.Timestamp
+		if ts.IsZero() {
+			ts = time.Now().UTC() // real CloudWatch defaults an omitted timestamp to now
+		}
 		datum := CWMetricDatum{
 			Namespace:  req.Namespace,
 			MetricName: item.MetricName,
 			Dimensions: item.Dimensions,
 			Value:      item.Value,
-			Timestamp:  item.Timestamp,
+			Timestamp:  float64(ts.Unix()),
 			Unit:       item.Unit,
 		}
 		cwMetrics.Update(key, func(existing *[]CWMetricDatum) {

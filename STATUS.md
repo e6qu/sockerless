@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-iam-policy-sim` (PR pending — IAM policy simulation, issue #427) |
-| In-flight | AWS IAM policy simulation (BUG-1474, issue #427): a real policy-evaluation engine (parse JSON, explicit-deny-wins, action/resource wildcards, NotAction/NotResource, condition operators incl. aws:ResourceTag) behind `SimulateCustomPolicy` + `SimulatePrincipalPolicy` (resolves a role's inline+attached policies). SDK + CLI coverage green locally (no Terraform surface for policy sim). |
-| Last merged | PR #430 — EC2 standalone ENI ops (#428) |
-| Also merged recently | PR #429 (five fidelity-audit fixes); PR #426 (Azure test-gap coverage); PR #425 (Azure KV version-less crypto #423) |
-| Open GitHub issues | #427 (IAM policy sim — closing via pending PR), #394 (azuread upstream blocker) |
-| Bugs | 1474 filed · 1430 fixed · 5 open · 4 false positives |
+| Active branch | `feat/aws-sim-real-cloudwatch-metrics` (PR pending — real CloudWatch metrics, BUG-1475) |
+| In-flight | AWS CloudWatch real metrics (BUG-1475, audit follow-up): dropped the fabricated ECS metric values; `GetMetricData` now serves real `PutMetricData` datapoints with proper period-bucketing + statistic (Average/Sum/Min/Max/SampleCount). Also fixed two pre-existing protocol bugs the missing test hid: gzip-compressed CBOR request bodies, and CBOR tag-1 timestamp encoding. SDK coverage green. |
+| Last merged | PR #431 — IAM policy simulation (#427) |
+| Also merged recently | PR #430 (EC2 ENI ops #428); PR #429 (five fidelity-audit fixes); PR #426 (Azure test-gap) |
+| Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
+| Bugs | 1475 filed · 1431 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After #427: no actionable issues remain (only #394, upstream-blocked) — audit lower-priority items (ECS fabricated metrics etc.) or await new issues |
+| Planned next | Possible follow-ups: query-protocol (aws CLI/botocore) metrics surface (GetMetricStatistics/PutMetricData XML — separate from the rpc-v2-cbor SDK path); other audit items; or await new issues |
 | Live infra | None up |
 
 ## Invariants
