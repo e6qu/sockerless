@@ -102,6 +102,7 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("RemoveRoleFromInstanceProfile", handleIAMRemoveRoleFromInstanceProfile)
 
 	// Service-linked roles + OIDC providers (iam_slr_oidc.go)
+	registerIAMPolicySimulation(r)
 	registerIAMSLRandOIDC(r, srv)
 }
 

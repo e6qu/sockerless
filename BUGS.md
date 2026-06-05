@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1473 filed - 1429 fixed - 5 open - 4 false positives.**
+**1474 filed - 1430 fixed - 5 open - 4 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1474~~ | P1 | aws iam simulator — policy simulation unimplemented | sim fidelity gap (issue #427) | Fixed: `SimulateCustomPolicy`/`SimulatePrincipalPolicy` returned `InvalidAction`; the IAM sim stored policy documents as opaque strings with no evaluation engine, so least-privilege IAM couldn't be asserted below the real-AWS tier. Fix: a real policy evaluator (parse IAM JSON with string-or-list Action/Resource; Effect with explicit-deny-wins; `*`/`?` wildcard Action (case-insensitive) + Resource ARN matching; NotAction/NotResource; Condition operators StringEquals/NotEquals/Like/NotLike/EqualsIgnoreCase, Bool, ArnLike/ArnEquals, `…IfExists`, with MissingContextValues), returning `EvaluationResults[].EvalDecision` (allowed/explicitDeny/implicitDeny). `SimulateCustomPolicy` evaluates `PolicyInputList`; `SimulatePrincipalPolicy` resolves the role's inline + attached managed policies from the store then reuses the same evaluator. |
 | ~~1473~~ | P1 | aws ec2 simulator — standalone ENI ops unimplemented | sim fidelity gap (issue #428) | Fixed: ENIs were only materialized as a side-effect of `RunInstances`; the standalone lifecycle ops returned `InvalidAction`: `CreateNetworkInterface`, `AttachNetworkInterface`, `DetachNetworkInterface`, `DeleteNetworkInterface`, `ModifyNetworkInterfaceAttribute`, `AssignPrivateIpAddresses`. Blocks the fck-nat NAT-instance Terraform path (`aws_network_interface` + attachment + `source_dest_check=false`). Fix: register the ops over the existing `ec2NetworkInterfaces` store (control-plane modeling, like `CreateNatGateway`) — create→available, attach/detach toggle status+attachment, modify sets SourceDestCheck/description/groups, assign adds secondary IPs. |
 | ~~1468~~ | P1 | gcp firestore simulator — Patch/Commit ignore updateMask | sim fidelity gap (fidelity audit) | Fixed: `handleFSPatchDocument` (`current.Fields = req.Fields`) and `handleFSCommit` (`fsPutDocument(*wr.Update)`) replace the whole document, ignoring `updateMask`/`update.updateMask`. The Firestore SDK `DocumentRef.Update(...)` and `Set(..., MergeAll)` send masked writes carrying only changed fields → the sim silently drops every unmentioned field (data loss). Fix: merge only masked field paths into the existing doc. |
 | ~~1469~~ | P2 | gcp secret-manager simulator — :access ignores version State | sim fidelity gap (fidelity audit) | Fixed: `accessSecretPayloadResolved` serves any version's payload regardless of `State`, and `latest` picks the highest-numbered version without skipping DISABLED/DESTROYED. Real GCP: accessing a DISABLED version → `FAILED_PRECONDITION` (400); `latest` resolves to the latest ENABLED version. Fix: check state on explicit access; skip non-ENABLED for `latest`. |
