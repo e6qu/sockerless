@@ -1,6 +1,7 @@
 package azure_cli_test
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // kvDataRest dispatches az rest to the KV data-plane on the sim.
@@ -121,6 +123,25 @@ func TestKVDataPlane_Keys_CLI(t *testing.T) {
 	}
 	parseJSON(t, out, &getResp)
 	assert.NotEmpty(t, getResp.Key.Kid)
+
+	// Version-less crypto (POST /keys/{name}/encrypt|decrypt) must target the
+	// current version, not 405 (issue #423).
+	pt := base64.RawURLEncoding.EncodeToString([]byte("cli-secret"))
+	out = runCLI(t, kvDataRest("POST", vault, "/keys/cli-key/encrypt", `{"alg":"RSA-OAEP","value":"`+pt+`"}`))
+	var encResp struct {
+		Value string `json:"value"`
+	}
+	parseJSON(t, out, &encResp)
+	require.NotEmpty(t, encResp.Value, "version-less encrypt must succeed, not 405")
+
+	out = runCLI(t, kvDataRest("POST", vault, "/keys/cli-key/decrypt", `{"alg":"RSA-OAEP","value":"`+encResp.Value+`"}`))
+	var decResp struct {
+		Value string `json:"value"`
+	}
+	parseJSON(t, out, &decResp)
+	dec, err := base64.RawURLEncoding.DecodeString(decResp.Value)
+	require.NoError(t, err)
+	require.Equal(t, "cli-secret", string(dec))
 
 	// ListKeys — created key must appear
 	out = runCLI(t, kvDataRest("GET", vault, "/keys", ""))

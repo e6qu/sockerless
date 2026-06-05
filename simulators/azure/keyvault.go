@@ -966,6 +966,11 @@ func handleKVKey(w http.ResponseWriter, r *http.Request, vault, path string) {
 		case verb == "backup":
 			handleKVBackupKey(w, r, vault, name)
 			return
+		case len(segs) == 3 && kvIsCryptoVerb(verb):
+			// Version-less crypto (POST /keys/{name}/{verb}) targets the key's
+			// current version, like real Key Vault and azkeys.Encrypt(name, "").
+			handleKVCryptoKey(w, r, vault, name, "", verb)
+			return
 		case len(segs) == 4:
 			handleKVCryptoKey(w, r, vault, name, verb, segs[3])
 			return
@@ -1372,6 +1377,16 @@ func handleKVRestoreKey(w http.ResponseWriter, r *http.Request, vault string) {
 		return
 	}
 	sim.AzureError(w, "BadParameter", "key backup blob does not contain any key versions", http.StatusBadRequest)
+}
+
+// kvIsCryptoVerb reports whether the path segment names a Key Vault key
+// cryptographic operation (the ops handleKVCryptoKey dispatches).
+func kvIsCryptoVerb(verb string) bool {
+	switch verb {
+	case "encrypt", "decrypt", "sign", "verify", "wrapkey", "unwrapkey":
+		return true
+	}
+	return false
 }
 
 func handleKVCryptoKey(w http.ResponseWriter, r *http.Request, vault, name, version, operation string) {
