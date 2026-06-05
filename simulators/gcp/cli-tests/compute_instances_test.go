@@ -8,6 +8,7 @@ import (
 )
 
 func TestGcloudComputeInstances_Lifecycle(t *testing.T) {
+	requireNetworkHost(t)
 	zone := "us-central1-a"
 	name := "sim-instance-cli-1"
 

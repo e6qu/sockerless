@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — Cross-cloud OCI Distribution /v2/ data plane (BUG-1491–1493, PR pending)
+
+The "shimanism" consumer filed #450/#451/#452 — the OCI Distribution `/v2/` Docker Registry data plane (real `docker push`/`pull` through the shim) for ECR, Artifact Registry, and ACR. AWS had no `/v2/` at all; GCP's chunked PATCH 405'd; Azure's blob-upload POST 404'd for multi-segment repos. The user chose to consolidate into **one shared library** wired into all three sims (rather than three near-identical copies).
+
+New `simulators/<cloud>/shared/oci.go` (package `simulator`, one identical copy per cloud's `shared/`) defines `sim.OCIRegistry` — a spec-conformant data plane over three stores: `GET /v2/` base (Docker-Distribution-API-Version), blob upload `POST`(init or monolithic-with-`?digest`)/`PATCH`(chunk, with `Range`)/`PUT`(finalize) all sha256-digest-verified, blob `GET`/`HEAD`, manifest `PUT`/`GET`/`HEAD`/`DELETE` stored under both tag and digest (DELETE drops all aliases for the content), and `tags/list`. It mounts **per-method on the `/v2/` subtree** (`GET` also serves `HEAD`), which threads three ServeMux needles at once: the Go-1.22 `{name...}`-must-be-last rule (so multi-segment repos route), the awsJson `POST /` root pattern, and AWS API Gateway v2's `/v2/apis` (the GET-implies-HEAD conflict). Cloud-specifics ride hooks — `OnManifestPut`, `HydrateManifest(reg, …)`, `SkipPath`.
+
+- **#450 AWS ECR (BUG-1491)** — `ecr_oci.go`: new data plane; `OnManifestPut` registers an `ECRImageDetail` so a pushed image surfaces in the control plane.
+- **#451 GCP AR (BUG-1492)** — replaced the inline `/v2/` handler + `handleOCIManifest`/`Blob`/`BlobUpload` (which had no chunked PATCH). Kept the docker-hub pull-through hydration via the `HydrateManifest` hook (now writing through `reg.PutBlob`/`reg.PutManifest`) and the DockerImage row via `OnManifestPut`; `SkipPath` keeps `/v2/projects/` for the Cloud Functions API.
+- **#452 Azure ACR (BUG-1493)** — replaced the per-method `GET/HEAD/PUT/POST/PATCH/DELETE /v2/{path...}` handlers (which split init across verbs and mis-parsed multi-segment repos). The `/acr/v1/_catalog` and `_tags` data-plane APIs now read `reg.Manifests`. Retired ACR's `OCIManifest`/`BlobData`/`BlobUpload` types + the `parse*Path`/`writeOCIError` helpers.
+
+**Fixing all the failures the change (and the suites) surfaced — no dismissals, no flakiness, no retries** (per explicit user direction):
+- A real regression in the shared lib: manifest `DELETE` removed only the addressed key, so delete-by-digest left the tag (and vice-versa). Fixed to delete every alias for the same `repo`+`Digest` (matching ACR's original) — repaired `TestACR_ImageManifestPushGetDelete`.
+- The GCP/Azure **Compute + Network** SDK/CLI tests `503`'d on macOS because those sims do *real* Linux netns/bridge/veth/nftables (CI runs them for real under `sudo` + iproute2/nftables). Added a `requireNetworkHost(t)` gate that calls the **same** `realexec.DetectNetworkCapabilities().Require()` the sim uses, so each test runs for real where the sim can and skips cleanly otherwise — applied to exactly the failing tests (6 GCP sdk, 2 GCP cli, 4 Azure sdk, 2 Azure cli), not the metadata-only ones. `realexec` added as a local-replace dep to the four affected test modules.
+- The `TestEventGridCLI_TopicSubscriptionPublish` CLI test resolved `cli-topic.eventgrid.localhost` directly — `*.localhost` maps to loopback on Linux but not macOS. Genuinely fixed (not skipped): publish to the loopback base URL with a `Host: <topic>.eventgrid.localhost` header, which is how the sim already routes `/api/events` (by the `.eventgrid.` Host) — now green on both macOS and CI.
+- OCI push/pull stress-tested `-count=5` per cloud (zero flakiness). All six suites (3 SDK + 3 CLI) green locally.
+
 ## 2026-06-06 — AWS sim: six consumer issues (BUG-1485–1490, PR pending)
 
 The consumer filed a fresh batch (#441–#447). #444 (ECR scan/encryption config) turned out already-fixed by #448 — verified and closed. #394 stays upstream-blocked. The other six, bundled (briefs gathered via parallel Explore agents; query-protocol XML verified against the `ec2@v1.305.2` / `iam@v1.54.3` deserializers):

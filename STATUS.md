@@ -6,14 +6,15 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-consumer-batch-441` (PR pending — six consumer issues, BUG-1485–1490, #441–#443/#445–#447) |
-| In-flight | Six consumer issues bundled: **#441** IAM ListPolicyVersions (aws_iam_policy destroy); **#442** DescribeVpcs filtering + cidrBlockAssociationSet; **#443** DescribeSecurityGroups vpc-id filter; **#445** CloudWatch Logs CreateLogGroup kmsKeyId (+Associate/DisassociateKmsKey); **#446** ECS DescribeClusters settings/configuration (include-gated); **#447** IAM ListRoles + ListRoleTags/ListPolicyTags (+ role/policy tag storage). #444 (ECR scan/encryption config) was already fixed by #448. SDK + CLI for all six; TF stack augmented (aws_iam_policy, data.aws_vpc filter, ecs cluster settings, log-group kms). |
-| Last merged | PR #448 — three flagged follow-ups (BUG-1482–1484) |
-| Also merged recently | PR #440 (five AWS sim gaps #434–#438); PR #439 (EC2 Launch Template ops #433); PR #432 (real CloudWatch metrics #1475) |
+| Active branch | `feat/sim-oci-registry-data-plane` (PR pending — shared OCI /v2/ data plane, BUG-1491–1493, #450–#452) |
+| In-flight | Cross-cloud OCI Distribution `/v2/` Docker Registry data plane (real `docker push`/`pull` through the shim), one shared library wired into all three sims: **#450** AWS ECR (had no /v2/ at all); **#451** GCP AR (chunked PATCH 405'd); **#452** Azure ACR (blob-upload POST 404'd). New `shared/oci.go` (`sim.OCIRegistry`: base route, chunked blob upload start/PATCH/finalize with sha256 verify, blob GET/HEAD, manifest PUT/GET/HEAD/DELETE by tag+digest, tags/list) mounted per-method on /v2/ (avoids the awsJson `POST /` + apigatewayv2 `/v2/apis` mux conflicts). GCP/Azure's duplicated OCI handlers retired; GCP keeps pull-through hydration via the `HydrateManifest` hook. SDK tests (raw-HTTP chunked push+pull) per cloud. |
+| Last merged | PR #449 — six consumer issues (BUG-1485–1490, #441–#447) |
+| Also merged recently | PR #448 (three flagged follow-ups); PR #440 (five AWS sim gaps #434–#438); PR #439 (EC2 Launch Template #433) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
-| Bugs | 1490 filed · 1446 fixed · 5 open · 4 false positives |
+| Bugs | 1493 filed · 1449 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
 | Planned next | Consumer issue queue drained (only #394 upstream-blocked). Options: fresh fidelity audit; Phase G new slices (GCP Spanner/Dataflow/Bigtable, Azure); or await new consumer issues |
+| Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 
 ## Invariants

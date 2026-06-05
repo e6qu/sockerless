@@ -8,6 +8,7 @@ import (
 )
 
 func TestGcloudComputeAddressAndRouterNAT(t *testing.T) {
+	requireNetworkHost(t)
 	region := "us-central1"
 	network := "cli-nat-network"
 	address := "cli-nat-address"

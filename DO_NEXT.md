@@ -4,8 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-consumer-batch-441` (PR pending — six consumer issues, BUG-1485–1490).
-- Last merged: PR #448 (three flagged follow-ups, BUG-1482–1484).
+- Branch: `feat/sim-oci-registry-data-plane` (PR pending — shared OCI /v2/ data plane, BUG-1491–1493, #450–#452).
+- Last merged: PR #449 (six consumer issues, BUG-1485–1490, #441–#447).
+- **Cross-cloud OCI Distribution `/v2/` Docker Registry data plane** (real `docker push`/`pull` through the shim), one shared library wired into all three sims:
+  - New `simulators/<cloud>/shared/oci.go` (package `simulator`, identical copy per cloud) = `sim.OCIRegistry`: GET /v2/ base; blob upload POST(init/monolithic)/PATCH(chunk)/PUT(finalize) with sha256 digest verify; blob GET/HEAD; manifest PUT/GET/HEAD/DELETE stored by tag+digest (DELETE removes all aliases); tags/list. Mounted per-method on the /v2/ subtree (GET covers HEAD) — avoids the awsJson `POST /` and apigatewayv2 `/v2/apis` mux conflicts. Hooks: `OnManifestPut`, `HydrateManifest`, `SkipPath`.
+  - **#450 AWS ECR** (`ecr_oci.go`): new — `OnManifestPut` registers an ECR image row.
+  - **#451 GCP AR** (`artifactregistry.go`): replaced the inline /v2/ handler (which lacked chunked PATCH); kept pull-through docker-hub hydration via `HydrateManifest` + DockerImage rows via `OnManifestPut`; `SkipPath` for /v2/projects/.
+  - **#452 Azure ACR** (`acr.go`): replaced the per-method /v2/ handlers (POST mis-routed for multi-segment repos); `/acr/v1/_catalog` + `_tags` read `reg.Manifests`.
+- **Test-host gating added (fixes pre-existing macOS failures):** GCP/Azure Compute+Network real-exec tests now skip when `realexec.DetectNetworkCapabilities().Require()` fails (off-Linux / no ip+nft+sysctl+CAP_NET_ADMIN) — they run for real on the sudo+iproute2/nftables CI runner. The EventGrid CLI publish now POSTs to the loopback base URL with a `Host: <topic>.eventgrid.localhost` header (the sim routes /api/events by Host), removing the `*.localhost` DNS dependency. `realexec` added (local replace) to gcp/azure {sdk,cli}-tests go.mod.
 - Consumer batch (#441–#447; #444 already fixed by #448, #394 upstream-blocked):
   - **#441 (BUG-1485)** IAM `ListPolicyVersions` — returns the policy's single `v1` (the aws_iam_policy destroy path).
   - **#442 (BUG-1486)** EC2 `DescribeVpcs` — multi-id + `ec2Filters` (vpc-id/cidr/tag) + render `cidrBlockAssociationSet`. New helpers `ec2VpcMatchesFilters`, `ec2TagFilterMatch`.
@@ -30,9 +36,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
 - **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained by this PR.
+- Open GitHub issues: #394 (upstream-blocked). #450/#451/#452 fixed by this PR (the shimanism OCI registry batch).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1490 filed · 1446 fixed · 5 open · 4 false positives.
+- BUG counters: 1493 filed · 1449 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

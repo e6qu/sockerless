@@ -31,6 +31,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue v1.0.1
 	github.com/coder/websocket v1.8.14
+	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -51,3 +52,5 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/sockerless/simulator-realexec => ../../realexec

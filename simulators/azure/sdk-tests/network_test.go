@@ -11,6 +11,7 @@ import (
 )
 
 func TestNetwork_CreateVirtualNetwork(t *testing.T) {
+	requireNetworkHost(t)
 	// Create resource group first
 	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)
@@ -37,6 +38,7 @@ func TestNetwork_CreateVirtualNetwork(t *testing.T) {
 }
 
 func TestNetwork_CreateSubnet(t *testing.T) {
+	requireNetworkHost(t)
 	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)
 	_, err = rgClient.CreateOrUpdate(ctx, "subnet-rg", armresources.ResourceGroup{
@@ -305,6 +307,7 @@ func TestNetwork_LoadBalancerLifecycle(t *testing.T) {
 }
 
 func TestNetwork_PublicIPPrefixNatGatewaySubnetAssociation(t *testing.T) {
+	requireNetworkHost(t)
 	rg := "nat-rg"
 	location := "eastus"
 	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())

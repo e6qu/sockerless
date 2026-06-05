@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -36,28 +34,6 @@ type RegistryProperties struct {
 	ZoneRedundancy      string `json:"zoneRedundancy,omitempty"`
 }
 
-// OCIManifest represents a stored OCI manifest.
-type OCIManifest struct {
-	ContentType string `json:"contentType"`
-	Digest      string `json:"digest"`
-	Data        []byte `json:"data"`
-	Repo        string `json:"repo,omitempty"` // repository name extracted at push time
-	Ref         string `json:"ref,omitempty"`  // tag or digest reference used as the store key
-}
-
-// BlobData represents a stored blob.
-type BlobData struct {
-	Digest string `json:"digest"`
-	Data   []byte `json:"data"`
-}
-
-// BlobUpload represents an in-progress blob upload.
-type BlobUpload struct {
-	UUID string `json:"uuid"`
-	Repo string `json:"repo"`
-	Data []byte `json:"data"`
-}
-
 // ACRCacheRule models an Azure Container Registry cache rule
 // (pull-through cache) as returned by the `cacheRules` sub-resource.
 // Sockerless and terraform callers register one rule per registered
@@ -88,12 +64,13 @@ var acrRegistries sim.Store[Registry]
 func registerACR(srv *sim.Server) {
 	registries := sim.MakeStore[Registry](srv.DB(), "acr_registries")
 	acrRegistries = registries
-	// manifests stores manifests keyed by "repo:reference" (tag or digest)
-	manifests := sim.MakeStore[OCIManifest](srv.DB(), "acr_manifests")
-	// blobs stores blobs keyed by "repo@digest"
-	blobs := sim.MakeStore[BlobData](srv.DB(), "acr_blobs")
-	// uploads stores in-progress uploads keyed by uuid
-	uploads := sim.MakeStore[BlobUpload](srv.DB(), "acr_uploads")
+	// OCI Distribution data plane (shared registry library). ACR has no
+	// pull-through hydration here; the catalog API below reads reg.Manifests.
+	reg := &sim.OCIRegistry{
+		Manifests: sim.MakeStore[sim.OCIManifest](srv.DB(), "acr_manifests"),
+		Blobs:     sim.MakeStore[sim.OCIBlob](srv.DB(), "acr_blobs"),
+		Uploads:   sim.MakeStore[sim.OCIUpload](srv.DB(), "acr_uploads"),
+	}
 	// cacheRules stores pull-through cache rules keyed by ARM resource ID.
 	cacheRules := sim.MakeStore[ACRCacheRule](srv.DB(), "acr_cache_rules")
 
@@ -320,295 +297,12 @@ func registerACR(srv *sim.Server) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 
-	// --- OCI Distribution API ---
-
-	// GET /v2/ and GET /v2/{path...} - OCI Distribution API
-	// Combined into a single handler because Go's ServeMux doesn't allow both patterns.
-	srv.HandleFunc("GET /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		// v2/ version check (empty path)
-		if fullPath == "" {
-			w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
-			sim.WriteJSON(w, http.StatusOK, map[string]any{})
-			return
-		}
-		if repo, ref, ok := parseManifestPath(fullPath); ok {
-			key := repo + ":" + ref
-			manifest, found := manifests.Get(key)
-			if !found {
-				// Try by digest if ref looks like a tag
-				if !strings.HasPrefix(ref, "sha256:") {
-					// Search all manifests for this repo with matching tag
-					writeOCIError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest tagged by %q is not found", ref), http.StatusNotFound)
-					return
-				}
-				writeOCIError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest %q is not found", ref), http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", manifest.ContentType)
-			w.Header().Set("Docker-Content-Digest", manifest.Digest)
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(manifest.Data)))
-			w.WriteHeader(http.StatusOK)
-			w.Write(manifest.Data)
-			return
-		}
-		if repo, digest, ok := parseBlobPath(fullPath); ok {
-			key := repo + "@" + digest
-			blob, found := blobs.Get(key)
-			if !found {
-				writeOCIError(w, "BLOB_UNKNOWN", fmt.Sprintf("blob %q is not found", digest), http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.Header().Set("Docker-Content-Digest", blob.Digest)
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(blob.Data)))
-			w.WriteHeader(http.StatusOK)
-			w.Write(blob.Data)
-			return
-		}
-		if repo, ok := parseBlobUploadInitPath(fullPath); ok {
-			uuid := generateUUID()
-			uploads.Put(uuid, BlobUpload{
-				UUID: uuid,
-				Repo: repo,
-			})
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repo, uuid))
-			w.Header().Set("Docker-Upload-UUID", uuid)
-			w.Header().Set("Range", "0-0")
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		if repo, uuid, ok := parseBlobUploadPath(fullPath); ok {
-			upload, found := uploads.Get(uuid)
-			if !found {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "upload not found", http.StatusNotFound)
-				return
-			}
-			_ = repo
-
-			digest := r.URL.Query().Get("digest")
-			if digest == "" {
-				writeOCIError(w, "DIGEST_INVALID", "digest parameter is required", http.StatusBadRequest)
-				return
-			}
-
-			// Read remaining body data (streaming-aware: handles gzip)
-			rc, err := openStreamingBody(r)
-			if err != nil {
-				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
-				return
-			}
-			body, err := io.ReadAll(rc)
-			_ = rc.Close()
-			if err != nil {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
-				return
-			}
-			data := append(upload.Data, body...)
-
-			// Verify the uploaded content hashes to the asserted digest — real
-			// OCI/ACR rejects a mismatch with DIGEST_INVALID rather than storing
-			// content under a wrong digest.
-			if actual := fmt.Sprintf("sha256:%x", sha256.Sum256(data)); actual != digest {
-				uploads.Delete(uuid)
-				writeOCIError(w, "DIGEST_INVALID",
-					fmt.Sprintf("provided digest %s does not match uploaded content digest %s", digest, actual),
-					http.StatusBadRequest)
-				return
-			}
-
-			blobKey := upload.Repo + "@" + digest
-			blobs.Put(blobKey, BlobData{
-				Digest: digest,
-				Data:   data,
-			})
-			uploads.Delete(uuid)
-
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/%s", upload.Repo, digest))
-			w.Header().Set("Content-Length", "0")
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-
-		http.NotFound(w, r)
-	})
-
-	// HEAD /v2/{name}/blobs/{digest} - Check blob existence
-	srv.HandleFunc("HEAD /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		if repo, digest, ok := parseBlobPath(fullPath); ok {
-			key := repo + "@" + digest
-			blob, found := blobs.Get(key)
-			if !found {
-				writeOCIError(w, "BLOB_UNKNOWN", fmt.Sprintf("blob %q is not found", digest), http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.Header().Set("Docker-Content-Digest", blob.Digest)
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(blob.Data)))
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if repo, ref, ok := parseManifestPath(fullPath); ok {
-			key := repo + ":" + ref
-			manifest, found := manifests.Get(key)
-			if !found {
-				writeOCIError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest %q is not found", ref), http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", manifest.ContentType)
-			w.Header().Set("Docker-Content-Digest", manifest.Digest)
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(manifest.Data)))
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.NotFound(w, r)
-	})
-
-	// PUT /v2/{name}/manifests/{reference} - Put manifest
-	srv.HandleFunc("PUT /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		if repo, ref, ok := parseManifestPath(fullPath); ok {
-			rc, err := openStreamingBody(r)
-			if err != nil {
-				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
-				return
-			}
-			body, err := io.ReadAll(rc)
-			_ = rc.Close()
-			if err != nil {
-				writeOCIError(w, "MANIFEST_INVALID", "failed to read body", http.StatusBadRequest)
-				return
-			}
-
-			digest := fmt.Sprintf("sha256:%x", sha256.Sum256(body))
-			contentType := r.Header.Get("Content-Type")
-			if contentType == "" {
-				contentType = "application/vnd.docker.distribution.manifest.v2+json"
-			}
-
-			manifest := OCIManifest{
-				ContentType: contentType,
-				Digest:      digest,
-				Data:        body,
-				Repo:        repo,
-				Ref:         ref,
-			}
-
-			// Store by tag reference
-			manifests.Put(repo+":"+ref, manifest)
-			// Also store by digest (Ref field reflects the digest key)
-			byDigest := manifest
-			byDigest.Ref = digest
-			manifests.Put(repo+":"+digest, byDigest)
-
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", repo, digest))
-			w.Header().Set("Content-Length", "0")
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-		if repo, uuid, ok := parseBlobUploadPath(fullPath); ok {
-			upload, found := uploads.Get(uuid)
-			if !found {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "upload not found", http.StatusNotFound)
-				return
-			}
-			_ = repo
-
-			digest := r.URL.Query().Get("digest")
-			if digest == "" {
-				writeOCIError(w, "DIGEST_INVALID", "digest parameter is required", http.StatusBadRequest)
-				return
-			}
-
-			rc, err := openStreamingBody(r)
-			if err != nil {
-				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
-				return
-			}
-			body, err := io.ReadAll(rc)
-			_ = rc.Close()
-			if err != nil {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
-				return
-			}
-			data := append(upload.Data, body...)
-
-			// Verify the uploaded content hashes to the asserted digest — real
-			// OCI/ACR rejects a mismatch with DIGEST_INVALID rather than storing
-			// content under a wrong digest.
-			if actual := fmt.Sprintf("sha256:%x", sha256.Sum256(data)); actual != digest {
-				uploads.Delete(uuid)
-				writeOCIError(w, "DIGEST_INVALID",
-					fmt.Sprintf("provided digest %s does not match uploaded content digest %s", digest, actual),
-					http.StatusBadRequest)
-				return
-			}
-
-			blobKey := upload.Repo + "@" + digest
-			blobs.Put(blobKey, BlobData{
-				Digest: digest,
-				Data:   data,
-			})
-			uploads.Delete(uuid)
-
-			w.Header().Set("Docker-Content-Digest", digest)
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/%s", upload.Repo, digest))
-			w.Header().Set("Content-Length", "0")
-			w.WriteHeader(http.StatusCreated)
-			return
-		}
-
-		http.NotFound(w, r)
-	})
-
-	// POST /v2/{name}/blobs/uploads/ - Initiate upload
-	srv.HandleFunc("POST /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		if repo, ok := parseBlobUploadInitPath(fullPath); ok {
-			uuid := generateUUID()
-			uploads.Put(uuid, BlobUpload{
-				UUID: uuid,
-				Repo: repo,
-			})
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repo, uuid))
-			w.Header().Set("Docker-Upload-UUID", uuid)
-			w.Header().Set("Range", "0-0")
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		http.NotFound(w, r)
-	})
-
-	// DELETE /v2/{name}/manifests/{reference} - Delete manifest by tag or digest
-	srv.HandleFunc("DELETE /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		if repo, ref, ok := parseManifestPath(fullPath); ok {
-			entry, exists := manifests.Get(repo + ":" + ref)
-			if !exists {
-				writeOCIError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest %q not found", ref), http.StatusNotFound)
-				return
-			}
-			manifests.Delete(repo + ":" + ref)
-			// Delete all aliases for the same repo+digest (tag entry when deleting by digest, or vice-versa).
-			digestToClean := entry.Digest
-			aliases := manifests.Filter(func(m OCIManifest) bool {
-				return m.Repo == repo && m.Digest == digestToClean
-			})
-			for _, alias := range aliases {
-				manifests.Delete(repo + ":" + alias.Ref)
-			}
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		http.NotFound(w, r)
-	})
+	// OCI Distribution data plane — mounted from the shared registry library.
+	reg.Register(srv)
 
 	// GET /acr/v1/_catalog - List all repositories (ACR data-plane catalog API)
 	srv.HandleFunc("GET /acr/v1/_catalog", func(w http.ResponseWriter, r *http.Request) {
-		all := manifests.List()
+		all := reg.Manifests.List()
 		seen := map[string]bool{}
 		var repos []string
 		for _, m := range all {
@@ -646,7 +340,7 @@ func registerACR(srv *sim.Server) {
 			http.NotFound(w, r)
 			return
 		}
-		tags := manifests.Filter(func(m OCIManifest) bool {
+		tags := reg.Manifests.Filter(func(m sim.OCIManifest) bool {
 			return m.Repo == repoName && m.Ref != "" && !strings.HasPrefix(m.Ref, "sha256:")
 		})
 		tagList := make([]map[string]any, 0, len(tags))
@@ -668,126 +362,4 @@ func registerACR(srv *sim.Server) {
 		})
 	})
 
-	// PATCH /v2/{name}/blobs/uploads/{uuid} - Chunked upload
-	srv.HandleFunc("PATCH /v2/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		fullPath := sim.PathParam(r, "path")
-		if repo, uuid, ok := parseBlobUploadPath(fullPath); ok {
-			upload, found := uploads.Get(uuid)
-			if !found {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "upload not found", http.StatusNotFound)
-				return
-			}
-
-			rc, err := openStreamingBody(r)
-			if err != nil {
-				writeOCIError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
-				return
-			}
-			body, err := io.ReadAll(rc)
-			_ = rc.Close()
-			if err != nil {
-				writeOCIError(w, "BLOB_UPLOAD_UNKNOWN", "failed to read body", http.StatusInternalServerError)
-				return
-			}
-			upload.Data = append(upload.Data, body...)
-			uploads.Put(uuid, upload)
-
-			end := len(upload.Data) - 1
-			if end < 0 {
-				end = 0
-			}
-			w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repo, uuid))
-			w.Header().Set("Docker-Upload-UUID", uuid)
-			w.Header().Set("Range", fmt.Sprintf("0-%d", end))
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		http.NotFound(w, r)
-	})
-}
-
-// parseManifestPath parses paths like "{name}/manifests/{reference}" from the /v2/ prefix.
-// {name} can contain slashes (e.g., "myrepo/myimage").
-func parseManifestPath(path string) (repo, reference string, ok bool) {
-	const marker = "/manifests/"
-	idx := strings.LastIndex(path, marker)
-	if idx < 0 {
-		return "", "", false
-	}
-	repo = path[:idx]
-	reference = path[idx+len(marker):]
-	if repo == "" || reference == "" {
-		return "", "", false
-	}
-	return repo, reference, true
-}
-
-// parseBlobPath parses paths like "{name}/blobs/{digest}" from the /v2/ prefix.
-func parseBlobPath(path string) (repo, digest string, ok bool) {
-	const marker = "/blobs/"
-	idx := strings.LastIndex(path, marker)
-	if idx < 0 {
-		return "", "", false
-	}
-	rest := path[idx+len(marker):]
-	// Must not be an upload path
-	if strings.HasPrefix(rest, "uploads/") || rest == "uploads" {
-		return "", "", false
-	}
-	repo = path[:idx]
-	digest = rest
-	if repo == "" || digest == "" {
-		return "", "", false
-	}
-	return repo, digest, true
-}
-
-// parseBlobUploadInitPath parses paths like "{name}/blobs/uploads/" from the /v2/ prefix.
-func parseBlobUploadInitPath(path string) (repo string, ok bool) {
-	const marker = "/blobs/uploads/"
-	idx := strings.Index(path, marker)
-	if idx < 0 {
-		// Also match without trailing slash
-		const marker2 = "/blobs/uploads"
-		if strings.HasSuffix(path, marker2) {
-			repo = path[:len(path)-len(marker2)]
-			return repo, repo != ""
-		}
-		return "", false
-	}
-	// If there's content after uploads/, it's not an init path
-	rest := path[idx+len(marker):]
-	if rest != "" {
-		return "", false
-	}
-	repo = path[:idx]
-	return repo, repo != ""
-}
-
-// parseBlobUploadPath parses paths like "{name}/blobs/uploads/{uuid}" from the /v2/ prefix.
-func parseBlobUploadPath(path string) (repo, uuid string, ok bool) {
-	const marker = "/blobs/uploads/"
-	idx := strings.Index(path, marker)
-	if idx < 0 {
-		return "", "", false
-	}
-	uuid = path[idx+len(marker):]
-	repo = path[:idx]
-	if repo == "" || uuid == "" {
-		return "", "", false
-	}
-	return repo, uuid, true
-}
-
-// writeOCIError writes an OCI Distribution API error response.
-func writeOCIError(w http.ResponseWriter, code, message string, statusCode int) {
-	sim.WriteJSON(w, statusCode, map[string]any{
-		"errors": []map[string]any{
-			{
-				"code":    code,
-				"message": message,
-				"detail":  map[string]any{},
-			},
-		},
-	})
 }
