@@ -4,13 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `fix/azure-sim-kv-versionless-crypto` (PR pending, closes #423).
-- Last merged: PR #424 (AWS ACM DNS validation, #420 + #421).
-- Azure KV version-less key crypto (BUG-1466, issue #423): `handleKVKey` only routed crypto for the 4-segment `/keys/{name}/{version}/{verb}` form; the version-less 3-segment `/keys/{name}/{verb}` (`encrypt`/`decrypt`/`sign`/`verify`/`wrapkey`/`unwrapkey`) fell through to 405. Added a `len(segs)==3 && kvIsCryptoVerb(verb)` route that calls `handleKVCryptoKey(..., version="", verb)`; `findVersion("")` already resolves to `latest()` (same as the version-less GET). SDK (`keyvault_versionless_crypto_test.go` — azkeys Encrypt/Decrypt/Sign/Verify/Wrap/Unwrap with version "") and CLI (`az rest` POST `/keys/{name}/encrypt`+`decrypt` in `keyvault_dataplane_test.go`) pass locally. No Terraform data-plane crypto surface. Internal routing only — no new ops, surface table/matrix unchanged.
-- Open GitHub issues: #423 (closing via pending PR). #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
+- Branch: `test/azure-sim-coverage-gaps` (PR pending — test-only).
+- Last merged: PR #425 (Azure KV version-less key crypto, #423).
+- Azure test-gap audit: the three headline gaps from the old roadmap (App Insights SDK/CLI, Private DNS A-record SDK, ACR image-ops SDK) were ALREADY covered (insights_test.go, dns_private_test.go, acr_test.go). The genuine remaining gap was **Private DNS non-A record types** — A has a dedicated handler + test; AAAA/CNAME/MX/PTR/SRV/TXT go through a separate generic-loop handler (dns.go:428) that was untested. Added `dns_private_records_test.go` (per-type round-trip for all six). Also added `TestAppInsights_BillingFeatures` (the one untested App Insights SDK op). BUG-1467 was a FALSE POSITIVE: suspected the billing-features response used wrong casing, but App Insights legacy billing-features genuinely uses PascalCase (confirmed vs the SDK serde); a camelCase "fix" broke it and was reverted. The new test guards that.
+- Open GitHub issues: none actionable (#394 upstream-blocked).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1466 filed · 1423 fixed · 5 open · 3 false positives.
-- After this: no open consumer issues remain (only #394, upstream-blocked); fall back to planned Azure/GCP test-gap PRs or await new issues.
+- BUG counters: 1467 filed · 1423 fixed · 5 open · 4 false positives.
+- After this: GCP coverage-gap PR (SA-key + instance-template route impls — real missing ops, not just tests), or await new consumer issues.
 
 ## Recently Completed
 

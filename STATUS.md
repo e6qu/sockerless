@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/azure-sim-kv-versionless-crypto` (PR pending — Azure KV version-less key crypto, issue #423) |
-| In-flight | Azure KV version-less key crypto (BUG-1466): `handleKVKey` now routes the 3-segment `/keys/{name}/{verb}` crypto form to the key's current version instead of 405. SDK + CLI coverage green locally (no Terraform data-plane crypto surface). |
-| Last merged | PR #424 — ACM DNS validation (#420 + #421) |
-| Also merged recently | PR #422 (GCP Cloud KMS #419); PR #418 (DynamoDB GSIs #416, ECS Service #417, azf attach-stdin #1461, CloudFront tagging #1462) |
-| Open GitHub issues | #423 — Azure KV version-less key crypto (closing via the pending PR). #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
-| Bugs | 1466 filed · 1423 fixed · 5 open · 3 false positives |
+| Active branch | `test/azure-sim-coverage-gaps` (PR pending — Azure SDK test-gap coverage) |
+| In-flight | Azure test-gap coverage: Private DNS non-A record types (AAAA/CNAME/MX/PTR/SRV/TXT — the untested generic-loop handlers) + App Insights billing-features SDK round-trip. Test-only (BUG-1467 was a false positive — App Insights billing-features genuinely uses PascalCase). |
+| Last merged | PR #425 — Azure KV version-less key crypto (#423) |
+| Also merged recently | PR #424 (ACM DNS validation #420/#421); PR #422 (GCP Cloud KMS #419); PR #418 (DynamoDB GSIs/ECS Service + azf/CloudFront fixes) |
+| Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker, waiting on hashicorp) |
+| Bugs | 1467 filed · 1423 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After KV PR: planned Azure test-gap PR (App Insights/Private DNS/ACR), then GCP coverage-gap PR — or new consumer issues |
+| Planned next | After this: GCP coverage-gap PR (SA keys, instance templates — real impls), or await new consumer issues |
 | Live infra | None up |
 
 ## Invariants
