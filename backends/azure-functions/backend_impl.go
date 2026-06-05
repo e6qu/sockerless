@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
@@ -412,21 +415,47 @@ func (s *Server) ContainerStart(ref string) error {
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
 			s.publishAZFAttachResponse(id, nil, []byte(inv.Error))
+		} else if readyErr := s.waitAZFFunctionListening(azfState.FunctionURL); readyErr != nil {
+			// The in-container bootstrap binds its HTTP port a moment after
+			// ContainerStart returns. POSTing the invoke before the listener
+			// is up races startup and surfaces as a connection error that —
+			// given the long invoke timeout — strands attached readers. Wait
+			// for the listener, then fail fast and clearly if it never comes.
+			s.Logger.Error().Err(readyErr).Str("functionApp", azfState.FunctionAppName).Msg("Function App HTTP trigger not ready before invoke")
+			inv.ExitCode = 1
+			inv.Error = fmt.Sprintf("function app not ready: %v", readyErr)
+			s.publishAZFAttachResponse(id, nil, []byte(inv.Error))
 		} else {
 			client := &http.Client{Timeout: time.Duration(s.config.Timeout) * time.Second}
-			var body io.Reader
-			contentType := "application/json"
-			if hasCapturedStdin {
-				body = azfExecEnvelopeBody(capturedStdin)
+			newReq := func() *http.Request {
+				var body io.Reader
+				if hasCapturedStdin {
+					body = azfExecEnvelopeBody(capturedStdin)
+				}
+				req, _ := http.NewRequest("POST", azfState.FunctionURL, body)
+				req.Header.Set("Content-Type", "application/json")
+				if azfState.FunctionHost != "" {
+					req.Host = azfState.FunctionHost
+				}
+				return req
 			}
-			invokeReq, _ := http.NewRequest("POST", azfState.FunctionURL, body)
-			if contentType != "" {
-				invokeReq.Header.Set("Content-Type", contentType)
+
+			// Retry only on connection-refused — the brief window between the
+			// reverse-agent registering and the HTTP listener binding its
+			// port. ECONNREFUSED means the request never reached the server,
+			// so re-POSTing cannot double-invoke the workload.
+			var resp *http.Response
+			var err error
+			retryDeadline := time.Now().Add(s.azfBootstrapTimeout())
+			for {
+				resp, err = client.Do(newReq())
+				if err == nil || !errors.Is(err, syscall.ECONNREFUSED) || !time.Now().Before(retryDeadline) {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
 			}
-			if azfState.FunctionHost != "" {
-				invokeReq.Host = azfState.FunctionHost
-			}
-			if resp, err := client.Do(invokeReq); err != nil {
+
+			if err != nil {
 				s.Logger.Error().Err(err).Str("functionApp", azfState.FunctionAppName).Msg("Function App invocation failed")
 				inv.ExitCode = core.HTTPInvokeErrorExitCode(err)
 				inv.Error = err.Error()
@@ -491,6 +520,54 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 
 	return nil
+}
+
+// azfBootstrapTimeout returns the configured bootstrap-ready timeout, falling
+// back to the documented default when the env var is unset or invalid.
+func (s *Server) azfBootstrapTimeout() time.Duration {
+	timeout, err := core.BootstrapTimeoutFromEnv("azf")
+	if err != nil || timeout <= 0 {
+		return 90 * time.Second
+	}
+	return timeout
+}
+
+// waitAZFFunctionListening blocks until the Function App HTTP trigger accepts
+// TCP connections, so the buffered-attach invoke POST reaches a live listener
+// instead of racing the in-container bootstrap binding its port (which
+// surfaced as a connection error that — given the long invoke timeout —
+// stranded attached readers). The probe only dials; it never sends the invoke
+// body, so it cannot double-invoke the workload. This path deliberately does
+// not depend on the reverse-agent: the buffered HTTP invoke is reachable
+// host->container even where the container cannot dial back to the backend.
+func (s *Server) waitAZFFunctionListening(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse function URL %q: %w", rawURL, err)
+	}
+	addr := u.Host
+	if u.Port() == "" {
+		if u.Scheme == "https" {
+			addr = u.Hostname() + ":443"
+		} else {
+			addr = u.Hostname() + ":80"
+		}
+	}
+	deadline := time.Now().Add(s.azfBootstrapTimeout())
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, derr := net.DialTimeout("tcp", addr, 2*time.Second)
+		if derr == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = derr
+		time.Sleep(200 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = context.DeadlineExceeded
+	}
+	return fmt.Errorf("function app %s never accepted connections: %w", addr, lastErr)
 }
 
 func (s *Server) captureAZFStdin(id string) ([]byte, bool) {

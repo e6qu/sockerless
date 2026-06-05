@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1460 filed - 1417 fixed - 5 open - 3 false positives.**
+**1461 filed - 1418 fixed - 5 open - 3 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1461~~ | P1 | azf backend — attach-stdin invoke race + unbounded timeout | flaky CI hang (#418 `test (azure backends)`) | Fixed: `TestAZFGitLabRunnerAttachStdin` flaked in CI (`Post .../api/function: EOF` then `panic: test timed out after 5m0s`; same code passed an earlier run). The buffered-attach invoke goroutine in `ContainerStart` POSTed the `/bin/sh` exec envelope to the Function App HTTP trigger immediately, racing the in-container bootstrap binding its port; with the 600s invoke-client timeout, an early/failed POST stranded the attached reader (which blocks until `publishAZFAttachResponse`) past go-test's 5-min limit → opaque panic. Added `waitAZFFunctionListening`: a bounded (90s azf bootstrap timeout) TCP-readiness probe that waits for the listener before POSTing and publishes a clear `function app not ready` error on timeout instead of stranding the reader. The buffered HTTP-invoke path deliberately does **not** depend on the reverse-agent — host→container is reachable even where the container cannot dial back (`ws://host.docker.internal/...` is unreachable under local Podman, so every reverse-agent path is CI-only) — so the attach path stays locally validatable (passes in ~21s). A test reorder would have masked this and wrongly imposed the local-Docker start-then-write contract on the buffered cloud-exec model (where write-before-start is correct); not done. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 | 1104 | P0 | simulator audit cadence | meta | Keep re-checking SDK/CLI/Terraform surface claims during simulator phases. This remains open while meaningful simulator work continues; stale "not applicable" rows are treated as real bugs when public clients exist. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |

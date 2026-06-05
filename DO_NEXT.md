@@ -7,9 +7,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - Branch: `fix/aws-sim-ecs-service-ddb-gsi` (PR #418, closes #416/#417), being expanded with ECS/DynamoDB audit follow-ups.
 - Last merged: PR #415 (KMS tagging #413, EC2 API-only control-plane modeling #414, Podman container image fix).
 - ECS+DynamoDB audit follow-ups (all done, folded into PR #418, BUG-1457–1460): DDB UpdateTable (GSI lifecycle/throughput/billing/deletion-protection), Query/Scan IndexName validation + ScannedCount, Batch/Transact ops, richer ConditionExpression + ReturnValues; ECS tags on cluster/service, ListServices pagination, ListClusters/ListTaskDefinitions. (GSI queries were already working via the generic matcher — audit false-positive.)
+- azf attach-stdin invoke race (folded into PR #418, BUG-1461): `test (azure backends)` CI flaked with `Post .../api/function: EOF` → 5-min opaque panic. Root cause: the buffered-attach invoke POSTed before the in-container bootstrap's HTTP listener was up, and the 600s client timeout stranded the attached reader past go-test's 5-min limit. Fix: `waitAZFFunctionListening` TCP-readiness probe (90s-bounded) before the POST + clear fail-fast error. Does **not** use the reverse-agent (CI-only under local Podman), so the path stays locally validatable (passes ~21s). The test was left unchanged — a reorder would have masked the bug.
 - Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp). #416/#417 closing via PR #418.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1460 filed · 1417 fixed · 5 open · 3 false positives.
+- BUG counters: 1461 filed · 1418 fixed · 5 open · 3 false positives.
 
 ## Recently Completed
 
