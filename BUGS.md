@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1472 filed - 1428 fixed - 5 open - 4 false positives.**
+**1473 filed - 1429 fixed - 5 open - 4 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1473~~ | P1 | aws ec2 simulator — standalone ENI ops unimplemented | sim fidelity gap (issue #428) | Fixed: ENIs were only materialized as a side-effect of `RunInstances`; the standalone lifecycle ops returned `InvalidAction`: `CreateNetworkInterface`, `AttachNetworkInterface`, `DetachNetworkInterface`, `DeleteNetworkInterface`, `ModifyNetworkInterfaceAttribute`, `AssignPrivateIpAddresses`. Blocks the fck-nat NAT-instance Terraform path (`aws_network_interface` + attachment + `source_dest_check=false`). Fix: register the ops over the existing `ec2NetworkInterfaces` store (control-plane modeling, like `CreateNatGateway`) — create→available, attach/detach toggle status+attachment, modify sets SourceDestCheck/description/groups, assign adds secondary IPs. |
 | ~~1468~~ | P1 | gcp firestore simulator — Patch/Commit ignore updateMask | sim fidelity gap (fidelity audit) | Fixed: `handleFSPatchDocument` (`current.Fields = req.Fields`) and `handleFSCommit` (`fsPutDocument(*wr.Update)`) replace the whole document, ignoring `updateMask`/`update.updateMask`. The Firestore SDK `DocumentRef.Update(...)` and `Set(..., MergeAll)` send masked writes carrying only changed fields → the sim silently drops every unmentioned field (data loss). Fix: merge only masked field paths into the existing doc. |
 | ~~1469~~ | P2 | gcp secret-manager simulator — :access ignores version State | sim fidelity gap (fidelity audit) | Fixed: `accessSecretPayloadResolved` serves any version's payload regardless of `State`, and `latest` picks the highest-numbered version without skipping DISABLED/DESTROYED. Real GCP: accessing a DISABLED version → `FAILED_PRECONDITION` (400); `latest` resolves to the latest ENABLED version. Fix: check state on explicit access; skip non-ENABLED for `latest`. |
 | ~~1470~~ | P2 | aws ec2 simulator — Describe{NatGateways,Subnets,RouteTables} only honor Filter.1 | sim fidelity gap (fidelity audit) | Fixed: These check `r.FormValue("Filter.1.Name")=="vpc-id"` literally; a `vpc-id` filter sent as `Filter.2` (or combined with another filter) is ignored and the handler returns ALL resources. `handleDescribeInstances` uses the general `ec2Filters()` matcher correctly. Fix: route these through `ec2Filters()` so any filter position/combination works. |

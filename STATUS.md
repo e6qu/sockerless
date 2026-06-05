@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/sim-fidelity-audit` (PR pending — cross-cloud fidelity-audit fixes, BUG-1468–1472) |
-| In-flight | Fresh fidelity-audit fixes (one PR by user's call): GCP Firestore updateMask (silent data loss), GCP Secret Manager disabled-version access → FAILED_PRECONDITION, AWS EC2 Describe{NatGateways,Subnets,RouteTables} position-independent filters, Azure App Insights billing PUT persist+echo, Azure ACR blob digest verification. SDK tests for all five; all sims green locally. |
-| Last merged | PR #426 — Azure SDK test-gap coverage (Private DNS non-A records + App Insights billing) |
-| Also merged recently | PR #425 (Azure KV version-less crypto #423); PR #424 (ACM DNS validation #420/#421); PR #422 (GCP Cloud KMS #419) |
-| Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker, waiting on hashicorp) |
-| Bugs | 1472 filed · 1428 fixed · 5 open · 4 false positives |
+| Active branch | `feat/aws-sim-ec2-eni-ops` (PR pending — EC2 standalone ENI ops, issue #428) |
+| In-flight | AWS EC2 standalone ENI ops (BUG-1473, issue #428): Create/Attach/Detach/Delete/ModifyAttribute/AssignPrivateIpAddresses over the existing `ec2NetworkInterfaces` store; unblocks the fck-nat NAT-instance path. SDK + CLI + Terraform coverage green locally. NEXT in queue: #427 IAM policy simulation. |
+| Last merged | PR #429 — five cross-cloud fidelity-audit fixes (BUG-1468–1472) |
+| Also merged recently | PR #426 (Azure test-gap coverage); PR #425 (Azure KV version-less crypto #423); PR #424 (ACM DNS validation #420/#421) |
+| Open GitHub issues | #428 (EC2 ENI — closing via pending PR), #427 (IAM policy sim — queued), #394 (azuread upstream blocker) |
+| Bugs | 1473 filed · 1429 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After this: more audit (the agents flagged lower-priority items, mostly intended modeling), or await new consumer issues |
+| Planned next | #427 IAM policy simulation (larger — a policy-evaluation engine), then audit lower-priority items or await new issues |
 | Live infra | None up |
 
 ## Invariants
