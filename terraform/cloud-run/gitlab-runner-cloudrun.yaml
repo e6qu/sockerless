@@ -113,7 +113,7 @@ spec:
               value: "runner-workspace=/tmp/runner-work=sockerless-live-46x3zg4imo-runner-workspace"
             - name: SOCKERLESS_CLOUDRUN_BOOTSTRAP
               value: "/opt/sockerless/sockerless-cloudrun-bootstrap"
-            # BUG-927/Phase 122g: route step containers to Cloud Run
+            # route step containers to Cloud Run
             # Service (long-lived, supports docker exec) instead of
             # Cloud Run Job (one-shot, breaks gitlab-runner's container
             # reuse pattern). VPC connector for cross-Service DNS.

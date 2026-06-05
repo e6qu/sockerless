@@ -6,7 +6,7 @@ import (
 )
 
 // TestEC2LaunchTemplateCLI drives the EC2 Launch Template ops via the aws CLI
-// (issue #433): create with launch-template-data, describe, describe-versions
+// : create with launch-template-data, describe, describe-versions
 // (round-tripping the data), delete. This is the fck-nat aws_launch_template
 // shape exercised through botocore's query protocol.
 func TestEC2LaunchTemplateCLI(t *testing.T) {

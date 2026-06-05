@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSNS_SetTopicAttributes_RoundTrip locks the BUG-1153 SNS fix:
+// TestSNS_SetTopicAttributes_RoundTrip locks the SNS fix:
 // SetTopicAttributes must accept the AttributeName/AttributeValue
 // pair, persist it, and subsequent GetTopicAttributes must return
 // it. Pre-fix the action returned InvalidAction and tf-provider-aws
@@ -34,7 +34,7 @@ func TestSNS_SetTopicAttributes_RoundTrip(t *testing.T) {
 		AttributeName:  aws.String("Policy"),
 		AttributeValue: aws.String(policy),
 	})
-	require.NoError(t, err, "SetTopicAttributes must succeed (BUG-1153 regression guard)")
+	require.NoError(t, err, "SetTopicAttributes must succeed (regression guard)")
 
 	got, err := c.GetTopicAttributes(ctx, &sns.GetTopicAttributesInput{TopicArn: created.TopicArn})
 	require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestSNS_SetTopicAttributes_RoundTrip(t *testing.T) {
 		"GetTopicAttributes must return the previously-set Policy verbatim")
 }
 
-// TestSQS_PurgeQueue_RemovesMessages locks BUG-1153 SQS fix:
+// TestSQS_PurgeQueue_RemovesMessages locks the SQS fix:
 // PurgeQueue must delete every queued message without removing the
 // queue itself. Pre-fix the action returned UnknownOperationException
 // and tests had to delete + recreate the queue between runs.
@@ -70,7 +70,7 @@ func TestSQS_PurgeQueue_RemovesMessages(t *testing.T) {
 
 	// Purge.
 	_, err = c.PurgeQueue(ctx, &sqs.PurgeQueueInput{QueueUrl: queueURL})
-	require.NoError(t, err, "PurgeQueue must succeed (BUG-1153 regression guard)")
+	require.NoError(t, err, "PurgeQueue must succeed (regression guard)")
 
 	// Receive returns nothing (queue is empty + queue still exists).
 	recv, err := c.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{

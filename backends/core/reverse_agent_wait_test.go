@@ -97,7 +97,7 @@ func TestLifetimeExpired_MarkAndCheck(t *testing.T) {
 }
 
 func TestLifetimeExpired_DropSessionPreservesMarker(t *testing.T) {
-	// Regression for BUG-1057: DropSession (the WS-close path called
+	// Regression: DropSession (the WS-close path called
 	// when Lambda/GCF/cloudrun kills the pod after sending
 	// lifetime_expired) must NOT wipe the marker. Otherwise the next
 	// ExecStart falls through to the generic "no agent" error instead
@@ -106,12 +106,12 @@ func TestLifetimeExpired_DropSessionPreservesMarker(t *testing.T) {
 	r.MarkLifetimeExpired("c1")
 	r.DropSession("c1")
 	if !r.IsLifetimeExpired("c1") {
-		t.Fatal("DropSession wiped lifetime-expired (BUG-1057 regression)")
+		t.Fatal("DropSession wiped lifetime-expired (regression)")
 	}
 }
 
 func TestWaitForAgent_TimeoutDoesNotStrandSiblingWaiter(t *testing.T) {
-	// Regression for BUG-1064. With the previous shared-channel
+	// Regression. With the previous shared-channel
 	// design, waiter A timing out would delete the bucket and waiter
 	// B never woke when Register fired.
 	r := NewReverseAgentRegistry()
@@ -144,7 +144,7 @@ func TestWaitForAgent_TimeoutDoesNotStrandSiblingWaiter(t *testing.T) {
 			t.Fatalf("long waiter: %v", err)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("long waiter never woke after Register (BUG-1064 regression)")
+		t.Fatal("long waiter never woke after Register (regression)")
 	}
 }
 

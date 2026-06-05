@@ -6,7 +6,7 @@
 # GitLab and dispatches each job's step containers via DOCKER_HOST →
 # in-image sockerless backend → Cloud Run Job per step (the docker
 # executor's standard "step container" model). `services:` rides
-# alongside as a sockerless pod (Phase 118d).
+# alongside as a sockerless pod.
 #
 # No dispatcher needed — gitlab-runner has its own polling master.
 

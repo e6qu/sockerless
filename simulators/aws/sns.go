@@ -26,7 +26,7 @@ func xmlEscape(s string) string {
 // in-process: a Publish to a topic enumerates Subscription entries
 // pointing at SQS queues and pushes the message body into each
 // queue's Messages slice. HTTP / HTTPS / email / SMS subscribers
-// are recorded but not delivered (issue #176 note: real HTTP/HTTPS
+// are recorded but not delivered (real HTTP/HTTPS
 // subscription confirmation is out of scope for the first cut).
 //
 // Wire protocol: awsQuery (POST / + Action form param + XML envelope),

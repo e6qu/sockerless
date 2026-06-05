@@ -40,7 +40,7 @@ repos:
         pass_filenames: false
 
       - id: no-public-cloud-services
-        name: No public Cloud Run / GCF exposure (Phase 122g rule)
+        name: No public Cloud Run / GCF exposure
         entry: bash scripts/check-no-public-cloud-services.sh
         language: system
         pass_filenames: false
@@ -61,7 +61,7 @@ repos:
         always_run: true
 
       - id: port-defaults
-        name: Port defaults (BUG-710 — no :2375 / :9100 in production sources)
+        name: Port defaults (no :2375 / :9100 in production sources)
         entry: bash scripts/check-port-defaults.sh
         language: system
         pass_filenames: false

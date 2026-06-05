@@ -340,7 +340,7 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 		}
 		// Boot a real Firecracker VM only on a real-execution host; on an
 		// API-only host the launched instance is modeled as "running" at the
-		// control plane, like a direct RunInstances (issue #414).
+		// control plane, like a direct RunInstances.
 		if ec2RealVMHostAvailable() {
 			if err := ec2StartRealVM(context.Background(), inst); err != nil {
 				_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)

@@ -10,7 +10,7 @@ import (
 )
 
 // TestCanonicalConfig_NoSimQuirkBaseEndpoint scans test sources and
-// Terraform provider configs for the BUG-1098 / BUG-1104 shape:
+// Terraform provider configs for the known shape:
 //
 //	o.BaseEndpoint = aws.String(baseURL + "/<service>")
 //	endpoints { s3 = "${var.endpoint}/<service>" }

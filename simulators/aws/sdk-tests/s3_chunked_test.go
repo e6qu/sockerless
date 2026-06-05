@@ -16,7 +16,7 @@ import (
 
 // TestS3_AWSChunkedPutObject_RoundTrip exercises the aws-chunked
 // upload path end-to-end against the sim, regression-guarding
-// BUG-1099 ("S3 sim stores aws-chunked envelope verbatim").
+// the known-bad shape ("S3 sim stores aws-chunked envelope verbatim").
 //
 // The aws-sdk-go-v2 SDK refuses streaming-signed payloads over plain
 // HTTP, so reproducing the SDK's exact wire shape requires TLS. The
@@ -89,7 +89,7 @@ func TestS3_AWSChunkedPutObject_RoundTrip(t *testing.T) {
 
 	if string(got) != payload {
 		t.Errorf("aws-chunked round-trip failed:\n  PUT  payload   = %q (len %d)\n  GET  stored    = %q (len %d)\n"+
-			"This is the BUG-1099 shape — the sim stored the chunk envelope verbatim instead of the decoded payload.",
+			"This is the known-bad shape — the sim stored the chunk envelope verbatim instead of the decoded payload.",
 			payload, len(payload), string(got), len(got))
 	}
 

@@ -2,7 +2,7 @@
 #
 # Same pipeline shape as cell-7. Runner image bakes
 # `sockerless-backend-gcf`. Each job's step container becomes a Cloud
-# Run Function via Phase 118d's pod overlay; stage-to-stage reuse
+# Run Function via the pod overlay; stage-to-stage reuse
 # rides the gcf overlay-content-tag pool — same image hash across
 # stages = same Function reused (sub-118b-style amortised cold start).
 
@@ -44,7 +44,7 @@ probe-and-compile:
     - cat /etc/hostname 2>/dev/null || true
     - df -h 2>/dev/null | head -10 || true
     - mount | head -20 || true
-    - echo "=== probe-capabilities (Phase 118d shared-degraded honest surface) ==="
+    - echo "=== probe-capabilities ==="
     - grep -E '^(Cap|Seccomp|NoNew)' /proc/self/status || true
     - env | grep -E 'SOCKERLESS_(POD|NAMESPACE)' || true
     - echo "=== probe-kernel ==="
@@ -56,7 +56,7 @@ probe-and-compile:
     - getconf -a 2>/dev/null | head -30 || echo "getconf -a unavailable"
     - ulimit -a
     - echo "nproc=$(nproc)"
-    - echo "=== probe-localhost-peer (postgres sidecar via Phase 118d gcf pod overlay) ==="
+    - echo "=== probe-localhost-peer (postgres sidecar via the gcf pod overlay) ==="
     - |
       for i in 1 2 3 4 5 6 7 8 9 10; do
         if pg_isready -h postgres -p 5432 -t 5 -U ci; then echo "postgres ready"; break; fi

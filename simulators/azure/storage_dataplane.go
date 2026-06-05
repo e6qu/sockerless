@@ -17,15 +17,15 @@ import (
 // The Microsoft.Storage ARM PUT response advertises four data-plane
 // endpoint URLs on every storage-account create:
 //
-//	https://{account}.blob.<host>/   (BUG-1103 part 1 fixed in 173.10 → blob.go)
+//	https://{account}.blob.<host>/ (part 1 in blob.go)
 //	https://{account}.file.<host>/   ← this file
 //	https://{account}.queue.<host>/  ← this file
 //	https://{account}.table.<host>/  ← this file
 //
 // Real Azure SDK / azcopy / az CLI consumers follow these URLs;
 // before this commit the latter three 404'd (the sim emitted the
-// URLs but had no handler servicing them — exact BUG-1103 shape).
-// Closes BUG-1109. Each data plane is scope-tight to the canonical
+// URLs but had no handler servicing them — exact shape).
+// Each data plane is scope-tight to the canonical
 // CRUD that terraform-provider-azurerm + the Go SDK exercise; full
 // REST surfaces (ranges, leases, SAS, multipart copy, full OData
 // query) are out of scope for the first cut.

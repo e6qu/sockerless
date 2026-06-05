@@ -10,7 +10,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// EC2 Launch Templates (issue #433). A launch template is a versioned,
+// EC2 Launch Templates. A launch template is a versioned,
 // reusable description of instance launch parameters that an Auto Scaling
 // group (or RunInstances) references. The fck-nat NAT-instance Terraform
 // module uses aws_launch_template as the ASG's launch config, so the full

@@ -17,7 +17,7 @@ OUT_DIR="$REPO_ROOT/specs/SIM_SURFACE_TABLES"
 MATRIX="$REPO_ROOT/specs/SIM_TEST_COVERAGE_MATRIX.md"
 mkdir -p "$OUT_DIR"
 
-# Tables Phase 175-177 wrote by hand. The seeder leaves these alone.
+# Tables written by hand. The seeder leaves these alone.
 PRESERVED_TABLES=(
   aws-s3-bucket-subresources
   azure-kv-data-plane

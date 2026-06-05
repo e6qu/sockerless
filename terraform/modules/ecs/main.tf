@@ -558,7 +558,7 @@ data "aws_iam_policy_document" "task" {
     resources = ["*"]
   }
 
-  # SSM messages — required for ECS Exec (BUG-720). Without these,
+  # SSM messages — required for ECS Exec. Without these,
   # ECS.ExecuteCommand returns an error or the SSM data channel
   # immediately closes when the agent inside the task tries to dial back
   # to SSM Session Manager.

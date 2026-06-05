@@ -12,7 +12,7 @@ import (
 // TestKeyVault_VersionlessKeyCrypto exercises the no-version crypto form
 // (POST /keys/{name}/{verb}), which azkeys issues when version == "". Before
 // the fix the sim returned 405 for the 3-segment path; real Key Vault applies
-// the key's current version (issue #423).
+// the key's current version.
 func TestKeyVault_VersionlessKeyCrypto(t *testing.T) {
 	rg := "kv-versionless-rg"
 	vault := "kv-versionless"

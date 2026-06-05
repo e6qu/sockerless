@@ -22,7 +22,7 @@ import (
 // advertised endpoint URL like `https://{name}.blob.<host>:<port>/`
 // in its `primaryEndpoints.blob` field. Real SDK / azcopy / az CLI
 // consumers follow that URL for Put/Get/Head/Delete/List operations
-// against blob containers + blobs. Before BUG-1103 the sim emitted
+// against blob containers + blobs. Previously the sim emitted
 // the URL but had no handler servicing it — operators got 404 on
 // the URL the sim itself handed them.
 //

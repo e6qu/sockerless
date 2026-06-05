@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIAM_ListRolesAndTags covers ListRoles + ListRoleTags (issue #447): a role
+// TestIAM_ListRolesAndTags covers ListRoles + ListRoleTags: a role
 // created with tags is enumerable and its tags read back.
 func TestIAM_ListRolesAndTags(t *testing.T) {
 	c := iamClient()
@@ -38,8 +38,8 @@ func TestIAM_ListRolesAndTags(t *testing.T) {
 	assert.Equal(t, "platform", aws.ToString(tags.Tags[0].Value))
 }
 
-// TestIAM_ListPolicyVersionsAndTags covers ListPolicyVersions (issue #441) and
-// ListPolicyTags (issue #447).
+// TestIAM_ListPolicyVersionsAndTags covers ListPolicyVersions and
+// ListPolicyTags.
 func TestIAM_ListPolicyVersionsAndTags(t *testing.T) {
 	c := iamClient()
 	created, err := c.CreatePolicy(ctx, &iam.CreatePolicyInput{

@@ -229,7 +229,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 		"SOCKERLESS_AZF_SUBSCRIPTION_ID="+subscriptionID,
 		"SOCKERLESS_AZF_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_AZF_STORAGE_ACCOUNT="+storageAccount,
-		// Required at NewServer per Phase 168 (no fallback).
+		// Required at NewServer (no fallback).
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/azf/reverse", backendPort),
 	)
 	backendCmd.Stdout = os.Stderr

@@ -4,8 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/sim-oci-registry-data-plane` (PR pending — shared OCI /v2/ data plane, BUG-1491–1493, #450–#452).
-- Last merged: PR #449 (six consumer issues, BUG-1485–1490, #441–#447).
+- Branch: `feat/aws-sim-batch-453` (PR pending — three AWS round-trip/op gaps + a repo-wide PM-artifact comment sweep).
+- Last merged: PR #456 (shared OCI /v2/ data plane, BUG-1491–1493, #450–#452).
+- **Three consumer fixes (#453/#454/#455):**
+  - **#453 DynamoDB SSE (BUG-1494):** `DDBTable` gains `SSEDescription{Status,SSEType,KMSMasterKeyArn}`; CreateTable parses `SSESpecification` (Enabled → ENABLED, SSEType default KMS); DescribeTable echoes it.
+  - **#454 ECS deploymentConfiguration (BUG-1495):** `ECSService` gains `DeploymentConfiguration json.RawMessage` (same pattern as networkConfiguration); CreateService stores it, DescribeServices echoes it.
+  - **#455 EC2 ModifySecurityGroupRules (BUG-1496):** new op — updates each `SecurityGroupRule.N` (by `SecurityGroupRuleId`) in `ec2SecurityGroupRules`; NotFound for an unknown id. The provider's in-place SG-rule update path.
+  - SDK + CLI for each.
+- **Repo-wide PM-artifact sweep:** removed every project-management reference (BUG-NNNN, issue/PR #NNN, roadmap Phase NNN, `(#NNN)`) from SOURCE — comments, identifiers, file names — across ~120 files (~240 occurrences). Done in passes: automated parenthetical strips, then automated inline-formula strips, then manual rephrasing of the residue. **Kept** (NOT PM artifacts): the gitlab-e2e `Phase 1-6` step narrative (`tests/gitlab_runner_e2e_test.go`) and bleephub `issue #1` test data (`bleephub/test/run-gh-test.sh`). See [[feedback-no-phase-mentions]] (now broadened to file names + identifiers, not just comments).
 - **Cross-cloud OCI Distribution `/v2/` Docker Registry data plane** (real `docker push`/`pull` through the shim), one shared library wired into all three sims:
   - New `simulators/<cloud>/shared/oci.go` (package `simulator`, identical copy per cloud) = `sim.OCIRegistry`: GET /v2/ base; blob upload POST(init/monolithic)/PATCH(chunk)/PUT(finalize) with sha256 digest verify; blob GET/HEAD; manifest PUT/GET/HEAD/DELETE stored by tag+digest (DELETE removes all aliases); tags/list. Mounted per-method on the /v2/ subtree (GET covers HEAD) — avoids the awsJson `POST /` and apigatewayv2 `/v2/apis` mux conflicts. Hooks: `OnManifestPut`, `HydrateManifest`, `SkipPath`.
   - **#450 AWS ECR** (`ecr_oci.go`): new — `OnManifestPut` registers an ECR image row.
@@ -36,9 +42,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
 - **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #394 (upstream-blocked). #450/#451/#452 fixed by this PR (the shimanism OCI registry batch).
+- Open GitHub issues: #394 (upstream-blocked). #453/#454/#455 fixed by this PR.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1493 filed · 1449 fixed · 5 open · 4 false positives.
+- BUG counters: 1496 filed · 1452 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

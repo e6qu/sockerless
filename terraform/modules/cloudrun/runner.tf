@@ -4,7 +4,7 @@
 #
 # GCS bucket backing the github-runner-dispatcher-gcp's spawned runner
 # Cloud Run Job's `/tmp/runner-work` and `/opt/runner/externals` shared
-# volumes (BUG-909, Phase 122d). Cloud Run Jobs natively support
+# volumes. Cloud Run Jobs natively support
 # `Volume{Gcs{Bucket}}`; the dispatcher mounts this bucket on the
 # runner-task and sets `SOCKERLESS_GCP_SHARED_VOLUMES=runner-workspace=
 # /tmp/runner-work=<bucket>,runner-externals=/opt/runner/externals=

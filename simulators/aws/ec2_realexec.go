@@ -31,7 +31,7 @@ const ec2RealEBSMaxSlots = 15
 // ec2RealNetHostAvailable reports whether the host can build real EC2 network
 // fabric (namespaces, bridges, veth, nftables). ec2RealVMHostAvailable reports
 // whether it can run real Firecracker VMs. When false, the sim is in the
-// API-only tier (issue #414): the corresponding operations are modeled at the
+// API-only tier: the corresponding operations are modeled at the
 // control plane without real execution, so IaC/control-plane testing works on
 // hosts lacking CAP_NET_ADMIN/nft/KVM.
 func ec2RealNetHostAvailable() bool {

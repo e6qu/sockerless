@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestECS_ClusterSettingsAndConfiguration covers issue #446: containerInsights
+// TestECS_ClusterSettingsAndConfiguration covers containerInsights
 // settings and the executeCommand KMS configuration round-trip through
 // DescribeClusters --include SETTINGS CONFIGURATIONS, and are omitted otherwise.
 func TestECS_ClusterSettingsAndConfiguration(t *testing.T) {

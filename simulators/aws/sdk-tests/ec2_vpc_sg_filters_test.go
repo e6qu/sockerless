@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_DescribeVpcsFiltering covers issue #442: vpc-id filter / multi-id
+// TestEC2_DescribeVpcsFiltering covers vpc-id filter / multi-id
 // return the right VPC(s), and CidrBlockAssociationSet is populated.
 func TestEC2_DescribeVpcsFiltering(t *testing.T) {
 	c := ec2Client()
@@ -43,7 +43,7 @@ func TestEC2_DescribeVpcsFiltering(t *testing.T) {
 	require.Len(t, byIDs.Vpcs, 2)
 }
 
-// TestEC2_DescribeSecurityGroupsVpcFilter covers issue #443: the vpc-id filter
+// TestEC2_DescribeSecurityGroupsVpcFilter covers the vpc-id filter
 // must not leak SGs from other VPCs.
 func TestEC2_DescribeSecurityGroupsVpcFilter(t *testing.T) {
 	c := ec2Client()

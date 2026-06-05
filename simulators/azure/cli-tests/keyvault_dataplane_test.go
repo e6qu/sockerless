@@ -125,7 +125,7 @@ func TestKVDataPlane_Keys_CLI(t *testing.T) {
 	assert.NotEmpty(t, getResp.Key.Kid)
 
 	// Version-less crypto (POST /keys/{name}/encrypt|decrypt) must target the
-	// current version, not 405 (issue #423).
+	// current version, not 405.
 	pt := base64.RawURLEncoding.EncodeToString([]byte("cli-secret"))
 	out = runCLI(t, kvDataRest("POST", vault, "/keys/cli-key/encrypt", `{"alg":"RSA-OAEP","value":"`+pt+`"}`))
 	var encResp struct {

@@ -413,12 +413,12 @@ else
 fi
 
 # ============================================================
-# Phase 153 — GitHub Apps + OAuth Apps parity tests
+# GitHub Apps + OAuth Apps parity tests
 # ============================================================
-log "Phase 153: GitHub Apps + OAuth Apps surface"
+log "GitHub Apps + OAuth Apps surface"
 
 # Create a GitHub App with explicit permissions + events
-APP=$(api "$BASE/api/v3/bleephub/apps" -f name="Parity App" -f description="Phase 153 test" \
+APP=$(api "$BASE/api/v3/bleephub/apps" -f name="Parity App" -f description="parity test" \
     -f 'permissions[issues]=write' -f 'permissions[checks]=write' \
     -f 'events[]=push' -f 'events[]=installation')
 APP_ID=$(echo "$APP" | jq -r '.id')
@@ -462,7 +462,7 @@ USR_INST_ID=$(echo "$USR_INST" | jq -r '.id // 0')
 assert_eq "Phase153 GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
 
 # OAuth App create + Basic-auth on /applications/{client_id}/token
-OA=$(api "$BASE/api/v3/bleephub/oauth-apps" -f name="OA Parity" -f description="Phase 153" \
+OA=$(api "$BASE/api/v3/bleephub/oauth-apps" -f name="OA Parity" -f description="parity" \
     -f url="https://example.test" -f callback_url="https://example.test/cb")
 OA_CID=$(echo "$OA" | jq -r '.client_id')
 OA_CSEC=$(echo "$OA" | jq -r '.client_secret')
@@ -483,14 +483,14 @@ ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
     "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
 assert_eq "Phase153 /applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
 
-log "Phase 153 parity probes complete"
+log "Apps parity probes complete"
 
 # ============================================================
-# Phase 161 parity — PR conversation, review threads, ProjectV2,
+# PR-conversation parity — review threads, ProjectV2,
 # edit history, minimization, locking, PR.milestone.
-# Each block here exercises the surface added during Phase 161.
+# Each block here exercises the surface added.
 # ============================================================
-log "Phase 161 parity probes…"
+log "PR-conversation parity probes…"
 
 P161_REPO="admin/gh-test-repo"
 
@@ -602,7 +602,7 @@ if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
     fi
 fi
 
-log "Phase 161 parity probes complete"
+log "PR-conversation parity probes complete"
 
 # ============================================================
 # Summary

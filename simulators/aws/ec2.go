@@ -391,6 +391,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("CreateSecurityGroup", handleCreateSecurityGroup)
 	r.Register("DescribeSecurityGroups", handleDescribeSecurityGroups)
 	r.Register("DescribeSecurityGroupRules", handleDescribeSecurityGroupRules)
+	r.Register("ModifySecurityGroupRules", handleModifySecurityGroupRules)
 	r.Register("DeleteSecurityGroup", handleDeleteSecurityGroup)
 	r.Register("AuthorizeSecurityGroupIngress", handleAuthorizeSecurityGroupIngress)
 	r.Register("AuthorizeSecurityGroupEgress", handleAuthorizeSecurityGroupEgress)
@@ -1035,7 +1036,7 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	// handleCreateVpc. Real NAT fabric is programmed opportunistically, only
 	// when the host actually has the network capabilities; its absence must not
 	// fail the API call (IaC/control-plane testing in SIM_RUNTIME=process runs
-	// on hosts without CAP_NET_ADMIN/nft). See issue #414.
+	// on hosts without CAP_NET_ADMIN/nft).
 	ec2NatGateways.Put(id, natgw)
 	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
 		if err2 := ec2CreateRealNATGateway(r.Context(), natgw); err2 != nil {
@@ -1255,7 +1256,7 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	if natId != "" {
 		// The route is always modeled below; programming the real NAT route is
 		// opportunistic (only when the host has network capabilities) and must
-		// not fail the API call. Mirrors handleCreateNatGateway. See issue #414.
+		// not fail the API call. Mirrors handleCreateNatGateway.
 		if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
 			if err2 := ec2ConfigureRealNATRoute(r.Context(), rtId, destCidr, natId); err2 != nil {
 				fmt.Fprintf(os.Stderr, "sim: real NAT route to %s unavailable: %v\n", natId, err2)
@@ -1717,6 +1718,46 @@ func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 </DescribeSecurityGroupRulesResponse>`, ec2Xmlns(), generateUUID(), items.String())
 }
 
+// handleModifySecurityGroupRules updates existing rule attributes in place.
+// terraform-provider-aws v6 calls this for an in-place change to an
+// aws_vpc_security_group_{ingress,egress}_rule instead of revoke + authorize.
+func handleModifySecurityGroupRules(w http.ResponseWriter, r *http.Request) {
+	for i := 1; ; i++ {
+		base := fmt.Sprintf("SecurityGroupRule.%d", i)
+		ruleID := r.FormValue(base + ".SecurityGroupRuleId")
+		if ruleID == "" {
+			break
+		}
+		rule, ok := ec2SecurityGroupRules.Get(ruleID)
+		if !ok {
+			ec2ErrorXML(w, "InvalidSecurityGroupRuleId.NotFound",
+				fmt.Sprintf("The security group rule ID %q does not exist", ruleID), http.StatusBadRequest)
+			return
+		}
+		sr := base + ".SecurityGroupRule"
+		if v := r.FormValue(sr + ".Description"); v != "" {
+			rule.Description = v
+		}
+		if v := r.FormValue(sr + ".IpProtocol"); v != "" {
+			rule.IpProtocol = v
+		}
+		if v := r.FormValue(sr + ".FromPort"); v != "" {
+			fmt.Sscanf(v, "%d", &rule.FromPort)
+		}
+		if v := r.FormValue(sr + ".ToPort"); v != "" {
+			fmt.Sscanf(v, "%d", &rule.ToPort)
+		}
+		if v := r.FormValue(sr + ".CidrIpv4"); v != "" {
+			rule.CidrIpv4 = v
+		}
+		if v := r.FormValue(sr + ".ReferencedGroupId"); v != "" {
+			rule.RefGroupId = v
+		}
+		ec2SecurityGroupRules.Put(ruleID, rule)
+	}
+	ec2WriteSimpleResponse(w, "ModifySecurityGroupRulesResponse")
+}
+
 // ---- Instances ----
 
 func ec2ParamList(r *http.Request, prefix string) []string {
@@ -1901,7 +1942,7 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 	// describable) — like VPC/subnet/NAT. A real Firecracker VM is booted
 	// opportunistically in ec2TransitionInstanceToRunning only when the host
 	// has VM capabilities; their absence must not fail RunInstances, so
-	// IaC/control-plane testing works in SIM_RUNTIME=process. See issue #414.
+	// IaC/control-plane testing works in SIM_RUNTIME=process.
 	reservationID := ec2ID("r")
 	sgIDs := runInstancesSecurityGroups(r)
 	if len(sgIDs) == 0 {
@@ -2086,7 +2127,6 @@ func ec2TransitionInstanceToRunning(instanceID string) {
 	// there is a genuine error, so the instance settles to "stopped". On an
 	// API-only host (no VM capabilities) the instance is modeled as "running"
 	// at the control plane — the same modeling tier VPC/subnet/NAT use. See
-	// issue #414.
 	if ec2RealVMHostAvailable() {
 		if err := ec2StartRealVM(context.Background(), inst); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
@@ -2122,7 +2162,7 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reconcile reported state against real VM liveness only on a real-execution
 	// host. On an API-only host there is no real VM behind a modeled "running"
-	// instance, so the stored control-plane state is authoritative (issue #414).
+	// instance, so the stored control-plane state is authoritative.
 	if ec2RealVMHostAvailable() {
 		for i := range instances {
 			if instances[i].State == "running" && !ec2RealVMAlive(instances[i].InstanceId) {
@@ -2261,7 +2301,7 @@ func writeInstanceStateChange(w http.ResponseWriter, r *http.Request, next strin
 		}
 		prev := inst.State
 		// Real VM start/stop only on a real-execution host; on an API-only host
-		// the state change is purely modeled (issue #414).
+		// the state change is purely modeled.
 		if ec2RealVMHostAvailable() {
 			if next == "running" {
 				if err := ec2StartRealVM(r.Context(), inst); err != nil {
@@ -2875,7 +2915,6 @@ func handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	// Real block-device attach only on a real-execution host (the volume binds
 	// to the instance's Firecracker VM); modeled at the control plane otherwise
-	// (issue #414).
 	if ec2RealVMHostAvailable() {
 		if err := ec2AttachRealVolume(r.Context(), instanceID, &vol); err != nil {
 			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to attach real EBS volume: %v", err), http.StatusServiceUnavailable)

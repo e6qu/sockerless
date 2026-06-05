@@ -34,7 +34,7 @@ func arDo(t *testing.T, method, url string, body []byte, contentType string) *ht
 	return resp
 }
 
-// TestArtifactRegistry_OCIChunkedPush covers issue #451: the OCI Distribution
+// TestArtifactRegistry_OCIChunkedPush covers the OCI Distribution
 // chunked blob upload (POST → PATCH → PUT) that previously 405'd on PATCH, then
 // a manifest push + pull round-trip.
 func TestArtifactRegistry_OCIChunkedPush(t *testing.T) {

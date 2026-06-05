@@ -22,7 +22,7 @@ import (
 //  5. GetSecretValue with VersionId selector returns that exact
 //     version's bytes (not just AWSCURRENT).
 //
-// Regression guard for BUG-1100 (issue #175).
+// Regression guard.
 func TestSecretsManager_ListSecretVersionIds(t *testing.T) {
 	client := smClient()
 	name := "versioning-test-secret"

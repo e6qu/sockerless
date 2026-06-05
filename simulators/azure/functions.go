@@ -575,7 +575,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 	// Also add to lowercase canonicalization map so /authsettingsV2 →
 	// /authsettingsv2 in the middleware. Done via the package-level
-	// middleware (BUG-1172).
+	// middleware.
 
 	// POST /config/publishingcredentials/list — real Azure returns the
 	// SCM publishing user/password for App Service deployment + Kudu

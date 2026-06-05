@@ -28,19 +28,19 @@ HDR='Metadata-Flavor: Google'
 export SOCKERLESS_GCR_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCR_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCR_PROJECT}-build"
-# Phase 123: 4-tuple `name=path=bucket=backing`. Cells 7+8 (gitlab-runner)
+# 4-tuple `name=path=bucket=backing`. Cells 7+8 (gitlab-runner)
 # stay on `gcs-fuse` because the existing tar-pack persist module handles
 # sequential-stage workspace propagation. New SharedVolumes (cells 5+6)
 # use `gcs-sync` instead — see github bootstrap.sh.
 export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-fuse,runner-externals=/opt/runner/externals=${SOCKERLESS_GCR_PROJECT}-runner-workspace=gcs-fuse"
-# Phase 122f: Cloud Run Service path for runner-pattern containers.
+# Cloud Run Service path for runner-pattern containers.
 export SOCKERLESS_GCR_USE_SERVICE=1
 export SOCKERLESS_GCR_VPC_CONNECTOR="projects/${SOCKERLESS_GCR_PROJECT}/locations/${SOCKERLESS_GCR_REGION}/connectors/sockerless-connector"
 echo "bootstrap: project=$SOCKERLESS_GCR_PROJECT region=$SOCKERLESS_GCR_REGION use_service=1"
 
 # Backend log goes to stderr so Cloud Logging captures it (without
 # this redirect to /tmp/sockerless-backend.log it never surfaced and
-# BUG-917 was undiagnosable). Use `tee` to keep both file + stderr.
+# the failure was undiagnosable). Use `tee` to keep both file + stderr.
 nohup /usr/local/bin/sockerless-backend-cloudrun -addr :3375 -log-level debug \
     > >(tee /tmp/sockerless-backend.log >&2) 2>&1 &
 
@@ -55,7 +55,7 @@ until curl -sfo /dev/null http://localhost:3375/_ping; do
 done
 echo "bootstrap: sockerless-backend-cloudrun ready"
 
-# BUG-913: gitlab-runner crashes with `chdir: no such file or directory`
+# Gitlab-runner crashes with `chdir: no such file or directory`
 # if --working-directory doesn't exist. Cloud Run gives us an empty
 # rootfs (no host bind mounts); create the work dir up-front.
 mkdir -p /tmp/runner-work
@@ -82,12 +82,12 @@ gitlab-runner register \
     --docker-host "tcp://localhost:3375" \
     --docker-pull-policy if-not-present
 
-# BUG-915: --docker-disable-cache CLI flag doesn't always propagate
+# --docker-disable-cache CLI flag doesn't always propagate
 # to config.toml. Post-edit to ensure disable_cache=true (the default
 # gitlab-runner cache volume name exceeds GCS's 63-char bucket limit).
 sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
 
-# BUG-918 wedge: pin helper_image to the tag-form so gitlab-runner's
+# pin helper_image to the tag-form so gitlab-runner's
 # permission containers don't reference the bare sha256:<digest> form
 # that sockerless's parseDockerRef mangles into a broken AR URL.
 # Insert helper_image line after [runners.docker] section header.

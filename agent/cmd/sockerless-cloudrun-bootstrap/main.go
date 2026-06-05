@@ -82,7 +82,7 @@ const (
 	// GNU `timeout(1)`. Set to 0 or empty to disable.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 	// SOCKERLESS_CALLBACK_URL — WebSocket URL the bootstrap dials back
-	// to as the reverse-agent endpoint. Required per Phase 168
+	// to as the reverse-agent endpoint. Required
 	// (no-fallback). Cloud Run Services + GCF Gen2 inject this via
 	// jobspec.go / pod_service.go. Without it the backend's ExecStart
 	// fails with operator guidance.
@@ -202,7 +202,7 @@ func main() {
 	}
 
 	// Start the reverse-agent dial-back so the backend's ExecStart
-	// has somewhere to route exec messages. Required per Phase 168.
+	// has somewhere to route exec messages. Required.
 	// The HTTP server below stays — it handles the default-invoke
 	// path (initial workload start + the gitlab-runner stdin-piped
 	// envelope), but per-step `docker exec` flows through the WS.
@@ -450,7 +450,7 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 
 	stderrBytes := stderr.Bytes()
 	// ENOSPC override only when the subprocess actually failed
-	// (BUG-1062). Otherwise a successful command that mentions
+	// Otherwise a successful command that mentions
 	// the marker on stderr gets force-coerced to 28.
 	if exitCode != 0 && agent.DetectENOSPC(stderrBytes) {
 		exitCode = agent.ENOSPCExitCode

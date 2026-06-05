@@ -28,14 +28,14 @@ type ReverseAgentRegistry struct {
 	// waiters maps container ID -> slice of per-waiter channels
 	// (each closed by Register when the session lands). Per-waiter
 	// channels (vs the previous shared-channel design) close
-	// BUG-1064 where a timed-out waiter would delete the shared
+	// A stale waiter must not delete the shared
 	// channel and leave remaining waiters hanging.
 	waiters map[string][]chan struct{}
 	// lifetimeExpired tracks containers whose in-FaaS bootstrap
 	// signalled it's about to hit the platform's max invocation
 	// deadline. Set by MarkLifetimeExpired; checked by ExecStart so
 	// the operator sees an actionable error instead of a generic
-	// timeout or 500 (BUG-1053).
+	// timeout or 500.
 	lifetimeExpired map[string]struct{}
 }
 
@@ -111,7 +111,7 @@ func (r *ReverseAgentRegistry) WaitForAgent(ctx context.Context, id string) erro
 		return nil
 	case <-ctx.Done():
 		// Remove this specific waiter channel; other waiters for the
-		// same id stay subscribed (BUG-1064 — previous shared-channel
+		// same id stay subscribed (previous shared-channel
 		// design stranded sibling waiters on the first timeout).
 		r.mu.Lock()
 		bucket := r.waiters[id]
@@ -211,7 +211,7 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 // from `SOCKERLESS_<BACKEND>_TMPFS_SIZE_MIB` (default 2048 MiB).
 // Invalid / non-positive values fail loud (no clamping). Consumed by
 // backends that register `MemoryDriver` as a default storage backing
-// (cloudrun + cloudrun-functions + ACA after Phase 168).
+// (cloudrun + cloudrun-functions + ACA).
 func TmpfsSizeFromEnv(backend string) (int, error) {
 	name := "SOCKERLESS_" + strings.ToUpper(backend) + "_TMPFS_SIZE_MIB"
 	raw := os.Getenv(name)

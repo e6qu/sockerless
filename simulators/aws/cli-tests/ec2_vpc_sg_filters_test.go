@@ -6,7 +6,7 @@ import (
 )
 
 // TestEC2CLI_VpcAndSgFilters drives the DescribeVpcs / DescribeSecurityGroups
-// filter fixes via the aws CLI (issues #442, #443).
+// filter fixes via the aws CLI.
 func TestEC2CLI_VpcAndSgFilters(t *testing.T) {
 	vpcA := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc",
 		"--cidr-block", "10.65.0.0/16", "--query", "Vpc.VpcId", "--output", "text")))

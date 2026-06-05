@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # dispatch-gcp-cells.sh — operator runbook automation for the four
-# Phase 120 GCP runner cells (5/6/7/8).
+# GCP runner cells (5/6/7/8).
 #
 # Triggers each cell, polls until the run reaches a terminal state,
 # prints the run URL + status. Captures all four URLs in one
@@ -93,7 +93,7 @@ dispatch_gitlab_cell() {
   fi
 }
 
-echo "=== Phase 120 GCP cells dispatcher ==="
+echo "=== GCP cells dispatcher ==="
 dispatch_github_cell live-tests-cloudrun
 dispatch_github_cell live-tests-cloudrun-functions
 dispatch_gitlab_cell cell-7-cloudrun tests/runners/gitlab/cell-7-cloudrun.yml

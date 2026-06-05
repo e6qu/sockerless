@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestIAMCLI_ListRolesAndPolicyVersions drives ListRoles (issue #447) and
-// ListPolicyVersions (issue #441) via the aws CLI — the audit-enumeration and
+// TestIAMCLI_ListRolesAndPolicyVersions drives ListRoles and
+// ListPolicyVersions via the aws CLI — the audit-enumeration and
 // aws_iam_policy destroy paths.
 func TestIAMCLI_ListRolesAndPolicyVersions(t *testing.T) {
 	runCLI(t, awsCLI("iam", "create-role",

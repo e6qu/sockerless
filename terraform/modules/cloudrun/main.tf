@@ -165,7 +165,7 @@ resource "google_vpc_access_connector" "main" {
 # ---------------------------------------------------------------------------
 # Static egress IP for VPC-connector traffic. Required for two things:
 #
-#   1. BUG-928 (VPC egress GCSFuse timeout): when Cloud Run Services
+# 1. VPC egress GCSFuse timeout: when Cloud Run Services
 #      use VpcAccess_ALL_TRAFFIC (the only mode that lets cross-Cloud-
 #      Run service-to-service calls appear as same-VPC source IP),
 #      ALL outbound — including public Google APIs like
@@ -174,14 +174,14 @@ resource "google_vpc_access_connector" "main" {
 #      traffic has no return path. With Cloud NAT, external traffic
 #      egresses through a NAT'd public IP.
 #
-#   2. BUG-941 (dispatcher GitHub abuse-flag): the github-runner-
+# 2. dispatcher GitHub abuse-flag: the github-runner-
 #      dispatcher-gcp Service polls api.github.com every 15s. With
 #      default Cloud Run egress (dynamic IPs), each restart picks a new
 #      IP and accumulates abuse flags across the IP block. Static NAT
 #      egress IP gives GitHub a single endpoint to track + lets the
 #      operator request abuse-flag clearance for that IP.
 #
-# Terraform NAT resources mirror what BUG-928 created out-of-band via
+# Terraform NAT resources mirror what the dispatcher created out-of-band via
 # `gcloud compute routers create / nats create` so a fresh
 # `terragrunt apply` reproduces the same topology.
 

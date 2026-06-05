@@ -6,7 +6,7 @@ import (
 )
 
 // TestECSCLI_ClusterSettingsAndConfig drives DescribeClusters --include
-// SETTINGS CONFIGURATIONS via the aws CLI (issue #446).
+// SETTINGS CONFIGURATIONS via the aws CLI.
 func TestECSCLI_ClusterSettingsAndConfig(t *testing.T) {
 	cluster := "probe-cli-cluster-config"
 	runCLI(t, awsCLI("ecs", "create-cluster",

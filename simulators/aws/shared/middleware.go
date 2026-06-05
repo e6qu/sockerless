@@ -91,7 +91,7 @@ func LoggingMiddleware(logger zerolog.Logger, provider string) func(http.Handler
 			}
 
 			// Streaming-envelope sentinels. Surfacing these on the
-			// request log makes the BUG-1099 shape ("handler reads
+			// request log makes the known-bad shape ("handler reads
 			// raw body without consuming the chunked envelope")
 			// greppable in operator output. Fields only appear when
 			// the corresponding header is present, so normal

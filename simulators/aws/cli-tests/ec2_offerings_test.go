@@ -6,7 +6,7 @@ import (
 )
 
 // TestEC2CLI_InstanceTypeOfferings drives DescribeInstanceTypeOfferings via the
-// aws CLI (issue #437) — the fck-nat AZ-availability pre-flight.
+// aws CLI — the fck-nat AZ-availability pre-flight.
 func TestEC2CLI_InstanceTypeOfferings(t *testing.T) {
 	it := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-instance-type-offerings",
 		"--location-type", "availability-zone",

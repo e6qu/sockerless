@@ -123,7 +123,7 @@ const (
 	// 30s grace → SIGKILL; bootstrap reports exit code 124.
 	envJobTimeoutSeconds = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 	// SOCKERLESS_CALLBACK_URL — reverse-agent WebSocket URL (required
-	// per Phase 168; backend's ExecStart fails loud without an agent).
+	// backend's ExecStart fails loud without an agent).
 	envCallbackURL = "SOCKERLESS_CALLBACK_URL"
 	// SOCKERLESS_CONTAINER_ID — session_id for the reverse-agent WS.
 	envContainerID = "SOCKERLESS_CONTAINER_ID"
@@ -224,7 +224,7 @@ func main() {
 		port = "8080"
 	}
 
-	// Reverse-agent dial-back (Phase 168). Required for `docker exec`
+	// Reverse-agent dial-back. Required for `docker exec`
 	// from the backend.
 	callbackURL := os.Getenv(envCallbackURL)
 	containerID := os.Getenv(envContainerID)
@@ -565,7 +565,7 @@ func runExecEnvelope(w http.ResponseWriter, env execEnvelopeExec) {
 
 	stderrBytes := stderr.Bytes()
 	// ENOSPC override only when the subprocess actually failed
-	// (BUG-1062). Otherwise a successful command that mentions
+	// Otherwise a successful command that mentions
 	// the marker on stderr gets force-coerced to 28.
 	if exitCode != 0 && agent.DetectENOSPC(stderrBytes) {
 		exitCode = agent.ENOSPCExitCode

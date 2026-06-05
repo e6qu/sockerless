@@ -10,7 +10,7 @@ HDR='Metadata-Flavor: Google'
 export SOCKERLESS_GCF_PROJECT=$(curl -sf -H "$HDR" $META/project/project-id)
 export SOCKERLESS_GCF_REGION=$(curl -sf -H "$HDR" $META/instance/region | awk -F/ '{print $NF}')
 export SOCKERLESS_GCP_BUILD_BUCKET="${SOCKERLESS_GCF_PROJECT}-build"
-# Phase 123: 4-tuple `name=path=bucket=backing`. Cells 7+8 stay on
+# 4-tuple `name=path=bucket=backing`. Cells 7+8 stay on
 # `gcs-fuse` (sequential whole-tar uploads via persist module).
 export SOCKERLESS_GCP_SHARED_VOLUMES="runner-workspace=/tmp/runner-work=${SOCKERLESS_GCF_PROJECT}-runner-workspace=gcs-fuse,runner-externals=/opt/runner/externals=${SOCKERLESS_GCF_PROJECT}-runner-workspace=gcs-fuse"
 echo "bootstrap: project=$SOCKERLESS_GCF_PROJECT region=$SOCKERLESS_GCF_REGION"
@@ -29,7 +29,7 @@ until curl -sfo /dev/null http://localhost:3376/_ping; do
 done
 echo "bootstrap: sockerless-backend-gcf ready"
 
-# BUG-913: gitlab-runner needs --working-directory to exist; create it.
+# Gitlab-runner needs --working-directory to exist; create it.
 mkdir -p /tmp/runner-work
 
 if [ -n "${PORT:-}" ]; then
@@ -48,23 +48,23 @@ gitlab-runner register \
     --docker-host "tcp://localhost:3376" \
     --docker-pull-policy if-not-present
 
-# BUG-915: post-edit to ensure disable_cache=true.
+# Post-edit to ensure disable_cache=true.
 sed -i 's/disable_cache = false/disable_cache = true/' /etc/gitlab-runner/config.toml
 
-# BUG-918 wedge: pin helper_image to tag form (avoids sha256: digest
+# pin helper_image to tag form (avoids sha256: digest
 # refs that sockerless's image-resolve mangles).
 sed -i '/\[runners.docker\]/a\
     helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.5.0"' \
     /etc/gitlab-runner/config.toml
 
-# BUG-925: skip the wait-for-services healthcheck container (postgres
+# Skip the wait-for-services healthcheck container (postgres
 # sidecar will be deployed in the same Cloud Run Function as the BUILD
 # container, so the redundant TCP probe wedge isn't needed).
 sed -i '/\[runners.docker\]/a\
     wait_for_services_timeout = -1' \
     /etc/gitlab-runner/config.toml
 
-# BUG-925: enable FF_NETWORK_PER_BUILD so gitlab-runner uses standard
+# Enable FF_NETWORK_PER_BUILD so gitlab-runner uses standard
 # Docker user-defined networks (verified in v17.5
 # executors/docker/services.go::createServices). The gcf backend's
 # network-pod auto-detector requires this signal.

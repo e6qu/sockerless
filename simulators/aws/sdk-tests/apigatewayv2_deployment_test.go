@@ -12,7 +12,7 @@ import (
 )
 
 // TestAPIGwV2_CreateDeployment_RoutesPastS3 locks the invariant from
-// BUG-1150 / issue #204: POST /v2/apis/{apiId}/deployments must
+// POST /v2/apis/{apiId}/deployments must
 // route to the API Gateway v2 handler (registered explicitly), not
 // fall through to S3's wildcard POST /{bucket}/{key...} dispatcher.
 // Pre-fix, the request hit handleS3PostObjectDispatch and got an

@@ -9,11 +9,11 @@ import (
 )
 
 // TestACMCertificateValidationTerraform exercises the real consumer flow that
-// hit issues #420 and #421: a DNS-validated cert with a wildcard SAN, the
+// hit a known shape: a DNS-validated cert with a wildcard SAN, the
 // Route53 _acm-challenge records built from domain_validation_options, and
 // aws_acm_certificate_validation waiting for ISSUED. Before the fix this hung
-// to the validation timeout (#420) or failed the record-name consistency
-// check on the literal '*' (#421).
+// to the validation timeout or failed the record-name consistency
+// check on the literal '*'.
 func TestACMCertificateValidationTerraform(t *testing.T) {
 	env := tfsim.Start(t, ".")
 	env.Terraform(t, "init")
@@ -23,10 +23,10 @@ func TestACMCertificateValidationTerraform(t *testing.T) {
 	require.Contains(t, outputs.must(t, "certificate_arn"), "arn:aws:acm:us-east-1:")
 	// aws_acm_certificate_validation only finishes creating (and exports an id)
 	// once DescribeCertificate reports ISSUED — so a non-empty validation_id is
-	// the end-to-end proof of #420. The apply also completing (not timing out)
+	// the end-to-end proof. The apply also completing (not timing out)
 	// confirms it.
 	require.NotEmpty(t, outputs.must(t, "validation_id"))
-	// #421: the wildcard SAN's record name is de-wildcarded (base domain).
+	// The wildcard SAN's record name is de-wildcarded (base domain).
 	names := outputs.must(t, "validation_record_names")
 	require.Contains(t, names, "_acm-challenge.devbox.example.test")
 	require.NotContains(t, names, "*", "validation record name must not carry a literal '*'")

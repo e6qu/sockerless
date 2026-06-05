@@ -42,6 +42,7 @@ type ECSService struct {
 	LoadBalancers            json.RawMessage `json:"loadBalancers,omitempty"`
 	ServiceRegistries        json.RawMessage `json:"serviceRegistries,omitempty"`
 	DeploymentController     json.RawMessage `json:"deploymentController,omitempty"`
+	DeploymentConfiguration  json.RawMessage `json:"deploymentConfiguration,omitempty"`
 	CapacityProviderStrategy json.RawMessage `json:"capacityProviderStrategy,omitempty"`
 	Deployments              []ECSDeployment `json:"deployments"`
 	Tags                     []ECSTag        `json:"tags,omitempty"`
@@ -83,7 +84,7 @@ func registerECSServices(r *sim.AWSRouter, srv *sim.Server) {
 var ecsBuiltInCapacityProviders = []string{"FARGATE", "FARGATE_SPOT"}
 
 // handleECSDescribeCapacityProviders is the read-back for capacity providers
-// (BUG-1479) — without it `aws_ecs_cluster_capacity_providers` shows spurious
+// — without it `aws_ecs_cluster_capacity_providers` shows spurious
 // drift on the post-apply plan. The sim has no standalone capacity-provider
 // store (providers live as names on clusters via PutClusterCapacityProviders),
 // so it resolves the built-in FARGATE/FARGATE_SPOT plus any custom provider
@@ -148,7 +149,7 @@ func ecsCapacityProviderName(ref string) string {
 }
 
 // handleECSListTaskDefinitionFamilies aggregates the distinct families across
-// the registered task definitions (BUG-1479) — the family companion to
+// the registered task definitions — the family companion to
 // ListTaskDefinitions. status (ACTIVE/INACTIVE/ALL) selects which revisions a
 // family must have to be listed; familyPrefix narrows by name prefix.
 func handleECSListTaskDefinitionFamilies(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +257,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		LoadBalancers            json.RawMessage `json:"loadBalancers"`
 		ServiceRegistries        json.RawMessage `json:"serviceRegistries"`
 		DeploymentController     json.RawMessage `json:"deploymentController"`
+		DeploymentConfiguration  json.RawMessage `json:"deploymentConfiguration"`
 		CapacityProviderStrategy json.RawMessage `json:"capacityProviderStrategy"`
 		Tags                     []ECSTag        `json:"tags"`
 	}
@@ -314,6 +316,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		LoadBalancers:            req.LoadBalancers,
 		ServiceRegistries:        req.ServiceRegistries,
 		DeploymentController:     req.DeploymentController,
+		DeploymentConfiguration:  req.DeploymentConfiguration,
 		CapacityProviderStrategy: req.CapacityProviderStrategy,
 		Tags:                     req.Tags,
 		Deployments:              []ECSDeployment{ecsPrimaryDeployment(req.TaskDefinition, desired, now)},

@@ -11,7 +11,7 @@ import (
 )
 
 // TestECS_DescribeCapacityProviders covers the read-back for capacity
-// providers (#436) — the built-in FARGATE/FARGATE_SPOT always resolve ACTIVE,
+// providers — the built-in FARGATE/FARGATE_SPOT always resolve ACTIVE,
 // and an unknown name comes back as a failure rather than a phantom ACTIVE.
 func TestECS_DescribeCapacityProviders(t *testing.T) {
 	c := ecsClient()
@@ -34,7 +34,7 @@ func TestECS_DescribeCapacityProviders(t *testing.T) {
 	assert.Equal(t, "MISSING", aws.ToString(missing.Failures[0].Reason))
 }
 
-// TestECS_ListTaskDefinitionFamilies covers the family aggregation (#436):
+// TestECS_ListTaskDefinitionFamilies covers the family aggregation:
 // after registering a task definition its family is listed, honouring
 // familyPrefix.
 func TestECS_ListTaskDefinitionFamilies(t *testing.T) {

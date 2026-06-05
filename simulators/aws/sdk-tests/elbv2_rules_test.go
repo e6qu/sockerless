@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestELBv2_ListenerRulesAndModifyListener covers issue #438: listener-rule
+// TestELBv2_ListenerRulesAndModifyListener covers listener-rule
 // CRUD (host-header routing) plus ModifyListener changing the default action.
 func TestELBv2_ListenerRulesAndModifyListener(t *testing.T) {
 	ec2c := ec2Client()

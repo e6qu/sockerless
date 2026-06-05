@@ -137,8 +137,8 @@ jobs:
           got5=$(./eval-arithmetic '1.5 + 2.5 * 2'); test "$got5" = "6.5" || { echo "expected 6.5 got $got5"; exit 1; }
           echo "all arithmetic checks pass"
 
-# trigger: 2026-05-03 BUG-909 cloudrun fix
+# trigger: 2026-05-03 cloudrun fix
 
-# trigger: 2026-05-03 BUG-910 fix
+# trigger: 2026-05-03 fix
 
-# trigger: BUG-911 task_timeout fix
+# trigger: task_timeout fix

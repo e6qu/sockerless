@@ -68,7 +68,7 @@ func TestDynamoDB_TableLifecycle(t *testing.T) {
 	assert.Contains(t, list.TableNames, tableName)
 }
 
-// TestDynamoDB_GlobalSecondaryIndexes pins the issue #416 fix: CreateTable
+// TestDynamoDB_GlobalSecondaryIndexes pins CreateTable
 // must echo each GSI in TableDescription with IndexStatus==ACTIVE, and
 // DescribeTable must report the same. Pre-fix the sim dropped all GSIs
 // (returned null), so terraform-provider-aws waited for GSI ACTIVE forever.

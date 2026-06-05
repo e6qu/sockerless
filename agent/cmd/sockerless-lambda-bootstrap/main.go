@@ -196,7 +196,7 @@ func handleOneInvocation(base string, raConn *websocket.Conn, raMu *sync.Mutex) 
 	// deadline-5s. The done channel cancels the timer if the
 	// invocation returns normally. Short invocations (deadline < 5s
 	// remaining) skip entirely so we don't falsely mark the
-	// container as lifetime-expired on legitimate fast paths (BUG-1060).
+	// container as lifetime-expired on legitimate fast paths.
 	done := make(chan struct{})
 	defer close(done)
 	if raConn != nil && raMu != nil && deadlineMs != "" {
@@ -393,7 +393,7 @@ func runExecInvocation(ctx context.Context, env execEnvelope) (stdout, stderr []
 	stderrBytes := errBuf.Bytes()
 	// ENOSPC override only when the subprocess actually failed.
 	// `echo "no space left on device" >&2; exit 0` legitimately
-	// returns success and must not be force-coerced to 28 (BUG-1062).
+	// returns success and must not be force-coerced to 28.
 	if code != 0 && agent.DetectENOSPC(stderrBytes) {
 		code = agent.ENOSPCExitCode
 		stderrBytes = agent.AnnotateENOSPC(stderrBytes, "lambda")

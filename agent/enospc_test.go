@@ -30,7 +30,7 @@ func TestDetectENOSPC(t *testing.T) {
 func TestENOSPC_HelperPure(t *testing.T) {
 	// Sanity check: DetectENOSPC + AnnotateENOSPC are pure functions.
 	// The exit-code override is the BOOTSTRAP's responsibility (after
-	// BUG-1062 — only override on non-zero exit). Verify that
+	// Only override on non-zero exit). Verify that
 	// DetectENOSPC alone doesn't imply exit-code change.
 	stderr := []byte("write failed: no space left on device\n")
 	if !DetectENOSPC(stderr) {

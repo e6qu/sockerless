@@ -9,7 +9,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// ELBv2 listener rules + ModifyListener (issue #438). Listeners were read-only
+// ELBv2 listener rules + ModifyListener. Listeners were read-only
 // after creation; the `aws_alb_listener_rule` resource (host-header /
 // path-pattern routing — the IAP-proxy ALB shape) needs rule CRUD, and
 // updating a listener's default action / certificates needs ModifyListener.

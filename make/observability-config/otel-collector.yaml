@@ -1,8 +1,8 @@
-# OpenTelemetry Collector — Phase 87 Stack A.
+# OpenTelemetry Collector — Stack A.
 #
 # Receivers:
 #   - otlp: 4317 (gRPC) + 4318 (HTTP) for components that emit OTLP
-#     directly. Wired in Phase 87b across each binary.
+# directly. Wired across each binary.
 #   - filelog: scrapes .stack-pids/*.log so log lines flow into
 #     VictoriaLogs even when the source binary doesn't speak OTLP.
 #     The pidfile-named log file becomes the service.name attribute,
