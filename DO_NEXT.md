@@ -4,13 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `fix/sim-fidelity-audit` (PR pending — cross-cloud audit fixes, one PR by user's explicit call).
-- Last merged: PR #426 (Azure SDK test-gap coverage).
-- Fresh fidelity audit (3 parallel agents, then adversarially verified each finding — the agents correctly flagged StepFunctions/Batch/CodeBuild/Glue "complete immediately", Lambda container-mode, deterministic keys as INTENDED modeling, not bugs). Five real bugs fixed (BUG-1468–1472): (1) GCP Firestore Patch/Commit ignored updateMask → masked writes dropped unmentioned fields (data loss); now `fsApplyUpdateMask` merges. (2) GCP Secret Manager `:access` served DISABLED/DESTROYED versions; now FAILED_PRECONDITION (400), and `latest`=highest-number (does NOT skip disabled). (3) AWS EC2 Describe{NatGateways,Subnets,RouteTables} only honored a filter at Filter.1; now position-independent via `ec2Filters()`. (4) Azure App Insights `currentbillingfeatures` PUT ignored the body (static Cap) → now persists+echoes (daily_data_cap round-trips). (5) Azure ACR blob PUT stored under the client digest without verifying; now computes+compares → DIGEST_INVALID on mismatch. SDK tests for all five; all sims green; no new ops (matrix unchanged).
-- Lower-priority audit items left as-is (intended modeling / cosmetic): AWS ECS fabricated CloudWatch metrics (0.15×CPU — arguably should be no-data; needs design call), IMDS accountId vs STS inconsistency, GCS preconditions, ACR checkNameAvailability always-true. Could revisit.
-- Open GitHub issues: none actionable (#394 upstream-blocked).
+- Branch: `feat/aws-sim-ec2-eni-ops` (PR pending, closes #428).
+- Last merged: PR #429 (five cross-cloud fidelity-audit fixes, BUG-1468–1472).
+- AWS EC2 standalone ENI ops (BUG-1473, issue #428): registered `CreateNetworkInterface`/`AttachNetworkInterface`/`DetachNetworkInterface`/`DeleteNetworkInterface`/`ModifyNetworkInterfaceAttribute`/`AssignPrivateIpAddresses` over the existing `ec2NetworkInterfaces` store (control-plane modeling like `CreateNatGateway`). Added `SourceDestDisabled`/`Description`/`DeviceIndex`/`DeleteOnTermination`/`SecondaryPrivateIps` to the ENI struct; extracted `eniFieldsXML` shared by Describe (`<item>`) and Create (`<networkInterface>`). Unblocks the fck-nat NAT-instance Terraform path (`aws_network_interface` + `source_dest_check=false`). SDK (full lifecycle incl. attach to a RunInstances instance + assign secondary IP), CLI, and Terraform (`network-interface/` fixture — Create + modify source_dest_check + read + delete) all pass. Note: the TF fixture deliberately omits the instance+attachment combo (the bare aws_instance read timed out); attach/detach are covered by the SDK test.
+- **Next queued: #427 IAM policy simulation** — `SimulateCustomPolicy`/`SimulatePrincipalPolicy`. This is LARGER: needs a real policy-evaluation engine (parse IAM JSON; evaluate Effect/Action-wildcard/Resource-ARN-match/Condition operators like StringEquals + aws:ResourceTag). The issue frames it as a phased ask.
+- Open GitHub issues: #428 (closing via pending PR), #427 (queued), #394 (upstream-blocked).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1472 filed · 1428 fixed · 5 open · 4 false positives.
+- BUG counters: 1473 filed · 1429 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

@@ -169,16 +169,21 @@ type EC2Instance struct {
 }
 
 type EC2NetworkInterface struct {
-	NetworkInterfaceId string
-	SubnetId           string
-	VpcId              string
-	PrivateIpAddress   string
-	Status             string
-	AttachmentId       string
-	InstanceId         string
-	SecurityGroupIds   []string
-	Tags               []EC2Tag
-	OwnerId            string
+	NetworkInterfaceId  string
+	SubnetId            string
+	VpcId               string
+	PrivateIpAddress    string
+	Status              string
+	AttachmentId        string
+	InstanceId          string
+	DeviceIndex         int
+	DeleteOnTermination bool
+	SourceDestDisabled  bool
+	Description         string
+	SecondaryPrivateIps []string
+	SecurityGroupIds    []string
+	Tags                []EC2Tag
+	OwnerId             string
 }
 
 type EC2Volume struct {
@@ -428,6 +433,12 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	// Network Interfaces (used during destroy to check ENIs before deleting SGs/subnets)
 	r.Register("DescribeNetworkInterfaces", handleDescribeNetworkInterfaces)
+	r.Register("CreateNetworkInterface", handleCreateNetworkInterface)
+	r.Register("AttachNetworkInterface", handleAttachNetworkInterface)
+	r.Register("DetachNetworkInterface", handleDetachNetworkInterface)
+	r.Register("DeleteNetworkInterface", handleDeleteNetworkInterface)
+	r.Register("ModifyNetworkInterfaceAttribute", handleModifyNetworkInterfaceAttribute)
+	r.Register("AssignPrivateIpAddresses", handleAssignPrivateIpAddresses)
 }
 
 // Tag helpers
@@ -1932,16 +1943,18 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 	}
 	ec2Instances.Put(instanceID, inst)
 	ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
-		NetworkInterfaceId: eniID,
-		SubnetId:           spec.SubnetId,
-		VpcId:              spec.Subnet.VpcId,
-		PrivateIpAddress:   spec.PrivateIP,
-		Status:             "in-use",
-		AttachmentId:       "eni-attach-" + eniID,
-		InstanceId:         instanceID,
-		SecurityGroupIds:   spec.SecurityGroupIds,
-		Tags:               spec.Tags,
-		OwnerId:            ec2Owner(),
+		NetworkInterfaceId:  eniID,
+		SubnetId:            spec.SubnetId,
+		VpcId:               spec.Subnet.VpcId,
+		PrivateIpAddress:    spec.PrivateIP,
+		Status:              "in-use",
+		AttachmentId:        "eni-attach-" + eniID,
+		InstanceId:          instanceID,
+		DeviceIndex:         0,
+		DeleteOnTermination: true,
+		SecurityGroupIds:    spec.SecurityGroupIds,
+		Tags:                spec.Tags,
+		OwnerId:             ec2Owner(),
 	})
 	rootVolumeID := "vol-" + strings.TrimPrefix(instanceID, "i-")
 	rootVolume := EC2Volume{
@@ -3080,40 +3093,223 @@ func handleDescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 	}
 	var items strings.Builder
 	for _, eni := range enis {
-		var groups strings.Builder
-		for _, groupID := range eni.SecurityGroupIds {
-			name := groupID
-			if sg, ok := ec2SecurityGroups.Get(groupID); ok {
-				name = sg.GroupName
-			}
-			fmt.Fprintf(&groups, "<item><groupId>%s</groupId><groupName>%s</groupName></item>", groupID, name)
-		}
-		fmt.Fprintf(&items, `<item>
-    <networkInterfaceId>%s</networkInterfaceId>
-    <subnetId>%s</subnetId>
-    <vpcId>%s</vpcId>
-    <availabilityZone>%s</availabilityZone>
-    <description/>
-    <ownerId>%s</ownerId>
-    <requesterManaged>false</requesterManaged>
-    <status>%s</status>
-    <macAddress>02:00:00:00:00:01</macAddress>
-    <privateIpAddress>%s</privateIpAddress>
-    <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
-    <sourceDestCheck>true</sourceDestCheck>
-    <groupSet>%s</groupSet>
-    <attachment><attachmentId>%s</attachmentId><instanceId>%s</instanceId><deviceIndex>0</deviceIndex><status>attached</status><deleteOnTermination>true</deleteOnTermination></attachment>
-    %s
-  </item>`,
-			eni.NetworkInterfaceId, eni.SubnetId, eni.VpcId, awsAvailabilityZone(), eni.OwnerId, eni.Status,
-			eni.PrivateIpAddress, strings.ReplaceAll(eni.PrivateIpAddress, ".", "-"), awsRegion(), groups.String(),
-			eni.AttachmentId, eni.InstanceId, writeTagSetXML(eni.Tags))
+		items.WriteString("<item>" + eniFieldsXML(eni) + "</item>")
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeNetworkInterfacesResponse %s>
   <requestId>%s</requestId>
   <networkInterfaceSet>%s</networkInterfaceSet>
 </DescribeNetworkInterfacesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+// ec2WriteSimpleResponse writes the `<NameResponse><requestId/><return>true</return></NameResponse>`
+// shape used by EC2 mutation actions that have no payload.
+func ec2WriteSimpleResponse(w http.ResponseWriter, name string) {
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<%s %s>
+  <requestId>%s</requestId><return>true</return>
+</%s>`, name, ec2Xmlns(), generateUUID(), name)
+}
+
+// eniFieldsXML renders the inner ENI fields (no wrapper element), shared by
+// DescribeNetworkInterfaces (wrapped in <item>) and CreateNetworkInterface
+// (wrapped in <networkInterface>). The attachment block only appears when the
+// ENI is attached, and sourceDestCheck reflects the (modifiable)
+// SourceDestDisabled flag.
+func eniFieldsXML(eni EC2NetworkInterface) string {
+	var groups strings.Builder
+	for _, groupID := range eni.SecurityGroupIds {
+		name := groupID
+		if sg, ok := ec2SecurityGroups.Get(groupID); ok {
+			name = sg.GroupName
+		}
+		fmt.Fprintf(&groups, "<item><groupId>%s</groupId><groupName>%s</groupName></item>", groupID, name)
+	}
+	status := eni.Status
+	if status == "" {
+		status = "available"
+	}
+	sourceDest := "true"
+	if eni.SourceDestDisabled {
+		sourceDest = "false"
+	}
+	var privateIPs strings.Builder
+	fmt.Fprintf(&privateIPs, "<item><privateIpAddress>%s</privateIpAddress><primary>true</primary></item>", eni.PrivateIpAddress)
+	for _, ip := range eni.SecondaryPrivateIps {
+		fmt.Fprintf(&privateIPs, "<item><privateIpAddress>%s</privateIpAddress><primary>false</primary></item>", ip)
+	}
+	attachment := ""
+	if eni.AttachmentId != "" {
+		attachment = fmt.Sprintf(`<attachment><attachmentId>%s</attachmentId><instanceId>%s</instanceId><deviceIndex>%d</deviceIndex><status>attached</status><deleteOnTermination>%t</deleteOnTermination></attachment>`,
+			eni.AttachmentId, eni.InstanceId, eni.DeviceIndex, eni.DeleteOnTermination)
+	}
+	return fmt.Sprintf(`<networkInterfaceId>%s</networkInterfaceId>
+    <subnetId>%s</subnetId>
+    <vpcId>%s</vpcId>
+    <availabilityZone>%s</availabilityZone>
+    <description>%s</description>
+    <ownerId>%s</ownerId>
+    <requesterManaged>false</requesterManaged>
+    <status>%s</status>
+    <macAddress>02:00:00:00:00:01</macAddress>
+    <privateIpAddress>%s</privateIpAddress>
+    <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
+    <sourceDestCheck>%s</sourceDestCheck>
+    <groupSet>%s</groupSet>
+    <privateIpAddressesSet>%s</privateIpAddressesSet>
+    %s
+    %s`,
+		eni.NetworkInterfaceId, eni.SubnetId, eni.VpcId, awsAvailabilityZone(), eni.Description, eni.OwnerId, status,
+		eni.PrivateIpAddress, strings.ReplaceAll(eni.PrivateIpAddress, ".", "-"), awsRegion(), sourceDest, groups.String(),
+		privateIPs.String(), attachment, writeTagSetXML(eni.Tags))
+}
+
+// handleCreateNetworkInterface materializes a standalone ENI in a subnet
+// (status "available", source/dest check on). Control-plane modeling like
+// handleCreateNatGateway — no real fabric.
+func handleCreateNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	subnetID := r.FormValue("SubnetId")
+	subnet, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidSubnetID.NotFound", fmt.Sprintf("The subnet ID %q does not exist", subnetID), http.StatusBadRequest)
+		return
+	}
+	privateIP := r.FormValue("PrivateIpAddress")
+	if privateIP == "" {
+		ip, err := AllocateSubnetIP(subnetID)
+		if err != nil {
+			ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", fmt.Sprintf("failed to allocate ENI private IP: %v", err), http.StatusBadRequest)
+			return
+		}
+		privateIP = ip
+	}
+	eni := EC2NetworkInterface{
+		NetworkInterfaceId: ec2ID("eni"),
+		SubnetId:           subnetID,
+		VpcId:              subnet.VpcId,
+		PrivateIpAddress:   privateIP,
+		Status:             "available",
+		Description:        r.FormValue("Description"),
+		SecurityGroupIds:   ec2ParamList(r, "SecurityGroupId"),
+		Tags:               parseTags(r),
+		OwnerId:            ec2Owner(),
+	}
+	ec2NetworkInterfaces.Put(eni.NetworkInterfaceId, eni)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateNetworkInterfaceResponse %s>
+  <requestId>%s</requestId>
+  <networkInterface>%s</networkInterface>
+</CreateNetworkInterfaceResponse>`, ec2Xmlns(), generateUUID(), eniFieldsXML(eni))
+}
+
+func handleAttachNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	eniID := r.FormValue("NetworkInterfaceId")
+	eni, ok := ec2NetworkInterfaces.Get(eniID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidNetworkInterfaceID.NotFound", fmt.Sprintf("The networkInterface ID %q does not exist", eniID), http.StatusBadRequest)
+		return
+	}
+	if eni.AttachmentId != "" {
+		ec2ErrorXML(w, "InvalidNetworkInterface.InUse", fmt.Sprintf("Interface %q is already attached", eniID), http.StatusBadRequest)
+		return
+	}
+	attachID := ec2ID("eni-attach")
+	eni.AttachmentId = attachID
+	eni.InstanceId = r.FormValue("InstanceId")
+	if di := r.FormValue("DeviceIndex"); di != "" {
+		fmt.Sscanf(di, "%d", &eni.DeviceIndex)
+	}
+	eni.Status = "in-use"
+	ec2NetworkInterfaces.Put(eniID, eni)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AttachNetworkInterfaceResponse %s>
+  <requestId>%s</requestId>
+  <attachmentId>%s</attachmentId>
+</AttachNetworkInterfaceResponse>`, ec2Xmlns(), generateUUID(), attachID)
+}
+
+func handleDetachNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	attachID := r.FormValue("AttachmentId")
+	for _, eni := range ec2NetworkInterfaces.List() {
+		if eni.AttachmentId == attachID {
+			eni.AttachmentId = ""
+			eni.InstanceId = ""
+			eni.DeviceIndex = 0
+			eni.Status = "available"
+			ec2NetworkInterfaces.Put(eni.NetworkInterfaceId, eni)
+			ec2WriteSimpleResponse(w, "DetachNetworkInterfaceResponse")
+			return
+		}
+	}
+	ec2ErrorXML(w, "InvalidAttachmentID.NotFound", fmt.Sprintf("The attachment ID %q does not exist", attachID), http.StatusBadRequest)
+}
+
+func handleDeleteNetworkInterface(w http.ResponseWriter, r *http.Request) {
+	eniID := r.FormValue("NetworkInterfaceId")
+	eni, ok := ec2NetworkInterfaces.Get(eniID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidNetworkInterfaceID.NotFound", fmt.Sprintf("The networkInterface ID %q does not exist", eniID), http.StatusBadRequest)
+		return
+	}
+	if eni.AttachmentId != "" {
+		ec2ErrorXML(w, "InvalidParameterValue", fmt.Sprintf("Network interface %q is currently in use", eniID), http.StatusBadRequest)
+		return
+	}
+	ec2NetworkInterfaces.Delete(eniID)
+	ec2WriteSimpleResponse(w, "DeleteNetworkInterfaceResponse")
+}
+
+func handleModifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http.Request) {
+	eniID := r.FormValue("NetworkInterfaceId")
+	eni, ok := ec2NetworkInterfaces.Get(eniID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidNetworkInterfaceID.NotFound", fmt.Sprintf("The networkInterface ID %q does not exist", eniID), http.StatusBadRequest)
+		return
+	}
+	if v := r.FormValue("SourceDestCheck.Value"); v != "" {
+		eni.SourceDestDisabled = v == "false"
+	}
+	if v := r.FormValue("Description.Value"); v != "" {
+		eni.Description = v
+	}
+	if groups := ec2ParamList(r, "SecurityGroupId"); len(groups) > 0 {
+		eni.SecurityGroupIds = groups
+	}
+	ec2NetworkInterfaces.Put(eniID, eni)
+	ec2WriteSimpleResponse(w, "ModifyNetworkInterfaceAttributeResponse")
+}
+
+func handleAssignPrivateIpAddresses(w http.ResponseWriter, r *http.Request) {
+	eniID := r.FormValue("NetworkInterfaceId")
+	eni, ok := ec2NetworkInterfaces.Get(eniID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidNetworkInterfaceID.NotFound", fmt.Sprintf("The networkInterface ID %q does not exist", eniID), http.StatusBadRequest)
+		return
+	}
+	assigned := ec2ParamList(r, "PrivateIpAddress")
+	if n := r.FormValue("SecondaryPrivateIpAddressCount"); n != "" {
+		var count int
+		fmt.Sscanf(n, "%d", &count)
+		for i := 0; i < count; i++ {
+			ip, err := AllocateSubnetIP(eni.SubnetId)
+			if err != nil {
+				break
+			}
+			assigned = append(assigned, ip)
+		}
+	}
+	eni.SecondaryPrivateIps = append(eni.SecondaryPrivateIps, assigned...)
+	ec2NetworkInterfaces.Put(eniID, eni)
+	var ipItems strings.Builder
+	for _, ip := range assigned {
+		fmt.Fprintf(&ipItems, "<item><privateIpAddress>%s</privateIpAddress></item>", ip)
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AssignPrivateIpAddressesResponse %s>
+  <requestId>%s</requestId>
+  <networkInterfaceId>%s</networkInterfaceId>
+  <assignedPrivateIpAddressesSet>%s</assignedPrivateIpAddressesSet>
+</AssignPrivateIpAddressesResponse>`, ec2Xmlns(), generateUUID(), eniID, ipItems.String())
 }
 
 func removePermission(perms []EC2IpPermission, target EC2IpPermission) []EC2IpPermission {
