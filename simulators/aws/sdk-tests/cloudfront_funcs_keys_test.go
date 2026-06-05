@@ -58,6 +58,40 @@ func TestCloudFrontFunctionLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cftypes.FunctionStageLive, pubOut.FunctionSummary.FunctionMetadata.Stage)
 
+	// Tags on the published function ARN. Regression: ListTagsForResource
+	// resolved only distribution ARNs, so a function ARN 404'd (NoSuchResource),
+	// which the AWS provider surfaced intermittently as a terraform apply
+	// failure on aws_cloudfront_function. It must return 200 (empty) and
+	// round-trip tag/untag.
+	fnARN := aws.ToString(pubOut.FunctionSummary.FunctionMetadata.FunctionARN)
+	require.NotEmpty(t, fnARN)
+
+	emptyTags, err := c.ListTagsForResource(ctx, &cloudfront.ListTagsForResourceInput{Resource: aws.String(fnARN)})
+	require.NoError(t, err, "ListTagsForResource on a function ARN must not 404")
+	assert.Empty(t, emptyTags.Tags.Items)
+
+	_, err = c.TagResource(ctx, &cloudfront.TagResourceInput{
+		Resource: aws.String(fnARN),
+		Tags:     &cftypes.Tags{Items: []cftypes.Tag{{Key: aws.String("env"), Value: aws.String("test")}}},
+	})
+	require.NoError(t, err)
+
+	taggedOut, err := c.ListTagsForResource(ctx, &cloudfront.ListTagsForResourceInput{Resource: aws.String(fnARN)})
+	require.NoError(t, err)
+	require.Len(t, taggedOut.Tags.Items, 1)
+	assert.Equal(t, "env", aws.ToString(taggedOut.Tags.Items[0].Key))
+	assert.Equal(t, "test", aws.ToString(taggedOut.Tags.Items[0].Value))
+
+	_, err = c.UntagResource(ctx, &cloudfront.UntagResourceInput{
+		Resource: aws.String(fnARN),
+		TagKeys:  &cftypes.TagKeys{Items: []string{"env"}},
+	})
+	require.NoError(t, err)
+
+	afterUntag, err := c.ListTagsForResource(ctx, &cloudfront.ListTagsForResourceInput{Resource: aws.String(fnARN)})
+	require.NoError(t, err)
+	assert.Empty(t, afterUntag.Tags.Items)
+
 	// re-describe and pick up the new ETag for delete
 	descOut, err = c.DescribeFunction(ctx, &cloudfront.DescribeFunctionInput{Name: aws.String(name)})
 	require.NoError(t, err)

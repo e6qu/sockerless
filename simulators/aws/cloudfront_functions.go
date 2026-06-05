@@ -79,6 +79,7 @@ type cfStoredFunction struct {
 	Summary CFFunctionSummary
 	Code    []byte
 	ETag    string
+	Tags    []CFTag
 }
 
 // ---------- Invalidation types ----------

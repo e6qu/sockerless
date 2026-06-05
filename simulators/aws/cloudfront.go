@@ -922,23 +922,91 @@ func cfDistributionIDFromARN(arn string) string {
 	return arn[i+len(prefix):]
 }
 
+// cfFunctionNameFromARN extracts the function name from a CloudFront Function
+// ARN (arn:aws:cloudfront::<acct>:function/<name>/<stage>), tolerating both the
+// stage-qualified (.../LIVE) and unqualified forms. Returns "" for non-function
+// ARNs (e.g. distributions), which the tagging handlers route to cfDistributions.
+func cfFunctionNameFromARN(arn string) string {
+	const prefix = "function/"
+	i := strings.LastIndex(arn, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := arn[i+len(prefix):]
+	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+		return rest[:slash]
+	}
+	return rest
+}
+
+// cfMergeTags overlays incoming tags onto existing ones: existing-key values are
+// replaced, new keys appended. Insertion order is preserved so the listed tag
+// order is stable (real AWS does not guarantee order, but a deterministic shape
+// avoids spurious test churn).
+func cfMergeTags(existing, incoming []CFTag) []CFTag {
+	values := make(map[string]string, len(existing)+len(incoming))
+	order := make([]string, 0, len(existing)+len(incoming))
+	add := func(t CFTag) {
+		if _, seen := values[t.Key]; !seen {
+			order = append(order, t.Key)
+		}
+		values[t.Key] = t.Value
+	}
+	for _, t := range existing {
+		add(t)
+	}
+	for _, t := range incoming {
+		add(t)
+	}
+	merged := make([]CFTag, 0, len(order))
+	for _, k := range order {
+		merged = append(merged, CFTag{Key: k, Value: values[k]})
+	}
+	return merged
+}
+
+// cfDropTags returns existing tags minus any whose key is in keys.
+func cfDropTags(existing []CFTag, keys []string) []CFTag {
+	drop := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		drop[k] = true
+	}
+	kept := make([]CFTag, 0, len(existing))
+	for _, t := range existing {
+		if !drop[t.Key] {
+			kept = append(kept, t)
+		}
+	}
+	return kept
+}
+
 func handleCFListTags(w http.ResponseWriter, r *http.Request) {
 	arn := r.URL.Query().Get("Resource")
 	if arn == "" {
 		cfWriteError(w, http.StatusBadRequest, "InvalidArgument", "Resource query parameter is required")
 		return
 	}
-	id := cfDistributionIDFromARN(arn)
-	stored, ok := cfDistributions.Get(id)
-	if !ok {
-		cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
-		return
+	var tags []CFTag
+	if fname := cfFunctionNameFromARN(arn); fname != "" {
+		stored, ok := cfFunctions.Get(fname)
+		if !ok {
+			cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+			return
+		}
+		tags = stored.Tags
+	} else {
+		stored, ok := cfDistributions.Get(cfDistributionIDFromARN(arn))
+		if !ok {
+			cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+			return
+		}
+		tags = stored.Tags
 	}
 	resp := struct {
 		XMLName xml.Name `xml:"Tags"`
 		Xmlns   string   `xml:"xmlns,attr,omitempty"`
 		Items   []CFTag  `xml:"Items>Tag"`
-	}{Xmlns: cfNamespace, Items: stored.Tags}
+	}{Xmlns: cfNamespace, Items: tags}
 	cfWriteXML(w, http.StatusOK, resp)
 }
 
@@ -956,12 +1024,6 @@ func handleCFTagDispatch(w http.ResponseWriter, r *http.Request) {
 
 func handleCFTagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.URL.Query().Get("Resource")
-	id := cfDistributionIDFromARN(arn)
-	stored, ok := cfDistributions.Get(id)
-	if !ok {
-		cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
-		return
-	}
 	var body struct {
 		XMLName xml.Name `xml:"Tags"`
 		Items   []CFTag  `xml:"Items>Tag"`
@@ -970,31 +1032,30 @@ func handleCFTagResource(w http.ResponseWriter, r *http.Request) {
 		cfWriteError(w, http.StatusBadRequest, "MalformedXML", "Could not decode Tags: "+err.Error())
 		return
 	}
-	// merge: replace existing-key values, append new keys
-	tagMap := make(map[string]string, len(stored.Tags))
-	for _, t := range stored.Tags {
-		tagMap[t.Key] = t.Value
+	if fname := cfFunctionNameFromARN(arn); fname != "" {
+		stored, ok := cfFunctions.Get(fname)
+		if !ok {
+			cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+			return
+		}
+		stored.Tags = cfMergeTags(stored.Tags, body.Items)
+		cfFunctions.Put(fname, stored)
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
-	for _, t := range body.Items {
-		tagMap[t.Key] = t.Value
-	}
-	merged := make([]CFTag, 0, len(tagMap))
-	for k, v := range tagMap {
-		merged = append(merged, CFTag{Key: k, Value: v})
-	}
-	stored.Tags = merged
-	cfDistributions.Put(id, stored)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func handleCFUntagResource(w http.ResponseWriter, r *http.Request) {
-	arn := r.URL.Query().Get("Resource")
 	id := cfDistributionIDFromARN(arn)
 	stored, ok := cfDistributions.Get(id)
 	if !ok {
 		cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
 		return
 	}
+	stored.Tags = cfMergeTags(stored.Tags, body.Items)
+	cfDistributions.Put(id, stored)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleCFUntagResource(w http.ResponseWriter, r *http.Request) {
+	arn := r.URL.Query().Get("Resource")
 	var body struct {
 		XMLName xml.Name `xml:"TagKeys"`
 		Items   []string `xml:"Items>Key"`
@@ -1003,17 +1064,24 @@ func handleCFUntagResource(w http.ResponseWriter, r *http.Request) {
 		cfWriteError(w, http.StatusBadRequest, "MalformedXML", "Could not decode TagKeys: "+err.Error())
 		return
 	}
-	drop := make(map[string]bool, len(body.Items))
-	for _, k := range body.Items {
-		drop[k] = true
-	}
-	kept := stored.Tags[:0]
-	for _, t := range stored.Tags {
-		if !drop[t.Key] {
-			kept = append(kept, t)
+	if fname := cfFunctionNameFromARN(arn); fname != "" {
+		stored, ok := cfFunctions.Get(fname)
+		if !ok {
+			cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+			return
 		}
+		stored.Tags = cfDropTags(stored.Tags, body.Items)
+		cfFunctions.Put(fname, stored)
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
-	stored.Tags = kept
+	id := cfDistributionIDFromARN(arn)
+	stored, ok := cfDistributions.Get(id)
+	if !ok {
+		cfWriteError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+		return
+	}
+	stored.Tags = cfDropTags(stored.Tags, body.Items)
 	cfDistributions.Put(id, stored)
 	w.WriteHeader(http.StatusNoContent)
 }
