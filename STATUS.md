@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-ec2-eni-ops` (PR pending — EC2 standalone ENI ops, issue #428) |
-| In-flight | AWS EC2 standalone ENI ops (BUG-1473, issue #428): Create/Attach/Detach/Delete/ModifyAttribute/AssignPrivateIpAddresses over the existing `ec2NetworkInterfaces` store; unblocks the fck-nat NAT-instance path. SDK + CLI + Terraform coverage green locally. NEXT in queue: #427 IAM policy simulation. |
-| Last merged | PR #429 — five cross-cloud fidelity-audit fixes (BUG-1468–1472) |
-| Also merged recently | PR #426 (Azure test-gap coverage); PR #425 (Azure KV version-less crypto #423); PR #424 (ACM DNS validation #420/#421) |
-| Open GitHub issues | #428 (EC2 ENI — closing via pending PR), #427 (IAM policy sim — queued), #394 (azuread upstream blocker) |
-| Bugs | 1473 filed · 1429 fixed · 5 open · 4 false positives |
+| Active branch | `feat/aws-sim-iam-policy-sim` (PR pending — IAM policy simulation, issue #427) |
+| In-flight | AWS IAM policy simulation (BUG-1474, issue #427): a real policy-evaluation engine (parse JSON, explicit-deny-wins, action/resource wildcards, NotAction/NotResource, condition operators incl. aws:ResourceTag) behind `SimulateCustomPolicy` + `SimulatePrincipalPolicy` (resolves a role's inline+attached policies). SDK + CLI coverage green locally (no Terraform surface for policy sim). |
+| Last merged | PR #430 — EC2 standalone ENI ops (#428) |
+| Also merged recently | PR #429 (five fidelity-audit fixes); PR #426 (Azure test-gap coverage); PR #425 (Azure KV version-less crypto #423) |
+| Open GitHub issues | #427 (IAM policy sim — closing via pending PR), #394 (azuread upstream blocker) |
+| Bugs | 1474 filed · 1430 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | #427 IAM policy simulation (larger — a policy-evaluation engine), then audit lower-priority items or await new issues |
+| Planned next | After #427: no actionable issues remain (only #394, upstream-blocked) — audit lower-priority items (ECS fabricated metrics etc.) or await new issues |
 | Live infra | None up |
 
 ## Invariants
