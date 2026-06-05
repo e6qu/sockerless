@@ -121,7 +121,17 @@ func TestAppInsights_BillingFeatures(t *testing.T) {
 			DataVolumeCap:          &armapplicationinsights.ComponentDataVolumeCap{Cap: &cap200},
 		}, nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, updateResp.CurrentBillingFeatures, "update response must also deserialize")
+	require.NotEmpty(t, updateResp.CurrentBillingFeatures)
+	// PUT must echo the submitted cap, not a static value (BUG-1471).
+	require.NotNil(t, updateResp.DataVolumeCap)
+	require.NotNil(t, updateResp.DataVolumeCap.Cap)
+	assert.Equal(t, float32(200), *updateResp.DataVolumeCap.Cap)
+
+	// And a subsequent GET must return the persisted cap.
+	afterGet, err := billing.Get(ctx, rgName, componentName, nil)
+	require.NoError(t, err)
+	require.NotNil(t, afterGet.DataVolumeCap.Cap)
+	assert.Equal(t, float32(200), *afterGet.DataVolumeCap.Cap, "GET must return the persisted daily cap")
 }
 
 func ptrApplicationType(s armapplicationinsights.ApplicationType) *armapplicationinsights.ApplicationType {

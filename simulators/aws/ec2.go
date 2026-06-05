@@ -673,9 +673,9 @@ func handleDescribeSubnets(w http.ResponseWriter, r *http.Request) {
 		if s, ok := ec2Subnets.Get(id); ok {
 			subnets = append(subnets, s)
 		}
-	} else if vpcFilter := r.FormValue("Filter.1.Value.1"); r.FormValue("Filter.1.Name") == "vpc-id" && vpcFilter != "" {
+	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
 		subnets = ec2Subnets.Filter(func(s EC2Subnet) bool {
-			return s.VpcId == vpcFilter
+			return ec2StrInValues(s.VpcId, vpcIDs)
 		})
 	} else {
 		subnets = ec2Subnets.List()
@@ -1004,10 +1004,9 @@ func handleDescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 		if n, ok := ec2NatGateways.Get(id); ok {
 			nats = append(nats, n)
 		}
-	} else if r.FormValue("Filter.1.Name") == "vpc-id" {
-		vpcId := r.FormValue("Filter.1.Value.1")
+	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
 		nats = ec2NatGateways.Filter(func(n EC2NatGateway) bool {
-			return n.VpcId == vpcId
+			return ec2StrInValues(n.VpcId, vpcIDs)
 		})
 	} else {
 		nats = ec2NatGateways.List()
@@ -1134,16 +1133,19 @@ func handleDescribeRouteTables(w http.ResponseWriter, r *http.Request) {
 		if rt, ok := ec2RouteTables.Get(id); ok {
 			rts = append(rts, rt)
 		}
-	} else if r.FormValue("Filter.1.Name") == "association.route-table-association-id" {
-		assocId := r.FormValue("Filter.1.Value.1")
+	} else if assocIDs := ec2Filters(r)["association.route-table-association-id"]; len(assocIDs) > 0 {
 		for _, rt := range ec2RouteTables.List() {
 			for _, a := range rt.Associations {
-				if a.AssociationId == assocId {
+				if ec2StrInValues(a.AssociationId, assocIDs) {
 					rts = append(rts, rt)
 					break
 				}
 			}
 		}
+	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
+		rts = ec2RouteTables.Filter(func(rt EC2RouteTable) bool {
+			return ec2StrInValues(rt.VpcId, vpcIDs)
+		})
 	} else {
 		rts = ec2RouteTables.List()
 	}
@@ -1645,6 +1647,17 @@ func ec2Filters(r *http.Request) map[string][]string {
 		}
 	}
 	return filters
+}
+
+// ec2StrInValues reports whether s is one of vals (a filter's values are OR'd
+// in real EC2).
+func ec2StrInValues(s string, vals []string) bool {
+	for _, v := range vals {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func instanceStateCode(state string) int {

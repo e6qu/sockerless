@@ -146,6 +146,30 @@ func handleFSListDocuments(w http.ResponseWriter, r *http.Request, collection st
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"documents": docs})
 }
 
+// fsApplyUpdateMask merges incoming fields into existing per the Firestore
+// updateMask. With no mask the document is replaced wholesale (Set without
+// merge); with a mask only the listed top-level field paths are written
+// (present in the body → set, absent → delete) and every other existing field
+// is preserved — which is what DocumentRef.Update(...) and Set(..., MergeAll)
+// rely on. Without this, masked writes silently drop all unmentioned fields.
+func fsApplyUpdateMask(existing, incoming map[string]FSValue, mask []string) map[string]FSValue {
+	if len(mask) == 0 {
+		return incoming
+	}
+	result := make(map[string]FSValue, len(existing)+len(incoming))
+	for k, v := range existing {
+		result[k] = v
+	}
+	for _, path := range mask {
+		if v, ok := incoming[path]; ok {
+			result[path] = v
+		} else {
+			delete(result, path)
+		}
+	}
+	return result
+}
+
 func handleFSPatchDocument(w http.ResponseWriter, r *http.Request) {
 	project, database, docPath := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "docPath")
 	name := fsFullName(project, database, docPath)
@@ -158,7 +182,7 @@ func handleFSPatchDocument(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid document body: %v", err)
 		return
 	}
-	current.Fields = req.Fields
+	current.Fields = fsApplyUpdateMask(current.Fields, req.Fields, r.URL.Query()["updateMask.fieldPaths"])
 	sim.WriteJSON(w, http.StatusOK, fsPutDocument(current))
 }
 
@@ -174,8 +198,11 @@ func handleFSDeleteDocument(w http.ResponseWriter, r *http.Request) {
 func handleFSCommit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Writes []struct {
-			Update *FSDocument `json:"update,omitempty"`
-			Delete string      `json:"delete,omitempty"`
+			Update     *FSDocument `json:"update,omitempty"`
+			UpdateMask *struct {
+				FieldPaths []string `json:"fieldPaths"`
+			} `json:"updateMask,omitempty"`
+			Delete string `json:"delete,omitempty"`
 		} `json:"writes"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -190,8 +217,18 @@ func handleFSCommit(w http.ResponseWriter, r *http.Request) {
 				sim.GCPError(w, http.StatusBadRequest, "write.update.name is required", "INVALID_ARGUMENT")
 				return
 			}
-			doc = fsPutDocument(doc)
-			writeResults = append(writeResults, map[string]any{"updateTime": doc.UpdateTime})
+			// Honor the per-write updateMask so masked writes (Update /
+			// Set-MergeAll) preserve unmentioned fields instead of replacing
+			// the whole document.
+			existing, _ := fsDocuments.Get(doc.Name)
+			var mask []string
+			if wr.UpdateMask != nil {
+				mask = wr.UpdateMask.FieldPaths
+			}
+			merged := FSDocument{Name: doc.Name, CreateTime: existing.CreateTime}
+			merged.Fields = fsApplyUpdateMask(existing.Fields, doc.Fields, mask)
+			merged = fsPutDocument(merged)
+			writeResults = append(writeResults, map[string]any{"updateTime": merged.UpdateTime})
 		}
 		if wr.Delete != "" {
 			fsDocuments.Delete(wr.Delete)

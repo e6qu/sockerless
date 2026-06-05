@@ -406,6 +406,17 @@ func registerACR(srv *sim.Server) {
 			}
 			data := append(upload.Data, body...)
 
+			// Verify the uploaded content hashes to the asserted digest — real
+			// OCI/ACR rejects a mismatch with DIGEST_INVALID rather than storing
+			// content under a wrong digest.
+			if actual := fmt.Sprintf("sha256:%x", sha256.Sum256(data)); actual != digest {
+				uploads.Delete(uuid)
+				writeOCIError(w, "DIGEST_INVALID",
+					fmt.Sprintf("provided digest %s does not match uploaded content digest %s", digest, actual),
+					http.StatusBadRequest)
+				return
+			}
+
 			blobKey := upload.Repo + "@" + digest
 			blobs.Put(blobKey, BlobData{
 				Digest: digest,
@@ -524,6 +535,17 @@ func registerACR(srv *sim.Server) {
 				return
 			}
 			data := append(upload.Data, body...)
+
+			// Verify the uploaded content hashes to the asserted digest — real
+			// OCI/ACR rejects a mismatch with DIGEST_INVALID rather than storing
+			// content under a wrong digest.
+			if actual := fmt.Sprintf("sha256:%x", sha256.Sum256(data)); actual != digest {
+				uploads.Delete(uuid)
+				writeOCIError(w, "DIGEST_INVALID",
+					fmt.Sprintf("provided digest %s does not match uploaded content digest %s", digest, actual),
+					http.StatusBadRequest)
+				return
+			}
 
 			blobKey := upload.Repo + "@" + digest
 			blobs.Put(blobKey, BlobData{
