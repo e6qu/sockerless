@@ -363,6 +363,18 @@ resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
   upstream_registry_url = "registry-1.docker.io"
 }
 
+# aws_ecr_repository — exercises the repository config the provider reads back
+# on refresh (image_tag_mutability / image_scanning_configuration /
+# encryption_configuration). Without the sim echoing these, the provider drifts.
+resource "aws_ecr_repository" "tf_repo" {
+  name                 = "tf-runner-repo"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
 # Exercise the Cloud Map namespace + service APIs that BUG-701's fix
 # depends on. The namespace and service are Cloud Map control-plane
 # resources; the simulator creates a Docker user-defined network later,
@@ -1295,6 +1307,12 @@ output "elbv2_listener_rule_arn" {
 }
 output "kms_grant_id" {
   value = aws_kms_grant.tf_kms_grant.grant_id
+}
+output "ecr_repository_url" {
+  value = aws_ecr_repository.tf_repo.repository_url
+}
+output "ecr_repository_tag_mutability" {
+  value = aws_ecr_repository.tf_repo.image_tag_mutability
 }
 output "ec2_nat_gateway_id" {
   value = aws_nat_gateway.tf_nat.id

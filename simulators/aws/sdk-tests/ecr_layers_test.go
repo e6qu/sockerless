@@ -119,3 +119,38 @@ func TestECR_LayerUploadPipeline(t *testing.T) {
 func ecrLayerDigest(b []byte) string {
 	return fmt.Sprintf("sha256:%x", sha256.Sum256(b))
 }
+
+// TestECR_RepositoryConfiguration covers the aws_ecr_repository read-back fields
+// (#435 follow-up): image tag mutability, scan-on-push, and encryption config
+// round-trip through CreateRepository + DescribeRepositories.
+func TestECR_RepositoryConfiguration(t *testing.T) {
+	c := ecrClient()
+
+	repo := "config-repo"
+	created, err := c.CreateRepository(ctx, &ecr.CreateRepositoryInput{
+		RepositoryName:             aws.String(repo),
+		ImageTagMutability:         ecrtypes.ImageTagMutabilityImmutable,
+		ImageScanningConfiguration: &ecrtypes.ImageScanningConfiguration{ScanOnPush: true},
+		EncryptionConfiguration:    &ecrtypes.EncryptionConfiguration{EncryptionType: ecrtypes.EncryptionTypeAes256},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ecrtypes.ImageTagMutabilityImmutable, created.Repository.ImageTagMutability)
+	require.NotNil(t, created.Repository.ImageScanningConfiguration)
+	assert.True(t, created.Repository.ImageScanningConfiguration.ScanOnPush)
+
+	desc, err := c.DescribeRepositories(ctx, &ecr.DescribeRepositoriesInput{RepositoryNames: []string{repo}})
+	require.NoError(t, err)
+	require.Len(t, desc.Repositories, 1)
+	got := desc.Repositories[0]
+	assert.Equal(t, ecrtypes.ImageTagMutabilityImmutable, got.ImageTagMutability)
+	require.NotNil(t, got.ImageScanningConfiguration)
+	assert.True(t, got.ImageScanningConfiguration.ScanOnPush)
+	require.NotNil(t, got.EncryptionConfiguration)
+	assert.Equal(t, ecrtypes.EncryptionTypeAes256, got.EncryptionConfiguration.EncryptionType)
+
+	// A bare repository gets the AWS defaults (MUTABLE / AES256 / no scan).
+	def, err := c.CreateRepository(ctx, &ecr.CreateRepositoryInput{RepositoryName: aws.String("config-default-repo")})
+	require.NoError(t, err)
+	assert.Equal(t, ecrtypes.ImageTagMutabilityMutable, def.Repository.ImageTagMutability)
+	assert.Equal(t, ecrtypes.EncryptionTypeAes256, def.Repository.EncryptionConfiguration.EncryptionType)
+}

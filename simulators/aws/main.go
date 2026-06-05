@@ -86,6 +86,7 @@ func main() {
 	registerElastiCache(queryRouter, srv)
 	registerELBv2(queryRouter, srv)
 	registerAutoScaling(queryRouter, srv)
+	registerCloudWatchMetricsQuery(queryRouter)
 
 	// Host-addressed service data planes are registered outside the
 	// Query Protocol control-plane router.

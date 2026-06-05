@@ -4,8 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-fck-nat-onion-batch` (PR pending — five AWS sim gaps bundled, BUG-1477–1481, issues #434–#438).
-- Last merged: PR #439 (EC2 Launch Template ops, BUG-1476, #433).
+- Branch: `feat/aws-sim-flagged-followups` (PR pending — three flagged follow-ups, BUG-1482–1484).
+- Last merged: PR #440 (five AWS sim gaps, BUG-1477–1481, #434–#438).
+- Flagged follow-ups closed (user asked to tie off the deferreds I noted in recent PRs):
+  - **#433 follow-up (BUG-1482)** — EC2 launch-template in-place update: `CreateLaunchTemplateVersion` (appends a version, becomes latest not default) + `ModifyLaunchTemplate` (moves the default; numeric/`$Latest`/`$Default`). Gotcha: the wire param for the default selector is `SetDefaultVersion`, NOT `DefaultVersion`.
+  - **#435 follow-up (BUG-1483)** — ECR `aws_ecr_repository` read-back: `CreateRepository`/`DescribeRepositories` now echo imageTagMutability (default MUTABLE), encryptionConfiguration (default AES256), imageScanningConfiguration (default scanOnPush=false); `aws_ecr_repository` added to the TF stack (the resource deferred from #435).
+  - **#432 follow-up (BUG-1484)** — CloudWatch CLI query metrics: `cloudwatch_metrics_query.go` registers PutMetricData/GetMetricStatistics/ListMetrics on the query router, sharing the `cwMetrics` store + `cwApplyStat`. The Go SDK still uses the rpc-v2-cbor path; both protocols round-trip the same store.
+- Coverage: SDK (LT versions, ECR config) + CLI (CloudWatch query) + TF (`aws_ecr_repository` in the prod-shape stack).
 - Five-issue batch (user asked to bundle all open non-upstream-blocked issues in one PR):
   - **#434 KMS** (`kms_grants.go`): grant store + CreateGrant/ListGrants/RevokeGrant; GenerateDataKeyWithoutPlaintext (encrypted-only) + ReEncrypt (decrypt-src-envelope → rewrap-dest) over the existing kms-sim envelope.
   - **#435 ECR** (`ecr_layers.go`): repo-policy store (Set/Get/Delete) + real layer pipeline (Initiate→Upload→Complete with `sha256(buffer)==digest` verify→GetDownloadUrl); `BatchCheckLayerAvailability` now reports real availability. (No `/v2/` OCI registry — these are the awsJson SDK/CLI ops, not docker-push.)
@@ -17,9 +22,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
 - **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained by this PR.
+- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1481 filed · 1437 fixed · 5 open · 4 false positives.
+- BUG counters: 1484 filed · 1440 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 
