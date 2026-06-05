@@ -4,13 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-iam-policy-sim` (PR pending, closes #427).
-- Last merged: PR #430 (EC2 standalone ENI ops, #428).
-- AWS IAM policy simulation (BUG-1474, issue #427): new `iam_policy_sim.go` — a real evaluator (parse IAM JSON with string-or-list Action/Resource; explicit-deny-wins; `*`/`?` wildcard action (case-insensitive) + resource-ARN matching; NotAction/NotResource; condition operators StringEquals/NotEquals/Like/NotLike/EqualsIgnoreCase, Bool, ArnLike/ArnEquals, `…IfExists`, with MissingContextValues) returning EvalDecision allowed/explicitDeny/implicitDeny. `SimulateCustomPolicy` evaluates PolicyInputList; `SimulatePrincipalPolicy` resolves the role's inline (`iamRolePolicies`) + attached-managed (`iamAttachedPolicies`→`iamPolicies`) policies then reuses the evaluator. Per-(action×resource) EvaluationResults. SDK (deny-wins, resource scoping, wildcards, aws:ResourceTag condition, principal resolution) + CLI (`aws iam simulate-custom-policy`) pass. No Terraform surface (no resource/data-source for policy sim).
-- After #427: **no actionable consumer issues remain** (only #394, upstream-blocked). Fall back to auditing the lower-priority items the fidelity audit flagged (AWS ECS fabricated CloudWatch metrics, IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #427 (closing via pending PR), #394 (upstream-blocked).
+- Branch: `feat/aws-sim-real-cloudwatch-metrics` (PR pending — real CloudWatch metrics, BUG-1475).
+- Last merged: PR #431 (IAM policy simulation, #427).
+- AWS CloudWatch real metrics (BUG-1475, audit follow-up): removed `computeECSMetric` (the fabricated `0.15×CPU`/`0.25×mem`) — `GetMetricData` now serves real `PutMetricData` datapoints for every namespace (ECS included; empty if nothing pushed). Added real CloudWatch period-bucketing + statistic (`cwAggregate`/`cwApplyStat`: Average/Sum/Minimum/Maximum/SampleCount over `[StartTime,EndTime)`). Two pre-existing protocol bugs the missing test hid, now fixed: (a) `PutMetricData` request bodies are gzip-compressed CBOR (`cwReadBody` decompresses); (b) the response must encode timestamps as CBOR **tag-1** not a bare uint (`cwEncMode` with `TimeTag: EncTagRequired`). SDK round-trip test (Average/Sum/Min/Max/SampleCount + ECS de-fabrication). Added the `cloudwatch` SDK module to sdk-tests/go.mod.
+- **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** (`Action=PutMetricData`, XML) for CloudWatch — NOT the rpc-v2-cbor the Go SDK uses — so `aws cloudwatch put-metric-data`/`get-metric-statistics` currently return `InvalidAction`. Implementing the query-protocol metric ops (PutMetricData + GetMetricStatistics XML, backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
+- After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
+- Open GitHub issues: #394 (upstream-blocked).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1474 filed · 1430 fixed · 5 open · 4 false positives.
+- BUG counters: 1475 filed · 1431 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 
