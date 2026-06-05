@@ -4,12 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/gcp-sim-cloudkms` (PR pending, closes #419).
-- Last merged: PR #418 (DynamoDB GSIs #416 + ECS Service family #417 + audit follow-ups BUG-1457–1460; azf attach-stdin race BUG-1461; CloudFront Function tagging BUG-1462).
-- GCP Cloud KMS service (BUG-1463, issue #419): new `simulators/gcp/cloudkms.go` — keyRings (create/get/list, 404/409), cryptoKeys (create with `cryptoKeyId`+purpose, get/list/patch rotation), cryptoKeyVersions (list/get/destroy → DESTROY_SCHEDULED), and `cryptoKeys:encrypt`/`:decrypt` with real AES-256-GCM per-version material + CRC32C integrity fields. Accepts std AND URL-safe base64 (gcloud emits URL-safe). SDK (`cloudkms_test.go`, 3 tests), CLI (`gcloud kms` encrypt/decrypt round-trip), and Terraform (`fixtures/kms-lifecycle`, `google_kms_key_ring`+`google_kms_crypto_key`) all pass locally. Surface table `gcp-cloudkms.md` + coverage-matrix row added.
-- Open GitHub issues: #419 (closing via pending PR). #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
+- Branch: `fix/aws-sim-acm-dns-validation` (PR pending, closes #420 + #421).
+- Last merged: PR #422 (GCP Cloud KMS service, #419).
+- AWS ACM DNS validation (BUG-1464/1465, issues #420/#421): `acm.go` now (a) transitions a DNS-validated AMAZON_ISSUED cert to ISSUED on `DescribeCertificate` once every domain's `_acm-challenge` CNAME exists in the Route53 sim store (`acmReconcileIssuance`/`acmDNSRecordPresent` — honest signal, no synthetic success; a cert with no record stays PENDING), and (b) builds the validation record name from `strings.TrimPrefix(domain, "*.")` so a wildcard SAN no longer yields a literal `*`. SDK (`acm_dns_validation_test.go`), CLI (`acm_dns_validation_test.go` — request + route53 record + describe→ISSUED), and Terraform (`terraform-tests/acm-validation/` — `aws_acm_certificate` wildcard SAN + `aws_route53_record` for_each over DVOs + `aws_acm_certificate_validation`) all pass locally. ACM already had a surface table + matrix row (no new ops).
+- Next queued: Azure KV #423 (version-less key crypto routing).
+- Open GitHub issues: #420/#421 (closing via pending PR). #423 (Azure KV, queued). #394 (azuread upstream blocker).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1463 filed · 1420 fixed · 5 open · 3 false positives.
+- BUG counters: 1465 filed · 1422 fixed · 5 open · 3 false positives.
 
 ## Recently Completed
 

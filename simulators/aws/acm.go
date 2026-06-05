@@ -13,9 +13,12 @@ import (
 )
 
 // AWS Certificate Manager. Wire: AWS-JSON 1.1 (POST /, X-Amz-Target =
-// "CertificateManager.<Op>"). Sim eagerly transitions issued
-// certificates to Status=ISSUED instead of synthesising the real
-// AWS DNS-validation polling window (out of scope).
+// "CertificateManager.<Op>"). ImportCertificate is ISSUED immediately.
+// A DNS-validated RequestCertificate (AMAZON_ISSUED) starts
+// PENDING_VALIDATION and transitions to ISSUED on DescribeCertificate
+// once its _acm-challenge records exist in the Route53 sim store — the
+// sim can't perform real public DNS validation, so record presence is
+// the validation signal (a cert with no record stays PENDING).
 
 // ---------- Types ----------
 
@@ -183,8 +186,14 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 			ValidationStatus: "PENDING_VALIDATION",
 		}
 		if method == "DNS" {
+			// Real ACM strips a leading "*." and validates the base domain,
+			// so a wildcard SAN yields `_acm-challenge.devbox.example.com.`,
+			// not a star-bearing `_acm-challenge.*.devbox.example.com.` that
+			// aws_acm_certificate_validation rejects. DomainName still echoes
+			// the original wildcard.
+			base := strings.TrimPrefix(d, "*.")
 			opt.ResourceRecord = &ACMResourceRecord{
-				Name:  "_acm-challenge." + d + ".",
+				Name:  "_acm-challenge." + base + ".",
 				Type:  "CNAME",
 				Value: "_acm-challenge-" + id[:8] + ".acm-validations.aws.",
 			}
@@ -236,7 +245,60 @@ func handleACMDescribeCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
 		return
 	}
+	stored = acmReconcileIssuance(id, stored)
 	acmWriteJSON(w, http.StatusOK, map[string]ACMCertificate{"Certificate": stored.Cert})
+}
+
+// acmReconcileIssuance transitions a DNS-validated AMAZON_ISSUED certificate
+// from PENDING_VALIDATION to ISSUED once every domain's _acm-challenge CNAME
+// exists in the Route53 sim store, mirroring real ACM (which issues after the
+// validation records propagate). The sim cannot perform real public DNS
+// validation, so record presence is the honest "validation done" signal — a
+// cert with no record stays PENDING, exactly like real ACM. Persists and
+// returns the (possibly updated) record.
+func acmReconcileIssuance(id string, stored acmStoredCert) acmStoredCert {
+	cert := stored.Cert
+	if cert.Type != "AMAZON_ISSUED" || cert.Status != "PENDING_VALIDATION" {
+		return stored
+	}
+	for _, dvo := range cert.DomainValidationOptions {
+		if dvo.ValidationMethod != "DNS" || dvo.ResourceRecord == nil {
+			return stored // EMAIL / malformed — issuance not modeled, stays pending
+		}
+		if !acmDNSRecordPresent(dvo.ResourceRecord.Name) {
+			return stored // validation record not created yet — still pending
+		}
+	}
+	now := acmEpochNow()
+	notAfter := float64(time.Now().UTC().AddDate(1, 0, 0).Unix())
+	cert.Status = "ISSUED"
+	cert.IssuedAt = now
+	cert.NotBefore = now
+	cert.NotAfter = &notAfter
+	cert.RenewalEligibility = "ELIGIBLE"
+	for i := range cert.DomainValidationOptions {
+		cert.DomainValidationOptions[i].ValidationStatus = "SUCCESS"
+	}
+	stored.Cert = cert
+	acmCertificates.Put(id, stored)
+	return stored
+}
+
+// acmDNSRecordPresent reports whether a CNAME ResourceRecordSet with the given
+// name exists in any Route53 hosted zone — the signal that the operator
+// created the _acm-challenge validation record. DNS names are matched
+// case-insensitively and trailing-dot-insensitively.
+func acmDNSRecordPresent(name string) bool {
+	want := strings.TrimSuffix(name, ".")
+	for _, z := range r53Zones.List() {
+		for _, rec := range z.Records {
+			if strings.EqualFold(rec.Type, "CNAME") &&
+				strings.EqualFold(strings.TrimSuffix(rec.Name, "."), want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func handleACMDeleteCertificate(w http.ResponseWriter, r *http.Request) {
