@@ -420,6 +420,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DeleteSnapshot", handleDeleteSnapshot)
 	r.Register("DescribeImages", handleDescribeImages)
 	r.Register("DescribeInstanceTypes", handleDescribeInstanceTypes)
+	r.Register("DescribeInstanceTypeOfferings", handleDescribeInstanceTypeOfferings)
 	r.Register("DescribeKeyPairs", handleDescribeKeyPairs)
 
 	// Pre-register a default `vpc-sim` + `subnet-0123456789abcdef0` so harnesses that
@@ -3074,6 +3075,47 @@ func handleDescribeInstanceTypes(w http.ResponseWriter, r *http.Request) {
 func handleDescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeKeyPairsResponse %s><requestId>%s</requestId><keySet/></DescribeKeyPairsResponse>`, ec2Xmlns(), generateUUID())
+}
+
+// handleDescribeInstanceTypeOfferings answers "is this instance type offered in
+// these locations?" — the fck-nat module's pre-flight AZ validation. Like
+// handleDescribeInstanceTypes, the API-only sim does not model real per-AZ
+// capacity: it reports each requested instance type as offered in each
+// requested (or default) location. Filters honoured: `instance-type` and
+// `location`; LocationType selects region / availability-zone / -id scope.
+func handleDescribeInstanceTypeOfferings(w http.ResponseWriter, r *http.Request) {
+	locationType := r.FormValue("LocationType")
+	if locationType == "" {
+		locationType = "region"
+	}
+	filters := ec2Filters(r)
+	types := filters["instance-type"]
+	if len(types) == 0 {
+		types = []string{"t3.micro", "t3.small", "t4g.nano", "m6i.large"}
+	}
+	locations := filters["location"]
+	if len(locations) == 0 {
+		switch locationType {
+		case "availability-zone":
+			locations = []string{awsAvailabilityZone()}
+		case "availability-zone-id":
+			locations = []string{awsRegion() + "-az1"}
+		default: // region
+			locations = []string{awsRegion()}
+		}
+	}
+	var items strings.Builder
+	for _, t := range types {
+		for _, loc := range locations {
+			fmt.Fprintf(&items, `<item><instanceType>%s</instanceType><location>%s</location><locationType>%s</locationType></item>`,
+				xmlEscape(t), xmlEscape(loc), xmlEscape(locationType))
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeInstanceTypeOfferingsResponse %s>
+  <requestId>%s</requestId>
+  <instanceTypeOfferingSet>%s</instanceTypeOfferingSet>
+</DescribeInstanceTypeOfferingsResponse>`, ec2Xmlns(), generateUUID(), items.String())
 }
 
 // ---- Network Interfaces ----

@@ -4,15 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-ec2-launch-templates` (PR pending — EC2 Launch Template ops, BUG-1476, issue #433).
-- Last merged: PR #432 (real CloudWatch metrics, BUG-1475).
+- Branch: `feat/aws-sim-fck-nat-onion-batch` (PR pending — five AWS sim gaps bundled, BUG-1477–1481, issues #434–#438).
+- Last merged: PR #439 (EC2 Launch Template ops, BUG-1476, #433).
+- Five-issue batch (user asked to bundle all open non-upstream-blocked issues in one PR):
+  - **#434 KMS** (`kms_grants.go`): grant store + CreateGrant/ListGrants/RevokeGrant; GenerateDataKeyWithoutPlaintext (encrypted-only) + ReEncrypt (decrypt-src-envelope → rewrap-dest) over the existing kms-sim envelope.
+  - **#435 ECR** (`ecr_layers.go`): repo-policy store (Set/Get/Delete) + real layer pipeline (Initiate→Upload→Complete with `sha256(buffer)==digest` verify→GetDownloadUrl); `BatchCheckLayerAvailability` now reports real availability. (No `/v2/` OCI registry — these are the awsJson SDK/CLI ops, not docker-push.)
+  - **#436 ECS** (`ecs_service.go`): DescribeCapacityProviders (built-in FARGATE/FARGATE_SPOT ACTIVE + cluster-referenced customs, name filter, MISSING failure) + ListTaskDefinitionFamilies (dedup over `ecsTaskDefinitions`, prefix/status filters, pagination).
+  - **#437 EC2** (`ec2.go`): DescribeInstanceTypeOfferings — instance-type × location offerings, honours `instance-type`/`location` filters + LocationType.
+  - **#438 ELBv2** (`elbv2_rules.go`): rule store + Create/Describe/Modify/DeleteRule (conditions parsed from BOTH the CLI legacy `Values` and TF typed `*Config`, rendered as both; actions forward/fixed-response/redirect with typed round-trip) + ModifyListener. Extended `ELBv2Action` + shared `elbv2ActionsXML`.
+- Coverage: SDK + CLI tests for all five; Terraform `aws_lb_listener_rule` + `aws_kms_grant` added to `terraform-tests/main.tf` (TestStackProductionShape apply/destroy clean). ECR repo-policy intentionally SDK+CLI-only (a TF `aws_ecr_repository` would risk unrelated read-back drift in the shared stack — noted as a follow-up).
 - AWS EC2 Launch Templates (BUG-1476, issue #433): all four ops returned `InvalidAction` — `CreateLaunchTemplate`, `DescribeLaunchTemplates`, `DescribeLaunchTemplateVersions`, `DeleteLaunchTemplate` — blocking the fck-nat NAT-instance Terraform path (`nat_mode="instance"` uses `aws_launch_template` as the ASG launch config). Added `simulators/aws/ec2_launch_template.go`: a versioned launch-template store keyed by `lt-…` (default = `$Default`); `CreateLaunchTemplate` parses + persists the full `RequestLaunchTemplateData` (ImageId/InstanceType/KeyName/UserData/EbsOptimized/IamInstanceProfile/NetworkInterfaces+groupSet/SecurityGroupIds/BlockDeviceMappings+Ebs/TagSpecifications/MetadataOptions/Monitoring/Placement) and template tags; `DescribeLaunchTemplates` honours `LaunchTemplateId`/`LaunchTemplateName` filters; `DescribeLaunchTemplateVersions` returns stored versions (with `$Latest`/`$Default`/numeric/Min/Max selectors) rendering `launchTemplateData` back at exact SDK locationNames (verified against `ec2@v1.305.2` deserializers); `DeleteLaunchTemplate` removes + echoes. SDK + CLI + Terraform coverage (TF apply/destroy clean → no drift).
 - **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
 - **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
-- Open GitHub issues: #394 (upstream-blocked).
+- Open GitHub issues: #394 (upstream-blocked) — the consumer issue queue is otherwise drained by this PR.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1476 filed · 1432 fixed · 5 open · 4 false positives.
+- BUG counters: 1481 filed · 1437 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

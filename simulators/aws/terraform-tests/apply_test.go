@@ -181,6 +181,10 @@ func TestStackProductionShape(t *testing.T) {
 	require.Contains(t, elbv2ListenerArn, ":listener/app/tf-alb/",
 		"ELBv2 listener ARN must use the listener/app resource path; got %s", elbv2ListenerArn)
 
+	elbv2RuleArn := outputs.must(t, "elbv2_listener_rule_arn")
+	require.Contains(t, elbv2RuleArn, ":rule/app/tf-alb/",
+		"ELBv2 listener-rule ARN must use the rule/app resource path; got %s", elbv2RuleArn)
+
 	natGatewayID := outputs.must(t, "ec2_nat_gateway_id")
 	require.True(t, strings.HasPrefix(natGatewayID, "nat-"),
 		"EC2 NAT gateway id must use nat-* shape; got %s", natGatewayID)
@@ -250,6 +254,9 @@ func TestStackProductionShape(t *testing.T) {
 
 	require.Equal(t, "terraform", outputs.must(t, "kms_key_tag_env"),
 		"KMS key tags must round-trip through TagResource + ListResourceTags (else the provider hangs)")
+
+	require.NotEmpty(t, outputs.must(t, "kms_grant_id"),
+		"aws_kms_grant must return a grant_id through CreateGrant + ListGrants read-back")
 
 	aasResourceID := outputs.must(t, "appautoscaling_target_resource_id")
 	require.Contains(t, aasResourceID, "service/tf-test-cluster/",

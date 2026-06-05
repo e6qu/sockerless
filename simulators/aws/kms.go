@@ -89,6 +89,8 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
 	r.Register("TrentService.EnableKeyRotation", handleKMSEnableKeyRotation)
 	r.Register("TrentService.DisableKeyRotation", handleKMSDisableKeyRotation)
+
+	registerKMSGrants(r, srv)
 }
 
 // kmsDefaultKeyPolicyJSON returns the default key policy that real AWS KMS

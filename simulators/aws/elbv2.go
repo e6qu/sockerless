@@ -64,6 +64,23 @@ type ELBv2Action struct {
 	Type           string
 	TargetGroupArn string
 	Order          int
+	FixedResponse  *ELBv2FixedResponseConfig
+	Redirect       *ELBv2RedirectConfig
+}
+
+type ELBv2FixedResponseConfig struct {
+	StatusCode  string
+	ContentType string
+	MessageBody string
+}
+
+type ELBv2RedirectConfig struct {
+	Protocol   string
+	Port       string
+	Host       string
+	Path       string
+	Query      string
+	StatusCode string
 }
 
 type ELBv2TargetDescription struct {
@@ -112,6 +129,8 @@ func registerELBv2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(elbv2APIVersion, "RemoveTags", handleELBv2RemoveTags)
 	r.RegisterVersioned(elbv2APIVersion, "DescribeTags", handleELBv2DescribeTags)
 	r.RegisterVersioned(elbv2APIVersion, "DescribeAccountLimits", handleELBv2DescribeAccountLimits)
+
+	registerELBv2Rules(r, srv)
 }
 
 func elbv2XMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
@@ -679,21 +698,17 @@ func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
 }
 
 func elbv2ListenerXML(listener ELBv2Listener) string {
-	var actions strings.Builder
-	actions.WriteString("<DefaultActions>")
-	for _, action := range listener.DefaultActions {
-		fmt.Fprintf(&actions, "<member><Type>%s</Type>", xmlEscape(action.Type))
-		if action.TargetGroupArn != "" {
-			fmt.Fprintf(&actions, "<TargetGroupArn>%s</TargetGroupArn>", xmlEscape(action.TargetGroupArn))
+	var certs strings.Builder
+	if len(listener.Certificates) > 0 {
+		certs.WriteString("<Certificates>")
+		for _, c := range listener.Certificates {
+			fmt.Fprintf(&certs, "<member><CertificateArn>%s</CertificateArn></member>", xmlEscape(c))
 		}
-		if action.Order != 0 {
-			fmt.Fprintf(&actions, "<Order>%d</Order>", action.Order)
-		}
-		actions.WriteString("</member>")
+		certs.WriteString("</Certificates>")
 	}
-	actions.WriteString("</DefaultActions>")
-	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s</member>`,
-		xmlEscape(listener.Arn), xmlEscape(listener.LoadBalancerArn), listener.Port, xmlEscape(listener.Protocol), actions.String())
+	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s%s</member>`,
+		xmlEscape(listener.Arn), xmlEscape(listener.LoadBalancerArn), listener.Port, xmlEscape(listener.Protocol),
+		elbv2ActionsXML("DefaultActions", listener.DefaultActions), certs.String())
 }
 
 func elbv2TargetXML(target ELBv2TargetDescription) string {
@@ -759,19 +774,90 @@ func parseELBv2Targets(r *http.Request) []ELBv2TargetDescription {
 }
 
 func parseELBv2Actions(r *http.Request) []ELBv2Action {
+	return parseELBv2ActionsPrefix(r, "DefaultActions")
+}
+
+// parseELBv2ActionsPrefix parses an action list flattened under prefix
+// (`DefaultActions` for listeners, `Actions` for rules), including the typed
+// fixed-response / redirect configs so they round-trip back to Terraform and
+// the SDK.
+func parseELBv2ActionsPrefix(r *http.Request, prefix string) []ELBv2Action {
 	var actions []ELBv2Action
 	for i := 1; ; i++ {
-		actionType := r.FormValue(fmt.Sprintf("DefaultActions.member.%d.Type", i))
+		base := fmt.Sprintf("%s.member.%d", prefix, i)
+		actionType := r.FormValue(base + ".Type")
 		if actionType == "" {
 			break
 		}
-		actions = append(actions, ELBv2Action{
+		action := ELBv2Action{
 			Type:           actionType,
-			TargetGroupArn: r.FormValue(fmt.Sprintf("DefaultActions.member.%d.TargetGroupArn", i)),
-			Order:          atoiDefault(r.FormValue(fmt.Sprintf("DefaultActions.member.%d.Order", i)), 0),
-		})
+			TargetGroupArn: r.FormValue(base + ".TargetGroupArn"),
+			Order:          atoiDefault(r.FormValue(base+".Order"), 0),
+		}
+		if sc := r.FormValue(base + ".FixedResponseConfig.StatusCode"); sc != "" {
+			action.FixedResponse = &ELBv2FixedResponseConfig{
+				StatusCode:  sc,
+				ContentType: r.FormValue(base + ".FixedResponseConfig.ContentType"),
+				MessageBody: r.FormValue(base + ".FixedResponseConfig.MessageBody"),
+			}
+		}
+		if r.FormValue(base+".RedirectConfig.StatusCode") != "" {
+			action.Redirect = &ELBv2RedirectConfig{
+				Protocol:   r.FormValue(base + ".RedirectConfig.Protocol"),
+				Port:       r.FormValue(base + ".RedirectConfig.Port"),
+				Host:       r.FormValue(base + ".RedirectConfig.Host"),
+				Path:       r.FormValue(base + ".RedirectConfig.Path"),
+				Query:      r.FormValue(base + ".RedirectConfig.Query"),
+				StatusCode: r.FormValue(base + ".RedirectConfig.StatusCode"),
+			}
+		}
+		actions = append(actions, action)
 	}
 	return actions
+}
+
+// elbv2ActionsXML renders an action list under the given wrapper element
+// (DefaultActions / Actions), emitting the typed fixed-response / redirect
+// configs when present.
+func elbv2ActionsXML(wrapper string, actions []ELBv2Action) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<%s>", wrapper)
+	for _, action := range actions {
+		fmt.Fprintf(&b, "<member><Type>%s</Type>", xmlEscape(action.Type))
+		if action.TargetGroupArn != "" {
+			fmt.Fprintf(&b, "<TargetGroupArn>%s</TargetGroupArn>", xmlEscape(action.TargetGroupArn))
+		}
+		if action.Order != 0 {
+			fmt.Fprintf(&b, "<Order>%d</Order>", action.Order)
+		}
+		if fr := action.FixedResponse; fr != nil {
+			b.WriteString("<FixedResponseConfig>")
+			fmt.Fprintf(&b, "<StatusCode>%s</StatusCode>", xmlEscape(fr.StatusCode))
+			if fr.ContentType != "" {
+				fmt.Fprintf(&b, "<ContentType>%s</ContentType>", xmlEscape(fr.ContentType))
+			}
+			if fr.MessageBody != "" {
+				fmt.Fprintf(&b, "<MessageBody>%s</MessageBody>", xmlEscape(fr.MessageBody))
+			}
+			b.WriteString("</FixedResponseConfig>")
+		}
+		if rd := action.Redirect; rd != nil {
+			b.WriteString("<RedirectConfig>")
+			fmt.Fprintf(&b, "<StatusCode>%s</StatusCode>", xmlEscape(rd.StatusCode))
+			for _, kv := range []struct{ name, val string }{
+				{"Protocol", rd.Protocol}, {"Port", rd.Port}, {"Host", rd.Host},
+				{"Path", rd.Path}, {"Query", rd.Query},
+			} {
+				if kv.val != "" {
+					fmt.Fprintf(&b, "<%s>%s</%s>", kv.name, xmlEscape(kv.val), kv.name)
+				}
+			}
+			b.WriteString("</RedirectConfig>")
+		}
+		b.WriteString("</member>")
+	}
+	fmt.Fprintf(&b, "</%s>", wrapper)
+	return b.String()
 }
 
 func queryList(r *http.Request, name string) []string {
