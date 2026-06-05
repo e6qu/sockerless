@@ -32,6 +32,21 @@ type ECRRepository struct {
 	RepositoryUri  string `json:"repositoryUri"` // external: canonical <account>.dkr.ecr.<region>.amazonaws.com/<repo>; sim serves the registry API at its own endpoint
 	RegistryId     string `json:"registryId"`
 	CreatedAt      int64  `json:"createdAt"`
+	// Configuration the aws_ecr_repository Terraform provider reads back on
+	// refresh; the sim must echo what CreateRepository received (or the AWS
+	// defaults) or the provider shows perpetual drift.
+	ImageTagMutability         string                        `json:"imageTagMutability"`
+	EncryptionConfiguration    ECREncryptionConfiguration    `json:"encryptionConfiguration"`
+	ImageScanningConfiguration ECRImageScanningConfiguration `json:"imageScanningConfiguration"`
+}
+
+type ECREncryptionConfiguration struct {
+	EncryptionType string `json:"encryptionType"`
+	KmsKey         string `json:"kmsKey,omitempty"`
+}
+
+type ECRImageScanningConfiguration struct {
+	ScanOnPush bool `json:"scanOnPush"`
 }
 
 type ECRImageDetail struct {
@@ -246,7 +261,10 @@ func handleECRDeletePullThroughCacheRule(w http.ResponseWriter, r *http.Request)
 
 func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RepositoryName string `json:"repositoryName"`
+		RepositoryName             string                         `json:"repositoryName"`
+		ImageTagMutability         string                         `json:"imageTagMutability"`
+		EncryptionConfiguration    *ECREncryptionConfiguration    `json:"encryptionConfiguration"`
+		ImageScanningConfiguration *ECRImageScanningConfiguration `json:"imageScanningConfiguration"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -264,11 +282,24 @@ func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := ECRRepository{
-		RepositoryArn:  ecrArn("repository", req.RepositoryName),
-		RepositoryName: req.RepositoryName,
-		RepositoryUri:  ecrRegistryId() + ".dkr.ecr." + awsRegion() + ".amazonaws.com/" + req.RepositoryName,
-		RegistryId:     ecrRegistryId(),
-		CreatedAt:      time.Now().Unix(),
+		RepositoryArn:              ecrArn("repository", req.RepositoryName),
+		RepositoryName:             req.RepositoryName,
+		RepositoryUri:              ecrRegistryId() + ".dkr.ecr." + awsRegion() + ".amazonaws.com/" + req.RepositoryName,
+		RegistryId:                 ecrRegistryId(),
+		CreatedAt:                  time.Now().Unix(),
+		ImageTagMutability:         req.ImageTagMutability,
+		ImageScanningConfiguration: ECRImageScanningConfiguration{},
+		// Real ECR defaults to AES256 server-side encryption.
+		EncryptionConfiguration: ECREncryptionConfiguration{EncryptionType: "AES256"},
+	}
+	if repo.ImageTagMutability == "" {
+		repo.ImageTagMutability = "MUTABLE" // AWS default
+	}
+	if req.EncryptionConfiguration != nil && req.EncryptionConfiguration.EncryptionType != "" {
+		repo.EncryptionConfiguration = *req.EncryptionConfiguration
+	}
+	if req.ImageScanningConfiguration != nil {
+		repo.ImageScanningConfiguration = *req.ImageScanningConfiguration
 	}
 	ecrRepositories.Put(req.RepositoryName, repo)
 

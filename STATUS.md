@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-fck-nat-onion-batch` (PR pending — five AWS sim gaps, BUG-1477–1481, issues #434–#438) |
-| In-flight | Five AWS simulator gaps bundled in one PR (the next fck-nat onion layers + consumer read-completeness): **#434** KMS grants (CreateGrant/ListGrants/RevokeGrant) + GenerateDataKeyWithoutPlaintext/ReEncrypt; **#435** ECR repository policy + image-layer push/pull pipeline (Initiate/Upload/Complete/GetDownloadUrl, real content-addressed blobs, BatchCheckLayerAvailability now real); **#436** ECS DescribeCapacityProviders + ListTaskDefinitionFamilies; **#437** EC2 DescribeInstanceTypeOfferings; **#438** ELBv2 listener rules (CreateRule/DescribeRules/ModifyRule/DeleteRule) + ModifyListener. Query-protocol ops (EC2/ELBv2) rendered at exact `ec2@v1.305.2` / `elasticloadbalancingv2@v1.55.3` locationNames. SDK + CLI coverage for all five; Terraform: `aws_lb_listener_rule` + `aws_kms_grant` added to the production-shape stack (apply/destroy clean). |
-| Last merged | PR #439 — EC2 Launch Template ops (BUG-1476, #433) |
-| Also merged recently | PR #432 (real CloudWatch metrics #1475); PR #431 (IAM policy simulation #427); PR #430 (EC2 ENI ops #428) |
+| Active branch | `feat/aws-sim-flagged-followups` (PR pending — three flagged follow-ups, BUG-1482–1484) |
+| In-flight | Three flagged follow-ups bundled: **#433 follow-up** EC2 launch-template in-place update (`CreateLaunchTemplateVersion` + `ModifyLaunchTemplate`); **#435 follow-up** ECR `aws_ecr_repository` read-back completeness (imageTagMutability/encryptionConfiguration/imageScanningConfiguration) + the deferred TF resource; **#432 follow-up** CloudWatch CLI query-protocol metrics (`PutMetricData`/`GetMetricStatistics`/`ListMetrics` over the query router, same `cwMetrics` store). Note: `ModifyLaunchTemplate`'s wire param is `SetDefaultVersion`, not `DefaultVersion`. SDK + CLI coverage; `aws_ecr_repository` added to the production-shape Terraform stack. |
+| Last merged | PR #440 — five AWS sim gaps (BUG-1477–1481, #434–#438) |
+| Also merged recently | PR #439 (EC2 Launch Template ops #433); PR #432 (real CloudWatch metrics #1475); PR #431 (IAM policy simulation #427) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
-| Bugs | 1481 filed · 1437 fixed · 5 open · 4 false positives |
+| Bugs | 1484 filed · 1440 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Possible follow-ups: launch-template update-in-place (`CreateLaunchTemplateVersion`/`ModifyLaunchTemplate`); ECR `aws_ecr_repository` Terraform read-back completeness (image_tag_mutability/encryption/scanning) if a consumer adds the resource; query-protocol CloudWatch metrics; or await new issues |
+| Planned next | Consumer issue queue drained (only #394 upstream-blocked). Options: fresh fidelity audit; Phase G new slices (GCP Spanner/Dataflow/Bigtable, Azure); or await new consumer issues |
 | Live infra | None up |
 
 ## Invariants

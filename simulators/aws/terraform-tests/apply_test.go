@@ -258,6 +258,11 @@ func TestStackProductionShape(t *testing.T) {
 	require.NotEmpty(t, outputs.must(t, "kms_grant_id"),
 		"aws_kms_grant must return a grant_id through CreateGrant + ListGrants read-back")
 
+	require.Equal(t, "IMMUTABLE", outputs.must(t, "ecr_repository_tag_mutability"),
+		"aws_ecr_repository image_tag_mutability must round-trip through DescribeRepositories")
+	require.Contains(t, outputs.must(t, "ecr_repository_url"), ".dkr.ecr.us-east-1.amazonaws.com/tf-runner-repo",
+		"aws_ecr_repository repository_url must use the canonical ECR registry host")
+
 	aasResourceID := outputs.must(t, "appautoscaling_target_resource_id")
 	require.Contains(t, aasResourceID, "service/tf-test-cluster/",
 		"Application Auto Scaling target resource_id must reference the ECS service")

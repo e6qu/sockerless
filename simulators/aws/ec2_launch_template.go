@@ -122,6 +122,94 @@ func registerEC2LaunchTemplates(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DescribeLaunchTemplates", handleDescribeLaunchTemplates)
 	r.Register("DescribeLaunchTemplateVersions", handleDescribeLaunchTemplateVersions)
 	r.Register("DeleteLaunchTemplate", handleDeleteLaunchTemplate)
+	r.Register("CreateLaunchTemplateVersion", handleCreateLaunchTemplateVersion)
+	r.Register("ModifyLaunchTemplate", handleModifyLaunchTemplate)
+}
+
+// handleCreateLaunchTemplateVersion appends a new version to an existing
+// template (the aws_launch_template in-place update path). The new version
+// becomes the latest but NOT the default — real EC2 keeps the default pinned
+// until ModifyLaunchTemplate moves it.
+func handleCreateLaunchTemplateVersion(w http.ResponseWriter, r *http.Request) {
+	lt, ok := lookupLaunchTemplate(r.FormValue("LaunchTemplateId"), r.FormValue("LaunchTemplateName"))
+	if !ok {
+		ref := r.FormValue("LaunchTemplateId")
+		if ref == "" {
+			ref = r.FormValue("LaunchTemplateName")
+		}
+		ec2ErrorXML(w, "InvalidLaunchTemplateId.NotFound",
+			fmt.Sprintf("Launch template %s does not exist.", ref), 400)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	lt.LatestVersionNumber++
+	version := EC2LaunchTemplateVersion{
+		VersionNumber:      lt.LatestVersionNumber,
+		VersionDescription: r.FormValue("VersionDescription"),
+		CreateTime:         now,
+		CreatedBy:          fmt.Sprintf("arn:aws:iam::%s:root", awsAccountID()),
+		DefaultVersion:     false,
+		Data:               parseLaunchTemplateData(r, "LaunchTemplateData"),
+	}
+	lt.Versions = append(lt.Versions, version)
+	ec2LaunchTemplates.Put(lt.LaunchTemplateId, lt)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CreateLaunchTemplateVersionResponse %s>
+  <requestId>%s</requestId>
+  <launchTemplateVersion>%s</launchTemplateVersion>
+</CreateLaunchTemplateVersionResponse>`, ec2Xmlns(), generateUUID(), ltVersionFieldsXML(lt, version))
+}
+
+// handleModifyLaunchTemplate moves the default version (the second half of an
+// aws_launch_template in-place update). DefaultVersion accepts a numeric
+// version or the $Latest/$Default aliases.
+func handleModifyLaunchTemplate(w http.ResponseWriter, r *http.Request) {
+	lt, ok := lookupLaunchTemplate(r.FormValue("LaunchTemplateId"), r.FormValue("LaunchTemplateName"))
+	if !ok {
+		ref := r.FormValue("LaunchTemplateId")
+		if ref == "" {
+			ref = r.FormValue("LaunchTemplateName")
+		}
+		ec2ErrorXML(w, "InvalidLaunchTemplateId.NotFound",
+			fmt.Sprintf("Launch template %s does not exist.", ref), 400)
+		return
+	}
+	if sel := r.FormValue("SetDefaultVersion"); sel != "" {
+		target := lt.DefaultVersionNumber
+		switch sel {
+		case "$Latest":
+			target = lt.LatestVersionNumber
+		case "$Default":
+			// no-op: already the default
+		default:
+			n := parseInt64(sel)
+			if !ltHasVersion(lt, n) {
+				ec2ErrorXML(w, "InvalidLaunchTemplateId.VersionNotFound",
+					fmt.Sprintf("Launch template version %s does not exist.", sel), 400)
+				return
+			}
+			target = n
+		}
+		lt.DefaultVersionNumber = target
+		for i := range lt.Versions {
+			lt.Versions[i].DefaultVersion = lt.Versions[i].VersionNumber == target
+		}
+		ec2LaunchTemplates.Put(lt.LaunchTemplateId, lt)
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyLaunchTemplateResponse %s>
+  <requestId>%s</requestId>
+  <launchTemplate>%s</launchTemplate>
+</ModifyLaunchTemplateResponse>`, ec2Xmlns(), generateUUID(), ltSummaryXML(lt))
+}
+
+func ltHasVersion(lt EC2LaunchTemplate, n int64) bool {
+	for _, v := range lt.Versions {
+		if v.VersionNumber == n {
+			return true
+		}
+	}
+	return false
 }
 
 // ec2HasFormPrefix reports whether any submitted form key belongs to a
@@ -355,19 +443,24 @@ func ltSummaryXML(lt EC2LaunchTemplate) string {
 		lt.DefaultVersionNumber, lt.LatestVersionNumber, writeTagSetXML(lt.Tags))
 }
 
-func ltVersionXML(lt EC2LaunchTemplate, v EC2LaunchTemplateVersion) string {
-	return fmt.Sprintf(`<item>`+
-		`<launchTemplateId>%s</launchTemplateId>`+
+// ltVersionFieldsXML renders the inner LaunchTemplateVersion fields (no
+// wrapper), shared by DescribeLaunchTemplateVersions (wrapped in <item>) and
+// CreateLaunchTemplateVersion (wrapped in <launchTemplateVersion>).
+func ltVersionFieldsXML(lt EC2LaunchTemplate, v EC2LaunchTemplateVersion) string {
+	return fmt.Sprintf(`<launchTemplateId>%s</launchTemplateId>`+
 		`<launchTemplateName>%s</launchTemplateName>`+
 		`<versionNumber>%d</versionNumber>`+
 		`<versionDescription>%s</versionDescription>`+
 		`<createTime>%s</createTime>`+
 		`<createdBy>%s</createdBy>`+
 		`<defaultVersion>%t</defaultVersion>`+
-		`<launchTemplateData>%s</launchTemplateData>`+
-		`</item>`,
+		`<launchTemplateData>%s</launchTemplateData>`,
 		lt.LaunchTemplateId, xmlEscape(lt.LaunchTemplateName), v.VersionNumber,
 		xmlEscape(v.VersionDescription), v.CreateTime, v.CreatedBy, v.DefaultVersion, ltDataXML(v.Data))
+}
+
+func ltVersionXML(lt EC2LaunchTemplate, v EC2LaunchTemplateVersion) string {
+	return "<item>" + ltVersionFieldsXML(lt, v) + "</item>"
 }
 
 // ---- Handlers ----
