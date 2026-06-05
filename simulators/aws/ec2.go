@@ -439,6 +439,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DeleteNetworkInterface", handleDeleteNetworkInterface)
 	r.Register("ModifyNetworkInterfaceAttribute", handleModifyNetworkInterfaceAttribute)
 	r.Register("AssignPrivateIpAddresses", handleAssignPrivateIpAddresses)
+
+	registerEC2LaunchTemplates(r, srv)
 }
 
 // Tag helpers

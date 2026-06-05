@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-real-cloudwatch-metrics` (PR pending — real CloudWatch metrics, BUG-1475) |
-| In-flight | AWS CloudWatch real metrics (BUG-1475, audit follow-up): dropped the fabricated ECS metric values; `GetMetricData` now serves real `PutMetricData` datapoints with proper period-bucketing + statistic (Average/Sum/Min/Max/SampleCount). Also fixed two pre-existing protocol bugs the missing test hid: gzip-compressed CBOR request bodies, and CBOR tag-1 timestamp encoding. SDK coverage green. |
-| Last merged | PR #431 — IAM policy simulation (#427) |
-| Also merged recently | PR #430 (EC2 ENI ops #428); PR #429 (five fidelity-audit fixes); PR #426 (Azure test-gap) |
+| Active branch | `feat/aws-sim-ec2-launch-templates` (PR pending — EC2 Launch Template ops, BUG-1476, issue #433) |
+| In-flight | AWS EC2 Launch Templates (BUG-1476, issue #433): `CreateLaunchTemplate`/`DescribeLaunchTemplates`/`DescribeLaunchTemplateVersions`/`DeleteLaunchTemplate` returned `InvalidAction`, blocking the fck-nat NAT-instance path (`nat_mode="instance"` uses `aws_launch_template`). Added a versioned launch-template store; `CreateLaunchTemplate` parses + persists the full `RequestLaunchTemplateData` and template tags; `DescribeLaunchTemplateVersions` renders `launchTemplateData` back at exact SDK locationNames (verified against `ec2@v1.305.2` deserializers) so it round-trips with no Terraform drift. SDK + CLI + Terraform coverage green (TF apply/destroy clean). |
+| Last merged | PR #432 — real CloudWatch metrics (BUG-1475) |
+| Also merged recently | PR #431 (IAM policy simulation #427); PR #430 (EC2 ENI ops #428); PR #429 (five fidelity-audit fixes) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
-| Bugs | 1475 filed · 1431 fixed · 5 open · 4 false positives |
+| Bugs | 1476 filed · 1432 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Possible follow-ups: query-protocol (aws CLI/botocore) metrics surface (GetMetricStatistics/PutMetricData XML — separate from the rpc-v2-cbor SDK path); other audit items; or await new issues |
+| Planned next | Possible follow-ups: launch-template update-in-place ops (`CreateLaunchTemplateVersion`/`ModifyLaunchTemplate`) if a consumer needs them; query-protocol (aws CLI/botocore) CloudWatch metrics surface; other audit items; or await new issues |
 | Live infra | None up |
 
 ## Invariants

@@ -4,14 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-real-cloudwatch-metrics` (PR pending — real CloudWatch metrics, BUG-1475).
-- Last merged: PR #431 (IAM policy simulation, #427).
-- AWS CloudWatch real metrics (BUG-1475, audit follow-up): removed `computeECSMetric` (the fabricated `0.15×CPU`/`0.25×mem`) — `GetMetricData` now serves real `PutMetricData` datapoints for every namespace (ECS included; empty if nothing pushed). Added real CloudWatch period-bucketing + statistic (`cwAggregate`/`cwApplyStat`: Average/Sum/Minimum/Maximum/SampleCount over `[StartTime,EndTime)`). Two pre-existing protocol bugs the missing test hid, now fixed: (a) `PutMetricData` request bodies are gzip-compressed CBOR (`cwReadBody` decompresses); (b) the response must encode timestamps as CBOR **tag-1** not a bare uint (`cwEncMode` with `TimeTag: EncTagRequired`). SDK round-trip test (Average/Sum/Min/Max/SampleCount + ECS de-fabrication). Added the `cloudwatch` SDK module to sdk-tests/go.mod.
-- **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** (`Action=PutMetricData`, XML) for CloudWatch — NOT the rpc-v2-cbor the Go SDK uses — so `aws cloudwatch put-metric-data`/`get-metric-statistics` currently return `InvalidAction`. Implementing the query-protocol metric ops (PutMetricData + GetMetricStatistics XML, backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
+- Branch: `feat/aws-sim-ec2-launch-templates` (PR pending — EC2 Launch Template ops, BUG-1476, issue #433).
+- Last merged: PR #432 (real CloudWatch metrics, BUG-1475).
+- AWS EC2 Launch Templates (BUG-1476, issue #433): all four ops returned `InvalidAction` — `CreateLaunchTemplate`, `DescribeLaunchTemplates`, `DescribeLaunchTemplateVersions`, `DeleteLaunchTemplate` — blocking the fck-nat NAT-instance Terraform path (`nat_mode="instance"` uses `aws_launch_template` as the ASG launch config). Added `simulators/aws/ec2_launch_template.go`: a versioned launch-template store keyed by `lt-…` (default = `$Default`); `CreateLaunchTemplate` parses + persists the full `RequestLaunchTemplateData` (ImageId/InstanceType/KeyName/UserData/EbsOptimized/IamInstanceProfile/NetworkInterfaces+groupSet/SecurityGroupIds/BlockDeviceMappings+Ebs/TagSpecifications/MetadataOptions/Monitoring/Placement) and template tags; `DescribeLaunchTemplates` honours `LaunchTemplateId`/`LaunchTemplateName` filters; `DescribeLaunchTemplateVersions` returns stored versions (with `$Latest`/`$Default`/numeric/Min/Max selectors) rendering `launchTemplateData` back at exact SDK locationNames (verified against `ec2@v1.305.2` deserializers); `DeleteLaunchTemplate` removes + echoes. SDK + CLI + Terraform coverage (TF apply/destroy clean → no drift).
+- **Possible follow-up (launch-template update-in-place):** the read/create/delete lifecycle (the four ops) covers `aws_launch_template` apply + destroy. An in-place *change* to a launch template makes the AWS provider call `CreateLaunchTemplateVersion` + `ModifyLaunchTemplate` (set default version) — not yet implemented. Add if a consumer mutates a template in place.
+- **Possible follow-up (the metrics CLI gap):** the aws CLI (botocore) uses the legacy **query protocol** for CloudWatch (not rpc-v2-cbor) so `aws cloudwatch put-metric-data`/`get-metric-statistics` return `InvalidAction`. Implementing the query-protocol metric ops (backed by the same `cwMetrics` store) would make the CLI work. Separate, sizable.
 - After this: no actionable consumer issues (only #394, upstream-blocked). Other audit items (IMDS accountId, GCS preconditions, ACR checkNameAvailability) or await the consumer's next batch.
 - Open GitHub issues: #394 (upstream-blocked).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1475 filed · 1431 fixed · 5 open · 4 false positives.
+- BUG counters: 1476 filed · 1432 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 
