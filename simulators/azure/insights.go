@@ -28,6 +28,23 @@ type AppInsightsComponentProperties struct {
 	ProvisioningState  string `json:"provisioningState"`
 }
 
+// AppInsightsBillingFeatures is the currentbillingfeatures wire shape. App
+// Insights is a legacy API that uses PascalCase JSON (not camelCase) — see the
+// note on AppInsightsComponentProperties.
+type AppInsightsBillingFeatures struct {
+	DataVolumeCap          AppInsightsDataVolumeCap `json:"DataVolumeCap"`
+	CurrentBillingFeatures []string                 `json:"CurrentBillingFeatures"`
+}
+
+type AppInsightsDataVolumeCap struct {
+	Cap                                  float64 `json:"Cap"`
+	ResetTime                            int     `json:"ResetTime"`
+	StopSendNotificationWhenHitCap       bool    `json:"StopSendNotificationWhenHitCap"`
+	StopSendNotificationWhenHitThreshold bool    `json:"StopSendNotificationWhenHitThreshold"`
+	WarningThreshold                     int     `json:"WarningThreshold"`
+	MaxHistoryCap                        int     `json:"MaxHistoryCap"`
+}
+
 var azureAppInsightsComponents sim.Store[AppInsightsComponent]
 
 func registerApplicationInsights(srv *sim.Server) {
@@ -123,23 +140,41 @@ func registerApplicationInsights(srv *sim.Server) {
 		}
 	})
 
-	// GET/PUT - Billing features (azurerm provider reads then updates after creating a component)
-	billingResponse := map[string]any{
-		"DataVolumeCap": map[string]any{
-			"Cap":                                  100,
-			"ResetTime":                            0,
-			"StopSendNotificationWhenHitCap":       false,
-			"StopSendNotificationWhenHitThreshold": false,
-			"WarningThreshold":                     90,
-			"MaxHistoryCap":                        500,
+	// GET/PUT - Billing features (azurerm provider reads then updates after
+	// creating a component). PUT must persist + echo the submitted DataVolumeCap
+	// / CurrentBillingFeatures so e.g. daily_data_cap_in_gb round-trips instead
+	// of perpetually drifting to a static value.
+	billing := sim.MakeStore[AppInsightsBillingFeatures](srv.DB(), "insights_billing")
+	defaultBilling := AppInsightsBillingFeatures{
+		DataVolumeCap: AppInsightsDataVolumeCap{
+			Cap:              100,
+			ResetTime:        0,
+			WarningThreshold: 90,
+			MaxHistoryCap:    500,
 		},
-		"CurrentBillingFeatures": []string{"Basic"},
+		CurrentBillingFeatures: []string{"Basic"},
+	}
+	billingKey := func(r *http.Request) string {
+		return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Insights/components/%s",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "componentName"))
 	}
 	srv.HandleFunc("GET "+armBase+"/components/{componentName}/currentbillingfeatures", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, billingResponse)
+		b, ok := billing.Get(billingKey(r))
+		if !ok {
+			b = defaultBilling
+		}
+		sim.WriteJSON(w, http.StatusOK, b)
 	})
 	srv.HandleFunc("PUT "+armBase+"/components/{componentName}/currentbillingfeatures", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, billingResponse)
+		b := defaultBilling
+		if err := sim.ReadJSON(r, &b); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// ResetTime / MaxHistoryCap are server-computed read-only fields.
+		b.DataVolumeCap.MaxHistoryCap = defaultBilling.DataVolumeCap.MaxHistoryCap
+		billing.Put(billingKey(r), b)
+		sim.WriteJSON(w, http.StatusOK, b)
 	})
 
 	// POST - Query Application Insights (data-plane)

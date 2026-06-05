@@ -4,13 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `test/azure-sim-coverage-gaps` (PR pending — test-only).
-- Last merged: PR #425 (Azure KV version-less key crypto, #423).
-- Azure test-gap audit: the three headline gaps from the old roadmap (App Insights SDK/CLI, Private DNS A-record SDK, ACR image-ops SDK) were ALREADY covered (insights_test.go, dns_private_test.go, acr_test.go). The genuine remaining gap was **Private DNS non-A record types** — A has a dedicated handler + test; AAAA/CNAME/MX/PTR/SRV/TXT go through a separate generic-loop handler (dns.go:428) that was untested. Added `dns_private_records_test.go` (per-type round-trip for all six). Also added `TestAppInsights_BillingFeatures` (the one untested App Insights SDK op). BUG-1467 was a FALSE POSITIVE: suspected the billing-features response used wrong casing, but App Insights legacy billing-features genuinely uses PascalCase (confirmed vs the SDK serde); a camelCase "fix" broke it and was reverted. The new test guards that.
+- Branch: `fix/sim-fidelity-audit` (PR pending — cross-cloud audit fixes, one PR by user's explicit call).
+- Last merged: PR #426 (Azure SDK test-gap coverage).
+- Fresh fidelity audit (3 parallel agents, then adversarially verified each finding — the agents correctly flagged StepFunctions/Batch/CodeBuild/Glue "complete immediately", Lambda container-mode, deterministic keys as INTENDED modeling, not bugs). Five real bugs fixed (BUG-1468–1472): (1) GCP Firestore Patch/Commit ignored updateMask → masked writes dropped unmentioned fields (data loss); now `fsApplyUpdateMask` merges. (2) GCP Secret Manager `:access` served DISABLED/DESTROYED versions; now FAILED_PRECONDITION (400), and `latest`=highest-number (does NOT skip disabled). (3) AWS EC2 Describe{NatGateways,Subnets,RouteTables} only honored a filter at Filter.1; now position-independent via `ec2Filters()`. (4) Azure App Insights `currentbillingfeatures` PUT ignored the body (static Cap) → now persists+echoes (daily_data_cap round-trips). (5) Azure ACR blob PUT stored under the client digest without verifying; now computes+compares → DIGEST_INVALID on mismatch. SDK tests for all five; all sims green; no new ops (matrix unchanged).
+- Lower-priority audit items left as-is (intended modeling / cosmetic): AWS ECS fabricated CloudWatch metrics (0.15×CPU — arguably should be no-data; needs design call), IMDS accountId vs STS inconsistency, GCS preconditions, ACR checkNameAvailability always-true. Could revisit.
 - Open GitHub issues: none actionable (#394 upstream-blocked).
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1467 filed · 1423 fixed · 5 open · 4 false positives.
-- After this: GCP coverage-gap PR (SA-key + instance-template route impls — real missing ops, not just tests), or await new consumer issues.
+- BUG counters: 1472 filed · 1428 fixed · 5 open · 4 false positives.
 
 ## Recently Completed
 

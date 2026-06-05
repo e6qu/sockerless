@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 
 	sim "github.com/sockerless/simulator"
 )
+
+// errSecretVersionNotEnabled signals an access attempt on a DISABLED or
+// DESTROYED version — real GCP returns FAILED_PRECONDITION (400), not 404.
+var errSecretVersionNotEnabled = errors.New("secret version is not enabled")
 
 // Secret Manager v1 slice. Sockerless's GCP Cloud Build integration
 // references secret versions via `availableSecrets.secretManager
@@ -345,6 +350,10 @@ func registerSecretManager(srv *sim.Server) {
 			}
 			payload, resolvedID, err := accessSecretPayloadResolved(project, secretID, versionID)
 			if err != nil {
+				if errors.Is(err, errSecretVersionNotEnabled) {
+					sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "%s", err.Error())
+					return
+				}
 				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "%s", err.Error())
 				return
 			}
@@ -477,41 +486,30 @@ func accessSecretPayload(project, secretID, version string) ([]byte, error) {
 // can't detect when the underlying version changes.
 func accessSecretPayloadResolved(project, secretID, version string) (smPayloadRecord, string, error) {
 	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
+	resolvedID := version
 	if version == "latest" {
-		// Pick the highest-numbered version for this secret.
-		var latestN int
-		var latestName string
-		for _, v := range smSecretVersions.List() {
-			if !strings.HasPrefix(v.Name, secretName+"/versions/") {
-				continue
-			}
-			idStr := strings.TrimPrefix(v.Name, secretName+"/versions/")
-			var n int
-			_, _ = fmt.Sscanf(idStr, "%d", &n)
-			if n > latestN {
-				latestN = n
-				latestName = v.Name
-			}
-		}
-		if latestN == 0 {
-			return smPayloadRecord{}, "", fmt.Errorf("no enabled versions for secret %s", secretName)
-		}
-		pl, ok := smSecretPayloads.Get(latestName)
+		// "latest" is an alias for the highest version number — regardless of
+		// state. Accessing it when that version is DISABLED/DESTROYED fails
+		// (it does NOT fall back to an older enabled version).
+		id, ok := resolveLatestVersionID(project, secretID)
 		if !ok {
-			return smPayloadRecord{}, "", fmt.Errorf("payload for %s not found", latestName)
+			return smPayloadRecord{}, "", fmt.Errorf("no versions for secret %s", secretName)
 		}
-		return pl, fmt.Sprintf("%d", latestN), nil
+		resolvedID = id
 	}
-
-	versionName := fmt.Sprintf("%s/versions/%s", secretName, version)
-	if _, ok := smSecretVersions.Get(versionName); !ok {
+	versionName := fmt.Sprintf("%s/versions/%s", secretName, resolvedID)
+	ver, ok := smSecretVersions.Get(versionName)
+	if !ok {
 		return smPayloadRecord{}, "", fmt.Errorf("secret version %s not found", versionName)
+	}
+	if ver.State != "ENABLED" {
+		return smPayloadRecord{}, "", fmt.Errorf("%w: cannot access the payload of version %s in state %s", errSecretVersionNotEnabled, versionName, ver.State)
 	}
 	pl, ok := smSecretPayloads.Get(versionName)
 	if !ok {
 		return smPayloadRecord{}, "", fmt.Errorf("payload for %s not found", versionName)
 	}
-	return pl, version, nil
+	return pl, resolvedID, nil
 }
 
 // resolveLatestVersionID returns the concrete version number of the

@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `test/azure-sim-coverage-gaps` (PR pending — Azure SDK test-gap coverage) |
-| In-flight | Azure test-gap coverage: Private DNS non-A record types (AAAA/CNAME/MX/PTR/SRV/TXT — the untested generic-loop handlers) + App Insights billing-features SDK round-trip. Test-only (BUG-1467 was a false positive — App Insights billing-features genuinely uses PascalCase). |
-| Last merged | PR #425 — Azure KV version-less key crypto (#423) |
-| Also merged recently | PR #424 (ACM DNS validation #420/#421); PR #422 (GCP Cloud KMS #419); PR #418 (DynamoDB GSIs/ECS Service + azf/CloudFront fixes) |
+| Active branch | `fix/sim-fidelity-audit` (PR pending — cross-cloud fidelity-audit fixes, BUG-1468–1472) |
+| In-flight | Fresh fidelity-audit fixes (one PR by user's call): GCP Firestore updateMask (silent data loss), GCP Secret Manager disabled-version access → FAILED_PRECONDITION, AWS EC2 Describe{NatGateways,Subnets,RouteTables} position-independent filters, Azure App Insights billing PUT persist+echo, Azure ACR blob digest verification. SDK tests for all five; all sims green locally. |
+| Last merged | PR #426 — Azure SDK test-gap coverage (Private DNS non-A records + App Insights billing) |
+| Also merged recently | PR #425 (Azure KV version-less crypto #423); PR #424 (ACM DNS validation #420/#421); PR #422 (GCP Cloud KMS #419) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker, waiting on hashicorp) |
-| Bugs | 1467 filed · 1423 fixed · 5 open · 4 false positives |
+| Bugs | 1472 filed · 1428 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After this: GCP coverage-gap PR (SA keys, instance templates — real impls), or await new consumer issues |
+| Planned next | After this: more audit (the agents flagged lower-priority items, mostly intended modeling), or await new consumer issues |
 | Live infra | None up |
 
 ## Invariants
