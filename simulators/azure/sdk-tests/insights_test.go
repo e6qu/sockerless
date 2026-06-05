@@ -80,6 +80,50 @@ func TestAppInsights_InstrumentationKeyStableOnUpsert(t *testing.T) {
 	assert.Equal(t, *first.Properties.InstrumentationKey, *second.Properties.InstrumentationKey)
 }
 
+// TestAppInsights_BillingFeatures covers the currentbillingfeatures GET/PUT
+// surface via armapplicationinsights.ComponentCurrentBillingFeaturesClient.
+// The response must use Azure's camelCase wire shape — with PascalCase keys
+// the SDK silently deserialized CurrentBillingFeatures/DataVolumeCap to nil
+// (BUG-1467), which this test would have caught.
+func TestAppInsights_BillingFeatures(t *testing.T) {
+	const (
+		rgName        = "insights-billing-rg"
+		componentName = "billing-component"
+	)
+	ensureRG(t, rgName)
+
+	comps, err := armapplicationinsights.NewComponentsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = comps.CreateOrUpdate(ctx, rgName, componentName, armapplicationinsights.Component{
+		Location: ptrStr("eastus"),
+		Kind:     ptrStr("web"),
+		Properties: &armapplicationinsights.ComponentProperties{
+			ApplicationType: ptrApplicationType(armapplicationinsights.ApplicationTypeWeb),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	billing, err := armapplicationinsights.NewComponentCurrentBillingFeaturesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+
+	getResp, err := billing.Get(ctx, rgName, componentName, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, getResp.CurrentBillingFeatures, "currentBillingFeatures must deserialize (camelCase wire shape)")
+	assert.Equal(t, "Basic", *getResp.CurrentBillingFeatures[0])
+	require.NotNil(t, getResp.DataVolumeCap, "dataVolumeCap must deserialize")
+	require.NotNil(t, getResp.DataVolumeCap.Cap)
+	assert.Equal(t, float32(100), *getResp.DataVolumeCap.Cap)
+
+	cap200 := float32(200)
+	updateResp, err := billing.Update(ctx, rgName, componentName,
+		armapplicationinsights.ComponentBillingFeatures{
+			CurrentBillingFeatures: []*string{ptrStr("Basic")},
+			DataVolumeCap:          &armapplicationinsights.ComponentDataVolumeCap{Cap: &cap200},
+		}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, updateResp.CurrentBillingFeatures, "update response must also deserialize")
+}
+
 func ptrApplicationType(s armapplicationinsights.ApplicationType) *armapplicationinsights.ApplicationType {
 	return &s
 }
