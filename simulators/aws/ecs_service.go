@@ -74,6 +74,129 @@ func registerECSServices(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.PutClusterCapacityProviders", handleECSPutClusterCapacityProviders)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListClusters", handleECSListClusters)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTaskDefinitions", handleECSListTaskDefinitions)
+	r.Register("AmazonEC2ContainerServiceV20141113.ListTaskDefinitionFamilies", handleECSListTaskDefinitionFamilies)
+	r.Register("AmazonEC2ContainerServiceV20141113.DescribeCapacityProviders", handleECSDescribeCapacityProviders)
+}
+
+// ecsBuiltInCapacityProviders are the two AWS-managed providers every account
+// has; they are always ACTIVE and need no cluster association.
+var ecsBuiltInCapacityProviders = []string{"FARGATE", "FARGATE_SPOT"}
+
+// handleECSDescribeCapacityProviders is the read-back for capacity providers
+// (BUG-1479) — without it `aws_ecs_cluster_capacity_providers` shows spurious
+// drift on the post-apply plan. The sim has no standalone capacity-provider
+// store (providers live as names on clusters via PutClusterCapacityProviders),
+// so it resolves the built-in FARGATE/FARGATE_SPOT plus any custom provider
+// referenced by a cluster. A requested name that resolves to neither is a
+// failure, mirroring real ECS.
+func handleECSDescribeCapacityProviders(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CapacityProviders []string `json:"capacityProviders"`
+	}
+	_ = sim.ReadJSON(r, &req)
+
+	known := map[string]bool{}
+	for _, name := range ecsBuiltInCapacityProviders {
+		known[name] = true
+	}
+	for _, c := range ecsClusters.List() {
+		for _, cp := range c.CapacityProviders {
+			known[ecsCapacityProviderName(cp)] = true
+		}
+	}
+
+	requested := req.CapacityProviders
+	if len(requested) == 0 {
+		for name := range known {
+			requested = append(requested, name)
+		}
+		sort.Strings(requested)
+	}
+
+	providers := make([]map[string]any, 0, len(requested))
+	failures := make([]map[string]any, 0)
+	for _, ref := range requested {
+		name := ecsCapacityProviderName(ref)
+		if !known[name] {
+			failures = append(failures, map[string]any{
+				"arn":    ecsArn("capacity-provider", name),
+				"reason": "MISSING",
+			})
+			continue
+		}
+		providers = append(providers, map[string]any{
+			"capacityProviderArn": ecsArn("capacity-provider", name),
+			"name":                name,
+			"status":              "ACTIVE",
+			"tags":                []any{},
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"capacityProviders": providers,
+		"failures":          failures,
+	})
+}
+
+// ecsCapacityProviderName normalizes a capacity provider name or ARN to its
+// bare name.
+func ecsCapacityProviderName(ref string) string {
+	if strings.HasPrefix(ref, "arn:") {
+		parts := strings.Split(ref, "/")
+		return parts[len(parts)-1]
+	}
+	return ref
+}
+
+// handleECSListTaskDefinitionFamilies aggregates the distinct families across
+// the registered task definitions (BUG-1479) — the family companion to
+// ListTaskDefinitions. status (ACTIVE/INACTIVE/ALL) selects which revisions a
+// family must have to be listed; familyPrefix narrows by name prefix.
+func handleECSListTaskDefinitionFamilies(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FamilyPrefix string `json:"familyPrefix"`
+		Status       string `json:"status"`
+		MaxResults   int    `json:"maxResults"`
+		NextToken    string `json:"nextToken"`
+	}
+	_ = sim.ReadJSON(r, &req)
+
+	status := req.Status
+	if status == "" {
+		status = "ACTIVE"
+	}
+	// active[family] is true if the family has ≥1 ACTIVE revision.
+	active := map[string]bool{}
+	seen := map[string]bool{}
+	for _, td := range ecsTaskDefinitions.List() {
+		seen[td.Family] = true
+		if td.Status == "ACTIVE" {
+			active[td.Family] = true
+		}
+	}
+	families := make([]string, 0, len(seen))
+	for family := range seen {
+		if req.FamilyPrefix != "" && !strings.HasPrefix(family, req.FamilyPrefix) {
+			continue
+		}
+		switch status {
+		case "ACTIVE":
+			if !active[family] {
+				continue
+			}
+		case "INACTIVE":
+			if active[family] {
+				continue
+			}
+		}
+		families = append(families, family)
+	}
+	sort.Strings(families)
+	page, next := awsPage(families, req.NextToken, req.MaxResults, 100)
+	out := map[string]any{"families": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 // ecsClusterNameFromRef extracts the cluster name from a name or ARN,

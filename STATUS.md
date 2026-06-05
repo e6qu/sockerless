@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-ec2-launch-templates` (PR pending — EC2 Launch Template ops, BUG-1476, issue #433) |
-| In-flight | AWS EC2 Launch Templates (BUG-1476, issue #433): `CreateLaunchTemplate`/`DescribeLaunchTemplates`/`DescribeLaunchTemplateVersions`/`DeleteLaunchTemplate` returned `InvalidAction`, blocking the fck-nat NAT-instance path (`nat_mode="instance"` uses `aws_launch_template`). Added a versioned launch-template store; `CreateLaunchTemplate` parses + persists the full `RequestLaunchTemplateData` and template tags; `DescribeLaunchTemplateVersions` renders `launchTemplateData` back at exact SDK locationNames (verified against `ec2@v1.305.2` deserializers) so it round-trips with no Terraform drift. SDK + CLI + Terraform coverage green (TF apply/destroy clean). |
-| Last merged | PR #432 — real CloudWatch metrics (BUG-1475) |
-| Also merged recently | PR #431 (IAM policy simulation #427); PR #430 (EC2 ENI ops #428); PR #429 (five fidelity-audit fixes) |
+| Active branch | `feat/aws-sim-fck-nat-onion-batch` (PR pending — five AWS sim gaps, BUG-1477–1481, issues #434–#438) |
+| In-flight | Five AWS simulator gaps bundled in one PR (the next fck-nat onion layers + consumer read-completeness): **#434** KMS grants (CreateGrant/ListGrants/RevokeGrant) + GenerateDataKeyWithoutPlaintext/ReEncrypt; **#435** ECR repository policy + image-layer push/pull pipeline (Initiate/Upload/Complete/GetDownloadUrl, real content-addressed blobs, BatchCheckLayerAvailability now real); **#436** ECS DescribeCapacityProviders + ListTaskDefinitionFamilies; **#437** EC2 DescribeInstanceTypeOfferings; **#438** ELBv2 listener rules (CreateRule/DescribeRules/ModifyRule/DeleteRule) + ModifyListener. Query-protocol ops (EC2/ELBv2) rendered at exact `ec2@v1.305.2` / `elasticloadbalancingv2@v1.55.3` locationNames. SDK + CLI coverage for all five; Terraform: `aws_lb_listener_rule` + `aws_kms_grant` added to the production-shape stack (apply/destroy clean). |
+| Last merged | PR #439 — EC2 Launch Template ops (BUG-1476, #433) |
+| Also merged recently | PR #432 (real CloudWatch metrics #1475); PR #431 (IAM policy simulation #427); PR #430 (EC2 ENI ops #428) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
-| Bugs | 1476 filed · 1432 fixed · 5 open · 4 false positives |
+| Bugs | 1481 filed · 1437 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Possible follow-ups: launch-template update-in-place ops (`CreateLaunchTemplateVersion`/`ModifyLaunchTemplate`) if a consumer needs them; query-protocol (aws CLI/botocore) CloudWatch metrics surface; other audit items; or await new issues |
+| Planned next | Possible follow-ups: launch-template update-in-place (`CreateLaunchTemplateVersion`/`ModifyLaunchTemplate`); ECR `aws_ecr_repository` Terraform read-back completeness (image_tag_mutability/encryption/scanning) if a consumer adds the resource; query-protocol CloudWatch metrics; or await new issues |
 | Live infra | None up |
 
 ## Invariants

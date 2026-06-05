@@ -118,6 +118,8 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.CreatePullThroughCacheRule", handleECRCreatePullThroughCacheRule)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribePullThroughCacheRules", handleECRDescribePullThroughCacheRules)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule", handleECRDeletePullThroughCacheRule)
+
+	registerECRLayers(r, srv)
 }
 
 // handleECRCreatePullThroughCacheRule registers a pull-through cache
@@ -542,9 +544,13 @@ func handleECRBatchCheckLayerAvailability(w http.ResponseWriter, r *http.Request
 
 	var layers []map[string]any
 	for _, digest := range req.LayerDigests {
+		availability := "UNAVAILABLE"
+		if _, ok := ecrLayers.Get(ecrLayerKey(req.RepositoryName, digest)); ok {
+			availability = "AVAILABLE"
+		}
 		layers = append(layers, map[string]any{
 			"layerDigest":       digest,
-			"layerAvailability": "AVAILABLE",
+			"layerAvailability": availability,
 		})
 	}
 	if layers == nil {

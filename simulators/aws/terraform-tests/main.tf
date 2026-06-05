@@ -187,6 +187,25 @@ resource "aws_lb_listener" "tf_alb_listener" {
   }
 }
 
+# Listener rule: host-header routing — the IAP-proxy ALB shape (issue #438).
+# Exercises CreateRule + DescribeRules (read-back) on apply, DeleteRule on
+# destroy.
+resource "aws_lb_listener_rule" "tf_alb_rule" {
+  listener_arn = aws_lb_listener.tf_alb_listener.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.tf_alb_tg.arn
+  }
+
+  condition {
+    host_header {
+      values = ["app.example.com"]
+    }
+  }
+}
+
 resource "aws_instance" "tf_vm" {
   ami           = "ami-tf1234"
   instance_type = "t3.micro"
@@ -1152,6 +1171,16 @@ resource "aws_kms_alias" "tf_kms_alias" {
   target_key_id = aws_kms_key.tf_kms.key_id
 }
 
+# KMS grant — how AWS services delegate CMK use for encryption at rest
+# (issue #434). CreateGrant on apply (read-back via ListGrants), RevokeGrant on
+# destroy.
+resource "aws_kms_grant" "tf_kms_grant" {
+  name              = "tf-runner-grant"
+  key_id            = aws_kms_key.tf_kms.key_id
+  grantee_principal = "arn:aws:iam::000000000000:role/tf-kms-grantee"
+  operations        = ["Decrypt", "GenerateDataKey"]
+}
+
 # Secrets Manager secret + version — runner credentials.
 resource "aws_secretsmanager_secret" "tf_secret" {
   name                    = "tf-test-runner-secret"
@@ -1260,6 +1289,12 @@ output "elbv2_target_group_arn" {
 }
 output "elbv2_listener_arn" {
   value = aws_lb_listener.tf_alb_listener.arn
+}
+output "elbv2_listener_rule_arn" {
+  value = aws_lb_listener_rule.tf_alb_rule.arn
+}
+output "kms_grant_id" {
+  value = aws_kms_grant.tf_kms_grant.grant_id
 }
 output "ec2_nat_gateway_id" {
   value = aws_nat_gateway.tf_nat.id
