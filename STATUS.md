@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/aws-sim-ecs-service-ddb-gsi` (PR #418 open + audit follow-up in progress) |
-| In-flight | PR #418 — DynamoDB GSIs (#416) + ECS Service family & capacity providers (#417), plus ECS/DynamoDB audit follow-ups (BUG-1457–1460: DDB UpdateTable / batch+transact / richer conditions; ECS tags / pagination / list ops), plus azf attach-stdin invoke-race fix (BUG-1461 — flaky `test (azure backends)` CI hang) and CloudFront Function tagging fix (BUG-1462 — flaky `tf (aws)` apply on `aws_cloudfront_function`) |
-| Last merged | PR #415 — KMS tagging (#413), EC2 control-plane modeling in API-only mode (#414), Podman container image fix |
-| Also merged recently | PR #412 (Azure KV version ordering, #407); PR #410 (bleephub quality tooling + AWS sim KMS rotation / app-autoscaling / scheduler + terraform-test orphan-leak fix) |
-| Open GitHub issues | #394 — azuread TF provider upstream blocker (waiting on hashicorp). #416/#417 closing via PR #418 |
-| Bugs | 1462 filed · 1419 fixed · 5 open · 3 false positives |
+| Active branch | `feat/gcp-sim-cloudkms` (PR pending — GCP Cloud KMS, issue #419) |
+| In-flight | GCP Cloud KMS service (BUG-1463, issue #419): keyRings/cryptoKeys/cryptoKeyVersions + symmetric encrypt/decrypt with real AES-256-GCM and CRC32C integrity fields. SDK + CLI (`gcloud kms`) + Terraform coverage all green locally. |
+| Last merged | PR #418 — DynamoDB GSIs (#416) + ECS Service family (#417) + audit follow-ups (BUG-1457–1460); azf attach-stdin race (BUG-1461); CloudFront Function tagging (BUG-1462) |
+| Also merged recently | PR #415 (KMS tagging #413, EC2 API-only modeling #414, Podman image fix); PR #412 (Azure KV version ordering #407) |
+| Open GitHub issues | #419 — GCP Cloud KMS (closing via the pending PR). #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
+| Bugs | 1463 filed · 1420 fixed · 5 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Finish ECS/DynamoDB audit follow-ups; then await new sim-fidelity issues |
+| Planned next | After Cloud KMS PR: planned Azure test-gap PR, then GCP coverage-gap PR |
 | Live infra | None up |
 
 ## Invariants

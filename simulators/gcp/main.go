@@ -75,6 +75,7 @@ func main() {
 	registerCloudFunctions(srv)
 	registerOperations(srv)
 	registerSecretManager(srv)
+	registerCloudKMS(srv)
 	registerPubSub(srv)
 	registerEventarc(srv)
 	registerMemorystoreRedis(srv)
