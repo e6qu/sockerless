@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/aws-sim-acm-dns-validation` (PR pending — ACM DNS validation, issues #420 + #421) |
-| In-flight | AWS ACM DNS-validation fixes (BUG-1464/1465): DNS-validated cert reaches ISSUED once its `_acm-challenge` records exist in the Route53 sim store; wildcard SAN validation record name strips `*.`. SDK + CLI + Terraform coverage all green locally. |
-| Last merged | PR #422 — GCP Cloud KMS service (#419) |
-| Also merged recently | PR #418 (DynamoDB GSIs #416, ECS Service #417, azf attach-stdin #1461, CloudFront tagging #1462); PR #415 (KMS tagging #413, EC2 API-only #414) |
-| Open GitHub issues | #420 + #421 — ACM DNS validation (closing via the pending PR). #423 — Azure KV version-less key crypto (queued). #394 — azuread TF provider upstream blocker |
-| Bugs | 1465 filed · 1422 fixed · 5 open · 3 false positives |
+| Active branch | `fix/azure-sim-kv-versionless-crypto` (PR pending — Azure KV version-less key crypto, issue #423) |
+| In-flight | Azure KV version-less key crypto (BUG-1466): `handleKVKey` now routes the 3-segment `/keys/{name}/{verb}` crypto form to the key's current version instead of 405. SDK + CLI coverage green locally (no Terraform data-plane crypto surface). |
+| Last merged | PR #424 — ACM DNS validation (#420 + #421) |
+| Also merged recently | PR #422 (GCP Cloud KMS #419); PR #418 (DynamoDB GSIs #416, ECS Service #417, azf attach-stdin #1461, CloudFront tagging #1462) |
+| Open GitHub issues | #423 — Azure KV version-less key crypto (closing via the pending PR). #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
+| Bugs | 1466 filed · 1423 fixed · 5 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After ACM PR: Azure KV #423, then planned Azure/GCP test-gap PRs |
+| Planned next | After KV PR: planned Azure test-gap PR (App Insights/Private DNS/ACR), then GCP coverage-gap PR — or new consumer issues |
 | Live infra | None up |
 
 ## Invariants
