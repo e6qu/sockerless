@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/gcp-sim-cloudkms` (PR pending — GCP Cloud KMS, issue #419) |
-| In-flight | GCP Cloud KMS service (BUG-1463, issue #419): keyRings/cryptoKeys/cryptoKeyVersions + symmetric encrypt/decrypt with real AES-256-GCM and CRC32C integrity fields. SDK + CLI (`gcloud kms`) + Terraform coverage all green locally. |
-| Last merged | PR #418 — DynamoDB GSIs (#416) + ECS Service family (#417) + audit follow-ups (BUG-1457–1460); azf attach-stdin race (BUG-1461); CloudFront Function tagging (BUG-1462) |
-| Also merged recently | PR #415 (KMS tagging #413, EC2 API-only modeling #414, Podman image fix); PR #412 (Azure KV version ordering #407) |
-| Open GitHub issues | #419 — GCP Cloud KMS (closing via the pending PR). #394 — azuread TF provider upstream blocker (waiting on hashicorp) |
-| Bugs | 1463 filed · 1420 fixed · 5 open · 3 false positives |
+| Active branch | `fix/aws-sim-acm-dns-validation` (PR pending — ACM DNS validation, issues #420 + #421) |
+| In-flight | AWS ACM DNS-validation fixes (BUG-1464/1465): DNS-validated cert reaches ISSUED once its `_acm-challenge` records exist in the Route53 sim store; wildcard SAN validation record name strips `*.`. SDK + CLI + Terraform coverage all green locally. |
+| Last merged | PR #422 — GCP Cloud KMS service (#419) |
+| Also merged recently | PR #418 (DynamoDB GSIs #416, ECS Service #417, azf attach-stdin #1461, CloudFront tagging #1462); PR #415 (KMS tagging #413, EC2 API-only #414) |
+| Open GitHub issues | #420 + #421 — ACM DNS validation (closing via the pending PR). #423 — Azure KV version-less key crypto (queued). #394 — azuread TF provider upstream blocker |
+| Bugs | 1465 filed · 1422 fixed · 5 open · 3 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After Cloud KMS PR: planned Azure test-gap PR, then GCP coverage-gap PR |
+| Planned next | After ACM PR: Azure KV #423, then planned Azure/GCP test-gap PRs |
 | Live infra | None up |
 
 ## Invariants
