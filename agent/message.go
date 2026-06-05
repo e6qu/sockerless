@@ -24,7 +24,7 @@ const (
 	// the next ExecStart returns operator-guidance ("use ECS / ACA /
 	// Cloud Run Services for longer pods") rather than a generic 500
 	// or hanging exec. No transparent re-invoke / warm-pool /
-	// checkpoint-restart — FaaS max is a hard limit per Phase 168.
+	// checkpoint-restart — FaaS max is a hard limit.
 	TypeLifetimeExpired = "lifetime_expired"
 )
 

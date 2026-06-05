@@ -13,7 +13,7 @@ import (
 )
 
 // TestECR_RepositoryPolicy covers the `aws_ecr_repository_policy` surface
-// (#435): Set → Get round-trip + Delete.
+// : Set → Get round-trip + Delete.
 func TestECR_RepositoryPolicy(t *testing.T) {
 	c := ecrClient()
 	repo := "policy-repo"
@@ -38,7 +38,7 @@ func TestECR_RepositoryPolicy(t *testing.T) {
 	require.Error(t, err, "policy must be gone after delete")
 }
 
-// TestECR_LayerUploadPipeline covers the image-layer data plane (#435):
+// TestECR_LayerUploadPipeline covers the image-layer data plane:
 // Initiate → UploadPart → Complete (content-addressed) → GetDownloadUrl, with
 // BatchCheckLayerAvailability reflecting the real store before/after.
 func TestECR_LayerUploadPipeline(t *testing.T) {
@@ -121,7 +121,7 @@ func ecrLayerDigest(b []byte) string {
 }
 
 // TestECR_RepositoryConfiguration covers the aws_ecr_repository read-back fields
-// (#435 follow-up): image tag mutability, scan-on-push, and encryption config
+// — image tag mutability, scan-on-push, and encryption config
 // round-trip through CreateRepository + DescribeRepositories.
 func TestECR_RepositoryConfiguration(t *testing.T) {
 	c := ecrClient()

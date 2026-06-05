@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestACM_DNSValidationIssuesCert drives the issue #420/#421 flow through the
+// TestACM_DNSValidationIssuesCert drives the flow through the
 // aws CLI: request a DNS cert with a wildcard SAN, create the _acm-challenge
 // records in Route53, and confirm the cert transitions to ISSUED. Also asserts
-// the wildcard SAN's record name is de-wildcarded (#421).
+// the wildcard SAN's record name is de-wildcarded.
 func TestACM_DNSValidationIssuesCert(t *testing.T) {
 	out := runCLI(t, awsCLI("acm", "request-certificate",
 		"--domain-name", "app.cli.example.test",

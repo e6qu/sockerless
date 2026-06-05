@@ -11,7 +11,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// KMS grants + secondary crypto ops (issue #434). AWS services (ECS, ECR,
+// KMS grants + secondary crypto ops. AWS services (ECS, ECR,
 // DynamoDB, S3) create grants on customer-managed CMKs to use them for
 // encryption at rest; the Terraform `aws_kms_grant` resource is the explicit
 // surface. GenerateDataKeyWithoutPlaintext and ReEncrypt are the remaining

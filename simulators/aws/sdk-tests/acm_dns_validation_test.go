@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestACMDNSCertWildcardAndIssuance covers issue #420 (a DNS-validated
-// AMAZON_ISSUED cert must reach ISSUED) and #421 (a wildcard SAN's validation
-// record name must strip the "*."). The cert stays PENDING until its
-// _acm-challenge records exist in Route53, then issues — mirroring real ACM.
+// TestACMDNSCertWildcardAndIssuance verifies a DNS-validated AMAZON_ISSUED
+// cert reaches ISSUED, and that a wildcard SAN's validation record name strips
+// the "*.". The cert stays PENDING until its _acm-challenge records exist in
+// Route53, then issues — mirroring real ACM.
 func TestACMDNSCertWildcardAndIssuance(t *testing.T) {
 	acmC := acmClient()
 	r53C := r53Client()
@@ -41,13 +41,13 @@ func TestACMDNSCertWildcardAndIssuance(t *testing.T) {
 		require.NotNil(t, dvo.ResourceRecord, "DNS DVO must carry a ResourceRecord")
 		records[aws.ToString(dvo.DomainName)] = *dvo.ResourceRecord
 	}
-	// #421: DomainName echoes the wildcard, but the record name is de-wildcarded.
+	// DomainName echoes the wildcard, but the record name is de-wildcarded.
 	require.Contains(t, records, "*.devbox.example.test")
 	wildName := aws.ToString(records["*.devbox.example.test"].Name)
 	require.Equal(t, "_acm-challenge.devbox.example.test.", wildName)
 	require.NotContains(t, wildName, "*")
 
-	// #420 (faithful): with no validation records yet, the cert stays PENDING —
+	// Faithful: with no validation records yet, the cert stays PENDING —
 	// no synthetic issuance.
 	desc, err = acmC.DescribeCertificate(ctx, &acm.DescribeCertificateInput{CertificateArn: aws.String(arn)})
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestACMDNSCertWildcardAndIssuance(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// With both _acm-challenge records present, the cert reaches ISSUED (#420).
+	// With both _acm-challenge records present, the cert reaches ISSUED.
 	desc, err = acmC.DescribeCertificate(ctx, &acm.DescribeCertificateInput{CertificateArn: aws.String(arn)})
 	require.NoError(t, err)
 	require.Equal(t, acmtypes.CertificateStatusIssued, desc.Certificate.Status)

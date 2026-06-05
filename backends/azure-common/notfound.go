@@ -11,7 +11,6 @@ import (
 // for the Azure SDK shapes sockerless uses. Typed check (errors.As
 // to *azcore.ResponseError + StatusCode == 404) replaces the previous
 // substring-based pattern that was brittle across SDK version bumps
-// (BUG-1063).
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false

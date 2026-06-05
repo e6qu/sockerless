@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_LaunchTemplateLifecycle covers issue #433: the EC2 Launch Template
+// TestEC2_LaunchTemplateLifecycle covers the EC2 Launch Template
 // create → describe → describe-versions → delete lifecycle, the fck-nat
 // NAT-instance shape (aws_launch_template as the ASG launch config). The
 // launch-template data submitted on create must round-trip verbatim through

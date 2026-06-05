@@ -1,6 +1,6 @@
 # Sockerless-runner workload — single-container ECS task definition for
 # the GitHub Actions runner with sockerless-backend-ecs baked in. Used
-# by the Phase 110b runner harness to dispatch ephemeral runners into
+# by the runner harness to dispatch ephemeral runners into
 # Fargate. Each task: 1 container that runs sockerless on localhost
 # in the background then registers `actions/runner` with `--ephemeral`,
 # picks up exactly one job, then exits.
@@ -220,7 +220,7 @@ data "aws_iam_policy_document" "runner_task" {
     resources = ["*"]
   }
 
-  # SSM messages for ECS Exec on sub-tasks (BUG-720 / 842).
+  # SSM messages for ECS Exec on sub-tasks.
   statement {
     sid    = "SSMMessages"
     effect = "Allow"

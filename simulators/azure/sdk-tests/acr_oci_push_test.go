@@ -34,7 +34,7 @@ func acrDo(t *testing.T, method, url string, body []byte, contentType string) *h
 	return resp
 }
 
-// TestACR_OCIChunkedPush covers issue #452: POST blob-upload start (which
+// TestACR_OCIChunkedPush covers POST blob-upload start (which
 // previously 404'd) followed by the chunked PATCH/PUT upload and a manifest
 // push + pull round-trip, against a multi-segment repository.
 func TestACR_OCIChunkedPush(t *testing.T) {

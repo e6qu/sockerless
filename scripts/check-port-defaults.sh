@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per BUG-710 — fail if any source/markdown/script/terraform file outside
+# Fail if any source/markdown/script/terraform file outside
 # excluded fixtures still references the obsolete default ports :2375 or
 # :9100. Sockerless's canonical default is :3375 (avoids Docker daemon
 # collision). Run from repo root or any subdirectory; resolves relative
@@ -31,7 +31,7 @@ found=$(grep -REn --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.g
   || true)
 
 if [ -n "$found" ]; then
-  echo "BUG-710 regression: obsolete port reference (use :3375 instead)" >&2
+  echo "obsolete port reference (use :3375 instead)" >&2
   echo "$found" >&2
   exit 1
 fi

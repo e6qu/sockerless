@@ -47,7 +47,7 @@ func TestECS_DescribeClusters(t *testing.T) {
 	assert.Equal(t, "describe-cluster", *out.Clusters[0].ClusterName)
 }
 
-// TestECS_ServiceLifecycle pins the issue #417 fix: the ECS Service family
+// TestECS_ServiceLifecycle pins the ECS Service family
 // (CreateService/DescribeServices/ListServices/UpdateService/DeleteService) and
 // PutClusterCapacityProviders must round-trip a Fargate service through its
 // control-plane state machine. Pre-fix every one of these returned

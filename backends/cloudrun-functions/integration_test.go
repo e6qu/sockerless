@@ -364,7 +364,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,
 		// SOCKERLESS_CALLBACK_URL is required at NewServer time per
-		// Phase 168 (no Path B fallback). Bootstrap dials back over
+		// (no Path B fallback). Bootstrap dials back over
 		// WebSocket from inside the workload container —
 		// host.docker.internal resolves the test host.
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/gcf/reverse", backendPort),

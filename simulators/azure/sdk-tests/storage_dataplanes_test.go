@@ -36,9 +36,9 @@ func storageDataplaneReq(t *testing.T, method, account, service, path string, bo
 }
 
 // TestFilesDataPlane exercises Files data-plane share + file CRUD.
-// Regression guard for BUG-1109 (Azure storage data planes that
+// Regression guard (Azure storage data planes that
 // weren't serviced — the ARM response had advertised these URLs
-// since Phase 173.10 fixed Blob; this commit fixes the remaining 3).
+// fixed Blob; this commit fixes the remaining 3).
 func TestFilesDataPlane(t *testing.T) {
 	account := "testacct"
 	share := "myshare"

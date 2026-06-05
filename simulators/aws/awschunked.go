@@ -14,7 +14,7 @@ import (
 // request body is non-seekable and the SDK must stream the payload.
 //
 // Real S3 unwraps this framing server-side; the sim must do the same
-// or it would store the chunk-encoding envelope verbatim (BUG-1099).
+// or it would store the chunk-encoding envelope verbatim.
 //
 // Wire format (per AWS documentation + aws-sdk-go-v2's
 // internal/checksum/aws_chunked_encoding.go encoder, inverted):

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_DescribeInstanceTypeOfferings covers issue #437: the fck-nat
+// TestEC2_DescribeInstanceTypeOfferings covers the fck-nat
 // pre-flight that validates the chosen instance type is offered in the target
 // availability zones.
 func TestEC2_DescribeInstanceTypeOfferings(t *testing.T) {

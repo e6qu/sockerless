@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRDS_Snapshot_Lifecycle exercises the BUG-1153 snapshot family
+// TestRDS_Snapshot_Lifecycle exercises the snapshot family
 // — CreateDBSnapshot → DescribeDBSnapshots → RestoreDBInstanceFromDBSnapshot
 // → DeleteDBSnapshot — and asserts the state machine documented in
 // RDSSnapshot's docstring. Real RDS transitions a snapshot through

@@ -276,7 +276,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		"SOCKERLESS_ACA_RESOURCE_GROUP="+resourceGroup,
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
-		// Required at NewServer per Phase 168 (no fallback).
+		// Required at NewServer (no fallback).
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/aca/reverse", backendPort),
 	)
 	if os.Getenv(acaAppsE2EEnv) == "1" {

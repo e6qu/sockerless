@@ -21,7 +21,7 @@ func requireGoogleErrCode(t *testing.T, err error, code int) {
 	require.Equal(t, code, gerr.Code)
 }
 
-// TestFirestore_UpdateMaskPreservesFields covers BUG-1468: Patch and Commit
+// TestFirestore_UpdateMaskPreservesFields covers Patch and Commit
 // must honor updateMask and preserve unmentioned fields (DocumentRef.Update /
 // Set MergeAll) instead of replacing the whole document.
 func TestFirestore_UpdateMaskPreservesFields(t *testing.T) {
@@ -73,7 +73,7 @@ func TestFirestore_UpdateMaskPreservesFields(t *testing.T) {
 	assert.Equal(t, "keepme", got.Fields["b"].StringValue)
 }
 
-// TestSecretManager_AccessDisabledVersionFails covers BUG-1469: accessing a
+// TestSecretManager_AccessDisabledVersionFails covers accessing a
 // DISABLED version (or "latest" when the highest version is disabled) must
 // return FAILED_PRECONDITION (400), not the payload.
 func TestSecretManager_AccessDisabledVersionFails(t *testing.T) {

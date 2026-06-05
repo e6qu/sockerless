@@ -755,7 +755,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// stdin-piped script and exits without any docker exec follow-up,
 	// so there's nothing to race. For exec-driven callers (gh-runner,
 	// docker-runner, arbitrary client) the first ExecStart MUST find
-	// an agent — no Path B fallback exists after BUG-1046.
+	// an agent — no Path B fallback exists.
 	if !lambdaState.OpenStdin {
 		timeout, err := core.BootstrapTimeoutFromEnv("lambda")
 		if err != nil {

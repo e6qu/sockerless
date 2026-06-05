@@ -1,5 +1,5 @@
 #!/bin/bash
-# Phase 122g hardening: enforce that no Cloud Run / Cloud Functions
+# Hardening: enforce that no Cloud Run / Cloud Functions
 # resources in terraform or backend Go specs grant invoke access to
 # allUsers / allAuthenticatedUsers, AND that long-lived sockerless
 # Services default to ingress=internal.
@@ -48,7 +48,7 @@ fi
 
 if [ $fail -ne 0 ]; then
   echo ""
-  echo "Phase 122g rule: no Cloud Run / GCF service may be exposed to the public internet."
+  echo "no Cloud Run / GCF service may be exposed to the public internet."
   echo "Either:"
   echo "  - Set ingress=internal (preferred — caller must reach via VPC connector + auth)"
   echo "  - Use Workload Identity Federation with attribute.repository=='e6qu/sockerless'"

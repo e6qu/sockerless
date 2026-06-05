@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCloudWatchLogs_KmsKey covers issue #445: CreateLogGroup persists kmsKeyId,
+// TestCloudWatchLogs_KmsKey covers CreateLogGroup persists kmsKeyId,
 // and AssociateKmsKey / DisassociateKmsKey update it.
 func TestCloudWatchLogs_KmsKey(t *testing.T) {
 	c := cwLogsClient()

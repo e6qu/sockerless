@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_NetworkInterfaceLifecycle covers issue #428: the standalone ENI
+// TestEC2_NetworkInterfaceLifecycle covers the standalone ENI
 // lifecycle (create → describe → attach → modify source/dest check → detach →
 // delete), the fck-nat NAT-instance shape.
 func TestEC2_NetworkInterfaceLifecycle(t *testing.T) {

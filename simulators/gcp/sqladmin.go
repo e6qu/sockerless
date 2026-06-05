@@ -290,10 +290,9 @@ func sqlAPIPrefix(r *http.Request) string {
 // the request arrived on, with `https` hard-coded. Real GCP emits
 // `https://<service>.googleapis.com/v1/...` regardless of the
 // caller's transport; the sim listens on plain HTTP locally but
-// emitting `http://` selfLink URLs (issue #209) breaks downstream
+// emitting `http://` selfLink URLs breaks downstream
 // tooling that strips/expects an HTTPS-only contract. Same shape as
-// the Phase 176 GCS `gcsObjectMetadata` hard-coded-https fix
-// (BUG-1140).
+// the GCS `gcsObjectMetadata` hard-coded-https fix
 func gcpSelfLink(r *http.Request, path string) string {
 	host := r.Host
 	if host == "" {

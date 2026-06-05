@@ -415,7 +415,7 @@ func (st *Store) loadFromPersistence() error {
 			st.NextRepo = r.ID + 1
 		}
 		// Re-open (or create) the git storage for this repo so git operations
-		// work immediately after restart (BUG-1423).
+		// work immediately after restart.
 		stor, err := openOrInitGitStorage(GitDataDir(), r.FullName)
 		if err == nil {
 			st.GitStorages[r.FullName] = stor

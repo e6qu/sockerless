@@ -35,7 +35,7 @@ func ociDo(t *testing.T, method, url string, body []byte, contentType string) *h
 	return resp
 }
 
-// TestECR_OCIDataPlane covers issue #450: the Docker Registry /v2/ data plane —
+// TestECR_OCIDataPlane covers the Docker Registry /v2/ data plane —
 // a full chunked blob push + manifest push, then pull, against an ECR
 // multi-segment repository.
 func TestECR_OCIDataPlane(t *testing.T) {

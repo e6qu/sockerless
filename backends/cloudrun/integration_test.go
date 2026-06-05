@@ -288,7 +288,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
 		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
-		// Required at NewServer per Phase 168 (no Path B fallback).
+		// Required at NewServer (no Path B fallback).
 		// Bootstrap dials back over WebSocket from inside the workload
 		// container — host.docker.internal resolves the test host.
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/cloudrun/reverse", backendPort),

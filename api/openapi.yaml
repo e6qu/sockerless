@@ -3168,7 +3168,7 @@ components:
 
     # PodInspectResponse mirrors podman's libpod `define.InspectPodData`
     # so `podman pod inspect --format ...` templates against any of the
-    # optional fields produce non-zero output (BUG-804).
+    # optional fields produce non-zero output.
     PodInspectResponse:
       type: object
       properties:
@@ -3296,7 +3296,7 @@ components:
           items:
             $ref: "#/components/schemas/PodContainerInfo"
 
-    # PodActionResponse — wire shape note (BUG-806): podman's
+    # PodActionResponse — wire shape note: podman's
     # `PodStopReport.Errs` is `[]error`, which can never round-trip
     # JSON cleanly. The libpod handler emits `Errs: []` on success and
     # routes any per-container failure through HTTP 409. The Errs

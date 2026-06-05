@@ -14,7 +14,7 @@ import (
 // TestLoggingMiddleware_StreamingEnvelopeSentinels asserts that streaming-
 // envelope headers surface as structured fields on the request log when
 // present. This is the operator-visible footprint that would have made
-// the BUG-1099 shape ("handler reads body without consuming aws-chunked
+// the known-bad shape ("handler reads body without consuming aws-chunked
 // envelope") greppable. Fields must be absent on plain requests so the
 // happy path stays quiet.
 func TestLoggingMiddleware_StreamingEnvelopeSentinels(t *testing.T) {

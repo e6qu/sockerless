@@ -9,7 +9,7 @@ import (
 
 // TestSandboxApplies covers the core invariant: every profile sets
 // the privileged + cap deny bits correctly + the user when configured.
-// Regression guard for BUG-1077.
+// Regression guard.
 func TestSandboxApplies(t *testing.T) {
 	cases := []struct {
 		name           string

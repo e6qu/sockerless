@@ -10,7 +10,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// IAM list ops + tag reads (issues #441, #447).
+// IAM list ops + tag reads.
 //
 // ListPolicyVersions is needed by terraform-provider-aws on aws_iam_policy
 // plan/refresh/destroy. ListRoles enumerates roles for audit tooling and

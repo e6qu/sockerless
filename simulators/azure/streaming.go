@@ -16,7 +16,7 @@ import (
 // PUTs which are handled by the per-handler range logic, not this
 // helper) pass through to a plain reader.
 //
-// Closes BUG-1110 for Azure handlers. The skill
+// The skill
 // `sim-streaming-body-handler` codifies the pre-write check.
 // Caller still needs to inspect `Content-Range` / SSE-C headers
 // per-handler when those semantics matter; this helper handles

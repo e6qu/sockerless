@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_LaunchTemplateVersions covers the in-place update path (#433
-// follow-up): CreateLaunchTemplateVersion appends a version (latest, not
+// TestEC2_LaunchTemplateVersions covers the in-place update path:
+// CreateLaunchTemplateVersion appends a version (latest, not
 // default) and ModifyLaunchTemplate moves the default version.
 func TestEC2_LaunchTemplateVersions(t *testing.T) {
 	client := ec2Client()

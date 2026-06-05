@@ -61,6 +61,7 @@ type DDBTable struct {
 	DeletionProtectionEnabled bool                      `json:"DeletionProtectionEnabled"`
 	TableClassSummary         *DDBTableClassSummary     `json:"TableClassSummary,omitempty"`
 	WarmThroughput            *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
+	SSEDescription            *DDBSSEDescription        `json:"SSEDescription,omitempty"`
 
 	// PITR + TTL state — Update* persists here so Describe* reads back
 	// the actual state (real AWS round-trips these; terraform polls
@@ -69,6 +70,14 @@ type DDBTable struct {
 	TTLStatus        string  `json:"-"` // ENABLED / DISABLED
 	TTLAttributeName string  `json:"-"`
 	Tags             []SMTag `json:"-"`
+}
+
+// DDBSSEDescription mirrors the SDK SSEDescription returned by DescribeTable for
+// an SSE-enabled table.
+type DDBSSEDescription struct {
+	Status          string `json:"Status"`
+	SSEType         string `json:"SSEType"`
+	KMSMasterKeyArn string `json:"KMSMasterKeyArn,omitempty"`
 }
 
 // DDBProvisionedThroughput mirrors the SDK shape. For PAY_PER_REQUEST
@@ -481,6 +490,11 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 		BillingMode            string                    `json:"BillingMode"`
 		GlobalSecondaryIndexes []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes"`
 		LocalSecondaryIndexes  []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes"`
+		SSESpecification       *struct {
+			Enabled        bool   `json:"Enabled"`
+			SSEType        string `json:"SSEType"`
+			KMSMasterKeyId string `json:"KMSMasterKeyId"`
+		} `json:"SSESpecification"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -550,6 +564,20 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(lsis) > 0 {
 		table.LocalSecondaryIndexes = lsis
+	}
+	// Server-side encryption: once enabled, real DynamoDB reports the full
+	// descriptor (Status ENABLED) on every Describe. SSEType defaults to KMS
+	// (a customer/AWS-managed key) when omitted.
+	if req.SSESpecification != nil && req.SSESpecification.Enabled {
+		sseType := req.SSESpecification.SSEType
+		if sseType == "" {
+			sseType = "KMS"
+		}
+		table.SSEDescription = &DDBSSEDescription{
+			Status:          "ENABLED",
+			SSEType:         sseType,
+			KMSMasterKeyArn: req.SSESpecification.KMSMasterKeyId,
+		}
 	}
 	ddbTables.Put(req.TableName, table)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
@@ -1306,7 +1334,7 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 
-	// Phase 1: validate every condition before mutating anything.
+	// Validate every condition before mutating anything.
 	for _, ti := range req.TransactItems {
 		var tableName, condExpr, storeKey string
 		var keyItem map[string]any
@@ -1338,7 +1366,7 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Phase 2: apply mutations.
+	// Apply mutations.
 	for _, ti := range req.TransactItems {
 		switch {
 		case ti.Put != nil:

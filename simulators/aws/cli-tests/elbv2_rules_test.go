@@ -6,7 +6,7 @@ import (
 )
 
 // TestELBv2CLI_ListenerRules drives listener-rule CRUD + ModifyListener via the
-// aws CLI (issue #438), using the CLI `Field=...,Values=...` condition
+// aws CLI, using the CLI `Field=...,Values=...` condition
 // shorthand.
 func TestELBv2CLI_ListenerRules(t *testing.T) {
 	vpcID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc",

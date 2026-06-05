@@ -22,7 +22,7 @@ func pubsubService(t *testing.T) *pubsub.Service {
 
 // TestPubSub_TopicAndSubscriptionLifecycle exercises the canonical
 // fan-out flow: create topic → create subscription → publish → pull
-// → ack. Regression guard for BUG-1102 (issue #177, Pub/Sub slice).
+// → ack. Regression guard (Pub/Sub slice).
 func TestPubSub_TopicAndSubscriptionLifecycle(t *testing.T) {
 	svc := pubsubService(t)
 	project := "test-project"

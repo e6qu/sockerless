@@ -16,7 +16,7 @@ import (
 // chunked uploads for AR) carry semantics each handler decides
 // per-op; this helper only handles transparent-decode encodings.
 //
-// Closes BUG-1110 for GCP handlers. The skill
+// The skill
 // `sim-streaming-body-handler` codifies the pre-write check.
 func openStreamingBody(r *http.Request) (io.ReadCloser, error) {
 	ce := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))

@@ -84,7 +84,7 @@ func TestAppInsights_InstrumentationKeyStableOnUpsert(t *testing.T) {
 // surface via armapplicationinsights.ComponentCurrentBillingFeaturesClient.
 // The response must use Azure's camelCase wire shape — with PascalCase keys
 // the SDK silently deserialized CurrentBillingFeatures/DataVolumeCap to nil
-// (BUG-1467), which this test would have caught.
+// , which this test would have caught.
 func TestAppInsights_BillingFeatures(t *testing.T) {
 	const (
 		rgName        = "insights-billing-rg"
@@ -122,7 +122,7 @@ func TestAppInsights_BillingFeatures(t *testing.T) {
 		}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, updateResp.CurrentBillingFeatures)
-	// PUT must echo the submitted cap, not a static value (BUG-1471).
+	// PUT must echo the submitted cap, not a static value.
 	require.NotNil(t, updateResp.DataVolumeCap)
 	require.NotNil(t, updateResp.DataVolumeCap.Cap)
 	assert.Equal(t, float32(200), *updateResp.DataVolumeCap.Cap)

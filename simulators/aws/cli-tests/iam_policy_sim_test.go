@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestIAMSimulateCustomPolicyCLI covers issue #427 via the aws CLI — the exact
+// TestIAMSimulateCustomPolicyCLI exercises SimulateCustomPolicy via the aws CLI — the exact
 // shape a consumer uses to assert least-privilege locally.
 func TestIAMSimulateCustomPolicyCLI(t *testing.T) {
 	denyPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"ec2:DeleteVolume","Resource":"*"}]}`

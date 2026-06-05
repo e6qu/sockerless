@@ -45,7 +45,7 @@ var (
 // `POST /{bucket}/{key...}` is the most-greedy POST route on the
 // AWS sim's collapsed-port mux; without a known-bucket gate it
 // would shadow any other AWS service whose POST path happens to
-// share the 2+-segment shape (issue #204: API Gateway v2
+// share the 2+-segment shape (API Gateway v2
 // `POST /v2/apis/{id}/deployments`). The gate routes to NotFound
 // when the first segment isn't a registered bucket so the SDK
 // surfaces a real 404 instead of an S3-shaped InvalidRequest.

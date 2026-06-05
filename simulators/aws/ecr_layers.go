@@ -8,7 +8,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// ECR repository policy + image-layer data plane (issue #435).
+// ECR repository policy + image-layer data plane.
 //
 // Repository policy backs the Terraform `aws_ecr_repository_policy` resource.
 // The layer ops are the real (awsJson) image-transfer pipeline used by the

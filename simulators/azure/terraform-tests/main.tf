@@ -621,7 +621,7 @@ resource "azurerm_linux_function_app" "az_fa" {
 # Key Vault + a single secret. The secret resource is what fires the
 # challenge-then-retry handshake: terraform-provider-azurerm constructs
 # an azsecrets client, issues the unauthenticated PUT, parses the
-# WWW-Authenticate response (which is where issue #193 reopened — the
+# WWW-Authenticate response (which is where the prior regression reopened — the
 # authorization URL must split to ≥ 4 segments or the SDK's
 # parseTenant panics), fetches a token from the configured credential,
 # retries the PUT. If the sim's challenge format is wrong, apply fails

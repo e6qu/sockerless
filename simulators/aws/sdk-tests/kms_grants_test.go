@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestKMS_GrantsLifecycle covers issue #434: CreateGrant → ListGrants →
+// TestKMS_GrantsLifecycle covers CreateGrant → ListGrants →
 // RevokeGrant — the `aws_kms_grant` surface AWS services use to delegate CMK
 // use for encryption at rest.
 func TestKMS_GrantsLifecycle(t *testing.T) {
@@ -53,7 +53,7 @@ func TestKMS_GrantsLifecycle(t *testing.T) {
 }
 
 // TestKMS_GenerateDataKeyWithoutPlaintextAndReEncrypt covers the two secondary
-// crypto ops (#434): the encrypted-only data key, and re-wrapping ciphertext
+// crypto ops: the encrypted-only data key, and re-wrapping ciphertext
 // under a new key (rotation).
 func TestKMS_GenerateDataKeyWithoutPlaintextAndReEncrypt(t *testing.T) {
 	c := kmsClient()

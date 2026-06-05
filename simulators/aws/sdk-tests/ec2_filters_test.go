@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEC2_DescribeFiltersPositionIndependent covers BUG-1470: a vpc-id filter
+// TestEC2_DescribeFiltersPositionIndependent covers a vpc-id filter
 // must be honored regardless of its position in the Filter.N sequence.
 // Previously these handlers only inspected Filter.1, so a vpc-id filter sent
 // after another filter was ignored and ALL resources were returned.

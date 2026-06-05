@@ -7,7 +7,7 @@ import (
 // SandboxProfile encodes the security restrictions the real cloud
 // platform applies to workload containers. The sim enforces them on
 // the local Docker daemon so workloads that "work in the sim" can't
-// rely on privileges the real cloud would reject (BUG-1077).
+// rely on privileges the real cloud would reject.
 //
 // Profiles are deliberately MORE restrictive than the cloud where
 // the Docker primitive permits a stricter setting cheaply (e.g. cap

@@ -330,7 +330,7 @@ jobs:
     # providers run against the sim binary via `terraform init` +
     # `terraform apply -auto-approve`. Exercises the provider's
     # call-sequence shape, which differs materially from the SDK's
-    # (every recent reopen — BUG-1098 / 1099 / 1142 / 1147 — surfaced
+    # (every recent reopen surfaced
     # against a provider sequence that the SDK tests had already
     # marked green).
     runs-on: ubuntu-24.04

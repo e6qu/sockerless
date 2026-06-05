@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLaunchTemplateTerraform exercises the EC2 Launch Template ops (issue
-// #433) through terraform-provider-aws: aws_launch_template create +
+// TestLaunchTemplateTerraform exercises the EC2 Launch Template ops through
+// terraform-provider-aws: aws_launch_template create +
 // read-back, then destroy. This is the fck-nat aws_launch_template shape that
 // previously failed at CreateLaunchTemplate (InvalidAction). A clean apply
 // with no follow-up diff proves the launch-template data round-trips.

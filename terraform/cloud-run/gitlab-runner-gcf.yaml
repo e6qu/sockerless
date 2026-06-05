@@ -90,7 +90,7 @@ spec:
               value: "runner-workspace=/tmp/runner-work=sockerless-live-46x3zg4imo-runner-workspace"
             - name: SOCKERLESS_GCF_BOOTSTRAP
               value: "/opt/sockerless/sockerless-gcf-bootstrap"
-            # BUG-948: pre-deploy free Functions for the gitlab-runner cache
+            # Pre-deploy free Functions for the gitlab-runner cache
             # -permission overlay so first ContainerCreate hits a warm pool
             # instead of paying the regional CPU quota cost of a fresh
             # deploy. Image is the gitlab-runner-helper used by the docker

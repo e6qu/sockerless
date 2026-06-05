@@ -79,7 +79,7 @@ resource "aws_vpc" "tf_ec2_vpc" {
 }
 
 # data.aws_vpc by vpc-id filter — the fck-nat pattern; reads back the VPC's
-# CIDR from cidr_block_associations (issues #442). With the broken filter this
+# CIDR from cidr_block_associations. With the broken filter this
 # returned the wrong VPC / an empty CIDR.
 data "aws_vpc" "by_filter" {
   filter {
@@ -197,7 +197,7 @@ resource "aws_lb_listener" "tf_alb_listener" {
   }
 }
 
-# Listener rule: host-header routing — the IAP-proxy ALB shape (issue #438).
+# Listener rule: host-header routing — the IAP-proxy ALB shape.
 # Exercises CreateRule + DescribeRules (read-back) on apply, DeleteRule on
 # destroy.
 resource "aws_lb_listener_rule" "tf_alb_rule" {
@@ -295,7 +295,7 @@ resource "aws_ecs_cluster" "main" {
   name = "tf-test-cluster"
 
   # containerInsights setting + execute-command KMS config — read back via
-  # DescribeClusters --include SETTINGS CONFIGURATIONS (issue #446).
+  # DescribeClusters --include SETTINGS CONFIGURATIONS.
   setting {
     name  = "containerInsights"
     value = "enabled"
@@ -379,7 +379,7 @@ resource "aws_appautoscaling_policy" "ecs_cpu" {
 }
 
 # Exercise the pull-through-cache APIs added to the simulator in
-# BUG-696's fix. Terraform's aws_ecr_pull_through_cache_rule resource
+# Terraform's aws_ecr_pull_through_cache_rule resource
 # wraps the same CreatePullThroughCacheRule / DescribePullThroughCacheRules
 # / DeletePullThroughCacheRule endpoints the SDK + CLI tests cover.
 resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
@@ -399,7 +399,7 @@ resource "aws_ecr_repository" "tf_repo" {
   }
 }
 
-# Exercise the Cloud Map namespace + service APIs that BUG-701's fix
+# Exercise the Cloud Map namespace + service APIs that the sim fix
 # depends on. The namespace and service are Cloud Map control-plane
 # resources; the simulator creates a Docker user-defined network later,
 # only when an ECS task registration needs private DNS at runtime.
@@ -422,7 +422,7 @@ resource "aws_service_discovery_service" "tf_svc" {
   }
 }
 
-# Phase 159 — Exercise the CloudFront REST + XML wire on the simulator.
+# Exercise the CloudFront REST + XML wire on the simulator.
 # Hits POST /2020-05-31/distribution + GET /2020-05-31/distribution/{id} +
 # PUT /2020-05-31/distribution/{id}/config (Terraform sets Enabled=false
 # automatically before destroy because the simulator enforces the real
@@ -628,12 +628,12 @@ resource "aws_cloudwatch_event_target" "tf_eventbridge_target" {
 resource "aws_cloudwatch_log_group" "tf_log_group" {
   name              = "/aws/sockerless/tf-log-group"
   retention_in_days = 7
-  # KMS encryption at rest — read back via DescribeLogGroups (issue #445).
+  # KMS encryption at rest — read back via DescribeLogGroups.
   kms_key_id = aws_kms_key.tf_kms.arn
 }
 
 # Standalone managed policy — its destroy path calls ListPolicyVersions
-# (issue #441); without it `terraform destroy` previously failed.
+#; without it `terraform destroy` previously failed.
 resource "aws_iam_policy" "tf_nat_policy" {
   name = "tf-nat-policy"
   policy = jsonencode({
@@ -1227,7 +1227,7 @@ resource "aws_kms_alias" "tf_kms_alias" {
 }
 
 # KMS grant — how AWS services delegate CMK use for encryption at rest
-# (issue #434). CreateGrant on apply (read-back via ListGrants), RevokeGrant on
+# CreateGrant on apply (read-back via ListGrants), RevokeGrant on
 # destroy.
 resource "aws_kms_grant" "tf_kms_grant" {
   name              = "tf-runner-grant"
@@ -1254,7 +1254,7 @@ resource "aws_ssm_parameter" "tf_param" {
   value = "tf-test-config-value"
 }
 
-# Phase 159.10 end-to-end stack outputs — verify the production-shape
+# 10 end-to-end stack outputs — verify the production-shape
 # cross-resource links converge after apply. apply_test.go asserts that
 # WAF.resource_arn == CloudFront.arn, Route 53 ALIAS target == CloudFront
 # domain_name, and the ACM cert ARN region is us-east-1 (CloudFront pin).

@@ -1209,7 +1209,7 @@ func handleKVListKeyVersions(w http.ResponseWriter, r *http.Request, vault, name
 		}
 	}
 	// Oldest-first by creation order (stable sort over append-ordered versions),
-	// matching real Azure — not by random version UUID. See issue #407.
+	// matching real Azure — not by random version UUID.
 	sort.SliceStable(versions, func(i, j int) bool {
 		return versions[i].Attributes.Created < versions[j].Attributes.Created
 	})
@@ -1777,7 +1777,7 @@ func handleKVListCertificateVersions(w http.ResponseWriter, r *http.Request, vau
 		}
 	}
 	// Oldest-first by creation order (stable sort over append-ordered versions),
-	// matching real Azure — not by random version UUID. See issue #407.
+	// matching real Azure — not by random version UUID.
 	sort.SliceStable(versions, func(i, j int) bool {
 		return versions[i].Attributes.Created < versions[j].Attributes.Created
 	})
@@ -2550,7 +2550,7 @@ func handleKVListSecretVersions(w http.ResponseWriter, r *http.Request, vault, n
 	// (append) order; a stable sort by Created preserves that order for the
 	// common case where rapid same-second writes share a Created timestamp.
 	// (Sorting by the random version UUID — the old behaviour — bore no
-	// relation to creation order. See issue #407.)
+	// relation to creation order.)
 	sort.SliceStable(versions, func(i, j int) bool {
 		return versions[i].Attributes.Created < versions[j].Attributes.Created
 	})

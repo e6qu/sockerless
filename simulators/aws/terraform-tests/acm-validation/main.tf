@@ -25,8 +25,8 @@ provider "aws" {
 }
 
 # DNS-validated cert with a wildcard SAN — the consumer's control-plane +
-# workspace-wildcard shape that hit both #420 (never ISSUED) and #421
-# (validation record name kept a literal '*').
+# workspace-wildcard shape that hit both failures: the cert never reaching ISSUED, and
+# the validation record name keeping a literal '*'.
 resource "aws_acm_certificate" "tf_cert" {
   domain_name               = "app.example.test"
   subject_alternative_names = ["*.devbox.example.test"]
@@ -58,7 +58,7 @@ resource "aws_route53_record" "tf_validation" {
   records = [each.value.record]
 }
 
-# Waits for the cert to reach ISSUED — hung forever before #420.
+# Waits for the cert to reach ISSUED — hung forever before the fix.
 resource "aws_acm_certificate_validation" "tf_cert_val" {
   certificate_arn         = aws_acm_certificate.tf_cert.arn
   validation_record_fqdns = [for r in aws_route53_record.tf_validation : r.fqdn]

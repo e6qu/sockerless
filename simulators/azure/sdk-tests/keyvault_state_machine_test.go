@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestKeyVault_State_FullVersionChain locks the BUG-1149 versioning
+// TestKeyVault_State_FullVersionChain locks the versioning
 // invariant: PUT appends a new version per call; ListSecretProperties
 // returns the canonical paged SecretListResult with one item per
 // version (NOT a single SecretBundle envelope); a version-specific
@@ -65,7 +65,7 @@ func TestKeyVault_State_FullVersionChain(t *testing.T) {
 	var seen []string
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
-		require.NoError(t, err, "paged iterator must succeed (BUG-1149 regression guard)")
+		require.NoError(t, err, "paged iterator must succeed (regression guard)")
 		for _, item := range page.Value {
 			require.NotNil(t, item.ID)
 			seen = append(seen, item.ID.Version())
@@ -75,7 +75,7 @@ func TestKeyVault_State_FullVersionChain(t *testing.T) {
 		"paged List must surface all PUT versions")
 }
 
-// TestKeyVault_State_VersionListOrder locks the issue #407 ordering
+// TestKeyVault_State_VersionListOrder locks the ordering
 // invariant: ListSecretPropertiesVersions must return versions oldest-first
 // (creation order), not ordered by the random version UUID. In the sim,
 // SetSecret calls in rapid succession share an identical second-precision
@@ -128,7 +128,7 @@ func TestKeyVault_State_VersionListOrder(t *testing.T) {
 		"GetSecret must return the most recently written version")
 }
 
-// TestKeyVault_State_SoftDeleteRoundTrip locks the BUG-1151 soft-
+// TestKeyVault_State_SoftDeleteRoundTrip locks the soft-
 // delete state machine: active → deleted → recovered → deleted →
 // purged. Each transition must be observable via the SDK's canonical
 // methods (DeleteSecret / GetDeletedSecret / RecoverDeletedSecret /

@@ -21,7 +21,7 @@ func decisionFor(t *testing.T, results []iamtypes.EvaluationResult, action strin
 	return ""
 }
 
-// TestIAM_SimulateCustomPolicy covers issue #427: evaluate inline policies for
+// TestIAM_SimulateCustomPolicy covers evaluate inline policies for
 // explicit-deny-wins, resource scoping, action wildcards, and conditions.
 func TestIAM_SimulateCustomPolicy(t *testing.T) {
 	client := iamClient()

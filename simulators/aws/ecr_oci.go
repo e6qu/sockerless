@@ -8,7 +8,7 @@ import (
 	sim "github.com/sockerless/simulator"
 )
 
-// ECR OCI Distribution data plane (issue #450). The ECR control plane
+// ECR OCI Distribution data plane. The ECR control plane
 // (CreateRepository / DescribeImages / layer ops) is awsJson; the actual
 // `docker push` / `docker pull` go over the OCI Distribution `/v2/` API, which
 // the AWS simulator previously didn't serve at all (`GET /v2/` → 404). This

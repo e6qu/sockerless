@@ -25,7 +25,7 @@ type ReverseAgentConn struct {
 
 	// OnSystemMessage fires for connection-level messages that don't
 	// belong to any session (msg.ID == ""). Currently the only such
-	// type is TypeLifetimeExpired (Phase 168.8). May be nil.
+	// type is TypeLifetimeExpired. May be nil.
 	OnSystemMessage func(Message)
 }
 
@@ -34,7 +34,7 @@ type ReverseAgentConn struct {
 // Callers that need to observe connection-level (no-ID) system messages
 // like TypeLifetimeExpired MUST use NewReverseAgentConnWithSystemHandler
 // instead — assigning OnSystemMessage after this constructor returns
-// races with messages arriving in the first scheduler quantum (BUG-1061).
+// races with messages arriving in the first scheduler quantum.
 func NewReverseAgentConn(ws *websocket.Conn) *ReverseAgentConn {
 	rc := &ReverseAgentConn{
 		ws:   ws,

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestACR_BlobUploadRejectsWrongDigest covers BUG-1472: the monolithic blob
+// TestACR_BlobUploadRejectsWrongDigest covers the monolithic blob
 // upload completion must reject a content/digest mismatch with DIGEST_INVALID
 // (400) instead of storing the bytes under the asserted (wrong) digest.
 func TestACR_BlobUploadRejectsWrongDigest(t *testing.T) {
