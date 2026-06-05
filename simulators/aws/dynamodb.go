@@ -52,6 +52,8 @@ type DDBTable struct {
 	CreationDateTime          float64                   `json:"CreationDateTime"`
 	AttributeDefinitions      []DDBAttributeDef         `json:"AttributeDefinitions"`
 	KeySchema                 []DDBKeySchemaEntry       `json:"KeySchema"`
+	GlobalSecondaryIndexes    []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes,omitempty"`
+	LocalSecondaryIndexes     []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes,omitempty"`
 	BillingModeSummary        *DDBBillingModeSummary    `json:"BillingModeSummary,omitempty"`
 	ProvisionedThroughput     *DDBProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
 	ItemCount                 int64                     `json:"ItemCount"`
@@ -113,6 +115,40 @@ type DDBKeySchemaEntry struct {
 	KeyType       string `json:"KeyType"` // HASH / RANGE
 }
 
+// DDBProjection is a secondary index's attribute projection.
+type DDBProjection struct {
+	ProjectionType   string   `json:"ProjectionType"` // ALL / KEYS_ONLY / INCLUDE
+	NonKeyAttributes []string `json:"NonKeyAttributes,omitempty"`
+}
+
+// DDBGlobalSecondaryIndex mirrors the GSI shape. The CreateTable request
+// carries IndexName/KeySchema/Projection/ProvisionedThroughput; the
+// Create/Describe responses additionally carry IndexStatus (ACTIVE),
+// IndexArn, ItemCount, and IndexSizeBytes — terraform-provider-aws waits for
+// IndexStatus==ACTIVE on every GSI before the table converges.
+type DDBGlobalSecondaryIndex struct {
+	IndexName             string                    `json:"IndexName"`
+	KeySchema             []DDBKeySchemaEntry       `json:"KeySchema"`
+	Projection            *DDBProjection            `json:"Projection,omitempty"`
+	IndexStatus           string                    `json:"IndexStatus,omitempty"`
+	IndexArn              string                    `json:"IndexArn,omitempty"`
+	ItemCount             int64                     `json:"ItemCount"`
+	IndexSizeBytes        int64                     `json:"IndexSizeBytes"`
+	ProvisionedThroughput *DDBProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
+	WarmThroughput        *DDBWarmThroughput        `json:"WarmThroughput,omitempty"`
+}
+
+// DDBLocalSecondaryIndex mirrors the LSI shape. LSIs are created with the
+// table and have no independent status (no IndexStatus field).
+type DDBLocalSecondaryIndex struct {
+	IndexName      string              `json:"IndexName"`
+	KeySchema      []DDBKeySchemaEntry `json:"KeySchema"`
+	Projection     *DDBProjection      `json:"Projection,omitempty"`
+	IndexArn       string              `json:"IndexArn,omitempty"`
+	ItemCount      int64               `json:"ItemCount"`
+	IndexSizeBytes int64               `json:"IndexSizeBytes"`
+}
+
 // DDBBillingModeSummary mirrors the SDK shape — `PAY_PER_REQUEST` or
 // `PROVISIONED`. The sim accepts both; tests don't exercise actual
 // throughput throttling.
@@ -145,6 +181,10 @@ func ddbTableArn(name string) string {
 	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", awsRegion(), awsAccountID(), name)
 }
 
+func ddbIndexArn(table, index string) string {
+	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s/index/%s", awsRegion(), awsAccountID(), table, index)
+}
+
 // ddbTableByArn locates a stored table by its full ARN. Tag CRUD takes
 // ResourceArn (not TableName) and real DynamoDB accepts both forms; the
 // sim's name-keyed store has to be scanned for an ARN match.
@@ -170,6 +210,7 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 
 	r.Register("DynamoDB_20120810.CreateTable", handleDDBCreateTable)
 	r.Register("DynamoDB_20120810.DescribeTable", handleDDBDescribeTable)
+	r.Register("DynamoDB_20120810.UpdateTable", handleDDBUpdateTable)
 	r.Register("DynamoDB_20120810.DeleteTable", handleDDBDeleteTable)
 	r.Register("DynamoDB_20120810.ListTables", handleDDBListTables)
 	r.Register("DynamoDB_20120810.PutItem", handleDDBPutItem)
@@ -178,6 +219,10 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("DynamoDB_20120810.DeleteItem", handleDDBDeleteItem)
 	r.Register("DynamoDB_20120810.Query", handleDDBQuery)
 	r.Register("DynamoDB_20120810.Scan", handleDDBScan)
+	r.Register("DynamoDB_20120810.BatchWriteItem", handleDDBBatchWriteItem)
+	r.Register("DynamoDB_20120810.BatchGetItem", handleDDBBatchGetItem)
+	r.Register("DynamoDB_20120810.TransactWriteItems", handleDDBTransactWriteItems)
+	r.Register("DynamoDB_20120810.TransactGetItems", handleDDBTransactGetItems)
 	r.Register("DynamoDB_20120810.DescribeContinuousBackups", handleDDBDescribeContinuousBackups)
 	r.Register("DynamoDB_20120810.UpdateContinuousBackups", handleDDBUpdateContinuousBackups)
 	r.Register("DynamoDB_20120810.DescribeTimeToLive", handleDDBDescribeTimeToLive)
@@ -430,10 +475,12 @@ func handleDDBListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 
 func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName            string              `json:"TableName"`
-		AttributeDefinitions []DDBAttributeDef   `json:"AttributeDefinitions"`
-		KeySchema            []DDBKeySchemaEntry `json:"KeySchema"`
-		BillingMode          string              `json:"BillingMode"`
+		TableName              string                    `json:"TableName"`
+		AttributeDefinitions   []DDBAttributeDef         `json:"AttributeDefinitions"`
+		KeySchema              []DDBKeySchemaEntry       `json:"KeySchema"`
+		BillingMode            string                    `json:"BillingMode"`
+		GlobalSecondaryIndexes []DDBGlobalSecondaryIndex `json:"GlobalSecondaryIndexes"`
+		LocalSecondaryIndexes  []DDBLocalSecondaryIndex  `json:"LocalSecondaryIndexes"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -453,6 +500,20 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 		billingMode = "PROVISIONED"
 	}
 	now := float64(time.Now().Unix())
+
+	// Model secondary indexes as immediately ACTIVE. terraform-provider-aws
+	// waits for every GSI's IndexStatus to reach ACTIVE before the table
+	// converges; pre-fix the indexes were dropped entirely (returned null).
+	gsis := make([]DDBGlobalSecondaryIndex, 0, len(req.GlobalSecondaryIndexes))
+	for _, g := range req.GlobalSecondaryIndexes {
+		gsis = append(gsis, ddbActivateGSI(req.TableName, g))
+	}
+	lsis := make([]DDBLocalSecondaryIndex, 0, len(req.LocalSecondaryIndexes))
+	for _, l := range req.LocalSecondaryIndexes {
+		l.IndexArn = ddbIndexArn(req.TableName, l.IndexName)
+		lsis = append(lsis, l)
+	}
+
 	table := DDBTable{
 		TableName:            req.TableName,
 		TableId:              generateUUID(),
@@ -484,6 +545,12 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			Status:              "ACTIVE",
 		},
 	}
+	if len(gsis) > 0 {
+		table.GlobalSecondaryIndexes = gsis
+	}
+	if len(lsis) > 0 {
+		table.LocalSecondaryIndexes = lsis
+	}
 	ddbTables.Put(req.TableName, table)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
 }
@@ -503,6 +570,112 @@ func handleDDBDescribeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{"Table": t})
+}
+
+// ddbActivateGSI fills the stored/response fields of a GSI so it reports as
+// immediately ACTIVE (the sim models index builds as instantaneous).
+func ddbActivateGSI(tableName string, g DDBGlobalSecondaryIndex) DDBGlobalSecondaryIndex {
+	g.IndexStatus = "ACTIVE"
+	g.IndexArn = ddbIndexArn(tableName, g.IndexName)
+	if g.ProvisionedThroughput == nil {
+		g.ProvisionedThroughput = &DDBProvisionedThroughput{}
+	}
+	g.WarmThroughput = &DDBWarmThroughput{
+		ReadUnitsPerSecond:  12000,
+		WriteUnitsPerSecond: 4000,
+		Status:              "ACTIVE",
+	}
+	return g
+}
+
+func ddbMergeAttributeDefs(existing, incoming []DDBAttributeDef) []DDBAttributeDef {
+	seen := map[string]bool{}
+	out := make([]DDBAttributeDef, 0, len(existing)+len(incoming))
+	for _, a := range existing {
+		if !seen[a.AttributeName] {
+			seen[a.AttributeName] = true
+			out = append(out, a)
+		}
+	}
+	for _, a := range incoming {
+		if !seen[a.AttributeName] {
+			seen[a.AttributeName] = true
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// handleDDBUpdateTable applies GSI create/update/delete, throughput, billing
+// mode, and deletion-protection changes. terraform-provider-aws manages the GSI
+// lifecycle after table creation via UpdateTable's GlobalSecondaryIndexUpdates,
+// then polls DescribeTable until each new GSI's IndexStatus is ACTIVE.
+func handleDDBUpdateTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TableName                 string                    `json:"TableName"`
+		AttributeDefinitions      []DDBAttributeDef         `json:"AttributeDefinitions"`
+		BillingMode               string                    `json:"BillingMode"`
+		DeletionProtectionEnabled *bool                     `json:"DeletionProtectionEnabled"`
+		ProvisionedThroughput     *DDBProvisionedThroughput `json:"ProvisionedThroughput"`
+
+		GlobalSecondaryIndexUpdates []struct {
+			Create *DDBGlobalSecondaryIndex `json:"Create"`
+			Update *struct {
+				IndexName             string                    `json:"IndexName"`
+				ProvisionedThroughput *DDBProvisionedThroughput `json:"ProvisionedThroughput"`
+			} `json:"Update"`
+			Delete *struct {
+				IndexName string `json:"IndexName"`
+			} `json:"Delete"`
+		} `json:"GlobalSecondaryIndexUpdates"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	t, ok := ddbTables.Get(req.TableName)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: Table: %s not found", req.TableName)
+		return
+	}
+	if len(req.AttributeDefinitions) > 0 {
+		t.AttributeDefinitions = ddbMergeAttributeDefs(t.AttributeDefinitions, req.AttributeDefinitions)
+	}
+	if req.BillingMode != "" {
+		if t.BillingModeSummary == nil {
+			t.BillingModeSummary = &DDBBillingModeSummary{}
+		}
+		t.BillingModeSummary.BillingMode = req.BillingMode
+	}
+	if req.ProvisionedThroughput != nil {
+		t.ProvisionedThroughput = req.ProvisionedThroughput
+	}
+	if req.DeletionProtectionEnabled != nil {
+		t.DeletionProtectionEnabled = *req.DeletionProtectionEnabled
+	}
+	for _, upd := range req.GlobalSecondaryIndexUpdates {
+		switch {
+		case upd.Create != nil:
+			t.GlobalSecondaryIndexes = append(t.GlobalSecondaryIndexes, ddbActivateGSI(req.TableName, *upd.Create))
+		case upd.Delete != nil:
+			kept := t.GlobalSecondaryIndexes[:0:0]
+			for _, g := range t.GlobalSecondaryIndexes {
+				if g.IndexName != upd.Delete.IndexName {
+					kept = append(kept, g)
+				}
+			}
+			t.GlobalSecondaryIndexes = kept
+		case upd.Update != nil && upd.Update.ProvisionedThroughput != nil:
+			for i := range t.GlobalSecondaryIndexes {
+				if t.GlobalSecondaryIndexes[i].IndexName == upd.Update.IndexName {
+					t.GlobalSecondaryIndexes[i].ProvisionedThroughput = upd.Update.ProvisionedThroughput
+				}
+			}
+		}
+	}
+	ddbTables.Put(req.TableName, t)
+	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": t})
 }
 
 func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
@@ -599,10 +772,12 @@ func ddbExtractAttrValue(v any) string {
 
 func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                string            `json:"TableName"`
-		Item                     map[string]any    `json:"Item"`
-		ConditionExpression      string            `json:"ConditionExpression"`
-		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames,omitempty"`
+		TableName                 string            `json:"TableName"`
+		Item                      map[string]any    `json:"Item"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames,omitempty"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues,omitempty"`
+		ReturnValues              string            `json:"ReturnValues,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -617,22 +792,23 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Item)
-	_, exists := ddbItems.Get(itemKey)
+	old, exists := ddbItems.Get(itemKey)
 
-	// Terraform state lock uses ConditionExpression="attribute_not_exists(LockID)"
-	// to atomically acquire the lock. Mirror that behaviour: when the
-	// expression contains "attribute_not_exists", reject the put if
-	// the item already exists.
-	if req.ConditionExpression != "" {
-		if exists && (containsCI(req.ConditionExpression, "attribute_not_exists")) {
-			sim.AWSError(w, "ConditionalCheckFailedException",
-				"The conditional request failed", http.StatusBadRequest)
-			return
-		}
+	// Atomically evaluate the ConditionExpression (e.g. terraform's state-lock
+	// "attribute_not_exists(LockID)") before writing.
+	if req.ConditionExpression != "" &&
+		!ddbEvalCondition(old, exists, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		sim.AWSError(w, "ConditionalCheckFailedException",
+			"The conditional request failed", http.StatusBadRequest)
+		return
 	}
 	ddbItems.Put(itemKey, req.Item)
 	ddbItemNames.Put(itemKey, itemKey)
-	writeDDBJSON(w, http.StatusOK, map[string]any{})
+	resp := map[string]any{}
+	if req.ReturnValues == "ALL_OLD" && exists {
+		resp["Attributes"] = old
+	}
+	writeDDBJSON(w, http.StatusOK, resp)
 }
 
 func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
@@ -707,10 +883,12 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 
 func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName           string         `json:"TableName"`
-		Key                 map[string]any `json:"Key"`
-		ConditionExpression string         `json:"ConditionExpression"`
-		ReturnValues        string         `json:"ReturnValues"`
+		TableName                 string            `json:"TableName"`
+		Key                       map[string]any    `json:"Key"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		ReturnValues              string            `json:"ReturnValues"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -726,12 +904,11 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Key)
 	oldItem, existed := ddbItems.Get(itemKey)
-	if req.ConditionExpression != "" {
-		if !existed && containsCI(req.ConditionExpression, "attribute_exists") {
-			sim.AWSError(w, "ConditionalCheckFailedException",
-				"The conditional request failed", http.StatusBadRequest)
-			return
-		}
+	if req.ConditionExpression != "" &&
+		!ddbEvalCondition(oldItem, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		sim.AWSError(w, "ConditionalCheckFailedException",
+			"The conditional request failed", http.StatusBadRequest)
+		return
 	}
 	ddbItems.Delete(itemKey)
 	ddbItemNames.Delete(itemKey)
@@ -749,6 +926,7 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
+		IndexName                 string            `json:"IndexName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
@@ -763,6 +941,14 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
+		return
+	}
+	// IndexName selects a GSI/LSI; the KeyConditionExpression then matches that
+	// index's key attributes. The matcher is generic over item attributes, so a
+	// GSI query needs no special handling beyond rejecting an unknown index.
+	if req.IndexName != "" && !ddbHasIndex(t, req.IndexName) {
+		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+			"The table does not have the specified index: %s", req.IndexName)
 		return
 	}
 	prefix := req.TableName + "/"
@@ -796,7 +982,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items)}
+	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": len(items)}
 	// Emit LastEvaluatedKey if we hit the Limit and more items may exist.
 	if req.Limit > 0 && len(items) == req.Limit {
 		last := items[len(items)-1]
@@ -805,9 +991,25 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	writeDDBJSON(w, http.StatusOK, out)
 }
 
+// ddbHasIndex reports whether the table has a GSI or LSI with the given name.
+func ddbHasIndex(t DDBTable, name string) bool {
+	for _, g := range t.GlobalSecondaryIndexes {
+		if g.IndexName == name {
+			return true
+		}
+	}
+	for _, l := range t.LocalSecondaryIndexes {
+		if l.IndexName == name {
+			return true
+		}
+	}
+	return false
+}
+
 func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName                 string            `json:"TableName"`
+		IndexName                 string            `json:"IndexName"`
 		FilterExpression          string            `json:"FilterExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
@@ -822,6 +1024,11 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"Requested resource not found: Table: %s not found", req.TableName)
+		return
+	}
+	if req.IndexName != "" && !ddbHasIndex(t, req.IndexName) {
+		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+			"The table does not have the specified index: %s", req.IndexName)
 		return
 	}
 	prefix := req.TableName + "/"
@@ -840,8 +1047,10 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var items []map[string]any
+	scanned := 0
 	for _, k := range keys[startIdx:] {
 		if it, ok2 := ddbItems.Get(k); ok2 {
+			scanned++
 			if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
 				items = append(items, it)
 			}
@@ -854,12 +1063,333 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items)}
+	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": scanned}
 	if req.Limit > 0 && len(items) == req.Limit {
 		last := items[len(items)-1]
 		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
 	}
 	writeDDBJSON(w, http.StatusOK, out)
+}
+
+// ddbEvalCondition reports whether a DynamoDB ConditionExpression holds for an
+// item. `exists` is whether the item is currently present. Supports the common
+// subset: attribute_exists / attribute_not_exists, begins_with, and the
+// comparison operators (=, <>, <, <=, >, >=), combined with AND. An empty
+// expression always holds.
+func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return true
+	}
+	for _, raw := range splitTopLevelAnd(expr) {
+		clause := strings.TrimSpace(raw)
+		if !ddbEvalConditionClause(item, exists, clause, names, values) {
+			return false
+		}
+	}
+	return true
+}
+
+func splitTopLevelAnd(expr string) []string {
+	// AND is the only conjunction the sim models; split case-insensitively.
+	lower := strings.ToLower(expr)
+	var parts []string
+	last := 0
+	for {
+		idx := strings.Index(lower[last:], " and ")
+		if idx < 0 {
+			parts = append(parts, expr[last:])
+			break
+		}
+		parts = append(parts, expr[last:last+idx])
+		last += idx + len(" and ")
+	}
+	return parts
+}
+
+func ddbEvalConditionClause(item map[string]any, exists bool, clause string, names map[string]string, values map[string]any) bool {
+	clause = strings.TrimSpace(clause)
+	if rest, ok := ddbFuncArg(clause, "attribute_not_exists"); ok {
+		attr := ddbResolveAttrName(rest, names)
+		return !exists || item[attr] == nil
+	}
+	if rest, ok := ddbFuncArg(clause, "attribute_exists"); ok {
+		attr := ddbResolveAttrName(rest, names)
+		return exists && item[attr] != nil
+	}
+	if rest, ok := ddbFuncArg(clause, "begins_with"); ok {
+		args := strings.SplitN(rest, ",", 2)
+		if len(args) != 2 {
+			return false
+		}
+		attr := ddbResolveAttrName(strings.TrimSpace(args[0]), names)
+		want := ddbScalarString(values[strings.TrimSpace(args[1])])
+		return strings.HasPrefix(ddbScalarString(item[attr]), want)
+	}
+	// Comparison operators, longest-first so "<=" / ">=" / "<>" win over "<"/">".
+	for _, op := range []string{"<=", ">=", "<>", "=", "<", ">"} {
+		if left, right, found := strings.Cut(clause, op); found {
+			attr := ddbResolveAttrName(strings.TrimSpace(left), names)
+			want, ok := values[strings.TrimSpace(right)]
+			if !ok {
+				return false
+			}
+			return ddbCompare(item[attr], want, op)
+		}
+	}
+	return false
+}
+
+// ddbFuncArg returns the single argument of fn(arg) if clause matches.
+func ddbFuncArg(clause, fn string) (string, bool) {
+	clause = strings.TrimSpace(clause)
+	if !strings.HasPrefix(strings.ToLower(clause), fn+"(") || !strings.HasSuffix(clause, ")") {
+		return "", false
+	}
+	return strings.TrimSpace(clause[len(fn)+1 : len(clause)-1]), true
+}
+
+func ddbScalarString(v any) string {
+	if m, ok := v.(map[string]any); ok {
+		for _, k := range []string{"S", "N", "B"} {
+			if s, ok := m[k]; ok {
+				return fmt.Sprint(s)
+			}
+		}
+	}
+	return fmt.Sprint(v)
+}
+
+func ddbCompare(a, b any, op string) bool {
+	if op == "=" {
+		return ddbAttrValuesEqual(a, b)
+	}
+	if op == "<>" {
+		return !ddbAttrValuesEqual(a, b)
+	}
+	// Numeric comparison when both sides are N; lexicographic otherwise.
+	as, bs := ddbScalarString(a), ddbScalarString(b)
+	if af, aerr := strconv.ParseFloat(as, 64); aerr == nil {
+		if bf, berr := strconv.ParseFloat(bs, 64); berr == nil {
+			switch op {
+			case "<":
+				return af < bf
+			case "<=":
+				return af <= bf
+			case ">":
+				return af > bf
+			case ">=":
+				return af >= bf
+			}
+		}
+	}
+	switch op {
+	case "<":
+		return as < bs
+	case "<=":
+		return as <= bs
+	case ">":
+		return as > bs
+	case ">=":
+		return as >= bs
+	}
+	return false
+}
+
+func handleDDBBatchWriteItem(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RequestItems map[string][]struct {
+			PutRequest *struct {
+				Item map[string]any `json:"Item"`
+			} `json:"PutRequest"`
+			DeleteRequest *struct {
+				Key map[string]any `json:"Key"`
+			} `json:"DeleteRequest"`
+		} `json:"RequestItems"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	ddbItemsMu.Lock()
+	defer ddbItemsMu.Unlock()
+	for tableName, ops := range req.RequestItems {
+		t, ok := ddbTables.Get(tableName)
+		if !ok {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+				"Requested resource not found: Table: %s not found", tableName)
+			return
+		}
+		for _, op := range ops {
+			switch {
+			case op.PutRequest != nil:
+				key := ddbItemKey(t, op.PutRequest.Item)
+				ddbItems.Put(key, op.PutRequest.Item)
+				ddbItemNames.Put(key, key)
+			case op.DeleteRequest != nil:
+				key := ddbItemKey(t, op.DeleteRequest.Key)
+				ddbItems.Delete(key)
+				ddbItemNames.Delete(key)
+			}
+		}
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{"UnprocessedItems": map[string]any{}})
+}
+
+func handleDDBBatchGetItem(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RequestItems map[string]struct {
+			Keys []map[string]any `json:"Keys"`
+		} `json:"RequestItems"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	ddbItemsMu.Lock()
+	defer ddbItemsMu.Unlock()
+	responses := map[string][]map[string]any{}
+	for tableName, spec := range req.RequestItems {
+		t, ok := ddbTables.Get(tableName)
+		if !ok {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+				"Requested resource not found: Table: %s not found", tableName)
+			return
+		}
+		items := []map[string]any{}
+		for _, key := range spec.Keys {
+			if it, ok := ddbItems.Get(ddbItemKey(t, key)); ok {
+				items = append(items, it)
+			}
+		}
+		responses[tableName] = items
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"Responses":       responses,
+		"UnprocessedKeys": map[string]any{},
+	})
+}
+
+// handleDDBTransactWriteItems applies Put/Delete/Update/ConditionCheck actions
+// atomically: all ConditionExpressions are evaluated first under the item lock;
+// if any fails the whole transaction aborts with TransactionCanceledException.
+func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TransactItems []struct {
+			Put *struct {
+				TableName                 string            `json:"TableName"`
+				Item                      map[string]any    `json:"Item"`
+				ConditionExpression       string            `json:"ConditionExpression"`
+				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+			} `json:"Put"`
+			Delete *struct {
+				TableName                 string            `json:"TableName"`
+				Key                       map[string]any    `json:"Key"`
+				ConditionExpression       string            `json:"ConditionExpression"`
+				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+			} `json:"Delete"`
+			ConditionCheck *struct {
+				TableName                 string            `json:"TableName"`
+				Key                       map[string]any    `json:"Key"`
+				ConditionExpression       string            `json:"ConditionExpression"`
+				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+			} `json:"ConditionCheck"`
+		} `json:"TransactItems"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	ddbItemsMu.Lock()
+	defer ddbItemsMu.Unlock()
+
+	// Phase 1: validate every condition before mutating anything.
+	for _, ti := range req.TransactItems {
+		var tableName, condExpr, storeKey string
+		var keyItem map[string]any
+		var names map[string]string
+		var values map[string]any
+		switch {
+		case ti.Put != nil:
+			tableName, condExpr, keyItem, names, values = ti.Put.TableName, ti.Put.ConditionExpression, ti.Put.Item, ti.Put.ExpressionAttributeNames, ti.Put.ExpressionAttributeValues
+		case ti.Delete != nil:
+			tableName, condExpr, keyItem, names, values = ti.Delete.TableName, ti.Delete.ConditionExpression, ti.Delete.Key, ti.Delete.ExpressionAttributeNames, ti.Delete.ExpressionAttributeValues
+		case ti.ConditionCheck != nil:
+			tableName, condExpr, keyItem, names, values = ti.ConditionCheck.TableName, ti.ConditionCheck.ConditionExpression, ti.ConditionCheck.Key, ti.ConditionCheck.ExpressionAttributeNames, ti.ConditionCheck.ExpressionAttributeValues
+		default:
+			continue
+		}
+		t, ok := ddbTables.Get(tableName)
+		if !ok {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+				"Requested resource not found: Table: %s not found", tableName)
+			return
+		}
+		storeKey = ddbItemKey(t, keyItem)
+		current, exists := ddbItems.Get(storeKey)
+		if condExpr != "" && !ddbEvalCondition(current, exists, condExpr, names, values) {
+			sim.AWSError(w, "TransactionCanceledException",
+				"Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]",
+				http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Phase 2: apply mutations.
+	for _, ti := range req.TransactItems {
+		switch {
+		case ti.Put != nil:
+			t, _ := ddbTables.Get(ti.Put.TableName)
+			key := ddbItemKey(t, ti.Put.Item)
+			ddbItems.Put(key, ti.Put.Item)
+			ddbItemNames.Put(key, key)
+		case ti.Delete != nil:
+			t, _ := ddbTables.Get(ti.Delete.TableName)
+			key := ddbItemKey(t, ti.Delete.Key)
+			ddbItems.Delete(key)
+			ddbItemNames.Delete(key)
+		}
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleDDBTransactGetItems(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TransactItems []struct {
+			Get *struct {
+				TableName string         `json:"TableName"`
+				Key       map[string]any `json:"Key"`
+			} `json:"Get"`
+		} `json:"TransactItems"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	ddbItemsMu.Lock()
+	defer ddbItemsMu.Unlock()
+	responses := make([]map[string]any, 0, len(req.TransactItems))
+	for _, ti := range req.TransactItems {
+		if ti.Get == nil {
+			responses = append(responses, map[string]any{})
+			continue
+		}
+		t, ok := ddbTables.Get(ti.Get.TableName)
+		if !ok {
+			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+				"Requested resource not found: Table: %s not found", ti.Get.TableName)
+			return
+		}
+		if it, ok := ddbItems.Get(ddbItemKey(t, ti.Get.Key)); ok {
+			responses = append(responses, map[string]any{"Item": it})
+		} else {
+			responses = append(responses, map[string]any{})
+		}
+	}
+	writeDDBJSON(w, http.StatusOK, map[string]any{"Responses": responses})
 }
 
 // ddbExtractKey builds a DynamoDB key AttributeValue map from an item's primary key attributes.
@@ -940,43 +1470,6 @@ func ddbAttrValuesEqual(a, b any) bool {
 		}
 	}
 	return fmt.Sprint(a) == fmt.Sprint(b)
-}
-
-// containsCI is a case-insensitive substring check — Terraform's
-// state-lock condition expression is `attribute_not_exists(LockID)`
-// which we just need to recognize without parsing.
-func containsCI(haystack, needle string) bool {
-	return indexOfFold(haystack, needle) >= 0
-}
-
-func indexOfFold(s, sub string) int {
-	if len(sub) == 0 {
-		return 0
-	}
-	if len(s) < len(sub) {
-		return -1
-	}
-	for i := 0; i+len(sub) <= len(s); i++ {
-		match := true
-		for j := 0; j < len(sub); j++ {
-			a := s[i+j]
-			b := sub[j]
-			if a >= 'A' && a <= 'Z' {
-				a += 32
-			}
-			if b >= 'A' && b <= 'Z' {
-				b += 32
-			}
-			if a != b {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
 }
 
 // ddbItemNames mirrors the keys of ddbItems for iteration. Maintained

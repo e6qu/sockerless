@@ -26,7 +26,10 @@ import (
 //   - DynamoDB: CreateTable, DescribeTable, DeleteTable,
 //     DescribeContinuousBackups, UpdateContinuousBackups,
 //     DescribeTimeToLive, UpdateTimeToLive,
-//     ListTagsOfResource, TagResource, UntagResource
+//     ListTagsOfResource, TagResource, UntagResource (incl. GlobalSecondaryIndexes)
+//   - ECS: CreateCluster, DescribeClusters, RegisterTaskDefinition,
+//     PutClusterCapacityProviders, CreateService, DescribeServices,
+//     UpdateService, DeleteService
 //   - KMS: GetKeyPolicy, PutKeyPolicy, ListResourceTags, GetKeyRotationStatus,
 //     EnableKeyRotation, TagResource, UntagResource
 //   - Application Auto Scaling: RegisterScalableTarget, DescribeScalableTargets,
@@ -258,6 +261,11 @@ func TestStackProductionShape(t *testing.T) {
 	schedARN := outputs.must(t, "scheduler_schedule_arn")
 	require.Contains(t, schedARN, ":schedule/default/tf-runner-schedule",
 		"CreateSchedule must return a schedule ARN scoped to its group; got %s", schedARN)
+
+	require.Equal(t, "tf-runner-svc", outputs.must(t, "ecs_service_name"),
+		"aws_ecs_service must converge (ACTIVE, runningCount==desiredCount) via the ECS Service family")
+	require.Equal(t, "FARGATE,FARGATE_SPOT", outputs.must(t, "ecs_cluster_capacity_providers"),
+		"PutClusterCapacityProviders must round-trip through DescribeClusters")
 
 	kmsAliasARN := outputs.must(t, "kms_alias_arn")
 	require.Contains(t, kmsAliasARN, ":alias/tf-test-runner",

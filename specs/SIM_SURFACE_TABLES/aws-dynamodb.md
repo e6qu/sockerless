@@ -13,23 +13,28 @@ Surface registered in `simulators/aws/dynamodb.go` (and related files grouped un
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `Action DynamoDB_20120810.CreateTable` | ✓ `simulators/aws/dynamodb.go:169::handleDDBCreateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.DescribeTable` | ✓ `simulators/aws/dynamodb.go:170::handleDDBDescribeTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.DeleteTable` | ✓ `simulators/aws/dynamodb.go:171::handleDDBDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.ListTables` | ✓ `simulators/aws/dynamodb.go:172::handleDDBListTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.PutItem` | ✓ `simulators/aws/dynamodb.go:173::handleDDBPutItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.GetItem` | ✓ `simulators/aws/dynamodb.go:174::handleDDBGetItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.UpdateItem` | ✓ `simulators/aws/dynamodb.go:175::handleDDBUpdateItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.DeleteItem` | ✓ `simulators/aws/dynamodb.go:176::handleDDBDeleteItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.Query` | ✓ `simulators/aws/dynamodb.go:177::handleDDBQuery` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.Scan` | ✓ `simulators/aws/dynamodb.go:178::handleDDBScan` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.DescribeContinuousBackups` | ✓ `simulators/aws/dynamodb.go:179::handleDDBDescribeContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.UpdateContinuousBackups` | ✓ `simulators/aws/dynamodb.go:180::handleDDBUpdateContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.DescribeTimeToLive` | ✓ `simulators/aws/dynamodb.go:181::handleDDBDescribeTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.UpdateTimeToLive` | ✓ `simulators/aws/dynamodb.go:182::handleDDBUpdateTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.ListTagsOfResource` | ✓ `simulators/aws/dynamodb.go:183::handleDDBListTagsOfResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.TagResource` | ✓ `simulators/aws/dynamodb.go:184::handleDDBTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `Action DynamoDB_20120810.UntagResource` | ✓ `simulators/aws/dynamodb.go:185::handleDDBUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.CreateTable` | ✓ `simulators/aws/dynamodb.go:211::handleDDBCreateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeTable` | ✓ `simulators/aws/dynamodb.go:212::handleDDBDescribeTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateTable` | ✓ `simulators/aws/dynamodb.go:213::handleDDBUpdateTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DeleteTable` | ✓ `simulators/aws/dynamodb.go:214::handleDDBDeleteTable` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.ListTables` | ✓ `simulators/aws/dynamodb.go:215::handleDDBListTables` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.PutItem` | ✓ `simulators/aws/dynamodb.go:216::handleDDBPutItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.GetItem` | ✓ `simulators/aws/dynamodb.go:217::handleDDBGetItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateItem` | ✓ `simulators/aws/dynamodb.go:218::handleDDBUpdateItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DeleteItem` | ✓ `simulators/aws/dynamodb.go:219::handleDDBDeleteItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.Query` | ✓ `simulators/aws/dynamodb.go:220::handleDDBQuery` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.Scan` | ✓ `simulators/aws/dynamodb.go:221::handleDDBScan` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.BatchWriteItem` | ✓ `simulators/aws/dynamodb.go:222::handleDDBBatchWriteItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.BatchGetItem` | ✓ `simulators/aws/dynamodb.go:223::handleDDBBatchGetItem` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.TransactWriteItems` | ✓ `simulators/aws/dynamodb.go:224::handleDDBTransactWriteItems` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.TransactGetItems` | ✓ `simulators/aws/dynamodb.go:225::handleDDBTransactGetItems` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeContinuousBackups` | ✓ `simulators/aws/dynamodb.go:226::handleDDBDescribeContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateContinuousBackups` | ✓ `simulators/aws/dynamodb.go:227::handleDDBUpdateContinuousBackups` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.DescribeTimeToLive` | ✓ `simulators/aws/dynamodb.go:228::handleDDBDescribeTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UpdateTimeToLive` | ✓ `simulators/aws/dynamodb.go:229::handleDDBUpdateTimeToLive` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.ListTagsOfResource` | ✓ `simulators/aws/dynamodb.go:230::handleDDBListTagsOfResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.TagResource` | ✓ `simulators/aws/dynamodb.go:231::handleDDBTagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `Action DynamoDB_20120810.UntagResource` | ✓ `simulators/aws/dynamodb.go:232::handleDDBUntagResource` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 
 ## Coverage status
 

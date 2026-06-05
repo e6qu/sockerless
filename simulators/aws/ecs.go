@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,13 +22,16 @@ import (
 // ECS types
 
 type ECSCluster struct {
-	ClusterArn                        string `json:"clusterArn"`
-	ClusterName                       string `json:"clusterName"`
-	Status                            string `json:"status"`
-	RunningTasksCount                 int    `json:"runningTasksCount"`
-	PendingTasksCount                 int    `json:"pendingTasksCount"`
-	ActiveServicesCount               int    `json:"activeServicesCount"`
-	RegisteredContainerInstancesCount int    `json:"registeredContainerInstancesCount"`
+	ClusterArn                        string          `json:"clusterArn"`
+	ClusterName                       string          `json:"clusterName"`
+	Status                            string          `json:"status"`
+	RunningTasksCount                 int             `json:"runningTasksCount"`
+	PendingTasksCount                 int             `json:"pendingTasksCount"`
+	ActiveServicesCount               int             `json:"activeServicesCount"`
+	RegisteredContainerInstancesCount int             `json:"registeredContainerInstancesCount"`
+	CapacityProviders                 []string        `json:"capacityProviders,omitempty"`
+	DefaultCapacityProviderStrategy   json.RawMessage `json:"defaultCapacityProviderStrategy,omitempty"`
+	Tags                              []ECSTag        `json:"tags,omitempty"`
 }
 
 type ECSContainerDefinition struct {
@@ -279,6 +283,10 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.UntagResource", handleECSUntagResource)
 	r.Register("AmazonEC2ContainerServiceV20141113.ExecuteCommand", handleECSExecuteCommand(srv))
 
+	// ECS Service family + cluster capacity providers (aws_ecs_service /
+	// aws_ecs_cluster_capacity_providers).
+	registerECSServices(r, srv)
+
 	// Static WebSocket route for ECS exec sessions (session ID is a path param)
 	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
@@ -336,7 +344,10 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 
 func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClusterName string `json:"clusterName"`
+		ClusterName                     string          `json:"clusterName"`
+		Tags                            []ECSTag        `json:"tags"`
+		CapacityProviders               []string        `json:"capacityProviders"`
+		DefaultCapacityProviderStrategy json.RawMessage `json:"defaultCapacityProviderStrategy"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -347,9 +358,12 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cluster := ECSCluster{
-		ClusterArn:  ecsArn("cluster", req.ClusterName),
-		ClusterName: req.ClusterName,
-		Status:      "ACTIVE",
+		ClusterArn:                      ecsArn("cluster", req.ClusterName),
+		ClusterName:                     req.ClusterName,
+		Status:                          "ACTIVE",
+		Tags:                            req.Tags,
+		CapacityProviders:               req.CapacityProviders,
+		DefaultCapacityProviderStrategy: req.DefaultCapacityProviderStrategy,
 	}
 	ecsClusters.Put(req.ClusterName, cluster)
 
@@ -390,6 +404,13 @@ func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			cluster.RunningTasksCount = runningCount
+			activeServices := 0
+			for _, s := range ecsServices.List() {
+				if s.ClusterArn == cluster.ClusterArn && s.Status == "ACTIVE" {
+					activeServices++
+				}
+			}
+			cluster.ActiveServicesCount = activeServices
 			clusters = append(clusters, cluster)
 		} else {
 			failures = append(failures, map[string]string{
@@ -1431,9 +1452,34 @@ func handleECSTagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Other resource types (cluster, service, container-instance) —
-	// not used by sockerless today; surface a clear error rather
-	// than silently succeeding (no fakes / no fallbacks).
+	// Cluster ARN.
+	if strings.Contains(req.ResourceArn, ":cluster/") {
+		name := ecsClusterNameFromRef(req.ResourceArn)
+		cluster, ok := ecsClusters.Get(name)
+		if !ok {
+			sim.AWSError(w, "ClusterNotFoundException", "cluster not found: "+req.ResourceArn, http.StatusBadRequest)
+			return
+		}
+		cluster.Tags = mergeECSTagsByKey(cluster.Tags, req.Tags)
+		ecsClusters.Put(name, cluster)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+
+	// Service ARN (arn:...:service/<cluster>/<service>).
+	if strings.Contains(req.ResourceArn, ":service/") {
+		clusterName, key, svc, ok := ecsServiceFromARN(req.ResourceArn)
+		_ = clusterName
+		if !ok {
+			sim.AWSError(w, "ServiceNotFoundException", "service not found: "+req.ResourceArn, http.StatusBadRequest)
+			return
+		}
+		svc.Tags = mergeECSTagsByKey(svc.Tags, req.Tags)
+		ecsServices.Put(key, svc)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+
 	sim.AWSError(w, "InvalidParameterException", "tag-target type not implemented in sim: "+req.ResourceArn, http.StatusBadRequest)
 }
 
@@ -1497,6 +1543,23 @@ func handleECSUntagResource(w http.ResponseWriter, r *http.Request) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
+	if strings.Contains(req.ResourceArn, ":cluster/") {
+		name := ecsClusterNameFromRef(req.ResourceArn)
+		if cluster, ok := ecsClusters.Get(name); ok {
+			cluster.Tags = keep(cluster.Tags)
+			ecsClusters.Put(name, cluster)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	if strings.Contains(req.ResourceArn, ":service/") {
+		if _, key, svc, ok := ecsServiceFromARN(req.ResourceArn); ok {
+			svc.Tags = keep(svc.Tags)
+			ecsServices.Put(key, svc)
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
 	sim.AWSError(w, "InvalidParameterException", "untag-target type not implemented in sim: "+req.ResourceArn, http.StatusBadRequest)
 }
 
@@ -1538,14 +1601,23 @@ func handleECSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if it's a task ARN
-	if strings.Contains(req.ResourceArn, ":task/") {
+	switch {
+	case strings.Contains(req.ResourceArn, ":task/"):
 		parts := strings.Split(req.ResourceArn, "/")
-		if len(parts) > 0 {
-			taskID := parts[len(parts)-1]
-			if task, ok := ecsTasks.Get(taskID); ok {
-				tags = task.Tags
-			}
+		if task, ok := ecsTasks.Get(parts[len(parts)-1]); ok {
+			tags = task.Tags
+		}
+	case strings.Contains(req.ResourceArn, ":task-definition/"):
+		if td, ok := ecsTaskDefinitions.Get(extractTDKey(req.ResourceArn)); ok {
+			tags = td.Tags
+		}
+	case strings.Contains(req.ResourceArn, ":cluster/"):
+		if cluster, ok := ecsClusters.Get(ecsClusterNameFromRef(req.ResourceArn)); ok {
+			tags = cluster.Tags
+		}
+	case strings.Contains(req.ResourceArn, ":service/"):
+		if _, _, svc, ok := ecsServiceFromARN(req.ResourceArn); ok {
+			tags = svc.Tags
 		}
 	}
 

@@ -4,11 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `main` (clean).
-- Last merged: PR #405 (Phase E+F — Azure KV data-plane CLI tests, bleephub surface tables, webhook schema fixes).
-- Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp).
+- Branch: `fix/aws-sim-ecs-service-ddb-gsi` (PR #418, closes #416/#417), being expanded with ECS/DynamoDB audit follow-ups.
+- Last merged: PR #415 (KMS tagging #413, EC2 API-only control-plane modeling #414, Podman container image fix).
+- ECS+DynamoDB audit follow-ups (all done, folded into PR #418, BUG-1457–1460): DDB UpdateTable (GSI lifecycle/throughput/billing/deletion-protection), Query/Scan IndexName validation + ScannedCount, Batch/Transact ops, richer ConditionExpression + ReturnValues; ECS tags on cluster/service, ListServices pagination, ListClusters/ListTaskDefinitions. (GSI queries were already working via the generic matcher — audit false-positive.)
+- CloudFront Function tagging (folded into PR #418, BUG-1462): `tf (aws)` `TestStackProductionShape` flaked — `ListTagsForResource` resolved only distribution ARNs, so `aws_cloudfront_function.tf_fn`'s function ARN 404'd (`NoSuchResource`); the AWS provider tolerated the 404 on some read paths but not others (passed runs 26984053264/26985224721, failed 26987472514 on identical sim code). Fix: `cfStoredFunction.Tags` + `cfFunctionNameFromARN` + function-ARN branches in list/tag/untag handlers (shared `cfMergeTags`/`cfDropTags`). SDK regression test added to `TestCloudFrontFunctionLifecycle`.
+- azf attach-stdin invoke race (folded into PR #418, BUG-1461): `test (azure backends)` CI flaked with `Post .../api/function: EOF` → 5-min opaque panic. Root cause: the buffered-attach invoke POSTed before the in-container bootstrap's HTTP listener was up, and the 600s client timeout stranded the attached reader past go-test's 5-min limit. Fix: `waitAZFFunctionListening` TCP-readiness probe (90s-bounded) before the POST + clear fail-fast error. Does **not** use the reverse-agent (CI-only under local Podman), so the path stays locally validatable (passes ~21s). The test was left unchanged — a reorder would have masked the bug.
+- Open GitHub issues: #394 (azuread Terraform provider upstream blocker — waiting on hashicorp). #416/#417 closing via PR #418.
 - Open BUG trackers: BUG-1075, BUG-1104, BUG-1345.
-- BUG counters: 1398 filed · 1393 fixed · 5 open · 3 false positives.
+- BUG counters: 1462 filed · 1419 fixed · 5 open · 3 false positives.
 
 ## Recently Completed
 

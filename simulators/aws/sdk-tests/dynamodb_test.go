@@ -68,6 +68,254 @@ func TestDynamoDB_TableLifecycle(t *testing.T) {
 	assert.Contains(t, list.TableNames, tableName)
 }
 
+// TestDynamoDB_GlobalSecondaryIndexes pins the issue #416 fix: CreateTable
+// must echo each GSI in TableDescription with IndexStatus==ACTIVE, and
+// DescribeTable must report the same. Pre-fix the sim dropped all GSIs
+// (returned null), so terraform-provider-aws waited for GSI ACTIVE forever.
+func TestDynamoDB_GlobalSecondaryIndexes(t *testing.T) {
+	c := ddbClient()
+	tableName := "gsi-probe"
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(tableName)})
+
+	createOut, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("SK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI1PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI2PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash},
+			{AttributeName: aws.String("SK"), KeyType: ddbtypes.KeyTypeRange},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{
+			{
+				IndexName:  aws.String("GSI1"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSI1PK"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+			{
+				IndexName:  aws.String("GSI2"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSI2PK"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeKeysOnly},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.TableDescription)
+
+	// gsiStatus maps index name -> status, requiring the projection to round-trip.
+	gsiStatus := func(gsis []ddbtypes.GlobalSecondaryIndexDescription) map[string]string {
+		m := map[string]string{}
+		for _, g := range gsis {
+			m[aws.ToString(g.IndexName)] = string(g.IndexStatus)
+			require.NotNil(t, g.Projection, "GSI %s must carry its Projection", aws.ToString(g.IndexName))
+			assert.Contains(t, aws.ToString(g.IndexArn), ":table/"+tableName+"/index/"+aws.ToString(g.IndexName))
+		}
+		return m
+	}
+
+	created := gsiStatus(createOut.TableDescription.GlobalSecondaryIndexes)
+	require.Len(t, created, 2, "CreateTable response must echo both GSIs (was null pre-fix)")
+	assert.Equal(t, "ACTIVE", created["GSI1"])
+	assert.Equal(t, "ACTIVE", created["GSI2"])
+
+	desc, err := c.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(tableName)})
+	require.NoError(t, err)
+	require.NotNil(t, desc.Table)
+	described := gsiStatus(desc.Table.GlobalSecondaryIndexes)
+	require.Len(t, described, 2, "DescribeTable must report both GSIs")
+	assert.Equal(t, "ACTIVE", described["GSI1"])
+	assert.Equal(t, "ACTIVE", described["GSI2"])
+}
+
+// TestDynamoDB_UpdateTableGSI covers the post-create GSI lifecycle that
+// terraform-provider-aws drives via UpdateTable's GlobalSecondaryIndexUpdates:
+// add a GSI (declaring its new attribute), confirm it goes ACTIVE, then delete
+// it. Pre-fix UpdateTable was unregistered (404 UnknownOperation).
+func TestDynamoDB_UpdateTableGSI(t *testing.T) {
+	c := ddbClient()
+	table := "update-gsi"
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(table)})
+
+	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(table),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema:   []ddbtypes.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash}},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	// Add a GSI post-create (declaring the new attribute in the same call).
+	upd, err := c.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+		TableName: aws.String(table),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("GSIPK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{
+			{Create: &ddbtypes.CreateGlobalSecondaryIndexAction{
+				IndexName:  aws.String("LateGSI"),
+				KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSIPK"), KeyType: ddbtypes.KeyTypeHash}},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, upd.TableDescription)
+	require.Len(t, upd.TableDescription.GlobalSecondaryIndexes, 1)
+	assert.Equal(t, "ACTIVE", string(upd.TableDescription.GlobalSecondaryIndexes[0].IndexStatus))
+
+	desc, err := c.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
+	require.NoError(t, err)
+	require.Len(t, desc.Table.GlobalSecondaryIndexes, 1, "DescribeTable must report the added GSI")
+
+	// Delete the GSI.
+	_, err = c.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+		TableName: aws.String(table),
+		GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{
+			{Delete: &ddbtypes.DeleteGlobalSecondaryIndexAction{IndexName: aws.String("LateGSI")}},
+		},
+	})
+	require.NoError(t, err)
+	desc, err = c.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)})
+	require.NoError(t, err)
+	assert.Empty(t, desc.Table.GlobalSecondaryIndexes, "deleted GSI must be gone")
+}
+
+// TestDynamoDB_QueryOnGSI verifies a Query against a GSI returns the items
+// whose GSI key matches, that an unknown index is rejected, and that
+// ScannedCount is reported.
+func TestDynamoDB_QueryOnGSI(t *testing.T) {
+	c := ddbClient()
+	table := "gsi-query"
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(table)})
+
+	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(table),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSIPK"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema:   []ddbtypes.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash}},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{{
+			IndexName:  aws.String("by-gsi"),
+			KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("GSIPK"), KeyType: ddbtypes.KeyTypeHash}},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+	require.NoError(t, err)
+
+	put := func(pk, gsipk string) {
+		item := map[string]ddbtypes.AttributeValue{"PK": &ddbtypes.AttributeValueMemberS{Value: pk}}
+		if gsipk != "" {
+			item["GSIPK"] = &ddbtypes.AttributeValueMemberS{Value: gsipk}
+		}
+		_, perr := c.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(table), Item: item})
+		require.NoError(t, perr)
+	}
+	put("a", "group1")
+	put("b", "group1")
+	put("c", "group2")
+	put("d", "") // not in the GSI
+
+	out, err := c.Query(ctx, &dynamodb.QueryInput{
+		TableName:                 aws.String(table),
+		IndexName:                 aws.String("by-gsi"),
+		KeyConditionExpression:    aws.String("GSIPK = :g"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":g": &ddbtypes.AttributeValueMemberS{Value: "group1"}},
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, out.Count, "GSI query must return the two group1 items")
+	assert.EqualValues(t, 2, out.ScannedCount)
+
+	// Unknown index must be rejected.
+	_, err = c.Query(ctx, &dynamodb.QueryInput{
+		TableName:                 aws.String(table),
+		IndexName:                 aws.String("does-not-exist"),
+		KeyConditionExpression:    aws.String("GSIPK = :g"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":g": &ddbtypes.AttributeValueMemberS{Value: "group1"}},
+	})
+	require.Error(t, err, "querying an unknown index must fail with ValidationException")
+}
+
+// TestDynamoDB_BatchAndTransact covers BatchWriteItem/BatchGetItem and the
+// transactional ops, plus a richer ConditionExpression than the state-lock case.
+func TestDynamoDB_BatchAndTransact(t *testing.T) {
+	c := ddbClient()
+	table := "batch-tx"
+	defer c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(table)})
+	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String(table),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("PK"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: ddbtypes.KeyTypeHash}},
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+	s := func(v string) *ddbtypes.AttributeValueMemberS { return &ddbtypes.AttributeValueMemberS{Value: v} }
+
+	// BatchWriteItem: put three.
+	_, err = c.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{table: {
+			{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"PK": s("a")}}},
+			{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"PK": s("b")}}},
+			{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"PK": s("c")}}},
+		}},
+	})
+	require.NoError(t, err)
+
+	// BatchGetItem: read two back.
+	bg, err := c.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{table: {Keys: []map[string]ddbtypes.AttributeValue{
+			{"PK": s("a")}, {"PK": s("c")},
+		}}},
+	})
+	require.NoError(t, err)
+	assert.Len(t, bg.Responses[table], 2)
+
+	// TransactWriteItems: put "d" only if it doesn't exist — succeeds, then fails.
+	txPut := func() error {
+		_, e := c.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: []ddbtypes.TransactWriteItem{{Put: &ddbtypes.Put{
+				TableName:           aws.String(table),
+				Item:                map[string]ddbtypes.AttributeValue{"PK": s("d")},
+				ConditionExpression: aws.String("attribute_not_exists(PK)"),
+			}}},
+		})
+		return e
+	}
+	require.NoError(t, txPut())
+	require.Error(t, txPut(), "second transactional put must be cancelled by the condition")
+
+	// TransactGetItems.
+	tg, err := c.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+		TransactItems: []ddbtypes.TransactGetItem{{Get: &ddbtypes.Get{
+			TableName: aws.String(table), Key: map[string]ddbtypes.AttributeValue{"PK": s("d")},
+		}}},
+	})
+	require.NoError(t, err)
+	require.Len(t, tg.Responses, 1)
+	require.NotNil(t, tg.Responses[0].Item)
+
+	// Richer ConditionExpression: numeric comparison.
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(table),
+		Item:      map[string]ddbtypes.AttributeValue{"PK": s("ver"), "v": &ddbtypes.AttributeValueMemberN{Value: "5"}},
+	})
+	require.NoError(t, err)
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:                 aws.String(table),
+		Item:                      map[string]ddbtypes.AttributeValue{"PK": s("ver"), "v": &ddbtypes.AttributeValueMemberN{Value: "9"}},
+		ConditionExpression:       aws.String("v < :max"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":max": &ddbtypes.AttributeValueMemberN{Value: "10"}},
+	})
+	require.NoError(t, err, "condition v < 10 should hold (current v=5)")
+}
+
 // TestDynamoDB_TerraformStateLockSemantics pins the canonical
 // state-lock acquire/release flow that terraform uses with
 // `backend "s3" { dynamodb_table = "..." }` — PutItem with

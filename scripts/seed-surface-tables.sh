@@ -64,6 +64,7 @@ matrix_cell() {
 table_for_file() {
   case "$1:$2" in
     aws:s3|aws:s3_subresources) echo "aws-s3" ;;
+    aws:ecs|aws:ecs_service) echo "aws-ecs" ;;
     aws:application_autoscaling) echo "aws-application-autoscaling" ;;
     aws:lambda|aws:lambda_subresources) echo "aws-lambda" ;;
     aws:cloudfront|aws:cloudfront_functions|aws:cloudfront_keys|aws:cloudfront_policies) echo "aws-cloudfront" ;;

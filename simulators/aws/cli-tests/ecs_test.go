@@ -9,6 +9,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestECS_CLI_ServiceFamily(t *testing.T) {
+	cluster := "cli-ecs-svc-cluster"
+	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
+	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
+	runCLI(t, awsCLI("ecs", "register-task-definition",
+		"--family", "cli-svc-task",
+		"--container-definitions", `[{"name":"app","image":"alpine:latest","essential":true}]`))
+
+	// PutClusterCapacityProviders → DescribeClusters echoes them.
+	runCLI(t, awsCLI("ecs", "put-cluster-capacity-providers",
+		"--cluster", cluster,
+		"--capacity-providers", "FARGATE", "FARGATE_SPOT",
+		"--default-capacity-provider-strategy", "capacityProvider=FARGATE,weight=1,base=1"))
+	descCl := runCLI(t, awsCLI("ecs", "describe-clusters", "--clusters", cluster, "--output", "json"))
+	var cl struct {
+		Clusters []struct {
+			CapacityProviders []string `json:"capacityProviders"`
+		} `json:"clusters"`
+	}
+	parseJSON(t, descCl, &cl)
+	require.Len(t, cl.Clusters, 1)
+	assert.ElementsMatch(t, []string{"FARGATE", "FARGATE_SPOT"}, cl.Clusters[0].CapacityProviders)
+
+	// CreateService → ACTIVE.
+	createOut := runCLI(t, awsCLI("ecs", "create-service",
+		"--cluster", cluster, "--service-name", "cli-svc",
+		"--task-definition", "cli-svc-task", "--desired-count", "2",
+		"--launch-type", "FARGATE", "--output", "json"))
+	var created struct {
+		Service struct {
+			Status       string `json:"status"`
+			RunningCount int    `json:"runningCount"`
+		} `json:"service"`
+	}
+	parseJSON(t, createOut, &created)
+	assert.Equal(t, "ACTIVE", created.Service.Status)
+	assert.Equal(t, 2, created.Service.RunningCount)
+
+	descOut := runCLI(t, awsCLI("ecs", "describe-services",
+		"--cluster", cluster, "--services", "cli-svc", "--output", "json"))
+	var desc struct {
+		Services []struct {
+			Status string `json:"status"`
+		} `json:"services"`
+	}
+	parseJSON(t, descOut, &desc)
+	require.Len(t, desc.Services, 1)
+	assert.Equal(t, "ACTIVE", desc.Services[0].Status)
+
+	delOut := runCLI(t, awsCLI("ecs", "delete-service",
+		"--cluster", cluster, "--service", "cli-svc", "--force", "--output", "json"))
+	var del struct {
+		Service struct {
+			Status string `json:"status"`
+		} `json:"service"`
+	}
+	parseJSON(t, delOut, &del)
+	assert.Equal(t, "INACTIVE", del.Service.Status)
+}
+
 func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 	// Create cluster
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ecs-cluster"))
