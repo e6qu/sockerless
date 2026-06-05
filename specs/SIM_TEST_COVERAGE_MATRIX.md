@@ -72,6 +72,7 @@ Legend:
 | `gcp-bigquery` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudbuild` | direct | direct | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-cloudkms` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudkms_test.go`; `simulators/gcp/cli-tests/cloudkms_test.go`; `simulators/gcp/terraform-tests/fixtures/kms-lifecycle/main.tf` |
 | `gcp-cloudrun` | direct | direct | direct | `simulators/gcp/sdk-tests/run_sdk_test.go`; `simulators/gcp/cli-tests/run_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/cli-tests/compute_instances_test.go`; `simulators/gcp/cli-tests/compute_nat_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute_loadbalancing` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_loadbalancing_test.go`; `simulators/gcp/terraform-tests/main.tf` |
