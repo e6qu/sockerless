@@ -20,6 +20,7 @@ type CWLogGroup struct {
 	CreationTime    int64  `json:"creationTime"`
 	RetentionInDays int    `json:"retentionInDays,omitempty"`
 	StoredBytes     int64  `json:"storedBytes"`
+	KmsKeyId        string `json:"kmsKeyId,omitempty"`
 }
 
 type CWLogStream struct {
@@ -77,12 +78,50 @@ func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("Logs_20140328.PutRetentionPolicy", handleCWPutRetentionPolicy)
 	r.Register("Logs_20140328.ListTagsForResource", handleCWListTagsForResource)
 	r.Register("Logs_20140328.TagResource", handleCWTagResource)
+	r.Register("Logs_20140328.AssociateKmsKey", handleCWAssociateKmsKey)
+	r.Register("Logs_20140328.DisassociateKmsKey", handleCWDisassociateKmsKey)
+}
+
+// handleCWAssociateKmsKey sets the KMS key on an existing log group (the path
+// for aws_cloudwatch_log_group when kms_key_id is changed after create).
+func handleCWAssociateKmsKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LogGroupName string `json:"logGroupName"`
+		KmsKeyId     string `json:"kmsKeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !cwLogGroups.Update(req.LogGroupName, func(lg *CWLogGroup) { lg.KmsKeyId = req.KmsKeyId }) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"The specified log group does not exist: %s", req.LogGroupName)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleCWDisassociateKmsKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LogGroupName string `json:"logGroupName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !cwLogGroups.Update(req.LogGroupName, func(lg *CWLogGroup) { lg.KmsKeyId = "" }) {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"The specified log group does not exist: %s", req.LogGroupName)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handleCWCreateLogGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LogGroupName    string `json:"logGroupName"`
 		RetentionInDays int    `json:"retentionInDays"`
+		KmsKeyId        string `json:"kmsKeyId"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -104,6 +143,7 @@ func handleCWCreateLogGroup(w http.ResponseWriter, r *http.Request) {
 		Arn:             cwLogGroupArn(req.LogGroupName),
 		CreationTime:    time.Now().UnixMilli(),
 		RetentionInDays: req.RetentionInDays,
+		KmsKeyId:        req.KmsKeyId,
 	}
 	cwLogGroups.Put(req.LogGroupName, lg)
 

@@ -78,6 +78,16 @@ resource "aws_vpc" "tf_ec2_vpc" {
   cidr_block = "10.88.0.0/16"
 }
 
+# data.aws_vpc by vpc-id filter — the fck-nat pattern; reads back the VPC's
+# CIDR from cidr_block_associations (issues #442). With the broken filter this
+# returned the wrong VPC / an empty CIDR.
+data "aws_vpc" "by_filter" {
+  filter {
+    name   = "vpc-id"
+    values = [aws_vpc.tf_ec2_vpc.id]
+  }
+}
+
 resource "aws_subnet" "tf_ec2_subnet" {
   vpc_id     = aws_vpc.tf_ec2_vpc.id
   cidr_block = "10.88.1.0/24"
@@ -283,6 +293,20 @@ resource "aws_autoscaling_group" "tf_asg" {
 
 resource "aws_ecs_cluster" "main" {
   name = "tf-test-cluster"
+
+  # containerInsights setting + execute-command KMS config — read back via
+  # DescribeClusters --include SETTINGS CONFIGURATIONS (issue #446).
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
+  configuration {
+    execute_command_configuration {
+      kms_key_id = aws_kms_key.tf_kms.arn
+      logging    = "DEFAULT"
+    }
+  }
 }
 
 # Cluster capacity providers — exercises PutClusterCapacityProviders; the
@@ -604,6 +628,25 @@ resource "aws_cloudwatch_event_target" "tf_eventbridge_target" {
 resource "aws_cloudwatch_log_group" "tf_log_group" {
   name              = "/aws/sockerless/tf-log-group"
   retention_in_days = 7
+  # KMS encryption at rest — read back via DescribeLogGroups (issue #445).
+  kms_key_id = aws_kms_key.tf_kms.arn
+}
+
+# Standalone managed policy — its destroy path calls ListPolicyVersions
+# (issue #441); without it `terraform destroy` previously failed.
+resource "aws_iam_policy" "tf_nat_policy" {
+  name = "tf-nat-policy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ec2:AssignPrivateIpAddresses", "ec2:DescribeNetworkInterfaces"]
+      Resource = "*"
+    }]
+  })
+  tags = {
+    module = "fck-nat"
+  }
 }
 
 resource "aws_api_gateway_rest_api" "tf_rest_api" {
@@ -1313,6 +1356,18 @@ output "ecr_repository_url" {
 }
 output "ecr_repository_tag_mutability" {
   value = aws_ecr_repository.tf_repo.image_tag_mutability
+}
+output "data_vpc_cidr" {
+  value = data.aws_vpc.by_filter.cidr_block
+}
+output "data_vpc_id" {
+  value = data.aws_vpc.by_filter.id
+}
+output "iam_nat_policy_arn" {
+  value = aws_iam_policy.tf_nat_policy.arn
+}
+output "log_group_kms_key_id" {
+  value = aws_cloudwatch_log_group.tf_log_group.kms_key_id
 }
 output "ec2_nat_gateway_id" {
   value = aws_nat_gateway.tf_nat.id

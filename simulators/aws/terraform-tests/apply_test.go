@@ -263,6 +263,13 @@ func TestStackProductionShape(t *testing.T) {
 	require.Contains(t, outputs.must(t, "ecr_repository_url"), ".dkr.ecr.us-east-1.amazonaws.com/tf-runner-repo",
 		"aws_ecr_repository repository_url must use the canonical ECR registry host")
 
+	require.Equal(t, "10.88.0.0/16", outputs.must(t, "data_vpc_cidr"),
+		"data.aws_vpc by vpc-id filter must read the right VPC's CIDR (issue #442)")
+	require.NotEmpty(t, outputs.must(t, "iam_nat_policy_arn"),
+		"aws_iam_policy must apply (and destroy via ListPolicyVersions — issue #441)")
+	require.Contains(t, outputs.must(t, "log_group_kms_key_id"), "arn:aws:kms:",
+		"aws_cloudwatch_log_group kms_key_id must round-trip through DescribeLogGroups (issue #445)")
+
 	aasResourceID := outputs.must(t, "appautoscaling_target_resource_id")
 	require.Contains(t, aasResourceID, "service/tf-test-cluster/",
 		"Application Auto Scaling target resource_id must reference the ECS service")

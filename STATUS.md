@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/aws-sim-flagged-followups` (PR pending — three flagged follow-ups, BUG-1482–1484) |
-| In-flight | Three flagged follow-ups bundled: **#433 follow-up** EC2 launch-template in-place update (`CreateLaunchTemplateVersion` + `ModifyLaunchTemplate`); **#435 follow-up** ECR `aws_ecr_repository` read-back completeness (imageTagMutability/encryptionConfiguration/imageScanningConfiguration) + the deferred TF resource; **#432 follow-up** CloudWatch CLI query-protocol metrics (`PutMetricData`/`GetMetricStatistics`/`ListMetrics` over the query router, same `cwMetrics` store). Note: `ModifyLaunchTemplate`'s wire param is `SetDefaultVersion`, not `DefaultVersion`. SDK + CLI coverage; `aws_ecr_repository` added to the production-shape Terraform stack. |
-| Last merged | PR #440 — five AWS sim gaps (BUG-1477–1481, #434–#438) |
-| Also merged recently | PR #439 (EC2 Launch Template ops #433); PR #432 (real CloudWatch metrics #1475); PR #431 (IAM policy simulation #427) |
+| Active branch | `feat/aws-sim-consumer-batch-441` (PR pending — six consumer issues, BUG-1485–1490, #441–#443/#445–#447) |
+| In-flight | Six consumer issues bundled: **#441** IAM ListPolicyVersions (aws_iam_policy destroy); **#442** DescribeVpcs filtering + cidrBlockAssociationSet; **#443** DescribeSecurityGroups vpc-id filter; **#445** CloudWatch Logs CreateLogGroup kmsKeyId (+Associate/DisassociateKmsKey); **#446** ECS DescribeClusters settings/configuration (include-gated); **#447** IAM ListRoles + ListRoleTags/ListPolicyTags (+ role/policy tag storage). #444 (ECR scan/encryption config) was already fixed by #448. SDK + CLI for all six; TF stack augmented (aws_iam_policy, data.aws_vpc filter, ecs cluster settings, log-group kms). |
+| Last merged | PR #448 — three flagged follow-ups (BUG-1482–1484) |
+| Also merged recently | PR #440 (five AWS sim gaps #434–#438); PR #439 (EC2 Launch Template ops #433); PR #432 (real CloudWatch metrics #1475) |
 | Open GitHub issues | None actionable — only #394 (azuread TF provider upstream blocker) |
-| Bugs | 1484 filed · 1440 fixed · 5 open · 4 false positives |
+| Bugs | 1490 filed · 1446 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
 | Planned next | Consumer issue queue drained (only #394 upstream-blocked). Options: fresh fidelity audit; Phase G new slices (GCP Spanner/Dataflow/Bigtable, Azure); or await new consumer issues |
 | Live infra | None up |
