@@ -873,9 +873,12 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TableName string         `json:"TableName"`
 		Key       map[string]any `json:"Key"`
-		// Real UpdateItem supports UpdateExpression — for sim's needs
-		// we accept AttributeUpdates (legacy) which is simpler.
-		AttributeUpdates map[string]struct {
+		// Modern clients drive UpdateItem with an UpdateExpression; the legacy
+		// AttributeUpdates parameter is also accepted.
+		UpdateExpression          string            `json:"UpdateExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+		AttributeUpdates          map[string]struct {
 			Action string         `json:"Action"`
 			Value  map[string]any `json:"Value"`
 		} `json:"AttributeUpdates"`
@@ -899,6 +902,12 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 		// Copy primary-key attrs from Key into the new item.
 		for k, v := range req.Key {
 			item[k] = v
+		}
+	}
+	if req.UpdateExpression != "" {
+		if err := ddbApplyUpdateExpression(item, req.UpdateExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues); err != nil {
+			sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 	for attr, upd := range req.AttributeUpdates {

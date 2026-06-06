@@ -117,6 +117,8 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeleteRepository", handleECRDeleteRepository)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken", handleECRGetAuthorizationToken)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchGetImage", handleECRBatchGetImage)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.ListImages", handleECRListImages)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribeImages", handleECRDescribeImages)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.PutImage", handleECRPutImage)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchDeleteImage", handleECRBatchDeleteImage)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.BatchCheckLayerAvailability", handleECRBatchCheckLayerAvailability)
@@ -398,6 +400,97 @@ func handleECRGetAuthorizationToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ecrRepoImages returns the distinct images in a repository (the ecrImages
+// store holds each image under both its tag and its digest key, so dedup by
+// digest).
+func ecrRepoImages(repo string) []ECRImageDetail {
+	seen := map[string]bool{}
+	var out []ECRImageDetail
+	for _, img := range ecrImages.List() {
+		if img.RepositoryName != repo || seen[img.ImageDigest] {
+			continue
+		}
+		seen[img.ImageDigest] = true
+		out = append(out, img)
+	}
+	return out
+}
+
+func handleECRListImages(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName string `json:"repositoryName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ecrRepositories.Get(req.RepositoryName); !ok {
+		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest, "The repository with name '%s' does not exist", req.RepositoryName)
+		return
+	}
+	imageIds := []map[string]string{}
+	for _, img := range ecrRepoImages(req.RepositoryName) {
+		if len(img.ImageTags) == 0 {
+			imageIds = append(imageIds, map[string]string{"imageDigest": img.ImageDigest})
+			continue
+		}
+		for _, tag := range img.ImageTags {
+			imageIds = append(imageIds, map[string]string{"imageDigest": img.ImageDigest, "imageTag": tag})
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"imageIds": imageIds})
+}
+
+func handleECRDescribeImages(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepositoryName string `json:"repositoryName"`
+		ImageIds       []struct {
+			ImageTag    string `json:"imageTag"`
+			ImageDigest string `json:"imageDigest"`
+		} `json:"imageIds"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := ecrRepositories.Get(req.RepositoryName); !ok {
+		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest, "The repository with name '%s' does not exist", req.RepositoryName)
+		return
+	}
+
+	var images []ECRImageDetail
+	if len(req.ImageIds) > 0 {
+		for _, id := range req.ImageIds {
+			key := req.RepositoryName + ":" + id.ImageTag
+			if id.ImageDigest != "" {
+				key = req.RepositoryName + ":" + id.ImageDigest
+			}
+			if img, ok := ecrImages.Get(key); ok {
+				images = append(images, img)
+			}
+		}
+	} else {
+		images = ecrRepoImages(req.RepositoryName)
+	}
+
+	details := make([]map[string]any, 0, len(images))
+	for _, img := range images {
+		tags := img.ImageTags
+		if tags == nil {
+			tags = []string{}
+		}
+		details = append(details, map[string]any{
+			"registryId":       img.RegistryId,
+			"repositoryName":   img.RepositoryName,
+			"imageDigest":      img.ImageDigest,
+			"imageTags":        tags,
+			"imageSizeInBytes": len(img.ImageManifest),
+			"imagePushedAt":    img.PushedAt,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"imageDetails": details})
+}
+
 func handleECRBatchGetImage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepositoryName string `json:"repositoryName"`
@@ -532,7 +625,14 @@ func handleECRBatchDeleteImage(w http.ResponseWriter, r *http.Request) {
 			key = req.RepositoryName + ":" + imageId.ImageDigest
 		}
 
-		if _, ok := ecrImages.Get(key); ok {
+		if img, ok := ecrImages.Get(key); ok {
+			// Each image is stored under its digest key and one key per tag —
+			// delete every alias for the content, or DescribeImages/ListImages
+			// (which dedup by digest) would still surface a "deleted" image.
+			ecrImages.Delete(req.RepositoryName + ":" + img.ImageDigest)
+			for _, tag := range img.ImageTags {
+				ecrImages.Delete(req.RepositoryName + ":" + tag)
+			}
 			ecrImages.Delete(key)
 			imgId := map[string]string{}
 			if imageId.ImageTag != "" {

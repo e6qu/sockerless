@@ -4,6 +4,15 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — Coverage audit batch 2: 3 real bugs + DynamoDB/ECR/misc backfill (BUG-1514–1516, PR pending)
+
+Continuing the untested-op audit, probing the remaining gaps surfaced **three real bugs** (the audit paying off, not just adding tests):
+- **BUG-1514 DynamoDB UpdateItem silent no-op.** The handler only implemented the legacy `AttributeUpdates` param and ignored `UpdateExpression` (`SET #a = :v`, `ADD`, `REMOVE`) — what every modern client sends — so `update-item --update-expression` returned 200 and persisted *nothing*; a follow-up `get-item` showed the attribute absent. Forbidden synthetic-success. Fixed with a real `UpdateExpression` evaluator (`dynamodb_update_expression.go`): SET assignment + `+`/`-` arithmetic + `if_not_exists`, REMOVE, ADD (numeric/set-union), DELETE (set-element), resolving `#name`/`:val`.
+- **BUG-1515 ECR DescribeImages + ListImages missing.** Both core read ops `UnknownOperationException`'d — only `BatchGetImage` (by explicit id) existed. Implemented both off the `ecrImages` store.
+- **BUG-1516 ECR BatchDeleteImage incomplete delete.** Each image is stored under its digest key + one key per tag; delete-by-tag dropped only the tag key, so the digest alias survived and the (new) DescribeImages still surfaced the "deleted" image. Same alias class as the OCI manifest DELETE — fixed to drop every alias.
+
+Coverage backfill (SDK + CLI) for the remaining untested ops: DynamoDB (UpdateExpression, TTL, continuous-backups), ECR (ListImages/DescribeImages/BatchDeleteImage/DeleteLifecyclePolicy), SSM GetParameters, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN ListStateMachineVersions/ValidateStateMachineDefinition, Logs PutRetentionPolicy, SQS SetQueueAttributes, ElastiCache RemoveTagsFromResource. (ECS ExecuteCommand deferred — it needs a running-task fixture.)
+
 ## 2026-06-06 — AWS sim test-coverage audit + EC2/IAM backfill (PR pending)
 
 Acting on the lesson that an *unrun* CloudWatch test hid a broken protocol, audited the AWS sim for handlers with no test at all. Cross-referenced all 380 registered operations against the SDK + CLI test corpus: **34 had no test**. Probed every one against a running sim — all respond correctly (no CloudWatch-style hard breakage; the apparent failures were missing prerequisites, i.e. correct NotFound errors), and the state-changing ones round-trip (modify-vpc/subnet-attribute reflect in describe, associate/disassociate route-table, revoke SG rules, IGW attach/detach). So the gap is regression exposure, not live bugs.
