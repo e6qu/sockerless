@@ -4,6 +4,10 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — CI: every AWS CLI test now runs in a shard, guarded (BUG-1512, PR pending)
+
+While fixing a compute-shard timeout I noticed several CLI tests matched no shard `-run '^Test(...)'` regex. A full audit found **16 AWS CLI tests that never ran in CI**: `TestBatch_*`, `TestCloudWatch*`, `TestCodeBuild_*`, `TestECRCLI_*` (the shard carried the stale `CLI_ECR` prefix, which only matches `TestCLI_ECR_*`, not `TestECRCLI_*`), `TestGlue_*`, `TestResourceTagsCLI_*` (one of our own #462 tests), `TestSFN_*`. Ran all 16 locally — every one passes; they were simply unrun. Extended the shard regexes so every CLI test maps to exactly one shard (balanced edge/compute/appdata, ECR kept alongside CLI_ECR), and added `scripts/check-cli-shard-coverage.sh` (pre-commit hook + portable bash/zsh, shellcheck-clean) that fails on any orphan or double-matched test — so a new service's CLI tests can't silently slip through unrun again.
+
 ## 2026-06-06 — Five read-back fidelity gaps: EC2/ELBv2 idempotency + ACR auth (BUG-1507–1511, PR pending)
 
 Consumer batch #469–#473, all reproduced against running sims first, then SDK + CLI + (for the AWS four) the `terraform plan -detailed-exitcode==0` idempotency stack.
