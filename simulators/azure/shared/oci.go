@@ -84,8 +84,13 @@ func (reg *OCIRegistry) Register(srv *Server) {
 
 func (reg *OCIRegistry) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	// Real Docker Distribution / ECR registries return this header on EVERY
+	// /v2/ response (not just the base ping) — including the missing-manifest
+	// 404 that a push client probes first. Setting it here covers manifest,
+	// blob, tags, and error responses; a strict client or fronting proxy can
+	// otherwise reject a bare 404 that doesn't look like a registry response.
+	w.Header().Set("Docker-Distribution-Api-Version", "registry/2.0")
 	if path == "/v2/" || path == "/v2" {
-		w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
 		WriteJSON(w, http.StatusOK, map[string]any{})
 		return
 	}

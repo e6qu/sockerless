@@ -4,6 +4,14 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — OCI `/v2/` registry header fidelity (BUG-1504, PR pending)
+
+The consumer filed #465: an ECR push via go-containerregistry "returns HTTP 400 for the missing-manifest HEAD probe and aborts." **Reproduced rigorously against current main with the real go-containerregistry client** (built a throwaway g-c-r program) — and the 400 did *not* reproduce: `HEAD /v2/<repo>/manifests/<missing>` returns **404 MANIFEST_UNKNOWN** and the full push succeeds across 1/2/3-segment repos. The sim already does what the issue's "Expected" asks (a 404 that lets the push continue).
+
+The one real defect found and fixed: only the base `GET /v2/` ping set `Docker-Distribution-Api-Version: registry/2.0`; manifest / blob / tags / error responses omitted it, where real Docker Distribution and ECR emit it on **every** `/v2/` response. A strict client or a fronting proxy can reject a 404 that doesn't look like a registry response — the most plausible explanation for the consumer's 400. Fix: set the header once at the top of the shared `serve()` so all OCI responses carry it (the same identical `shared/oci.go` copied to aws/gcp/azure). Honest caveat, recorded in the BUG + PR + issue: this is header hardening, not a proven repro of the 400 — go-containerregistry itself doesn't key on the header for manifest HEAD.
+
+Coverage: a new `TestECR_OCIManifestHeadMissing` locks the consumer's exact probe — missing-tag HEAD → 404 (not 400) with the header present, GET → 404 `MANIFEST_UNKNOWN`, then push → HEAD reports 200. Existing AWS/GCP/Azure OCI suites stay green.
+
 ## 2026-06-06 — Seven AWS terraform-idempotency read-back gaps (BUG-1497–1503, PR pending)
 
 The consumer filed a batch (#457–#464) of read-back fidelity gaps that each break `terraform plan` idempotency: a field round-trips on real AWS but the sim dropped or mis-rendered it, so every plan-after-apply shows spurious drift. All seven were reproduced against a running sim with the real `aws` CLI first (ground truth — three issues' surface conflicted with a first-pass code read, and the CLI repro decided it), fixed, then proven with SDK + CLI tests and a `terraform plan -detailed-exitcode==0` idempotency stack:

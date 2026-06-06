@@ -4,8 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-batch-457` (PR pending — seven AWS terraform-idempotency read-back fidelity gaps, #457–#464, BUG-1497–1503).
-- **Two PRs pending, both off main, neither merged:** PR #463 = `feat/aws-sim-batch-453` (#453/#454/#455 + sweep); this branch = `feat/aws-sim-batch-457` (#457–#464). They overlap in `ec2.go`/`dynamodb.go` (different regions); rebase this branch on main once #463 merges.
+- Branch: `feat/ecr-oci-manifest-head-465` (PR pending — OCI `/v2/` registry header fidelity, #465, BUG-1504).
+- **#465 finding:** consumer reported ECR manifest HEAD returns 400 (go-containerregistry); **could not reproduce on current main** — built a throwaway g-c-r client, HEAD→404 across 1/2/3-segment repos and the full push works. Real defect fixed: only `GET /v2/` set `Docker-Distribution-Api-Version`; now set on **every** `/v2/` response in the shared `serve()` (all 3 cloud copies identical). Regression test `TestECR_OCIManifestHeadMissing` (sdk-tests/ecr_oci_test.go) locks missing-tag HEAD→404 + header + push round-trip. Honest: hardening, not a proven 400 repro — g-c-r doesn't key on the header for manifest HEAD. **Next: ask the consumer (via #465) for their exact commit SHA + g-c-r version + proxy/auth to pin the discrepancy.**
+- Merged earlier today: PR #466 (#457–#464, BUG-1497–1503), PR #463 (#453–#455 + PM-artifact sweep). All consumer issues #453–#464 closed; #465 open (this branch), #394 upstream-blocked.
 - **Seven consumer fixes (#457–#464):** all reproduced against a running sim with the real `aws` CLI first (ground truth), then SDK + CLI tests + a `terraform plan -detailed-exitcode==0` idempotency stack (`terraform-tests/idempotency-fidelity/`, covers 6 end-to-end; #460 SDK+CLI-only).
   - **#457 (BUG-1497)** SG-rule `sgrItemXML` omits `<fromPort>`/`<toPort>` when `IpProtocol=="-1"`.
   - **#458 (BUG-1498)** `referencedGroupInfo` omits `<userId>` for same-account refs (provider was prefixing `userId/sg-id` under `skip_requesting_account_id`).
