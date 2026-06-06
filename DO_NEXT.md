@@ -4,7 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `test/aws-coverage-backfill` (PR pending — AWS sim test-coverage audit + EC2/IAM backfill).
+- Branch: `test/aws-coverage-backfill-2` (PR pending — coverage audit batch 2: 3 real bug fixes + DynamoDB/ECR/misc backfill).
+- **3 bugs found by the audit + fixed:** BUG-1514 DynamoDB UpdateItem silent no-op (only legacy AttributeUpdates; ignored UpdateExpression → wrote a real evaluator `dynamodb_update_expression.go`); BUG-1515 ECR DescribeImages+ListImages missing (implemented); BUG-1516 ECR BatchDeleteImage left the digest alias (fixed — same class as the OCI manifest DELETE). SDK+CLI coverage for all + the remaining misc ops (SSM/Glue/CodeBuild/SFN/Logs/SQS/ElastiCache). **Only ECS ExecuteCommand still uncovered** — it needs a running-task fixture (reuse the run-task harness in a follow-up).
+- EC2/IAM coverage backfill (batch 1) merged as PR #476.
+
+## Prior current state
 - **Coverage audit:** cross-referenced all 380 registered AWS sim ops vs the SDK+CLI test corpus → **34 untested**. Probed all 34 against a running sim: all respond + round-trip correctly (no hidden bugs; this is regression exposure, not live defects). This PR backfills the 18 fck-nat-critical EC2 networking + IAM role-policy ops (SDK+CLI, real round-trip assertions). **Remaining 16 for follow-up:** DynamoDB (UpdateItem, TTL, continuous-backups), ECR (BatchDeleteImage, DeleteLifecyclePolicy), SSM GetParameters, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN (ListStateMachineVersions, ValidateStateMachineDefinition), ECS ExecuteCommand, Logs PutRetentionPolicy, SQS SetQueueAttributes, RemoveTagsFromResource.
 - **Audit method (reusable):** `grep -rhoE '\.Register(Versioned)?\("[^"]+"'` for ops; cross-ref against `.<Op>(` in sdk-tests + `"<kebab-op>"` in cli-tests; probe the gap against a running sim.
 

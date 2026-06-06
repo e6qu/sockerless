@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `test/aws-coverage-backfill` (PR pending — AWS sim test-coverage audit + EC2/IAM backfill) |
-| In-flight | Audited all 380 registered AWS sim ops vs the SDK+CLI corpus → 34 untested (all probed: respond + round-trip OK, no live bugs). This PR backfills 18 fck-nat-critical EC2-networking + IAM-role-policy ops with SDK+CLI round-trip tests. 16 remain for follow-up (DynamoDB/ECR/SSM/Glue/CodeBuild/SFN/ECS/Logs/SQS). |
-| Last merged | PR #475 (#469–#473 + BUG-1512/1513); PR #474 (azf attach deadline); PR #468 (#465 + #467); PR #466 (#457–#464) |
+| Active branch | `test/aws-coverage-backfill-2` (PR pending — coverage audit batch 2: 3 bug fixes + DynamoDB/ECR/misc backfill) |
+| In-flight | Probing the remaining untested ops surfaced **3 real bugs**: BUG-1514 DynamoDB UpdateItem silent no-op (UpdateExpression ignored — wrote a real evaluator), BUG-1515 ECR DescribeImages+ListImages missing (implemented), BUG-1516 ECR BatchDeleteImage left the digest alias (fixed). SDK+CLI coverage for these + SSM/Glue/CodeBuild/SFN/Logs/SQS/ElastiCache. Only ECS ExecuteCommand deferred (needs running-task fixture). |
+| Last merged | PR #476 (EC2/IAM coverage backfill); PR #475 (#469–#473 + BUG-1512/1513); PR #474 (azf attach deadline) |
 | Open GitHub issues | All consumer issues #453–#473 closed; only #394 (azuread TF upstream) remains. |
-| Bugs | 1513 filed · 1469 fixed · 5 open · 4 false positives |
+| Bugs | 1516 filed · 1472 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
 | Planned next | Finish the coverage backfill (16 remaining ops); then fresh fidelity audit / Phase G new slices / await new consumer issues |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
