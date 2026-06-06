@@ -37,20 +37,21 @@ type BQDatasetRef struct {
 }
 
 type BQTable struct {
-	Kind             string     `json:"kind"`
-	Etag             string     `json:"etag,omitempty"`
-	ID               string     `json:"id"`
-	SelfLink         string     `json:"selfLink,omitempty"`
-	TableReference   BQTableRef `json:"tableReference"`
-	FriendlyName     string     `json:"friendlyName,omitempty"`
-	Description      string     `json:"description,omitempty"`
-	Schema           *BQSchema  `json:"schema,omitempty"`
-	Type             string     `json:"type,omitempty"`
-	Location         string     `json:"location,omitempty"`
-	CreationTime     string     `json:"creationTime,omitempty"`
-	LastModifiedTime string     `json:"lastModifiedTime,omitempty"`
-	NumRows          string     `json:"numRows"`
-	NumBytes         string     `json:"numBytes"`
+	Kind             string            `json:"kind"`
+	Etag             string            `json:"etag,omitempty"`
+	ID               string            `json:"id"`
+	SelfLink         string            `json:"selfLink,omitempty"`
+	TableReference   BQTableRef        `json:"tableReference"`
+	FriendlyName     string            `json:"friendlyName,omitempty"`
+	Description      string            `json:"description,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Schema           *BQSchema         `json:"schema,omitempty"`
+	Type             string            `json:"type,omitempty"`
+	Location         string            `json:"location,omitempty"`
+	CreationTime     string            `json:"creationTime,omitempty"`
+	LastModifiedTime string            `json:"lastModifiedTime,omitempty"`
+	NumRows          string            `json:"numRows"`
+	NumBytes         string            `json:"numBytes"`
 }
 
 type BQTableRef struct {
@@ -372,6 +373,7 @@ func handleBQListTables(w http.ResponseWriter, r *http.Request) {
 			"tableReference": t.TableReference,
 			"type":           t.Type,
 			"friendlyName":   t.FriendlyName,
+			"labels":         t.Labels,
 		})
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#tableList", "tables": items})
@@ -395,6 +397,9 @@ func handleBQPatchTable(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != "" {
 		current.Description = req.Description
+	}
+	if req.Labels != nil {
+		current.Labels = req.Labels
 	}
 	if req.Schema != nil {
 		current.Schema = req.Schema
@@ -547,7 +552,23 @@ func handleBQListJobs(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	all := bqJobs.Filter(func(j BQJob) bool { return j.JobReference.ProjectID == project })
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#jobList", "jobs": all})
+	// jobs.list items follow the lighter JobListJobs shape: the running state
+	// is a top-level `state` field (mirrored from status.state), not nested.
+	items := make([]map[string]any, 0, len(all))
+	for _, j := range all {
+		state, _ := j.Status["state"].(string)
+		items = append(items, map[string]any{
+			"kind":          "bigquery#job",
+			"id":            j.ID,
+			"jobReference":  j.JobReference,
+			"state":         state,
+			"status":        j.Status,
+			"statistics":    j.Statistics,
+			"configuration": j.Configuration,
+			"user_email":    j.UserEmail,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#jobList", "jobs": items})
 }
 
 func handleBQGetQueryResults(w http.ResponseWriter, r *http.Request) {
