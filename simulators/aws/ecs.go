@@ -54,6 +54,12 @@ type ECSContainerDefinition struct {
 	Command           []string             `json:"command,omitempty"`
 	PseudoTerminal    bool                 `json:"pseudoTerminal,omitempty"`
 	Interactive       bool                 `json:"interactive,omitempty"`
+	// healthCheck and secrets are opaque passthrough: the provider folds the
+	// whole containerDefinitions JSON into a ForceNew hash, so dropping any
+	// registered field forces a new revision on every plan. RawMessage round-trips
+	// them byte-for-byte without enumerating every nested field.
+	HealthCheck json.RawMessage `json:"healthCheck,omitempty"`
+	Secrets     json.RawMessage `json:"secrets,omitempty"`
 }
 
 type ECSKeyValuePair struct {

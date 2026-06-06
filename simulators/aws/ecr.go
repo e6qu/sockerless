@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -38,6 +39,7 @@ type ECRRepository struct {
 	ImageTagMutability         string                        `json:"imageTagMutability"`
 	EncryptionConfiguration    ECREncryptionConfiguration    `json:"encryptionConfiguration"`
 	ImageScanningConfiguration ECRImageScanningConfiguration `json:"imageScanningConfiguration"`
+	Tags                       []SMTag                       `json:"-"`
 }
 
 type ECREncryptionConfiguration struct {
@@ -266,6 +268,7 @@ func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 		ImageTagMutability         string                         `json:"imageTagMutability"`
 		EncryptionConfiguration    *ECREncryptionConfiguration    `json:"encryptionConfiguration"`
 		ImageScanningConfiguration *ECRImageScanningConfiguration `json:"imageScanningConfiguration"`
+		Tags                       []SMTag                        `json:"tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -302,6 +305,9 @@ func handleECRCreateRepository(w http.ResponseWriter, r *http.Request) {
 	if req.ImageScanningConfiguration != nil {
 		repo.ImageScanningConfiguration = *req.ImageScanningConfiguration
 	}
+	// Tags set at create round-trip through ListTagsForResource; real ECR
+	// accepts tags on CreateRepository and dropping them drifts every plan.
+	repo.Tags = req.Tags
 	ecrRepositories.Put(req.RepositoryName, repo)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -667,21 +673,63 @@ func handleECRDeleteLifecyclePolicy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ecrRepoByArn resolves a repository ARN (arn:aws:ecr:…:repository/<name>) to
+// its stored name.
+func ecrRepoByArn(arn string) (string, bool) {
+	const sep = ":repository/"
+	idx := strings.Index(arn, sep)
+	if idx < 0 {
+		return "", false
+	}
+	name := arn[idx+len(sep):]
+	_, ok := ecrRepositories.Get(name)
+	return name, ok
+}
+
 func handleECRListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	// Terraform uses this to read tags for ECR repositories
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+	var req struct {
+		ResourceArn string `json:"resourceArn"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tags": []any{},
-	})
+	tags := []SMTag{}
+	if name, ok := ecrRepoByArn(req.ResourceArn); ok {
+		if repo, ok := ecrRepositories.Get(name); ok {
+			tags = append(tags, repo.Tags...)
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"tags": tags})
 }
 
 func handleECRTagResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+	var req struct {
+		ResourceArn string  `json:"resourceArn"`
+		Tags        []SMTag `json:"tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
+	name, ok := ecrRepoByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest, "repository not found: %s", req.ResourceArn)
+		return
+	}
+	ecrRepositories.Update(name, func(repo *ECRRepository) {
+		override := map[string]string{}
+		for _, t := range req.Tags {
+			override[t.Key] = t.Value
+		}
+		merged := make([]SMTag, 0, len(repo.Tags)+len(req.Tags))
+		for _, t := range repo.Tags {
+			if _, replaced := override[t.Key]; !replaced {
+				merged = append(merged, t)
+			}
+		}
+		repo.Tags = append(merged, req.Tags...)
+	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

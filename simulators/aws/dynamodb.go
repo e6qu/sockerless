@@ -495,6 +495,7 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			SSEType        string `json:"SSEType"`
 			KMSMasterKeyId string `json:"KMSMasterKeyId"`
 		} `json:"SSESpecification"`
+		Tags []SMTag `json:"Tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -579,6 +580,10 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 			KMSMasterKeyArn: req.SSESpecification.KMSMasterKeyId,
 		}
 	}
+	// Tags set at create time round-trip through ListTagsOfResource — real
+	// DynamoDB accepts Tags on CreateTable; dropping them makes every plan
+	// re-add them.
+	table.Tags = req.Tags
 	ddbTables.Put(req.TableName, table)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": table})
 }

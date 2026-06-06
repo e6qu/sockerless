@@ -15,12 +15,13 @@ import (
 // CloudWatch Logs types
 
 type CWLogGroup struct {
-	LogGroupName    string `json:"logGroupName"`
-	Arn             string `json:"arn"`
-	CreationTime    int64  `json:"creationTime"`
-	RetentionInDays int    `json:"retentionInDays,omitempty"`
-	StoredBytes     int64  `json:"storedBytes"`
-	KmsKeyId        string `json:"kmsKeyId,omitempty"`
+	LogGroupName    string            `json:"logGroupName"`
+	Arn             string            `json:"arn"`
+	CreationTime    int64             `json:"creationTime"`
+	RetentionInDays int               `json:"retentionInDays,omitempty"`
+	StoredBytes     int64             `json:"storedBytes"`
+	KmsKeyId        string            `json:"kmsKeyId,omitempty"`
+	Tags            map[string]string `json:"-"`
 }
 
 type CWLogStream struct {
@@ -119,9 +120,10 @@ func handleCWDisassociateKmsKey(w http.ResponseWriter, r *http.Request) {
 
 func handleCWCreateLogGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LogGroupName    string `json:"logGroupName"`
-		RetentionInDays int    `json:"retentionInDays"`
-		KmsKeyId        string `json:"kmsKeyId"`
+		LogGroupName    string            `json:"logGroupName"`
+		RetentionInDays int               `json:"retentionInDays"`
+		KmsKeyId        string            `json:"kmsKeyId"`
+		Tags            map[string]string `json:"tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -144,6 +146,7 @@ func handleCWCreateLogGroup(w http.ResponseWriter, r *http.Request) {
 		CreationTime:    time.Now().UnixMilli(),
 		RetentionInDays: req.RetentionInDays,
 		KmsKeyId:        req.KmsKeyId,
+		Tags:            req.Tags,
 	}
 	cwLogGroups.Put(req.LogGroupName, lg)
 
@@ -555,20 +558,58 @@ func handleCWPutRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
+// cwLogGroupByArn resolves a log-group ARN to its stored name. Real log-group
+// ARNs may carry a trailing ":*" (stream wildcard); the provider tags by the
+// bare group ARN, so accept both.
+func cwLogGroupByArn(arn string) (string, bool) {
+	const sep = ":log-group:"
+	idx := strings.Index(arn, sep)
+	if idx < 0 {
+		return "", false
+	}
+	name := strings.TrimSuffix(arn[idx+len(sep):], ":*")
+	_, ok := cwLogGroups.Get(name)
+	return name, ok
+}
+
 func handleCWListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+	var req struct {
+		ResourceArn string `json:"resourceArn"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tags": map[string]string{},
-	})
+	tags := map[string]string{}
+	if name, ok := cwLogGroupByArn(req.ResourceArn); ok {
+		if lg, ok := cwLogGroups.Get(name); ok && lg.Tags != nil {
+			tags = lg.Tags
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"tags": tags})
 }
 
 func handleCWTagResource(w http.ResponseWriter, r *http.Request) {
-	if err := sim.ReadJSON(r, &struct{}{}); err != nil {
+	var req struct {
+		ResourceArn string            `json:"resourceArn"`
+		Tags        map[string]string `json:"tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
 		return
 	}
+	name, ok := cwLogGroupByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "log group not found: %s", req.ResourceArn)
+		return
+	}
+	cwLogGroups.Update(name, func(lg *CWLogGroup) {
+		if lg.Tags == nil {
+			lg.Tags = map[string]string{}
+		}
+		for k, v := range req.Tags {
+			lg.Tags[k] = v
+		}
+	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

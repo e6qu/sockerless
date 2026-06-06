@@ -4,7 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `feat/aws-sim-batch-453` (PR pending — three AWS round-trip/op gaps + a repo-wide PM-artifact comment sweep).
+- Branch: `feat/aws-sim-batch-457` (PR pending — seven AWS terraform-idempotency read-back fidelity gaps, #457–#464, BUG-1497–1503).
+- **Two PRs pending, both off main, neither merged:** PR #463 = `feat/aws-sim-batch-453` (#453/#454/#455 + sweep); this branch = `feat/aws-sim-batch-457` (#457–#464). They overlap in `ec2.go`/`dynamodb.go` (different regions); rebase this branch on main once #463 merges.
+- **Seven consumer fixes (#457–#464):** all reproduced against a running sim with the real `aws` CLI first (ground truth), then SDK + CLI tests + a `terraform plan -detailed-exitcode==0` idempotency stack (`terraform-tests/idempotency-fidelity/`, covers 6 end-to-end; #460 SDK+CLI-only).
+  - **#457 (BUG-1497)** SG-rule `sgrItemXML` omits `<fromPort>`/`<toPort>` when `IpProtocol=="-1"`.
+  - **#458 (BUG-1498)** `referencedGroupInfo` omits `<userId>` for same-account refs (provider was prefixing `userId/sg-id` under `skip_requesting_account_id`).
+  - **#459 (BUG-1499)** `EC2NatGateway.ConnectivityType` parsed at create (default `public`), rendered in Create + Describe.
+  - **#460 (BUG-1500)** `ECSContainerDefinition` gains `HealthCheck`/`Secrets json.RawMessage` passthrough.
+  - **#461 (BUG-1501)** `DescribeCapacityReservation` drops the always-zero `MinimumLoadBalancerCapacity` (no setter exists). Issue mis-titled `DescribeLoadBalancerAttributes`.
+  - **#462 (BUG-1502)** create-time tags stored + returned for CW Logs / DynamoDB / ECR (real ARN lookups, not stubs). ECS task-def tags already worked.
+  - **#464 (BUG-1503)** `CreateListener` parses nested `Certificates.member.N.CertificateArn` (via existing `parseELBv2Certificates`).
 - Last merged: PR #456 (shared OCI /v2/ data plane, BUG-1491–1493, #450–#452).
 - **Three consumer fixes (#453/#454/#455):**
   - **#453 DynamoDB SSE (BUG-1494):** `DDBTable` gains `SSEDescription{Status,SSEType,KMSMasterKeyArn}`; CreateTable parses `SSESpecification` (Enabled → ENABLED, SSEType default KMS); DescribeTable echoes it.
