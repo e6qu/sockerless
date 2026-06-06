@@ -131,4 +131,22 @@ func TestAzureAPIM_ARMLifecycle(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 		"api should be cascade-deleted when service is deleted")
 	resp.Body.Close()
+
+	// Soft-delete/purge flow: a deleted service is recoverable at the
+	// subscription+location-scoped deletedServices path, then purgeable.
+	// terraform-provider-azurerm exercises this on destroy by default.
+	deletedPath := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.ApiManagement/locations/eastus/deletedServices/%s", sub, name)
+	resp = armReq(t, "GET", deletedPath, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "deleted service is recoverable until purged")
+	delBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Contains(t, string(delBody), svcPath, "deleted service contract carries the original serviceId")
+
+	resp = armReq(t, "DELETE", deletedPath, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "purge removes the soft-deleted service")
+	resp.Body.Close()
+
+	resp = armReq(t, "GET", deletedPath, "")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "service is gone after purge")
+	resp.Body.Close()
 }
