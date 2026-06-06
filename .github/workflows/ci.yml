@@ -298,11 +298,11 @@ jobs:
       matrix:
         include:
           - suite: edge
-            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|CloudFront|CloudTrail|ELBv2)'
+            run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
           - suite: compute
-            run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECS|EFS|Logs)'
+            run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECR|ECS|EFS|Logs)'
           - suite: appdata
-            run: '^Test(EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|Route53|S3|Scheduler|SecretsManager|SNS|SQS|SSM|STS|WAFv2)'
+            run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|ResourceTags|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: actions/setup-go@v6.4.0
