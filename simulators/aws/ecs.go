@@ -1200,6 +1200,12 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		for _, ev := range cd.Environment {
 			cmdEnv[ev.Name] = ev.Value
 		}
+		// Resolve the container definition's `secrets` (valueFrom →
+		// SecretsManager/SSM) at launch and inject them as env vars, exactly as
+		// real ECS does — indistinguishable from `environment` to the container.
+		for name, val := range resolveECSContainerSecrets(cd.Secrets) {
+			cmdEnv[name] = val
+		}
 		var binds []string
 		for _, mp := range cd.MountPoints {
 			if src, ok := volMap[mp.SourceVolume]; ok {
@@ -1721,6 +1727,69 @@ func (w *ssmStreamWriter) Write(p []byte) (int, error) {
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// resolveECSContainerSecrets resolves a container definition's `secrets` array
+// (`[{"name","valueFrom"}]`) to name→value pairs by fetching each `valueFrom`
+// from Secrets Manager or SSM Parameter Store, as real ECS does at task launch.
+func resolveECSContainerSecrets(raw json.RawMessage) map[string]string {
+	out := map[string]string{}
+	if len(raw) == 0 {
+		return out
+	}
+	var secrets []struct {
+		Name      string `json:"name"`
+		ValueFrom string `json:"valueFrom"`
+	}
+	if err := json.Unmarshal(raw, &secrets); err != nil {
+		return out
+	}
+	for _, s := range secrets {
+		if s.Name == "" || s.ValueFrom == "" {
+			continue
+		}
+		if v, ok := resolveECSSecretValue(s.ValueFrom); ok {
+			out[s.Name] = v
+		}
+	}
+	return out
+}
+
+// resolveECSSecretValue resolves a single ECS secret `valueFrom` reference.
+// Secrets Manager: arn:aws:secretsmanager:…:secret:name-suffix[:jsonKey:stage:id]
+// — an optional jsonKey selects a field from a JSON SecretString. SSM:
+// arn:aws:ssm:…:parameter/name or a bare /name.
+func resolveECSSecretValue(valueFrom string) (string, bool) {
+	if strings.Contains(valueFrom, ":secretsmanager:") {
+		parts := strings.Split(valueFrom, ":")
+		if len(parts) < 7 {
+			return "", false
+		}
+		baseARN := strings.Join(parts[:7], ":")
+		secret, ok := resolveSMSecret(baseARN)
+		if !ok {
+			return "", false
+		}
+		val := secret.SecretString
+		if len(parts) >= 8 && parts[7] != "" {
+			var m map[string]any
+			if json.Unmarshal([]byte(val), &m) == nil {
+				if jv, ok := m[parts[7]]; ok {
+					return fmt.Sprint(jv), true
+				}
+			}
+		}
+		return val, true
+	}
+	// SSM Parameter Store (ARN or bare name).
+	name := valueFrom
+	if i := strings.Index(valueFrom, ":parameter"); i >= 0 {
+		name = valueFrom[i+len(":parameter"):]
+	}
+	if p, ok := ssmParams.Get(ensureLeadingSlash(name)); ok {
+		return p.Value, true
+	}
+	return "", false
 }
 
 // handleECSExecuteCommand returns a handler that implements ECS ExecuteCommand.
