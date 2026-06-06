@@ -1,0 +1,250 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// EventBridge Scheduler firing engine. The CRUD surface in scheduler.go stores
+// schedules; this loop evaluates the ScheduleExpression (`at(...)` one-time and
+// `rate(N unit)` recurring) and invokes the configured Target when due — ECS
+// RunTask, Lambda Invoke, SQS SendMessage, SNS Publish — by calling the sim's
+// own handlers in-process, exactly as real EventBridge Scheduler invokes the
+// downstream service. `cron(...)` expressions are still stored faithfully but
+// not yet evaluated by the loop.
+
+type schedulerFireRec struct {
+	next  time.Time
+	fired bool // one-time at() already fired
+}
+
+var (
+	schedulerFireMu   sync.Mutex
+	schedulerFireRecs = map[string]*schedulerFireRec{}
+	schedulerLoopOnce sync.Once
+)
+
+// startSchedulerFiringLoop launches the once-per-second evaluation loop.
+func startSchedulerFiringLoop() {
+	schedulerLoopOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			for range ticker.C {
+				schedulerTick(time.Now().UTC())
+			}
+		}()
+	})
+}
+
+func schedulerTick(now time.Time) {
+	for _, s := range schedules.List() {
+		if s.State != "ENABLED" {
+			continue
+		}
+		key := scheduleKey(s.GroupName, s.Name)
+		if !schedulerDue(key, s, now) {
+			continue
+		}
+		fireSchedule(s)
+		schedulerAfterFire(key, s, now)
+		if s.ActionAfterCompletion == "DELETE" && !schedulerRecurring(s.ScheduleExpression) {
+			schedules.Delete(key)
+			schedulerFireMu.Lock()
+			delete(schedulerFireRecs, key)
+			schedulerFireMu.Unlock()
+		}
+	}
+}
+
+func schedulerDue(key string, s Schedule, now time.Time) bool {
+	schedulerFireMu.Lock()
+	defer schedulerFireMu.Unlock()
+	rec := schedulerFireRecs[key]
+	if rec == nil {
+		next, ok := schedulerFirstFire(s, now)
+		if !ok {
+			return false
+		}
+		rec = &schedulerFireRec{next: next}
+		schedulerFireRecs[key] = rec
+	}
+	if rec.fired {
+		return false
+	}
+	return !now.Before(rec.next)
+}
+
+func schedulerAfterFire(key string, s Schedule, now time.Time) {
+	schedulerFireMu.Lock()
+	defer schedulerFireMu.Unlock()
+	rec := schedulerFireRecs[key]
+	if rec == nil {
+		return
+	}
+	if interval, ok := schedulerRateInterval(s.ScheduleExpression); ok {
+		rec.next = now.Add(interval)
+	} else {
+		rec.fired = true
+	}
+}
+
+func schedulerRecurring(expr string) bool {
+	_, ok := schedulerRateInterval(expr)
+	return ok
+}
+
+// schedulerFirstFire computes the first fire time: at(...) → the timestamp;
+// rate(...) → creation + interval. False for unparseable/cron expressions.
+func schedulerFirstFire(s Schedule, now time.Time) (time.Time, bool) {
+	expr := strings.TrimSpace(s.ScheduleExpression)
+	if strings.HasPrefix(expr, "at(") {
+		inner := strings.TrimSuffix(strings.TrimPrefix(expr, "at("), ")")
+		if t, err := time.Parse("2006-01-02T15:04:05", inner); err == nil {
+			return t.UTC(), true
+		}
+		return time.Time{}, false
+	}
+	if interval, ok := schedulerRateInterval(expr); ok {
+		base := now
+		if s.CreationDate > 0 {
+			base = time.Unix(int64(s.CreationDate), 0).UTC()
+		}
+		return base.Add(interval), true
+	}
+	return time.Time{}, false
+}
+
+func schedulerRateInterval(expr string) (time.Duration, bool) {
+	expr = strings.TrimSpace(expr)
+	if !strings.HasPrefix(expr, "rate(") {
+		return 0, false
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "rate("), ")")
+	f := strings.Fields(inner)
+	if len(f) != 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(f[0])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	switch {
+	case strings.HasPrefix(f[1], "minute"):
+		return time.Duration(n) * time.Minute, true
+	case strings.HasPrefix(f[1], "hour"):
+		return time.Duration(n) * time.Hour, true
+	case strings.HasPrefix(f[1], "day"):
+		return time.Duration(n) * 24 * time.Hour, true
+	}
+	return 0, false
+}
+
+type schedulerTarget struct {
+	Arn           string              `json:"Arn"`
+	Input         string              `json:"Input"`
+	EcsParameters *schedulerEcsParams `json:"EcsParameters"`
+}
+
+type schedulerEcsParams struct {
+	TaskDefinitionArn    string `json:"TaskDefinitionArn"`
+	TaskCount            int    `json:"TaskCount"`
+	LaunchType           string `json:"LaunchType"`
+	Group                string `json:"Group"`
+	NetworkConfiguration *struct {
+		AwsvpcConfiguration *struct {
+			Subnets        []string `json:"Subnets"`
+			SecurityGroups []string `json:"SecurityGroups"`
+			AssignPublicIp string   `json:"AssignPublicIp"`
+		} `json:"AwsvpcConfiguration"`
+	} `json:"NetworkConfiguration"`
+}
+
+// fireSchedule dispatches a due schedule to its Target by invoking the sim's
+// own handler for the target service in-process.
+func fireSchedule(s Schedule) {
+	var t schedulerTarget
+	if err := json.Unmarshal(s.Target, &t); err != nil || t.Arn == "" {
+		return
+	}
+	switch {
+	case strings.Contains(t.Arn, ":ecs:") && t.EcsParameters != nil:
+		fireECSTarget(t.Arn, t.EcsParameters)
+	case strings.Contains(t.Arn, ":lambda:"):
+		fireLambdaTarget(t.Arn, t.Input)
+	case strings.Contains(t.Arn, ":sqs:"):
+		fireSQSTarget(t.Arn, t.Input)
+	case strings.Contains(t.Arn, ":sns:"):
+		fireSNSTarget(t.Arn, t.Input)
+	}
+}
+
+// callJSONHandler invokes an awsJson-style handler in-process with a JSON body.
+func callJSONHandler(h http.HandlerFunc, body map[string]any) {
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	h(httptest.NewRecorder(), req)
+}
+
+func fireECSTarget(clusterArn string, p *schedulerEcsParams) {
+	count := p.TaskCount
+	if count <= 0 {
+		count = 1
+	}
+	body := map[string]any{
+		"cluster":        clusterArn,
+		"taskDefinition": p.TaskDefinitionArn,
+		"count":          count,
+		"launchType":     p.LaunchType,
+		"group":          p.Group,
+	}
+	if p.NetworkConfiguration != nil && p.NetworkConfiguration.AwsvpcConfiguration != nil {
+		a := p.NetworkConfiguration.AwsvpcConfiguration
+		body["networkConfiguration"] = map[string]any{
+			"awsvpcConfiguration": map[string]any{
+				"subnets":        a.Subnets,
+				"securityGroups": a.SecurityGroups,
+				"assignPublicIp": a.AssignPublicIp,
+			},
+		}
+	}
+	callJSONHandler(handleECSRunTask, body)
+}
+
+func fireSQSTarget(queueArn, input string) {
+	name := queueArn
+	if i := strings.LastIndex(queueArn, ":"); i >= 0 {
+		name = queueArn[i+1:]
+	}
+	callJSONHandler(handleSQSSendMessage, map[string]any{
+		"QueueUrl":    sqsQueueURL(name),
+		"MessageBody": input,
+	})
+}
+
+func fireLambdaTarget(functionArn, input string) {
+	name := functionArn
+	if i := strings.Index(functionArn, ":function:"); i >= 0 {
+		name = functionArn[i+len(":function:"):]
+		if c := strings.IndexByte(name, ':'); c >= 0 { // strip :version/:alias
+			name = name[:c]
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/2015-03-31/functions/"+name+"/invocations", strings.NewReader(input))
+	req.SetPathValue("name", name)
+	handleLambdaInvoke(httptest.NewRecorder(), req)
+}
+
+func fireSNSTarget(topicArn, input string) {
+	form := url.Values{"TopicArn": {topicArn}, "Message": {input}}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handleSNSPublish(httptest.NewRecorder(), req)
+}

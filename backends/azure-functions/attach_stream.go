@@ -23,7 +23,16 @@ type attachStream struct {
 
 // attachDeadline resolves the buffered-attach read deadline: the configured
 // AttachTimeout, falling back to the invoke Timeout, then 600s — so a reader is
-// always bounded by the invoke budget even if a Config path leaves it unset.
+// always bounded even if a Config path leaves it unset.
+//
+// The deadline clock starts when Read is first called, which is at
+// ContainerStart — BEFORE the function bootstraps. The buffered response can
+// only be published after bootstrap (up to azfBootstrapTimeout) and then the
+// invoke runs, so the read budget must cover the bootstrap window PLUS the
+// invoke/publish budget. Bounding it by the invoke budget alone strands the
+// reader when a healthy bootstrap is slow (e.g. a contended CI runner where
+// bootstrap legitimately takes 60–90s but the attach budget is 60s) — the
+// reader EOFs with empty output before the function can publish.
 func (s *Server) attachDeadline() time.Duration {
 	secs := s.config.AttachTimeout
 	if secs <= 0 {
@@ -32,7 +41,7 @@ func (s *Server) attachDeadline() time.Duration {
 	if secs <= 0 {
 		secs = 600
 	}
-	return time.Duration(secs) * time.Second
+	return s.azfBootstrapTimeout() + time.Duration(secs)*time.Second
 }
 
 func (s *Server) newAttachStream(containerID string, pipe *stdinPipe) *attachStream {

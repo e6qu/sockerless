@@ -330,7 +330,10 @@ func registerContainerAppsApps(srv *sim.Server) {
 			return
 		}
 		secrets := []ContainerAppSecret{}
-		if app.Properties.Configuration != nil {
+		// Keep a non-nil slice when the app has a configuration but no secrets:
+		// SecretsCollection.value is a REQUIRED array, so it must serialize as
+		// [] not null (a configured-but-secretless app overwrote it otherwise).
+		if app.Properties.Configuration != nil && app.Properties.Configuration.Secrets != nil {
 			secrets = app.Properties.Configuration.Secrets
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})

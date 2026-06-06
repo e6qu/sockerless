@@ -66,6 +66,9 @@ func registerScheduler(srv *sim.Server) {
 	srv.HandleFunc("GET /schedule-groups/{Name}", handleSchedulerGetScheduleGroup)
 	srv.HandleFunc("DELETE /schedule-groups/{Name}", handleSchedulerDeleteScheduleGroup)
 	srv.HandleFunc("GET /schedule-groups", handleSchedulerListScheduleGroups)
+
+	// Evaluate ScheduleExpressions and invoke due targets (ECS/Lambda/SQS/SNS).
+	startSchedulerFiringLoop()
 }
 
 func schedulerScheduleARN(group, name string) string {

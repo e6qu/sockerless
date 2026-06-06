@@ -391,7 +391,9 @@ func registerContainerApps(srv *sim.Server) {
 			return
 		}
 		secrets := []JobSecret{}
-		if job.Properties.Configuration != nil {
+		// SecretsCollection.value is a REQUIRED array — keep [] (not null) when a
+		// job has a configuration but no secrets.
+		if job.Properties.Configuration != nil && job.Properties.Configuration.Secrets != nil {
 			secrets = job.Properties.Configuration.Secrets
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})

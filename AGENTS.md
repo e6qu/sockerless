@@ -22,17 +22,9 @@ If you find yourself writing any of the following, you are writing a bug:
 
 ## Simulators are real implementations
 
-The cloud simulators (`simulators/aws/`, `simulators/gcp/`, `simulators/azure/`) are **local reimplementations** of cloud provider services, not mocks, stubs, or fakes. They execute real logic:
+The cloud simulators (`simulators/{aws,gcp,azure}/`) are **local reimplementations** of cloud services, not mocks. They run real logic: jobs run, functions execute, timeouts fire, logs are produced — driven by the same cloud-native config the real services honor (`replicaTimeout` for ACA, task template `timeout` for Cloud Run, `StopTask` for ECS). No synthetic timers, hardcoded delays, or fake completion signals; if a cloud service has no native timeout (e.g. ECS tasks), neither does the simulator. Logs go to the same tables/log groups, queryable through the same APIs (KQL, Cloud Logging, CloudWatch). Every field the real API returns, the simulator returns — if a backend's CloudState expects `latestCreatedExecution` on a Cloud Run Job, populate it.
 
-- Jobs run. Functions execute. Timeouts fire. Logs are produced.
-- Execution behavior is driven by the same cloud-native configuration that the real services honor — `replicaTimeout` for Azure ACA, task template `timeout` for GCP Cloud Run, `StopTask` for AWS ECS.
-- There are no synthetic timers, hardcoded delays, or fake completion signals. If a cloud service doesn't have a native timeout mechanism (e.g., ECS tasks), neither does the simulator.
-- Log entries are written to the same tables and log groups as the real services, queryable through the same APIs (KQL, Cloud Logging filters, CloudWatch).
-- Every field the real API returns, the simulator returns. If a backend's CloudState expects `latestCreatedExecution` on a Cloud Run Job, the simulator must populate it.
-
-When modifying simulators, always ask: "How does the real cloud service behave?" and implement that. Do not add simulator-specific environment variables, synthetic shortcuts, or approximate behaviors. Use the cloud's own configuration knobs.
-
-The simulators run locally on a single machine today. The architecture is designed to eventually distribute execution across multiple machines, with the same API surface.
+Always ask "How does the real cloud service behave?" and implement that — use the cloud's own configuration knobs, never simulator-specific env vars or shortcuts. The simulators run on one machine today; the architecture targets distributing execution across machines with the same API surface.
 
 ### Simulator architecture — cloud-slice principle
 
@@ -94,6 +86,12 @@ If the real implementation is not feasible today, file a bug and track it. Do no
 ## Always fix CI failures and test failures
 
 If CI fails or tests fail, fix the issue — even if the failure is "pre-existing" and not caused by the current change. We do not tolerate broken CI on any branch. If adding a module to lint or expanding test coverage reveals old issues, fix them in the same PR.
+
+## Never dismiss a problem as "unrelated"
+
+Any problem you notice — failing/flaky test, build or lint warning, dropped field, wrong status code, suspicious log — gets one of two outcomes: **fix it on the spot** (strongly preferred), or, if you truly can't now, **file it in `BUGS.md`** (area, symptom, suspected cause, fix shape). Noticing it and moving on is forbidden. "Pre-existing", "not caused by my change", "not my job" are not exits.
+
+"Unrelated" must be *earned with evidence*, never assumed — and especially not by an agent whose context resets across compactions and sessions, so it often can't see that a failure shares a helper, wire format, or store invariant with its change. Even a genuinely orthogonal failure still gets fixed or filed. This is a vibe-coded codebase: unfixed problems compound fast and hide the next one. Proactivity is required, not optional.
 
 ## Never merge PRs
 
