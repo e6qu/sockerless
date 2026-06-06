@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/ecr-oci-manifest-head-465` (PR #468 — OCI `/v2/` header fidelity #465 + ECS task-def tags include path #467) |
-| In-flight | **#465 (BUG-1504):** ECR manifest-HEAD 400 did NOT reproduce (HEAD→404, g-c-r push works); fixed the real gap — emit `Docker-Distribution-Api-Version` on every `/v2/` response (shared `serve()`, 3 cloud copies). **#467 (BUG-1506):** `DescribeTaskDefinition --include TAGS` returned no tags (sim leaked them inside `taskDefinition`, which the SDK drops; provider reads response top-level `tags`). Fixed: `Tags`→`json:"-"`, emit top-level tags from Register (always) + Describe (include=TAGS). SDK+CLI + the `idempotency-fidelity` TF stack (ECS task-def added). |
-| Last merged | PR #466 (#457–#464, BUG-1497–1503); PR #463 (#453–#455 + PM-artifact sweep); PR #456 (OCI /v2/ data plane, #450–#452) |
-| Open GitHub issues | #465 + #467 fixed by PR #468 (this branch). Only #394 (azuread TF upstream) remains. |
-| Bugs | 1506 filed · 1461 fixed · 6 open · 4 false positives (open incl. BUG-1505 flaky azf-backends 5min timeout, CI-only) |
+| Active branch | `fix/azf-buffered-attach-deadline-1505` (PR pending — bound the azf buffered-attach reader; fixes the flaky `test (azure backends)` 5-min timeout) |
+| In-flight | **BUG-1505:** `TestAZFGitLabRunnerAttachStdin` 5-min suite panic. Root cause: buffered `attachStream.Read` blocked on the invoke publish, which has a 600s client timeout; on a contended CI runner the FaaS pod expires before an instant workload runs → reader strands minutes, and the test's 5m guard == global `-timeout 5m` → binary panic. Fix: bound `Read` with a deadline (`SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC`, default = invoke Timeout — pure safety net) → EOF if no publish in time; integration backend runs with a 60s bound. Deterministic unit tests added. |
+| Last merged | PR #468 (#465 OCI header + #467 ECS tags); PR #466 (#457–#464); PR #463 (#453–#455 + sweep); PR #456 (OCI /v2/ data plane) |
+| Open GitHub issues | Only #394 (azuread TF upstream). All consumer issues #453–#467 fixed/merged. |
+| Bugs | 1506 filed · 1462 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
 | Planned next | After these two PRs merge: fresh fidelity audit; Phase G new slices (GCP Spanner/Dataflow/Bigtable, Azure); or await new consumer issues |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |

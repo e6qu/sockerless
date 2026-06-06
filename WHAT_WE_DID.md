@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — Bound the azf buffered-attach reader (BUG-1505, PR pending)
+
+The flaky `test (azure backends)` 5-min timeout that surfaced on PR #468's CI, root-caused and fixed. The panic goroutine dump pinned it to `TestAZFGitLabRunnerAttachStdin`: `stdcopy.StdCopy` was blocked reading the hijacked attach stream. That stream is the azf **buffered** `attachStream`, whose `Read` waits on `respReady` — closed only when the invoke goroutine publishes the captured output. The invoke is an HTTP POST to the Function App with a **600s** client timeout (`SOCKERLESS_AZF_TIMEOUT`). On a contended CI runner the FaaS pod hits its lifetime cap and the instant workload (`echo …`) never completes promptly, so the POST blocks for minutes (until the pod EOFs) and the reader strands. The test's own `5*time.Minute` safety guards **equalled** the global `-timeout 5m`, so the global won and panicked the whole azure-backends binary instead of failing one test.
+
+Fix (chosen direction: bound the buffered attach, not just test-hygiene): `attachStream.Read` now `select`s on `respReady` **or** a deadline, returning EOF on the deadline. The deadline (`SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC`) defaults to the invoke `Timeout` — so a healthy invoke always publishes first and the deadline is a pure safety net with **no** behaviour change by default — and the integration backend runs with a 60s bound so a rare pod-stall fails fast, well under the global timeout. Verified with deterministic unit tests (`attach_stream_test.go`, no Docker): `Read` returns EOF at the deadline when nothing publishes, and a normal publish before the deadline is delivered intact (the safety net never truncates a healthy invoke). Full `TestAZF*` integration suite stays green locally (24s).
+
 ## 2026-06-06 — OCI `/v2/` registry header fidelity + ECS task-def tags include path (BUG-1504/1506, PR pending)
 
 One PR bundles two consumer issues (#465 + #467).

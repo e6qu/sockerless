@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"sync"
+	"time"
 )
 
 type attachStream struct {
@@ -17,6 +18,21 @@ type attachStream struct {
 	respDone  bool
 	respReady chan struct{}
 	closed    bool
+	deadline  time.Duration
+}
+
+// attachDeadline resolves the buffered-attach read deadline: the configured
+// AttachTimeout, falling back to the invoke Timeout, then 600s — so a reader is
+// always bounded by the invoke budget even if a Config path leaves it unset.
+func (s *Server) attachDeadline() time.Duration {
+	secs := s.config.AttachTimeout
+	if secs <= 0 {
+		secs = s.config.Timeout
+	}
+	if secs <= 0 {
+		secs = 600
+	}
+	return time.Duration(secs) * time.Second
 }
 
 func (s *Server) newAttachStream(containerID string, pipe *stdinPipe) *attachStream {
@@ -25,6 +41,7 @@ func (s *Server) newAttachStream(containerID string, pipe *stdinPipe) *attachStr
 		containerID: containerID,
 		pipe:        pipe,
 		respReady:   make(chan struct{}),
+		deadline:    s.attachDeadline(),
 	}
 	s.attachStreams.Store(containerID, a)
 	return a
@@ -39,7 +56,16 @@ func (a *attachStream) CloseWrite() error {
 }
 
 func (a *attachStream) Read(p []byte) (int, error) {
-	<-a.respReady
+	// Wait for the invoke goroutine to publish captured output — but never past
+	// the deadline. A healthy invoke always publishes within its own timeout, so
+	// this is a pure safety net; it bounds the rare case where a FaaS pod stalls
+	// or hits its lifetime cap before an instant workload runs, which would
+	// otherwise strand an attached docker/StdCopy reader near the invoke cap.
+	select {
+	case <-a.respReady:
+	case <-time.After(a.deadline):
+		return 0, io.EOF
+	}
 	a.respMu.Lock()
 	defer a.respMu.Unlock()
 	if a.respBuf.Len() == 0 {

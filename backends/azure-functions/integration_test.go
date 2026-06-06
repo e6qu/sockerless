@@ -231,6 +231,12 @@ ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 		"SOCKERLESS_AZF_STORAGE_ACCOUNT="+storageAccount,
 		// Required at NewServer (no fallback).
 		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/azf/reverse", backendPort),
+		// Bound a buffered-attach reader to 60s. The integration workloads
+		// publish in well under a second; a longer wait means a FaaS pod
+		// stalled/expired before running an instant workload, and an attached
+		// reader should fail fast rather than strand near the 600s invoke cap
+		// (which would race the suite's global -timeout and panic the binary).
+		"SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC=60",
 	)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
