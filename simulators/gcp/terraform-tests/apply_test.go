@@ -179,6 +179,10 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, bqTableID, "/datasets/tf_test_dataset/tables/events",
 		"BigQuery table id must include dataset/table; got %s", bqTableID)
 
+	bqTableLabelEnv := outputs.must(t, "bigquery_table_label_env")
+	require.Equal(t, "terraform", bqTableLabelEnv,
+		"BigQuery table labels must round-trip through terraform state; got env=%s", bqTableLabelEnv)
+
 	fsDocName := outputs.must(t, "firestore_document_name")
 	require.Contains(t, fsDocName, "projects/test-project/databases/(default)/documents/tf-users/alice",
 		"Firestore document name must round-trip the canonical document path; got %s", fsDocName)

@@ -522,6 +522,10 @@ resource "google_bigquery_table" "tf_bq_table" {
   table_id            = "events"
   deletion_protection = false
 
+  labels = {
+    env = "terraform"
+  }
+
   schema = jsonencode([
     {
       name = "id"
@@ -739,6 +743,10 @@ output "service_account_name" {
 
 output "bigquery_table_id" {
   value = google_bigquery_table.tf_bq_table.id
+}
+
+output "bigquery_table_label_env" {
+  value = google_bigquery_table.tf_bq_table.labels["env"]
 }
 
 output "firestore_document_name" {

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1516 filed - 1472 fixed - 5 open - 4 false positives.**
+**1518 filed - 1474 fixed - 5 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1518~~ | P2 | gcp bigquery simulator — jobs.list items omit top-level `state` | sim fidelity gap | Found by the gcp test-coverage audit (bigquery had only 4 of 19 ops tested): `jobs.list` emitted full `BQJob` objects whose running state lives nested under `status.state`, but the SDK `JobListJobs` reads a **top-level `state`** field — so a client enumerating jobs sees `state == ""` on every entry. Fix: `handleBQListJobs` renders light list items carrying top-level `state` (derived from `status.state`) plus `id`/`jobReference`/`statistics`/`status`/`configuration`/`user_email`. |
+| ~~1517~~ | P1 | gcp bigquery simulator — tables drop `labels` (silent) | sim fidelity gap / dropped field | Found by the gcp test-coverage audit: `BQTable` had no `Labels` field, so a table created with labels comes back from `tables.get`/`tables.list`/`tables.patch` with none — `google_bigquery_table.labels` would drift every plan (the dataset path already round-trips labels). Fix: add `Labels map[string]string` to `BQTable`, preserve it through `bqApplyTableDefaults`, merge it on `tables.patch`, and surface it in `tables.list` items. |
 | ~~1516~~ | P2 | aws ecr simulator — BatchDeleteImage deletes only the addressed alias | sim fidelity gap / incomplete delete | Found via the new DescribeImages coverage: each image is stored under its digest key + one key per tag, but `BatchDeleteImage` deleted only the addressed (tag) key, so the digest alias survived and `describe-images`/`list-images` still surfaced the "deleted" image. Same alias-delete class as the OCI manifest DELETE. Fix: delete every alias (digest + all tags) for the matched image. |
 | ~~1515~~ | P2 | aws ecr simulator — DescribeImages + ListImages not implemented | sim fidelity gap / missing op | Found while writing the BatchDeleteImage coverage test: `ecr describe-images` / `list-images` return `UnknownOperationException` — core read ops clients use to enumerate a repo's images aren't registered (only `BatchGetImage` by explicit id was). Fix: implement both off the existing `ecrImages` store — `ListImages` → `imageIds[]` (one per tag, deduped by digest); `DescribeImages` → `imageDetails[]` (digest, tags, pushedAt, size) honouring an optional `imageIds` filter. |
 | ~~1514~~ | P1 | aws dynamodb simulator — UpdateItem ignores UpdateExpression (silent no-op) | sim fidelity gap / silent no-op | Found by the test-coverage audit: `UpdateItem` only implemented the **legacy** `AttributeUpdates` param and ignored `UpdateExpression` (`SET #a = :v`, `ADD`, `REMOVE`) — which every modern client (aws CLI / SDK / Terraform) uses. So `update-item --update-expression` returned 200 but persisted nothing; a subsequent `get-item` showed the attribute absent. Forbidden synthetic-success. Fix: real `UpdateExpression` evaluator (SET assignment + `+`/`-` arithmetic + `if_not_exists`, REMOVE, ADD numeric/string-set, DELETE set-element) resolving `#name`/`:val` placeholders, applied to the stored item; legacy `AttributeUpdates` kept. |
@@ -374,6 +376,7 @@ Older closed bugs are intentionally not repeated here. Use PR descriptions and `
 |------|---------|---------------------|
 | `backends/aca/azure.go::fakeCredential` | Returns literal `"fake-token"` against simulator endpoints. | Simulator auth does not validate bearer tokens. Production clients use `azidentity.NewDefaultAzureCredential`; this credential is only for simulator endpoint clients. |
 | `cmd/sockerless-admin/api_observability.go::envOrDefault` | Returns canonical OTel resource-attribute name when unset. | This is a documented default-value helper, not an error-hiding fallback. |
+| aws scheduler simulator — GetSchedule `awsvpcConfiguration` (issue #477) | Reported as `Target.EcsParameters.NetworkConfiguration.AwsvpcConfiguration` returning None. | The sim persists + returns all three fields under the **lowercase** `awsvpcConfiguration` wire key — exactly what aws-sdk-go-v2 `scheduler` serializes/deserializes (`object.Key("awsvpcConfiguration")` / `case "awsvpcConfiguration":`) and botocore/GetSchedule use. The consumer's CLI assertion queried capital-A `AwsvpcConfiguration`, which fails against real AWS too; the Terraform read path (Go SDK) is unaffected. Consumer closed it. |
 
 ## Class-of-Bug Rules
 
