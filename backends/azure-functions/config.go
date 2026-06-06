@@ -13,13 +13,21 @@ import (
 
 // Config holds Azure Functions backend configuration.
 type Config struct {
-	SubscriptionID        string
-	ResourceGroup         string
-	Location              string
-	StorageAccount        string
-	Registry              string
-	AppServicePlan        string
-	Timeout               int
+	SubscriptionID string
+	ResourceGroup  string
+	Location       string
+	StorageAccount string
+	Registry       string
+	AppServicePlan string
+	Timeout        int
+	// AttachTimeout bounds how long a buffered attach reader waits for the
+	// in-function invoke to publish its captured output before returning EOF.
+	// Defaults to the invoke Timeout (so a healthy invoke always publishes
+	// first and this is a pure safety net); a shorter value bounds the rare
+	// case where a FaaS pod stalls/expires before an instant workload runs, so
+	// an attached reader fails fast instead of stranding near the invoke cap.
+	// Set via SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC.
+	AttachTimeout         int
 	LogAnalyticsWorkspace string
 	BuildStorageAccount   string        // Storage account for ACR build context
 	BuildContainer        string        // Blob container for ACR build context
@@ -85,6 +93,7 @@ func ConfigFromEnv() Config {
 		Registry:              os.Getenv("SOCKERLESS_AZF_REGISTRY"),
 		AppServicePlan:        os.Getenv("SOCKERLESS_AZF_APP_SERVICE_PLAN"),
 		Timeout:               envOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600),
+		AttachTimeout:         envOrDefaultInt("SOCKERLESS_AZF_ATTACH_TIMEOUT_SEC", envOrDefaultInt("SOCKERLESS_AZF_TIMEOUT", 600)),
 		LogAnalyticsWorkspace: os.Getenv("SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE"),
 		BuildStorageAccount:   os.Getenv("SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT"),
 		BuildContainer:        os.Getenv("SOCKERLESS_AZURE_BUILD_CONTAINER"),
