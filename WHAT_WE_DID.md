@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — Five read-back fidelity gaps: EC2/ELBv2 idempotency + ACR auth (BUG-1507–1511, PR pending)
+
+Consumer batch #469–#473, all reproduced against running sims first, then SDK + CLI + (for the AWS four) the `terraform plan -detailed-exitcode==0` idempotency stack.
+
+- **#470 (BUG-1507) EC2 launch-template provenance.** `aws_instance.launch_template` (ForceNew) was absent on refresh → destroy+create every plan. The instinct — "DescribeInstances drops LaunchTemplate" — was *wrong*: the AWS SDK `Instance` shape has **no** launch-template field. The provider flattens `launch_template` from the `aws:ec2launchtemplate:id` / `aws:ec2launchtemplate:version` **system tags** AWS auto-applies. (Caught by checking the SDK deserializer + an empty CLI `LaunchTemplate` query despite the sim emitting `<launchTemplate>` XML; the dead XML approach was reverted.) Fix: `runInstancesLaunchTemplate` resolves the template (inheriting image/type when the request doesn't override) and stamps the two system tags.
+- **#471 (BUG-1508) EC2 route `NetworkInterfaceId`.** Added to `EC2Route`, parsed at `CreateRoute`, rendered in the route set (`aws_route` drift).
+- **#472 (BUG-1509) SG egress `Ipv6Ranges`.** Added `EC2Ipv6Range` + `Ipv6Ranges` to `EC2IpPermission`, parsed `*.Ipv6Ranges.N.CidrIpv6`, rendered `ipv6Ranges` in the SG describe (`aws_security_group` egress `ipv6_cidr_blocks` drift).
+- **#473 (BUG-1510) ELBv2 listener `SslPolicy`.** Parsed at `CreateListener`, stored on `ELBv2Listener`, rendered in `elbv2ListenerXML` (`aws_lb_listener` drift).
+- **#469 (BUG-1511) Azure ACR token service.** Implemented `POST /oauth2/exchange` (Entra access token → ACR refresh token) and `POST /oauth2/token` (refresh token + scope → scoped Bearer), returning deterministic ACR-shaped envelopes/errors; the data plane ignores auth so any minted token is accepted. Also fixed the AAD-v1 auth middleware, whose `strings.Contains(path, "/oauth2/token")` was swallowing the bare ACR `/oauth2/token` (the AAD v1 endpoint always has a tenant prefix, so the bare path is unambiguously ACR).
+
 ## 2026-06-06 — Bound the azf buffered-attach reader (BUG-1505, PR pending)
 
 The flaky `test (azure backends)` 5-min timeout that surfaced on PR #468's CI, root-caused and fixed. The panic goroutine dump pinned it to `TestAZFGitLabRunnerAttachStdin`: `stdcopy.StdCopy` was blocked reading the hijacked attach stream. That stream is the azf **buffered** `attachStream`, whose `Read` waits on `respReady` — closed only when the invoke goroutine publishes the captured output. The invoke is an HTTP POST to the Function App with a **600s** client timeout (`SOCKERLESS_AZF_TIMEOUT`). On a contended CI runner the FaaS pod hits its lifetime cap and the instant workload (`echo …`) never completes promptly, so the POST blocks for minutes (until the pod EOFs) and the reader strands. The test's own `5*time.Minute` safety guards **equalled** the global `-timeout 5m`, so the global won and panicked the whole azure-backends binary instead of failing one test.

@@ -124,8 +124,12 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 			handleAzureToken(w, r, path)
 			return
 		}
-		// Token endpoint v1: POST /{tenantId}/oauth2/token
-		if r.Method == http.MethodPost && strings.Contains(path, "/oauth2/token") {
+		// Token endpoint v1: POST /{tenantId}/oauth2/token. The Azure AD v1 endpoint
+		// always carries a tenant prefix; the bare /oauth2/token (and /oauth2/exchange)
+		// are ACR's registry-token endpoints, which must fall through to the ACR mux
+		// routes rather than be handled as an AAD token request.
+		if r.Method == http.MethodPost && strings.Contains(path, "/oauth2/token") &&
+			path != "/oauth2/token" && path != "/oauth2/exchange" {
 			handleAzureToken(w, r, path)
 			return
 		}

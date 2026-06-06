@@ -57,6 +57,7 @@ type ELBv2Listener struct {
 	Port            int
 	DefaultActions  []ELBv2Action
 	Certificates    []string
+	SslPolicy       string
 	Attributes      map[string]string
 }
 
@@ -521,6 +522,7 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		Port:            port,
 		DefaultActions:  parseELBv2Actions(r),
 		Certificates:    parseELBv2Certificates(r),
+		SslPolicy:       r.FormValue("SslPolicy"),
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
 	}
 	elbv2Listeners.Put(arn, listener)
@@ -710,9 +712,13 @@ func elbv2ListenerXML(listener ELBv2Listener) string {
 		}
 		certs.WriteString("</Certificates>")
 	}
-	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s%s</member>`,
+	var sslPolicy string
+	if listener.SslPolicy != "" {
+		sslPolicy = fmt.Sprintf("<SslPolicy>%s</SslPolicy>", xmlEscape(listener.SslPolicy))
+	}
+	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s%s%s</member>`,
 		xmlEscape(listener.Arn), xmlEscape(listener.LoadBalancerArn), listener.Port, xmlEscape(listener.Protocol),
-		elbv2ActionsXML("DefaultActions", listener.DefaultActions), certs.String())
+		elbv2ActionsXML("DefaultActions", listener.DefaultActions), certs.String(), sslPolicy)
 }
 
 func elbv2TargetXML(target ELBv2TargetDescription) string {
