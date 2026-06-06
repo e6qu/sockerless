@@ -109,3 +109,49 @@ func TestECR_OCIDataPlane(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	resp.Body.Close()
 }
+
+// TestECR_OCIManifestHeadMissing locks the push-client probe shape: a manifest
+// HEAD for a tag that doesn't exist must return 404 (MANIFEST_UNKNOWN), never a
+// generic 400 — an OCI client (go-containerregistry) treats 404 as "absent,
+// proceed to upload" but aborts on 4xx that isn't 404. Every /v2/ response,
+// including this 404, also carries Docker-Distribution-Api-Version (real
+// registries set it on all responses, not just the base ping).
+func TestECR_OCIManifestHeadMissing(t *testing.T) {
+	repo := "shim/registry"
+	const apiVersionHeader = "Docker-Distribution-Api-Version"
+
+	// Missing tag in a not-yet-populated repo → 404 with the registry header.
+	resp := ociDo(t, http.MethodHead, baseURL+"/v2/"+repo+"/manifests/v1", nil, "")
+	require.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"manifest HEAD for a missing tag must be 404, not 400")
+	assert.Equal(t, "registry/2.0", resp.Header.Get(apiVersionHeader),
+		"the missing-manifest response must carry Docker-Distribution-Api-Version")
+	resp.Body.Close()
+
+	// GET for the same missing tag → 404 with the MANIFEST_UNKNOWN envelope.
+	resp = ociDo(t, http.MethodGet, baseURL+"/v2/"+repo+"/manifests/v1", nil, "")
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Contains(t, string(body), "MANIFEST_UNKNOWN")
+
+	// Push the tag, then the same HEAD probe now reports it present (200).
+	layer := []byte("head-probe-layer")
+	digest := ociDigest(layer)
+	resp = ociDo(t, http.MethodPost, baseURL+"/v2/"+repo+"/blobs/uploads/", nil, "")
+	loc := resp.Header.Get("Location")
+	resp.Body.Close()
+	resp = ociDo(t, http.MethodPatch, baseURL+loc, layer, "application/octet-stream")
+	resp.Body.Close()
+	resp = ociDo(t, http.MethodPut, baseURL+loc+"?digest="+digest, nil, "")
+	resp.Body.Close()
+	manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","size":7,"digest":"%s"},"layers":[{"mediaType":"application/vnd.docker.image.rootfs.diff.tar.gzip","size":%d,"digest":"%s"}]}`, digest, len(layer), digest))
+	resp = ociDo(t, http.MethodPut, baseURL+"/v2/"+repo+"/manifests/v1", manifest, "application/vnd.docker.distribution.manifest.v2+json")
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	resp.Body.Close()
+
+	resp = ociDo(t, http.MethodHead, baseURL+"/v2/"+repo+"/manifests/v1", nil, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "registry/2.0", resp.Header.Get(apiVersionHeader))
+	resp.Body.Close()
+}

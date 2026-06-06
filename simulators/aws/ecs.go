@@ -144,8 +144,13 @@ type ECSTaskDefinition struct {
 	ExecutionRoleArn        string                   `json:"executionRoleArn,omitempty"`
 	TaskRoleArn             string                   `json:"taskRoleArn,omitempty"`
 	Volumes                 []ECSVolume              `json:"volumes,omitempty"`
-	Tags                    []ECSTag                 `json:"tags,omitempty"`
-	Status                  string                   `json:"status"`
+	// Tags are internal-only: real AWS does not carry them inside the
+	// taskDefinition object — they surface at the response top level (from
+	// RegisterTaskDefinition always, DescribeTaskDefinition only with
+	// include=TAGS). Serializing them here would be silently dropped by the SDK
+	// model, so the provider would still see no tags. See ecsTaskDefTagsResponse.
+	Tags   []ECSTag `json:"-"`
+	Status string   `json:"status"`
 }
 
 type ECSTaskContainer struct {
@@ -518,9 +523,12 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("%s:%d", req.Family, revision)
 	ecsTaskDefinitions.Put(key, td)
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskDefinition": td,
-	})
+	// Real RegisterTaskDefinition echoes the tags at the response top level.
+	resp := map[string]any{"taskDefinition": td}
+	if len(td.Tags) > 0 {
+		resp["tags"] = td.Tags
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleECSDeregisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
@@ -563,7 +571,8 @@ func handleECSDeregisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 
 func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TaskDefinition string `json:"taskDefinition"`
+		TaskDefinition string   `json:"taskDefinition"`
+		Include        []string `json:"include"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -599,9 +608,24 @@ func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"taskDefinition": td,
-	})
+	// Tags surface at the response top level only when include=TAGS — this is
+	// the path terraform-provider-aws reads task-definition tags on refresh.
+	resp := map[string]any{"taskDefinition": td}
+	if len(td.Tags) > 0 && ecsIncludeHasTags(req.Include) {
+		resp["tags"] = td.Tags
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ecsIncludeHasTags reports whether the DescribeTaskDefinition include list
+// requests TAGS (case-insensitive, matching the AWS enum).
+func ecsIncludeHasTags(include []string) bool {
+	for _, v := range include {
+		if strings.EqualFold(v, "TAGS") {
+			return true
+		}
+	}
+	return false
 }
 
 type ecsRequestError struct {
