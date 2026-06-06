@@ -279,6 +279,13 @@ func handleCWDescribeLogStreams(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidParameterException", "logGroupName is required", http.StatusBadRequest)
 		return
 	}
+	// Real DescribeLogStreams returns ResourceNotFoundException for a missing
+	// group rather than an empty list (RNFE is a declared error for the op).
+	if _, ok := cwLogGroups.Get(req.LogGroupName); !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"The specified log group does not exist: %s", req.LogGroupName)
+		return
+	}
 
 	streams := cwLogStreams.Filter(func(s CWLogStream) bool {
 		if s.LogGroupName != req.LogGroupName {
@@ -399,6 +406,13 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidParameterException", "logGroupName and logStreamName are required", http.StatusBadRequest)
 		return
 	}
+	// Real GetLogEvents checks the group before the stream, so a missing group
+	// reports "log group does not exist", not "log stream does not exist".
+	if _, ok := cwLogGroups.Get(req.LogGroupName); !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"The specified log group does not exist: %s", req.LogGroupName)
+		return
+	}
 
 	key := cwEventsKey(req.LogGroupName, req.LogStreamName)
 	events, ok := cwLogEvents.Get(key)
@@ -471,6 +485,14 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LogGroupName == "" {
 		sim.AWSError(w, "InvalidParameterException", "logGroupName is required", http.StatusBadRequest)
+		return
+	}
+	// Real CloudWatch Logs FilterLogEvents validates the group exists first
+	// (ResourceNotFoundException is a declared error for the op); without this
+	// a missing group returns an empty event list, masking misconfiguration.
+	if _, ok := cwLogGroups.Get(req.LogGroupName); !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"The specified log group does not exist: %s", req.LogGroupName)
 		return
 	}
 
