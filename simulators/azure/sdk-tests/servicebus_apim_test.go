@@ -107,6 +107,15 @@ func TestAzureAPIM_ARMLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
+	// listSecrets returns the subscription's keys (SubscriptionKeysContract).
+	// terraform-provider-azurerm's subscription Read calls this after create.
+	resp = armReq(t, "POST", apimSubPath+"/listSecrets", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	secretsBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Contains(t, string(secretsBody), `"primaryKey"`)
+	assert.Contains(t, string(secretsBody), `"secondaryKey"`)
+
 	resp = armReq(t, "GET", svcPath+"/apis", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	listBody, _ := io.ReadAll(resp.Body)

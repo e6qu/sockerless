@@ -112,6 +112,10 @@ func registerAPIM(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions/{sub}", handleAPIMGetSubscription)
 	srv.HandleFunc("DELETE "+base+"/{name}/subscriptions/{sub}", handleAPIMDeleteSubscription)
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions", handleAPIMListSubscriptions)
+	// AzurePathNormalizationMiddleware lowercases action verbs, so the route
+	// must be registered lowercase (`listsecrets`) to match the provider's
+	// `POST .../listSecrets` after normalization.
+	srv.HandleFunc("POST "+base+"/{name}/subscriptions/{sub}/listsecrets", handleAPIMListSubscriptionSecrets)
 
 	// Operations: scoped to an API. Path:
 	// /service/{svc}/apis/{api}/operations/{op}.
@@ -543,6 +547,23 @@ func handleAPIMDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleAPIMListSubscriptionSecrets returns the subscription's primary and
+// secondary keys (ARM SubscriptionKeysContract). terraform-provider-azurerm's
+// azurerm_api_management_subscription Read calls POST .../listSecrets after
+// create to populate primary_key/secondary_key; without it the create hangs.
+func handleAPIMListSubscriptionSecrets(w http.ResponseWriter, r *http.Request) {
+	id := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
+		"/subscriptions/" + sim.PathParam(r, "sub")
+	if _, ok := apimSubscriptions.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"primaryKey":   simListKey32(id, "apim-subscription-primary"),
+		"secondaryKey": simListKey32(id, "apim-subscription-secondary"),
+	})
 }
 
 func handleAPIMListSubscriptions(w http.ResponseWriter, r *http.Request) {
