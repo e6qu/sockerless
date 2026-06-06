@@ -61,6 +61,7 @@ func main() {
 	registerECS(awsRouter, srv)
 	registerECR(awsRouter, srv)
 	registerCloudWatchLogs(awsRouter, srv)
+	registerCloudWatchMetricsJSON(awsRouter)
 	registerCloudMap(awsRouter, srv)
 	registerSecretsManager(awsRouter, srv)
 	registerSSMParameterStore(awsRouter, srv)

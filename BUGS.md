@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1512 filed - 1468 fixed - 5 open - 4 false positives.**
+**1513 filed - 1469 fixed - 5 open - 4 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1513~~ | P1 | aws cloudwatch simulator — metrics unreachable from current aws CLI (awsJson1.0) | sim fidelity gap | Surfaced once BUG-1512 made `TestCloudWatchCLI_QueryMetrics` actually run in CI: it failed `UnknownOperationException`. Current botocore/aws CLI send CloudWatch metrics over **awsJson1.0** (`X-Amz-Target: GraniteServiceVersion20100801.<Op>`, `application/x-amz-json-1.0`, `x-amzn-query-mode:true`) — the same awsQuery→awsJson migration SQS went through — but the sim only served the legacy query protocol (old CLI) + rpc-v2-cbor (Go SDK). Reproduced locally with the latest botocore (1.43.24) in a venv. Fix: `cloudwatch_metrics_json.go` registers PutMetricData/GetMetricStatistics/ListMetrics on the awsJson router off the SAME `cwMetrics` store; stats emitted as decimal-bearing JSON numbers so botocore reads them as Double (`42.0`). Verified with both old + new CLI and a wire-level awsJson SDK test. |
 | ~~1512~~ | P2 | CI — 16 AWS CLI tests silently never ran (no shard regex match) | CI coverage gap | Fixed: the AWS CLI test job fans out across edge/compute/appdata shards via `-run '^Test(...)'`; 16 tests matched **no** shard so never ran in CI — `TestBatch_*`, `TestCloudWatch*`, `TestCodeBuild_*`, `TestECRCLI_*` (the shard listed the stale `CLI_ECR` prefix, which only matches `TestCLI_ECR_*`), `TestGlue_*`, `TestResourceTagsCLI_*`, `TestSFN_*`. All 16 verified passing — they were simply unrun. Fix: extended the shard regexes so every CLI test matches exactly one shard (balanced across edge/compute/appdata) + added `scripts/check-cli-shard-coverage.sh` (pre-commit) that fails on any orphan/double-matched test so this can't recur. |
 | ~~1511~~ | P2 | azure acr simulator — missing /oauth2/exchange + /oauth2/token | sim fidelity gap (issue #469) | ACR's registry-token auth endpoints aren't implemented (`POST /oauth2/exchange` 404s, `/oauth2/token` 400s), so ACR-shaped clients that do the Bearer challenge → exchange Entra token for refresh token → exchange for scoped Bearer can't push/pull (raw unauthenticated `/v2/` works). Fix: implement both endpoints returning ACR-shaped envelopes (deterministic local tokens) + accept them on `/v2/` + `/acr/v1/`. |
 | ~~1510~~ | P1 | aws elbv2 simulator — DescribeListeners drops SslPolicy | sim fidelity gap (issue #473) | An HTTPS listener created with `SslPolicy` comes back from Create/Describe with no `SslPolicy`, so `aws_lb_listener` plans an in-place update every idempotency plan. Fix: parse `SslPolicy` at CreateListener, store on `ELBv2Listener`, render in `elbv2ListenerXML`. |
