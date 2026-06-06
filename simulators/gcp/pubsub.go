@@ -165,9 +165,15 @@ func handlePSCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	// (sub may not be in the store yet for a brand-new project).
 	now := time.Now().UTC()
 	expire := now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
+	// A snapshot records the TOPIC of the subscription it is taken from, not
+	// the subscription name; resolve it from the subscription store.
+	topic := req.Subscription
+	if sub, ok := psSubscriptions.Get(req.Subscription); ok {
+		topic = sub.Topic
+	}
 	s := PSSnapshot{
 		Name:       "projects/" + project + "/snapshots/" + snap,
-		Topic:      req.Subscription,
+		Topic:      topic,
 		ExpireTime: expire,
 		Labels:     req.Labels,
 	}
@@ -537,11 +543,29 @@ func handlePSSubscriptionVerb(w http.ResponseWriter, r *http.Request) {
 		handlePSAck(w, r, name)
 	case "modifyAckDeadline":
 		handlePSModifyAck(w, r, name)
+	case "seek":
+		handlePSSeek(w, r, name)
 	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
 		handleResourceIAM(w, r, gcpResourceIAMStore(), name, verb)
 	default:
 		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown verb: "+verb)
 	}
+}
+
+// handlePSSeek resets a subscription to a snapshot or timestamp. The sim does
+// not model per-message ack cursors, so seek validates the subscription exists
+// and returns the empty SeekResponse the API contract specifies.
+func handlePSSeek(w http.ResponseWriter, r *http.Request, subName string) {
+	if _, ok := psSubscriptions.Get(subName); !ok {
+		gcpError(w, http.StatusNotFound, "NOT_FOUND", "Subscription not found: "+subName)
+		return
+	}
+	var req struct {
+		Snapshot string `json:"snapshot,omitempty"`
+		Time     string `json:"time,omitempty"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 func handlePSPull(w http.ResponseWriter, r *http.Request, subName string) {
