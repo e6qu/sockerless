@@ -4,6 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
+- Branch: `test/aws-coverage-backfill` (PR pending — AWS sim test-coverage audit + EC2/IAM backfill).
+- **Coverage audit:** cross-referenced all 380 registered AWS sim ops vs the SDK+CLI test corpus → **34 untested**. Probed all 34 against a running sim: all respond + round-trip correctly (no hidden bugs; this is regression exposure, not live defects). This PR backfills the 18 fck-nat-critical EC2 networking + IAM role-policy ops (SDK+CLI, real round-trip assertions). **Remaining 16 for follow-up:** DynamoDB (UpdateItem, TTL, continuous-backups), ECR (BatchDeleteImage, DeleteLifecyclePolicy), SSM GetParameters, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN (ListStateMachineVersions, ValidateStateMachineDefinition), ECS ExecuteCommand, Logs PutRetentionPolicy, SQS SetQueueAttributes, RemoveTagsFromResource.
+- **Audit method (reusable):** `grep -rhoE '\.Register(Versioned)?\("[^"]+"'` for ops; cross-ref against `.<Op>(` in sdk-tests + `"<kebab-op>"` in cli-tests; probe the gap against a running sim.
+
+## Prior state
+
 - Branch: `feat/sim-fidelity-batch-469` (PR #475 — five read-back fidelity gaps #469–#473, BUG-1507–1511, + a CI shard-coverage fix BUG-1512).
 - **BUG-1512 (CI coverage gap):** 16 AWS CLI tests matched no shard `-run` regex and never ran in CI (Batch/CloudWatch/CodeBuild/ECRCLI/Glue/ResourceTags/SFN; the shard had stale `CLI_ECR` which only matches `TestCLI_ECR_*`). All 16 verified passing (with both old AND new botocore). Fixed the shard regexes + added `scripts/check-cli-shard-coverage.sh` (pre-commit, bash/zsh+mac/linux, shellcheck-clean) that fails on any orphan/double so it can't recur. SDK + gcp/azure suites run unsharded (no gap).
 - **BUG-1513 (CloudWatch awsJson1.0):** enabling the CloudWatch metrics CLI test surfaced that the sim only served the legacy query protocol — current botocore sends CloudWatch over **awsJson1.0** (`GraniteServiceVersion20100801.<Op>`). Added `cloudwatch_metrics_json.go` (awsJson handlers off the same `cwMetrics` store; stats emitted as decimal JSON numbers so botocore reads Double). Reproduced/verified with latest botocore in a venv (`uv pip`).
