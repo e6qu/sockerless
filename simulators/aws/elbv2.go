@@ -260,7 +260,11 @@ func handleELBv2DescribeCapacityReservation(w http.ResponseWriter, r *http.Reque
 		fmt.Fprintf(&states, "<member><State><Code>provisioned</Code></State><AvailabilityZone>%s</AvailabilityZone><EffectiveCapacityUnits>0</EffectiveCapacityUnits></member>", xmlEscape(az))
 	}
 	states.WriteString("</CapacityReservationState>")
-	body := fmt.Sprintf("<LastModifiedTime>%s</LastModifiedTime><DecreaseRequestsRemaining>10</DecreaseRequestsRemaining><MinimumLoadBalancerCapacity><CapacityUnits>0</CapacityUnits></MinimumLoadBalancerCapacity>%s",
+	// MinimumLoadBalancerCapacity is omitted unless a minimum was actually
+	// configured (via ModifyCapacityReservation, which the sim doesn't model).
+	// Emitting CapacityUnits=0 makes the provider read a configured 0 and plan
+	// "capacity_units = 0 -> null" on every idempotency check.
+	body := fmt.Sprintf("<LastModifiedTime>%s</LastModifiedTime><DecreaseRequestsRemaining>10</DecreaseRequestsRemaining>%s",
 		xmlEscape(lb.CreatedTime), states.String())
 	elbv2XMLResponse(w, "DescribeCapacityReservation", body, sim.RequestID(r.Context()))
 }
@@ -516,7 +520,7 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		Protocol:        protocol,
 		Port:            port,
 		DefaultActions:  parseELBv2Actions(r),
-		Certificates:    queryList(r, "Certificates"),
+		Certificates:    parseELBv2Certificates(r),
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
 	}
 	elbv2Listeners.Put(arn, listener)

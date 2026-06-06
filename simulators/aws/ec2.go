@@ -59,6 +59,7 @@ type EC2NatGateway struct {
 	AllocationId        string
 	VpcId               string
 	State               string
+	ConnectivityType    string
 	Tags                []EC2Tag
 	NatGatewayAddresses []EC2NatGatewayAddress
 	CreateTime          string
@@ -998,6 +999,12 @@ func handleDescribeAddressesAttribute(w http.ResponseWriter, r *http.Request) {
 func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	subnetId := r.FormValue("SubnetId")
 	allocId := r.FormValue("AllocationId")
+	// connectivity_type is ForceNew in the provider; it defaults to "public"
+	// when omitted (matching real AWS) and must round-trip through Describe.
+	connectivityType := r.FormValue("ConnectivityType")
+	if connectivityType == "" {
+		connectivityType = "public"
+	}
 	tags := parseTags(r)
 	id := ec2ID("nat")
 
@@ -1017,12 +1024,13 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	eniID := ec2ID("eni")
 
 	natgw := EC2NatGateway{
-		NatGatewayId: id,
-		SubnetId:     subnetId,
-		AllocationId: allocId,
-		VpcId:        vpcId,
-		State:        "available",
-		Tags:         tags,
+		NatGatewayId:     id,
+		SubnetId:         subnetId,
+		AllocationId:     allocId,
+		VpcId:            vpcId,
+		State:            "available",
+		ConnectivityType: connectivityType,
+		Tags:             tags,
 		NatGatewayAddresses: []EC2NatGatewayAddress{{
 			AllocationId:       allocId,
 			PublicIp:           publicIp,
@@ -1050,13 +1058,23 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
   <natGateway>
     <natGatewayId>%s</natGatewayId><subnetId>%s</subnetId>
     <vpcId>%s</vpcId><state>available</state>
+    <connectivityType>%s</connectivityType>
     <natGatewayAddressSet>
       <item><allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>%s</privateIp></item>
     </natGatewayAddressSet>
     <createTime>%s</createTime>
     %s
   </natGateway>
-</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, allocId, publicIp, privateIP, natgw.CreateTime, writeTagSetXML(tags))
+</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, connectivityType, allocId, publicIp, privateIP, natgw.CreateTime, writeTagSetXML(tags))
+}
+
+// ec2NatConnectivityType defaults to "public" for gateways stored before the
+// field existed, matching real AWS's default for omitted connectivity_type.
+func ec2NatConnectivityType(n EC2NatGateway) string {
+	if n.ConnectivityType == "" {
+		return "public"
+	}
+	return n.ConnectivityType
 }
 
 func natgwItemXML(n EC2NatGateway) string {
@@ -1069,9 +1087,9 @@ func natgwItemXML(n EC2NatGateway) string {
 	addrs.WriteString("</natGatewayAddressSet>")
 	return fmt.Sprintf(`<item>
     <natGatewayId>%s</natGatewayId><subnetId>%s</subnetId><vpcId>%s</vpcId>
-    <state>%s</state>%s<createTime>%s</createTime>
+    <state>%s</state><connectivityType>%s</connectivityType>%s<createTime>%s</createTime>
     %s
-  </item>`, n.NatGatewayId, n.SubnetId, n.VpcId, n.State, addrs.String(), n.CreateTime, writeTagSetXML(n.Tags))
+  </item>`, n.NatGatewayId, n.SubnetId, n.VpcId, n.State, ec2NatConnectivityType(n), addrs.String(), n.CreateTime, writeTagSetXML(n.Tags))
 }
 
 func handleDescribeNatGateways(w http.ResponseWriter, r *http.Request) {
@@ -1538,13 +1556,23 @@ func sgrItemXML(rule EC2SecurityGroupRule) string {
 	fmt.Fprintf(&b, "<groupOwnerId>%s</groupOwnerId>", rule.GroupOwner)
 	fmt.Fprintf(&b, "<isEgress>%t</isEgress>", rule.IsEgress)
 	fmt.Fprintf(&b, "<ipProtocol>%s</ipProtocol>", rule.IpProtocol)
-	fmt.Fprintf(&b, "<fromPort>%d</fromPort>", rule.FromPort)
-	fmt.Fprintf(&b, "<toPort>%d</toPort>", rule.ToPort)
+	// All-traffic rules (ip_protocol="-1") carry no ports — real AWS omits
+	// fromPort/toPort entirely, so the provider reads them back as null. Emitting
+	// 0 would make every idempotency plan see "0 -> null" drift.
+	if rule.IpProtocol != "-1" {
+		fmt.Fprintf(&b, "<fromPort>%d</fromPort>", rule.FromPort)
+		fmt.Fprintf(&b, "<toPort>%d</toPort>", rule.ToPort)
+	}
 	if rule.CidrIpv4 != "" {
 		fmt.Fprintf(&b, "<cidrIpv4>%s</cidrIpv4>", rule.CidrIpv4)
 	}
 	if rule.RefGroupId != "" {
-		fmt.Fprintf(&b, "<referencedGroupInfo><groupId>%s</groupId><userId>%s</userId></referencedGroupInfo>", rule.RefGroupId, rule.GroupOwner)
+		// Same-account references carry no userId — emitting the owner account
+		// makes the provider render "<account>/sg-id" (it only prefixes when
+		// ReferencedGroupInfo.UserId differs from its own account), which drifts
+		// against the bare sg-id stored in config. The sim is single-account, so
+		// every reference is same-account.
+		fmt.Fprintf(&b, "<referencedGroupInfo><groupId>%s</groupId></referencedGroupInfo>", rule.RefGroupId)
 	}
 	if rule.Description != "" {
 		fmt.Fprintf(&b, "<description>%s</description>", rule.Description)
