@@ -20,6 +20,7 @@ provider "aws" {
 
   endpoints {
     ec2      = var.endpoint
+    ecs      = var.endpoint
     elbv2    = var.endpoint
     logs     = var.endpoint
     dynamodb = var.endpoint
@@ -111,6 +112,26 @@ resource "aws_ecr_repository" "this" {
   name = "fidelity-repo"
   tags = {
     Name = "fidelity"
+  }
+}
+
+# Task-def tags are read by the provider via DescribeTaskDefinition
+# --include TAGS (response top-level tags); a simple container def keeps the
+# ForceNew containerDefinitions hash stable so only the tag path is exercised.
+resource "aws_ecs_task_definition" "this" {
+  family                   = "fidelity-control-plane"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+  container_definitions = jsonencode([{
+    name      = "app"
+    image     = "nginx"
+    essential = true
+  }])
+  tags = {
+    Name            = "fidelity"
+    "edd:component" = "ecs-dev-desktop"
   }
 }
 

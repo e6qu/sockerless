@@ -4,7 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
-## 2026-06-06 — OCI `/v2/` registry header fidelity (BUG-1504, PR pending)
+## 2026-06-06 — OCI `/v2/` registry header fidelity + ECS task-def tags include path (BUG-1504/1506, PR pending)
+
+One PR bundles two consumer issues (#465 + #467).
+
+**#467 (BUG-1506) — ECS task-def tags via `DescribeTaskDefinition --include TAGS`.** After #466 fixed #462's tag round-trip, the consumer found `aws_ecs_task_definition.tags`/`tags_all` *still* drift every plan. Reproduced both read paths: `ListTagsForResource` already works (the "empty" claim didn't reproduce), but `DescribeTaskDefinition --include TAGS` returned no tags. Root cause: the sim leaked tags *inside* the `taskDefinition` object (`json:"tags,omitempty"`), a field the AWS SDK model doesn't have — so it's silently dropped — while the provider reads the **response top-level `tags`**, which AWS populates only when `include` contains `TAGS`, and the handler ignored `include`. Fix: `ECSTaskDefinition.Tags`→`json:"-"` (internal only; real AWS's taskDefinition has no tags field), and emit top-level `tags` from `RegisterTaskDefinition` (always) and `DescribeTaskDefinition` (when `include` has `TAGS`; absent otherwise, matching AWS). SDK + CLI coverage, and `aws_ecs_task_definition` (simple container def + tags) added to the `idempotency-fidelity` stack — a minimal def's containerDefinitions hash is stable, so it stays idempotent and proves the consumer's "last remaining drift" is gone.
+
+
 
 The consumer filed #465: an ECR push via go-containerregistry "returns HTTP 400 for the missing-manifest HEAD probe and aborts." **Reproduced rigorously against current main with the real go-containerregistry client** (built a throwaway g-c-r program) — and the 400 did *not* reproduce: `HEAD /v2/<repo>/manifests/<missing>` returns **404 MANIFEST_UNKNOWN** and the full push succeeds across 1/2/3-segment repos. The sim already does what the issue's "Expected" asks (a 404 that lets the push continue).
 
