@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-06 — AWS sim test-coverage audit + EC2/IAM backfill (PR pending)
+
+Acting on the lesson that an *unrun* CloudWatch test hid a broken protocol, audited the AWS sim for handlers with no test at all. Cross-referenced all 380 registered operations against the SDK + CLI test corpus: **34 had no test**. Probed every one against a running sim — all respond correctly (no CloudWatch-style hard breakage; the apparent failures were missing prerequisites, i.e. correct NotFound errors), and the state-changing ones round-trip (modify-vpc/subnet-attribute reflect in describe, associate/disassociate route-table, revoke SG rules, IGW attach/detach). So the gap is regression exposure, not live bugs.
+
+First backfill batch — the fck-nat-critical EC2 networking + IAM role-policy ops (18 of 34), each with SDK + CLI tests that assert a real round-trip so future drift fails loudly:
+- **EC2 networking (11):** AssociateRouteTable / DisassociateRouteTable / DeleteRouteTable, AttachInternetGateway / DetachInternetGateway / DeleteInternetGateway, ModifyVpcAttribute / DescribeVpcAttribute, ModifySubnetAttribute, RevokeSecurityGroupIngress / RevokeSecurityGroupEgress.
+- **IAM role-policy (7):** AttachRolePolicy / DetachRolePolicy / ListAttachedRolePolicies, PutRolePolicy-driven ListRolePolicies / DeleteRolePolicy, UpdateAssumeRolePolicy, ListInstanceProfiles.
+
+Remaining untested (follow-up): DynamoDB (UpdateItem, TTL + continuous-backups describe/update), and misc (ECR BatchDeleteImage/DeleteLifecyclePolicy, SSM GetParameters, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN ListStateMachineVersions/ValidateStateMachineDefinition, ECS ExecuteCommand, Logs PutRetentionPolicy, SQS SetQueueAttributes, RemoveTagsFromResource).
+
 ## 2026-06-06 — CloudWatch metrics over awsJson1.0 (BUG-1513, PR pending)
 
 Enabling the previously-orphaned `TestCloudWatchCLI_QueryMetrics` (BUG-1512) surfaced a real fidelity gap: it failed `UnknownOperationException` on CI. Current botocore / aws CLI send CloudWatch metrics over **awsJson1.0** (`X-Amz-Target: GraniteServiceVersion20100801.<Op>`, `Content-Type application/x-amz-json-1.0`, `x-amzn-query-mode:true`) — the same awsQuery→awsJson migration SQS went through — but the sim only served the legacy query protocol (old CLI) and rpc-v2-cbor (Go SDK). Reproduced by installing the latest botocore (1.43.24) in a venv (`uv pip`); local CLI (2.26.6) still uses query, which is why it passed locally. Fix: `cloudwatch_metrics_json.go` registers `PutMetricData`/`GetMetricStatistics`/`ListMetrics` on the awsJson router, served from the SAME `cwMetrics` store + helpers as the query and cbor paths. Subtlety: the awsJson deserializer trusts the literal JSON number type (the query XML one coerces by model), so a bare `42` reads back as an int — emit the Double-typed statistics as decimal-bearing JSON numbers (`42.0`) so botocore renders them right. Verified the `Sum=42.0` round-trip with both old and new CLI, plus a version-independent wire-level awsJson SDK test.

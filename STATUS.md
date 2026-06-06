@@ -6,13 +6,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/sim-fidelity-batch-469` (PR pending — five read-back fidelity gaps #469–#473) |
-| In-flight | **#469** Azure ACR `/oauth2/exchange` + `/oauth2/token` endpoints (deterministic ACR-shaped tokens; AAD-v1 middleware no longer swallows the bare `/oauth2/token`). **#470** EC2 instance launch-template provenance via `aws:ec2launchtemplate:*` system tags (the SDK `Instance` has no LT field — provider reads the tags). **#471** route `NetworkInterfaceId`. **#472** SG egress `Ipv6Ranges`. **#473** ELBv2 listener `SslPolicy`. SDK+CLI each; #470–#473 added to the `idempotency-fidelity` TF stack (`plan -detailed-exitcode==0`). |
-| Last merged | PR #474 (azf attach deadline); PR #468 (#465 + #467); PR #466 (#457–#464); PR #463 (#453–#455 + sweep) |
-| Open GitHub issues | #469–#473 fixed by this branch; only #394 (azuread TF upstream) remains. |
-| Bugs | 1511 filed · 1467 fixed · 5 open · 4 false positives |
+| Active branch | `test/aws-coverage-backfill` (PR pending — AWS sim test-coverage audit + EC2/IAM backfill) |
+| In-flight | Audited all 380 registered AWS sim ops vs the SDK+CLI corpus → 34 untested (all probed: respond + round-trip OK, no live bugs). This PR backfills 18 fck-nat-critical EC2-networking + IAM-role-policy ops with SDK+CLI round-trip tests. 16 remain for follow-up (DynamoDB/ECR/SSM/Glue/CodeBuild/SFN/ECS/Logs/SQS). |
+| Last merged | PR #475 (#469–#473 + BUG-1512/1513); PR #474 (azf attach deadline); PR #468 (#465 + #467); PR #466 (#457–#464) |
+| Open GitHub issues | All consumer issues #453–#473 closed; only #394 (azuread TF upstream) remains. |
+| Bugs | 1513 filed · 1469 fixed · 5 open · 4 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | After these two PRs merge: fresh fidelity audit; Phase G new slices (GCP Spanner/Dataflow/Bigtable, Azure); or await new consumer issues |
+| Planned next | Finish the coverage backfill (16 remaining ops); then fresh fidelity audit / Phase G new slices / await new consumer issues |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 
