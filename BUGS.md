@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1523 filed - 1479 fixed - 5 open - 5 false positives.**
+**1524 filed - 1480 fixed - 5 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1524~~ | P2 | aws ecs simulator — ExecuteCommand allowed on tasks not run with enableExecuteCommand | sim fidelity gap / too permissive | Found while building the ECS ExecuteCommand running-task fixture (the last untested AWS op): the handler validated only `LastStatus == "RUNNING"`, never the task's `enableExecuteCommand`. Real ECS rejects exec on a task not started with `--enable-execute-command` (`InvalidParameterException`: "execute command was not enabled when the task was run...") since the SSM exec agent is only injected then. Fix: reject with that error when `!task.EnableExecuteCommand`. New SDK tests run a long-lived busybox task (enabled → session returned; disabled → rejected). |
 | ~~1523~~ | P2 | gcp pubsub simulator — subscriptions.seek not implemented | sim fidelity gap / missing verb | Found by the coverage-audit snapshot probe (snapshots were the one untested pubsub cluster): `projects.subscriptions.seek` (seek-to-snapshot / seek-to-time, the snapshot-replay path) returned `400 Unknown verb: seek` — the subscription-verb switch only handled pull/acknowledge/modifyAckDeadline/IAM. Fix: add a `seek` case + `handlePSSeek` (validates the subscription exists, returns the empty SeekResponse the contract specifies; the sim doesn't model per-message ack cursors). |
 | ~~1522~~ | P2 | gcp pubsub simulator — snapshot records subscription name as its `topic` | sim fidelity gap / wrong field | Found by the snapshot probe: `projects.snapshots.create` stored `topic = <subscription name>` instead of the subscription's source topic, so `snapshots.get` returned the wrong `topic` (a `google_pubsub_snapshot` consumer reads it back). Fix: resolve the subscription's `Topic` from the store at create time. |
 | ~~1521~~ | P1 | azure apim simulator — no soft-delete/purge surface (terraform destroy purge fails) | sim fidelity gap / missing lifecycle | Found after the BUG-1520 delete-status fix let destroy reach the purge step: terraform-provider-azurerm purges APIM by default — after `DELETE service` it `GET .../locations/{loc}/deletedServices/{name}` then `DELETE` (purge). The sim had no `deletedServices` routes → `retrieving the deleted Service ... to be able to purge it: unexpected status 404 ... 404 page not found`. Fix: model APIM soft-delete — service DELETE moves the record to an `apimDeleted` store; `GET/DELETE /subscriptions/{sub}/providers/Microsoft.ApiManagement/locations/{location}/deletedServices/{name}` serve the `DeletedService` contract (200, with `properties.serviceId`) and purge it. Pre-create GET still 404s (name free) so create proceeds. |

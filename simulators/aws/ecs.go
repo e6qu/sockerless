@@ -1768,6 +1768,14 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 				"Execute command is not supported on task in %s status", task.LastStatus)
 			return
 		}
+		// Real ECS rejects exec unless the task was started with
+		// enableExecuteCommand=true (the SSM exec agent is only injected then).
+		if !task.EnableExecuteCommand {
+			sim.AWSError(w, "InvalidParameterException",
+				"The execute command failed because execute command was not enabled when the task was run or the execute command agent isn't running. Wait and try again or run a new task with execute command enabled and try again.",
+				http.StatusBadRequest)
+			return
+		}
 
 		sessionID := generateUUID()
 
