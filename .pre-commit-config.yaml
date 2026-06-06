@@ -60,6 +60,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: cli-shard-coverage
+        name: AWS CLI shard coverage (every CLI test runs in exactly one CI shard)
+        entry: bash scripts/check-cli-shard-coverage.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: port-defaults
         name: Port defaults (no :2375 / :9100 in production sources)
         entry: bash scripts/check-port-defaults.sh

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -362,4 +364,68 @@ func registerACR(srv *sim.Server) {
 		})
 	})
 
+	registerACROAuth2(srv)
+}
+
+// registerACROAuth2 mounts ACR's registry-token auth endpoints. Real ACR clients
+// do the Docker Bearer challenge → POST /oauth2/exchange (Entra access token →
+// ACR refresh token) → POST /oauth2/token (refresh token + scope → scoped Bearer
+// access token) before the /v2/ data-plane calls. The sim keeps a deterministic
+// local-token model; the data plane ignores auth, so any minted token is
+// accepted. Without these endpoints an ACR-shaped client 404s before reaching
+// the registry.
+func registerACROAuth2(srv *sim.Server) {
+	// POST /oauth2/exchange — Entra access token → ACR refresh token.
+	srv.HandleFunc("POST /oauth2/exchange", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		grant := r.PostFormValue("grant_type")
+		if grant != "access_token" && grant != "access_token_refresh_token" {
+			acrOAuthError(w, "unsupported_grant_type", "grant_type must be access_token")
+			return
+		}
+		if r.PostFormValue("access_token") == "" {
+			acrOAuthError(w, "invalid_request", "access_token is required")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"refresh_token": acrMintToken("refresh", r.PostFormValue("service"), ""),
+		})
+	})
+
+	// POST /oauth2/token — ACR refresh token + scope → scoped Bearer access token.
+	srv.HandleFunc("POST /oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		// ACR accepts both grant_type=refresh_token (refresh-token flow) and
+		// grant_type=password (basic admin creds); either yields a Bearer.
+		switch r.PostFormValue("grant_type") {
+		case "refresh_token":
+			if r.PostFormValue("refresh_token") == "" {
+				acrOAuthError(w, "invalid_request", "refresh_token is required")
+				return
+			}
+		case "password", "":
+			// admin-credential flow — accepted deterministically
+		default:
+			acrOAuthError(w, "unsupported_grant_type", "grant_type must be refresh_token or password")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"access_token": acrMintToken("access", r.PostFormValue("service"), r.PostFormValue("scope")),
+		})
+	})
+}
+
+// acrMintToken builds a deterministic, opaque token. The data plane never
+// validates it; the value just has to be non-empty and stable per inputs.
+func acrMintToken(kind, service, scope string) string {
+	sum := sha256.Sum256([]byte(kind + "|" + service + "|" + scope))
+	return "acr-" + kind + "-" + hex.EncodeToString(sum[:16])
+}
+
+// acrOAuthError writes an ACR-shaped OAuth2 error envelope.
+func acrOAuthError(w http.ResponseWriter, code, msg string) {
+	sim.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		"error":             code,
+		"error_description": msg,
+	})
 }

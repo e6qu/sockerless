@@ -157,13 +157,14 @@ resource "aws_lb_target_group" "this" {
   vpc_id   = aws_vpc.main.id
 }
 
-# HTTPS listener with an ACM cert: the cert ARN must round-trip through
-# DescribeListeners or the listener-to-cert linkage is lost.
+# HTTPS listener with an ACM cert + ssl_policy: both must round-trip through
+# DescribeListeners (cert ARN + SslPolicy) or the listener drifts every plan.
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
   certificate_arn   = aws_acm_certificate.this.arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
     type             = "forward"
@@ -171,8 +172,60 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# Inline-egress SG with both IPv4 + IPv6: DescribeSecurityGroups must echo
+# Ipv6Ranges or ipv6_cidr_blocks drifts every plan.
+resource "aws_security_group" "dualstack" {
+  name   = "fidelity-dualstack"
+  vpc_id = aws_vpc.main.id
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+}
+
+# NAT-instance launch template + instance: launch_template is ForceNew and the
+# provider reads it from the aws:ec2launchtemplate:* system tags; absent tags
+# force destroy+create every plan.
+resource "aws_launch_template" "nat" {
+  name          = "fidelity-nat-lt"
+  image_id      = "ami-12345678"
+  instance_type = "t4g.nano"
+}
+
+resource "aws_instance" "nat" {
+  subnet_id = aws_subnet.a.id
+  launch_template {
+    id      = aws_launch_template.nat.id
+    version = "$Latest"
+  }
+}
+
+# Route targeting a network interface: DescribeRouteTables must echo
+# NetworkInterfaceId or aws_route drifts every plan.
+resource "aws_network_interface" "nat" {
+  subnet_id = aws_subnet.a.id
+}
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_route" "via_eni" {
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "0.0.0.0/0"
+  network_interface_id   = aws_network_interface.nat.id
+}
+
 output "nat_gateway_id" {
   value = aws_nat_gateway.this.id
+}
+
+output "nat_instance_id" {
+  value = aws_instance.nat.id
 }
 
 output "listener_certificate_arn" {

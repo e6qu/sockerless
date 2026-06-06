@@ -92,6 +92,7 @@ type EC2Route struct {
 	DestinationCidrBlock string
 	GatewayId            string
 	NatGatewayId         string
+	NetworkInterfaceId   string
 	State                string
 	Origin               string
 }
@@ -119,11 +120,17 @@ type EC2IpPermission struct {
 	FromPort         int
 	ToPort           int
 	IpRanges         []EC2IpRange
+	Ipv6Ranges       []EC2Ipv6Range
 	UserIdGroupPairs []EC2UserIdGroupPair
 }
 
 type EC2IpRange struct {
 	CidrIp      string
+	Description string
+}
+
+type EC2Ipv6Range struct {
+	CidrIpv6    string
 	Description string
 }
 
@@ -1184,6 +1191,9 @@ func routeSetXML(routes []EC2Route) string {
 		if route.NatGatewayId != "" {
 			fmt.Fprintf(&b, "<natGatewayId>%s</natGatewayId>", route.NatGatewayId)
 		}
+		if route.NetworkInterfaceId != "" {
+			fmt.Fprintf(&b, "<networkInterfaceId>%s</networkInterfaceId>", route.NetworkInterfaceId)
+		}
 		fmt.Fprintf(&b, "<state>%s</state><origin>%s</origin>", route.State, route.Origin)
 		b.WriteString("</item>")
 	}
@@ -1271,6 +1281,7 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	destCidr := r.FormValue("DestinationCidrBlock")
 	gwId := r.FormValue("GatewayId")
 	natId := r.FormValue("NatGatewayId")
+	eniId := r.FormValue("NetworkInterfaceId")
 	if natId != "" {
 		// The route is always modeled below; programming the real NAT route is
 		// opportunistic (only when the host has network capabilities) and must
@@ -1287,6 +1298,7 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 			DestinationCidrBlock: destCidr,
 			GatewayId:            gwId,
 			NatGatewayId:         natId,
+			NetworkInterfaceId:   eniId,
 			State:                "active",
 			Origin:               "CreateRoute",
 		})
@@ -1427,6 +1439,19 @@ func ipPermsXML(element string, perms []EC2IpPermission) string {
 		} else {
 			b.WriteString("<ipRanges/>")
 		}
+		if len(p.Ipv6Ranges) > 0 {
+			b.WriteString("<ipv6Ranges>")
+			for _, r := range p.Ipv6Ranges {
+				fmt.Fprintf(&b, "<item><cidrIpv6>%s</cidrIpv6>", r.CidrIpv6)
+				if r.Description != "" {
+					fmt.Fprintf(&b, "<description>%s</description>", r.Description)
+				}
+				b.WriteString("</item>")
+			}
+			b.WriteString("</ipv6Ranges>")
+		} else {
+			b.WriteString("<ipv6Ranges/>")
+		}
 		if len(p.UserIdGroupPairs) > 0 {
 			b.WriteString("<groups>")
 			for _, g := range p.UserIdGroupPairs {
@@ -1528,6 +1553,15 @@ func parseIpPermission(r *http.Request, prefix string) EC2IpPermission {
 		}
 		desc := r.FormValue(fmt.Sprintf("%s.IpRanges.%d.Description", prefix, i))
 		perm.IpRanges = append(perm.IpRanges, EC2IpRange{CidrIp: cidr, Description: desc})
+	}
+
+	for i := 1; ; i++ {
+		cidr := r.FormValue(fmt.Sprintf("%s.Ipv6Ranges.%d.CidrIpv6", prefix, i))
+		if cidr == "" {
+			break
+		}
+		desc := r.FormValue(fmt.Sprintf("%s.Ipv6Ranges.%d.Description", prefix, i))
+		perm.Ipv6Ranges = append(perm.Ipv6Ranges, EC2Ipv6Range{CidrIpv6: cidr, Description: desc})
 	}
 
 	// Try both "UserIdGroupPairs" (classic) and "Groups" (SDK v2) field names
@@ -1922,6 +1956,40 @@ func ec2InstanceXML(inst EC2Instance) string {
 		writeTagSetXML(inst.Tags), ni.String())
 }
 
+// runInstancesLaunchTemplate resolves a RunInstances LaunchTemplate spec to the
+// owning template's id/name, the resolved version, and the effective version
+// data. Returns ok=false when no LaunchTemplate was supplied.
+func runInstancesLaunchTemplate(r *http.Request) (id, name, version string, data EC2LaunchTemplateData, ok bool) {
+	reqId := r.FormValue("LaunchTemplate.LaunchTemplateId")
+	reqName := r.FormValue("LaunchTemplate.LaunchTemplateName")
+	if reqId == "" && reqName == "" {
+		return "", "", "", EC2LaunchTemplateData{}, false
+	}
+	lt, found := lookupLaunchTemplate(reqId, reqName)
+	if !found {
+		return "", "", "", EC2LaunchTemplateData{}, false
+	}
+	reqVersion := r.FormValue("LaunchTemplate.Version")
+	verNum := lt.DefaultVersionNumber
+	switch reqVersion {
+	case "", "$Default":
+		verNum = lt.DefaultVersionNumber
+	case "$Latest":
+		verNum = lt.LatestVersionNumber
+	default:
+		fmt.Sscanf(reqVersion, "%d", &verNum)
+	}
+	for _, v := range lt.Versions {
+		if v.VersionNumber == verNum {
+			data = v.Data
+			break
+		}
+	}
+	// DescribeInstances echoes the resolved numeric version (real AWS does too;
+	// the provider's $Latest/$Default config is diff-suppressed against it).
+	return lt.LaunchTemplateId, lt.LaunchTemplateName, fmt.Sprintf("%d", verNum), data, true
+}
+
 func runInstancesSecurityGroups(r *http.Request) []string {
 	var groups []string
 	for i := 1; ; i++ {
@@ -1946,11 +2014,20 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A LaunchTemplate spec supplies the instance's image/type (unless the
+	// request overrides them) and is echoed back by DescribeInstances.
+	ltID, _, ltVersion, ltData, hasLT := runInstancesLaunchTemplate(r)
 	imageID := r.FormValue("ImageId")
+	if imageID == "" {
+		imageID = ltData.ImageId
+	}
 	if imageID == "" {
 		imageID = "ami-simulated"
 	}
 	instanceType := r.FormValue("InstanceType")
+	if instanceType == "" {
+		instanceType = ltData.InstanceType
+	}
 	if instanceType == "" {
 		instanceType = "t3.micro"
 	}
@@ -2023,6 +2100,16 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			break
+		}
+		if hasLT {
+			// Real AWS records launch-template provenance as system tags on the
+			// instance (DescribeInstances has no LaunchTemplate field); the
+			// provider flattens aws_instance.launch_template from these, so their
+			// absence forces a destroy+create every plan.
+			inst.Tags = append(inst.Tags,
+				EC2Tag{Key: "aws:ec2launchtemplate:id", Value: ltID},
+				EC2Tag{Key: "aws:ec2launchtemplate:version", Value: ltVersion})
+			ec2Instances.Put(inst.InstanceId, inst)
 		}
 		instances = append(instances, inst)
 		go ec2TransitionInstanceToRunning(inst.InstanceId)
