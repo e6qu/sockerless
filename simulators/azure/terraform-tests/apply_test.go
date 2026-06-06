@@ -252,6 +252,26 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
 		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)
 
+	azrmAPIM := outputs.must(t, "azrm_apim_id")
+	require.Contains(t, azrmAPIM, "/providers/Microsoft.ApiManagement/service/tf-azrm-apim",
+		"azurerm API Management id must include canonical ARM path; got %s", azrmAPIM)
+
+	azrmAPIMGateway := outputs.must(t, "azrm_apim_gateway_url")
+	require.Contains(t, azrmAPIMGateway, "tf-azrm-apim",
+		"APIM gateway_url must reference the service name (round-trips properties.gatewayUrl); got %s", azrmAPIMGateway)
+
+	azrmAPIMApi := outputs.must(t, "azrm_apim_api_id")
+	require.Contains(t, azrmAPIMApi, "/service/tf-azrm-apim/apis/tf-azrm-api",
+		"APIM API id must include the service+api path; got %s", azrmAPIMApi)
+
+	azrmAPIMProduct := outputs.must(t, "azrm_apim_product_id")
+	require.Contains(t, azrmAPIMProduct, "/service/tf-azrm-apim/products/tf-azrm-product",
+		"APIM product id must include the service+product path; got %s", azrmAPIMProduct)
+
+	azrmAPIMSub := outputs.must(t, "azrm_apim_subscription_id")
+	require.Contains(t, azrmAPIMSub, "/service/tf-azrm-apim/subscriptions/",
+		"APIM subscription id must include the service+subscription path; got %s", azrmAPIMSub)
+
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }

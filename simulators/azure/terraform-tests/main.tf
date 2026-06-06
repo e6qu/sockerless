@@ -699,6 +699,55 @@ resource "azurerm_key_vault_certificate" "az_kv_cert" {
   depends_on = [azurerm_key_vault_access_policy.az_kv_policy]
 }
 
+# ---------- API Management (Microsoft.ApiManagement control plane) ----------
+# Drives the sim's APIM service + api + product + subscription slice through
+# the real terraform-provider-azurerm client (the stable consumer of these
+# routes — see consumer issues #178 / #210, which used the Consumption SKU).
+# Consumption_0 is what the consumer provisions and is the SKU the provider
+# does NOT gate behind the portalsettings/tenant-access create choreography
+# (Developer/Standard/Premium PUT /portalsettings/{signin,signup,delegation}
+# + /tenant/access after create — surface no sockerless consumer exercises).
+resource "azurerm_api_management" "az_apim" {
+  provider            = azurerm
+  name                = "tf-azrm-apim"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  publisher_name      = "Sockerless CI"
+  publisher_email     = "ci@sockerless.test"
+  sku_name            = "Consumption_0"
+}
+
+resource "azurerm_api_management_api" "az_apim_api" {
+  provider            = azurerm
+  name                = "tf-azrm-api"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  api_management_name = azurerm_api_management.az_apim.name
+  revision            = "1"
+  display_name        = "TF API"
+  path                = "tfapi"
+  protocols           = ["https"]
+}
+
+resource "azurerm_api_management_product" "az_apim_product" {
+  provider              = azurerm
+  product_id            = "tf-azrm-product"
+  resource_group_name   = azurerm_resource_group.az_rg.name
+  api_management_name   = azurerm_api_management.az_apim.name
+  display_name          = "TF Product"
+  published             = true
+  subscription_required = true
+  approval_required     = false
+}
+
+resource "azurerm_api_management_subscription" "az_apim_sub" {
+  provider            = azurerm
+  resource_group_name = azurerm_resource_group.az_rg.name
+  api_management_name = azurerm_api_management.az_apim.name
+  product_id          = azurerm_api_management_product.az_apim_product.id
+  display_name        = "TF Subscription"
+  state               = "active"
+}
+
 # ---------- Outputs (cross-resource invariants) ----------
 
 output "resource_group_id" {
@@ -879,4 +928,24 @@ output "azrm_storage_table_resource_manager_id" {
 
 output "azrm_function_app_id" {
   value = azurerm_linux_function_app.az_fa.id
+}
+
+output "azrm_apim_id" {
+  value = azurerm_api_management.az_apim.id
+}
+
+output "azrm_apim_gateway_url" {
+  value = azurerm_api_management.az_apim.gateway_url
+}
+
+output "azrm_apim_api_id" {
+  value = azurerm_api_management_api.az_apim_api.id
+}
+
+output "azrm_apim_product_id" {
+  value = azurerm_api_management_product.az_apim_product.id
+}
+
+output "azrm_apim_subscription_id" {
+  value = azurerm_api_management_subscription.az_apim_sub.id
 }

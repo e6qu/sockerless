@@ -80,6 +80,7 @@ var (
 	apimOperations    sim.Store[APIMOperation]
 	apimBackends      sim.Store[APIMBackend]
 	apimNamedValues   sim.Store[APIMNamedValue]
+	apimDeleted       sim.Store[APIMService] // soft-deleted services awaiting purge
 )
 
 func registerAPIM(srv *sim.Server) {
@@ -90,6 +91,7 @@ func registerAPIM(srv *sim.Server) {
 	apimOperations = sim.MakeStore[APIMOperation](srv.DB(), "apim_operations")
 	apimBackends = sim.MakeStore[APIMBackend](srv.DB(), "apim_backends")
 	apimNamedValues = sim.MakeStore[APIMNamedValue](srv.DB(), "apim_named_values")
+	apimDeleted = sim.MakeStore[APIMService](srv.DB(), "apim_deleted_services")
 
 	const base = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ApiManagement/service"
 
@@ -97,6 +99,13 @@ func registerAPIM(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}", handleAPIMGetService)
 	srv.HandleFunc("DELETE "+base+"/{name}", handleAPIMDeleteService)
 	srv.HandleFunc("GET "+base, handleAPIMListServicesByRG)
+
+	// Soft-deleted-service (purge) surface — subscription+location scoped, no
+	// resourceGroup. terraform-provider-azurerm purges by default on destroy:
+	// after DELETE service it GETs the deleted service then DELETEs (purges) it.
+	const deletedBase = "/subscriptions/{subscriptionId}/providers/Microsoft.ApiManagement/locations/{location}/deletedServices/{name}"
+	srv.HandleFunc("GET "+deletedBase, handleAPIMGetDeletedService)
+	srv.HandleFunc("DELETE "+deletedBase, handleAPIMPurgeDeletedService)
 
 	srv.HandleFunc("PUT "+base+"/{name}/apis/{api}", handleAPIMCreateApi)
 	srv.HandleFunc("GET "+base+"/{name}/apis/{api}", handleAPIMGetApi)
@@ -112,6 +121,10 @@ func registerAPIM(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions/{sub}", handleAPIMGetSubscription)
 	srv.HandleFunc("DELETE "+base+"/{name}/subscriptions/{sub}", handleAPIMDeleteSubscription)
 	srv.HandleFunc("GET "+base+"/{name}/subscriptions", handleAPIMListSubscriptions)
+	// AzurePathNormalizationMiddleware lowercases action verbs, so the route
+	// must be registered lowercase (`listsecrets`) to match the provider's
+	// `POST .../listSecrets` after normalization.
+	srv.HandleFunc("POST "+base+"/{name}/subscriptions/{sub}/listsecrets", handleAPIMListSubscriptionSecrets)
 
 	// Operations: scoped to an API. Path:
 	// /service/{svc}/apis/{api}/operations/{op}.
@@ -336,12 +349,22 @@ func handleAPIMGetService(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, s)
 }
 
+func apimDeletedKey(sub, location, name string) string {
+	return sub + "/" + location + "/" + name
+}
+
 func handleAPIMDeleteService(w http.ResponseWriter, r *http.Request) {
-	id := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
-	if !apimServices.Delete(id) {
+	sub := sim.PathParam(r, "subscriptionId")
+	id := apimServiceID(sub, sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	svc, ok := apimServices.Get(id)
+	if !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "service not found")
 		return
 	}
+	apimServices.Delete(id)
+	// Move the service to the soft-deleted store so the provider's default
+	// purge step (GET + DELETE deletedServices) can find and purge it.
+	apimDeleted.Put(apimDeletedKey(sub, svc.Location, svc.Name), svc)
 	prefix := id + "/"
 	for _, a := range apimApis.List() {
 		if strings.HasPrefix(a.ID, prefix) {
@@ -358,7 +381,42 @@ func handleAPIMDeleteService(w http.ResponseWriter, r *http.Request) {
 			apimSubscriptions.Delete(s.ID)
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	// All APIM deletes return a synchronous 200: terraform-provider-azurerm's
+	// sub-resource delete clients require 200 (not 202), and its service
+	// DeleteThenPoll treats a 200 as an immediately-complete LRO. A bare 202
+	// with no Location header makes both error "unexpected status 202".
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleAPIMGetDeletedService serves the soft-deleted service (DeletedService
+// contract). The provider GETs this both before create (404 → name is free)
+// and during purge (200 → proceed to DELETE/purge).
+func handleAPIMGetDeletedService(w http.ResponseWriter, r *http.Request) {
+	sub, location, name := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "location"), sim.PathParam(r, "name")
+	svc, ok := apimDeleted.Get(apimDeletedKey(sub, location, name))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "deleted service not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":       fmt.Sprintf("/subscriptions/%s/providers/Microsoft.ApiManagement/locations/%s/deletedServices/%s", sub, location, name),
+		"name":     name,
+		"location": location,
+		"type":     "Microsoft.ApiManagement/deletedservices",
+		"properties": map[string]any{
+			"serviceId": svc.ID,
+		},
+	})
+}
+
+// handleAPIMPurgeDeletedService hard-deletes (purges) the soft-deleted service.
+func handleAPIMPurgeDeletedService(w http.ResponseWriter, r *http.Request) {
+	sub, location, name := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "location"), sim.PathParam(r, "name")
+	if !apimDeleted.Delete(apimDeletedKey(sub, location, name)) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "deleted service not found")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListServicesByRG(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +478,7 @@ func handleAPIMDeleteApi(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "api not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListApis(w http.ResponseWriter, r *http.Request) {
@@ -481,7 +539,7 @@ func handleAPIMDeleteProduct(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "product not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListProducts(w http.ResponseWriter, r *http.Request) {
@@ -542,7 +600,24 @@ func handleAPIMDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleAPIMListSubscriptionSecrets returns the subscription's primary and
+// secondary keys (ARM SubscriptionKeysContract). terraform-provider-azurerm's
+// azurerm_api_management_subscription Read calls POST .../listSecrets after
+// create to populate primary_key/secondary_key; without it the create hangs.
+func handleAPIMListSubscriptionSecrets(w http.ResponseWriter, r *http.Request) {
+	id := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
+		"/subscriptions/" + sim.PathParam(r, "sub")
+	if _, ok := apimSubscriptions.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"primaryKey":   simListKey32(id, "apim-subscription-primary"),
+		"secondaryKey": simListKey32(id, "apim-subscription-secondary"),
+	})
 }
 
 func handleAPIMListSubscriptions(w http.ResponseWriter, r *http.Request) {
