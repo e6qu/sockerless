@@ -123,7 +123,8 @@ func TestAzureAPIM_ARMLifecycle(t *testing.T) {
 	assert.Contains(t, string(listBody), "myapi")
 
 	resp = armReq(t, "DELETE", svcPath, "")
-	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode,
+		"APIM deletes are synchronous 200 (terraform-provider-azurerm errors on a bare 202)")
 	resp.Body.Close()
 
 	resp = armReq(t, "GET", apiPath, "")

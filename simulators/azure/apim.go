@@ -362,7 +362,11 @@ func handleAPIMDeleteService(w http.ResponseWriter, r *http.Request) {
 			apimSubscriptions.Delete(s.ID)
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	// All APIM deletes return a synchronous 200: terraform-provider-azurerm's
+	// sub-resource delete clients require 200 (not 202), and its service
+	// DeleteThenPoll treats a 200 as an immediately-complete LRO. A bare 202
+	// with no Location header makes both error "unexpected status 202".
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListServicesByRG(w http.ResponseWriter, r *http.Request) {
@@ -424,7 +428,7 @@ func handleAPIMDeleteApi(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "api not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListApis(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +489,7 @@ func handleAPIMDeleteProduct(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "product not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPIMListProducts(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +550,7 @@ func handleAPIMDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "subscription not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleAPIMListSubscriptionSecrets returns the subscription's primary and
