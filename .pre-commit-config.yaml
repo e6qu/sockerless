@@ -135,6 +135,39 @@ repos:
         files: ^ui/packages/bleephub/src/
         always_run: false
 
+      # simulator code-quality: dead code + copy-paste detection
+      - id: simulators-deadcode
+        name: simulator dead code (deadcode aws/gcp/azure)
+        entry: bash scripts/simulators-deadcode.sh
+        language: system
+        pass_filenames: false
+        files: ^simulators/(aws|gcp|azure)/.*\.go$
+        always_run: false
+
+      - id: simulators-dupl
+        name: simulator copy-paste Go (dupl ≥200 tokens)
+        entry: bash scripts/simulators-dupl.sh
+        language: system
+        pass_filenames: false
+        files: ^simulators/(aws|gcp|azure)/.*\.go$
+        always_run: false
+
+      - id: simulators-knip
+        name: simulator dead TS exports (knip)
+        entry: bash scripts/simulators-knip.sh
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/simulator-(aws|gcp|azure)/src/
+        always_run: false
+
+      - id: simulators-jscpd
+        name: simulator copy-paste UI (jscpd ≥200 tokens)
+        entry: bash scripts/simulators-jscpd.sh
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/simulator-(aws|gcp|azure)/src/
+        always_run: false
+
       # Commit-msg: strip AI attribution
       - id: strip-ai-attribution
         name: Strip AI attribution from commit messages
