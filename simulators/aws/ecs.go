@@ -1393,6 +1393,20 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		}
 		if i == 0 {
 			cfg.ExtraHosts = hostMetadataExtraHosts()
+			// awsvpc: pin the task's first container onto its VPC's Docker
+			// network at the ENI IP, so DescribeTasks's privateIPv4Address is the
+			// container's real, routable address — intra-VPC reachable, isolated
+			// across VPCs. Secondary containers share this netns (the shared ENI),
+			// exactly as real awsvpc tasks do.
+			netName, eniIP, ok, nerr := ecsTaskVPCNetwork(taskID)
+			if nerr != nil {
+				stopECSTaskProcesses(processes)
+				return nil, nerr
+			}
+			if ok {
+				cfg.Network = netName
+				cfg.IPAddress = eniIP
+			}
 		} else if mainDockerID != "" {
 			cfg.NetworkMode = "container:" + mainDockerID
 		}
@@ -1412,6 +1426,51 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		return nil, nil
 	}
 	return processes, nil
+}
+
+// ecsVPCNetworkName is the Docker network backing a VPC.
+func ecsVPCNetworkName(vpcID string) string { return "sockerless-sim-vpc-" + vpcID }
+
+// ecsTaskVPCNetwork resolves the VPC Docker network + ENI IP for an awsvpc task,
+// ensuring the network exists. Returns ok=false for tasks with no awsvpc ENI
+// (bridge/host tasks use default Docker networking). A network-provisioning
+// failure (e.g. a CIDR Docker can't allocate) is returned so the launch fails
+// loudly rather than running with a silently-wrong address.
+func ecsTaskVPCNetwork(taskID string) (networkName, eniIP string, ok bool, err error) {
+	task, found := ecsTasks.Get(taskID)
+	if !found {
+		return "", "", false, nil
+	}
+	var subnetID string
+	for _, att := range task.Attachments {
+		if att.Type != "ElasticNetworkInterface" {
+			continue
+		}
+		for _, d := range att.Details {
+			switch d.Name {
+			case "subnetId":
+				subnetID = d.Value
+			case "privateIPv4Address":
+				eniIP = d.Value
+			}
+		}
+	}
+	if subnetID == "" || eniIP == "" {
+		return "", "", false, nil
+	}
+	subnet, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		return "", "", false, nil
+	}
+	vpc, ok := ec2Vpcs.Get(subnet.VpcId)
+	if !ok || vpc.CidrBlock == "" {
+		return "", "", false, nil
+	}
+	name := ecsVPCNetworkName(subnet.VpcId)
+	if _, nerr := sim.EnsureVPCNetwork(name, vpc.CidrBlock); nerr != nil {
+		return "", "", false, fmt.Errorf("provision VPC network for %s: %w", subnet.VpcId, nerr)
+	}
+	return name, eniIP, true, nil
 }
 
 func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {

@@ -55,6 +55,7 @@ type ContainerConfig struct {
 	Timeout      time.Duration     // max execution time (0 = no limit)
 	Labels       map[string]string // container labels for tracking
 	Network      string            // Docker network to join (optional)
+	IPAddress    string            // static IPv4 within Network (optional; the VPC ENI IP)
 	NetworkMode  string            // Docker network mode (e.g. "container:<id>" for shared netns)
 	Name         string            // container name (optional, auto-generated if empty)
 	Tty          bool              // allocate a pseudo-TTY
@@ -337,9 +338,15 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 
 	var networkCfg *network.NetworkingConfig
 	if cfg.Network != "" && cfg.NetworkMode == "" {
+		endpoint := &network.EndpointSettings{}
+		if cfg.IPAddress != "" {
+			// Pin the container to its VPC ENI IP so DescribeTasks's
+			// privateIPv4Address is the container's real, routable address.
+			endpoint.IPAMConfig = &network.EndpointIPAMConfig{IPv4Address: cfg.IPAddress}
+		}
 		networkCfg = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				cfg.Network: {},
+				cfg.Network: endpoint,
 			},
 		}
 	}
@@ -551,6 +558,34 @@ func EnsureDockerNetwork(name string) (string, error) {
 	})
 	if err != nil {
 		return "", fmt.Errorf("network create %s: %w", name, err)
+	}
+	return resp.ID, nil
+}
+
+// EnsureVPCNetwork creates (idempotently) a user-defined bridge network whose
+// IPAM subnet is the VPC CIDR. Each VPC becomes a genuinely isolated L3 network:
+// the bridge enforces the VPC's implicit local route (intra-VPC routability) and
+// isolation across VPCs, and ECS tasks pinned to their ENI IP (within the CIDR)
+// expose that real, routable address via DescribeTasks. Returns the network ID.
+func EnsureVPCNetwork(name, cidr string) (string, error) {
+	cli := DockerClient()
+	if cli == nil {
+		return "", fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if existing, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err == nil {
+		return existing.ID, nil
+	}
+	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver: "bridge",
+		IPAM: &network.IPAM{
+			Config: []network.IPAMConfig{{Subnet: cidr}},
+		},
+		Labels: map[string]string{"sockerless-sim": "true", "sockerless-sim-vpc": name},
+	})
+	if err != nil {
+		return "", fmt.Errorf("vpc network create %s (%s): %w", name, cidr, err)
 	}
 	return resp.ID, nil
 }
