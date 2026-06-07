@@ -138,13 +138,14 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodGet && strings.HasSuffix(path, "/.well-known/openid-configuration") {
 			tenantId := extractTenantFromPath(path)
 			baseURL := azureAuthBaseURL(r)
-			// external: `issuer` is a JWT-spec claim convention,
-			// not a routable URL. azidentity verifies token
-			// signatures against the JWKS at `jwks_uri` below
-			// (which IS sim-hosted) and compares `iss` against
-			// the expected value rather than dereferencing it.
+			// The issuer is version-aware. For the v2.0 discovery path
+			// (`/{tenant}/v2.0/.well-known/...`) it MUST equal the URL the
+			// document was fetched from (RFC 8414 §3) so strict OIDC clients
+			// (coreos/go-oidc, Pomerium) validate it. For the v1 path the real
+			// AAD issuer is `sts.windows.net/{tenant}/`, which azidentity / the
+			// Azure SDK compare against (they don't dereference it as a URL).
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"issuer":                                fmt.Sprintf("https://sts.windows.net/%s/", tenantId),
+				"issuer":                                azureIssuer(baseURL, tenantId, strings.Contains(path, "/v2.0/.well-known/")),
 				"authorization_endpoint":                fmt.Sprintf("%s/%s/oauth2/v2.0/authorize", baseURL, tenantId),
 				"token_endpoint":                        fmt.Sprintf("%s/%s/oauth2/v2.0/token", baseURL, tenantId),
 				"jwks_uri":                              fmt.Sprintf("%s/%s/discovery/v2.0/keys", baseURL, tenantId),
@@ -266,6 +267,18 @@ func newAzureAuthorizationCode() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
+// azureIssuer returns the OIDC issuer for a tenant. The v2.0 issuer is the
+// sim's own discovery base (`<baseURL>/{tenant}/v2.0`) — it must match the URL
+// strict OIDC clients fetch the discovery document from (RFC 8414 §3, issue
+// #504). The v1 issuer is the real AAD `sts.windows.net/{tenant}/` value the
+// Azure SDK expects.
+func azureIssuer(baseURL, tenant string, v2 bool) string {
+	if v2 {
+		return fmt.Sprintf("%s/%s/v2.0", baseURL, tenant)
+	}
+	return fmt.Sprintf("https://sts.windows.net/%s/", tenant)
+}
+
 func extractTenantFromPath(path string) string {
 	// Path is like /{tenantId}/v2.0/.well-known/openid-configuration
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
@@ -368,7 +381,8 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 		"scope":          scope,
 	}
 	if azureScopeIncludes(scope, "openid") {
-		idToken, err := mintAzureSimIDToken(tenantID, clientID, authCode.Nonce, scope, now, now.Add(time.Hour))
+		issuer := azureIssuer(azureAuthBaseURL(r), tenantID, true)
+		idToken, err := mintAzureSimIDToken(tenantID, clientID, authCode.Nonce, scope, issuer, now, now.Add(time.Hour))
 		if err != nil {
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return
@@ -430,7 +444,8 @@ func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID st
 		"refresh_token":  refreshToken,
 	}
 	if azureScopeIncludes(scope, "openid") {
-		idToken, err := mintAzureSimIDToken(tenantID, clientID, stored.Nonce, scope, now, now.Add(time.Hour))
+		issuer := azureIssuer(azureAuthBaseURL(r), tenantID, true)
+		idToken, err := mintAzureSimIDToken(tenantID, clientID, stored.Nonce, scope, issuer, now, now.Add(time.Hour))
 		if err != nil {
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return
@@ -564,17 +579,19 @@ func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (
 // specific user. Groups are populated from both the inline sim-seed Groups
 // field and the standard membership store. mintAzureSimIDToken uses the
 // current sim-active user.
-func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
+func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope, issuer string, issuedAt, expiresAt time.Time) (string, error) {
 	email := u.Email
 	if email == "" {
 		email = u.PreferredUsername
 	}
 	claims := map[string]any{
-		"tid":                tenantID,
-		"oid":                u.OID,
-		"sub":                u.Sub,
-		"aud":                clientID,
-		"iss":                fmt.Sprintf("https://sts.windows.net/%s/", tenantID),
+		"tid": tenantID,
+		"oid": u.OID,
+		"sub": u.Sub,
+		"aud": clientID,
+		// v2.0 id_token: iss is the v2.0 issuer and must equal the discovery
+		// document's `issuer` so OIDC clients (coreos/go-oidc) validate it.
+		"iss":                issuer,
 		"iat":                issuedAt.Unix(),
 		"exp":                expiresAt.Unix(),
 		"nbf":                issuedAt.Unix(),
@@ -611,8 +628,8 @@ func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope st
 	return mintAzureSimSignedJWT(claims)
 }
 
-func mintAzureSimIDToken(tenantID, clientID, nonce, scope string, issuedAt, expiresAt time.Time) (string, error) {
-	return mintAzureSimIDTokenForUser(getEntraSimActiveUser(), tenantID, clientID, nonce, scope, issuedAt, expiresAt)
+func mintAzureSimIDToken(tenantID, clientID, nonce, scope, issuer string, issuedAt, expiresAt time.Time) (string, error) {
+	return mintAzureSimIDTokenForUser(getEntraSimActiveUser(), tenantID, clientID, nonce, scope, issuer, issuedAt, expiresAt)
 }
 
 // handleAzureROPC implements the Resource Owner Password Credentials grant
@@ -656,7 +673,8 @@ func handleAzureROPC(w http.ResponseWriter, r *http.Request, tenantID string) {
 		"scope":          scope,
 	}
 	if azureScopeIncludes(scope, "openid") {
-		idToken, err := mintAzureSimIDTokenForUser(u, tenantID, clientID, "", scope, now, now.Add(time.Hour))
+		issuer := azureIssuer(azureAuthBaseURL(r), tenantID, true)
+		idToken, err := mintAzureSimIDTokenForUser(u, tenantID, clientID, "", scope, issuer, now, now.Add(time.Hour))
 		if err != nil {
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return

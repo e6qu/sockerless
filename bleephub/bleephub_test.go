@@ -28,6 +28,10 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// The admin token has no default — every consumer (incl. the test harness)
+	// must set it explicitly. defaultToken is the non-PAT value the tests use.
+	os.Setenv("BLEEPHUB_ADMIN_TOKEN", defaultToken)
+
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
 		With().Timestamp().Logger().Level(zerolog.DebugLevel)
 

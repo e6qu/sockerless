@@ -199,22 +199,37 @@ type EC2Tag struct {
 }
 
 type EC2Instance struct {
-	InstanceId         string
-	ReservationId      string
-	ImageId            string
-	InstanceType       string
-	SubnetId           string
-	VpcId              string
-	State              string
-	PrivateIpAddress   string
-	PublicIpAddress    string
-	SecurityGroupIds   []string
-	Tags               []EC2Tag
-	LaunchTime         string
-	KeyName            string
-	Architecture       string
-	RootDeviceName     string
-	NetworkInterfaceId string
+	InstanceId             string
+	ReservationId          string
+	ImageId                string
+	InstanceType           string
+	SubnetId               string
+	VpcId                  string
+	State                  string
+	PrivateIpAddress       string
+	PublicIpAddress        string
+	SecurityGroupIds       []string
+	Tags                   []EC2Tag
+	LaunchTime             string
+	KeyName                string
+	Architecture           string
+	RootDeviceName         string
+	NetworkInterfaceId     string
+	IamInstanceProfileArn  string
+	IamInstanceProfileName string
+	EbsOptimized           bool
+	Monitoring             bool
+	UserData               string
+	DisableApiTermination  bool
+	SourceDestCheck        bool
+	CpuCoreCount           int
+	CpuThreadsPerCore      int
+	RootVolumeSize         int
+	RootVolumeType         string
+	MetadataHttpTokens     string
+	MetadataHttpEndpoint   string
+	MetadataHopLimit       int
+	MetadataInstanceTags   string
 }
 
 type EC2NetworkInterface struct {
@@ -2577,6 +2592,54 @@ func ec2InstanceXML(inst EC2Instance) string {
 	} else {
 		ni.WriteString("<networkInterfaceSet/>")
 	}
+	monitoringState := "disabled"
+	if inst.Monitoring {
+		monitoringState = "enabled"
+	}
+	keyNameXML := ""
+	if inst.KeyName != "" {
+		keyNameXML = fmt.Sprintf("<keyName>%s</keyName>", inst.KeyName)
+	}
+	iamXML := ""
+	if inst.IamInstanceProfileArn != "" || inst.IamInstanceProfileName != "" {
+		arn := inst.IamInstanceProfileArn
+		if arn == "" {
+			arn = fmt.Sprintf("arn:aws:iam::%s:instance-profile/%s", ec2Owner(), inst.IamInstanceProfileName)
+		}
+		iamXML = fmt.Sprintf("<iamInstanceProfile><arn>%s</arn><id>AIPA%s</id></iamInstanceProfile>",
+			arn, strings.TrimPrefix(inst.InstanceId, "i-"))
+	}
+	cpuXML := ""
+	if inst.CpuCoreCount > 0 {
+		threads := inst.CpuThreadsPerCore
+		if threads == 0 {
+			threads = 1
+		}
+		cpuXML = fmt.Sprintf("<cpuOptions><coreCount>%d</coreCount><threadsPerCore>%d</threadsPerCore></cpuOptions>",
+			inst.CpuCoreCount, threads)
+	}
+	metaTokens := inst.MetadataHttpTokens
+	if metaTokens == "" {
+		metaTokens = "optional"
+	}
+	metaEndpoint := inst.MetadataHttpEndpoint
+	if metaEndpoint == "" {
+		metaEndpoint = "enabled"
+	}
+	metaHop := inst.MetadataHopLimit
+	if metaHop == 0 {
+		metaHop = 1
+	}
+	metaTags := inst.MetadataInstanceTags
+	if metaTags == "" {
+		metaTags = "disabled"
+	}
+	metaXML := fmt.Sprintf("<metadataOptions><state>applied</state><httpTokens>%s</httpTokens><httpPutResponseHopLimit>%d</httpPutResponseHopLimit><httpEndpoint>%s</httpEndpoint><httpProtocolIpv6>disabled</httpProtocolIpv6><instanceMetadataTags>%s</instanceMetadataTags></metadataOptions>",
+		metaTokens, metaHop, metaEndpoint, metaTags)
+	publicXML := ""
+	if inst.PublicIpAddress != "" {
+		publicXML = fmt.Sprintf("<ipAddress>%s</ipAddress>", inst.PublicIpAddress)
+	}
 	return fmt.Sprintf(`<item>
     <instanceId>%s</instanceId>
     <imageId>%s</imageId>
@@ -2584,16 +2647,17 @@ func ec2InstanceXML(inst EC2Instance) string {
     <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
     <dnsName/>
     <reason/>
+    %s
     <amiLaunchIndex>0</amiLaunchIndex>
     <productCodes/>
     <instanceType>%s</instanceType>
     <launchTime>%s</launchTime>
     <placement><availabilityZone>%s</availabilityZone><groupName/><tenancy>default</tenancy></placement>
-    <monitoring><state>disabled</state></monitoring>
+    <monitoring><state>%s</state></monitoring>
     <subnetId>%s</subnetId>
     <vpcId>%s</vpcId>
-    <privateIpAddress>%s</privateIpAddress>
-    <sourceDestCheck>true</sourceDestCheck>
+    <privateIpAddress>%s</privateIpAddress>%s
+    <sourceDestCheck>%t</sourceDestCheck>
     <groupSet>%s</groupSet>
     <architecture>%s</architecture>
     <rootDeviceType>ebs</rootDeviceType>
@@ -2601,13 +2665,16 @@ func ec2InstanceXML(inst EC2Instance) string {
     <blockDeviceMapping><item><deviceName>%s</deviceName><ebs><volumeId>%s</volumeId><status>attached</status><attachTime>%s</attachTime><deleteOnTermination>true</deleteOnTermination></ebs></item></blockDeviceMapping>
     <virtualizationType>hvm</virtualizationType>
     <clientToken/>
+    <ebsOptimized>%t</ebsOptimized>
+    %s%s%s
     %s
     %s
   </item>`,
 		inst.InstanceId, inst.ImageId, instanceStateCode(inst.State), inst.State,
-		strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), inst.InstanceType, inst.LaunchTime,
-		awsAvailabilityZone(), inst.SubnetId, inst.VpcId, inst.PrivateIpAddress, groups.String(),
+		strings.ReplaceAll(inst.PrivateIpAddress, ".", "-"), awsRegion(), keyNameXML, inst.InstanceType, inst.LaunchTime,
+		awsAvailabilityZone(), monitoringState, inst.SubnetId, inst.VpcId, inst.PrivateIpAddress, publicXML, inst.SourceDestCheck, groups.String(),
 		inst.Architecture, inst.RootDeviceName, inst.RootDeviceName, "vol-"+strings.TrimPrefix(inst.InstanceId, "i-"), inst.LaunchTime,
+		inst.EbsOptimized, iamXML, metaXML, cpuXML,
 		writeTagSetXML(inst.Tags), ni.String())
 }
 
@@ -2664,6 +2731,60 @@ func runInstancesSecurityGroups(r *http.Request) []string {
 	return groups
 }
 
+// ec2FormOrLT returns the request value for key, falling back to the
+// launch-template value (applying LT data to the instance is the documented
+// behaviour, not a synthetic default).
+func ec2FormOrLT(r *http.Request, key, ltVal string) string {
+	if v := r.FormValue(key); v != "" {
+		return v
+	}
+	return ltVal
+}
+
+func ec2BoolStr(s string) bool { return s == "true" || s == "1" }
+
+func ec2AtoiOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	var n int
+	fmt.Sscanf(s, "%d", &n)
+	return n
+}
+
+// runInstancesRootBlockDevice resolves the root volume size/type from the
+// request's BlockDeviceMapping (matched by the sim's root device name, else the
+// sole mapping), else the launch template's. Zero/"" means "use the AWS default"
+// (resolved in ec2CreateInstance).
+func runInstancesRootBlockDevice(r *http.Request, lt EC2LaunchTemplateData) (int, string) {
+	isRoot := func(dn string) bool {
+		return dn == "/dev/sda1" || dn == "/dev/xvda" || dn == "/dev/xvda1"
+	}
+	var reqDev []struct{ dn, size, vtype string }
+	for i := 1; ; i++ {
+		dn := r.FormValue(fmt.Sprintf("BlockDeviceMapping.%d.DeviceName", i))
+		if dn == "" {
+			break
+		}
+		reqDev = append(reqDev, struct{ dn, size, vtype string }{
+			dn,
+			r.FormValue(fmt.Sprintf("BlockDeviceMapping.%d.Ebs.VolumeSize", i)),
+			r.FormValue(fmt.Sprintf("BlockDeviceMapping.%d.Ebs.VolumeType", i)),
+		})
+	}
+	for _, d := range reqDev {
+		if isRoot(d.dn) || len(reqDev) == 1 {
+			return ec2AtoiOr(d.size, 0), d.vtype
+		}
+	}
+	for _, b := range lt.BlockDeviceMappings {
+		if b.Ebs != nil && (isRoot(b.DeviceName) || len(lt.BlockDeviceMappings) == 1) {
+			return ec2AtoiOr(b.Ebs.VolumeSize, 0), b.Ebs.VolumeType
+		}
+	}
+	return 0, ""
+}
+
 func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 	minCount, maxCount, ok := runInstancesCounts(w, r)
 	if !ok {
@@ -2715,6 +2836,56 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 	}
 	launchTime := time.Now().UTC().Format(time.RFC3339)
 	tags := parseTags(r)
+
+	// Instance knobs: request value, else launch-template value, else the AWS
+	// default the API documents (metadata options). These are the fields
+	// aws_instance reads back; dropping them forces drift every plan.
+	var ltMetaTokens, ltMetaEndpoint, ltMetaHop, ltMetaTags string
+	if m := ltData.MetadataOptions; m != nil {
+		ltMetaTokens, ltMetaEndpoint, ltMetaHop, ltMetaTags = m.HttpTokens, m.HttpEndpoint, m.HttpPutResponseHopLimit, m.InstanceMetadataTags
+	}
+	metaTokens := ec2FormOrLT(r, "MetadataOptions.HttpTokens", ltMetaTokens)
+	if metaTokens == "" {
+		metaTokens = "optional"
+	}
+	metaEndpoint := ec2FormOrLT(r, "MetadataOptions.HttpEndpoint", ltMetaEndpoint)
+	if metaEndpoint == "" {
+		metaEndpoint = "enabled"
+	}
+	metaTags := ec2FormOrLT(r, "MetadataOptions.InstanceMetadataTags", ltMetaTags)
+	if metaTags == "" {
+		metaTags = "disabled"
+	}
+	rootSize, rootType := runInstancesRootBlockDevice(r, ltData)
+	base := EC2InstanceCreateSpec{
+		Context:                r.Context(),
+		ReservationId:          reservationID,
+		ImageId:                imageID,
+		InstanceType:           instanceType,
+		Subnet:                 subnet,
+		SubnetId:               subnetID,
+		SecurityGroupIds:       sgIDs,
+		Tags:                   tags,
+		LaunchTime:             launchTime,
+		State:                  "pending",
+		KeyName:                ec2FormOrLT(r, "KeyName", ltData.KeyName),
+		IamInstanceProfileArn:  ec2FormOrLT(r, "IamInstanceProfile.Arn", ltData.IamInstanceProfileArn),
+		IamInstanceProfileName: ec2FormOrLT(r, "IamInstanceProfile.Name", ltData.IamInstanceProfileName),
+		EbsOptimized:           ec2BoolStr(ec2FormOrLT(r, "EbsOptimized", ltData.EbsOptimized)),
+		Monitoring:             ec2BoolStr(ec2FormOrLT(r, "Monitoring.Enabled", ltData.MonitoringEnabled)),
+		UserData:               ec2FormOrLT(r, "UserData", ltData.UserData),
+		DisableApiTermination:  ec2BoolStr(ec2FormOrLT(r, "DisableApiTermination", ltData.DisableApiTermination)),
+		SourceDestCheck:        true, // AWS default; ModifyInstanceAttribute can disable it
+		CpuCoreCount:           ec2AtoiOr(r.FormValue("CpuOptions.CoreCount"), 0),
+		CpuThreadsPerCore:      ec2AtoiOr(r.FormValue("CpuOptions.ThreadsPerCore"), 0),
+		RootVolumeSize:         rootSize,
+		RootVolumeType:         rootType,
+		MetadataHttpTokens:     metaTokens,
+		MetadataHttpEndpoint:   metaEndpoint,
+		MetadataHopLimit:       ec2AtoiOr(ec2FormOrLT(r, "MetadataOptions.HttpPutResponseHopLimit", ltMetaHop), 1),
+		MetadataInstanceTags:   metaTags,
+	}
+
 	var instances []EC2Instance
 	for i := 0; i < maxCount; i++ {
 		privateIP := ""
@@ -2735,20 +2906,9 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 			}
 			privateIP = ip
 		}
-		inst, err := ec2CreateInstance(EC2InstanceCreateSpec{
-			Context:          r.Context(),
-			ReservationId:    reservationID,
-			ImageId:          imageID,
-			InstanceType:     instanceType,
-			Subnet:           subnet,
-			SubnetId:         subnetID,
-			PrivateIP:        privateIP,
-			SecurityGroupIds: sgIDs,
-			Tags:             tags,
-			LaunchTime:       launchTime,
-			KeyName:          r.FormValue("KeyName"),
-			State:            "pending",
-		})
+		spec := base
+		spec.PrivateIP = privateIP
+		inst, err := ec2CreateInstance(spec)
 		if err != nil {
 			if i < minCount {
 				ec2ErrorXML(w, "InsufficientFreeAddressesInSubnet", fmt.Sprintf("failed to attach real EC2 network interface: %v", err), http.StatusServiceUnavailable)
@@ -2807,18 +2967,33 @@ func runInstancesCounts(w http.ResponseWriter, r *http.Request) (int, int, bool)
 }
 
 type EC2InstanceCreateSpec struct {
-	Context          context.Context
-	ReservationId    string
-	ImageId          string
-	InstanceType     string
-	Subnet           EC2Subnet
-	SubnetId         string
-	PrivateIP        string
-	SecurityGroupIds []string
-	Tags             []EC2Tag
-	LaunchTime       string
-	KeyName          string
-	State            string
+	Context                context.Context
+	ReservationId          string
+	ImageId                string
+	InstanceType           string
+	Subnet                 EC2Subnet
+	SubnetId               string
+	PrivateIP              string
+	SecurityGroupIds       []string
+	Tags                   []EC2Tag
+	LaunchTime             string
+	KeyName                string
+	State                  string
+	IamInstanceProfileArn  string
+	IamInstanceProfileName string
+	EbsOptimized           bool
+	Monitoring             bool
+	UserData               string
+	DisableApiTermination  bool
+	SourceDestCheck        bool
+	CpuCoreCount           int
+	CpuThreadsPerCore      int
+	RootVolumeSize         int
+	RootVolumeType         string
+	MetadataHttpTokens     string
+	MetadataHttpEndpoint   string
+	MetadataHopLimit       int
+	MetadataInstanceTags   string
 }
 
 func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
@@ -2831,22 +3006,45 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 	instanceID := ec2ID("i")
 	eniID := ec2ID("eni")
 	rootDevice := "/dev/sda1"
+	rootVolSize := spec.RootVolumeSize
+	if rootVolSize == 0 {
+		rootVolSize = 8
+	}
+	rootVolType := spec.RootVolumeType
+	if rootVolType == "" {
+		rootVolType = "gp3"
+	}
 	inst := EC2Instance{
-		InstanceId:         instanceID,
-		ReservationId:      spec.ReservationId,
-		ImageId:            spec.ImageId,
-		InstanceType:       spec.InstanceType,
-		SubnetId:           spec.SubnetId,
-		VpcId:              spec.Subnet.VpcId,
-		State:              spec.State,
-		PrivateIpAddress:   spec.PrivateIP,
-		SecurityGroupIds:   spec.SecurityGroupIds,
-		Tags:               spec.Tags,
-		LaunchTime:         spec.LaunchTime,
-		KeyName:            spec.KeyName,
-		Architecture:       "x86_64",
-		RootDeviceName:     rootDevice,
-		NetworkInterfaceId: eniID,
+		InstanceId:             instanceID,
+		ReservationId:          spec.ReservationId,
+		ImageId:                spec.ImageId,
+		InstanceType:           spec.InstanceType,
+		SubnetId:               spec.SubnetId,
+		VpcId:                  spec.Subnet.VpcId,
+		State:                  spec.State,
+		PrivateIpAddress:       spec.PrivateIP,
+		SecurityGroupIds:       spec.SecurityGroupIds,
+		Tags:                   spec.Tags,
+		LaunchTime:             spec.LaunchTime,
+		KeyName:                spec.KeyName,
+		Architecture:           "x86_64",
+		RootDeviceName:         rootDevice,
+		NetworkInterfaceId:     eniID,
+		IamInstanceProfileArn:  spec.IamInstanceProfileArn,
+		IamInstanceProfileName: spec.IamInstanceProfileName,
+		EbsOptimized:           spec.EbsOptimized,
+		Monitoring:             spec.Monitoring,
+		UserData:               spec.UserData,
+		DisableApiTermination:  spec.DisableApiTermination,
+		SourceDestCheck:        spec.SourceDestCheck,
+		CpuCoreCount:           spec.CpuCoreCount,
+		CpuThreadsPerCore:      spec.CpuThreadsPerCore,
+		RootVolumeSize:         rootVolSize,
+		RootVolumeType:         rootVolType,
+		MetadataHttpTokens:     spec.MetadataHttpTokens,
+		MetadataHttpEndpoint:   spec.MetadataHttpEndpoint,
+		MetadataHopLimit:       spec.MetadataHopLimit,
+		MetadataInstanceTags:   spec.MetadataInstanceTags,
 	}
 	ec2Instances.Put(instanceID, inst)
 	ec2NetworkInterfaces.Put(eniID, EC2NetworkInterface{
@@ -2866,12 +3064,12 @@ func ec2CreateInstance(spec EC2InstanceCreateSpec) (EC2Instance, error) {
 	rootVolumeID := "vol-" + strings.TrimPrefix(instanceID, "i-")
 	rootVolume := EC2Volume{
 		VolumeId:         rootVolumeID,
-		Size:             8,
+		Size:             rootVolSize,
 		SnapshotId:       "snap-" + strings.TrimPrefix(spec.ImageId, "ami-"),
 		AvailabilityZone: spec.Subnet.AvailabilityZone,
 		State:            "in-use",
 		CreateTime:       spec.LaunchTime,
-		VolumeType:       "gp3",
+		VolumeType:       rootVolType,
 		Tags:             spec.Tags,
 		Attachments: []EC2VolumeAttachment{{
 			VolumeId:            rootVolumeID,
@@ -3211,9 +3409,9 @@ func handleDescribeInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	case "ramdisk":
 		body = "<ramdisk><value/></ramdisk>"
 	case "userData":
-		body = "<userData><value/></userData>"
+		body = fmt.Sprintf("<userData><value>%s</value></userData>", inst.UserData)
 	case "disableApiTermination":
-		body = "<disableApiTermination><value>false</value></disableApiTermination>"
+		body = fmt.Sprintf("<disableApiTermination><value>%t</value></disableApiTermination>", inst.DisableApiTermination)
 	case "disableApiStop":
 		body = "<disableApiStop><value>false</value></disableApiStop>"
 	case "instanceInitiatedShutdownBehavior":
@@ -3221,7 +3419,9 @@ func handleDescribeInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	case "rootDeviceName":
 		body = fmt.Sprintf("<rootDeviceName><value>%s</value></rootDeviceName>", inst.RootDeviceName)
 	case "sourceDestCheck":
-		body = "<sourceDestCheck><value>true</value></sourceDestCheck>"
+		body = fmt.Sprintf("<sourceDestCheck><value>%t</value></sourceDestCheck>", inst.SourceDestCheck)
+	case "ebsOptimized":
+		body = fmt.Sprintf("<ebsOptimized><value>%t</value></ebsOptimized>", inst.EbsOptimized)
 	default:
 		body = fmt.Sprintf("<%s><value/></%s>", attribute, attribute)
 	}
@@ -3239,6 +3439,28 @@ func handleModifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", instanceID)
 		return
 	}
+	// Persist the modified attributes (previously a no-op: the set succeeded but
+	// DescribeInstances/DescribeInstanceAttribute still showed the old value).
+	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+		if v := r.FormValue("SourceDestCheck.Value"); v != "" {
+			inst.SourceDestCheck = v == "true"
+		}
+		if v := r.FormValue("DisableApiTermination.Value"); v != "" {
+			inst.DisableApiTermination = v == "true"
+		}
+		if v := r.FormValue("EbsOptimized.Value"); v != "" {
+			inst.EbsOptimized = v == "true"
+		}
+		if v := r.FormValue("InstanceType.Value"); v != "" {
+			inst.InstanceType = v
+		}
+		if v := r.FormValue("UserData.Value"); v != "" {
+			inst.UserData = v
+		}
+		if groups := ec2ParamList(r, "GroupId"); len(groups) > 0 {
+			inst.SecurityGroupIds = groups
+		}
+	})
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ModifyInstanceAttributeResponse %s><requestId>%s</requestId><return>true</return></ModifyInstanceAttributeResponse>`, ec2Xmlns(), generateUUID())
 }

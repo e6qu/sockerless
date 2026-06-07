@@ -20,7 +20,7 @@ async function shot(page: Page, name: string): Promise<void> {
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-const TOKEN = "ghp_0000000000000000000000000000000000000000";
+const TOKEN = "bleephub-admin-token-00000000000000000000";
 const BASE = "http://localhost:15555";
 
 async function apiPost(page: Page, path: string, body: unknown) {

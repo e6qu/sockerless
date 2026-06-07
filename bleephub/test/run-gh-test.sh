@@ -67,6 +67,8 @@ export GIT_SSL_CAINFO=/tmp/tls/ca.crt
 log "Starting bleephub..."
 export BPH_TLS_CERT=/tmp/tls/server.crt
 export BPH_TLS_KEY=/tmp/tls/server.key
+# The admin token has no default — the binary fails loudly if this is unset.
+export BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000"
 bleephub -addr :443 --log-level debug > /tmp/bleephub.log 2>&1 &
 BPH_PID=$!
 
@@ -91,7 +93,7 @@ git config --global user.name "Test User"
 git config --global init.defaultBranch main
 
 # Default token
-TOKEN="ghp_0000000000000000000000000000000000000000"
+TOKEN="bleephub-admin-token-00000000000000000000"
 BASE="https://localhost"
 HOST="localhost"
 

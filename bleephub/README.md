@@ -42,7 +42,7 @@ sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
   ./sockerless-bleephub --addr :443 &
 
 # 4. Point gh at bleephub — --hostname is the key flag
-echo "ghp_0000000000000000000000000000000000000000" \
+echo "bleephub-admin-token-00000000000000000000" \
   | gh auth login --hostname localhost --with-token
 export GH_HOST=localhost                                     # make it the default host
 
@@ -211,6 +211,7 @@ Flags:
 - `--log-level` — `debug` | `info` | `warn` | `error` (default `info`).
 
 Env vars:
+- `BLEEPHUB_ADMIN_TOKEN=<token>` — **required.** The seeded admin token. There is no default (a default would be a guessable credential, and the historical `ghp_…` value tripped secret scanners); the binary fails loudly at startup if unset. Set a non-PAT-shaped value.
 - `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default).
 - `BLEEPHUB_DATA_DIR=<dir>` — persistence + artifact directory.
 - `BPH_TLS_CERT` + `BPH_TLS_KEY` — serve over TLS.
