@@ -295,12 +295,27 @@ data "aws_ami" "al2023" {
   }
 }
 
+# EBS volume with non-default performance + encryption: iops/throughput/kms/
+# encrypted were dropped from DescribeVolumes, so each drifted every plan.
+resource "aws_ebs_volume" "data" {
+  availability_zone = "us-east-1a"
+  size              = 20
+  type              = "gp3"
+  iops              = 3000
+  throughput        = 125
+  encrypted         = true
+}
+
 output "deployer_key_id" {
   value = aws_key_pair.deployer.key_pair_id
 }
 
 output "resolved_ami_id" {
   value = data.aws_ami.al2023.id
+}
+
+output "data_volume_id" {
+  value = aws_ebs_volume.data.id
 }
 
 output "nat_gateway_id" {
