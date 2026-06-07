@@ -63,6 +63,19 @@ type EC2LaunchTemplateData struct {
 	TagSpecifications                 []EC2LTTagSpecification
 	MetadataOptions                   *EC2LTMetadataOptions
 	Placement                         *EC2LTPlacement
+	CreditSpecification               *EC2LTCreditSpecification
+	InstanceMarketOptions             *EC2LTInstanceMarketOptions
+}
+
+type EC2LTCreditSpecification struct {
+	CpuCredits string
+}
+
+type EC2LTInstanceMarketOptions struct {
+	MarketType                   string
+	MaxPrice                     string
+	SpotInstanceType             string
+	InstanceInterruptionBehavior string
 }
 
 type EC2LTNetworkInterface struct {
@@ -319,6 +332,19 @@ func parseLaunchTemplateData(r *http.Request, prefix string) EC2LaunchTemplateDa
 		}
 	}
 
+	if ec2HasFormPrefix(r, prefix+".CreditSpecification") {
+		d.CreditSpecification = &EC2LTCreditSpecification{CpuCredits: g("CreditSpecification.CpuCredits")}
+	}
+
+	if ec2HasFormPrefix(r, prefix+".InstanceMarketOptions") {
+		d.InstanceMarketOptions = &EC2LTInstanceMarketOptions{
+			MarketType:                   g("InstanceMarketOptions.MarketType"),
+			MaxPrice:                     g("InstanceMarketOptions.SpotOptions.MaxPrice"),
+			SpotInstanceType:             g("InstanceMarketOptions.SpotOptions.SpotInstanceType"),
+			InstanceInterruptionBehavior: g("InstanceMarketOptions.SpotOptions.InstanceInterruptionBehavior"),
+		}
+	}
+
 	return d
 }
 
@@ -426,6 +452,23 @@ func ltDataXML(d EC2LaunchTemplateData) string {
 		ltOptEl(&b, "groupName", d.Placement.GroupName)
 		ltOptEl(&b, "tenancy", d.Placement.Tenancy)
 		b.WriteString("</placement>")
+	}
+	if d.CreditSpecification != nil {
+		b.WriteString("<creditSpecification>")
+		ltOptEl(&b, "cpuCredits", d.CreditSpecification.CpuCredits)
+		b.WriteString("</creditSpecification>")
+	}
+	if d.InstanceMarketOptions != nil {
+		b.WriteString("<instanceMarketOptions>")
+		ltOptEl(&b, "marketType", d.InstanceMarketOptions.MarketType)
+		if d.InstanceMarketOptions.MaxPrice != "" || d.InstanceMarketOptions.SpotInstanceType != "" || d.InstanceMarketOptions.InstanceInterruptionBehavior != "" {
+			b.WriteString("<spotOptions>")
+			ltOptEl(&b, "maxPrice", d.InstanceMarketOptions.MaxPrice)
+			ltOptEl(&b, "spotInstanceType", d.InstanceMarketOptions.SpotInstanceType)
+			ltOptEl(&b, "instanceInterruptionBehavior", d.InstanceMarketOptions.InstanceInterruptionBehavior)
+			b.WriteString("</spotOptions>")
+		}
+		b.WriteString("</instanceMarketOptions>")
 	}
 	return b.String()
 }
