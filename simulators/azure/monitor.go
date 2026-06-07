@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -291,6 +292,31 @@ func registerAzureMonitor(srv *sim.Server) {
 		} else {
 			w.WriteHeader(http.StatusNoContent)
 		}
+	})
+
+	// GET - Subscription-scoped workspace list. terraform-provider-azurerm
+	// resolves a Container App Environment's log_analytics_workspace_id by
+	// listing every workspace in the subscription and matching customerId
+	// (findWorkspaceResourceIDFromCustomerID); without this list the read
+	// can't recover the workspace id and plans to re-add it every refresh.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/", sim.PathParam(r, "subscriptionId"))
+		items := workspaces.Filter(func(ws Workspace) bool { return strings.HasPrefix(ws.ID, prefix) })
+		if items == nil {
+			items = []Workspace{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
+	})
+
+	// GET - Resource-group-scoped workspace list (ListByResourceGroup).
+	srv.HandleFunc("GET "+armBase+"/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.OperationalInsights/workspaces/",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+		items := workspaces.Filter(func(ws Workspace) bool { return strings.HasPrefix(ws.ID, prefix) })
+		if items == nil {
+			items = []Workspace{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
 	})
 
 	// POST - Execute KQL query (Log Analytics data-plane)

@@ -51,14 +51,17 @@ type SiteProperties struct {
 
 // SiteConfig holds the site configuration for a function app.
 type SiteConfig struct {
-	AppSettings                         []NameValuePair `json:"appSettings,omitempty"`
-	LinuxFxVersion                      string          `json:"linuxFxVersion,omitempty"`
-	FunctionAppScaleLimit               int             `json:"functionAppScaleLimit,omitempty"`
-	FtpsState                           string          `json:"ftpsState,omitempty"`
-	LoadBalancing                       string          `json:"loadBalancing,omitempty"`
-	ManagedPipelineMode                 string          `json:"managedPipelineMode,omitempty"`
-	IPSecurityRestrictionsDefaultAction string          `json:"ipSecurityRestrictionsDefaultAction,omitempty"`
-	SimCommand                          []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
+	AppSettings                            []NameValuePair `json:"appSettings,omitempty"`
+	LinuxFxVersion                         string          `json:"linuxFxVersion,omitempty"`
+	FunctionAppScaleLimit                  int             `json:"functionAppScaleLimit,omitempty"`
+	FtpsState                              string          `json:"ftpsState,omitempty"`
+	LoadBalancing                          string          `json:"loadBalancing,omitempty"`
+	ManagedPipelineMode                    string          `json:"managedPipelineMode,omitempty"`
+	IPSecurityRestrictionsDefaultAction    string          `json:"ipSecurityRestrictionsDefaultAction,omitempty"`
+	MinTLSVersion                          string          `json:"minTlsVersion,omitempty"`
+	ScmMinTLSVersion                       string          `json:"scmMinTlsVersion,omitempty"`
+	ScmIPSecurityRestrictionsDefaultAction string          `json:"scmIpSecurityRestrictionsDefaultAction,omitempty"`
+	SimCommand                             []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 // NameValuePair holds a name-value pair for app settings.
@@ -195,6 +198,15 @@ func registerAzureFunctions(srv *sim.Server) {
 		if siteConfig.IPSecurityRestrictionsDefaultAction == "" {
 			siteConfig.IPSecurityRestrictionsDefaultAction = "Allow"
 		}
+		if siteConfig.MinTLSVersion == "" {
+			siteConfig.MinTLSVersion = "1.2"
+		}
+		if siteConfig.ScmMinTLSVersion == "" {
+			siteConfig.ScmMinTLSVersion = "1.2"
+		}
+		if siteConfig.ScmIPSecurityRestrictionsDefaultAction == "" {
+			siteConfig.ScmIPSecurityRestrictionsDefaultAction = "Allow"
+		}
 
 		site := Site{
 			ID:       resourceID,
@@ -220,6 +232,23 @@ func registerAzureFunctions(srv *sim.Server) {
 		}
 
 		sites.Put(resourceID, site)
+
+		// terraform-provider-azurerm sends app settings inside the site PUT's
+		// siteConfig.appSettings, then reads them back via POST
+		// /config/appsettings/list (a separate store). Mirror them into that
+		// store so the read recovers FUNCTIONS_EXTENSION_VERSION /
+		// AzureWebJobsStorage / AzureWebJobsDashboard — the provider derives
+		// functions_extension_version / storage_account_name /
+		// builtin_logging_enabled from those, and drops them on drift otherwise.
+		if len(siteConfig.AppSettings) > 0 {
+			cfg, _ := siteConfigStore.Get(resourceID)
+			settings := make(map[string]string, len(siteConfig.AppSettings))
+			for _, kv := range siteConfig.AppSettings {
+				settings[kv.Name] = kv.Value
+			}
+			cfg.AppSettings = settings
+			siteConfigStore.Put(resourceID, cfg)
+		}
 
 		// Always return 200 OK so the ARM SDK's BeginCreateOrUpdate poller
 		// treats this as an immediately completed operation.
@@ -471,6 +500,24 @@ func registerAzureFunctions(srv *sim.Server) {
 			Type:       "Microsoft.Web/sites/config",
 			Properties: props,
 		})
+	})
+
+	// GET /config/backup — GetBackupConfiguration. terraform-provider-azurerm
+	// calls this on read; real Azure returns 404 when no backup schedule is
+	// configured, and the provider treats NotFound as "no backup block".
+	// Returning 200 with an empty bag instead makes its flatten materialise a
+	// phantom `backup { enabled = false }` block that drifts every plan.
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/backup", func(w http.ResponseWriter, r *http.Request) {
+		name := sim.PathParam(r, "siteName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), name)
+		if _, ok := sites.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Web/sites/%s' was not found.", name)
+			return
+		}
+		sim.AzureErrorf(w, "NotFound", http.StatusNotFound,
+			"No backup configuration found for site %q.", name)
 	})
 
 	// POST /config/backup/list — App Service backup configuration. The

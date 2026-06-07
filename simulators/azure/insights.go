@@ -30,7 +30,10 @@ type AppInsightsComponentProperties struct {
 	SamplingPercentage              float64 `json:"SamplingPercentage,omitempty"`
 	PublicNetworkAccessForIngestion string  `json:"publicNetworkAccessForIngestion,omitempty"`
 	PublicNetworkAccessForQuery     string  `json:"publicNetworkAccessForQuery,omitempty"`
-	ProvisioningState               string  `json:"provisioningState"`
+	// WorkspaceResourceId links a workspace-based component to its Log Analytics
+	// workspace; terraform-provider-azurerm reads it back as workspace_id.
+	WorkspaceResourceId string `json:"WorkspaceResourceId,omitempty"`
+	ProvisioningState   string `json:"provisioningState"`
 }
 
 // AppInsightsBillingFeatures is the currentbillingfeatures wire shape. App
@@ -138,6 +141,7 @@ func registerApplicationInsights(srv *sim.Server) {
 				SamplingPercentage:              samplingPercentage,
 				PublicNetworkAccessForIngestion: publicNetworkAccessForIngestion,
 				PublicNetworkAccessForQuery:     publicNetworkAccessForQuery,
+				WorkspaceResourceId:             req.Properties.WorkspaceResourceId,
 				ProvisioningState:               "Succeeded",
 			},
 		}
