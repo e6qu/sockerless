@@ -252,19 +252,38 @@ type EC2NetworkInterface struct {
 }
 
 type EC2Volume struct {
-	VolumeId         string
-	Size             int
-	SnapshotId       string
-	AvailabilityZone string
-	State            string
-	CreateTime       string
-	VolumeType       string
-	Encrypted        bool
-	Tags             []EC2Tag
-	Attachments      []EC2VolumeAttachment
-	HostPath         string
-	DockerVolumeName string
-	Data             []byte
+	VolumeId           string
+	Size               int
+	SnapshotId         string
+	AvailabilityZone   string
+	State              string
+	CreateTime         string
+	VolumeType         string
+	Iops               int
+	Throughput         int
+	KmsKeyId           string
+	Encrypted          bool
+	MultiAttachEnabled bool
+	Tags               []EC2Tag
+	Attachments        []EC2VolumeAttachment
+	HostPath           string
+	DockerVolumeName   string
+	Data               []byte
+}
+
+type EC2VolumeModification struct {
+	VolumeId           string
+	ModificationState  string
+	TargetSize         int
+	TargetVolumeType   string
+	TargetIops         int
+	TargetThroughput   int
+	OriginalSize       int
+	OriginalVolumeType string
+	OriginalIops       int
+	OriginalThroughput int
+	StartTime          string
+	EndTime            string
 }
 
 type EC2VolumeAttachment struct {
@@ -286,6 +305,8 @@ type EC2Snapshot struct {
 	Progress         string
 	Description      string
 	OwnerId          string
+	Encrypted        bool
+	KmsKeyId         string
 	Tags             []EC2Tag
 	HostPath         string
 	DockerVolumeName string
@@ -305,6 +326,7 @@ var (
 	ec2Instances          sim.Store[EC2Instance]
 	ec2NetworkInterfaces  sim.Store[EC2NetworkInterface]
 	ec2Volumes            sim.Store[EC2Volume]
+	ec2VolumeMods         sim.Store[EC2VolumeModification]
 	ec2Snapshots          sim.Store[EC2Snapshot]
 	// ec2SubnetIPCursor tracks the next host octet to hand out per
 	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
@@ -408,6 +430,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2NetworkInterfaces = sim.MakeStore[EC2NetworkInterface](srv.DB(), "ec2_network_interfaces")
 	ec2KeyPairs = sim.MakeStore[EC2KeyPair](srv.DB(), "ec2_key_pairs")
 	ec2Volumes = sim.MakeStore[EC2Volume](srv.DB(), "ec2_volumes")
+	ec2VolumeMods = sim.MakeStore[EC2VolumeModification](srv.DB(), "ec2_volume_modifications")
 	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
 
 	// VPC
@@ -487,6 +510,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DetachVolume", handleDetachVolume)
 	r.Register("DeleteVolume", handleDeleteVolume)
 	r.Register("ModifyVolume", handleModifyVolume)
+	r.Register("DescribeVolumesModifications", handleDescribeVolumesModifications)
 	r.Register("CreateSnapshot", handleCreateSnapshot)
 	r.Register("DescribeSnapshots", handleDescribeSnapshots)
 	r.Register("DeleteSnapshot", handleDeleteSnapshot)
@@ -3630,18 +3654,22 @@ func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
 
 func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
 	volumeIDs := ec2ParamList(r, "VolumeId")
-	volumes := make([]EC2Volume, 0)
-	if len(volumeIDs) > 0 {
-		for _, id := range volumeIDs {
-			vol, ok := ec2Volumes.Get(id)
-			if !ok {
-				ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", id), http.StatusBadRequest)
-				return
-			}
-			volumes = append(volumes, vol)
+	for _, id := range volumeIDs {
+		if _, ok := ec2Volumes.Get(id); !ok {
+			ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", id), http.StatusBadRequest)
+			return
 		}
-	} else {
-		volumes = ec2Volumes.List()
+	}
+	filters := ec2Filters(r)
+	volumes := make([]EC2Volume, 0)
+	for _, vol := range ec2Volumes.List() {
+		if len(volumeIDs) > 0 && !ec2StrInValues(vol.VolumeId, volumeIDs) {
+			continue
+		}
+		if !ec2VolumeMatchesFilters(vol, filters) {
+			continue
+		}
+		volumes = append(volumes, vol)
 	}
 	var items strings.Builder
 	for _, vol := range volumes {
@@ -3836,9 +3864,15 @@ func ec2VolumeFieldsXML(vol EC2Volume) string {
 		}
 		attachments.WriteString("</attachmentSet>")
 	}
-	snapshot := vol.SnapshotId
-	if snapshot == "" {
-		snapshot = ""
+	perf := ""
+	if vol.Iops > 0 {
+		perf += fmt.Sprintf("<iops>%d</iops>", vol.Iops)
+	}
+	if vol.Throughput > 0 {
+		perf += fmt.Sprintf("<throughput>%d</throughput>", vol.Throughput)
+	}
+	if vol.KmsKeyId != "" {
+		perf += fmt.Sprintf("<kmsKeyId>%s</kmsKeyId>", vol.KmsKeyId)
 	}
 	return fmt.Sprintf(`
     <volumeId>%s</volumeId>
@@ -3848,12 +3882,90 @@ func ec2VolumeFieldsXML(vol EC2Volume) string {
     <status>%s</status>
     <createTime>%s</createTime>
     %s
-    <volumeType>%s</volumeType>
+    <volumeType>%s</volumeType>%s
     <encrypted>%t</encrypted>
-    <multiAttachEnabled>false</multiAttachEnabled>
+    <multiAttachEnabled>%t</multiAttachEnabled>
     %s
-  `, vol.VolumeId, vol.Size, snapshot, vol.AvailabilityZone, vol.State, vol.CreateTime,
-		attachments.String(), vol.VolumeType, vol.Encrypted, writeTagSetXML(vol.Tags))
+  `, vol.VolumeId, vol.Size, vol.SnapshotId, vol.AvailabilityZone, vol.State, vol.CreateTime,
+		attachments.String(), vol.VolumeType, perf, vol.Encrypted, vol.MultiAttachEnabled, writeTagSetXML(vol.Tags))
+}
+
+// ec2ResolveVolumePerformance returns the effective iops/throughput for a
+// volume, applying the AWS-documented per-type rules (gp3 defaults 3000/125;
+// gp2 iops derived from size; io1/io2 use the requested iops; st1/sc1/standard
+// have neither). The resolved values are stored so they round-trip.
+func ec2ResolveVolumePerformance(volType string, size, reqIops, reqThroughput int) (iops, throughput int) {
+	switch volType {
+	case "gp3":
+		iops = reqIops
+		if iops == 0 {
+			iops = 3000
+		}
+		throughput = reqThroughput
+		if throughput == 0 {
+			throughput = 125
+		}
+	case "gp2":
+		iops = 3 * size
+		if iops < 100 {
+			iops = 100
+		}
+		if iops > 16000 {
+			iops = 16000
+		}
+	case "io1", "io2":
+		iops = reqIops
+	}
+	return iops, throughput
+}
+
+func ec2VolumeMatchesFilters(vol EC2Volume, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "volume-id":
+			if !ec2StrInValues(vol.VolumeId, vals) {
+				return false
+			}
+		case "volume-type":
+			if !ec2StrInValues(vol.VolumeType, vals) {
+				return false
+			}
+		case "status":
+			if !ec2StrInValues(vol.State, vals) {
+				return false
+			}
+		case "availability-zone":
+			if !ec2StrInValues(vol.AvailabilityZone, vals) {
+				return false
+			}
+		case "snapshot-id":
+			if !ec2StrInValues(vol.SnapshotId, vals) {
+				return false
+			}
+		case "encrypted":
+			if (ec2StrInValues("true", vals)) != vol.Encrypted {
+				return false
+			}
+		case "attachment.instance-id":
+			if !ec2VolumeHasAttachment(vol, func(a EC2VolumeAttachment) bool { return ec2StrInValues(a.InstanceId, vals) }) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, vol.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func ec2VolumeHasAttachment(vol EC2Volume, pred func(EC2VolumeAttachment) bool) bool {
+	for _, a := range vol.Attachments {
+		if pred(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleCreateVolume(w http.ResponseWriter, r *http.Request) {
@@ -3892,17 +4004,23 @@ func handleCreateVolume(w http.ResponseWriter, r *http.Request) {
 	if volType == "" {
 		volType = "gp3"
 	}
+	iops, throughput := ec2ResolveVolumePerformance(volType, size,
+		ec2AtoiOr(r.FormValue("Iops"), 0), ec2AtoiOr(r.FormValue("Throughput"), 0))
 	vol := EC2Volume{
-		VolumeId:         ec2ID("vol"),
-		Size:             size,
-		SnapshotId:       snapshotID,
-		AvailabilityZone: az,
-		State:            "available",
-		CreateTime:       time.Now().UTC().Format(time.RFC3339),
-		VolumeType:       volType,
-		Encrypted:        r.FormValue("Encrypted") == "true",
-		Tags:             parseTags(r),
-		Data:             data,
+		VolumeId:           ec2ID("vol"),
+		Size:               size,
+		SnapshotId:         snapshotID,
+		AvailabilityZone:   az,
+		State:              "available",
+		CreateTime:         time.Now().UTC().Format(time.RFC3339),
+		VolumeType:         volType,
+		Iops:               iops,
+		Throughput:         throughput,
+		KmsKeyId:           r.FormValue("KmsKeyId"),
+		Encrypted:          r.FormValue("Encrypted") == "true" || r.FormValue("KmsKeyId") != "",
+		MultiAttachEnabled: r.FormValue("MultiAttachEnabled") == "true",
+		Tags:               parseTags(r),
+		Data:               data,
 	}
 	if err := ebsPrepareVolumeHostPath(&vol); err != nil {
 		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not create volume data path: %v", err), http.StatusInternalServerError)
@@ -4024,6 +4142,16 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "InvalidVolume.NotFound", fmt.Sprintf("The volume %q does not exist", volID), http.StatusBadRequest)
 		return
 	}
+	mod := EC2VolumeModification{
+		VolumeId:           volID,
+		ModificationState:  "completed",
+		OriginalSize:       vol.Size,
+		OriginalVolumeType: vol.VolumeType,
+		OriginalIops:       vol.Iops,
+		OriginalThroughput: vol.Throughput,
+		StartTime:          time.Now().UTC().Format(time.RFC3339),
+		EndTime:            time.Now().UTC().Format(time.RFC3339),
+	}
 	if v := r.FormValue("Size"); v != "" {
 		var size int
 		if _, err := fmt.Sscanf(v, "%d", &size); err != nil || size < vol.Size {
@@ -4035,6 +4163,17 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 	if v := r.FormValue("VolumeType"); v != "" {
 		vol.VolumeType = v
 	}
+	if v := r.FormValue("Iops"); v != "" {
+		vol.Iops = ec2AtoiOr(v, vol.Iops)
+	}
+	if v := r.FormValue("Throughput"); v != "" {
+		vol.Throughput = ec2AtoiOr(v, vol.Throughput)
+	}
+	// Re-resolve performance for the (possibly new) type/size so gp2 iops and
+	// gp3 defaults stay consistent after a type change.
+	vol.Iops, vol.Throughput = ec2ResolveVolumePerformance(vol.VolumeType, vol.Size, vol.Iops, vol.Throughput)
+	mod.TargetSize, mod.TargetVolumeType, mod.TargetIops, mod.TargetThroughput = vol.Size, vol.VolumeType, vol.Iops, vol.Throughput
+	ec2VolumeMods.Put(volID, mod)
 	if len(vol.Attachments) > 0 && ec2RealVMHostAvailable() {
 		if _, err := ebsEnsureVolumeBlockImage(&vol); err != nil {
 			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not resize volume block image: %v", err), http.StatusInternalServerError)
@@ -4047,8 +4186,41 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	ec2Volumes.Put(volID, vol)
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<ModifyVolumeResponse %s><requestId>%s</requestId><volumeModification><volumeId>%s</volumeId><modificationState>completed</modificationState><targetSize>%d</targetSize><targetVolumeType>%s</targetVolumeType><originalSize>%d</originalSize><originalVolumeType>%s</originalVolumeType><progress>100</progress><startTime>%s</startTime></volumeModification></ModifyVolumeResponse>`,
-		ec2Xmlns(), generateUUID(), vol.VolumeId, vol.Size, vol.VolumeType, vol.Size, vol.VolumeType, time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(w, `<ModifyVolumeResponse %s><requestId>%s</requestId><volumeModification>%s</volumeModification></ModifyVolumeResponse>`,
+		ec2Xmlns(), generateUUID(), ec2VolumeModFieldsXML(mod))
+}
+
+func ec2VolumeModFieldsXML(m EC2VolumeModification) string {
+	return fmt.Sprintf(`<volumeId>%s</volumeId><modificationState>%s</modificationState>`+
+		`<targetSize>%d</targetSize><targetVolumeType>%s</targetVolumeType><targetIops>%d</targetIops><targetThroughput>%d</targetThroughput>`+
+		`<originalSize>%d</originalSize><originalVolumeType>%s</originalVolumeType><originalIops>%d</originalIops><originalThroughput>%d</originalThroughput>`+
+		`<progress>100</progress><startTime>%s</startTime><endTime>%s</endTime>`,
+		m.VolumeId, m.ModificationState,
+		m.TargetSize, m.TargetVolumeType, m.TargetIops, m.TargetThroughput,
+		m.OriginalSize, m.OriginalVolumeType, m.OriginalIops, m.OriginalThroughput,
+		m.StartTime, m.EndTime)
+}
+
+// handleDescribeVolumesModifications returns the recorded volume modifications.
+// terraform-provider-aws polls this after a ModifyVolume to wait for the resize
+// to reach `completed`; an unregistered op previously made aws_ebs_volume
+// updates error with UnknownOperation.
+func handleDescribeVolumesModifications(w http.ResponseWriter, r *http.Request) {
+	ids := ec2ParamList(r, "VolumeId")
+	var items strings.Builder
+	items.WriteString("<volumeModificationSet>")
+	for _, mod := range ec2VolumeMods.List() {
+		if len(ids) > 0 && !ec2StrInValues(mod.VolumeId, ids) {
+			continue
+		}
+		items.WriteString("<item>")
+		items.WriteString(ec2VolumeModFieldsXML(mod))
+		items.WriteString("</item>")
+	}
+	items.WriteString("</volumeModificationSet>")
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DescribeVolumesModificationsResponse %s><requestId>%s</requestId>%s</DescribeVolumesModificationsResponse>`,
+		ec2Xmlns(), generateUUID(), items.String())
 }
 
 func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -4069,6 +4241,8 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		Progress:      "0%",
 		Description:   r.FormValue("Description"),
 		OwnerId:       ec2Owner(),
+		Encrypted:     vol.Encrypted,
+		KmsKeyId:      vol.KmsKeyId,
 		Tags:          parseTags(r),
 		VolumeData:    append([]byte(nil), vol.Data...),
 	}
@@ -4140,7 +4314,28 @@ func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 		for _, snap := range ec2Snapshots.List() {
 			ec2SettleSnapshot(snap.SnapshotId)
 		}
-		snapshots = ec2Snapshots.List()
+		filters := ec2Filters(r)
+		// OwnerIds (`--owner-ids self`/<account>) scopes to the snapshot owner;
+		// the sim is single-account so a literal account id or "self" matches.
+		owners := ec2ParamList(r, "Owner")
+		self := ec2Owner()
+		for _, snap := range ec2Snapshots.List() {
+			if len(owners) > 0 {
+				matched := false
+				for _, o := range owners {
+					if o == self || o == "self" {
+						matched = true
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if !ec2SnapshotMatchesFilters(snap, filters) {
+				continue
+			}
+			snapshots = append(snapshots, snap)
+		}
 	}
 	var items strings.Builder
 	for _, snap := range snapshots {
@@ -4156,8 +4351,44 @@ func ec2SnapshotXML(snap EC2Snapshot) string {
 }
 
 func ec2SnapshotFieldsXML(snap EC2Snapshot) string {
-	return fmt.Sprintf(`<snapshotId>%s</snapshotId><volumeId>%s</volumeId><status>%s</status><startTime>%s</startTime><progress>%s</progress><ownerId>%s</ownerId><volumeSize>%d</volumeSize><description>%s</description>%s`,
-		snap.SnapshotId, snap.VolumeId, snap.State, snap.StartTime, snap.Progress, snap.OwnerId, snap.VolumeSize, xmlEscape(snap.Description), writeTagSetXML(snap.Tags))
+	kms := ""
+	if snap.KmsKeyId != "" {
+		kms = fmt.Sprintf("<kmsKeyId>%s</kmsKeyId>", snap.KmsKeyId)
+	}
+	return fmt.Sprintf(`<snapshotId>%s</snapshotId><volumeId>%s</volumeId><status>%s</status><startTime>%s</startTime><progress>%s</progress><ownerId>%s</ownerId><volumeSize>%d</volumeSize><description>%s</description><encrypted>%t</encrypted>%s%s`,
+		snap.SnapshotId, snap.VolumeId, snap.State, snap.StartTime, snap.Progress, snap.OwnerId, snap.VolumeSize, xmlEscape(snap.Description), snap.Encrypted, kms, writeTagSetXML(snap.Tags))
+}
+
+func ec2SnapshotMatchesFilters(snap EC2Snapshot, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "snapshot-id":
+			if !ec2StrInValues(snap.SnapshotId, vals) {
+				return false
+			}
+		case "volume-id":
+			if !ec2StrInValues(snap.VolumeId, vals) {
+				return false
+			}
+		case "status":
+			if !ec2StrInValues(snap.State, vals) {
+				return false
+			}
+		case "owner-id":
+			if !ec2StrInValues(snap.OwnerId, vals) {
+				return false
+			}
+		case "encrypted":
+			if (ec2StrInValues("true", vals)) != snap.Encrypted {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, snap.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func handleDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
