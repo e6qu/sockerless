@@ -29,15 +29,17 @@ type CloudTrailTrail struct {
 }
 
 type CloudTrailEvent struct {
-	EventId     string
-	EventName   string
-	EventSource string
-	EventTime   string
-	Username    string
-	AccessKeyId string
-	ReadOnly    bool
-	InvokedBy   string
-	Resources   []CloudTrailResource
+	EventId      string
+	EventName    string
+	EventSource  string
+	EventTime    string
+	Username     string
+	AccessKeyId  string
+	ReadOnly     bool
+	InvokedBy    string
+	Resources    []CloudTrailResource
+	ErrorCode    string
+	ErrorMessage string
 }
 
 type CloudTrailResource struct {
@@ -820,6 +822,14 @@ func cloudTrailEventRecord(ev CloudTrailEvent) map[string]any {
 	}
 	if ev.InvokedBy != "" {
 		rec["sourceIPAddress"] = ev.InvokedBy
+	}
+	// Real CloudTrail records failed API calls with errorCode/errorMessage at the
+	// top level of the record (the call still happened — it just didn't succeed).
+	if ev.ErrorCode != "" {
+		rec["errorCode"] = ev.ErrorCode
+	}
+	if ev.ErrorMessage != "" {
+		rec["errorMessage"] = ev.ErrorMessage
 	}
 	return rec
 }

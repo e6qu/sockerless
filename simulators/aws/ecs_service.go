@@ -44,22 +44,40 @@ type ECSService struct {
 	DeploymentController     json.RawMessage `json:"deploymentController,omitempty"`
 	DeploymentConfiguration  json.RawMessage `json:"deploymentConfiguration,omitempty"`
 	CapacityProviderStrategy json.RawMessage `json:"capacityProviderStrategy,omitempty"`
-	Deployments              []ECSDeployment `json:"deployments"`
-	Tags                     []ECSTag        `json:"tags,omitempty"`
+	// Top-level Service knobs the provider reads back — each was dropped on
+	// create/update, so aws_ecs_service.{enable_ecs_managed_tags,
+	// health_check_grace_period_seconds,ordered_placement_strategy,
+	// placement_constraints,availability_zone_rebalancing} drifted every plan.
+	EnableECSManagedTags          bool            `json:"enableECSManagedTags,omitempty"`
+	HealthCheckGracePeriodSeconds *int            `json:"healthCheckGracePeriodSeconds,omitempty"`
+	PlacementConstraints          json.RawMessage `json:"placementConstraints,omitempty"`
+	PlacementStrategy             json.RawMessage `json:"placementStrategy,omitempty"`
+	AvailabilityZoneRebalancing   string          `json:"availabilityZoneRebalancing,omitempty"`
+	// These three surface inside the deployment record (not the Service top
+	// level) — the SDK Service type has no such fields. Stored here for
+	// round-trip, emitted via the primary deployment.
+	ServiceConnectConfiguration json.RawMessage `json:"-"`
+	VolumeConfigurations        json.RawMessage `json:"-"`
+	VpcLatticeConfigurations    json.RawMessage `json:"-"`
+	Deployments                 []ECSDeployment `json:"deployments"`
+	Tags                        []ECSTag        `json:"tags,omitempty"`
 }
 
 // ECSDeployment is the service's deployment record. A modeled service has a
 // single PRIMARY deployment that immediately reports COMPLETED.
 type ECSDeployment struct {
-	Id             string  `json:"id"`
-	Status         string  `json:"status"`
-	TaskDefinition string  `json:"taskDefinition"`
-	DesiredCount   int     `json:"desiredCount"`
-	RunningCount   int     `json:"runningCount"`
-	PendingCount   int     `json:"pendingCount"`
-	RolloutState   string  `json:"rolloutState"`
-	CreatedAt      float64 `json:"createdAt"`
-	UpdatedAt      float64 `json:"updatedAt"`
+	Id                          string          `json:"id"`
+	Status                      string          `json:"status"`
+	TaskDefinition              string          `json:"taskDefinition"`
+	DesiredCount                int             `json:"desiredCount"`
+	RunningCount                int             `json:"runningCount"`
+	PendingCount                int             `json:"pendingCount"`
+	RolloutState                string          `json:"rolloutState"`
+	CreatedAt                   float64         `json:"createdAt"`
+	UpdatedAt                   float64         `json:"updatedAt"`
+	ServiceConnectConfiguration json.RawMessage `json:"serviceConnectConfiguration,omitempty"`
+	VolumeConfigurations        json.RawMessage `json:"volumeConfigurations,omitempty"`
+	VpcLatticeConfigurations    json.RawMessage `json:"vpcLatticeConfigurations,omitempty"`
 }
 
 var ecsServices sim.Store[ECSService]
@@ -259,7 +277,16 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		DeploymentController     json.RawMessage `json:"deploymentController"`
 		DeploymentConfiguration  json.RawMessage `json:"deploymentConfiguration"`
 		CapacityProviderStrategy json.RawMessage `json:"capacityProviderStrategy"`
-		Tags                     []ECSTag        `json:"tags"`
+
+		EnableECSManagedTags          bool            `json:"enableECSManagedTags"`
+		HealthCheckGracePeriodSeconds *int            `json:"healthCheckGracePeriodSeconds"`
+		PlacementConstraints          json.RawMessage `json:"placementConstraints"`
+		PlacementStrategy             json.RawMessage `json:"placementStrategy"`
+		AvailabilityZoneRebalancing   string          `json:"availabilityZoneRebalancing"`
+		ServiceConnectConfiguration   json.RawMessage `json:"serviceConnectConfiguration"`
+		VolumeConfigurations          json.RawMessage `json:"volumeConfigurations"`
+		VpcLatticeConfigurations      json.RawMessage `json:"vpcLatticeConfigurations"`
+		Tags                          []ECSTag        `json:"tags"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -297,45 +324,59 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	}
 	now := float64(time.Now().Unix())
 	svc := ECSService{
-		ServiceArn:               ecsArn("service", clusterName+"/"+req.ServiceName),
-		ServiceName:              req.ServiceName,
-		ClusterArn:               cluster.ClusterArn,
-		TaskDefinition:           req.TaskDefinition,
-		DesiredCount:             desired,
-		RunningCount:             desired, // modeled: tasks are immediately running
-		PendingCount:             0,
-		Status:                   "ACTIVE",
-		LaunchType:               req.LaunchType,
-		PlatformVersion:          req.PlatformVersion,
-		SchedulingStrategy:       strategy,
-		RoleArn:                  req.Role,
-		PropagateTags:            req.PropagateTags,
-		EnableExecuteCommand:     req.EnableExecuteCommand,
-		CreatedAt:                now,
-		NetworkConfiguration:     req.NetworkConfiguration,
-		LoadBalancers:            req.LoadBalancers,
-		ServiceRegistries:        req.ServiceRegistries,
-		DeploymentController:     req.DeploymentController,
-		DeploymentConfiguration:  req.DeploymentConfiguration,
-		CapacityProviderStrategy: req.CapacityProviderStrategy,
-		Tags:                     req.Tags,
-		Deployments:              []ECSDeployment{ecsPrimaryDeployment(req.TaskDefinition, desired, now)},
+		ServiceArn:                    ecsArn("service", clusterName+"/"+req.ServiceName),
+		ServiceName:                   req.ServiceName,
+		ClusterArn:                    cluster.ClusterArn,
+		TaskDefinition:                req.TaskDefinition,
+		DesiredCount:                  desired,
+		RunningCount:                  desired, // modeled: tasks are immediately running
+		PendingCount:                  0,
+		Status:                        "ACTIVE",
+		LaunchType:                    req.LaunchType,
+		PlatformVersion:               req.PlatformVersion,
+		SchedulingStrategy:            strategy,
+		RoleArn:                       req.Role,
+		PropagateTags:                 req.PropagateTags,
+		EnableExecuteCommand:          req.EnableExecuteCommand,
+		CreatedAt:                     now,
+		NetworkConfiguration:          req.NetworkConfiguration,
+		LoadBalancers:                 req.LoadBalancers,
+		ServiceRegistries:             req.ServiceRegistries,
+		DeploymentController:          req.DeploymentController,
+		DeploymentConfiguration:       req.DeploymentConfiguration,
+		CapacityProviderStrategy:      req.CapacityProviderStrategy,
+		EnableECSManagedTags:          req.EnableECSManagedTags,
+		HealthCheckGracePeriodSeconds: req.HealthCheckGracePeriodSeconds,
+		PlacementConstraints:          req.PlacementConstraints,
+		PlacementStrategy:             req.PlacementStrategy,
+		AvailabilityZoneRebalancing:   req.AvailabilityZoneRebalancing,
+		ServiceConnectConfiguration:   req.ServiceConnectConfiguration,
+		VolumeConfigurations:          req.VolumeConfigurations,
+		VpcLatticeConfigurations:      req.VpcLatticeConfigurations,
+		Tags:                          req.Tags,
 	}
+	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
 
-func ecsPrimaryDeployment(taskDef string, desired int, now float64) ECSDeployment {
+// ecsServiceDeployment builds the service's single PRIMARY deployment. The
+// service-connect / volume / vpc-lattice configs surface here (the SDK Service
+// type carries them only inside the deployment record, not at the top level).
+func ecsServiceDeployment(svc ECSService, now float64) ECSDeployment {
 	return ECSDeployment{
-		Id:             "ecs-svc/" + generateUUID(),
-		Status:         "PRIMARY",
-		TaskDefinition: taskDef,
-		DesiredCount:   desired,
-		RunningCount:   desired,
-		PendingCount:   0,
-		RolloutState:   "COMPLETED",
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Id:                          "ecs-svc/" + generateUUID(),
+		Status:                      "PRIMARY",
+		TaskDefinition:              svc.TaskDefinition,
+		DesiredCount:                svc.DesiredCount,
+		RunningCount:                svc.DesiredCount,
+		PendingCount:                0,
+		RolloutState:                "COMPLETED",
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
+		ServiceConnectConfiguration: svc.ServiceConnectConfiguration,
+		VolumeConfigurations:        svc.VolumeConfigurations,
+		VpcLatticeConfigurations:    svc.VpcLatticeConfigurations,
 	}
 }
 
@@ -437,13 +478,30 @@ func handleECSListTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
+	// UpdateService accepts nearly the whole service surface; the provider sends
+	// every changed attribute here. Anything not persisted drifts on the next
+	// plan, so each updatable field below is read and written.
 	var req struct {
-		Cluster              string          `json:"cluster"`
-		Service              string          `json:"service"`
-		TaskDefinition       string          `json:"taskDefinition"`
-		DesiredCount         *int            `json:"desiredCount"`
-		NetworkConfiguration json.RawMessage `json:"networkConfiguration"`
-		EnableExecuteCommand *bool           `json:"enableExecuteCommand"`
+		Cluster                       string          `json:"cluster"`
+		Service                       string          `json:"service"`
+		TaskDefinition                string          `json:"taskDefinition"`
+		DesiredCount                  *int            `json:"desiredCount"`
+		NetworkConfiguration          json.RawMessage `json:"networkConfiguration"`
+		EnableExecuteCommand          *bool           `json:"enableExecuteCommand"`
+		EnableECSManagedTags          *bool           `json:"enableECSManagedTags"`
+		PlatformVersion               string          `json:"platformVersion"`
+		PropagateTags                 string          `json:"propagateTags"`
+		HealthCheckGracePeriodSeconds *int            `json:"healthCheckGracePeriodSeconds"`
+		AvailabilityZoneRebalancing   string          `json:"availabilityZoneRebalancing"`
+		DeploymentConfiguration       json.RawMessage `json:"deploymentConfiguration"`
+		CapacityProviderStrategy      json.RawMessage `json:"capacityProviderStrategy"`
+		PlacementConstraints          json.RawMessage `json:"placementConstraints"`
+		PlacementStrategy             json.RawMessage `json:"placementStrategy"`
+		LoadBalancers                 json.RawMessage `json:"loadBalancers"`
+		ServiceRegistries             json.RawMessage `json:"serviceRegistries"`
+		ServiceConnectConfiguration   json.RawMessage `json:"serviceConnectConfiguration"`
+		VolumeConfigurations          json.RawMessage `json:"volumeConfigurations"`
+		VpcLatticeConfigurations      json.RawMessage `json:"vpcLatticeConfigurations"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -470,8 +528,50 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	if req.EnableExecuteCommand != nil {
 		svc.EnableExecuteCommand = *req.EnableExecuteCommand
 	}
+	if req.EnableECSManagedTags != nil {
+		svc.EnableECSManagedTags = *req.EnableECSManagedTags
+	}
+	if req.PlatformVersion != "" {
+		svc.PlatformVersion = req.PlatformVersion
+	}
+	if req.PropagateTags != "" {
+		svc.PropagateTags = req.PropagateTags
+	}
+	if req.HealthCheckGracePeriodSeconds != nil {
+		svc.HealthCheckGracePeriodSeconds = req.HealthCheckGracePeriodSeconds
+	}
+	if req.AvailabilityZoneRebalancing != "" {
+		svc.AvailabilityZoneRebalancing = req.AvailabilityZoneRebalancing
+	}
+	if req.DeploymentConfiguration != nil {
+		svc.DeploymentConfiguration = req.DeploymentConfiguration
+	}
+	if req.CapacityProviderStrategy != nil {
+		svc.CapacityProviderStrategy = req.CapacityProviderStrategy
+	}
+	if req.PlacementConstraints != nil {
+		svc.PlacementConstraints = req.PlacementConstraints
+	}
+	if req.PlacementStrategy != nil {
+		svc.PlacementStrategy = req.PlacementStrategy
+	}
+	if req.LoadBalancers != nil {
+		svc.LoadBalancers = req.LoadBalancers
+	}
+	if req.ServiceRegistries != nil {
+		svc.ServiceRegistries = req.ServiceRegistries
+	}
+	if req.ServiceConnectConfiguration != nil {
+		svc.ServiceConnectConfiguration = req.ServiceConnectConfiguration
+	}
+	if req.VolumeConfigurations != nil {
+		svc.VolumeConfigurations = req.VolumeConfigurations
+	}
+	if req.VpcLatticeConfigurations != nil {
+		svc.VpcLatticeConfigurations = req.VpcLatticeConfigurations
+	}
 	now := float64(time.Now().Unix())
-	svc.Deployments = []ECSDeployment{ecsPrimaryDeployment(svc.TaskDefinition, svc.DesiredCount, now)}
+	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
