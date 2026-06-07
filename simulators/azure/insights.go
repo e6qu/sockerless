@@ -14,7 +14,7 @@ type AppInsightsComponent struct {
 	Type       string                         `json:"type"`
 	Location   string                         `json:"location"`
 	Kind       string                         `json:"kind,omitempty"`
-	Tags       map[string]string              `json:"tags,omitempty"`
+	Tags       map[string]string              `json:"tags"`
 	Properties AppInsightsComponentProperties `json:"properties"`
 }
 
@@ -22,10 +22,18 @@ type AppInsightsComponent struct {
 // App Insights uses PascalCase for some property names (InstrumentationKey, ConnectionString)
 // unlike most ARM APIs which use camelCase — the SDK serde reflects this.
 type AppInsightsComponentProperties struct {
-	ApplicationID      string `json:"ApplicationId,omitempty"`
-	InstrumentationKey string `json:"InstrumentationKey,omitempty"`
-	ConnectionString   string `json:"ConnectionString,omitempty"`
-	ProvisioningState  string `json:"provisioningState"`
+	ApplicationID                   string  `json:"ApplicationId,omitempty"`
+	ApplicationType                 string  `json:"Application_Type,omitempty"`
+	InstrumentationKey              string  `json:"InstrumentationKey,omitempty"`
+	ConnectionString                string  `json:"ConnectionString,omitempty"`
+	RetentionInDays                 int     `json:"RetentionInDays,omitempty"`
+	SamplingPercentage              float64 `json:"SamplingPercentage,omitempty"`
+	PublicNetworkAccessForIngestion string  `json:"publicNetworkAccessForIngestion,omitempty"`
+	PublicNetworkAccessForQuery     string  `json:"publicNetworkAccessForQuery,omitempty"`
+	// WorkspaceResourceId links a workspace-based component to its Log Analytics
+	// workspace; terraform-provider-azurerm reads it back as workspace_id.
+	WorkspaceResourceId string `json:"WorkspaceResourceId,omitempty"`
+	ProvisioningState   string `json:"provisioningState"`
 }
 
 // AppInsightsBillingFeatures is the currentbillingfeatures wire shape. App
@@ -85,20 +93,56 @@ func registerApplicationInsights(srv *sim.Server) {
 			instrumentationKey = existing.Properties.InstrumentationKey
 		}
 
+		// Default provider-managed properties when the request omits them so the
+		// read-back echoes the same values terraform-provider-azurerm expects,
+		// matching real ARM Microsoft.Insights/components defaults.
+		appType := req.Properties.ApplicationType
+		if appType == "" {
+			appType = "web"
+		}
+		retentionInDays := req.Properties.RetentionInDays
+		if retentionInDays == 0 {
+			retentionInDays = 90
+		}
+		samplingPercentage := req.Properties.SamplingPercentage
+		if samplingPercentage == 0 {
+			samplingPercentage = 100
+		}
+		publicNetworkAccessForIngestion := req.Properties.PublicNetworkAccessForIngestion
+		if publicNetworkAccessForIngestion == "" {
+			publicNetworkAccessForIngestion = "Enabled"
+		}
+		publicNetworkAccessForQuery := req.Properties.PublicNetworkAccessForQuery
+		if publicNetworkAccessForQuery == "" {
+			publicNetworkAccessForQuery = "Enabled"
+		}
+
+		// terraform reads tags as a non-null map; echo {} rather than absent/null.
+		tags := req.Tags
+		if tags == nil {
+			tags = map[string]string{}
+		}
+
 		comp := AppInsightsComponent{
 			ID:       resourceID,
 			Name:     name,
 			Type:     "Microsoft.Insights/components",
 			Location: req.Location,
 			Kind:     kind,
-			Tags:     req.Tags,
+			Tags:     tags,
 			Properties: AppInsightsComponentProperties{
 				ApplicationID:      appID,
+				ApplicationType:    appType,
 				InstrumentationKey: instrumentationKey,
 				ConnectionString: fmt.Sprintf(
 					"InstrumentationKey=%s;IngestionEndpoint=https://eastus-0.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus.livediagnostics.monitor.azure.com/;ApplicationId=%s",
 					instrumentationKey, appID),
-				ProvisioningState: "Succeeded",
+				RetentionInDays:                 retentionInDays,
+				SamplingPercentage:              samplingPercentage,
+				PublicNetworkAccessForIngestion: publicNetworkAccessForIngestion,
+				PublicNetworkAccessForQuery:     publicNetworkAccessForQuery,
+				WorkspaceResourceId:             req.Properties.WorkspaceResourceId,
+				ProvisioningState:               "Succeeded",
 			},
 		}
 

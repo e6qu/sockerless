@@ -176,14 +176,11 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 		"provisioningState":        "Succeeded",
 		"documentEndpoint":         azureCosmosEndpointURL(r, name),
 		"databaseAccountOfferType": "Standard",
-		"locations": []map[string]any{{
-			"locationName":     req.Location,
-			"failoverPriority": 0,
-		}},
 	}
 	for k, v := range req.Properties {
 		props[k] = v
 	}
+	cosmosNormalizeLocations(props, name, req.Location)
 	cosmosEnsureBackupPolicy(props)
 	a := CosmosAccount{
 		ID:         id,
@@ -213,6 +210,97 @@ func cosmosEnsureBackupPolicy(props map[string]any) {
 		}
 	}
 	props["backupPolicy"] = backupPolicy
+}
+
+// cosmosNormalizeLocations rebuilds the geo-replication arrays the real ARM
+// Microsoft.DocumentDB/databaseAccounts GET returns from the create request's
+// properties.locations (Terraform's geo_location blocks). It is load-bearing
+// for both correctness and provider stability:
+//   - terraform-provider-azurerm builds `geo_location` from
+//     properties.failoverPolicies (NOT locations), looking up zone_redundant
+//     in properties.locations by a shared id. Without failoverPolicies the
+//     provider sees zero geo_locations and plans to add the block every refresh.
+//   - the create poll (cosmosdb_account_resource.go:1595) dereferences
+//     *location.ProvisioningState over read/writeLocations — every entry MUST
+//     carry a non-nil provisioningState or the provider panics.
+//
+// Each region gets a stable id `{account}-{location-normalized}` shared between
+// failoverPolicies and locations so findZoneRedundant resolves.
+func cosmosNormalizeLocations(props map[string]any, accountName, accountLocation string) {
+	type region struct {
+		name string
+		prio int
+		zone bool
+	}
+	var regions []region
+	if raw, ok := props["locations"].([]any); ok {
+		for _, item := range raw {
+			loc, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := loc["locationName"].(string)
+			if name == "" {
+				continue
+			}
+			zone, _ := loc["isZoneRedundant"].(bool)
+			regions = append(regions, region{name: name, prio: cosmosToInt(loc["failoverPriority"]), zone: zone})
+		}
+	}
+	if len(regions) == 0 {
+		regions = []region{{name: accountLocation, prio: 0, zone: false}}
+	}
+
+	docEndpoint, _ := props["documentEndpoint"].(string)
+	locID := func(name string) string {
+		return accountName + "-" + strings.ToLower(strings.ReplaceAll(name, " ", ""))
+	}
+
+	locations := make([]map[string]any, 0, len(regions))
+	writeLocations := make([]map[string]any, 0, 1)
+	readLocations := make([]map[string]any, 0, len(regions))
+	failoverPolicies := make([]map[string]any, 0, len(regions))
+	for _, reg := range regions {
+		id := locID(reg.name)
+		loc := map[string]any{
+			"id":                id,
+			"locationName":      reg.name,
+			"failoverPriority":  reg.prio,
+			"isZoneRedundant":   reg.zone,
+			"provisioningState": "Succeeded",
+			"documentEndpoint":  docEndpoint,
+		}
+		locations = append(locations, loc)
+		readLocations = append(readLocations, loc)
+		if reg.prio == 0 {
+			writeLocations = append(writeLocations, loc)
+		}
+		failoverPolicies = append(failoverPolicies, map[string]any{
+			"id":               id,
+			"locationName":     reg.name,
+			"failoverPriority": reg.prio,
+		})
+	}
+	if len(writeLocations) == 0 {
+		writeLocations = append(writeLocations, locations[0])
+	}
+	props["locations"] = locations
+	props["writeLocations"] = writeLocations
+	props["readLocations"] = readLocations
+	props["failoverPolicies"] = failoverPolicies
+}
+
+// cosmosToInt coerces a JSON-decoded number (float64) or int to int.
+func cosmosToInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
 }
 
 func handleCosmosGetAccount(w http.ResponseWriter, r *http.Request) {

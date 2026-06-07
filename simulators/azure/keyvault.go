@@ -92,6 +92,7 @@ type KeyVaultProperties struct {
 	EnableSoftDelete             bool                   `json:"enableSoftDelete,omitempty"`
 	EnablePurgeProtection        bool                   `json:"enablePurgeProtection,omitempty"`
 	EnableRbacAuthorization      bool                   `json:"enableRbacAuthorization,omitempty"`
+	SoftDeleteRetentionInDays    int                    `json:"softDeleteRetentionInDays,omitempty"`
 	NetworkAcls                  *KeyVaultNetworkAcls   `json:"networkAcls,omitempty"`
 	ProvisioningState            string                 `json:"provisioningState,omitempty"`
 }
@@ -291,6 +292,11 @@ func registerKeyVault(srv *sim.Server) {
 		}
 		if req.Properties.TenantID == "" {
 			req.Properties.TenantID = "00000000-0000-0000-0000-000000000000"
+		}
+		// soft-delete retention echoes the requested value; Azure
+		// defaults it to 90 days only when the request omits it.
+		if req.Properties.SoftDeleteRetentionInDays == 0 {
+			req.Properties.SoftDeleteRetentionInDays = 90
 		}
 		req.Properties.VaultURI = azureKeyVaultEndpointURL(r, name)
 		req.Properties.ProvisioningState = "Succeeded"
@@ -1002,6 +1008,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		Kty        string            `json:"kty"`
 		KeySize    int               `json:"key_size,omitempty"`
 		Crv        string            `json:"crv,omitempty"`
+		KeyOps     []string          `json:"key_ops,omitempty"`
 		Attributes *KeyVaultAttrs    `json:"attributes,omitempty"`
 		Tags       map[string]string `json:"tags,omitempty"`
 	}
@@ -1084,7 +1091,14 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	if body.Crv != "" {
 		jwk["crv"] = body.Crv
 	}
-	jwk["key_ops"] = []string{"encrypt", "decrypt", "sign", "verify", "wrapKey", "unwrapKey"}
+	// Echo the requested key_ops verbatim — Key Vault treats this as an
+	// ordered list and returns it in the order the caller supplied. Only
+	// fall back to the full default set when the request omits key_ops.
+	if len(body.KeyOps) > 0 {
+		jwk["key_ops"] = body.KeyOps
+	} else {
+		jwk["key_ops"] = []string{"encrypt", "decrypt", "sign", "verify", "wrapKey", "unwrapKey"}
+	}
 	now := time.Now().Unix()
 	key := KeyVaultKey{
 		ID: id, JsonWebKey: jwk,

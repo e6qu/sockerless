@@ -114,11 +114,11 @@ func TestMain(m *testing.M) {
 	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
 	evalImageName = "sockerless-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM golang:1.25-alpine AS build
+	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `

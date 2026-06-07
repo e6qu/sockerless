@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,6 +26,10 @@ type APIGWApiConfig struct {
 	CreateTime  string            `json:"createTime,omitempty"`
 	State       string            `json:"state,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
+	// openapiDocuments is ForceNew on google_api_gateway_api_config; the read
+	// must echo it back or terraform plans a replacement on every refresh.
+	OpenapiDocuments      json.RawMessage `json:"openapiDocuments,omitempty"`
+	GatewayServiceAccount string          `json:"gatewayServiceAccount,omitempty"`
 }
 
 type APIGWGateway struct {
@@ -225,11 +230,13 @@ func handleGCPAPIGWCreateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	name := fmt.Sprintf("projects/%s/locations/global/apis/%s/configs/%s", project, api, cfgId)
 	c := APIGWApiConfig{
-		Name:        name,
-		DisplayName: defaultStr(req.DisplayName, cfgId),
-		CreateTime:  nowTimestamp(),
-		State:       "ACTIVE",
-		Labels:      req.Labels,
+		Name:                  name,
+		DisplayName:           defaultStr(req.DisplayName, cfgId),
+		CreateTime:            nowTimestamp(),
+		State:                 "ACTIVE",
+		Labels:                req.Labels,
+		OpenapiDocuments:      req.OpenapiDocuments,
+		GatewayServiceAccount: req.GatewayServiceAccount,
 	}
 	apigwConfigs.Put(name, c)
 	op := newLRO(project, "global", c, "type.googleapis.com/google.cloud.apigateway.v1.ApiConfig")

@@ -17,12 +17,15 @@ import (
 )
 
 type PublicIPAddress struct {
-	ID         string                    `json:"id"`
-	Name       string                    `json:"name"`
-	Type       string                    `json:"type"`
-	Location   string                    `json:"location"`
-	Tags       map[string]string         `json:"tags,omitempty"`
-	Sku        *SkuName                  `json:"sku,omitempty"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	Location string            `json:"location"`
+	Tags     map[string]string `json:"tags"`
+	Sku      *SkuName          `json:"sku,omitempty"`
+	// Zones is read back by terraform-provider-azurerm; an absent value drifts
+	// the empty list to null, so emit a non-nil (possibly empty) slice.
+	Zones      []string                  `json:"zones"`
 	Properties PublicIPAddressProperties `json:"properties"`
 }
 
@@ -30,7 +33,11 @@ type PublicIPAddressProperties struct {
 	PublicIPAddress          string `json:"ipAddress,omitempty"`
 	PublicIPAllocationMethod string `json:"publicIPAllocationMethod,omitempty"`
 	PublicIPAddressVersion   string `json:"publicIPAddressVersion,omitempty"`
-	ProvisioningState        string `json:"provisioningState,omitempty"`
+	IdleTimeoutInMinutes     int32  `json:"idleTimeoutInMinutes,omitempty"`
+	// IPTags is a non-nil (possibly empty) list so the provider's flatten
+	// produces {} rather than drifting to null on every refresh.
+	IPTags            []any  `json:"ipTags"`
+	ProvisioningState string `json:"provisioningState,omitempty"`
 }
 
 type PublicIPPrefix struct {
@@ -38,9 +45,9 @@ type PublicIPPrefix struct {
 	Name       string                   `json:"name"`
 	Type       string                   `json:"type"`
 	Location   string                   `json:"location"`
-	Tags       map[string]string        `json:"tags,omitempty"`
+	Tags       map[string]string        `json:"tags"`
 	Sku        *SkuName                 `json:"sku,omitempty"`
-	Zones      []string                 `json:"zones,omitempty"`
+	Zones      []string                 `json:"zones"`
 	Properties PublicIPPrefixProperties `json:"properties"`
 }
 
@@ -57,7 +64,7 @@ type LoadBalancer struct {
 	Name       string                 `json:"name"`
 	Type       string                 `json:"type"`
 	Location   string                 `json:"location"`
-	Tags       map[string]string      `json:"tags,omitempty"`
+	Tags       map[string]string      `json:"tags"`
 	Sku        *SkuName               `json:"sku,omitempty"`
 	Properties LoadBalancerProperties `json:"properties"`
 }
@@ -225,6 +232,18 @@ func registerComputeCatalog(srv *sim.Server) {
 	})
 }
 
+// azureDefaultSkuTier ensures a SKU is present with a non-empty tier. Public
+// IP / prefix / load balancer all read sku_tier back as a forces-replacement
+// field, defaulting to Regional in real Azure.
+func azureDefaultSkuTier(sku **SkuName, defaultName string) {
+	if *sku == nil {
+		*sku = &SkuName{Name: defaultName}
+	}
+	if (*sku).Tier == "" {
+		(*sku).Tier = "Regional"
+	}
+}
+
 func registerPublicIPAddresses(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 
@@ -245,12 +264,28 @@ func registerPublicIPAddresses(srv *sim.Server) {
 			Location: req.Location,
 			Tags:     req.Tags,
 			Sku:      req.Sku,
+			Zones:    req.Zones,
 			Properties: PublicIPAddressProperties{
 				PublicIPAddress:          req.Properties.PublicIPAddress,
 				PublicIPAllocationMethod: req.Properties.PublicIPAllocationMethod,
 				PublicIPAddressVersion:   req.Properties.PublicIPAddressVersion,
+				IdleTimeoutInMinutes:     req.Properties.IdleTimeoutInMinutes,
+				IPTags:                   req.Properties.IPTags,
 				ProvisioningState:        "Succeeded",
 			},
+		}
+		azureDefaultSkuTier(&pip.Sku, "Standard")
+		if pip.Tags == nil {
+			pip.Tags = map[string]string{}
+		}
+		if pip.Zones == nil {
+			pip.Zones = []string{}
+		}
+		if pip.Properties.IPTags == nil {
+			pip.Properties.IPTags = []any{}
+		}
+		if pip.Properties.IdleTimeoutInMinutes == 0 {
+			pip.Properties.IdleTimeoutInMinutes = 4
 		}
 		if pip.Properties.PublicIPAllocationMethod == "" {
 			pip.Properties.PublicIPAllocationMethod = "Dynamic"
@@ -331,8 +366,12 @@ func registerPublicIPPrefixes(srv *sim.Server) {
 				ResourceGUID:           generateUUID(),
 			},
 		}
-		if prefix.Sku == nil {
-			prefix.Sku = &SkuName{Name: "Standard"}
+		azureDefaultSkuTier(&prefix.Sku, "Standard")
+		if prefix.Tags == nil {
+			prefix.Tags = map[string]string{}
+		}
+		if prefix.Zones == nil {
+			prefix.Zones = []string{}
 		}
 		if prefix.Properties.PublicIPAddressVersion == "" {
 			prefix.Properties.PublicIPAddressVersion = "IPv4"
@@ -418,6 +457,10 @@ func registerLoadBalancers(srv *sim.Server) {
 				Probes:                   normalizeLoadBalancerChildren(id, "probes", "Microsoft.Network/loadBalancers/probes", req.Properties.Probes),
 				ProvisioningState:        "Succeeded",
 			},
+		}
+		azureDefaultSkuTier(&lb.Sku, "Standard")
+		if lb.Tags == nil {
+			lb.Tags = map[string]string{}
 		}
 		azureLBs.Put(id, lb)
 		sim.WriteJSON(w, http.StatusOK, lb)

@@ -456,6 +456,18 @@ func handleAPIMCreateApi(w http.ResponseWriter, r *http.Request) {
 			a.Properties[k] = v
 		}
 	}
+	// ARM Microsoft.ApiManagement/service/apis defaults, applied only when the
+	// request omits them. terraform-provider-azurerm reads apiRevision (default
+	// "1"); a missing revision forces a replacement on every plan.
+	if v, ok := a.Properties["apiRevision"]; !ok || v == nil || v == "" {
+		a.Properties["apiRevision"] = "1"
+	}
+	if _, ok := a.Properties["isCurrent"]; !ok {
+		a.Properties["isCurrent"] = true
+	}
+	if v, ok := a.Properties["apiType"]; !ok || v == nil || v == "" {
+		a.Properties["apiType"] = "http"
+	}
 	apimApis.Put(id, a)
 	sim.WriteJSON(w, http.StatusOK, a)
 }

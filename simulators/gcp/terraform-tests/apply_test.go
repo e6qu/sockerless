@@ -52,6 +52,12 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	out, err = runTimed(t, "terraform apply", terraformCmd("apply", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform apply failed:\n%s", out)
 
+	// Idempotency: a second plan must show no drift. -detailed-exitcode makes
+	// terraform exit 2 (non-zero) on any drift, which runTimed surfaces as an
+	// error — so a clean plan (exit 0) is the only pass.
+	out, err = runTimed(t, "terraform plan", terraformCmd("plan", "-detailed-exitcode", "-var", "secret_label_env=dev"))
+	require.NoError(t, err, "terraform plan showed drift after apply (not idempotent):\n%s", out)
+
 	outputs := readOutputs(t)
 
 	diskLink := outputs.must(t, "compute_disk_self_link")

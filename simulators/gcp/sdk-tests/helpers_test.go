@@ -43,11 +43,11 @@ func TestMain(m *testing.M) {
 	// matches the image's platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM golang:1.25-alpine AS build
+	dockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
@@ -61,11 +61,11 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 
 	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
 	httpProbeImageName = "sockerless-http-localhost-probe:test"
-	probeDockerfile := `FROM golang:1.25-alpine AS build
+	probeDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /http-localhost-probe .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /http-localhost-probe /usr/local/bin/http-localhost-probe
 ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
 `

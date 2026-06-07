@@ -43,7 +43,11 @@ var logMetrics sim.Store[LoggingMetric]
 var logEntriesMu sync.Mutex
 
 type LoggingSink struct {
-	Name                 string             `json:"name"`
+	Name string `json:"name"`
+	// ResourceName is the output-only full path projects/{p}/sinks/{name}.
+	// Real Cloud Logging returns the short identifier in Name and the full
+	// path here as a distinct field (logging/v2 LogSink.resourceName).
+	ResourceName         string             `json:"resourceName,omitempty"`
 	Destination          string             `json:"destination"`
 	Filter               string             `json:"filter,omitempty"`
 	Description          string             `json:"description,omitempty"`
@@ -267,6 +271,22 @@ func normalizeLoggingMetric(project string, metric LoggingMetric) LoggingMetric 
 	return metric
 }
 
+// loggingSinkResponse / loggingMetricResponse strip the stored full-path name
+// down to the short resource name. Real Cloud Logging returns the SHORT name in
+// LogSink.name / LogMetric.name (e.g. "tf-log-sink"); the sim keys by full path
+// internally but must respond with the short name or terraform-provider-google
+// plans an in-place/replacement change on every refresh.
+func loggingSinkResponse(project string, s LoggingSink) LoggingSink {
+	s.Name = strings.TrimPrefix(s.Name, fmt.Sprintf("projects/%s/sinks/", project))
+	s.ResourceName = fmt.Sprintf("projects/%s/sinks/%s", project, s.Name)
+	return s
+}
+
+func loggingMetricResponse(project string, m LoggingMetric) LoggingMetric {
+	m.Name = strings.TrimPrefix(m.Name, fmt.Sprintf("projects/%s/metrics/", project))
+	return m
+}
+
 func handleCreateLoggingSink(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	var sink LoggingSink
@@ -276,7 +296,7 @@ func handleCreateLoggingSink(w http.ResponseWriter, r *http.Request) {
 	}
 	sink = normalizeLoggingSink(project, sink)
 	logSinks.Put(sink.Name, sink)
-	sim.WriteJSON(w, http.StatusOK, sink)
+	sim.WriteJSON(w, http.StatusOK, loggingSinkResponse(project, sink))
 }
 
 func handleListLoggingSinks(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +309,9 @@ func handleListLoggingSinks(w http.ResponseWriter, r *http.Request) {
 	page, next, ok := paginateList(w, r, sinks)
 	if !ok {
 		return
+	}
+	for i := range page {
+		page[i] = loggingSinkResponse(project, page[i])
 	}
 	resp := map[string]any{"sinks": page}
 	if next != "" {
@@ -304,7 +327,7 @@ func handleGetLoggingSink(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "sink %s not found", key)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, sink)
+	sim.WriteJSON(w, http.StatusOK, loggingSinkResponse(sim.PathParam(r, "project"), sink))
 }
 
 func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +341,7 @@ func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
 	sink.Name = key
 	sink = normalizeLoggingSink(project, sink)
 	logSinks.Put(key, sink)
-	sim.WriteJSON(w, http.StatusOK, sink)
+	sim.WriteJSON(w, http.StatusOK, loggingSinkResponse(project, sink))
 }
 
 func handleDeleteLoggingSink(w http.ResponseWriter, r *http.Request) {
@@ -335,7 +358,7 @@ func handleCreateLoggingMetric(w http.ResponseWriter, r *http.Request) {
 	}
 	metric = normalizeLoggingMetric(project, metric)
 	logMetrics.Put(metric.Name, metric)
-	sim.WriteJSON(w, http.StatusOK, metric)
+	sim.WriteJSON(w, http.StatusOK, loggingMetricResponse(project, metric))
 }
 
 func handleListLoggingMetrics(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +371,9 @@ func handleListLoggingMetrics(w http.ResponseWriter, r *http.Request) {
 	page, next, ok := paginateList(w, r, metrics)
 	if !ok {
 		return
+	}
+	for i := range page {
+		page[i] = loggingMetricResponse(project, page[i])
 	}
 	resp := map[string]any{"metrics": page}
 	if next != "" {
@@ -363,7 +389,7 @@ func handleGetLoggingMetric(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "metric %s not found", key)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, metric)
+	sim.WriteJSON(w, http.StatusOK, loggingMetricResponse(sim.PathParam(r, "project"), metric))
 }
 
 func handleUpdateLoggingMetric(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +403,7 @@ func handleUpdateLoggingMetric(w http.ResponseWriter, r *http.Request) {
 	metric.Name = key
 	metric = normalizeLoggingMetric(project, metric)
 	logMetrics.Put(key, metric)
-	sim.WriteJSON(w, http.StatusOK, metric)
+	sim.WriteJSON(w, http.StatusOK, loggingMetricResponse(project, metric))
 }
 
 func handleDeleteLoggingMetric(w http.ResponseWriter, r *http.Request) {

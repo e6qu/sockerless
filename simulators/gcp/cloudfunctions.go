@@ -44,17 +44,22 @@ type BuildConfig struct {
 
 // ServiceConfig holds the service configuration for a function.
 type ServiceConfig struct {
-	Uri                  string            `json:"uri,omitempty"`
-	Service              string            `json:"service,omitempty"` // Underlying Cloud Run service name (Gen2)
-	TimeoutSeconds       int               `json:"timeoutSeconds,omitempty"`
-	AvailableMemory      string            `json:"availableMemory,omitempty"`
-	AvailableCpu         string            `json:"availableCpu,omitempty"` // CPU limit (e.g. "1", "0.5", "2"). Real Cloud Functions Gen2 default: 1.
-	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
-	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
-	EnvironmentVariables map[string]string `json:"environmentVariables,omitempty"`
-	SimCommand           []string          `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
-	SimImage             string            `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
-	SimArchitecture      string            `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
+	Uri              string `json:"uri,omitempty"`
+	Service          string `json:"service,omitempty"` // Underlying Cloud Run service name (Gen2)
+	TimeoutSeconds   int    `json:"timeoutSeconds,omitempty"`
+	AvailableMemory  string `json:"availableMemory,omitempty"`
+	AvailableCpu     string `json:"availableCpu,omitempty"` // CPU limit (e.g. "1", "0.5", "2"). Real Cloud Functions Gen2 default: 1.
+	MaxInstanceCount int    `json:"maxInstanceCount,omitempty"`
+	MinInstanceCount int    `json:"minInstanceCount,omitempty"`
+	// AllTrafficOnLatestRevision + IngressSettings carry provider defaults
+	// (true / ALLOW_ALL); the read-back must echo them or terraform-provider-
+	// google plans an in-place service_config update on every refresh.
+	AllTrafficOnLatestRevision *bool             `json:"allTrafficOnLatestRevision,omitempty"`
+	IngressSettings            string            `json:"ingressSettings,omitempty"`
+	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
+	SimCommand                 []string          `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
+	SimImage                   string            `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
+	SimArchitecture            string            `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
 }
 
 // functionCPUResources returns the ResourceRequirements that should be
@@ -108,6 +113,13 @@ func registerCloudFunctions(srv *sim.Server) {
 		}
 		if fn.ServiceConfig == nil {
 			fn.ServiceConfig = &ServiceConfig{}
+		}
+		if fn.ServiceConfig.AllTrafficOnLatestRevision == nil {
+			allTraffic := true
+			fn.ServiceConfig.AllTrafficOnLatestRevision = &allTraffic
+		}
+		if fn.ServiceConfig.IngressSettings == "" {
+			fn.ServiceConfig.IngressSettings = "ALLOW_ALL"
 		}
 		// Use the simulator's own address as the function URL for invocations
 		fn.ServiceConfig.Uri = fmt.Sprintf("http://%s/v2-functions-invoke/%s", r.Host, functionID)

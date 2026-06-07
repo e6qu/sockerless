@@ -37,6 +37,10 @@ type MSRedisInstance struct {
 	Labels            map[string]string `json:"labels,omitempty"`
 	AuthorizedNetwork string            `json:"authorizedNetwork,omitempty"`
 	RedisConfigs      map[string]string `json:"redisConfigs,omitempty"`
+	// connectMode + transitEncryptionMode have provider defaults; the read-back
+	// must echo them or terraform-provider-google plans a replacement.
+	ConnectMode           string `json:"connectMode,omitempty"`
+	TransitEncryptionMode string `json:"transitEncryptionMode,omitempty"`
 }
 
 var msRedisInstances sim.Store[MSRedisInstance]
@@ -157,13 +161,15 @@ func handleMSRedisCreate(w http.ResponseWriter, r *http.Request) {
 		// instance ID so callers and terraform-provider-google reads
 		// see a syntactically valid IP rather than a `.example` placeholder
 		// that resolves to NXDOMAIN.
-		Host:              simRedisHost(id),
-		Port:              6379,
-		State:             "READY",
-		CreateTime:        nowTimestamp(),
-		Labels:            req.Labels,
-		AuthorizedNetwork: req.AuthorizedNetwork,
-		RedisConfigs:      req.RedisConfigs,
+		Host:                  simRedisHost(id),
+		Port:                  6379,
+		State:                 "READY",
+		CreateTime:            nowTimestamp(),
+		Labels:                req.Labels,
+		AuthorizedNetwork:     req.AuthorizedNetwork,
+		RedisConfigs:          req.RedisConfigs,
+		ConnectMode:           defaultStr(req.ConnectMode, "DIRECT_PEERING"),
+		TransitEncryptionMode: defaultStr(req.TransitEncryptionMode, "DISABLED"),
 	}
 	msRedisInstances.Put(inst.Name, inst)
 	op := newLRO(project, location, inst, "type.googleapis.com/google.cloud.redis.v1.Instance")

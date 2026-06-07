@@ -232,21 +232,24 @@ func TestLogging_SinkCRUD(t *testing.T) {
 	}
 	created, err := svc.Projects.Sinks.Create(parent, sink).Do()
 	require.NoError(t, err)
-	// Real GCP returns the full resource name.
-	assert.Equal(t, sinkResourceName, created.Name)
+	// Real Cloud Logging returns the short identifier in LogSink.name and the
+	// full path in the separate output-only resourceName field.
+	assert.Equal(t, "sdk-test-sink", created.Name)
+	assert.Equal(t, sinkResourceName, created.ResourceName)
 	assert.Equal(t, sink.Destination, created.Destination)
 
 	// Get sink.
 	got, err := svc.Projects.Sinks.Get(sinkResourceName).Do()
 	require.NoError(t, err)
-	assert.Equal(t, sinkResourceName, got.Name)
+	assert.Equal(t, "sdk-test-sink", got.Name)
+	assert.Equal(t, sinkResourceName, got.ResourceName)
 
-	// List sinks — must contain created sink by full resource name.
+	// List sinks — must contain created sink by short name.
 	list, err := svc.Projects.Sinks.List(parent).Do()
 	require.NoError(t, err)
 	found := false
 	for _, s := range list.Sinks {
-		if s.Name == sinkResourceName {
+		if s.Name == "sdk-test-sink" {
 			found = true
 		}
 	}
@@ -283,21 +286,22 @@ func TestLogging_MetricCRUD(t *testing.T) {
 	}
 	created, err := svc.Projects.Metrics.Create(parent, metric).Do()
 	require.NoError(t, err)
-	// Real GCP returns the full resource name.
-	assert.Equal(t, metricResourceName, created.Name)
+	// Real Cloud Logging returns the short metric identifier in LogMetric.name
+	// (the [METRIC_ID] part), not the full resource path.
+	assert.Equal(t, "sdk-test-metric", created.Name)
 	assert.Equal(t, `severity >= ERROR`, created.Filter)
 
 	// Get metric.
 	got, err := svc.Projects.Metrics.Get(metricResourceName).Do()
 	require.NoError(t, err)
-	assert.Equal(t, metricResourceName, got.Name)
+	assert.Equal(t, "sdk-test-metric", got.Name)
 
-	// List metrics — must contain created metric by full resource name.
+	// List metrics — must contain created metric by short name.
 	list, err := svc.Projects.Metrics.List(parent).Do()
 	require.NoError(t, err)
 	found := false
 	for _, m := range list.Metrics {
-		if m.Name == metricResourceName {
+		if m.Name == "sdk-test-metric" {
 			found = true
 		}
 	}
@@ -370,9 +374,8 @@ func TestLogging_ListSinks_Pagination(t *testing.T) {
 			break
 		}
 	}
-	// Sink names are stored as full resource paths: "projects/{p}/sinks/{name}".
+	// Real Cloud Logging returns the short sink identifier in LogSink.name.
 	for _, n := range []string{"pag-sink-a", "pag-sink-b", "pag-sink-c"} {
-		full := fmt.Sprintf("projects/%s/sinks/%s", project, n)
-		assert.True(t, seen[full], "sink %s should appear via pagination", n)
+		assert.True(t, seen[n], "sink %s should appear via pagination", n)
 	}
 }

@@ -31,6 +31,27 @@ type ManagedZone struct {
 	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
 }
 
+// pruneEmptyPrivateVisibilityConfig returns nil when the config carries no
+// networks and no GKE clusters, matching real Cloud DNS (which omits an empty
+// privateVisibilityConfig). A populated config is returned unchanged.
+func pruneEmptyPrivateVisibilityConfig(pvc map[string]any) map[string]any {
+	if len(pvc) == 0 {
+		return nil
+	}
+	hasItems := func(key string) bool {
+		v, ok := pvc[key]
+		if !ok {
+			return false
+		}
+		s, ok := v.([]any)
+		return ok && len(s) > 0
+	}
+	if hasItems("networks") || hasItems("gkeClusters") {
+		return pvc
+	}
+	return nil
+}
+
 // ResourceRecordSet represents a DNS record set.
 type ResourceRecordSet struct {
 	Name    string   `json:"name"`
@@ -100,6 +121,12 @@ func registerCloudDNS(srv *sim.Server) {
 		if zone.Visibility == "" {
 			zone.Visibility = "public"
 		}
+		// terraform-provider-google always sends privateVisibilityConfig with an
+		// empty networks list (even for public zones). Real Cloud DNS drops an
+		// empty privateVisibilityConfig from the read-back; echoing it makes the
+		// provider's flatten materialize a phantom block on every refresh. Strip
+		// it unless it actually carries networks or GKE clusters.
+		zone.PrivateVisibilityConfig = pruneEmptyPrivateVisibilityConfig(zone.PrivateVisibilityConfig)
 
 		// Back every private zone with a real Docker network.
 		// Containers registered in the zone via A records (sockerless's

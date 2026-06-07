@@ -23,7 +23,7 @@ type EventGridTopic struct {
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
+	Tags       map[string]string `json:"tags"`
 	Properties map[string]any    `json:"properties,omitempty"`
 }
 
@@ -215,12 +215,16 @@ func handleEventGridCreateTopic(w http.ResponseWriter, r *http.Request) {
 	if _, ok := props["inputSchema"]; !ok {
 		props["inputSchema"] = "EventGridSchema"
 	}
+	tags := req.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
 	topic := EventGridTopic{
 		ID:         id,
 		Name:       name,
 		Type:       "Microsoft.EventGrid/topics",
 		Location:   req.Location,
-		Tags:       req.Tags,
+		Tags:       tags,
 		Properties: props,
 	}
 	topic = eventGridTopicWithEndpoint(r, topic)
@@ -360,6 +364,7 @@ func handleEventGridCreateDomainTopic(w http.ResponseWriter, r *http.Request) {
 		ID:   id,
 		Name: sim.PathParam(r, "domainTopicName"),
 		Type: "Microsoft.EventGrid/domains/topics",
+		Tags: map[string]string{},
 		Properties: map[string]any{
 			"provisioningState": "Succeeded",
 		},
@@ -536,12 +541,16 @@ func eventGridCreateARMResource(w http.ResponseWriter, r *http.Request, store si
 		props = map[string]any{}
 	}
 	mutate(props)
+	tags := req.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
 	resource := EventGridTopic{
 		ID:         id,
 		Name:       name,
 		Type:       resourceType,
 		Location:   req.Location,
-		Tags:       req.Tags,
+		Tags:       tags,
 		Properties: props,
 	}
 	store.Put(id, resource)

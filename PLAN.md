@@ -18,7 +18,67 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Phase
 
-Phase G-AWS in progress on branch `feat/phase-g-aws-new-slices`. Step Functions, CodeBuild, Glue, and Batch implemented with full SDK + CLI + Terraform coverage.
+**Terraform idempotency drift sweep** (started in PR #491). The new
+second-plan `terraform plan -detailed-exitcode` drift assertions on the gcp +
+azure apply stacks (BUG-1532) surfaced ~13 pre-existing read-back fidelity bugs
+that cause a non-empty second plan. PR #491 already lands the green pieces
+(scheduler `cron(...)` evaluation BUG-1531, the drift assertions themselves, and
+the Docker-Hub→ECR-gallery harness fix BUG-1533); the drift fixes below are the
+remaining work to make `tf (gcp)` / `tf (azure)` green. These stacks cannot run
+on a Mac host (gcp needs Linux real-exec; azure-Docker times out locally), so
+each fix is verified blind via the CI `tf (...)` job.
+
+### Terraform drift fixes (BUG-1534, closing BUG-1532)
+
+Root causes are the `# forces replacement` / `-> null` lines in the second plan;
+the `(known after apply)` diffs are downstream cascades that clear once their
+parent resource stops being replaced.
+
+**GCP** (`simulators/gcp/`) — DONE (gcp drift reproduced + fixed locally; DNS
+runs on Mac, compute verified blind via `tf (gcp)`):
+1. **logging sink/metric** (`logging.go`) — `name` is the **short** identifier (verified vs logging/v2 `LogSink.name` doc); added the separate output-only `resourceName` full-path field for sinks. The SDK test asserted the full path against a false "Real GCP returns the full resource name" comment → corrected.
+2. **memorystore redis** (`memorystore_redis.go`) — `connectMode`/`transitEncryptionMode` defaults.
+3. **gcs bucket** (`gcs.go`) — `location` upper-cased.
+4. **api gateway api-config** (`apigateway.go`) — `openapiDocuments` round-trip.
+5. **compute router NAT** (`compute.go`) — the `type=PUBLIC` forces-replacement was **Cloud NAT**, not the network; default `type=PUBLIC`. Also network `networkFirewallPolicyEnforcementOrder=AFTER_CLASSIC_FIREWALL`.
+6. **cloudfunctions2** (`cloudfunctions.go`) — `allTrafficOnLatestRevision=true` + `ingressSettings=ALLOW_ALL`.
+7. **dns managed zone** (`dns.go`) — terraform sends `privateVisibilityConfig{networks:[]}` even for public zones; the provider flatten materialises a phantom block. Drop an empty `privateVisibilityConfig` from the read-back.
+
+**AZURE** (`simulators/azure/`) — DONE (11 resources; verified blind via
+`tf (azure)`, Docker-only so can't run on Mac):
+8. **public IP / prefix / LB** (`compute.go`, `network.go`) — `sku_tier=Regional` (SkuName.Tier), `tags={}`, `zones=[]`, public-IP `ip_tags=[]` + `idle_timeout=4`.
+9. **storage account** (`files.go`) — `sku.tier` from sku name (`account_tier`), `supportsHttpsTrafficOnly=true`, `minimumTlsVersion=TLS1_2`, `primaryLocation`.
+10. **application_insights** (`insights.go`) — `application_type=web`, retention=90, sampling=100, public-network ingestion/query=Enabled, `tags={}`.
+11. **cosmosdb_account** (`cosmos.go`) — round-trip `properties.locations` (`isZoneRedundant` was dropped) + write/readLocations.
+12. **key_vault / key_vault_key** (`keyvault.go`) — round-trip `softDeleteRetentionInDays`; echo `key_ops` in request order.
+13. **container_app** (`containerapps_apps.go`) — scale `cooldownPeriod=300`/`pollingInterval=30`.
+14. **linux_function_app** (`functions.go`) — `clientCertMode=Optional` + siteConfig `loadBalancing`/`managedPipelineMode`/`ipSecurityRestrictionsDefaultAction` defaults.
+15. **apim api** (`apim.go`) — `apiRevision=1` + `isCurrent`.
+16. **container_registry** (`acr.go`) — `networkRuleBypassOptions=AzureServices`.
+17. **virtual_network** (`network.go`) — `privateEndpointVNetPolicies=Disabled`.
+18. **eventgrid_system_topic** (`eventgrid.go`) — `tags={}`.
+
+**Second-pass residuals (after the cosmos provider-panic fix unblocked the azure
+apply), all fixed:**
+- cosmosdb_account — the geo_location fix had added read/writeLocations without
+  `provisioningState`; the provider's create poll dereferences it → nil panic
+  that aborted the whole apply. Rebuilt the shape with `failoverPolicies` (what
+  geo_location actually reads) + a shared id + `provisioningState=Succeeded`.
+- application_insights — round-trip `properties.WorkspaceResourceId` (workspace_id).
+- container_app_environment — `log_analytics_workspace_id` is resolved by the
+  provider via a subscription-scope workspace LIST matched by customerId; added
+  that LIST handler (monitor.go) so the read recovers it.
+- linux_function_app — mirror site-PUT siteConfig.appSettings into the
+  /config/appsettings store (functions_extension_version / storage_account_name
+  / builtin_logging_enabled); siteConfig minTlsVersion/scmMinTlsVersion/
+  scmIpSecurityRestrictionsDefaultAction defaults; backup config (POST
+  /config/backup/list) now 404s when unconfigured so the provider's
+  FlattenBackupConfig doesn't materialise a phantom backup{enabled=false} block.
+
+**DONE — `tf (gcp)` and `tf (azure)` both green; full PR #491 CI passes.**
+Approach used: fix one cloud fully, push, read the next CI plan, repeat. Azure
+verified blind via CI + per-resource curl wire-shape checks (azure terraform is
+Docker-only, can't run on Mac).
 
 ## Completed Phases
 

@@ -45,16 +45,23 @@ type SiteProperties struct {
 	ResourceGroup        string                            `json:"resourceGroup,omitempty"`
 	LastModifiedTime     string                            `json:"lastModifiedTimeUtc,omitempty"`
 	HTTPSOnly            bool                              `json:"httpsOnly,omitempty"`
+	ClientCertMode       string                            `json:"clientCertMode,omitempty"`
 	AzureStorageAccounts map[string]*AzureStorageInfoValue `json:"-"`
 }
 
 // SiteConfig holds the site configuration for a function app.
 type SiteConfig struct {
-	AppSettings           []NameValuePair `json:"appSettings,omitempty"`
-	LinuxFxVersion        string          `json:"linuxFxVersion,omitempty"`
-	FunctionAppScaleLimit int             `json:"functionAppScaleLimit,omitempty"`
-	FtpsState             string          `json:"ftpsState,omitempty"`
-	SimCommand            []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
+	AppSettings                            []NameValuePair `json:"appSettings,omitempty"`
+	LinuxFxVersion                         string          `json:"linuxFxVersion,omitempty"`
+	FunctionAppScaleLimit                  int             `json:"functionAppScaleLimit,omitempty"`
+	FtpsState                              string          `json:"ftpsState,omitempty"`
+	LoadBalancing                          string          `json:"loadBalancing,omitempty"`
+	ManagedPipelineMode                    string          `json:"managedPipelineMode,omitempty"`
+	IPSecurityRestrictionsDefaultAction    string          `json:"ipSecurityRestrictionsDefaultAction,omitempty"`
+	MinTLSVersion                          string          `json:"minTlsVersion,omitempty"`
+	ScmMinTLSVersion                       string          `json:"scmMinTlsVersion,omitempty"`
+	ScmIPSecurityRestrictionsDefaultAction string          `json:"scmIpSecurityRestrictionsDefaultAction,omitempty"`
+	SimCommand                             []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 // NameValuePair holds a name-value pair for app settings.
@@ -169,6 +176,38 @@ func registerAzureFunctions(srv *sim.Server) {
 		// the invoke handler matches that against DefaultHostName.
 		defaultHostName := name + ".azurewebsites.net"
 
+		// Default the ARM-computed site properties the provider reads back
+		// when the request omits them, so a post-apply GET echoes the same
+		// values terraform expects (no idempotency drift). These mirror the
+		// real Microsoft.Web/sites defaults.
+		clientCertMode := req.Properties.ClientCertMode
+		if clientCertMode == "" {
+			clientCertMode = "Optional"
+		}
+
+		siteConfig := req.Properties.SiteConfig
+		if siteConfig == nil {
+			siteConfig = &SiteConfig{}
+		}
+		if siteConfig.LoadBalancing == "" {
+			siteConfig.LoadBalancing = "LeastRequests"
+		}
+		if siteConfig.ManagedPipelineMode == "" {
+			siteConfig.ManagedPipelineMode = "Integrated"
+		}
+		if siteConfig.IPSecurityRestrictionsDefaultAction == "" {
+			siteConfig.IPSecurityRestrictionsDefaultAction = "Allow"
+		}
+		if siteConfig.MinTLSVersion == "" {
+			siteConfig.MinTLSVersion = "1.2"
+		}
+		if siteConfig.ScmMinTLSVersion == "" {
+			siteConfig.ScmMinTLSVersion = "1.2"
+		}
+		if siteConfig.ScmIPSecurityRestrictionsDefaultAction == "" {
+			siteConfig.ScmIPSecurityRestrictionsDefaultAction = "Allow"
+		}
+
 		site := Site{
 			ID:       resourceID,
 			Name:     name,
@@ -184,14 +223,32 @@ func registerAzureFunctions(srv *sim.Server) {
 				EnabledHostNames: []string{defaultHostName, name + ".scm.azurewebsites.net"},
 				ServerFarmID:     req.Properties.ServerFarmID,
 				Reserved:         req.Properties.Reserved,
-				SiteConfig:       req.Properties.SiteConfig,
+				SiteConfig:       siteConfig,
 				ResourceGroup:    rg,
 				LastModifiedTime: time.Now().UTC().Format(time.RFC3339),
 				HTTPSOnly:        req.Properties.HTTPSOnly,
+				ClientCertMode:   clientCertMode,
 			},
 		}
 
 		sites.Put(resourceID, site)
+
+		// terraform-provider-azurerm sends app settings inside the site PUT's
+		// siteConfig.appSettings, then reads them back via POST
+		// /config/appsettings/list (a separate store). Mirror them into that
+		// store so the read recovers FUNCTIONS_EXTENSION_VERSION /
+		// AzureWebJobsStorage / AzureWebJobsDashboard — the provider derives
+		// functions_extension_version / storage_account_name /
+		// builtin_logging_enabled from those, and drops them on drift otherwise.
+		if len(siteConfig.AppSettings) > 0 {
+			cfg, _ := siteConfigStore.Get(resourceID)
+			settings := make(map[string]string, len(siteConfig.AppSettings))
+			for _, kv := range siteConfig.AppSettings {
+				settings[kv.Name] = kv.Value
+			}
+			cfg.AppSettings = settings
+			siteConfigStore.Put(resourceID, cfg)
+		}
 
 		// Always return 200 OK so the ARM SDK's BeginCreateOrUpdate poller
 		// treats this as an immediately completed operation.
@@ -445,26 +502,28 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
-	// POST /config/backup/list — App Service backup configuration. The
-	// sim doesn't model backup schedules; the truthful response is an
-	// empty properties bag (no backup configured).
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", func(w http.ResponseWriter, r *http.Request) {
-		sub := sim.PathParam(r, "subscriptionId")
-		rg := sim.PathParam(r, "resourceGroupName")
+	// POST /config/backup/list — "Get Backup Configuration" (POST because the
+	// response carries the storage-account SAS secret). The sim doesn't model
+	// backup schedules; real Azure returns 404 when none is configured. Earlier
+	// the sim returned 200 with an empty `properties: {}` bag — but
+	// terraform-provider-azurerm's FlattenBackupConfig only short-circuits to
+	// [] when Properties is nil, so a non-nil empty bag materialised a phantom
+	// `backup { enabled = false }` block that drifted every plan. 404 makes the
+	// provider treat it as NotFound → no backup block.
+	backupNotFound := func(w http.ResponseWriter, r *http.Request) {
 		name := sim.PathParam(r, "siteName")
-		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), name)
 		if _, ok := sites.Get(resourceID); !ok {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
-				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
+				"The Resource 'Microsoft.Web/sites/%s' was not found.", name)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"id":         resourceID + "/config/backup",
-			"name":       "backup",
-			"type":       "Microsoft.Web/sites/config",
-			"properties": map[string]any{},
-		})
-	})
+		sim.AzureErrorf(w, "NotFound", http.StatusNotFound,
+			"No backup configuration found for site %q.", name)
+	}
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", backupNotFound)
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/backup", backupNotFound)
 
 	// GET /sites/{name}/basicPublishingCredentialsPolicies/{ftp|scm} —
 	// the per-protocol allow flag for FTP / SCM basic auth on the

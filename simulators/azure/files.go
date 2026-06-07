@@ -92,11 +92,30 @@ type StorageSku struct {
 	Tier string `json:"tier,omitempty"`
 }
 
+// storageSkuTierFromName derives the ARM `sku.tier` value from a SKU
+// name like "Standard_LRS" or "Premium_LRS". Azure populates `tier`
+// from the leading segment of the SKU name; the azurerm/azurestack
+// providers read it back to set `account_tier`.
+func storageSkuTierFromName(name string) string {
+	if i := strings.Index(name, "_"); i > 0 {
+		return name[:i]
+	}
+	switch name {
+	case "":
+		return "Standard"
+	default:
+		return name
+	}
+}
+
 // StorageAccountProperties holds the properties of a storage account.
 type StorageAccountProperties struct {
-	ProvisioningState string                   `json:"provisioningState"`
-	PrimaryEndpoints  *StoragePrimaryEndpoints `json:"primaryEndpoints,omitempty"`
-	CreationTime      string                   `json:"creationTime,omitempty"`
+	ProvisioningState        string                   `json:"provisioningState"`
+	PrimaryLocation          string                   `json:"primaryLocation,omitempty"`
+	SupportsHttpsTrafficOnly *bool                    `json:"supportsHttpsTrafficOnly,omitempty"`
+	MinimumTLSVersion        string                   `json:"minimumTlsVersion,omitempty"`
+	PrimaryEndpoints         *StoragePrimaryEndpoints `json:"primaryEndpoints,omitempty"`
+	CreationTime             string                   `json:"creationTime,omitempty"`
 }
 
 // StoragePrimaryEndpoints holds the primary endpoints for a storage account.
@@ -218,7 +237,25 @@ func registerAzureFiles(srv *sim.Server) {
 
 		sku := req.Sku
 		if sku == nil {
-			sku = &StorageSku{Name: "Standard_LRS", Tier: "Standard"}
+			sku = &StorageSku{Name: "Standard_LRS"}
+		}
+		if sku.Tier == "" {
+			sku.Tier = storageSkuTierFromName(sku.Name)
+		}
+
+		// Azure defaults supportsHttpsTrafficOnly to true when the
+		// request omits it; the provider reads it back as
+		// enable_https_traffic_only.
+		httpsOnly := req.Properties.SupportsHttpsTrafficOnly
+		if httpsOnly == nil {
+			v := true
+			httpsOnly = &v
+		}
+		// Azure defaults minimumTlsVersion to TLS1_2 for new accounts; the
+		// provider reads it back as min_tls_version.
+		minTLS := req.Properties.MinimumTLSVersion
+		if minTLS == "" {
+			minTLS = "TLS1_2"
 		}
 
 		acct := StorageAccount{
@@ -230,8 +267,11 @@ func registerAzureFiles(srv *sim.Server) {
 			Sku:      sku,
 			Tags:     req.Tags,
 			Properties: StorageAccountProperties{
-				ProvisioningState: "Succeeded",
-				CreationTime:      time.Now().UTC().Format(time.RFC3339),
+				ProvisioningState:        "Succeeded",
+				PrimaryLocation:          req.Location,
+				SupportsHttpsTrafficOnly: httpsOnly,
+				MinimumTLSVersion:        minTLS,
+				CreationTime:             time.Now().UTC().Format(time.RFC3339),
 			},
 		}
 		applyStorageAccountEndpoints(r, &acct)
@@ -266,6 +306,9 @@ func registerAzureFiles(srv *sim.Server) {
 			return
 		}
 		if req.Sku != nil {
+			if req.Sku.Tier == "" {
+				req.Sku.Tier = storageSkuTierFromName(req.Sku.Name)
+			}
 			acct.Sku = req.Sku
 		}
 		if req.Kind != "" {
