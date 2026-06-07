@@ -165,10 +165,18 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "this" {
-  name     = "fidelity-tg"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.main.id
+  name             = "fidelity-tg"
+  port             = 80
+  protocol         = "HTTP"
+  protocol_version = "HTTP1"
+  vpc_id           = aws_vpc.main.id
+
+  # Matcher was hardcoded to 200 in DescribeTargetGroups, so a non-default
+  # health_check.matcher drifted every plan.
+  health_check {
+    path    = "/healthz"
+    matcher = "200-299"
+  }
 }
 
 # HTTPS listener with an ACM cert + ssl_policy: both must round-trip through
