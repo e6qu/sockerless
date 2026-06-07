@@ -11,7 +11,55 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
+
+// TestAzureEntra_V2UserInfoEndpoint covers issue #508: the v2.0 discovery must
+// advertise a working userinfo_endpoint so coreos/go-oidc's provider.UserInfo()
+// — called by Pomerium after the token exchange — resolves. Verified with the
+// real go-oidc client. UserInfo requires a valid bearer token (OIDC Core §5.3);
+// there is no fallback identity.
+func TestAzureEntra_V2UserInfoEndpoint(t *testing.T) {
+	tenant := "edd-e2e-tenant"
+	clientID := "pomerium-userinfo-client"
+	v2Issuer := baseURL + "/" + tenant + "/v2.0"
+
+	// Discovery advertises a sim-hosted userinfo_endpoint.
+	doc := fetchAzureDiscovery(t, v2Issuer+"/.well-known/openid-configuration")
+	assert.Equal(t, v2Issuer+"/userinfo", doc["userinfo_endpoint"], "v2.0 discovery must advertise userinfo_endpoint")
+
+	provider, err := oidc.NewProvider(ctx, v2Issuer)
+	require.NoError(t, err)
+
+	tok := azureAuthCodeFlow(t, tenant, clientID)
+	require.NotEmpty(t, tok.AccessToken)
+	require.NotEmpty(t, tok.IDToken)
+	idSub, _ := azureTokenPayload(t, tok.IDToken)["sub"].(string)
+	require.NotEmpty(t, idSub)
+
+	// provider.UserInfo — the exact call Pomerium makes (previously failed with
+	// "user info endpoint is not supported by this provider").
+	ui, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok.AccessToken}))
+	require.NoError(t, err, "provider.UserInfo() must resolve against the v2.0 userinfo endpoint")
+	assert.Equal(t, idSub, ui.Subject, "userinfo sub must match the id_token sub")
+	var claims map[string]any
+	require.NoError(t, ui.Claims(&claims))
+	assert.NotEmpty(t, claims["name"], "userinfo must include the name claim")
+
+	// No bearer token -> 401 (no fallback to a default identity).
+	resp, err := http.Get(baseURL + "/" + tenant + "/v2.0/userinfo")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "UserInfo without a bearer token must be 401")
+
+	// A garbage token -> 401 (signature verification, no fallback).
+	badReq, _ := http.NewRequest(http.MethodGet, baseURL+"/"+tenant+"/v2.0/userinfo", nil)
+	badReq.Header.Set("Authorization", "Bearer not.a.realjwt")
+	badResp, err := http.DefaultClient.Do(badReq)
+	require.NoError(t, err)
+	defer badResp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, badResp.StatusCode, "an unverifiable token must be 401")
+}
 
 // TestAzureEntra_V2DiscoveryIssuerMatchesFetchURL covers issue #504: the v2.0
 // OIDC discovery document must advertise an issuer equal to the URL it was

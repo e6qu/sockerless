@@ -138,16 +138,21 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodGet && strings.HasSuffix(path, "/.well-known/openid-configuration") {
 			tenantId := extractTenantFromPath(path)
 			baseURL := azureAuthBaseURL(r)
+			isV2 := strings.Contains(path, "/v2.0/.well-known/")
 			// The issuer is version-aware. For the v2.0 discovery path
 			// (`/{tenant}/v2.0/.well-known/...`) it MUST equal the URL the
 			// document was fetched from (RFC 8414 §3) so strict OIDC clients
 			// (coreos/go-oidc, Pomerium) validate it. For the v1 path the real
 			// AAD issuer is `sts.windows.net/{tenant}/`, which azidentity / the
 			// Azure SDK compare against (they don't dereference it as a URL).
+			// userinfo_endpoint is sim-hosted (real AAD points at Graph, which the
+			// sim doesn't proxy) so coreos/go-oidc's provider.UserInfo() — called
+			// by Pomerium after the token exchange — can actually resolve it.
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"issuer":                                azureIssuer(baseURL, tenantId, strings.Contains(path, "/v2.0/.well-known/")),
+				"issuer":                                azureIssuer(baseURL, tenantId, isV2),
 				"authorization_endpoint":                fmt.Sprintf("%s/%s/oauth2/v2.0/authorize", baseURL, tenantId),
 				"token_endpoint":                        fmt.Sprintf("%s/%s/oauth2/v2.0/token", baseURL, tenantId),
+				"userinfo_endpoint":                     azureUserInfoEndpoint(baseURL, tenantId, isV2),
 				"jwks_uri":                              fmt.Sprintf("%s/%s/discovery/v2.0/keys", baseURL, tenantId),
 				"response_types_supported":              []string{"code"},
 				"response_modes_supported":              []string{"query", "fragment", "form_post"},
@@ -172,6 +177,14 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			sim.WriteJSON(w, http.StatusOK, map[string]any{"keys": []map[string]any{jwk}})
+			return
+		}
+
+		// UserInfo endpoint (OIDC). Pomerium / coreos/go-oidc call this after the
+		// token exchange. Returns the standard UserInfo claims for the bearer
+		// token's user.
+		if r.Method == http.MethodGet && strings.HasSuffix(path, "/userinfo") {
+			handleAzureUserInfo(w, r)
 			return
 		}
 
@@ -277,6 +290,88 @@ func azureIssuer(baseURL, tenant string, v2 bool) string {
 		return fmt.Sprintf("%s/%s/v2.0", baseURL, tenant)
 	}
 	return fmt.Sprintf("https://sts.windows.net/%s/", tenant)
+}
+
+// azureUserInfoEndpoint is sim-hosted so OIDC clients can resolve it (real AAD
+// points at graph.microsoft.com/oidc/userinfo, which the sim doesn't proxy).
+func azureUserInfoEndpoint(baseURL, tenant string, v2 bool) string {
+	if v2 {
+		return fmt.Sprintf("%s/%s/v2.0/userinfo", baseURL, tenant)
+	}
+	return fmt.Sprintf("%s/%s/userinfo", baseURL, tenant)
+}
+
+// verifyAzureSimJWT verifies a sim-minted RS256 JWT against the sim's signing
+// key (the same key published at the JWKS endpoint) and returns its claims. It
+// rejects malformed tokens, bad signatures, and expired tokens — there is no
+// fallback to an unauthenticated identity.
+func verifyAzureSimJWT(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed JWT")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("decode signature: %w", err)
+	}
+	key, err := azureSimSigningKey()
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], sig); err != nil {
+		return nil, fmt.Errorf("signature verification failed")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode payload: %w", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("parse claims: %w", err)
+	}
+	if exp, ok := claims["exp"].(float64); ok && time.Now().Unix() > int64(exp) {
+		return nil, fmt.Errorf("token expired")
+	}
+	return claims, nil
+}
+
+// handleAzureUserInfo serves the OIDC UserInfo endpoint. Per OpenID Connect Core
+// §5.3 it REQUIRES a valid bearer access token and returns 401 with a
+// WWW-Authenticate header otherwise — no fallback to a default identity. The
+// returned `sub`/`oid` come from the verified token (authoritative); profile
+// claims (name/email) come from the token's user.
+func handleAzureUserInfo(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token", error_description="missing bearer token"`)
+		sim.AzureError(w, "invalid_token", "The UserInfo endpoint requires a bearer access token", http.StatusUnauthorized)
+		return
+	}
+	claims, err := verifyAzureSimJWT(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")))
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="invalid_token", error_description=%q`, err.Error()))
+		sim.AzureError(w, "invalid_token", fmt.Sprintf("invalid access token: %v", err), http.StatusUnauthorized)
+		return
+	}
+	sub, _ := claims["sub"].(string)
+	oid, _ := claims["oid"].(string)
+	if sub == "" {
+		sim.AzureError(w, "invalid_token", "access token has no sub claim", http.StatusUnauthorized)
+		return
+	}
+	u := getEntraSimUser(oid)
+	out := map[string]any{"sub": sub, "oid": oid}
+	if u.Name != "" {
+		out["name"] = u.Name
+	}
+	if u.PreferredUsername != "" {
+		out["preferred_username"] = u.PreferredUsername
+	}
+	if u.Email != "" {
+		out["email"] = u.Email
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func extractTenantFromPath(path string) string {
