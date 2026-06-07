@@ -13,12 +13,11 @@ import (
 )
 
 // EventBridge Scheduler firing engine. The CRUD surface in scheduler.go stores
-// schedules; this loop evaluates the ScheduleExpression (`at(...)` one-time and
-// `rate(N unit)` recurring) and invokes the configured Target when due — ECS
-// RunTask, Lambda Invoke, SQS SendMessage, SNS Publish — by calling the sim's
-// own handlers in-process, exactly as real EventBridge Scheduler invokes the
-// downstream service. `cron(...)` expressions are still stored faithfully but
-// not yet evaluated by the loop.
+// schedules; this loop evaluates the ScheduleExpression — `at(...)` one-time,
+// `rate(N unit)` recurring, and `cron(...)` (see scheduler_cron.go) — and
+// invokes the configured Target when due (ECS RunTask, Lambda Invoke, SQS
+// SendMessage, SNS Publish) by calling the sim's own handlers in-process,
+// exactly as real EventBridge Scheduler invokes the downstream service.
 
 type schedulerFireRec struct {
 	next  time.Time
@@ -88,20 +87,30 @@ func schedulerAfterFire(key string, s Schedule, now time.Time) {
 	if rec == nil {
 		return
 	}
-	if interval, ok := schedulerRateInterval(s.ScheduleExpression); ok {
-		rec.next = now.Add(interval)
-	} else {
-		rec.fired = true
+	switch {
+	case schedulerRecurring(s.ScheduleExpression):
+		if interval, ok := schedulerRateInterval(s.ScheduleExpression); ok {
+			rec.next = now.Add(interval)
+		} else if next, ok := schedulerCronNext(s.ScheduleExpression, now); ok {
+			rec.next = next
+		} else {
+			rec.fired = true
+		}
+	default:
+		rec.fired = true // one-time at()
 	}
 }
 
 func schedulerRecurring(expr string) bool {
-	_, ok := schedulerRateInterval(expr)
-	return ok
+	if _, ok := schedulerRateInterval(expr); ok {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(expr), "cron(")
 }
 
 // schedulerFirstFire computes the first fire time: at(...) → the timestamp;
-// rate(...) → creation + interval. False for unparseable/cron expressions.
+// rate(...) → creation + interval; cron(...) → next match after now. False for
+// unparseable expressions.
 func schedulerFirstFire(s Schedule, now time.Time) (time.Time, bool) {
 	expr := strings.TrimSpace(s.ScheduleExpression)
 	if strings.HasPrefix(expr, "at(") {
@@ -117,6 +126,9 @@ func schedulerFirstFire(s Schedule, now time.Time) (time.Time, bool) {
 			base = time.Unix(int64(s.CreationDate), 0).UTC()
 		}
 		return base.Add(interval), true
+	}
+	if next, ok := schedulerCronNext(expr, now); ok {
+		return next, true
 	}
 	return time.Time{}, false
 }
