@@ -219,6 +219,7 @@ func TestOAuth_ConformantWebFlow_BindsCodeToSessionUser(t *testing.T) {
 	exchForm.Set("client_id", "Iv1.test")
 	req := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(exchForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json") // real clients (Go oauth2/gh) negotiate JSON
 	w3 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w3, req)
 	if w3.Code != http.StatusOK {
@@ -342,6 +343,7 @@ func TestOAuth_WebFlow_AccessTokenExchange(t *testing.T) {
 	exchForm.Set("client_id", "Iv1.test")
 	req := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(exchForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json") // real clients (Go oauth2/gh) negotiate JSON
 	w3 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w3, req)
 	if w3.Code != http.StatusOK {
@@ -389,6 +391,7 @@ func TestOAuth_WebFlow_CodeIsOneTimeUse(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(exchForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json") // real clients (Go oauth2/gh) negotiate JSON
 	w3 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w3, req)
 	if w3.Code != http.StatusOK {
@@ -398,6 +401,7 @@ func TestOAuth_WebFlow_CodeIsOneTimeUse(t *testing.T) {
 	// Second exchange with the SAME code — must fail.
 	req2 := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(exchForm.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Accept", "application/json")
 	w4 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w4, req2)
 	if !strings.Contains(w4.Body.String(), "bad_verification_code") {
@@ -434,6 +438,7 @@ func TestOAuth_DeviceFlow_StillWorks(t *testing.T) {
 	form2.Set("device_code", dc.DeviceCode)
 	req2 := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(form2.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Accept", "application/json")
 	w2 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w2, req2)
 
@@ -447,5 +452,73 @@ func TestOAuth_DeviceFlow_StillWorks(t *testing.T) {
 	}
 	if tokResp.AccessToken == "" {
 		t.Errorf("device flow access_token empty")
+	}
+}
+
+// TestOAuth_TokenResponse_ContentNegotiation pins the #494 contract: real
+// GitHub's POST /login/oauth/access_token returns form-encoded by default and
+// JSON only when the client sends Accept: application/json.
+func TestOAuth_TokenResponse_ContentNegotiation(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerGHOAuthRoutes()
+
+	form := url.Values{"scope": {"repo"}}
+	req := httptest.NewRequest("POST", "/login/device/code", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	var dc struct {
+		DeviceCode string `json:"device_code"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &dc)
+	if dc.DeviceCode == "" {
+		t.Fatal("missing device_code")
+	}
+
+	exchange := func(accept string) *httptest.ResponseRecorder {
+		f := url.Values{
+			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+			"device_code": {dc.DeviceCode},
+		}
+		r := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if accept != "" {
+			r.Header.Set("Accept", accept)
+		}
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// Default (no Accept) → form-encoded, matching real GitHub.
+	def := exchange("")
+	if ct := def.Header().Get("Content-Type"); !strings.Contains(ct, "application/x-www-form-urlencoded") {
+		t.Errorf("default Content-Type = %q, want application/x-www-form-urlencoded", ct)
+	}
+	vals, err := url.ParseQuery(def.Body.String())
+	if err != nil {
+		t.Fatalf("default body not form-encoded: %v (%s)", err, def.Body.String())
+	}
+	if vals.Get("access_token") == "" {
+		t.Errorf("default form body missing access_token: %s", def.Body.String())
+	}
+	if vals.Get("token_type") != "bearer" {
+		t.Errorf("default token_type = %q, want bearer", vals.Get("token_type"))
+	}
+
+	// Accept: application/json → JSON.
+	js := exchange("application/json")
+	if ct := js.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("json Content-Type = %q, want application/json", ct)
+	}
+	var obj struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(js.Body.Bytes(), &obj); err != nil {
+		t.Fatalf("json body not JSON: %v", err)
+	}
+	if obj.AccessToken == "" {
+		t.Errorf("json body missing access_token")
 	}
 }

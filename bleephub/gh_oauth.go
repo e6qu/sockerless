@@ -1,14 +1,42 @@
 package bleephub
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// writeOAuthTokenResponse renders a POST /login/oauth/access_token response in
+// the format the client negotiated via Accept, matching real GitHub: JSON when
+// the client sends `Accept: application/json`, otherwise
+// application/x-www-form-urlencoded (GitHub's default for this endpoint).
+// Applies to both success and error bodies, and to both the web and device
+// flows that share the endpoint.
+func writeOAuthTokenResponse(w http.ResponseWriter, r *http.Request, fields map[string]string) {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		obj := make(map[string]any, len(fields))
+		for k, v := range fields {
+			obj[k] = v
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(obj)
+		return
+	}
+	form := url.Values{}
+	for k, v := range fields {
+		form.Set(k, v)
+	}
+	w.Header().Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(form.Encode()))
+}
 
 func (s *Server) registerGHOAuthRoutes() {
 	s.mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
@@ -182,15 +210,13 @@ func (s *Server) handleDeviceTokenForm(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.RUnlock()
 
 	if !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"error":"bad_verification_code"}`))
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "bad_verification_code"})
 		return
 	}
 
 	s.logger.Info().Str("device_code", deviceCode).Msg("device token granted")
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeOAuthTokenResponse(w, r, map[string]string{
 		"access_token": dc.Token,
 		"token_type":   "bearer",
 		"scope":        "repo read:org gist",
@@ -213,15 +239,11 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 	s.store.mu.Unlock()
 
 	if !ok || time.Now().After(ac.ExpiresAt) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"error":"bad_verification_code"}`))
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "bad_verification_code"})
 		return
 	}
 	if clientID != "" && ac.ClientID != "" && clientID != ac.ClientID {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"error":"incorrect_client_credentials"}`))
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "incorrect_client_credentials"})
 		return
 	}
 
@@ -229,16 +251,14 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 	user := s.store.Users[ac.UserID]
 	if user == nil {
 		s.store.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"error":"server_error"}`))
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "server_error"})
 		return
 	}
 	tok := s.store.createTokenLocked(user.ID, ac.Scopes)
 	s.store.mu.Unlock()
 
 	s.logger.Info().Str("auth_code", code).Int("user_id", user.ID).Msg("web flow token granted")
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeOAuthTokenResponse(w, r, map[string]string{
 		"access_token": tok.Value,
 		"token_type":   "bearer",
 		"scope":        ac.Scopes,

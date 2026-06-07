@@ -262,7 +262,10 @@ func TestGHDeviceFlow(t *testing.T) {
 		"device_code": {deviceCode},
 		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 	}
-	resp2, err := http.Post(testBaseURL+"/login/oauth/access_token", "application/x-www-form-urlencoded", strings.NewReader(form2.Encode()))
+	tokReq, _ := http.NewRequest("POST", testBaseURL+"/login/oauth/access_token", strings.NewReader(form2.Encode()))
+	tokReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokReq.Header.Set("Accept", "application/json") // real clients (gh CLI) negotiate JSON
+	resp2, err := http.DefaultClient.Do(tokReq)
 	if err != nil {
 		t.Fatal(err)
 	}
