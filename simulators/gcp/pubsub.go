@@ -36,8 +36,15 @@ import (
 // a wildcard, then strip-and-switch inside the handler.
 
 type PSTopic struct {
-	Name   string            `json:"name"` // projects/{p}/topics/{t}
-	Labels map[string]string `json:"labels,omitempty"`
+	Name                     string                  `json:"name"` // projects/{p}/topics/{t}
+	Labels                   map[string]string       `json:"labels,omitempty"`
+	KmsKeyName               string                  `json:"kmsKeyName,omitempty"`
+	MessageRetentionDuration string                  `json:"messageRetentionDuration,omitempty"`
+	MessageStoragePolicy     *PSMessageStoragePolicy `json:"messageStoragePolicy,omitempty"`
+}
+
+type PSMessageStoragePolicy struct {
+	AllowedPersistenceRegions []string `json:"allowedPersistenceRegions,omitempty"`
 }
 
 type PSSubscription struct {
@@ -51,14 +58,33 @@ type PSSubscription struct {
 	ExpirationPolicy         *PSExpirationPolicy `json:"expirationPolicy,omitempty"`
 	EnableMessageOrdering    bool                `json:"enableMessageOrdering,omitempty"`
 	Filter                   string              `json:"filter,omitempty"`
+	DeadLetterPolicy         *PSDeadLetterPolicy `json:"deadLetterPolicy,omitempty"`
+	RetryPolicy              *PSRetryPolicy      `json:"retryPolicy,omitempty"`
 }
 
 type PSExpirationPolicy struct {
 	Ttl string `json:"ttl,omitempty"`
 }
 
+type PSDeadLetterPolicy struct {
+	DeadLetterTopic     string `json:"deadLetterTopic,omitempty"`
+	MaxDeliveryAttempts int    `json:"maxDeliveryAttempts,omitempty"`
+}
+
+type PSRetryPolicy struct {
+	MinimumBackoff string `json:"minimumBackoff,omitempty"`
+	MaximumBackoff string `json:"maximumBackoff,omitempty"`
+}
+
 type PSPushConfig struct {
-	PushEndpoint string `json:"pushEndpoint,omitempty"` // external (operator-supplied): webhook target for Push subscriptions; sim doesn't deliver
+	PushEndpoint string            `json:"pushEndpoint,omitempty"` // external (operator-supplied): webhook target for Push subscriptions; sim doesn't deliver
+	Attributes   map[string]string `json:"attributes,omitempty"`
+	OidcToken    *PSOidcToken      `json:"oidcToken,omitempty"`
+}
+
+type PSOidcToken struct {
+	ServiceAccountEmail string `json:"serviceAccountEmail,omitempty"`
+	Audience            string `json:"audience,omitempty"`
 }
 
 type PSMessage struct {
@@ -231,8 +257,11 @@ func handlePSCreateTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := PSTopic{
-		Name:   psTopicName(project, topic),
-		Labels: req.Labels,
+		Name:                     psTopicName(project, topic),
+		Labels:                   req.Labels,
+		KmsKeyName:               req.KmsKeyName,
+		MessageRetentionDuration: req.MessageRetentionDuration,
+		MessageStoragePolicy:     req.MessageStoragePolicy,
 	}
 	psTopics.Put(t.Name, t)
 	sim.WriteJSON(w, http.StatusOK, t)
@@ -378,6 +407,8 @@ func handlePSCreateSubscription(w http.ResponseWriter, r *http.Request) {
 		ExpirationPolicy:         req.ExpirationPolicy,
 		EnableMessageOrdering:    req.EnableMessageOrdering,
 		Filter:                   req.Filter,
+		DeadLetterPolicy:         req.DeadLetterPolicy,
+		RetryPolicy:              req.RetryPolicy,
 	}
 	psSubscriptions.Put(s.Name, s)
 	sim.WriteJSON(w, http.StatusOK, s)
@@ -435,6 +466,10 @@ func handlePSPatchSubscription(w http.ResponseWriter, r *http.Request) {
 			existing.EnableMessageOrdering = req.Subscription.EnableMessageOrdering
 		case "filter":
 			existing.Filter = req.Subscription.Filter
+		case "deadLetterPolicy":
+			existing.DeadLetterPolicy = req.Subscription.DeadLetterPolicy
+		case "retryPolicy":
+			existing.RetryPolicy = req.Subscription.RetryPolicy
 		default:
 			gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
 				"unknown updateMask path: "+path)
@@ -467,6 +502,12 @@ func handlePSPatchTopic(w http.ResponseWriter, r *http.Request) {
 		switch path {
 		case "labels":
 			existing.Labels = req.Topic.Labels
+		case "kmsKeyName":
+			existing.KmsKeyName = req.Topic.KmsKeyName
+		case "messageRetentionDuration":
+			existing.MessageRetentionDuration = req.Topic.MessageRetentionDuration
+		case "messageStoragePolicy":
+			existing.MessageStoragePolicy = req.Topic.MessageStoragePolicy
 		default:
 			gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
 				"unknown updateMask path: "+path)
