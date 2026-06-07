@@ -225,6 +225,16 @@ resource "aws_route" "via_eni" {
   network_interface_id   = aws_network_interface.nat.id
 }
 
+# The main route table AWS auto-creates per VPC — read via the association.main
+# filter (exercises the main association + associationState round-trip).
+data "aws_route_table" "main" {
+  vpc_id = aws_vpc.main.id
+  filter {
+    name   = "association.main"
+    values = ["true"]
+  }
+}
+
 output "nat_gateway_id" {
   value = aws_nat_gateway.this.id
 }

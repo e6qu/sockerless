@@ -81,13 +81,22 @@ type EC2NatGatewayAddress struct {
 	PublicIp           string
 	PrivateIp          string
 	NetworkInterfaceId string
+	AssociationId      string
+	IsPrimary          bool
+	Status             string
 }
 
 type EC2ElasticIP struct {
-	AllocationId string
-	PublicIp     string
-	Domain       string
-	Tags         []EC2Tag
+	AllocationId       string
+	PublicIp           string
+	Domain             string
+	InstanceId         string
+	NetworkInterfaceId string
+	PrivateIpAddress   string
+	AssociationId      string
+	NetworkBorderGroup string
+	PublicIpv4Pool     string
+	Tags               []EC2Tag
 }
 
 type EC2RouteTable struct {
@@ -100,18 +109,29 @@ type EC2RouteTable struct {
 }
 
 type EC2Route struct {
-	DestinationCidrBlock string
-	GatewayId            string
-	NatGatewayId         string
-	NetworkInterfaceId   string
-	State                string
-	Origin               string
+	DestinationCidrBlock        string
+	DestinationIpv6CidrBlock    string
+	DestinationPrefixListId     string
+	GatewayId                   string
+	NatGatewayId                string
+	NetworkInterfaceId          string
+	InstanceId                  string
+	VpcPeeringConnectionId      string
+	TransitGatewayId            string
+	EgressOnlyInternetGatewayId string
+	LocalGatewayId              string
+	CarrierGatewayId            string
+	VpcEndpointId               string
+	CoreNetworkArn              string
+	State                       string
+	Origin                      string
 }
 
 type EC2RouteTableAssociation struct {
 	AssociationId string
 	RouteTableId  string
 	SubnetId      string
+	GatewayId     string
 	Main          bool
 }
 
@@ -388,6 +408,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	// Elastic IP
 	r.Register("AllocateAddress", handleAllocateAddress)
+	r.Register("AssociateAddress", handleAssociateAddress)
+	r.Register("DisassociateAddress", handleDisassociateAddress)
 	r.Register("DescribeAddresses", handleDescribeAddresses)
 	r.Register("DescribeAddressesAttribute", handleDescribeAddressesAttribute)
 	r.Register("ReleaseAddress", handleReleaseAddress)
@@ -402,6 +424,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DescribeRouteTables", handleDescribeRouteTables)
 	r.Register("DeleteRouteTable", handleDeleteRouteTable)
 	r.Register("CreateRoute", handleCreateRoute)
+	r.Register("ReplaceRoute", handleReplaceRoute)
 	r.Register("DeleteRoute", handleDeleteRoute)
 	r.Register("AssociateRouteTable", handleAssociateRouteTable)
 	r.Register("DisassociateRouteTable", handleDisassociateRouteTable)
@@ -553,6 +576,26 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		EnableDnsHostnames: false,
 	}
 	ec2Vpcs.Put(id, vpc)
+	// Real AWS auto-creates a main route table per VPC (local route + a main
+	// association with no subnet). aws_vpc.main_route_table_id /
+	// default_route_table_id and aws_default_route_table read it back.
+	mainRTID := ec2ID("rtb")
+	ec2RouteTables.Put(mainRTID, EC2RouteTable{
+		RouteTableId: mainRTID,
+		VpcId:        id,
+		Routes: []EC2Route{{
+			DestinationCidrBlock: cidr,
+			GatewayId:            "local",
+			State:                "active",
+			Origin:               "CreateRouteTable",
+		}},
+		OwnerId: ec2Owner(),
+		Associations: []EC2RouteTableAssociation{{
+			AssociationId: ec2ID("rtbassoc"),
+			RouteTableId:  mainRTID,
+			Main:          true,
+		}},
+	})
 	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
 		if err2 := ec2CreateRealVPC(r.Context(), vpc); err2 != nil {
 			fmt.Fprintf(os.Stderr, "sim: real VPC %s network fabric unavailable: %v\n", id, err2)
@@ -1095,11 +1138,21 @@ func handleAllocateAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pool := r.FormValue("PublicIpv4Pool")
+	if pool == "" {
+		pool = "amazon"
+	}
+	nbg := r.FormValue("NetworkBorderGroup")
+	if nbg == "" {
+		nbg = awsRegion()
+	}
 	eip := EC2ElasticIP{
-		AllocationId: id,
-		PublicIp:     ip.String(),
-		Domain:       domain,
-		Tags:         tags,
+		AllocationId:       id,
+		PublicIp:           ip.String(),
+		Domain:             domain,
+		NetworkBorderGroup: nbg,
+		PublicIpv4Pool:     pool,
+		Tags:               tags,
 	}
 	ec2ElasticIPs.Put(id, eip)
 
@@ -1107,23 +1160,141 @@ func handleAllocateAddress(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<AllocateAddressResponse %s>
   <requestId>%s</requestId>
   <allocationId>%s</allocationId><publicIp>%s</publicIp><domain>%s</domain>
-</AllocateAddressResponse>`, ec2Xmlns(), generateUUID(), id, ip.String(), domain)
+  <networkBorderGroup>%s</networkBorderGroup><publicIpv4Pool>%s</publicIpv4Pool>
+</AllocateAddressResponse>`, ec2Xmlns(), generateUUID(), id, ip.String(), domain, nbg, pool)
+}
+
+func handleAssociateAddress(w http.ResponseWriter, r *http.Request) {
+	allocId := r.FormValue("AllocationId")
+	instanceId := r.FormValue("InstanceId")
+	eniId := r.FormValue("NetworkInterfaceId")
+	privateIp := r.FormValue("PrivateIpAddress")
+	if _, ok := ec2ElasticIPs.Get(allocId); !ok {
+		ec2ErrorXML(w, "InvalidAllocationID.NotFound", fmt.Sprintf("The allocation ID '%s' does not exist", allocId), http.StatusBadRequest)
+		return
+	}
+	// When associating to an instance without an explicit private IP, real AWS
+	// uses the instance's primary private address — read it back for fidelity.
+	if privateIp == "" && instanceId != "" {
+		if inst, ok := ec2Instances.Get(instanceId); ok {
+			privateIp = inst.PrivateIpAddress
+		}
+	}
+	assocId := ec2ID("eipassoc")
+	ec2ElasticIPs.Update(allocId, func(e *EC2ElasticIP) {
+		e.AssociationId = assocId
+		e.InstanceId = instanceId
+		e.NetworkInterfaceId = eniId
+		e.PrivateIpAddress = privateIp
+	})
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AssociateAddressResponse %s>
+  <requestId>%s</requestId><return>true</return><associationId>%s</associationId>
+</AssociateAddressResponse>`, ec2Xmlns(), generateUUID(), assocId)
+}
+
+func handleDisassociateAddress(w http.ResponseWriter, r *http.Request) {
+	assocId := r.FormValue("AssociationId")
+	allocId := r.FormValue("AllocationId")
+	for _, e := range ec2ElasticIPs.List() {
+		if (assocId != "" && e.AssociationId == assocId) || (allocId != "" && e.AllocationId == allocId) {
+			ec2ElasticIPs.Update(e.AllocationId, func(e *EC2ElasticIP) {
+				e.AssociationId = ""
+				e.InstanceId = ""
+				e.NetworkInterfaceId = ""
+				e.PrivateIpAddress = ""
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DisassociateAddressResponse %s>
+  <requestId>%s</requestId><return>true</return>
+</DisassociateAddressResponse>`, ec2Xmlns(), generateUUID())
+}
+
+func eipItemXML(e EC2ElasticIP) string {
+	var b strings.Builder
+	b.WriteString("<item>")
+	fmt.Fprintf(&b, "<allocationId>%s</allocationId><publicIp>%s</publicIp><domain>%s</domain>",
+		e.AllocationId, e.PublicIp, e.Domain)
+	if e.AssociationId != "" {
+		fmt.Fprintf(&b, "<associationId>%s</associationId>", e.AssociationId)
+	}
+	if e.InstanceId != "" {
+		fmt.Fprintf(&b, "<instanceId>%s</instanceId>", e.InstanceId)
+	}
+	if e.NetworkInterfaceId != "" {
+		fmt.Fprintf(&b, "<networkInterfaceId>%s</networkInterfaceId><networkInterfaceOwnerId>%s</networkInterfaceOwnerId>", e.NetworkInterfaceId, ec2Owner())
+	}
+	if e.PrivateIpAddress != "" {
+		fmt.Fprintf(&b, "<privateIpAddress>%s</privateIpAddress>", e.PrivateIpAddress)
+	}
+	if e.NetworkBorderGroup != "" {
+		fmt.Fprintf(&b, "<networkBorderGroup>%s</networkBorderGroup>", e.NetworkBorderGroup)
+	}
+	if e.PublicIpv4Pool != "" {
+		fmt.Fprintf(&b, "<publicIpv4Pool>%s</publicIpv4Pool>", e.PublicIpv4Pool)
+	}
+	b.WriteString(writeTagSetXML(e.Tags))
+	b.WriteString("</item>")
+	return b.String()
+}
+
+func ec2ElasticIPMatchesFilters(e EC2ElasticIP, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "allocation-id":
+			if !ec2StrInValues(e.AllocationId, vals) {
+				return false
+			}
+		case "public-ip":
+			if !ec2StrInValues(e.PublicIp, vals) {
+				return false
+			}
+		case "instance-id":
+			if !ec2StrInValues(e.InstanceId, vals) {
+				return false
+			}
+		case "network-interface-id":
+			if !ec2StrInValues(e.NetworkInterfaceId, vals) {
+				return false
+			}
+		case "association-id":
+			if !ec2StrInValues(e.AssociationId, vals) {
+				return false
+			}
+		case "domain":
+			if !ec2StrInValues(e.Domain, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, e.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func handleDescribeAddresses(w http.ResponseWriter, r *http.Request) {
-	var eips []EC2ElasticIP
-	if id := r.FormValue("AllocationId.1"); id != "" {
-		if e, ok := ec2ElasticIPs.Get(id); ok {
-			eips = append(eips, e)
-		}
-	} else {
-		eips = ec2ElasticIPs.List()
-	}
+	allocIDs := ec2ParamList(r, "AllocationId")
+	publicIPs := ec2ParamList(r, "PublicIp")
+	filters := ec2Filters(r)
 
 	var items strings.Builder
-	for _, e := range eips {
-		fmt.Fprintf(&items, `<item><allocationId>%s</allocationId><publicIp>%s</publicIp><domain>%s</domain>%s</item>`,
-			e.AllocationId, e.PublicIp, e.Domain, writeTagSetXML(e.Tags))
+	for _, e := range ec2ElasticIPs.List() {
+		if len(allocIDs) > 0 && !ec2StrInValues(e.AllocationId, allocIDs) {
+			continue
+		}
+		if len(publicIPs) > 0 && !ec2StrInValues(e.PublicIp, publicIPs) {
+			continue
+		}
+		if !ec2ElasticIPMatchesFilters(e, filters) {
+			continue
+		}
+		items.WriteString(eipItemXML(e))
 	}
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -1209,6 +1380,9 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 			PublicIp:           publicIp,
 			PrivateIp:          privateIP,
 			NetworkInterfaceId: eniID,
+			AssociationId:      ec2ID("eipassoc"),
+			IsPrimary:          true,
+			Status:             "succeeded",
 		}},
 		CreateTime: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -1232,13 +1406,39 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
     <natGatewayId>%s</natGatewayId><subnetId>%s</subnetId>
     <vpcId>%s</vpcId><state>available</state>
     <connectivityType>%s</connectivityType>
-    <natGatewayAddressSet>
-      <item><allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>%s</privateIp></item>
-    </natGatewayAddressSet>
+    %s
     <createTime>%s</createTime>
     %s
   </natGateway>
-</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, connectivityType, allocId, publicIp, privateIP, natgw.CreateTime, writeTagSetXML(tags))
+</CreateNatGatewayResponse>`, ec2Xmlns(), generateUUID(), id, subnetId, vpcId, connectivityType, natgwAddrSetXML(natgw.NatGatewayAddresses), natgw.CreateTime, writeTagSetXML(tags))
+}
+
+// natgwAddrSetXML renders the natGatewayAddressSet shared by CreateNatGateway
+// and DescribeNatGateways — including associationId, networkInterfaceId,
+// isPrimary, and status (the fields aws_nat_gateway reads back as
+// association_id / network_interface_id).
+func natgwAddrSetXML(addrs []EC2NatGatewayAddress) string {
+	var b strings.Builder
+	b.WriteString("<natGatewayAddressSet>")
+	for _, a := range addrs {
+		b.WriteString("<item>")
+		fmt.Fprintf(&b, "<allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>%s</privateIp>",
+			a.AllocationId, a.PublicIp, a.PrivateIp)
+		if a.NetworkInterfaceId != "" {
+			fmt.Fprintf(&b, "<networkInterfaceId>%s</networkInterfaceId>", a.NetworkInterfaceId)
+		}
+		if a.AssociationId != "" {
+			fmt.Fprintf(&b, "<associationId>%s</associationId>", a.AssociationId)
+		}
+		status := a.Status
+		if status == "" {
+			status = "succeeded"
+		}
+		fmt.Fprintf(&b, "<isPrimary>%t</isPrimary><status>%s</status>", a.IsPrimary, status)
+		b.WriteString("</item>")
+	}
+	b.WriteString("</natGatewayAddressSet>")
+	return b.String()
 }
 
 // ec2NatConnectivityType defaults to "public" for gateways stored before the
@@ -1251,18 +1451,11 @@ func ec2NatConnectivityType(n EC2NatGateway) string {
 }
 
 func natgwItemXML(n EC2NatGateway) string {
-	var addrs strings.Builder
-	addrs.WriteString("<natGatewayAddressSet>")
-	for _, a := range n.NatGatewayAddresses {
-		fmt.Fprintf(&addrs, "<item><allocationId>%s</allocationId><publicIp>%s</publicIp><privateIp>%s</privateIp></item>",
-			a.AllocationId, a.PublicIp, a.PrivateIp)
-	}
-	addrs.WriteString("</natGatewayAddressSet>")
 	return fmt.Sprintf(`<item>
     <natGatewayId>%s</natGatewayId><subnetId>%s</subnetId><vpcId>%s</vpcId>
     <state>%s</state><connectivityType>%s</connectivityType>%s<createTime>%s</createTime>
     %s
-  </item>`, n.NatGatewayId, n.SubnetId, n.VpcId, n.State, ec2NatConnectivityType(n), addrs.String(), n.CreateTime, writeTagSetXML(n.Tags))
+  </item>`, n.NatGatewayId, n.SubnetId, n.VpcId, n.State, ec2NatConnectivityType(n), natgwAddrSetXML(n.NatGatewayAddresses), n.CreateTime, writeTagSetXML(n.Tags))
 }
 
 func handleDescribeNatGateways(w http.ResponseWriter, r *http.Request) {
@@ -1350,15 +1543,31 @@ func routeSetXML(routes []EC2Route) string {
 	b.WriteString("<routeSet>")
 	for _, route := range routes {
 		b.WriteString("<item>")
-		fmt.Fprintf(&b, "<destinationCidrBlock>%s</destinationCidrBlock>", route.DestinationCidrBlock)
-		if route.GatewayId != "" {
-			fmt.Fprintf(&b, "<gatewayId>%s</gatewayId>", route.GatewayId)
+		if route.DestinationCidrBlock != "" {
+			fmt.Fprintf(&b, "<destinationCidrBlock>%s</destinationCidrBlock>", route.DestinationCidrBlock)
 		}
-		if route.NatGatewayId != "" {
-			fmt.Fprintf(&b, "<natGatewayId>%s</natGatewayId>", route.NatGatewayId)
+		if route.DestinationIpv6CidrBlock != "" {
+			fmt.Fprintf(&b, "<destinationIpv6CidrBlock>%s</destinationIpv6CidrBlock>", route.DestinationIpv6CidrBlock)
 		}
-		if route.NetworkInterfaceId != "" {
-			fmt.Fprintf(&b, "<networkInterfaceId>%s</networkInterfaceId>", route.NetworkInterfaceId)
+		if route.DestinationPrefixListId != "" {
+			fmt.Fprintf(&b, "<destinationPrefixListId>%s</destinationPrefixListId>", route.DestinationPrefixListId)
+		}
+		for _, tv := range []struct{ tag, val string }{
+			{"gatewayId", route.GatewayId},
+			{"natGatewayId", route.NatGatewayId},
+			{"networkInterfaceId", route.NetworkInterfaceId},
+			{"instanceId", route.InstanceId},
+			{"vpcPeeringConnectionId", route.VpcPeeringConnectionId},
+			{"transitGatewayId", route.TransitGatewayId},
+			{"egressOnlyInternetGatewayId", route.EgressOnlyInternetGatewayId},
+			{"localGatewayId", route.LocalGatewayId},
+			{"carrierGatewayId", route.CarrierGatewayId},
+			{"vpcEndpointId", route.VpcEndpointId},
+			{"coreNetworkArn", route.CoreNetworkArn},
+		} {
+			if tv.val != "" {
+				fmt.Fprintf(&b, "<%s>%s</%s>", tv.tag, tv.val, tv.tag)
+			}
 		}
 		fmt.Fprintf(&b, "<state>%s</state><origin>%s</origin>", route.State, route.Origin)
 		b.WriteString("</item>")
@@ -1380,8 +1589,16 @@ func assocSetXML(rtId string, assocs []EC2RouteTableAssociation) string {
 	var b strings.Builder
 	b.WriteString("<associationSet>")
 	for _, a := range filtered {
-		fmt.Fprintf(&b, `<item><routeTableAssociationId>%s</routeTableAssociationId><routeTableId>%s</routeTableId><subnetId>%s</subnetId><main>%t</main></item>`,
-			a.AssociationId, a.RouteTableId, a.SubnetId, a.Main)
+		b.WriteString("<item>")
+		fmt.Fprintf(&b, "<routeTableAssociationId>%s</routeTableAssociationId><routeTableId>%s</routeTableId>", a.AssociationId, a.RouteTableId)
+		if a.SubnetId != "" {
+			fmt.Fprintf(&b, "<subnetId>%s</subnetId>", a.SubnetId)
+		}
+		if a.GatewayId != "" {
+			fmt.Fprintf(&b, "<gatewayId>%s</gatewayId>", a.GatewayId)
+		}
+		fmt.Fprintf(&b, "<main>%t</main><associationState><state>associated</state></associationState>", a.Main)
+		b.WriteString("</item>")
 	}
 	b.WriteString("</associationSet>")
 	return b.String()
@@ -1397,27 +1614,69 @@ func rtItemXML(rt EC2RouteTable) string {
   </item>`, rt.RouteTableId, rt.VpcId, routeSetXML(rt.Routes), assocSetXML(rt.RouteTableId, rt.Associations), rt.OwnerId, writeTagSetXML(rt.Tags))
 }
 
-func handleDescribeRouteTables(w http.ResponseWriter, r *http.Request) {
-	var rts []EC2RouteTable
-	if id := r.FormValue("RouteTableId.1"); id != "" {
-		if rt, ok := ec2RouteTables.Get(id); ok {
-			rts = append(rts, rt)
-		}
-	} else if assocIDs := ec2Filters(r)["association.route-table-association-id"]; len(assocIDs) > 0 {
-		for _, rt := range ec2RouteTables.List() {
-			for _, a := range rt.Associations {
-				if ec2StrInValues(a.AssociationId, assocIDs) {
-					rts = append(rts, rt)
-					break
-				}
+func ec2RouteTableMatchesFilters(rt EC2RouteTable, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "vpc-id":
+			if !ec2StrInValues(rt.VpcId, vals) {
+				return false
+			}
+		case "route-table-id":
+			if !ec2StrInValues(rt.RouteTableId, vals) {
+				return false
+			}
+		case "association.route-table-association-id":
+			if !ec2RouteTableHasAssoc(rt, func(a EC2RouteTableAssociation) bool {
+				return ec2StrInValues(a.AssociationId, vals)
+			}) {
+				return false
+			}
+		case "association.subnet-id":
+			if !ec2RouteTableHasAssoc(rt, func(a EC2RouteTableAssociation) bool {
+				return ec2StrInValues(a.SubnetId, vals)
+			}) {
+				return false
+			}
+		case "association.main":
+			want := ec2StrInValues("true", vals)
+			if !ec2RouteTableHasAssoc(rt, func(a EC2RouteTableAssociation) bool { return a.Main == want }) {
+				return false
+			}
+		case "owner-id":
+			if !ec2StrInValues(rt.OwnerId, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, rt.Tags); handled && !match {
+				return false
 			}
 		}
-	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
-		rts = ec2RouteTables.Filter(func(rt EC2RouteTable) bool {
-			return ec2StrInValues(rt.VpcId, vpcIDs)
-		})
-	} else {
-		rts = ec2RouteTables.List()
+	}
+	return true
+}
+
+func ec2RouteTableHasAssoc(rt EC2RouteTable, pred func(EC2RouteTableAssociation) bool) bool {
+	for _, a := range rt.Associations {
+		if pred(a) {
+			return true
+		}
+	}
+	return false
+}
+
+func handleDescribeRouteTables(w http.ResponseWriter, r *http.Request) {
+	ids := ec2ParamList(r, "RouteTableId")
+	filters := ec2Filters(r)
+
+	var rts []EC2RouteTable
+	for _, rt := range ec2RouteTables.List() {
+		if len(ids) > 0 && !ec2StrInValues(rt.RouteTableId, ids) {
+			continue
+		}
+		if !ec2RouteTableMatchesFilters(rt, filters) {
+			continue
+		}
+		rts = append(rts, rt)
 	}
 
 	var items strings.Builder
@@ -1442,32 +1701,60 @@ func handleDeleteRouteTable(w http.ResponseWriter, r *http.Request) {
 </DeleteRouteTableResponse>`, ec2Xmlns(), generateUUID())
 }
 
+// parseRouteFromRequest builds an EC2Route from a CreateRoute/ReplaceRoute
+// request, covering every target type the EC2 API accepts (not just
+// gateway/nat/eni — peering, TGW, prefix-list, IPv6, egress-only, etc.).
+func parseRouteFromRequest(r *http.Request) EC2Route {
+	return EC2Route{
+		DestinationCidrBlock:        r.FormValue("DestinationCidrBlock"),
+		DestinationIpv6CidrBlock:    r.FormValue("DestinationIpv6CidrBlock"),
+		DestinationPrefixListId:     r.FormValue("DestinationPrefixListId"),
+		GatewayId:                   r.FormValue("GatewayId"),
+		NatGatewayId:                r.FormValue("NatGatewayId"),
+		NetworkInterfaceId:          r.FormValue("NetworkInterfaceId"),
+		InstanceId:                  r.FormValue("InstanceId"),
+		VpcPeeringConnectionId:      r.FormValue("VpcPeeringConnectionId"),
+		TransitGatewayId:            r.FormValue("TransitGatewayId"),
+		EgressOnlyInternetGatewayId: r.FormValue("EgressOnlyInternetGatewayId"),
+		LocalGatewayId:              r.FormValue("LocalGatewayId"),
+		CarrierGatewayId:            r.FormValue("CarrierGatewayId"),
+		VpcEndpointId:               r.FormValue("VpcEndpointId"),
+		CoreNetworkArn:              r.FormValue("CoreNetworkArn"),
+		State:                       "active",
+		Origin:                      "CreateRoute",
+	}
+}
+
+// routeDestMatches reports whether a stored route has the destination the
+// request addresses (IPv4 CIDR, IPv6 CIDR, or prefix list).
+func routeDestMatches(route EC2Route, cidr, ipv6, prefix string) bool {
+	switch {
+	case cidr != "":
+		return route.DestinationCidrBlock == cidr
+	case ipv6 != "":
+		return route.DestinationIpv6CidrBlock == ipv6
+	case prefix != "":
+		return route.DestinationPrefixListId == prefix
+	}
+	return false
+}
+
 func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	rtId := r.FormValue("RouteTableId")
-	destCidr := r.FormValue("DestinationCidrBlock")
-	gwId := r.FormValue("GatewayId")
-	natId := r.FormValue("NatGatewayId")
-	eniId := r.FormValue("NetworkInterfaceId")
-	if natId != "" {
+	route := parseRouteFromRequest(r)
+	if route.NatGatewayId != "" {
 		// The route is always modeled below; programming the real NAT route is
 		// opportunistic (only when the host has network capabilities) and must
 		// not fail the API call. Mirrors handleCreateNatGateway.
 		if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
-			if err2 := ec2ConfigureRealNATRoute(r.Context(), rtId, destCidr, natId); err2 != nil {
-				fmt.Fprintf(os.Stderr, "sim: real NAT route to %s unavailable: %v\n", natId, err2)
+			if err2 := ec2ConfigureRealNATRoute(r.Context(), rtId, route.DestinationCidrBlock, route.NatGatewayId); err2 != nil {
+				fmt.Fprintf(os.Stderr, "sim: real NAT route to %s unavailable: %v\n", route.NatGatewayId, err2)
 			}
 		}
 	}
 
 	ec2RouteTables.Update(rtId, func(rt *EC2RouteTable) {
-		rt.Routes = append(rt.Routes, EC2Route{
-			DestinationCidrBlock: destCidr,
-			GatewayId:            gwId,
-			NatGatewayId:         natId,
-			NetworkInterfaceId:   eniId,
-			State:                "active",
-			Origin:               "CreateRoute",
-		})
+		rt.Routes = append(rt.Routes, route)
 	})
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -1476,16 +1763,65 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 </CreateRouteResponse>`, ec2Xmlns(), generateUUID())
 }
 
+// handleReplaceRoute updates the target of an existing route in place (the
+// terraform-provider-aws path for any aws_route target change that keeps the
+// same destination).
+func handleReplaceRoute(w http.ResponseWriter, r *http.Request) {
+	rtId := r.FormValue("RouteTableId")
+	newRoute := parseRouteFromRequest(r)
+	cidr, ipv6, prefix := newRoute.DestinationCidrBlock, newRoute.DestinationIpv6CidrBlock, newRoute.DestinationPrefixListId
+
+	rt, ok := ec2RouteTables.Get(rtId)
+	if !ok {
+		ec2ErrorXML(w, "InvalidRouteTableID.NotFound", fmt.Sprintf("The route table ID '%s' does not exist", rtId), http.StatusBadRequest)
+		return
+	}
+	found := false
+	for _, route := range rt.Routes {
+		if routeDestMatches(route, cidr, ipv6, prefix) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		ec2ErrorXML(w, "InvalidRoute.NotFound", "no route with the specified destination exists", http.StatusBadRequest)
+		return
+	}
+	if newRoute.NatGatewayId != "" {
+		if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
+			if err2 := ec2ConfigureRealNATRoute(r.Context(), rtId, cidr, newRoute.NatGatewayId); err2 != nil {
+				fmt.Fprintf(os.Stderr, "sim: real NAT route to %s unavailable: %v\n", newRoute.NatGatewayId, err2)
+			}
+		}
+	}
+	ec2RouteTables.Update(rtId, func(rt *EC2RouteTable) {
+		for i := range rt.Routes {
+			if routeDestMatches(rt.Routes[i], cidr, ipv6, prefix) {
+				rt.Routes[i] = newRoute
+				return
+			}
+		}
+	})
+
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ReplaceRouteResponse %s>
+  <requestId>%s</requestId><return>true</return>
+</ReplaceRouteResponse>`, ec2Xmlns(), generateUUID())
+}
+
 func handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	rtId := r.FormValue("RouteTableId")
 	destCidr := r.FormValue("DestinationCidrBlock")
+	destIpv6 := r.FormValue("DestinationIpv6CidrBlock")
+	destPrefix := r.FormValue("DestinationPrefixListId")
 
 	ec2RouteTables.Update(rtId, func(rt *EC2RouteTable) {
 		var filtered []EC2Route
 		for _, route := range rt.Routes {
-			if route.DestinationCidrBlock != destCidr {
-				filtered = append(filtered, route)
+			if routeDestMatches(route, destCidr, destIpv6, destPrefix) {
+				continue
 			}
+			filtered = append(filtered, route)
 		}
 		rt.Routes = filtered
 	})
