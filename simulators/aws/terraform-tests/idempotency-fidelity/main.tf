@@ -68,6 +68,15 @@ resource "aws_vpc_security_group_egress_rule" "tasks_all" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
+# Standalone IPv6 egress rule: Authorize* with an IPv6 range must produce a
+# SecurityGroupRule row (carrying cidr_ipv6), or this resource drifts/recreates
+# every plan — it Reads via DescribeSecurityGroupRules by rule id.
+resource "aws_vpc_security_group_egress_rule" "tasks_all_ipv6" {
+  security_group_id = aws_security_group.tasks.id
+  ip_protocol       = "-1"
+  cidr_ipv6         = "::/0"
+}
+
 # Referencing rule: referenced_security_group_id must read back as the bare
 # sg-id (no account prefix), or it drifts every plan.
 resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
