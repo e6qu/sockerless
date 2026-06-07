@@ -13,29 +13,33 @@ import (
 const elbv2APIVersion = "2015-12-01"
 
 type ELBv2LoadBalancer struct {
-	Arn            string
-	Name           string
-	DNSName        string
-	CanonicalZone  string
-	Scheme         string
-	Type           string
-	State          string
-	VpcID          string
-	Subnets        []string
-	SecurityGroups []string
-	IpAddressType  string
-	CreatedTime    string
-	Tags           map[string]string
-	Attributes     map[string]string
+	Arn                       string
+	Name                      string
+	DNSName                   string
+	CanonicalZone             string
+	Scheme                    string
+	Type                      string
+	State                     string
+	VpcID                     string
+	Subnets                   []string
+	SecurityGroups            []string
+	IpAddressType             string
+	CustomerOwnedIpv4Pool     string
+	EnforceSGInboundOnPrivate string
+	CreatedTime               string
+	Tags                      map[string]string
+	Attributes                map[string]string
 }
 
 type ELBv2TargetGroup struct {
 	Arn                     string
 	Name                    string
 	Protocol                string
+	ProtocolVersion         string
 	Port                    int
 	VpcID                   string
 	TargetType              string
+	IpAddressType           string
 	HealthCheckProtocol     string
 	HealthCheckPort         string
 	HealthCheckPath         string
@@ -44,6 +48,8 @@ type ELBv2TargetGroup struct {
 	HealthCheckTimeout      int
 	HealthyThresholdCount   int
 	UnhealthyThresholdCount int
+	MatcherHttpCode         string
+	MatcherGrpcCode         string
 	LoadBalancerArns        []string
 	Targets                 []ELBv2TargetDescription
 	Tags                    map[string]string
@@ -109,6 +115,7 @@ func registerELBv2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(elbv2APIVersion, "DescribeCapacityReservation", handleELBv2DescribeCapacityReservation)
 	r.RegisterVersioned(elbv2APIVersion, "SetSecurityGroups", handleELBv2SetSecurityGroups)
 	r.RegisterVersioned(elbv2APIVersion, "SetSubnets", handleELBv2SetSubnets)
+	r.RegisterVersioned(elbv2APIVersion, "SetIpAddressType", handleELBv2SetIpAddressType)
 
 	r.RegisterVersioned(elbv2APIVersion, "CreateTargetGroup", handleELBv2CreateTargetGroup)
 	r.RegisterVersioned(elbv2APIVersion, "DescribeTargetGroups", handleELBv2DescribeTargetGroups)
@@ -185,9 +192,12 @@ func handleELBv2CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 		Subnets:        queryList(r, "Subnets"),
 		SecurityGroups: queryList(r, "SecurityGroups"),
 		IpAddressType:  ipType,
-		CreatedTime:    time.Now().UTC().Format(time.RFC3339),
-		Tags:           parseELBv2Tags(r, "Tags"),
-		Attributes:     defaultELBv2LoadBalancerAttributes(),
+		// NLBs default this to "on"; ALBs don't carry it. Honour the request.
+		EnforceSGInboundOnPrivate: elbv2DefaultEnforceSG(lbType, r.FormValue("EnforceSecurityGroupInboundRulesOnPrivateLinkTraffic")),
+		CustomerOwnedIpv4Pool:     r.FormValue("CustomerOwnedIpv4Pool"),
+		CreatedTime:               time.Now().UTC().Format(time.RFC3339),
+		Tags:                      parseELBv2Tags(r, "Tags"),
+		Attributes:                defaultELBv2LoadBalancerAttributes(),
 	}
 	elbv2LoadBalancers.Put(arn, lb)
 	elbv2XMLResponse(w, "CreateLoadBalancer", "<LoadBalancers>"+elbv2LoadBalancerXML(lb)+"</LoadBalancers>", sim.RequestID(r.Context()))
@@ -316,9 +326,11 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 		Arn:                     arn,
 		Name:                    name,
 		Protocol:                protocol,
+		ProtocolVersion:         elbv2DefaultProtocolVersion(protocol, r.FormValue("ProtocolVersion")),
 		Port:                    port,
 		VpcID:                   r.FormValue("VpcId"),
 		TargetType:              targetType,
+		IpAddressType:           firstNonEmpty(r.FormValue("IpAddressType"), "ipv4"),
 		HealthCheckProtocol:     firstNonEmpty(r.FormValue("HealthCheckProtocol"), protocol),
 		HealthCheckPort:         firstNonEmpty(r.FormValue("HealthCheckPort"), "traffic-port"),
 		HealthCheckPath:         firstNonEmpty(r.FormValue("HealthCheckPath"), "/"),
@@ -327,6 +339,8 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 		HealthCheckTimeout:      atoiDefault(r.FormValue("HealthCheckTimeoutSeconds"), 5),
 		HealthyThresholdCount:   atoiDefault(r.FormValue("HealthyThresholdCount"), 5),
 		UnhealthyThresholdCount: atoiDefault(r.FormValue("UnhealthyThresholdCount"), 2),
+		MatcherHttpCode:         firstNonEmpty(r.FormValue("Matcher.HttpCode"), elbv2DefaultMatcher(protocol)),
+		MatcherGrpcCode:         r.FormValue("Matcher.GrpcCode"),
 		Tags:                    parseELBv2Tags(r, "Tags"),
 		Attributes:              defaultELBv2TargetGroupAttributes(),
 	}
@@ -389,6 +403,15 @@ func handleELBv2ModifyTargetGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		if v := r.FormValue("UnhealthyThresholdCount"); v != "" {
 			tg.UnhealthyThresholdCount = atoiDefault(v, tg.UnhealthyThresholdCount)
+		}
+		if v := r.FormValue("HealthCheckEnabled"); v != "" {
+			tg.HealthCheckEnabled = v == "true"
+		}
+		if v := r.FormValue("Matcher.HttpCode"); v != "" {
+			tg.MatcherHttpCode = v
+		}
+		if v := r.FormValue("Matcher.GrpcCode"); v != "" {
+			tg.MatcherGrpcCode = v
 		}
 	}) {
 		elbv2ErrorXML(w, "TargetGroupNotFound", "Target group not found", http.StatusNotFound, sim.RequestID(r.Context()))
@@ -676,11 +699,48 @@ func filterELBv2Listeners(r *http.Request) []ELBv2Listener {
 	return elbv2Listeners.List()
 }
 
+// elbv2DefaultEnforceSG: NLBs carry
+// enforce_security_group_inbound_rules_on_private_link_traffic (default "on");
+// ALBs don't expose it.
+func elbv2DefaultEnforceSG(lbType, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if lbType == "network" {
+		return "on"
+	}
+	return ""
+}
+
 func elbv2LoadBalancerXML(lb ELBv2LoadBalancer) string {
-	return fmt.Sprintf(`<member><LoadBalancerArn>%s</LoadBalancerArn><DNSName>%s</DNSName><CanonicalHostedZoneId>%s</CanonicalHostedZoneId><CreatedTime>%s</CreatedTime><LoadBalancerName>%s</LoadBalancerName><Scheme>%s</Scheme><VpcId>%s</VpcId><State><Code>%s</Code></State><Type>%s</Type><AvailabilityZones>%s</AvailabilityZones><SecurityGroups>%s</SecurityGroups><IpAddressType>%s</IpAddressType></member>`,
+	extra := ""
+	if lb.EnforceSGInboundOnPrivate != "" {
+		extra += fmt.Sprintf("<EnforceSecurityGroupInboundRulesOnPrivateLinkTraffic>%s</EnforceSecurityGroupInboundRulesOnPrivateLinkTraffic>", xmlEscape(lb.EnforceSGInboundOnPrivate))
+	}
+	if lb.CustomerOwnedIpv4Pool != "" {
+		extra += fmt.Sprintf("<CustomerOwnedIpv4Pool>%s</CustomerOwnedIpv4Pool>", xmlEscape(lb.CustomerOwnedIpv4Pool))
+	}
+	return fmt.Sprintf(`<member><LoadBalancerArn>%s</LoadBalancerArn><DNSName>%s</DNSName><CanonicalHostedZoneId>%s</CanonicalHostedZoneId><CreatedTime>%s</CreatedTime><LoadBalancerName>%s</LoadBalancerName><Scheme>%s</Scheme><VpcId>%s</VpcId><State><Code>%s</Code></State><Type>%s</Type><AvailabilityZones>%s</AvailabilityZones><SecurityGroups>%s</SecurityGroups><IpAddressType>%s</IpAddressType>%s</member>`,
 		xmlEscape(lb.Arn), xmlEscape(lb.DNSName), xmlEscape(lb.CanonicalZone), xmlEscape(lb.CreatedTime), xmlEscape(lb.Name),
 		xmlEscape(lb.Scheme), xmlEscape(lb.VpcID), xmlEscape(lb.State), xmlEscape(lb.Type), elbv2AvailabilityZonesXML(lb.Subnets),
-		elbv2StringMembersXMLInner(lb.SecurityGroups), xmlEscape(lb.IpAddressType))
+		elbv2StringMembersXMLInner(lb.SecurityGroups), xmlEscape(lb.IpAddressType), extra)
+}
+
+// handleELBv2SetIpAddressType changes an existing load balancer's ip_address_type
+// in place (aws_lb in-place update; previously unregistered → 404).
+func handleELBv2SetIpAddressType(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("LoadBalancerArn")
+	ipType := r.FormValue("IpAddressType")
+	if !elbv2LoadBalancers.Update(arn, func(lb *ELBv2LoadBalancer) {
+		if ipType != "" {
+			lb.IpAddressType = ipType
+		}
+	}) {
+		elbv2ErrorXML(w, "LoadBalancerNotFound", "Load balancer not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	lb, _ := elbv2LoadBalancers.Get(arn)
+	elbv2XMLResponse(w, "SetIpAddressType", fmt.Sprintf("<IpAddressType>%s</IpAddressType>", xmlEscape(lb.IpAddressType)), sim.RequestID(r.Context()))
 }
 
 func elbv2AvailabilityZonesXML(subnets []string) string {
@@ -695,12 +755,54 @@ func elbv2AvailabilityZonesXML(subnets []string) string {
 	return b.String()
 }
 
+// elbv2DefaultMatcher returns the AWS default health-check success codes for a
+// target group's protocol: HTTP/HTTPS (ALB) default to "200"; TCP/TLS/UDP/
+// TCP_UDP/GENEVE (NLB) default to "200-399".
+func elbv2DefaultMatcher(protocol string) string {
+	switch protocol {
+	case "HTTP", "HTTPS":
+		return "200"
+	default:
+		return "200-399"
+	}
+}
+
+// elbv2DefaultProtocolVersion: HTTP/HTTPS target groups default protocol_version
+// to HTTP1 (unless requested); TCP/etc. carry none.
+func elbv2DefaultProtocolVersion(protocol, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if protocol == "HTTP" || protocol == "HTTPS" {
+		return "HTTP1"
+	}
+	return ""
+}
+
 func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
-	return fmt.Sprintf(`<member><TargetGroupArn>%s</TargetGroupArn><TargetGroupName>%s</TargetGroupName><Protocol>%s</Protocol><Port>%d</Port><VpcId>%s</VpcId><HealthCheckProtocol>%s</HealthCheckProtocol><HealthCheckPort>%s</HealthCheckPort><HealthCheckEnabled>%t</HealthCheckEnabled><HealthCheckIntervalSeconds>%d</HealthCheckIntervalSeconds><HealthCheckTimeoutSeconds>%d</HealthCheckTimeoutSeconds><HealthyThresholdCount>%d</HealthyThresholdCount><UnhealthyThresholdCount>%d</UnhealthyThresholdCount><HealthCheckPath>%s</HealthCheckPath><Matcher><HttpCode>200</HttpCode></Matcher><LoadBalancerArns>%s</LoadBalancerArns><TargetType>%s</TargetType></member>`,
-		xmlEscape(tg.Arn), xmlEscape(tg.Name), xmlEscape(tg.Protocol), tg.Port, xmlEscape(tg.VpcID),
+	matcher := ""
+	if tg.MatcherGrpcCode != "" {
+		matcher = fmt.Sprintf("<Matcher><GrpcCode>%s</GrpcCode></Matcher>", xmlEscape(tg.MatcherGrpcCode))
+	} else {
+		code := tg.MatcherHttpCode
+		if code == "" {
+			code = elbv2DefaultMatcher(tg.Protocol)
+		}
+		matcher = fmt.Sprintf("<Matcher><HttpCode>%s</HttpCode></Matcher>", xmlEscape(code))
+	}
+	protoVer := ""
+	if tg.ProtocolVersion != "" {
+		protoVer = fmt.Sprintf("<ProtocolVersion>%s</ProtocolVersion>", xmlEscape(tg.ProtocolVersion))
+	}
+	ipType := tg.IpAddressType
+	if ipType == "" {
+		ipType = "ipv4"
+	}
+	return fmt.Sprintf(`<member><TargetGroupArn>%s</TargetGroupArn><TargetGroupName>%s</TargetGroupName><Protocol>%s</Protocol>%s<Port>%d</Port><VpcId>%s</VpcId><HealthCheckProtocol>%s</HealthCheckProtocol><HealthCheckPort>%s</HealthCheckPort><HealthCheckEnabled>%t</HealthCheckEnabled><HealthCheckIntervalSeconds>%d</HealthCheckIntervalSeconds><HealthCheckTimeoutSeconds>%d</HealthCheckTimeoutSeconds><HealthyThresholdCount>%d</HealthyThresholdCount><UnhealthyThresholdCount>%d</UnhealthyThresholdCount><HealthCheckPath>%s</HealthCheckPath>%s<LoadBalancerArns>%s</LoadBalancerArns><TargetType>%s</TargetType><IpAddressType>%s</IpAddressType></member>`,
+		xmlEscape(tg.Arn), xmlEscape(tg.Name), xmlEscape(tg.Protocol), protoVer, tg.Port, xmlEscape(tg.VpcID),
 		xmlEscape(tg.HealthCheckProtocol), xmlEscape(tg.HealthCheckPort), tg.HealthCheckEnabled,
 		tg.HealthCheckInterval, tg.HealthCheckTimeout, tg.HealthyThresholdCount, tg.UnhealthyThresholdCount,
-		xmlEscape(tg.HealthCheckPath), elbv2StringMembersXMLInner(tg.LoadBalancerArns), xmlEscape(tg.TargetType))
+		xmlEscape(tg.HealthCheckPath), matcher, elbv2StringMembersXMLInner(tg.LoadBalancerArns), xmlEscape(tg.TargetType), xmlEscape(ipType))
 }
 
 func elbv2ListenerXML(listener ELBv2Listener) string {
