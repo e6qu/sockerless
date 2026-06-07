@@ -67,6 +67,7 @@ func cronField(spec string, min, max int, names map[string]int) (map[int]bool, b
 	out := make(map[int]bool)
 	for _, part := range strings.Split(spec, ",") {
 		step := 1
+		hasStep := false
 		rng := part
 		if i := strings.Index(part, "/"); i >= 0 {
 			rng = part[:i]
@@ -75,6 +76,7 @@ func cronField(spec string, min, max int, names map[string]int) (map[int]bool, b
 				return nil, false
 			}
 			step = s
+			hasStep = true
 		}
 		lo, hi := min, max
 		switch {
@@ -93,7 +95,15 @@ func cronField(spec string, min, max int, names map[string]int) (map[int]bool, b
 			if !ok {
 				return nil, false
 			}
-			lo, hi = v, v
+			lo = v
+			// AWS: a bare value with a step ("N/step") means "from N to the
+			// field max, every step" (e.g. minutes 0/5 → 0,5,…,55). Without a
+			// step it is the single value N.
+			if hasStep {
+				hi = max
+			} else {
+				hi = v
+			}
 		}
 		if lo < min || hi > max || lo > hi {
 			return nil, false
