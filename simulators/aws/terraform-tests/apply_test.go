@@ -182,8 +182,8 @@ func TestStackProductionShape(t *testing.T) {
 		"ELBv2 listener ARN must use the listener/app resource path; got %s", elbv2ListenerArn)
 
 	elbv2RuleArn := outputs.must(t, "elbv2_listener_rule_arn")
-	require.Contains(t, elbv2RuleArn, ":rule/app/tf-alb/",
-		"ELBv2 listener-rule ARN must use the rule/app resource path; got %s", elbv2RuleArn)
+	require.Contains(t, elbv2RuleArn, ":listener-rule/app/tf-alb/",
+		"ELBv2 listener-rule ARN must use the listener-rule/app resource path; got %s", elbv2RuleArn)
 
 	natGatewayID := outputs.must(t, "ec2_nat_gateway_id")
 	require.True(t, strings.HasPrefix(natGatewayID, "nat-"),

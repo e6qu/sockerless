@@ -194,6 +194,77 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# Second target group for the weighted forward rule below.
+resource "aws_lb_target_group" "secondary" {
+  name     = "fidelity-tg2"
+  port     = 8080
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+}
+
+# SNI certificate attached via aws_lb_listener_certificate: read back through
+# DescribeListenerCertificates (IsDefault=false) or it drifts/recreates.
+resource "aws_acm_certificate" "sni" {
+  domain_name       = "sni.fidelity.example.test"
+  validation_method = "DNS"
+}
+
+resource "aws_lb_listener_certificate" "sni" {
+  listener_arn    = aws_lb_listener.https.arn
+  certificate_arn = aws_acm_certificate.sni.arn
+}
+
+# Listener rule exercising authenticate-oidc (the IAP/Pomerium proxy shape) +
+# weighted forward with stickiness. Each config block must round-trip through
+# DescribeRules or the rule drifts every plan. client_secret is write-only (the
+# provider keeps it in state; ELBv2 never returns it).
+resource "aws_lb_listener_rule" "oidc" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
+
+  action {
+    type = "authenticate-oidc"
+    authenticate_oidc {
+      issuer                 = "https://idp.fidelity.example.test"
+      authorization_endpoint = "https://idp.fidelity.example.test/authorize"
+      token_endpoint         = "https://idp.fidelity.example.test/token"
+      user_info_endpoint     = "https://idp.fidelity.example.test/userinfo"
+      client_id              = "fidelity-client"
+      client_secret          = "fidelity-secret"
+      scope                  = "openid email"
+      session_cookie_name    = "AWSELBAuthSessionCookie"
+      session_timeout        = 3600
+      authentication_request_extra_params = {
+        prompt = "login"
+      }
+    }
+  }
+
+  action {
+    type = "forward"
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.this.arn
+        weight = 70
+      }
+      target_group {
+        arn    = aws_lb_target_group.secondary.arn
+        weight = 30
+      }
+      stickiness {
+        enabled  = true
+        duration = 600
+      }
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+}
+
 # Inline-egress SG with both IPv4 + IPv6: DescribeSecurityGroups must echo
 # Ipv6Ranges or ipv6_cidr_blocks drifts every plan.
 resource "aws_security_group" "dualstack" {

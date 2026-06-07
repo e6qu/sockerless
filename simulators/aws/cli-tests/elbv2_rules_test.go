@@ -35,7 +35,8 @@ func TestELBv2CLI_ListenerRules(t *testing.T) {
 		"--priority", "50",
 		"--actions", "Type=forward,TargetGroupArn="+tgArn,
 		"--query", "Rules[0].RuleArn", "--output", "text")))
-	if !strings.Contains(ruleArn, ":rule/app/cli-rule-lb/") {
+	// Real ELBv2 rule ARNs use the listener-rule/ resource prefix.
+	if !strings.Contains(ruleArn, ":listener-rule/app/cli-rule-lb/") {
 		t.Fatalf("expected an ELBv2 rule ARN, got %q", ruleArn)
 	}
 
