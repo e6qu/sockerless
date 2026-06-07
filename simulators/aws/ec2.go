@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -152,7 +153,13 @@ type EC2IpPermission struct {
 	ToPort           int
 	IpRanges         []EC2IpRange
 	Ipv6Ranges       []EC2Ipv6Range
+	PrefixListIds    []EC2PrefixListId
 	UserIdGroupPairs []EC2UserIdGroupPair
+}
+
+type EC2PrefixListId struct {
+	PrefixListId string
+	Description  string
 }
 
 type EC2IpRange struct {
@@ -171,16 +178,19 @@ type EC2UserIdGroupPair struct {
 }
 
 type EC2SecurityGroupRule struct {
-	RuleId      string
-	GroupId     string
-	GroupOwner  string
-	IsEgress    bool
-	IpProtocol  string
-	FromPort    int
-	ToPort      int
-	CidrIpv4    string
-	RefGroupId  string
-	Description string
+	RuleId       string
+	GroupId      string
+	GroupOwner   string
+	IsEgress     bool
+	IpProtocol   string
+	FromPort     int
+	ToPort       int
+	CidrIpv4     string
+	CidrIpv6     string
+	PrefixListId string
+	RefGroupId   string
+	Description  string
+	Tags         []EC2Tag
 }
 
 type EC2Tag struct {
@@ -221,6 +231,7 @@ type EC2NetworkInterface struct {
 	Description         string
 	SecondaryPrivateIps []string
 	SecurityGroupIds    []string
+	InterfaceType       string
 	Tags                []EC2Tag
 	OwnerId             string
 }
@@ -439,6 +450,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("AuthorizeSecurityGroupEgress", handleAuthorizeSecurityGroupEgress)
 	r.Register("RevokeSecurityGroupIngress", handleRevokeSecurityGroupIngress)
 	r.Register("RevokeSecurityGroupEgress", handleRevokeSecurityGroupEgress)
+	r.Register("UpdateSecurityGroupRuleDescriptionsIngress", handleUpdateSecurityGroupRuleDescriptionsIngress)
+	r.Register("UpdateSecurityGroupRuleDescriptionsEgress", handleUpdateSecurityGroupRuleDescriptionsEgress)
 
 	// Instances
 	r.Register("RunInstances", handleRunInstances)
@@ -1927,7 +1940,13 @@ func ipPermsXML(element string, perms []EC2IpPermission) string {
 	fmt.Fprintf(&b, "<%s>", element)
 	for _, p := range perms {
 		b.WriteString("<item>")
-		fmt.Fprintf(&b, "<ipProtocol>%s</ipProtocol><fromPort>%d</fromPort><toPort>%d</toPort>", p.IpProtocol, p.FromPort, p.ToPort)
+		fmt.Fprintf(&b, "<ipProtocol>%s</ipProtocol>", p.IpProtocol)
+		// All-traffic rules (ip_protocol="-1") carry no ports — real AWS omits
+		// fromPort/toPort, so the provider reads them back as null. Emitting 0
+		// would make an inline aws_security_group rule drift "0 -> null".
+		if p.IpProtocol != "-1" {
+			fmt.Fprintf(&b, "<fromPort>%d</fromPort><toPort>%d</toPort>", p.FromPort, p.ToPort)
+		}
 		if len(p.IpRanges) > 0 {
 			b.WriteString("<ipRanges>")
 			for _, r := range p.IpRanges {
@@ -1953,6 +1972,19 @@ func ipPermsXML(element string, perms []EC2IpPermission) string {
 			b.WriteString("</ipv6Ranges>")
 		} else {
 			b.WriteString("<ipv6Ranges/>")
+		}
+		if len(p.PrefixListIds) > 0 {
+			b.WriteString("<prefixListIds>")
+			for _, pl := range p.PrefixListIds {
+				fmt.Fprintf(&b, "<item><prefixListId>%s</prefixListId>", pl.PrefixListId)
+				if pl.Description != "" {
+					fmt.Fprintf(&b, "<description>%s</description>", pl.Description)
+				}
+				b.WriteString("</item>")
+			}
+			b.WriteString("</prefixListIds>")
+		} else {
+			b.WriteString("<prefixListIds/>")
 		}
 		if len(p.UserIdGroupPairs) > 0 {
 			b.WriteString("<groups>")
@@ -2066,6 +2098,15 @@ func parseIpPermission(r *http.Request, prefix string) EC2IpPermission {
 		perm.Ipv6Ranges = append(perm.Ipv6Ranges, EC2Ipv6Range{CidrIpv6: cidr, Description: desc})
 	}
 
+	for i := 1; ; i++ {
+		plid := r.FormValue(fmt.Sprintf("%s.PrefixListIds.%d.PrefixListId", prefix, i))
+		if plid == "" {
+			break
+		}
+		desc := r.FormValue(fmt.Sprintf("%s.PrefixListIds.%d.Description", prefix, i))
+		perm.PrefixListIds = append(perm.PrefixListIds, EC2PrefixListId{PrefixListId: plid, Description: desc})
+	}
+
 	// Try both "UserIdGroupPairs" (classic) and "Groups" (SDK v2) field names
 	for i := 1; ; i++ {
 		gid := r.FormValue(fmt.Sprintf("%s.UserIdGroupPairs.%d.GroupId", prefix, i))
@@ -2102,6 +2143,12 @@ func sgrItemXML(rule EC2SecurityGroupRule) string {
 	if rule.CidrIpv4 != "" {
 		fmt.Fprintf(&b, "<cidrIpv4>%s</cidrIpv4>", rule.CidrIpv4)
 	}
+	if rule.CidrIpv6 != "" {
+		fmt.Fprintf(&b, "<cidrIpv6>%s</cidrIpv6>", rule.CidrIpv6)
+	}
+	if rule.PrefixListId != "" {
+		fmt.Fprintf(&b, "<prefixListId>%s</prefixListId>", rule.PrefixListId)
+	}
 	if rule.RefGroupId != "" {
 		// Same-account references carry no userId — emitting the owner account
 		// makes the provider render "<account>/sg-id" (it only prefixes when
@@ -2113,45 +2160,98 @@ func sgrItemXML(rule EC2SecurityGroupRule) string {
 	if rule.Description != "" {
 		fmt.Fprintf(&b, "<description>%s</description>", rule.Description)
 	}
-	fmt.Fprintf(&b, "<tags/>")
+	fmt.Fprintf(&b, "<securityGroupRuleArn>arn:aws:ec2:%s:%s:security-group-rule/%s</securityGroupRuleArn>",
+		awsRegion(), rule.GroupOwner, rule.RuleId)
+	// SDK reads rule tags from <tagSet>, not <tags> — an empty <tags/> never
+	// surfaced and tagged standalone rules could not round-trip.
+	b.WriteString(writeTagSetXML(rule.Tags))
 	b.WriteString("</item>")
 	return b.String()
 }
 
+// createSecurityGroupRules materializes one SecurityGroupRule row per source in
+// the permission — IPv4 CIDR, IPv6 CIDR, prefix list, and referenced group. The
+// standalone aws_vpc_security_group_{ingress,egress}_rule resources Read each
+// back by SecurityGroupRuleId, so a missing row (the prior IPv6/prefix-list gap)
+// makes such a rule drift/recreate every plan.
 func createSecurityGroupRules(groupId string, perm EC2IpPermission, isEgress bool) []EC2SecurityGroupRule {
 	sg, _ := ec2SecurityGroups.Get(groupId)
+	base := EC2SecurityGroupRule{
+		GroupId:    groupId,
+		GroupOwner: sg.OwnerId,
+		IsEgress:   isEgress,
+		IpProtocol: perm.IpProtocol,
+		FromPort:   perm.FromPort,
+		ToPort:     perm.ToPort,
+	}
 	var rules []EC2SecurityGroupRule
-	for _, ipr := range perm.IpRanges {
-		rule := EC2SecurityGroupRule{
-			RuleId:      ec2ID("sgr"),
-			GroupId:     groupId,
-			GroupOwner:  sg.OwnerId,
-			IsEgress:    isEgress,
-			IpProtocol:  perm.IpProtocol,
-			FromPort:    perm.FromPort,
-			ToPort:      perm.ToPort,
-			CidrIpv4:    ipr.CidrIp,
-			Description: ipr.Description,
-		}
+	add := func(mut func(*EC2SecurityGroupRule)) {
+		rule := base
+		rule.RuleId = ec2ID("sgr")
+		mut(&rule)
 		ec2SecurityGroupRules.Put(rule.RuleId, rule)
 		rules = append(rules, rule)
+	}
+	for _, ipr := range perm.IpRanges {
+		add(func(r *EC2SecurityGroupRule) { r.CidrIpv4 = ipr.CidrIp; r.Description = ipr.Description })
+	}
+	for _, ipr := range perm.Ipv6Ranges {
+		add(func(r *EC2SecurityGroupRule) { r.CidrIpv6 = ipr.CidrIpv6; r.Description = ipr.Description })
+	}
+	for _, pl := range perm.PrefixListIds {
+		add(func(r *EC2SecurityGroupRule) { r.PrefixListId = pl.PrefixListId; r.Description = pl.Description })
 	}
 	for _, gp := range perm.UserIdGroupPairs {
-		rule := EC2SecurityGroupRule{
-			RuleId:      ec2ID("sgr"),
-			GroupId:     groupId,
-			GroupOwner:  sg.OwnerId,
-			IsEgress:    isEgress,
-			IpProtocol:  perm.IpProtocol,
-			FromPort:    perm.FromPort,
-			ToPort:      perm.ToPort,
-			RefGroupId:  gp.GroupId,
-			Description: gp.Description,
-		}
-		ec2SecurityGroupRules.Put(rule.RuleId, rule)
-		rules = append(rules, rule)
+		add(func(r *EC2SecurityGroupRule) { r.RefGroupId = gp.GroupId; r.Description = gp.Description })
 	}
 	return rules
+}
+
+// deleteSecurityGroupRules removes the SecurityGroupRule rows matching a revoked
+// permission (same group/direction/protocol/ports and one of its sources), so a
+// revoke no longer leaves orphan rows behind in DescribeSecurityGroupRules.
+func deleteSecurityGroupRules(groupId string, perm EC2IpPermission, isEgress bool) {
+	for _, rule := range ec2SecurityGroupRules.List() {
+		if rule.GroupId != groupId || rule.IsEgress != isEgress ||
+			rule.IpProtocol != perm.IpProtocol || rule.FromPort != perm.FromPort || rule.ToPort != perm.ToPort {
+			continue
+		}
+		matched := false
+		switch {
+		case rule.CidrIpv4 != "":
+			matched = ec2IPRangeHasCidr(perm.IpRanges, rule.CidrIpv4)
+		case rule.CidrIpv6 != "":
+			for _, ipr := range perm.Ipv6Ranges {
+				if ipr.CidrIpv6 == rule.CidrIpv6 {
+					matched = true
+				}
+			}
+		case rule.PrefixListId != "":
+			for _, pl := range perm.PrefixListIds {
+				if pl.PrefixListId == rule.PrefixListId {
+					matched = true
+				}
+			}
+		case rule.RefGroupId != "":
+			for _, gp := range perm.UserIdGroupPairs {
+				if gp.GroupId == rule.RefGroupId {
+					matched = true
+				}
+			}
+		}
+		if matched {
+			ec2SecurityGroupRules.Delete(rule.RuleId)
+		}
+	}
+}
+
+func ec2IPRangeHasCidr(ranges []EC2IpRange, cidr string) bool {
+	for _, r := range ranges {
+		if r.CidrIp == cidr {
+			return true
+		}
+	}
+	return false
 }
 
 func handleAuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
@@ -2207,6 +2307,7 @@ func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
 		sg.IpPermissions = removePermission(sg.IpPermissions, perm)
 	})
+	deleteSecurityGroupRules(groupId, perm, false)
 	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
 		return
@@ -2225,6 +2326,7 @@ func handleRevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
 		sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
 	})
+	deleteSecurityGroupRules(groupId, perm, true)
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<RevokeSecurityGroupEgressResponse %s>
@@ -2320,6 +2422,57 @@ func handleModifySecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 		ec2SecurityGroupRules.Put(ruleID, rule)
 	}
 	ec2WriteSimpleResponse(w, "ModifySecurityGroupRulesResponse")
+}
+
+// updateSecurityGroupRuleDescriptions sets the description on the rule rows (and
+// inline-permission sources) matching the given permission — the legacy
+// aws_security_group inline-block path (UpdateSecurityGroupRuleDescriptions*).
+func updateSecurityGroupRuleDescriptions(groupId string, perm EC2IpPermission, isEgress bool) {
+	descFor := func(rule EC2SecurityGroupRule) (string, bool) {
+		switch {
+		case rule.CidrIpv4 != "":
+			for _, ipr := range perm.IpRanges {
+				if ipr.CidrIp == rule.CidrIpv4 {
+					return ipr.Description, true
+				}
+			}
+		case rule.CidrIpv6 != "":
+			for _, ipr := range perm.Ipv6Ranges {
+				if ipr.CidrIpv6 == rule.CidrIpv6 {
+					return ipr.Description, true
+				}
+			}
+		case rule.RefGroupId != "":
+			for _, gp := range perm.UserIdGroupPairs {
+				if gp.GroupId == rule.RefGroupId {
+					return gp.Description, true
+				}
+			}
+		}
+		return "", false
+	}
+	for _, rule := range ec2SecurityGroupRules.List() {
+		if rule.GroupId != groupId || rule.IsEgress != isEgress ||
+			rule.IpProtocol != perm.IpProtocol || rule.FromPort != perm.FromPort || rule.ToPort != perm.ToPort {
+			continue
+		}
+		if desc, ok := descFor(rule); ok {
+			rule.Description = desc
+			ec2SecurityGroupRules.Put(rule.RuleId, rule)
+		}
+	}
+}
+
+func handleUpdateSecurityGroupRuleDescriptionsIngress(w http.ResponseWriter, r *http.Request) {
+	groupId := r.FormValue("GroupId")
+	updateSecurityGroupRuleDescriptions(groupId, parseIpPermission(r, "IpPermissions.1"), false)
+	ec2WriteSimpleResponse(w, "UpdateSecurityGroupRuleDescriptionsIngressResponse")
+}
+
+func handleUpdateSecurityGroupRuleDescriptionsEgress(w http.ResponseWriter, r *http.Request) {
+	groupId := r.FormValue("GroupId")
+	updateSecurityGroupRuleDescriptions(groupId, parseIpPermission(r, "IpPermissions.1"), true)
+	ec2WriteSimpleResponse(w, "UpdateSecurityGroupRuleDescriptionsEgressResponse")
 }
 
 // ---- Instances ----
@@ -3922,6 +4075,10 @@ func eniFieldsXML(eni EC2NetworkInterface) string {
 	if status == "" {
 		status = "available"
 	}
+	ifaceType := eni.InterfaceType
+	if ifaceType == "" {
+		ifaceType = "interface"
+	}
 	sourceDest := "true"
 	if eni.SourceDestDisabled {
 		sourceDest = "false"
@@ -3948,12 +4105,13 @@ func eniFieldsXML(eni EC2NetworkInterface) string {
     <privateIpAddress>%s</privateIpAddress>
     <privateDnsName>ip-%s.%s.compute.internal</privateDnsName>
     <sourceDestCheck>%s</sourceDestCheck>
+    <interfaceType>%s</interfaceType>
     <groupSet>%s</groupSet>
     <privateIpAddressesSet>%s</privateIpAddressesSet>
     %s
     %s`,
 		eni.NetworkInterfaceId, eni.SubnetId, eni.VpcId, awsAvailabilityZone(), eni.Description, eni.OwnerId, status,
-		eni.PrivateIpAddress, strings.ReplaceAll(eni.PrivateIpAddress, ".", "-"), awsRegion(), sourceDest, groups.String(),
+		eni.PrivateIpAddress, strings.ReplaceAll(eni.PrivateIpAddress, ".", "-"), awsRegion(), sourceDest, ifaceType, groups.String(),
 		privateIPs.String(), attachment, writeTagSetXML(eni.Tags))
 }
 
@@ -3984,6 +4142,7 @@ func handleCreateNetworkInterface(w http.ResponseWriter, r *http.Request) {
 		Status:             "available",
 		Description:        r.FormValue("Description"),
 		SecurityGroupIds:   ec2ParamList(r, "SecurityGroupId"),
+		InterfaceType:      r.FormValue("InterfaceType"),
 		Tags:               parseTags(r),
 		OwnerId:            ec2Owner(),
 	}
@@ -4068,6 +4227,9 @@ func handleModifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http.Reques
 	if groups := ec2ParamList(r, "SecurityGroupId"); len(groups) > 0 {
 		eni.SecurityGroupIds = groups
 	}
+	if v := r.FormValue("Attachment.DeleteOnTermination"); v != "" {
+		eni.DeleteOnTermination = v == "true"
+	}
 	ec2NetworkInterfaces.Put(eniID, eni)
 	ec2WriteSimpleResponse(w, "ModifyNetworkInterfaceAttributeResponse")
 }
@@ -4105,13 +4267,40 @@ func handleAssignPrivateIpAddresses(w http.ResponseWriter, r *http.Request) {
 </AssignPrivateIpAddressesResponse>`, ec2Xmlns(), generateUUID(), eniID, ipItems.String())
 }
 
+// removePermission drops the stored permission(s) whose protocol, ports AND
+// source set match the revoke target. Matching on protocol+ports alone (the
+// prior behaviour) removed every rule sharing a port range — e.g. revoking one
+// of two :443 ingress rules from different CIDRs deleted both.
 func removePermission(perms []EC2IpPermission, target EC2IpPermission) []EC2IpPermission {
+	targetKey := permSourceKey(target)
 	var result []EC2IpPermission
 	for _, p := range perms {
-		if p.IpProtocol == target.IpProtocol && p.FromPort == target.FromPort && p.ToPort == target.ToPort {
+		if p.IpProtocol == target.IpProtocol && p.FromPort == target.FromPort &&
+			p.ToPort == target.ToPort && permSourceKey(p) == targetKey {
 			continue
 		}
 		result = append(result, p)
 	}
 	return result
+}
+
+// permSourceKey is a canonical, order-independent key over a permission's
+// sources (IPv4/IPv6 CIDRs, prefix lists, referenced groups) used to match a
+// revoke against the exact authorized rule.
+func permSourceKey(p EC2IpPermission) string {
+	var parts []string
+	for _, r := range p.IpRanges {
+		parts = append(parts, "v4:"+r.CidrIp)
+	}
+	for _, r := range p.Ipv6Ranges {
+		parts = append(parts, "v6:"+r.CidrIpv6)
+	}
+	for _, r := range p.PrefixListIds {
+		parts = append(parts, "pl:"+r.PrefixListId)
+	}
+	for _, g := range p.UserIdGroupPairs {
+		parts = append(parts, "sg:"+g.GroupId)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
