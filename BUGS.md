@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1532 filed - 1488 fixed - 5 open - 5 false positives.**
+**1533 filed - 1489 fixed - 5 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1533~~ | P3 | CI — test-harness image builds pull base images from Docker Hub (throttle/timeout flake) | CI flaky infra | `sim (gcp)` failed building the eval-arithmetic image: `Head https://registry-1.docker.io/.../alpine i/o timeout` — the TestMain `docker build` Dockerfiles pulled `golang:1.25-alpine`/`alpine:latest` from Docker Hub, which throttles/times out on CI runners. Fix: pull the base images from the ECR Public Gallery mirror (`public.ecr.aws/docker/library/...`) in every harness build Dockerfile (gcp+azure sdk/cli helpers + ecs/aca/lambda/azf backend integration tests). |
 | ~~1532~~ | P2 | gcp + azure terraform stacks — no second-plan idempotency/drift assertion | test coverage gap | The aws stack had an `idempotency-fidelity` subdir asserting a clean `plan -detailed-exitcode`, but the gcp and azure apply stacks applied + asserted output IDs and never ran a second plan — so a resource that drifts on re-plan (the #469–#473 / #1517 class) would pass CI. Fix: add `terraform plan -detailed-exitcode` after apply in both apply tests (exit 2 = drift → `runTimed` surfaces the error). Runs in `tf (gcp)` / `tf (azure)` CI. |
 | ~~1531~~ | P2 | aws scheduler simulator — cron(...) expressions stored but not evaluated | sim fidelity gap (follow-on of #486) | After #486 added `at()`/`rate()` firing, `cron(...)` schedules were still stored but never fired. Fix: `scheduler_cron.go` evaluates AWS 6-field cron (`cron(min hr dom mon dow year)`) — `*`, `?`, values, lists, ranges, steps, named months/days; dow 1–7 with 1=Sunday; `L`/`W`/`#` unsupported (won't fire rather than fire wrong). Wired into the firing loop as a recurring expression (recomputes next after each fire). Unit-tested (next-fire computation + firing-loop wiring); `rate(5 minutes)` and the rest are unaffected. |
 | ~~1530~~ | P1 | aws scheduler simulator — schedules never fire their targets (issue #486) | sim fidelity gap / missing behaviour | EventBridge Scheduler stored schedules + round-tripped CRUD but never invoked the `Target` when the `ScheduleExpression` became due, so a cron/rate `→ ECS RunTask` (or Lambda/SQS/SNS) reconciler was configured-but-never-launched. Fix: `scheduler_firing.go` — a 1s evaluation loop parses `at(...)` (one-time) and `rate(N minute/hour/day)` (recurring) and invokes the target via the sim's own handlers in-process (ECS RunTask, Lambda Invoke, SQS SendMessage, SNS Publish), exactly as real Scheduler does. `cron(...)` is stored faithfully but not yet evaluated by the loop. SDK test: an `at(now+4s)` ECS target launches the task (appears in ListTasks). |

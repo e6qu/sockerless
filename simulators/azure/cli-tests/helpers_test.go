@@ -49,11 +49,11 @@ func TestMain(m *testing.M) {
 	// Multi-stage Docker build for the runner-native Linux platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM golang:1.25-alpine AS build
+	dockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
 ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
