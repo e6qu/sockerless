@@ -30,13 +30,18 @@ provider "aws" {
 }
 
 resource "aws_vpc" "main" {
-  cidr_block = "10.91.0.0/16"
+  cidr_block                           = "10.91.0.0/16"
+  instance_tenancy                     = "default"
+  enable_network_address_usage_metrics = true
 }
 
 resource "aws_subnet" "a" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.91.1.0/24"
-  availability_zone = "us-east-1a"
+  vpc_id                                         = aws_vpc.main.id
+  cidr_block                                     = "10.91.1.0/24"
+  availability_zone                              = "us-east-1a"
+  map_public_ip_on_launch                        = true
+  private_dns_hostname_type_on_launch            = "resource-name"
+  enable_resource_name_dns_a_record_on_launch    = true
 }
 
 resource "aws_subnet" "b" {

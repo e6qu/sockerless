@@ -20,25 +20,36 @@ import (
 // EC2 types
 
 type EC2Vpc struct {
-	VpcId              string
-	CidrBlock          string
-	State              string
-	Tags               []EC2Tag
-	OwnerId            string
-	IsDefault          bool
-	EnableDnsSupport   bool
-	EnableDnsHostnames bool
+	VpcId                            string
+	CidrBlock                        string
+	State                            string
+	Tags                             []EC2Tag
+	OwnerId                          string
+	IsDefault                        bool
+	InstanceTenancy                  string
+	EnableDnsSupport                 bool
+	EnableDnsHostnames               bool
+	EnableNetworkAddressUsageMetrics bool
 }
 
 type EC2Subnet struct {
-	SubnetId            string
-	VpcId               string
-	CidrBlock           string
-	AvailabilityZone    string
-	State               string
-	Tags                []EC2Tag
-	MapPublicIpOnLaunch bool
-	OwnerId             string
+	SubnetId                                string
+	VpcId                                   string
+	CidrBlock                               string
+	Ipv6CidrBlock                           string
+	AvailabilityZone                        string
+	AvailabilityZoneId                      string
+	State                                   string
+	Tags                                    []EC2Tag
+	MapPublicIpOnLaunch                     bool
+	MapCustomerOwnedIpOnLaunch              bool
+	AssignIpv6AddressOnCreation             bool
+	EnableDns64                             bool
+	Ipv6Native                              bool
+	PrivateDnsHostnameTypeOnLaunch          string
+	EnableResourceNameDnsARecordOnLaunch    bool
+	EnableResourceNameDnsAAAARecordOnLaunch bool
+	OwnerId                                 string
 }
 
 type EC2InternetGateway struct {
@@ -523,6 +534,10 @@ func handleDescribeRegions(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 	cidr := r.FormValue("CidrBlock")
+	tenancy := r.FormValue("InstanceTenancy")
+	if tenancy == "" {
+		tenancy = "default"
+	}
 	tags := parseTags(r)
 	id := ec2ID("vpc")
 
@@ -533,6 +548,7 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 		Tags:               tags,
 		OwnerId:            ec2Owner(),
 		IsDefault:          false,
+		InstanceTenancy:    tenancy,
 		EnableDnsSupport:   true,
 		EnableDnsHostnames: false,
 	}
@@ -546,23 +562,30 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateVpcResponse %s>
   <requestId>%s</requestId>
-  <vpc>
-    <vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>available</state>
-    <ownerId>%s</ownerId><isDefault>false</isDefault>
-    %s
-  </vpc>
-</CreateVpcResponse>`, ec2Xmlns(), generateUUID(), id, cidr, ec2Owner(), writeTagSetXML(tags))
+  <vpc>%s</vpc>
+</CreateVpcResponse>`, ec2Xmlns(), generateUUID(), vpcItemBodyXML(vpc))
 }
 
-func vpcItemXML(vpc EC2Vpc) string {
+// vpcItemBodyXML renders the inner <vpc>/<item> fields shared by CreateVpc and
+// DescribeVpcs. dhcpOptionsId is always "default" (real AWS associates the
+// account's default DHCP option set on create).
+func vpcItemBodyXML(vpc EC2Vpc) string {
 	// Real DescribeVpcs lists the primary CIDR in cidrBlockAssociationSet as
 	// well as in cidrBlock; data.aws_vpc reads cidr_block_associations from it.
 	// The sim synthesizes a stable association id from the VPC id.
 	assocID := "vpc-cidr-assoc-" + strings.TrimPrefix(vpc.VpcId, "vpc-")
 	cidrAssoc := fmt.Sprintf(`<cidrBlockAssociationSet><item><associationId>%s</associationId><cidrBlock>%s</cidrBlock><cidrBlockState><state>associated</state></cidrBlockState></item></cidrBlockAssociationSet>`,
 		assocID, vpc.CidrBlock)
-	return fmt.Sprintf(`<item><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>default</instanceTenancy>%s%s</item>`,
-		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, cidrAssoc, writeTagSetXML(vpc.Tags))
+	tenancy := vpc.InstanceTenancy
+	if tenancy == "" {
+		tenancy = "default"
+	}
+	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>default</dhcpOptionsId>%s%s`,
+		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, cidrAssoc, writeTagSetXML(vpc.Tags))
+}
+
+func vpcItemXML(vpc EC2Vpc) string {
+	return "<item>" + vpcItemBodyXML(vpc) + "</item>"
 }
 
 func handleDescribeVpcs(w http.ResponseWriter, r *http.Request) {
@@ -679,8 +702,8 @@ func handleDescribeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	case "enableNetworkAddressUsageMetrics":
 		fmt.Fprintf(w, `<DescribeVpcAttributeResponse %s>
   <requestId>%s</requestId><vpcId>%s</vpcId>
-  <enableNetworkAddressUsageMetrics><value>false</value></enableNetworkAddressUsageMetrics>
-</DescribeVpcAttributeResponse>`, ec2Xmlns(), generateUUID(), vpcId)
+  <enableNetworkAddressUsageMetrics><value>%t</value></enableNetworkAddressUsageMetrics>
+</DescribeVpcAttributeResponse>`, ec2Xmlns(), generateUUID(), vpcId, vpc.EnableNetworkAddressUsageMetrics)
 	default:
 		fmt.Fprintf(w, `<DescribeVpcAttributeResponse %s>
   <requestId>%s</requestId><vpcId>%s</vpcId>
@@ -697,6 +720,9 @@ func handleModifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 		if val := r.FormValue("EnableDnsHostnames.Value"); val != "" {
 			v.EnableDnsHostnames = val == "true"
 		}
+		if val := r.FormValue("EnableNetworkAddressUsageMetrics.Value"); val != "" {
+			v.EnableNetworkAddressUsageMetrics = val == "true"
+		}
 	})
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -711,17 +737,28 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 	vpcId := r.FormValue("VpcId")
 	cidr := r.FormValue("CidrBlock")
 	az := r.FormValue("AvailabilityZone")
+	if az == "" {
+		az = awsAvailabilityZone()
+	}
+	azID := r.FormValue("AvailabilityZoneId")
+	if azID == "" {
+		azID = ec2AvailabilityZoneId(az)
+	}
 	tags := parseTags(r)
 	id := ec2ID("subnet")
 
 	subnet := EC2Subnet{
-		SubnetId:         id,
-		VpcId:            vpcId,
-		CidrBlock:        cidr,
-		AvailabilityZone: az,
-		State:            "available",
-		Tags:             tags,
-		OwnerId:          ec2Owner(),
+		SubnetId:                       id,
+		VpcId:                          vpcId,
+		CidrBlock:                      cidr,
+		Ipv6CidrBlock:                  r.FormValue("Ipv6CidrBlock"),
+		AvailabilityZone:               az,
+		AvailabilityZoneId:             azID,
+		State:                          "available",
+		Tags:                           tags,
+		OwnerId:                        ec2Owner(),
+		Ipv6Native:                     r.FormValue("Ipv6Native") == "true",
+		PrivateDnsHostnameTypeOnLaunch: "ip-name",
 	}
 	ec2Subnets.Put(id, subnet)
 	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
@@ -733,40 +770,151 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateSubnetResponse %s>
   <requestId>%s</requestId>
-  <subnet>
-    <subnetId>%s</subnetId><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock>
-    <availabilityZone>%s</availabilityZone><state>available</state>
-    <mapPublicIpOnLaunch>false</mapPublicIpOnLaunch><ownerId>%s</ownerId>
-    %s
-  </subnet>
-</CreateSubnetResponse>`, ec2Xmlns(), generateUUID(), id, vpcId, cidr, az, ec2Owner(), writeTagSetXML(tags))
+  <subnet>%s</subnet>
+</CreateSubnetResponse>`, ec2Xmlns(), generateUUID(), subnetItemBodyXML(subnet))
+}
+
+// ec2AvailabilityZoneId synthesizes a stable AZ-id from an AZ name. Real AWS
+// AZ-ids (e.g. use1-az1) are randomized per account and not derivable from the
+// name, so we emit a deterministic stable value — availability_zone_id is a
+// computed attribute, so this does not drift.
+func ec2AvailabilityZoneId(az string) string {
+	if az == "" {
+		return ""
+	}
+	region := az
+	letter := ""
+	if n := len(az); n > 0 && az[n-1] >= 'a' && az[n-1] <= 'z' {
+		region = az[:n-1]
+		letter = string(az[n-1])
+	}
+	idx := 1
+	if letter != "" {
+		idx = int(letter[0]-'a') + 1
+	}
+	return fmt.Sprintf("%s-az%d", strings.ReplaceAll(region, "-", ""), idx)
+}
+
+// ec2SubnetAvailableIPs returns the usable host count for a subnet CIDR. AWS
+// reserves 5 addresses per subnet (network, VPC router, DNS, future, broadcast).
+func ec2SubnetAvailableIPs(cidr string) int {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0
+	}
+	ones, bits := ipnet.Mask.Size()
+	hostBits := bits - ones
+	if hostBits <= 0 {
+		return 0
+	}
+	total := 1 << uint(hostBits)
+	if total <= 5 {
+		return 0
+	}
+	return total - 5
+}
+
+func subnetArn(s EC2Subnet) string {
+	return fmt.Sprintf("arn:aws:ec2:%s:%s:subnet/%s", awsRegion(), s.OwnerId, s.SubnetId)
+}
+
+// subnetItemBodyXML renders the inner subnet fields shared by CreateSubnet and
+// DescribeSubnets.
+func subnetItemBodyXML(s EC2Subnet) string {
+	hostnameType := s.PrivateDnsHostnameTypeOnLaunch
+	if hostnameType == "" {
+		hostnameType = "ip-name"
+	}
+	ipv6 := ""
+	if s.Ipv6CidrBlock != "" {
+		assocID := "subnet-cidr-assoc-" + strings.TrimPrefix(s.SubnetId, "subnet-")
+		ipv6 = fmt.Sprintf(`<ipv6CidrBlockAssociationSet><item><associationId>%s</associationId><ipv6CidrBlock>%s</ipv6CidrBlock><ipv6CidrBlockState><state>associated</state></ipv6CidrBlockState></item></ipv6CidrBlockAssociationSet>`,
+			assocID, s.Ipv6CidrBlock)
+	}
+	return fmt.Sprintf(`<subnetId>%s</subnetId><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock>`+
+		`<availabilityZone>%s</availabilityZone><availabilityZoneId>%s</availabilityZoneId>`+
+		`<availableIpAddressCount>%d</availableIpAddressCount><state>%s</state>`+
+		`<mapPublicIpOnLaunch>%t</mapPublicIpOnLaunch><mapCustomerOwnedIpOnLaunch>%t</mapCustomerOwnedIpOnLaunch>`+
+		`<assignIpv6AddressOnCreation>%t</assignIpv6AddressOnCreation><enableDns64>%t</enableDns64>`+
+		`<ipv6Native>%t</ipv6Native><defaultForAz>false</defaultForAz>`+
+		`<privateDnsNameOptionsOnLaunch><hostnameType>%s</hostnameType><enableResourceNameDnsARecord>%t</enableResourceNameDnsARecord><enableResourceNameDnsAAAARecord>%t</enableResourceNameDnsAAAARecord></privateDnsNameOptionsOnLaunch>`+
+		`<subnetArn>%s</subnetArn><ownerId>%s</ownerId>%s%s`,
+		s.SubnetId, s.VpcId, s.CidrBlock,
+		s.AvailabilityZone, s.AvailabilityZoneId,
+		ec2SubnetAvailableIPs(s.CidrBlock), s.State,
+		s.MapPublicIpOnLaunch, s.MapCustomerOwnedIpOnLaunch,
+		s.AssignIpv6AddressOnCreation, s.EnableDns64,
+		s.Ipv6Native,
+		hostnameType, s.EnableResourceNameDnsARecordOnLaunch, s.EnableResourceNameDnsAAAARecordOnLaunch,
+		subnetArn(s), s.OwnerId, ipv6, writeTagSetXML(s.Tags))
 }
 
 func subnetItemXML(s EC2Subnet) string {
-	return fmt.Sprintf(`<item>
-    <subnetId>%s</subnetId><vpcId>%s</vpcId><cidrBlock>%s</cidrBlock>
-    <availabilityZone>%s</availabilityZone><state>%s</state>
-    <mapPublicIpOnLaunch>%t</mapPublicIpOnLaunch><ownerId>%s</ownerId>
-    %s
-  </item>`, s.SubnetId, s.VpcId, s.CidrBlock, s.AvailabilityZone, s.State, s.MapPublicIpOnLaunch, s.OwnerId, writeTagSetXML(s.Tags))
+	return "<item>" + subnetItemBodyXML(s) + "</item>"
+}
+
+func ec2SubnetMatchesFilters(s EC2Subnet, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "vpc-id":
+			if !ec2StrInValues(s.VpcId, vals) {
+				return false
+			}
+		case "subnet-id":
+			if !ec2StrInValues(s.SubnetId, vals) {
+				return false
+			}
+		case "cidr", "cidr-block", "cidrBlock":
+			if !ec2StrInValues(s.CidrBlock, vals) {
+				return false
+			}
+		case "availability-zone", "availabilityZone":
+			if !ec2StrInValues(s.AvailabilityZone, vals) {
+				return false
+			}
+		case "availability-zone-id":
+			if !ec2StrInValues(s.AvailabilityZoneId, vals) {
+				return false
+			}
+		case "state":
+			if !ec2StrInValues(s.State, vals) {
+				return false
+			}
+		case "owner-id":
+			if !ec2StrInValues(s.OwnerId, vals) {
+				return false
+			}
+		case "default-for-az":
+			if ec2StrInValues("true", vals) {
+				return false // the sim creates no default-for-az subnets
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, s.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func handleDescribeSubnets(w http.ResponseWriter, r *http.Request) {
-	var subnets []EC2Subnet
-	if id := r.FormValue("SubnetId.1"); id != "" {
-		if s, ok := ec2Subnets.Get(id); ok {
-			subnets = append(subnets, s)
+	ids := ec2ParamList(r, "SubnetId")
+	for _, id := range ids {
+		if _, ok := ec2Subnets.Get(id); !ok {
+			ec2ErrorXML(w, "InvalidSubnetID.NotFound", fmt.Sprintf("The subnet ID '%s' does not exist", id), http.StatusBadRequest)
+			return
 		}
-	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
-		subnets = ec2Subnets.Filter(func(s EC2Subnet) bool {
-			return ec2StrInValues(s.VpcId, vpcIDs)
-		})
-	} else {
-		subnets = ec2Subnets.List()
 	}
+	filters := ec2Filters(r)
 
 	var items strings.Builder
-	for _, s := range subnets {
+	for _, s := range ec2Subnets.List() {
+		if len(ids) > 0 && !ec2StrInValues(s.SubnetId, ids) {
+			continue
+		}
+		if !ec2SubnetMatchesFilters(s, filters) {
+			continue
+		}
 		items.WriteString(subnetItemXML(s))
 	}
 
@@ -782,6 +930,24 @@ func handleModifySubnetAttribute(w http.ResponseWriter, r *http.Request) {
 	ec2Subnets.Update(subnetId, func(s *EC2Subnet) {
 		if val := r.FormValue("MapPublicIpOnLaunch.Value"); val != "" {
 			s.MapPublicIpOnLaunch = val == "true"
+		}
+		if val := r.FormValue("MapCustomerOwnedIpOnLaunch.Value"); val != "" {
+			s.MapCustomerOwnedIpOnLaunch = val == "true"
+		}
+		if val := r.FormValue("AssignIpv6AddressOnCreation.Value"); val != "" {
+			s.AssignIpv6AddressOnCreation = val == "true"
+		}
+		if val := r.FormValue("EnableDns64.Value"); val != "" {
+			s.EnableDns64 = val == "true"
+		}
+		if val := r.FormValue("EnableResourceNameDnsARecordOnLaunch.Value"); val != "" {
+			s.EnableResourceNameDnsARecordOnLaunch = val == "true"
+		}
+		if val := r.FormValue("EnableResourceNameDnsAAAARecordOnLaunch.Value"); val != "" {
+			s.EnableResourceNameDnsAAAARecordOnLaunch = val == "true"
+		}
+		if val := r.FormValue("PrivateDnsHostnameTypeOnLaunch"); val != "" {
+			s.PrivateDnsHostnameTypeOnLaunch = val
 		}
 	})
 
