@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,8 @@ func registerIAMSLRandOIDC(r *sim.AWSQueryRouter, srv *sim.Server) {
 	// OIDC providers
 	r.Register("CreateOpenIDConnectProvider", handleIAMCreateOIDCProvider)
 	r.Register("GetOpenIDConnectProvider", handleIAMGetOIDCProvider)
+	r.Register("TagOpenIDConnectProvider", handleIAMTagOIDCProvider)
+	r.Register("UntagOpenIDConnectProvider", handleIAMUntagOIDCProvider)
 	r.Register("UpdateOpenIDConnectProviderThumbprint", handleIAMUpdateOIDCThumbprint)
 	r.Register("AddClientIDToOpenIDConnectProvider", handleIAMAddOIDCClientID)
 	r.Register("RemoveClientIDFromOpenIDConnectProvider", handleIAMRemoveOIDCClientID)
@@ -303,13 +306,72 @@ func handleIAMGetOIDCProvider(w http.ResponseWriter, r *http.Request) {
     <CreateDate>%s</CreateDate>
     <ClientIDList>%s</ClientIDList>
     <ThumbprintList>%s</ThumbprintList>
+    %s
   </GetOpenIDConnectProviderResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
 </GetOpenIDConnectProviderResponse>`,
 		provider.URL, provider.CreateDate,
 		iamOIDCMembers(provider.ClientIDList, "member"),
 		iamOIDCMembers(provider.ThumbprintList, "member"),
+		iamMapTagsXML(provider.Tags),
 		generateUUID())
+}
+
+// iamMapTagsXML renders a map-backed tag set (OIDC providers store tags as a
+// map) in deterministic key order as the IAM <Tags> member list.
+func iamMapTagsXML(tags map[string]string) string {
+	if len(tags) == 0 {
+		return "<Tags/>"
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("<Tags>")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "<member><Key>%s</Key><Value>%s</Value></member>", xmlEscape(k), xmlEscape(tags[k]))
+	}
+	b.WriteString("</Tags>")
+	return b.String()
+}
+
+func handleIAMTagOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("OpenIDConnectProviderArn")
+	if !iamOIDCProviders.Update(arn, func(p *IAMOIDCProvider) {
+		if p.Tags == nil {
+			p.Tags = map[string]string{}
+		}
+		for i := 1; ; i++ {
+			k := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
+			if k == "" {
+				break
+			}
+			p.Tags[k] = r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
+		}
+	}) {
+		iamErrorXML(w, "NoSuchEntity", "OpenID Connect provider not found", http.StatusNotFound)
+		return
+	}
+	iamEmptyResultXML(w, "TagOpenIDConnectProvider")
+}
+
+func handleIAMUntagOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("OpenIDConnectProviderArn")
+	if !iamOIDCProviders.Update(arn, func(p *IAMOIDCProvider) {
+		for i := 1; ; i++ {
+			k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
+			if k == "" {
+				break
+			}
+			delete(p.Tags, k)
+		}
+	}) {
+		iamErrorXML(w, "NoSuchEntity", "OpenID Connect provider not found", http.StatusNotFound)
+		return
+	}
+	iamEmptyResultXML(w, "UntagOpenIDConnectProvider")
 }
 
 func handleIAMUpdateOIDCThumbprint(w http.ResponseWriter, r *http.Request) {

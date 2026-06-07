@@ -18,6 +18,8 @@ type IAMRole struct {
 	AssumeRolePolicyDocument string
 	CreateDate               string
 	MaxSessionDuration       int
+	Description              string
+	PermissionsBoundaryARN   string
 	Tags                     []IAMTag
 }
 
@@ -75,6 +77,9 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("CreateRole", handleIAMCreateRole)
 	r.Register("GetRole", handleIAMGetRole)
 	r.Register("DeleteRole", handleIAMDeleteRole)
+	r.Register("UpdateRole", handleIAMUpdateRole)
+	r.Register("TagRole", handleIAMTagRole)
+	r.Register("UntagRole", handleIAMUntagRole)
 	r.Register("UpdateAssumeRolePolicy", handleIAMUpdateAssumeRolePolicy)
 	r.Register("PutRolePolicy", handleIAMPutRolePolicy)
 	r.Register("GetRolePolicy", handleIAMGetRolePolicy)
@@ -119,8 +124,16 @@ func iamRoleFieldsXML(role IAMRole) string {
 	if maxSession == 0 {
 		maxSession = 3600
 	}
-	return fmt.Sprintf(`<RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration>%s`,
-		role.RoleName, role.RoleId, role.Arn, role.Path, doc, role.CreateDate, maxSession, iamTagsXML(role.Tags))
+	var extra string
+	if role.Description != "" {
+		extra += fmt.Sprintf("<Description>%s</Description>", xmlEscape(role.Description))
+	}
+	if role.PermissionsBoundaryARN != "" {
+		extra += fmt.Sprintf("<PermissionsBoundary><PermissionsBoundaryType>PermissionsBoundaryPolicy</PermissionsBoundaryType><PermissionsBoundaryArn>%s</PermissionsBoundaryArn></PermissionsBoundary>",
+			xmlEscape(role.PermissionsBoundaryARN))
+	}
+	return fmt.Sprintf(`<RoleName>%s</RoleName><RoleId>%s</RoleId><Arn>%s</Arn><Path>%s</Path><AssumeRolePolicyDocument>%s</AssumeRolePolicyDocument><CreateDate>%s</CreateDate><MaxSessionDuration>%d</MaxSessionDuration>%s%s`,
+		role.RoleName, role.RoleId, role.Arn, role.Path, doc, role.CreateDate, maxSession, extra, iamTagsXML(role.Tags))
 }
 
 func iamRoleXML(role IAMRole) string {
@@ -145,6 +158,9 @@ func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 		Path:                     path,
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               time.Now().UTC().Format(time.RFC3339),
+		MaxSessionDuration:       atoiDefault(r.FormValue("MaxSessionDuration"), 0),
+		Description:              r.FormValue("Description"),
+		PermissionsBoundaryARN:   r.FormValue("PermissionsBoundary"),
 		Tags:                     iamParseTags(r),
 	}
 	iamRoles.Put(name, role)
@@ -154,6 +170,93 @@ func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
   <CreateRoleResult>%s</CreateRoleResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
 </CreateRoleResponse>`, iamRoleXML(role), generateUUID())
+}
+
+// handleIAMUpdateRole updates a role's description / max-session-duration. The
+// provider calls it when aws_iam_role.{description,max_session_duration} change
+// (assume-role policy goes through UpdateAssumeRolePolicy instead).
+func handleIAMUpdateRole(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("RoleName")
+	if !iamRoles.Update(name, func(role *IAMRole) {
+		if d := r.FormValue("Description"); d != "" {
+			role.Description = d
+		}
+		if ms := r.FormValue("MaxSessionDuration"); ms != "" {
+			role.MaxSessionDuration = atoiDefault(ms, role.MaxSessionDuration)
+		}
+	}) {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Role %s not found", name), http.StatusNotFound)
+		return
+	}
+	iamEmptyResultXML(w, "UpdateRole")
+}
+
+// handleIAMTagRole adds/overwrites tags on a role (aws_iam_role.tags changes).
+func handleIAMTagRole(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("RoleName")
+	newTags := iamParseTags(r)
+	if !iamRoles.Update(name, func(role *IAMRole) {
+		role.Tags = iamMergeTags(role.Tags, newTags)
+	}) {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Role %s not found", name), http.StatusNotFound)
+		return
+	}
+	iamEmptyResultXML(w, "TagRole")
+}
+
+// handleIAMUntagRole removes the named tag keys from a role.
+func handleIAMUntagRole(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("RoleName")
+	remove := map[string]bool{}
+	for i := 1; ; i++ {
+		k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
+		if k == "" {
+			break
+		}
+		remove[k] = true
+	}
+	if !iamRoles.Update(name, func(role *IAMRole) {
+		kept := role.Tags[:0]
+		for _, t := range role.Tags {
+			if !remove[t.Key] {
+				kept = append(kept, t)
+			}
+		}
+		role.Tags = kept
+	}) {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Role %s not found", name), http.StatusNotFound)
+		return
+	}
+	iamEmptyResultXML(w, "UntagRole")
+}
+
+// iamMergeTags overwrites existing tag values by key and appends new keys,
+// preserving order — the TagRole upsert semantics.
+func iamMergeTags(existing, incoming []IAMTag) []IAMTag {
+	out := append([]IAMTag(nil), existing...)
+	for _, nt := range incoming {
+		found := false
+		for i := range out {
+			if out[i].Key == nt.Key {
+				out[i].Value = nt.Value
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, nt)
+		}
+	}
+	return out
+}
+
+// iamEmptyResultXML emits the canonical empty-result response IAM mutating ops
+// return. The empty `<{op}Result/>` node is required by some deserializers
+// (e.g. UpdateRole) and harmlessly skipped by the others (TagRole/UntagRole).
+func iamEmptyResultXML(w http.ResponseWriter, op string) {
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<%sResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/"><%sResult/><ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata></%sResponse>`,
+		op, op, generateUUID(), op)
 }
 
 func iamErrorXML(w http.ResponseWriter, code string, message string, statusCode int) {

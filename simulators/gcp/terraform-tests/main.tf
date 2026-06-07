@@ -368,18 +368,38 @@ resource "google_eventarc_channel" "tf_eventarc_channel" {
 
 # ---------- Pub/Sub ----------
 
+# message_retention_duration was dropped on create, so the provider read it
+# back as null and drifted every plan.
 resource "google_pubsub_topic" "tf_pubsub_topic" {
-  name = "tf-pubsub-topic"
+  name                       = "tf-pubsub-topic"
+  message_retention_duration = "86400s"
 
   labels = {
     env = "terraform"
   }
 }
 
+# Dead-letter target for the subscription's dead_letter_policy.
+resource "google_pubsub_topic" "tf_pubsub_dlq" {
+  name = "tf-pubsub-dlq"
+}
+
+# dead_letter_policy + retry_policy were dropped on create → the subscription
+# drifted every plan. Exercise both round-trips here.
 resource "google_pubsub_subscription" "tf_pubsub_subscription" {
   name                 = "tf-pubsub-subscription"
   topic                = google_pubsub_topic.tf_pubsub_topic.id
   ack_deadline_seconds = 20
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.tf_pubsub_dlq.id
+    max_delivery_attempts = 7
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
 
   labels = {
     env = "terraform"
