@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -197,12 +198,69 @@ func fireSchedule(s Schedule) {
 	}
 }
 
-// callJSONHandler invokes an awsJson-style handler in-process with a JSON body.
-func callJSONHandler(h http.HandlerFunc, body map[string]any) {
+// callJSONHandler invokes an awsJson-style handler in-process with a JSON body
+// and returns the handler's HTTP status and response body, so the caller can
+// tell whether the downstream call actually succeeded (a scheduler fire must
+// not record a phantom success when the target API rejected the request).
+func callJSONHandler(h http.HandlerFunc, body map[string]any) (int, []byte) {
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
-	h(httptest.NewRecorder(), req)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	return rec.Code, rec.Body.Bytes()
+}
+
+// awsJSONError extracts the (__type, message) pair from an awsJson error body.
+// The short type ("InvalidParameterException") is the CloudTrail errorCode.
+func awsJSONError(body []byte) (code, message string) {
+	var e struct {
+		Type    string `json:"__type"`
+		TypeAlt string `json:"code"`
+		Message string `json:"message"`
+		MsgAlt  string `json:"Message"`
+	}
+	_ = json.Unmarshal(body, &e)
+	code = e.Type
+	if code == "" {
+		code = e.TypeAlt
+	}
+	if i := strings.LastIndex(code, "#"); i >= 0 { // strip "com.amazonaws...#Type" prefix
+		code = code[i+1:]
+	}
+	message = e.Message
+	if message == "" {
+		message = e.MsgAlt
+	}
+	return code, message
+}
+
+// awsXMLError extracts <Code>/<Message> from a query-protocol error response
+// (SNS and other XML APIs).
+func awsXMLError(body []byte) (code, message string) {
+	var e struct {
+		Code    string `xml:"Error>Code"`
+		Message string `xml:"Error>Message"`
+	}
+	_ = xml.Unmarshal(body, &e)
+	return e.Code, e.Message
+}
+
+// recordSchedulerFireResult records a fired target invocation, reflecting a
+// failed downstream call honestly (errorCode/errorMessage) instead of a phantom
+// success — the same class of silent-swallow bug for every target type.
+func recordSchedulerFireResult(eventName, source, resType, resName string, status int, body []byte, xmlErr bool) {
+	if status >= 400 {
+		var code, message string
+		if xmlErr {
+			code, message = awsXMLError(body)
+		} else {
+			code, message = awsJSONError(body)
+		}
+		cloudTrailRecordSchedulerFireErr(eventName, source, resType, resName, code, message)
+		return
+	}
+	cloudTrailRecordSchedulerFire(eventName, source, resType, resName)
 }
 
 func fireECSTarget(clusterArn string, p *schedulerEcsParams) {
@@ -227,9 +285,13 @@ func fireECSTarget(clusterArn string, p *schedulerEcsParams) {
 			},
 		}
 	}
-	callJSONHandler(handleECSRunTask, body)
-	cloudTrailRecordSchedulerFire("RunTask", "ecs.amazonaws.com",
-		"AWS::ECS::Cluster", cloudTrailShortName(clusterArn))
+	// Record the RunTask call either way (real CloudTrail records the attempt),
+	// but reflect a failed launch honestly with errorCode/errorMessage rather
+	// than a phantom success — e.g. RunTask rejects a security group that does
+	// not exist, so no task is created and none ever transitions to STOPPED.
+	status, respBody := callJSONHandler(handleECSRunTask, body)
+	recordSchedulerFireResult("RunTask", "ecs.amazonaws.com",
+		"AWS::ECS::Cluster", cloudTrailShortName(clusterArn), status, respBody, false)
 }
 
 func fireSQSTarget(queueArn, input string) {
@@ -237,11 +299,11 @@ func fireSQSTarget(queueArn, input string) {
 	if i := strings.LastIndex(queueArn, ":"); i >= 0 {
 		name = queueArn[i+1:]
 	}
-	callJSONHandler(handleSQSSendMessage, map[string]any{
+	status, respBody := callJSONHandler(handleSQSSendMessage, map[string]any{
 		"QueueUrl":    sqsQueueURL(name),
 		"MessageBody": input,
 	})
-	cloudTrailRecordSchedulerFire("SendMessage", "sqs.amazonaws.com", "AWS::SQS::Queue", name)
+	recordSchedulerFireResult("SendMessage", "sqs.amazonaws.com", "AWS::SQS::Queue", name, status, respBody, false)
 }
 
 func fireLambdaTarget(functionArn, input string) {
@@ -254,17 +316,22 @@ func fireLambdaTarget(functionArn, input string) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/2015-03-31/functions/"+name+"/invocations", strings.NewReader(input))
 	req.SetPathValue("name", name)
-	handleLambdaInvoke(httptest.NewRecorder(), req)
-	cloudTrailRecordSchedulerFire("Invoke", "lambda.amazonaws.com", "AWS::Lambda::Function", name)
+	rec := httptest.NewRecorder()
+	handleLambdaInvoke(rec, req)
+	// A function that runs but returns an error still 200s (X-Amz-Function-Error)
+	// — that's a successful Invoke. Only an Invoke-API failure (e.g. 404
+	// ResourceNotFound) is a failed fire.
+	recordSchedulerFireResult("Invoke", "lambda.amazonaws.com", "AWS::Lambda::Function", name, rec.Code, rec.Body.Bytes(), false)
 }
 
 func fireSNSTarget(topicArn, input string) {
 	form := url.Values{"TopicArn": {topicArn}, "Message": {input}}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	handleSNSPublish(httptest.NewRecorder(), req)
-	cloudTrailRecordSchedulerFire("Publish", "sns.amazonaws.com",
-		"AWS::SNS::Topic", cloudTrailShortName(topicArn))
+	rec := httptest.NewRecorder()
+	handleSNSPublish(rec, req)
+	recordSchedulerFireResult("Publish", "sns.amazonaws.com",
+		"AWS::SNS::Topic", cloudTrailShortName(topicArn), rec.Code, rec.Body.Bytes(), true)
 }
 
 // cloudTrailRecordSchedulerFire records a CloudTrail event for a target the
@@ -274,14 +341,22 @@ func fireSNSTarget(topicArn, input string) {
 // call (RunTask / SendMessage / Publish / Invoke) with
 // `userIdentity.invokedBy = scheduler.amazonaws.com`.
 func cloudTrailRecordSchedulerFire(eventName, source, resourceType, resourceName string) {
+	cloudTrailRecordSchedulerFireErr(eventName, source, resourceType, resourceName, "", "")
+}
+
+// cloudTrailRecordSchedulerFireErr records a scheduler-fired target invocation,
+// carrying errorCode/errorMessage when the downstream call failed.
+func cloudTrailRecordSchedulerFireErr(eventName, source, resourceType, resourceName, errorCode, errorMessage string) {
 	var resources []CloudTrailResource
 	if resourceName != "" {
 		resources = []CloudTrailResource{{ResourceType: resourceType, ResourceName: resourceName}}
 	}
 	cloudTrailRecord(CloudTrailEvent{
-		EventName:   eventName,
-		EventSource: source,
-		InvokedBy:   "scheduler.amazonaws.com",
-		Resources:   resources,
+		EventName:    eventName,
+		EventSource:  source,
+		InvokedBy:    "scheduler.amazonaws.com",
+		Resources:    resources,
+		ErrorCode:    errorCode,
+		ErrorMessage: errorMessage,
 	})
 }

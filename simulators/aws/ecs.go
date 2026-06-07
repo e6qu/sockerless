@@ -35,8 +35,9 @@ type ECSCluster struct {
 	// Settings (containerInsights) and Configuration (executeCommandConfiguration)
 	// are stored raw so they round-trip exactly; DescribeClusters only surfaces
 	// them when SETTINGS / CONFIGURATIONS is in the `include` list.
-	Settings      json.RawMessage `json:"settings,omitempty"`
-	Configuration json.RawMessage `json:"configuration,omitempty"`
+	Settings               json.RawMessage `json:"settings,omitempty"`
+	Configuration          json.RawMessage `json:"configuration,omitempty"`
+	ServiceConnectDefaults json.RawMessage `json:"serviceConnectDefaults,omitempty"`
 }
 
 type ECSContainerDefinition struct {
@@ -333,6 +334,8 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeClusters", handleECSDescribeClusters)
+	r.Register("AmazonEC2ContainerServiceV20141113.UpdateCluster", handleECSUpdateCluster)
+	r.Register("AmazonEC2ContainerServiceV20141113.UpdateClusterSettings", handleECSUpdateClusterSettings)
 	r.Register("AmazonEC2ContainerServiceV20141113.RegisterTaskDefinition", handleECSRegisterTaskDefinition)
 	r.Register("AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition", handleECSDeregisterTaskDefinition)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeTaskDefinition", handleECSDescribeTaskDefinition)
@@ -413,6 +416,7 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 		DefaultCapacityProviderStrategy json.RawMessage `json:"defaultCapacityProviderStrategy"`
 		Settings                        json.RawMessage `json:"settings"`
 		Configuration                   json.RawMessage `json:"configuration"`
+		ServiceConnectDefaults          json.RawMessage `json:"serviceConnectDefaults"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -431,6 +435,7 @@ func handleECSCreateCluster(w http.ResponseWriter, r *http.Request) {
 		DefaultCapacityProviderStrategy: req.DefaultCapacityProviderStrategy,
 		Settings:                        req.Settings,
 		Configuration:                   req.Configuration,
+		ServiceConnectDefaults:          req.ServiceConnectDefaults,
 	}
 	ecsClusters.Put(req.ClusterName, cluster)
 
@@ -509,6 +514,64 @@ func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 		"clusters": clusters,
 		"failures": failures,
 	})
+}
+
+// handleECSUpdateCluster updates a cluster's settings / configuration /
+// serviceConnectDefaults in place. Without it, any change to
+// aws_ecs_cluster.{setting,configuration,service_connect_defaults} forced
+// recreation.
+func handleECSUpdateCluster(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster                string          `json:"cluster"`
+		Settings               json.RawMessage `json:"settings"`
+		Configuration          json.RawMessage `json:"configuration"`
+		ServiceConnectDefaults json.RawMessage `json:"serviceConnectDefaults"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name := ecsClusterNameFromRef(req.Cluster)
+	cluster, ok := ecsClusters.Get(name)
+	if !ok {
+		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest, "Cluster not found: %s", req.Cluster)
+		return
+	}
+	if req.Settings != nil {
+		cluster.Settings = req.Settings
+	}
+	if req.Configuration != nil {
+		cluster.Configuration = req.Configuration
+	}
+	if req.ServiceConnectDefaults != nil {
+		cluster.ServiceConnectDefaults = req.ServiceConnectDefaults
+	}
+	ecsClusters.Put(name, cluster)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"cluster": cluster})
+}
+
+// handleECSUpdateClusterSettings updates only the cluster settings
+// (containerInsights). The provider uses it for aws_ecs_cluster.setting changes.
+func handleECSUpdateClusterSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cluster  string          `json:"cluster"`
+		Settings json.RawMessage `json:"settings"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name := ecsClusterNameFromRef(req.Cluster)
+	cluster, ok := ecsClusters.Get(name)
+	if !ok {
+		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest, "Cluster not found: %s", req.Cluster)
+		return
+	}
+	if req.Settings != nil {
+		cluster.Settings = req.Settings
+	}
+	ecsClusters.Put(name, cluster)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"cluster": cluster})
 }
 
 func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
