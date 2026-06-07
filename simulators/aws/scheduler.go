@@ -126,6 +126,14 @@ func handleSchedulerCreateSchedule(w http.ResponseWriter, r *http.Request) {
 		schedulerError(w, "ValidationException", http.StatusBadRequest, "ScheduleExpression is required")
 		return
 	}
+	// A malformed cron(...) is rejected here (as real AWS does) rather than
+	// accepted into a schedule that would silently never fire.
+	if strings.HasPrefix(strings.TrimSpace(req.ScheduleExpression), "cron(") &&
+		!schedulerCronValid(req.ScheduleExpression) {
+		schedulerError(w, "ValidationException", http.StatusBadRequest,
+			"Invalid Schedule Expression %q.", req.ScheduleExpression)
+		return
+	}
 	if req.Target == nil {
 		schedulerError(w, "ValidationException", http.StatusBadRequest, "Target is required")
 		return

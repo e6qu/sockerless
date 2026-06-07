@@ -10,9 +10,9 @@ import (
 // cron(minutes hours day-of-month month day-of-week year) — six fields. Each
 // field supports `*`, `?` (treated as `*`), single values, lists (`,`), ranges
 // (`-`), steps (`/`), and named months (JAN–DEC) / days (SUN–SAT). Day-of-week
-// is 1–7 with 1 = Sunday, matching AWS. The `L`, `W`, and `#` qualifiers are not
-// supported; an expression using them returns no next time (it won't fire),
-// which is preferable to firing at the wrong moment.
+// is 1–7 with 1 = Sunday, matching AWS. The AWS qualifiers `L` (last day of
+// month / week), `W` (nearest weekday), and `#` (nth weekday of month) are
+// supported in the day-of-month and day-of-week fields.
 
 var cronMonths = map[string]int{
 	"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
@@ -37,29 +37,142 @@ func schedulerCronNext(expr string, after time.Time) (time.Time, bool) {
 	}
 	mins, ok1 := cronField(f[0], 0, 59, nil)
 	hrs, ok2 := cronField(f[1], 0, 23, nil)
-	doms, ok3 := cronField(f[2], 1, 31, nil)
+	domMatch, ok3 := cronDayOfMonth(f[2])
 	mons, ok4 := cronField(f[3], 1, 12, cronMonths)
-	dows, ok5 := cronField(f[4], 1, 7, cronDows)
+	dowMatch, ok5 := cronDayOfWeek(f[4])
 	yrs, ok6 := cronField(f[5], 1970, 2199, nil)
 	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 {
 		return time.Time{}, false
 	}
-	domWild := f[2] == "*" || f[2] == "?"
-	dowWild := f[4] == "*" || f[4] == "?"
 
 	t := after.Truncate(time.Minute).Add(time.Minute)
 	limit := after.AddDate(4, 0, 0)
 	for t.Before(limit) {
 		if yrs[t.Year()] && mons[int(t.Month())] && hrs[t.Hour()] && mins[t.Minute()] {
-			domMatch := domWild || doms[t.Day()]
-			dowMatch := dowWild || dows[int(t.Weekday())+1] // Go Sunday=0 → AWS 1
-			if domMatch && dowMatch {
+			if domMatch(t) && dowMatch(t) {
 				return t, true
 			}
 		}
 		t = t.Add(time.Minute)
 	}
 	return time.Time{}, false
+}
+
+// schedulerCronValid reports whether expr is a structurally valid AWS cron(...)
+// expression (six parseable fields), independent of whether it has an upcoming
+// occurrence. CreateSchedule uses it to reject malformed cron loudly instead of
+// accepting a schedule that would silently never fire.
+func schedulerCronValid(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	if !strings.HasPrefix(expr, "cron(") || !strings.HasSuffix(expr, ")") {
+		return false
+	}
+	f := strings.Fields(strings.TrimSuffix(strings.TrimPrefix(expr, "cron("), ")"))
+	if len(f) != 6 {
+		return false
+	}
+	_, ok1 := cronField(f[0], 0, 59, nil)
+	_, ok2 := cronField(f[1], 0, 23, nil)
+	_, ok3 := cronDayOfMonth(f[2])
+	_, ok4 := cronField(f[3], 1, 12, cronMonths)
+	_, ok5 := cronDayOfWeek(f[4])
+	_, ok6 := cronField(f[5], 1970, 2199, nil)
+	return ok1 && ok2 && ok3 && ok4 && ok5 && ok6
+}
+
+// awsWeekday returns AWS day-of-week numbering (Sunday=1 … Saturday=7).
+func awsWeekday(t time.Time) int { return int(t.Weekday()) + 1 }
+
+// lastDayOfMonth returns the day number of the last day of t's month.
+func lastDayOfMonth(t time.Time) int {
+	return time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, t.Location()).Day()
+}
+
+// nearestWeekday returns the day-of-month of the nearest Mon–Fri to day n,
+// without crossing the month boundary (AWS `W` semantics: Sat→Fri, Sun→Mon,
+// except a boundary crossing flips to the other direction).
+func nearestWeekday(t time.Time, n int) int {
+	if last := lastDayOfMonth(t); n > last {
+		n = last
+	}
+	day := time.Date(t.Year(), t.Month(), n, 0, 0, 0, 0, t.Location())
+	switch day.Weekday() {
+	case time.Saturday:
+		if n-1 >= 1 {
+			return n - 1
+		}
+		return n + 2
+	case time.Sunday:
+		if n+1 <= lastDayOfMonth(t) {
+			return n + 1
+		}
+		return n - 2
+	default:
+		return n
+	}
+}
+
+// cronDayOfMonth builds the day-of-month predicate, handling AWS qualifiers
+// `L` (last day), `LW` (last weekday), and `nW` (nearest weekday to day n).
+func cronDayOfMonth(spec string) (func(time.Time) bool, bool) {
+	switch {
+	case spec == "*" || spec == "?":
+		return func(time.Time) bool { return true }, true
+	case spec == "L":
+		return func(t time.Time) bool { return t.Day() == lastDayOfMonth(t) }, true
+	case spec == "LW":
+		return func(t time.Time) bool {
+			return t.Day() == nearestWeekday(t, lastDayOfMonth(t))
+		}, true
+	case strings.HasSuffix(spec, "W"):
+		n, err := strconv.Atoi(strings.TrimSuffix(spec, "W"))
+		if err != nil || n < 1 || n > 31 {
+			return nil, false
+		}
+		return func(t time.Time) bool { return t.Day() == nearestWeekday(t, n) }, true
+	default:
+		set, ok := cronField(spec, 1, 31, nil)
+		if !ok {
+			return nil, false
+		}
+		return func(t time.Time) bool { return set[t.Day()] }, true
+	}
+}
+
+// cronDayOfWeek builds the day-of-week predicate, handling AWS qualifiers `L`
+// (last day of week = Saturday), `nL` (last weekday n of the month), and `d#n`
+// (nth weekday d of the month). Day numbering is AWS 1=SUN … 7=SAT.
+func cronDayOfWeek(spec string) (func(time.Time) bool, bool) {
+	switch {
+	case spec == "*" || spec == "?":
+		return func(time.Time) bool { return true }, true
+	case spec == "L":
+		return func(t time.Time) bool { return awsWeekday(t) == 7 }, true
+	case strings.HasSuffix(spec, "L"):
+		d, ok := cronAtoi(strings.TrimSuffix(spec, "L"), cronDows)
+		if !ok || d < 1 || d > 7 {
+			return nil, false
+		}
+		return func(t time.Time) bool {
+			return awsWeekday(t) == d && t.Day() > lastDayOfMonth(t)-7
+		}, true
+	case strings.Contains(spec, "#"):
+		parts := strings.SplitN(spec, "#", 2)
+		d, okD := cronAtoi(parts[0], cronDows)
+		n, errN := strconv.Atoi(parts[1])
+		if !okD || errN != nil || d < 1 || d > 7 || n < 1 || n > 5 {
+			return nil, false
+		}
+		return func(t time.Time) bool {
+			return awsWeekday(t) == d && (t.Day()-1)/7+1 == n
+		}, true
+	default:
+		set, ok := cronField(spec, 1, 7, cronDows)
+		if !ok {
+			return nil, false
+		}
+		return func(t time.Time) bool { return set[awsWeekday(t)] }, true
+	}
 }
 
 // cronField parses one cron field into the set of matching values in [min,max].
