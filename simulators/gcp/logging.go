@@ -43,7 +43,11 @@ var logMetrics sim.Store[LoggingMetric]
 var logEntriesMu sync.Mutex
 
 type LoggingSink struct {
-	Name                 string             `json:"name"`
+	Name string `json:"name"`
+	// ResourceName is the output-only full path projects/{p}/sinks/{name}.
+	// Real Cloud Logging returns the short identifier in Name and the full
+	// path here as a distinct field (logging/v2 LogSink.resourceName).
+	ResourceName         string             `json:"resourceName,omitempty"`
 	Destination          string             `json:"destination"`
 	Filter               string             `json:"filter,omitempty"`
 	Description          string             `json:"description,omitempty"`
@@ -274,6 +278,7 @@ func normalizeLoggingMetric(project string, metric LoggingMetric) LoggingMetric 
 // plans an in-place/replacement change on every refresh.
 func loggingSinkResponse(project string, s LoggingSink) LoggingSink {
 	s.Name = strings.TrimPrefix(s.Name, fmt.Sprintf("projects/%s/sinks/", project))
+	s.ResourceName = fmt.Sprintf("projects/%s/sinks/%s", project, s.Name)
 	return s
 }
 

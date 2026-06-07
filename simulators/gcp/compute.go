@@ -201,7 +201,11 @@ type ComputeRouterBgp struct {
 // WORKS / ALL_SUBNETWORKS_ALL_IP_RANGES), TCP/UDP timeout overrides.
 // The fields below cover what `google_compute_router_nat` round-trips.
 type ComputeRouterNAT struct {
-	Name                          string                       `json:"name"`
+	Name string `json:"name"`
+	// Type defaults to PUBLIC. terraform-provider-google treats this as a
+	// forces-replacement field; the read-back must echo the default or every
+	// refresh plans a NAT replacement.
+	Type                          string                       `json:"type,omitempty"`
 	NatIpAllocateOption           string                       `json:"natIpAllocateOption,omitempty"`
 	NatIps                        []string                     `json:"natIps,omitempty"`
 	SourceSubnetworkIpRangesToNat string                       `json:"sourceSubnetworkIpRangesToNat,omitempty"`
@@ -211,6 +215,17 @@ type ComputeRouterNAT struct {
 	TcpEstablishedIdleTimeoutSec  int32                        `json:"tcpEstablishedIdleTimeoutSec,omitempty"`
 	IcmpIdleTimeoutSec            int32                        `json:"icmpIdleTimeoutSec,omitempty"`
 	LogConfig                     *ComputeRouterNATLogConfig   `json:"logConfig,omitempty"`
+}
+
+// defaultRouterNATTypes stamps the PUBLIC default onto any NAT that omits
+// the type field, matching real Cloud NAT read-back (the field is
+// forces-replacement in terraform-provider-google).
+func defaultRouterNATTypes(nats []ComputeRouterNAT) {
+	for i := range nats {
+		if nats[i].Type == "" {
+			nats[i].Type = "PUBLIC"
+		}
+	}
 }
 
 // ComputeRouterNATSubnetwork picks a specific subnet for NAT'ing.
@@ -259,7 +274,11 @@ type ComputeNetwork struct {
 	RoutingConfig         struct {
 		RoutingMode string `json:"routingMode"`
 	} `json:"routingConfig"`
-	CreationTimestamp string `json:"creationTimestamp"`
+	// NetworkFirewallPolicyEnforcementOrder defaults to AFTER_CLASSIC_FIREWALL.
+	// terraform-provider-google reads this back as a computed default; omitting
+	// it makes every refresh plan an in-place update.
+	NetworkFirewallPolicyEnforcementOrder string `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
+	CreationTimestamp                     string `json:"creationTimestamp"`
 }
 
 type ComputeSubnetwork struct {
@@ -564,6 +583,7 @@ func registerCompute(srv *sim.Server) {
 		if net.RoutingConfig.RoutingMode == "" {
 			net.RoutingConfig.RoutingMode = "REGIONAL"
 		}
+		net.NetworkFirewallPolicyEnforcementOrder = "AFTER_CLASSIC_FIREWALL"
 		if !gcpRequireNetworkHost(w) {
 			return
 		}
@@ -1082,6 +1102,7 @@ func registerCompute(srv *sim.Server) {
 		rt.SelfLink = fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, rt.Name)
 		rt.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
 		rt.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		defaultRouterNATTypes(rt.Nats)
 		if len(rt.Nats) > 0 {
 			if !gcpRequireNetworkHost(w) {
 				return
@@ -1163,6 +1184,7 @@ func registerCompute(srv *sim.Server) {
 				rt.Bgp = patch.Bgp
 			}
 			if patch.Nats != nil {
+				defaultRouterNATTypes(patch.Nats)
 				rt.Nats = patch.Nats
 			}
 		})
