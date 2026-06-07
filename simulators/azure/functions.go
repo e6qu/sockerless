@@ -502,12 +502,15 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
-	// GET /config/backup — GetBackupConfiguration. terraform-provider-azurerm
-	// calls this on read; real Azure returns 404 when no backup schedule is
-	// configured, and the provider treats NotFound as "no backup block".
-	// Returning 200 with an empty bag instead makes its flatten materialise a
-	// phantom `backup { enabled = false }` block that drifts every plan.
-	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/backup", func(w http.ResponseWriter, r *http.Request) {
+	// POST /config/backup/list — "Get Backup Configuration" (POST because the
+	// response carries the storage-account SAS secret). The sim doesn't model
+	// backup schedules; real Azure returns 404 when none is configured. Earlier
+	// the sim returned 200 with an empty `properties: {}` bag — but
+	// terraform-provider-azurerm's FlattenBackupConfig only short-circuits to
+	// [] when Properties is nil, so a non-nil empty bag materialised a phantom
+	// `backup { enabled = false }` block that drifted every plan. 404 makes the
+	// provider treat it as NotFound → no backup block.
+	backupNotFound := func(w http.ResponseWriter, r *http.Request) {
 		name := sim.PathParam(r, "siteName")
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s",
 			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), name)
@@ -518,28 +521,9 @@ func registerAzureFunctions(srv *sim.Server) {
 		}
 		sim.AzureErrorf(w, "NotFound", http.StatusNotFound,
 			"No backup configuration found for site %q.", name)
-	})
-
-	// POST /config/backup/list — App Service backup configuration. The
-	// sim doesn't model backup schedules; the truthful response is an
-	// empty properties bag (no backup configured).
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", func(w http.ResponseWriter, r *http.Request) {
-		sub := sim.PathParam(r, "subscriptionId")
-		rg := sim.PathParam(r, "resourceGroupName")
-		name := sim.PathParam(r, "siteName")
-		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Web/sites/%s", sub, rg, name)
-		if _, ok := sites.Get(resourceID); !ok {
-			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
-				"The Resource 'Microsoft.Web/sites/%s' under resource group '%s' was not found.", name, rg)
-			return
-		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"id":         resourceID + "/config/backup",
-			"name":       "backup",
-			"type":       "Microsoft.Web/sites/config",
-			"properties": map[string]any{},
-		})
-	})
+	}
+	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", backupNotFound)
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/backup", backupNotFound)
 
 	// GET /sites/{name}/basicPublishingCredentialsPolicies/{ftp|scm} —
 	// the per-protocol allow flag for FTP / SCM basic auth on the
