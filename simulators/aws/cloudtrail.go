@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,9 @@ type CloudTrailEvent struct {
 	EventSource string
 	EventTime   string
 	Username    string
+	AccessKeyId string
+	ReadOnly    bool
+	InvokedBy   string
 	Resources   []CloudTrailResource
 }
 
@@ -252,6 +256,13 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 		MaxResults       int
 	}
 	_ = readAWSJSONAllowEmpty(r, &req)
+	for _, attr := range req.LookupAttributes {
+		if !cloudTrailValidLookupKeys[attr.AttributeKey] {
+			cloudTrailError(w, "InvalidLookupAttributesException",
+				"Invalid lookup attribute key: "+attr.AttributeKey, http.StatusBadRequest)
+			return
+		}
+	}
 	max := req.MaxResults
 	if max <= 0 || max > 50 {
 		max = 50
@@ -453,7 +464,12 @@ func cloudTrailARN(name string) string {
 	return fmt.Sprintf("arn:aws:cloudtrail:%s:%s:trail/%s", awsRegion(), awsAccountID(), name)
 }
 
-func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, status int) {
+// cloudTrailRecordAPICall records a management event for an awsJson or
+// query-protocol API call served by the central POST / router. reqBody is the
+// buffered request payload (the handler has already consumed r.Body), used to
+// extract the resources[] the call acted on for ResourceName/ResourceType
+// lookups.
+func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, status int) {
 	if cloudTrailEvents == nil || status >= 500 {
 		return
 	}
@@ -475,15 +491,63 @@ func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, status int) {
 			Msg("cloudtrail: no eventSource mapping for service slice; event not recorded")
 		return
 	}
-	event := CloudTrailEvent{
-		EventId:     generateUUID(),
+	cloudTrailRecord(CloudTrailEvent{
 		EventName:   eventName,
 		EventSource: source,
-		EventTime:   time.Now().UTC().Format(time.RFC3339),
-		Username:    "sockerless",
+		AccessKeyId: cloudTrailAccessKeyID(r),
+		ReadOnly:    cloudTrailReadOnly(eventName),
+		Resources:   cloudTrailResources(source, eventName, reqBody, r),
+	})
+}
+
+// cloudTrailRecord finalises and persists a management event: it stamps the
+// event id/time and a default username, then delivers it to every logging
+// trail. All recording paths (central API router, REST services like Scheduler,
+// and service-invoked targets) funnel through here so every event carries a
+// consistent shape.
+func cloudTrailRecord(ev CloudTrailEvent) {
+	if cloudTrailEvents == nil {
+		return
 	}
-	cloudTrailEvents.Put(event.EventId, event)
-	cloudTrailDeliverEvent(event)
+	ev.EventId = generateUUID()
+	ev.EventTime = time.Now().UTC().Format(time.RFC3339)
+	if ev.Username == "" && ev.InvokedBy == "" {
+		ev.Username = "sockerless"
+	}
+	cloudTrailEvents.Put(ev.EventId, ev)
+	cloudTrailDeliverEvent(ev)
+}
+
+// cloudTrailAccessKeyID extracts the IAM access key id from a SigV4
+// Authorization header (`Credential=<AKID>/<date>/<region>/<service>/...`).
+// Empty when the request is unsigned — real CloudTrail also omits AccessKeyId
+// for anonymous or service-invoked calls.
+func cloudTrailAccessKeyID(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return ""
+	}
+	cred := auth[i+len("Credential="):]
+	if j := strings.IndexAny(cred, "/,"); j >= 0 {
+		return cred[:j]
+	}
+	return cred
+}
+
+// cloudTrailReadOnly classifies an operation as read-only by its verb, the
+// convention AWS follows for its own per-operation readOnly flag (the value the
+// ReadOnly lookup attribute filters on).
+func cloudTrailReadOnly(eventName string) bool {
+	for _, p := range []string{
+		"Describe", "Get", "List", "Lookup", "BatchGet", "Search", "Scan",
+		"Query", "View", "Estimate", "Filter", "Head", "Check", "Validate",
+	} {
+		if strings.HasPrefix(eventName, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func awsRequestOperationName(r *http.Request) string {
@@ -590,16 +654,7 @@ func cloudTrailDeliverEvent(event CloudTrailEvent) {
 }
 
 func cloudTrailLogBody(event CloudTrailEvent) ([]byte, error) {
-	payload := map[string]any{"Records": []map[string]any{{
-		"eventVersion": "1.08",
-		"userIdentity": map[string]any{"type": "IAMUser", "userName": event.Username},
-		"eventTime":    event.EventTime,
-		"eventSource":  event.EventSource,
-		"eventName":    event.EventName,
-		"awsRegion":    awsRegion(),
-		"eventID":      event.EventId,
-		"eventType":    "AwsApiCall",
-	}}}
+	payload := map[string]any{"Records": []map[string]any{cloudTrailEventRecord(event)}}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -626,9 +681,20 @@ func cloudTrailObjectKey(trail CloudTrailTrail, event CloudTrailEvent) string {
 		prefix, awsAccountID(), awsRegion(), t.Year(), t.Month(), t.Day(), trail.Name, event.EventId)
 }
 
+// cloudTrailEventMatches implements LookupEvents filtering for all eight
+// AttributeKey values the CloudTrail API defines (EventId, EventName, ReadOnly,
+// Username, ResourceType, ResourceName, EventSource, AccessKeyId). Multiple
+// attributes are ANDed, matching real CloudTrail. An unsupported key is
+// rejected upstream by cloudTrailValidateLookupAttributes — it must never reach
+// here, but if it did it returns false (never silently match-all, which is the
+// exact defect of only handling three of the eight keys).
 func cloudTrailEventMatches(ev CloudTrailEvent, attrs []cloudTrailLookupAttribute) bool {
 	for _, attr := range attrs {
 		switch attr.AttributeKey {
+		case "EventId":
+			if ev.EventId != attr.AttributeValue {
+				return false
+			}
 		case "EventName":
 			if ev.EventName != attr.AttributeValue {
 				return false
@@ -641,22 +707,121 @@ func cloudTrailEventMatches(ev CloudTrailEvent, attrs []cloudTrailLookupAttribut
 			if ev.Username != attr.AttributeValue {
 				return false
 			}
+		case "AccessKeyId":
+			if ev.AccessKeyId != attr.AttributeValue {
+				return false
+			}
+		case "ReadOnly":
+			if (strings.EqualFold(attr.AttributeValue, "true")) != ev.ReadOnly {
+				return false
+			}
+		case "ResourceName":
+			if !cloudTrailHasResource(ev, func(r CloudTrailResource) bool {
+				return r.ResourceName == attr.AttributeValue
+			}) {
+				return false
+			}
+		case "ResourceType":
+			if !cloudTrailHasResource(ev, func(r CloudTrailResource) bool {
+				return r.ResourceType == attr.AttributeValue
+			}) {
+				return false
+			}
+		default:
+			return false
 		}
 	}
 	return true
 }
 
+func cloudTrailHasResource(ev CloudTrailEvent, pred func(CloudTrailResource) bool) bool {
+	for _, r := range ev.Resources {
+		if pred(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// cloudTrailValidLookupKeys is the set of AttributeKey values real CloudTrail
+// accepts (per the LookupAttribute API reference). Any other key is rejected
+// with InvalidLookupAttributesException rather than silently ignored.
+var cloudTrailValidLookupKeys = map[string]bool{
+	"EventId": true, "EventName": true, "ReadOnly": true, "Username": true,
+	"ResourceType": true, "ResourceName": true, "EventSource": true, "AccessKeyId": true,
+}
+
 func cloudTrailEventJSON(ev CloudTrailEvent) map[string]any {
-	return map[string]any{
+	resources := make([]map[string]any, 0, len(ev.Resources))
+	for _, res := range ev.Resources {
+		resources = append(resources, map[string]any{
+			"ResourceType": res.ResourceType,
+			"ResourceName": res.ResourceName,
+		})
+	}
+	out := map[string]any{
 		"EventId":     ev.EventId,
 		"EventName":   ev.EventName,
 		"EventSource": ev.EventSource,
 		"EventTime":   cloudTrailEpochSeconds(ev.EventTime),
 		"Username":    ev.Username,
-		"Resources":   ev.Resources,
-		"CloudTrailEvent": fmt.Sprintf(`{"eventSource":%q,"eventName":%q,"eventTime":%q,"eventID":%q}`,
-			ev.EventSource, ev.EventName, ev.EventTime, ev.EventId),
+		// The LookupEvents Event.ReadOnly response field is a string
+		// ("true"/"false"), not a boolean (the boolean lives in the embedded
+		// CloudTrailEvent record).
+		"ReadOnly":        strconv.FormatBool(ev.ReadOnly),
+		"Resources":       resources,
+		"CloudTrailEvent": cloudTrailEventRecordJSON(ev),
 	}
+	if ev.AccessKeyId != "" {
+		out["AccessKeyId"] = ev.AccessKeyId
+	}
+	return out
+}
+
+// cloudTrailEventRecordJSON renders the full event record AWS embeds as the
+// `CloudTrailEvent` string field of a LookupEvents result.
+func cloudTrailEventRecordJSON(ev CloudTrailEvent) string {
+	raw, _ := json.Marshal(cloudTrailEventRecord(ev))
+	return string(raw)
+}
+
+// cloudTrailEventRecord builds the canonical CloudTrail event-record object
+// (the shape delivered to S3 and embedded in LookupEvents).
+func cloudTrailEventRecord(ev CloudTrailEvent) map[string]any {
+	identity := map[string]any{}
+	if ev.InvokedBy != "" {
+		identity["type"] = "AWSService"
+		identity["invokedBy"] = ev.InvokedBy
+	} else {
+		identity["type"] = "IAMUser"
+		identity["userName"] = ev.Username
+		if ev.AccessKeyId != "" {
+			identity["accessKeyId"] = ev.AccessKeyId
+		}
+	}
+	resources := make([]map[string]any, 0, len(ev.Resources))
+	for _, res := range ev.Resources {
+		resources = append(resources, map[string]any{
+			"resourceType": res.ResourceType,
+			"resourceName": res.ResourceName,
+		})
+	}
+	rec := map[string]any{
+		"eventVersion": "1.08",
+		"userIdentity": identity,
+		"eventTime":    ev.EventTime,
+		"eventSource":  ev.EventSource,
+		"eventName":    ev.EventName,
+		"awsRegion":    awsRegion(),
+		"eventID":      ev.EventId,
+		"eventType":    "AwsApiCall",
+		"readOnly":     ev.ReadOnly,
+		"resources":    resources,
+	}
+	if ev.InvokedBy != "" {
+		rec["sourceIPAddress"] = ev.InvokedBy
+	}
+	return rec
 }
 
 func cloudTrailEpochSeconds(value string) float64 {

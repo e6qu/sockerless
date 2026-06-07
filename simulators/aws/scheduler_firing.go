@@ -228,6 +228,8 @@ func fireECSTarget(clusterArn string, p *schedulerEcsParams) {
 		}
 	}
 	callJSONHandler(handleECSRunTask, body)
+	cloudTrailRecordSchedulerFire("RunTask", "ecs.amazonaws.com",
+		"AWS::ECS::Cluster", cloudTrailShortName(clusterArn))
 }
 
 func fireSQSTarget(queueArn, input string) {
@@ -239,6 +241,7 @@ func fireSQSTarget(queueArn, input string) {
 		"QueueUrl":    sqsQueueURL(name),
 		"MessageBody": input,
 	})
+	cloudTrailRecordSchedulerFire("SendMessage", "sqs.amazonaws.com", "AWS::SQS::Queue", name)
 }
 
 func fireLambdaTarget(functionArn, input string) {
@@ -252,6 +255,7 @@ func fireLambdaTarget(functionArn, input string) {
 	req := httptest.NewRequest(http.MethodPost, "/2015-03-31/functions/"+name+"/invocations", strings.NewReader(input))
 	req.SetPathValue("name", name)
 	handleLambdaInvoke(httptest.NewRecorder(), req)
+	cloudTrailRecordSchedulerFire("Invoke", "lambda.amazonaws.com", "AWS::Lambda::Function", name)
 }
 
 func fireSNSTarget(topicArn, input string) {
@@ -259,4 +263,25 @@ func fireSNSTarget(topicArn, input string) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	handleSNSPublish(httptest.NewRecorder(), req)
+	cloudTrailRecordSchedulerFire("Publish", "sns.amazonaws.com",
+		"AWS::SNS::Topic", cloudTrailShortName(topicArn))
+}
+
+// cloudTrailRecordSchedulerFire records a CloudTrail event for a target the
+// Scheduler firing loop invoked in-process. These invocations call the target
+// handler directly (callJSONHandler / httptest), bypassing the central `POST /`
+// recording middleware (issue #497). Real CloudTrail records the downstream
+// call (RunTask / SendMessage / Publish / Invoke) with
+// `userIdentity.invokedBy = scheduler.amazonaws.com`.
+func cloudTrailRecordSchedulerFire(eventName, source, resourceType, resourceName string) {
+	var resources []CloudTrailResource
+	if resourceName != "" {
+		resources = []CloudTrailResource{{ResourceType: resourceType, ResourceName: resourceName}}
+	}
+	cloudTrailRecord(CloudTrailEvent{
+		EventName:   eventName,
+		EventSource: source,
+		InvokedBy:   "scheduler.amazonaws.com",
+		Resources:   resources,
+	})
 }
