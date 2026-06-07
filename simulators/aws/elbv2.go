@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,9 +63,19 @@ type ELBv2Listener struct {
 	Protocol        string
 	Port            int
 	DefaultActions  []ELBv2Action
-	Certificates    []string
+	Certificates    []string // the default certificate(s) set at create / ModifyListener
+	SNICertificates []string // extra SNI certs added via AddListenerCertificates
 	SslPolicy       string
+	AlpnPolicy      []string
+	MutualAuth      *ELBv2MutualAuth
 	Attributes      map[string]string
+}
+
+type ELBv2MutualAuth struct {
+	Mode                          string
+	TrustStoreArn                 string
+	IgnoreClientCertificateExpiry *bool
+	AdvertiseTrustStoreCaNames    string
 }
 
 type ELBv2Action struct {
@@ -73,6 +84,55 @@ type ELBv2Action struct {
 	Order          int
 	FixedResponse  *ELBv2FixedResponseConfig
 	Redirect       *ELBv2RedirectConfig
+	Forward        *ELBv2ForwardConfig
+	AuthOidc       *ELBv2AuthOidcConfig
+	AuthCognito    *ELBv2AuthCognitoConfig
+}
+
+// ELBv2ForwardConfig is the weighted multi-target-group forward (the
+// `forward {}` block on aws_lb_listener / aws_lb_listener_rule). Distinct from
+// the single top-level TargetGroupArn shorthand.
+type ELBv2ForwardConfig struct {
+	TargetGroups []ELBv2TargetGroupTuple
+	Stickiness   *ELBv2TargetGroupStickiness
+}
+
+type ELBv2TargetGroupTuple struct {
+	TargetGroupArn string
+	Weight         *int
+}
+
+type ELBv2TargetGroupStickiness struct {
+	Enabled         bool
+	DurationSeconds *int
+}
+
+// ELBv2AuthOidcConfig backs the `authenticate-oidc` action (the Pomerium/IAP
+// proxy ALB shape). ClientSecret is intentionally never stored or echoed — real
+// ELBv2 treats it as write-only and never returns it from Describe*.
+type ELBv2AuthOidcConfig struct {
+	Issuer                           string
+	AuthorizationEndpoint            string
+	TokenEndpoint                    string
+	UserInfoEndpoint                 string
+	ClientId                         string
+	Scope                            string
+	SessionCookieName                string
+	SessionTimeout                   *int64
+	OnUnauthenticatedRequest         string
+	AuthenticationRequestExtraParams map[string]string
+}
+
+// ELBv2AuthCognitoConfig backs the `authenticate-cognito` action.
+type ELBv2AuthCognitoConfig struct {
+	UserPoolArn                      string
+	UserPoolClientId                 string
+	UserPoolDomain                   string
+	Scope                            string
+	SessionCookieName                string
+	SessionTimeout                   *int64
+	OnUnauthenticatedRequest         string
+	AuthenticationRequestExtraParams map[string]string
 }
 
 type ELBv2FixedResponseConfig struct {
@@ -546,6 +606,8 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		DefaultActions:  parseELBv2Actions(r),
 		Certificates:    parseELBv2Certificates(r),
 		SslPolicy:       r.FormValue("SslPolicy"),
+		AlpnPolicy:      queryList(r, "AlpnPolicy"),
+		MutualAuth:      parseELBv2MutualAuth(r),
 		Attributes:      defaultELBv2ListenerAttributes(lb.Type),
 	}
 	elbv2Listeners.Put(arn, listener)
@@ -818,9 +880,57 @@ func elbv2ListenerXML(listener ELBv2Listener) string {
 	if listener.SslPolicy != "" {
 		sslPolicy = fmt.Sprintf("<SslPolicy>%s</SslPolicy>", xmlEscape(listener.SslPolicy))
 	}
-	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s%s%s</member>`,
+	var alpn string
+	if len(listener.AlpnPolicy) > 0 {
+		alpn = elbv2StringMembersXML("AlpnPolicy", listener.AlpnPolicy)
+	}
+	return fmt.Sprintf(`<member><ListenerArn>%s</ListenerArn><LoadBalancerArn>%s</LoadBalancerArn><Port>%d</Port><Protocol>%s</Protocol>%s%s%s%s%s</member>`,
 		xmlEscape(listener.Arn), xmlEscape(listener.LoadBalancerArn), listener.Port, xmlEscape(listener.Protocol),
-		elbv2ActionsXML("DefaultActions", listener.DefaultActions), certs.String(), sslPolicy)
+		elbv2ActionsXML("DefaultActions", listener.DefaultActions), certs.String(), sslPolicy, alpn,
+		elbv2MutualAuthXML(listener.MutualAuth))
+}
+
+func elbv2MutualAuthXML(m *ELBv2MutualAuth) string {
+	if m == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<MutualAuthentication>")
+	if m.Mode != "" {
+		fmt.Fprintf(&b, "<Mode>%s</Mode>", xmlEscape(m.Mode))
+	}
+	if m.TrustStoreArn != "" {
+		fmt.Fprintf(&b, "<TrustStoreArn>%s</TrustStoreArn>", xmlEscape(m.TrustStoreArn))
+	}
+	if m.IgnoreClientCertificateExpiry != nil {
+		fmt.Fprintf(&b, "<IgnoreClientCertificateExpiry>%t</IgnoreClientCertificateExpiry>", *m.IgnoreClientCertificateExpiry)
+	}
+	if m.AdvertiseTrustStoreCaNames != "" {
+		fmt.Fprintf(&b, "<AdvertiseTrustStoreCaNames>%s</AdvertiseTrustStoreCaNames>", xmlEscape(m.AdvertiseTrustStoreCaNames))
+	}
+	b.WriteString("</MutualAuthentication>")
+	return b.String()
+}
+
+// parseELBv2MutualAuth reads the listener's mutual_authentication block. The
+// `off` mode (the ELBv2 default) carries no trust store; only model it when a
+// non-empty mode or trust store is actually supplied.
+func parseELBv2MutualAuth(r *http.Request) *ELBv2MutualAuth {
+	mode := r.FormValue("MutualAuthentication.Mode")
+	trustStore := r.FormValue("MutualAuthentication.TrustStoreArn")
+	if mode == "" && trustStore == "" {
+		return nil
+	}
+	m := &ELBv2MutualAuth{
+		Mode:                       mode,
+		TrustStoreArn:              trustStore,
+		AdvertiseTrustStoreCaNames: r.FormValue("MutualAuthentication.AdvertiseTrustStoreCaNames"),
+	}
+	if v := r.FormValue("MutualAuthentication.IgnoreClientCertificateExpiry"); v != "" {
+		b := v == "true"
+		m.IgnoreClientCertificateExpiry = &b
+	}
+	return m
 }
 
 func elbv2TargetXML(target ELBv2TargetDescription) string {
@@ -923,6 +1033,15 @@ func parseELBv2ActionsPrefix(r *http.Request, prefix string) []ELBv2Action {
 				StatusCode: r.FormValue(base + ".RedirectConfig.StatusCode"),
 			}
 		}
+		if fwd := parseELBv2ForwardConfig(r, base+".ForwardConfig"); fwd != nil {
+			action.Forward = fwd
+		}
+		if oidc := parseELBv2AuthOidc(r, base+".AuthenticateOidcConfig"); oidc != nil {
+			action.AuthOidc = oidc
+		}
+		if cog := parseELBv2AuthCognito(r, base+".AuthenticateCognitoConfig"); cog != nil {
+			action.AuthCognito = cog
+		}
 		actions = append(actions, action)
 	}
 	return actions
@@ -966,9 +1085,196 @@ func elbv2ActionsXML(wrapper string, actions []ELBv2Action) string {
 			}
 			b.WriteString("</RedirectConfig>")
 		}
+		if fwd := action.Forward; fwd != nil {
+			b.WriteString(elbv2ForwardConfigXML(fwd))
+		}
+		if oidc := action.AuthOidc; oidc != nil {
+			b.WriteString(elbv2AuthOidcXML(oidc))
+		}
+		if cog := action.AuthCognito; cog != nil {
+			b.WriteString(elbv2AuthCognitoXML(cog))
+		}
 		b.WriteString("</member>")
 	}
 	fmt.Fprintf(&b, "</%s>", wrapper)
+	return b.String()
+}
+
+// parseELBv2ForwardConfig parses the weighted multi-target-group forward block.
+func parseELBv2ForwardConfig(r *http.Request, base string) *ELBv2ForwardConfig {
+	var tgs []ELBv2TargetGroupTuple
+	for i := 1; ; i++ {
+		m := fmt.Sprintf("%s.TargetGroups.member.%d", base, i)
+		arn := r.FormValue(m + ".TargetGroupArn")
+		if arn == "" {
+			break
+		}
+		tuple := ELBv2TargetGroupTuple{TargetGroupArn: arn}
+		if w := r.FormValue(m + ".Weight"); w != "" {
+			weight := atoiDefault(w, 1)
+			tuple.Weight = &weight
+		}
+		tgs = append(tgs, tuple)
+	}
+	var stickiness *ELBv2TargetGroupStickiness
+	if e := r.FormValue(base + ".TargetGroupStickinessConfig.Enabled"); e != "" {
+		st := &ELBv2TargetGroupStickiness{Enabled: e == "true"}
+		if d := r.FormValue(base + ".TargetGroupStickinessConfig.DurationSeconds"); d != "" {
+			dur := atoiDefault(d, 0)
+			st.DurationSeconds = &dur
+		}
+		stickiness = st
+	}
+	if len(tgs) == 0 && stickiness == nil {
+		return nil
+	}
+	return &ELBv2ForwardConfig{TargetGroups: tgs, Stickiness: stickiness}
+}
+
+func parseELBv2AuthOidc(r *http.Request, base string) *ELBv2AuthOidcConfig {
+	issuer := r.FormValue(base + ".Issuer")
+	clientID := r.FormValue(base + ".ClientId")
+	if issuer == "" && clientID == "" {
+		return nil
+	}
+	cfg := &ELBv2AuthOidcConfig{
+		Issuer:                           issuer,
+		AuthorizationEndpoint:            r.FormValue(base + ".AuthorizationEndpoint"),
+		TokenEndpoint:                    r.FormValue(base + ".TokenEndpoint"),
+		UserInfoEndpoint:                 r.FormValue(base + ".UserInfoEndpoint"),
+		ClientId:                         clientID,
+		Scope:                            r.FormValue(base + ".Scope"),
+		SessionCookieName:                r.FormValue(base + ".SessionCookieName"),
+		OnUnauthenticatedRequest:         r.FormValue(base + ".OnUnauthenticatedRequest"),
+		AuthenticationRequestExtraParams: parseELBv2ExtraParams(r, base+".AuthenticationRequestExtraParams"),
+	}
+	if t := r.FormValue(base + ".SessionTimeout"); t != "" {
+		v := int64(atoiDefault(t, 604800))
+		cfg.SessionTimeout = &v
+	}
+	return cfg
+}
+
+func parseELBv2AuthCognito(r *http.Request, base string) *ELBv2AuthCognitoConfig {
+	poolArn := r.FormValue(base + ".UserPoolArn")
+	clientID := r.FormValue(base + ".UserPoolClientId")
+	if poolArn == "" && clientID == "" {
+		return nil
+	}
+	cfg := &ELBv2AuthCognitoConfig{
+		UserPoolArn:                      poolArn,
+		UserPoolClientId:                 clientID,
+		UserPoolDomain:                   r.FormValue(base + ".UserPoolDomain"),
+		Scope:                            r.FormValue(base + ".Scope"),
+		SessionCookieName:                r.FormValue(base + ".SessionCookieName"),
+		OnUnauthenticatedRequest:         r.FormValue(base + ".OnUnauthenticatedRequest"),
+		AuthenticationRequestExtraParams: parseELBv2ExtraParams(r, base+".AuthenticationRequestExtraParams"),
+	}
+	if t := r.FormValue(base + ".SessionTimeout"); t != "" {
+		v := int64(atoiDefault(t, 604800))
+		cfg.SessionTimeout = &v
+	}
+	return cfg
+}
+
+// parseELBv2ExtraParams reads the query-protocol map (`.entry.N.key/.value`).
+func parseELBv2ExtraParams(r *http.Request, base string) map[string]string {
+	out := map[string]string{}
+	for i := 1; ; i++ {
+		m := fmt.Sprintf("%s.entry.%d", base, i)
+		k := r.FormValue(m + ".key")
+		if k == "" {
+			break
+		}
+		out[k] = r.FormValue(m + ".value")
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func elbv2ForwardConfigXML(fwd *ELBv2ForwardConfig) string {
+	var b strings.Builder
+	b.WriteString("<ForwardConfig><TargetGroups>")
+	for _, tg := range fwd.TargetGroups {
+		fmt.Fprintf(&b, "<member><TargetGroupArn>%s</TargetGroupArn>", xmlEscape(tg.TargetGroupArn))
+		if tg.Weight != nil {
+			fmt.Fprintf(&b, "<Weight>%d</Weight>", *tg.Weight)
+		}
+		b.WriteString("</member>")
+	}
+	b.WriteString("</TargetGroups>")
+	if st := fwd.Stickiness; st != nil {
+		b.WriteString("<TargetGroupStickinessConfig>")
+		fmt.Fprintf(&b, "<Enabled>%t</Enabled>", st.Enabled)
+		if st.DurationSeconds != nil {
+			fmt.Fprintf(&b, "<DurationSeconds>%d</DurationSeconds>", *st.DurationSeconds)
+		}
+		b.WriteString("</TargetGroupStickinessConfig>")
+	}
+	b.WriteString("</ForwardConfig>")
+	return b.String()
+}
+
+func elbv2AuthOidcXML(o *ELBv2AuthOidcConfig) string {
+	var b strings.Builder
+	b.WriteString("<AuthenticateOidcConfig>")
+	for _, kv := range []struct{ name, val string }{
+		{"Issuer", o.Issuer}, {"AuthorizationEndpoint", o.AuthorizationEndpoint},
+		{"TokenEndpoint", o.TokenEndpoint}, {"UserInfoEndpoint", o.UserInfoEndpoint},
+		{"ClientId", o.ClientId}, {"Scope", o.Scope}, {"SessionCookieName", o.SessionCookieName},
+		{"OnUnauthenticatedRequest", o.OnUnauthenticatedRequest},
+	} {
+		if kv.val != "" {
+			fmt.Fprintf(&b, "<%s>%s</%s>", kv.name, xmlEscape(kv.val), kv.name)
+		}
+	}
+	if o.SessionTimeout != nil {
+		fmt.Fprintf(&b, "<SessionTimeout>%d</SessionTimeout>", *o.SessionTimeout)
+	}
+	b.WriteString(elbv2ExtraParamsXML(o.AuthenticationRequestExtraParams))
+	b.WriteString("</AuthenticateOidcConfig>")
+	return b.String()
+}
+
+func elbv2AuthCognitoXML(c *ELBv2AuthCognitoConfig) string {
+	var b strings.Builder
+	b.WriteString("<AuthenticateCognitoConfig>")
+	for _, kv := range []struct{ name, val string }{
+		{"UserPoolArn", c.UserPoolArn}, {"UserPoolClientId", c.UserPoolClientId},
+		{"UserPoolDomain", c.UserPoolDomain}, {"Scope", c.Scope},
+		{"SessionCookieName", c.SessionCookieName}, {"OnUnauthenticatedRequest", c.OnUnauthenticatedRequest},
+	} {
+		if kv.val != "" {
+			fmt.Fprintf(&b, "<%s>%s</%s>", kv.name, xmlEscape(kv.val), kv.name)
+		}
+	}
+	if c.SessionTimeout != nil {
+		fmt.Fprintf(&b, "<SessionTimeout>%d</SessionTimeout>", *c.SessionTimeout)
+	}
+	b.WriteString(elbv2ExtraParamsXML(c.AuthenticationRequestExtraParams))
+	b.WriteString("</AuthenticateCognitoConfig>")
+	return b.String()
+}
+
+// elbv2ExtraParamsXML renders the auth extra-params map in deterministic key
+// order as `<entry><key/><value/></entry>` members.
+func elbv2ExtraParamsXML(params map[string]string) string {
+	if len(params) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("<AuthenticationRequestExtraParams>")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "<entry><key>%s</key><value>%s</value></entry>", xmlEscape(k), xmlEscape(params[k]))
+	}
+	b.WriteString("</AuthenticationRequestExtraParams>")
 	return b.String()
 }
 

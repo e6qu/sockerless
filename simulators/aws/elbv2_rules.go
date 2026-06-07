@@ -43,7 +43,11 @@ func registerELBv2Rules(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(elbv2APIVersion, "DescribeRules", handleELBv2DescribeRules)
 	r.RegisterVersioned(elbv2APIVersion, "ModifyRule", handleELBv2ModifyRule)
 	r.RegisterVersioned(elbv2APIVersion, "DeleteRule", handleELBv2DeleteRule)
+	r.RegisterVersioned(elbv2APIVersion, "SetRulePriorities", handleELBv2SetRulePriorities)
 	r.RegisterVersioned(elbv2APIVersion, "ModifyListener", handleELBv2ModifyListener)
+	r.RegisterVersioned(elbv2APIVersion, "AddListenerCertificates", handleELBv2AddListenerCertificates)
+	r.RegisterVersioned(elbv2APIVersion, "RemoveListenerCertificates", handleELBv2RemoveListenerCertificates)
+	r.RegisterVersioned(elbv2APIVersion, "DescribeListenerCertificates", handleELBv2DescribeListenerCertificates)
 }
 
 func handleELBv2CreateRule(w http.ResponseWriter, r *http.Request) {
@@ -154,14 +158,131 @@ func handleELBv2ModifyListener(w http.ResponseWriter, r *http.Request) {
 	if certs := parseELBv2Certificates(r); len(certs) > 0 {
 		listener.Certificates = certs
 	}
+	if ssl := r.FormValue("SslPolicy"); ssl != "" {
+		listener.SslPolicy = ssl
+	}
+	if alpn := queryList(r, "AlpnPolicy"); len(alpn) > 0 {
+		listener.AlpnPolicy = alpn
+	}
+	if ma := parseELBv2MutualAuth(r); ma != nil {
+		listener.MutualAuth = ma
+	}
 	elbv2Listeners.Put(arn, listener)
 	elbv2XMLResponse(w, "ModifyListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
 }
 
+// handleELBv2SetRulePriorities reorders non-default rules. The provider uses it
+// when an aws_lb_listener_rule's priority changes.
+func handleELBv2SetRulePriorities(w http.ResponseWriter, r *http.Request) {
+	var updated []ELBv2Rule
+	for i := 1; ; i++ {
+		base := fmt.Sprintf("RulePriorities.member.%d", i)
+		ruleArn := r.FormValue(base + ".RuleArn")
+		if ruleArn == "" {
+			break
+		}
+		rule, ok := elbv2Rules.Get(ruleArn)
+		if !ok {
+			elbv2ErrorXML(w, "RuleNotFound", "Rule not found", http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+		if p := r.FormValue(base + ".Priority"); p != "" {
+			rule.Priority = p
+		}
+		elbv2Rules.Put(ruleArn, rule)
+		updated = append(updated, rule)
+	}
+	var b strings.Builder
+	b.WriteString("<Rules>")
+	for _, rl := range updated {
+		b.WriteString(elbv2RuleXML(rl))
+	}
+	b.WriteString("</Rules>")
+	elbv2XMLResponse(w, "SetRulePriorities", b.String(), sim.RequestID(r.Context()))
+}
+
+// handleELBv2AddListenerCertificates appends SNI certificates to a listener.
+// These are the extra (non-default) certs the aws_lb_listener_certificate
+// resource manages, distinct from the listener's default certificate.
+func handleELBv2AddListenerCertificates(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("ListenerArn")
+	listener, ok := elbv2Listeners.Get(arn)
+	if !ok {
+		elbv2ErrorXML(w, "ListenerNotFound", "Listener not found", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	for _, c := range parseELBv2Certificates(r) {
+		listener.SNICertificates = appendUnique(listener.SNICertificates, c)
+	}
+	elbv2Listeners.Put(arn, listener)
+	elbv2XMLResponse(w, "AddListenerCertificates",
+		elbv2ListenerCertificatesXML(listener, false), sim.RequestID(r.Context()))
+}
+
+func handleELBv2RemoveListenerCertificates(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("ListenerArn")
+	listener, ok := elbv2Listeners.Get(arn)
+	if !ok {
+		elbv2ErrorXML(w, "ListenerNotFound", "Listener not found", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	remove := map[string]bool{}
+	for _, c := range parseELBv2Certificates(r) {
+		remove[c] = true
+	}
+	kept := listener.SNICertificates[:0]
+	for _, c := range listener.SNICertificates {
+		if !remove[c] {
+			kept = append(kept, c)
+		}
+	}
+	listener.SNICertificates = kept
+	elbv2Listeners.Put(arn, listener)
+	elbv2XMLResponse(w, "RemoveListenerCertificates", "", sim.RequestID(r.Context()))
+}
+
+// handleELBv2DescribeListenerCertificates returns the default certificate
+// (IsDefault=true) plus the SNI certificates (IsDefault=false). The
+// aws_lb_listener_certificate resource filters to the non-default ones.
+func handleELBv2DescribeListenerCertificates(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("ListenerArn")
+	listener, ok := elbv2Listeners.Get(arn)
+	if !ok {
+		elbv2ErrorXML(w, "ListenerNotFound", "Listener not found", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	elbv2XMLResponse(w, "DescribeListenerCertificates",
+		elbv2ListenerCertificatesXML(listener, true), sim.RequestID(r.Context()))
+}
+
+// elbv2ListenerCertificatesXML renders the <Certificates> member list. When
+// includeDefault is set, the listener's default cert is emitted first with
+// IsDefault=true (the DescribeListenerCertificates shape); AddListenerCertificates
+// returns only the SNI certs it just added.
+func elbv2ListenerCertificatesXML(listener ELBv2Listener, includeDefault bool) string {
+	var b strings.Builder
+	b.WriteString("<Certificates>")
+	if includeDefault {
+		for _, c := range listener.Certificates {
+			fmt.Fprintf(&b, "<member><CertificateArn>%s</CertificateArn><IsDefault>true</IsDefault></member>", xmlEscape(c))
+		}
+	}
+	for _, c := range listener.SNICertificates {
+		fmt.Fprintf(&b, "<member><CertificateArn>%s</CertificateArn><IsDefault>false</IsDefault></member>", xmlEscape(c))
+	}
+	b.WriteString("</Certificates>")
+	return b.String()
+}
+
 // ---- helpers ----
 
+// elbv2RuleArn builds a rule ARN from its listener ARN. Real ELBv2 rule ARNs
+// use the `listener-rule/` resource prefix (not `rule/`); terraform-provider-aws
+// reconstructs aws_lb_listener_rule.listener_arn from the rule ARN by requiring
+// exactly the `listener-rule/<type>/<lb>/<lbid>/<listenerid>/<ruleid>` shape, so
+// the wrong prefix nulls listener_arn and forces replacement every plan.
 func elbv2RuleArn(listenerArn, ruleID string) string {
-	return strings.Replace(listenerArn, ":listener/", ":rule/", 1) + "/" + ruleID
+	return strings.Replace(listenerArn, ":listener/", ":listener-rule/", 1) + "/" + ruleID
 }
 
 func elbv2DefaultRule(listener ELBv2Listener) ELBv2Rule {
