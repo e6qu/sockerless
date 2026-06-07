@@ -29,11 +29,12 @@ type RegistrySku struct {
 
 // RegistryProperties holds the properties of a container registry.
 type RegistryProperties struct {
-	LoginServer         string `json:"loginServer"`
-	ProvisioningState   string `json:"provisioningState"`
-	AdminUserEnabled    bool   `json:"adminUserEnabled"`
-	PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
-	ZoneRedundancy      string `json:"zoneRedundancy,omitempty"`
+	LoginServer              string `json:"loginServer"`
+	ProvisioningState        string `json:"provisioningState"`
+	AdminUserEnabled         bool   `json:"adminUserEnabled"`
+	PublicNetworkAccess      string `json:"publicNetworkAccess,omitempty"`
+	NetworkRuleBypassOptions string `json:"networkRuleBypassOptions,omitempty"`
+	ZoneRedundancy           string `json:"zoneRedundancy,omitempty"`
 }
 
 // ACRCacheRule models an Azure Container Registry cache rule
@@ -119,6 +120,13 @@ func registerACR(srv *sim.Server) {
 			sku = &RegistrySku{Name: "Basic", Tier: "Basic"}
 		}
 
+		// networkRuleBypassOptions defaults to "AzureServices" when the request
+		// omits it (ARM Microsoft.ContainerRegistry/registries default).
+		bypass := req.Properties.NetworkRuleBypassOptions
+		if bypass == "" {
+			bypass = "AzureServices"
+		}
+
 		reg := Registry{
 			ID:       resourceID,
 			Name:     name,
@@ -127,11 +135,12 @@ func registerACR(srv *sim.Server) {
 			Sku:      sku,
 			Tags:     req.Tags,
 			Properties: RegistryProperties{
-				LoginServer:         strings.ToLower(name) + ".azurecr.io",
-				ProvisioningState:   "Succeeded",
-				AdminUserEnabled:    req.Properties.AdminUserEnabled,
-				PublicNetworkAccess: "Enabled",
-				ZoneRedundancy:      "Disabled",
+				LoginServer:              strings.ToLower(name) + ".azurecr.io",
+				ProvisioningState:        "Succeeded",
+				AdminUserEnabled:         req.Properties.AdminUserEnabled,
+				PublicNetworkAccess:      "Enabled",
+				NetworkRuleBypassOptions: bypass,
+				ZoneRedundancy:           "Disabled",
 			},
 		}
 

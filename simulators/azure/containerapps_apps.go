@@ -99,8 +99,10 @@ type ContainerAppTemplate struct {
 
 // ContainerAppScale mirrors armappcontainers.Scale.
 type ContainerAppScale struct {
-	MinReplicas *int32 `json:"minReplicas,omitempty"`
-	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+	MinReplicas     *int32 `json:"minReplicas,omitempty"`
+	MaxReplicas     *int32 `json:"maxReplicas,omitempty"`
+	CooldownPeriod  *int32 `json:"cooldownPeriod,omitempty"`
+	PollingInterval *int32 `json:"pollingInterval,omitempty"`
 }
 
 // AsyncOperationStatus is the response shape for a polled
@@ -260,6 +262,27 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 		if app.Properties.Configuration != nil && app.Properties.Configuration.Ingress != nil {
 			app.Properties.Configuration.Ingress.Fqdn = fqdn
+		}
+
+		// KEDA scale settings: terraform-provider-azurerm reads
+		// properties.template.scale.cooldownPeriod (default 300) and
+		// pollingInterval (default 30) and would otherwise drift to 0 on a
+		// post-apply plan. Real ACA stamps these defaults server-side even
+		// when the request omits the scale block, so ensure a Scale object
+		// exists with them populated.
+		if app.Properties.Template == nil {
+			app.Properties.Template = &ContainerAppTemplate{}
+		}
+		if app.Properties.Template.Scale == nil {
+			app.Properties.Template.Scale = &ContainerAppScale{}
+		}
+		if app.Properties.Template.Scale.CooldownPeriod == nil {
+			cooldown := int32(300)
+			app.Properties.Template.Scale.CooldownPeriod = &cooldown
+		}
+		if app.Properties.Template.Scale.PollingInterval == nil {
+			polling := int32(30)
+			app.Properties.Template.Scale.PollingInterval = &polling
 		}
 
 		if err := startACAAppReplicas(r.Context(), resourceID, app); err != nil {

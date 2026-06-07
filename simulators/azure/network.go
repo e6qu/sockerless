@@ -20,9 +20,10 @@ type VirtualNetwork struct {
 }
 
 type VNetProperties struct {
-	AddressSpace      AddressSpace `json:"addressSpace"`
-	Subnets           []SubnetRef  `json:"subnets,omitempty"`
-	ProvisioningState string       `json:"provisioningState"`
+	AddressSpace                AddressSpace `json:"addressSpace"`
+	Subnets                     []SubnetRef  `json:"subnets,omitempty"`
+	PrivateEndpointVNetPolicies string       `json:"privateEndpointVNetPolicies,omitempty"`
+	ProvisioningState           string       `json:"provisioningState"`
 }
 
 type AddressSpace struct {
@@ -132,6 +133,10 @@ type NatGatewayProps struct {
 // other resources that carry just a name.
 type SkuName struct {
 	Name string `json:"name"`
+	// Tier (Regional/Global) is read back by terraform-provider-azurerm as
+	// sku_tier; it is a forces-replacement field on public IP / prefix / LB,
+	// so the create read-back must echo a non-empty default.
+	Tier string `json:"tier,omitempty"`
 }
 
 // SubResource is the standard Azure ARM reference shape — `{"id": "..."}`.
@@ -205,6 +210,11 @@ func registerNetwork(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/%s",
 			sub, rg, vnetName)
 
+		privateEndpointVNetPolicies := req.Properties.PrivateEndpointVNetPolicies
+		if privateEndpointVNetPolicies == "" {
+			privateEndpointVNetPolicies = "Disabled"
+		}
+
 		vnet := VirtualNetwork{
 			ID:       resourceID,
 			Name:     vnetName,
@@ -212,8 +222,9 @@ func registerNetwork(srv *sim.Server) {
 			Location: req.Location,
 			Tags:     req.Tags,
 			Properties: VNetProperties{
-				AddressSpace:      req.Properties.AddressSpace,
-				ProvisioningState: "Succeeded",
+				AddressSpace:                req.Properties.AddressSpace,
+				PrivateEndpointVNetPolicies: privateEndpointVNetPolicies,
+				ProvisioningState:           "Succeeded",
 			},
 		}
 

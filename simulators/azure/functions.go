@@ -45,16 +45,20 @@ type SiteProperties struct {
 	ResourceGroup        string                            `json:"resourceGroup,omitempty"`
 	LastModifiedTime     string                            `json:"lastModifiedTimeUtc,omitempty"`
 	HTTPSOnly            bool                              `json:"httpsOnly,omitempty"`
+	ClientCertMode       string                            `json:"clientCertMode,omitempty"`
 	AzureStorageAccounts map[string]*AzureStorageInfoValue `json:"-"`
 }
 
 // SiteConfig holds the site configuration for a function app.
 type SiteConfig struct {
-	AppSettings           []NameValuePair `json:"appSettings,omitempty"`
-	LinuxFxVersion        string          `json:"linuxFxVersion,omitempty"`
-	FunctionAppScaleLimit int             `json:"functionAppScaleLimit,omitempty"`
-	FtpsState             string          `json:"ftpsState,omitempty"`
-	SimCommand            []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
+	AppSettings                         []NameValuePair `json:"appSettings,omitempty"`
+	LinuxFxVersion                      string          `json:"linuxFxVersion,omitempty"`
+	FunctionAppScaleLimit               int             `json:"functionAppScaleLimit,omitempty"`
+	FtpsState                           string          `json:"ftpsState,omitempty"`
+	LoadBalancing                       string          `json:"loadBalancing,omitempty"`
+	ManagedPipelineMode                 string          `json:"managedPipelineMode,omitempty"`
+	IPSecurityRestrictionsDefaultAction string          `json:"ipSecurityRestrictionsDefaultAction,omitempty"`
+	SimCommand                          []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 // NameValuePair holds a name-value pair for app settings.
@@ -169,6 +173,29 @@ func registerAzureFunctions(srv *sim.Server) {
 		// the invoke handler matches that against DefaultHostName.
 		defaultHostName := name + ".azurewebsites.net"
 
+		// Default the ARM-computed site properties the provider reads back
+		// when the request omits them, so a post-apply GET echoes the same
+		// values terraform expects (no idempotency drift). These mirror the
+		// real Microsoft.Web/sites defaults.
+		clientCertMode := req.Properties.ClientCertMode
+		if clientCertMode == "" {
+			clientCertMode = "Optional"
+		}
+
+		siteConfig := req.Properties.SiteConfig
+		if siteConfig == nil {
+			siteConfig = &SiteConfig{}
+		}
+		if siteConfig.LoadBalancing == "" {
+			siteConfig.LoadBalancing = "LeastRequests"
+		}
+		if siteConfig.ManagedPipelineMode == "" {
+			siteConfig.ManagedPipelineMode = "Integrated"
+		}
+		if siteConfig.IPSecurityRestrictionsDefaultAction == "" {
+			siteConfig.IPSecurityRestrictionsDefaultAction = "Allow"
+		}
+
 		site := Site{
 			ID:       resourceID,
 			Name:     name,
@@ -184,10 +211,11 @@ func registerAzureFunctions(srv *sim.Server) {
 				EnabledHostNames: []string{defaultHostName, name + ".scm.azurewebsites.net"},
 				ServerFarmID:     req.Properties.ServerFarmID,
 				Reserved:         req.Properties.Reserved,
-				SiteConfig:       req.Properties.SiteConfig,
+				SiteConfig:       siteConfig,
 				ResourceGroup:    rg,
 				LastModifiedTime: time.Now().UTC().Format(time.RFC3339),
 				HTTPSOnly:        req.Properties.HTTPSOnly,
+				ClientCertMode:   clientCertMode,
 			},
 		}
 

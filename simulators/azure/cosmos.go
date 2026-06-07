@@ -176,14 +176,11 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 		"provisioningState":        "Succeeded",
 		"documentEndpoint":         azureCosmosEndpointURL(r, name),
 		"databaseAccountOfferType": "Standard",
-		"locations": []map[string]any{{
-			"locationName":     req.Location,
-			"failoverPriority": 0,
-		}},
 	}
 	for k, v := range req.Properties {
 		props[k] = v
 	}
+	cosmosNormalizeLocations(props, req.Location)
 	cosmosEnsureBackupPolicy(props)
 	a := CosmosAccount{
 		ID:         id,
@@ -213,6 +210,65 @@ func cosmosEnsureBackupPolicy(props map[string]any) {
 		}
 	}
 	props["backupPolicy"] = backupPolicy
+}
+
+// cosmosNormalizeLocations faithfully round-trips the geo-replication
+// locations the create request carried in properties.locations (Terraform's
+// geo_location blocks become this array), defaulting isZoneRedundant to false
+// where the request omitted it so the provider's zone_redundant attribute
+// round-trips. When the request carries no locations, a single write region is
+// synthesized from the account location. The parallel read-only writeLocations
+// and readLocations arrays are populated to match the real ARM
+// Microsoft.DocumentDB/databaseAccounts GET shape.
+func cosmosNormalizeLocations(props map[string]any, accountLocation string) {
+	raw, _ := props["locations"].([]any)
+	locations := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		loc, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		locations = append(locations, cosmosNormalizeLocation(loc))
+	}
+	if len(locations) == 0 {
+		locations = append(locations, map[string]any{
+			"locationName":     accountLocation,
+			"failoverPriority": 0,
+			"isZoneRedundant":  false,
+		})
+	}
+	props["locations"] = locations
+
+	writeLocations := make([]map[string]any, 0, 1)
+	readLocations := make([]map[string]any, 0, len(locations))
+	for _, loc := range locations {
+		readLocations = append(readLocations, loc)
+		if fmt.Sprint(loc["failoverPriority"]) == "0" {
+			writeLocations = append(writeLocations, loc)
+		}
+	}
+	if len(writeLocations) == 0 && len(locations) > 0 {
+		writeLocations = append(writeLocations, locations[0])
+	}
+	props["writeLocations"] = writeLocations
+	props["readLocations"] = readLocations
+}
+
+// cosmosNormalizeLocation preserves the request's locationName exactly (the
+// provider normalizes location names on its side, so a faithful round-trip
+// avoids drift) and ensures failoverPriority and isZoneRedundant are present.
+func cosmosNormalizeLocation(loc map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range loc {
+		out[k] = v
+	}
+	if out["failoverPriority"] == nil {
+		out["failoverPriority"] = 0
+	}
+	if out["isZoneRedundant"] == nil {
+		out["isZoneRedundant"] = false
+	}
+	return out
 }
 
 func handleCosmosGetAccount(w http.ResponseWriter, r *http.Request) {
