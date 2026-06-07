@@ -18,7 +18,40 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Phase
 
-Phase G-AWS in progress on branch `feat/phase-g-aws-new-slices`. Step Functions, CodeBuild, Glue, and Batch implemented with full SDK + CLI + Terraform coverage.
+**Terraform idempotency drift sweep** (started in PR #491). The new
+second-plan `terraform plan -detailed-exitcode` drift assertions on the gcp +
+azure apply stacks (BUG-1532) surfaced ~13 pre-existing read-back fidelity bugs
+that cause a non-empty second plan. PR #491 already lands the green pieces
+(scheduler `cron(...)` evaluation BUG-1531, the drift assertions themselves, and
+the Docker-Hub→ECR-gallery harness fix BUG-1533); the drift fixes below are the
+remaining work to make `tf (gcp)` / `tf (azure)` green. These stacks cannot run
+on a Mac host (gcp needs Linux real-exec; azure-Docker times out locally), so
+each fix is verified blind via the CI `tf (...)` job.
+
+### Terraform drift fixes (to close BUG-1532)
+
+Root causes are the `# forces replacement` / `-> null` lines in the second plan;
+the `(known after apply)` diffs are downstream cascades that clear once their
+parent resource stops being replaced.
+
+**GCP** (`simulators/gcp/`):
+1. **logging sink** (`logging.go`) — `name` returns the full `projects/{p}/sinks/{n}` path; real `LogSink.name` is the **short** name. Return short `name` in create/get/list/update responses while keeping the full-path store key.
+2. **logging metric** (`logging.go`) — same full-path-vs-short `name` issue; same fix.
+3. **memorystore redis** (`memorystore_redis.go`) — read-back omits the `connectMode` (default `DIRECT_PEERING`) and `transitEncryptionMode` (default `DISABLED`) defaults → both force replacement. Populate them on get.
+4. **gcs bucket** (`gcs.go`) — `location` returned lowercase `us-central1`; GCS bucket locations are **uppercase** (`US-CENTRAL1`) → forces replacement. Upper-case the location on read.
+5. **api gateway api-config** (`apigateway.go`) — the config read omits the OpenAPI document (`openapi_documents[].document.contents`/`path`) → forces replacement of `google_api_gateway_api_config`. Return the stored document.
+6. **dns managed zone / compute** — a `type = "PUBLIC"` default is added on re-plan (forces replacement); pin down the exact resource (dns zone `visibility`/managed-zone type or router-nat) and return the default.
+
+**AZURE** (`simulators/azure/`):
+7. **`tags = {} -> null` (pervasive)** — `Tags map[string]string json:"tags,omitempty"` drops an empty map → terraform refreshes `tags` to null vs the `{}` in state. Affects app-insights, cosmosdb account, key-vault, vnet, public-ip, etc. Fix: emit `"tags": {}` (drop `omitempty` + initialise to `{}` on read) for tagged resources.
+8. **`zones = [] -> null`** (public-ip / public-ip-prefix) — emit `[]` not null.
+9. **`ip_tags = {} -> null`** (public-ip) — emit `{}` not null.
+10. **public-ip / public-ip-prefix `sku_tier = "Regional"`** — default not returned → forces replacement. Return it.
+11. **storage account `account_tier = "Standard"`** — not returned on read → forces replacement. Return it.
+12. **app-insights `application_type = "web"`** — default not returned → forces replacement. Return it. (Also `daily_data_cap_notifications_disabled`/`enabled` boolean defaults `-> null`.)
+13. **apim api `revision = "1"`** — default not returned → forces replacement (from the #480 APIM addition). Return it.
+
+Approach: fix one cloud fully (so its `tf` job goes green), push, read the next CI plan, repeat. File each as its own BUG-#### as fixed.
 
 ## Completed Phases
 
