@@ -406,6 +406,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2SecurityGroupRules = sim.MakeStore[EC2SecurityGroupRule](srv.DB(), "ec2_security_group_rules")
 	ec2Instances = sim.MakeStore[EC2Instance](srv.DB(), "ec2_instances")
 	ec2NetworkInterfaces = sim.MakeStore[EC2NetworkInterface](srv.DB(), "ec2_network_interfaces")
+	ec2KeyPairs = sim.MakeStore[EC2KeyPair](srv.DB(), "ec2_key_pairs")
 	ec2Volumes = sim.MakeStore[EC2Volume](srv.DB(), "ec2_volumes")
 	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
 
@@ -493,6 +494,10 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DescribeInstanceTypes", handleDescribeInstanceTypes)
 	r.Register("DescribeInstanceTypeOfferings", handleDescribeInstanceTypeOfferings)
 	r.Register("DescribeKeyPairs", handleDescribeKeyPairs)
+	r.Register("CreateKeyPair", handleCreateKeyPair)
+	r.Register("ImportKeyPair", handleImportKeyPair)
+	r.Register("DeleteKeyPair", handleDeleteKeyPair)
+	r.Register("ModifyInstanceMetadataOptions", handleModifyInstanceMetadataOptions)
 
 	// Pre-register a default `vpc-sim` + `subnet-0123456789abcdef0` so harnesses that
 	// hardcode those IDs (smoke-tests/run.sh, backend config examples)
@@ -3465,6 +3470,40 @@ func handleModifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<ModifyInstanceAttributeResponse %s><requestId>%s</requestId><return>true</return></ModifyInstanceAttributeResponse>`, ec2Xmlns(), generateUUID())
 }
 
+// handleModifyInstanceMetadataOptions updates an instance's metadata options in
+// place — the provider's path for an aws_instance.metadata_options change.
+func handleModifyInstanceMetadataOptions(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.FormValue("InstanceId")
+	if _, ok := ec2Instances.Get(instanceID); !ok {
+		sim.AWSErrorf(w, "InvalidInstanceID.NotFound", http.StatusBadRequest, "The instance ID %q does not exist", instanceID)
+		return
+	}
+	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+		if v := r.FormValue("HttpTokens"); v != "" {
+			inst.MetadataHttpTokens = v
+		}
+		if v := r.FormValue("HttpEndpoint"); v != "" {
+			inst.MetadataHttpEndpoint = v
+		}
+		if v := r.FormValue("HttpPutResponseHopLimit"); v != "" {
+			inst.MetadataHopLimit = ec2AtoiOr(v, inst.MetadataHopLimit)
+		}
+		if v := r.FormValue("InstanceMetadataTags"); v != "" {
+			inst.MetadataInstanceTags = v
+		}
+	})
+	inst, _ := ec2Instances.Get(instanceID)
+	hop := inst.MetadataHopLimit
+	if hop == 0 {
+		hop = 1
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<ModifyInstanceMetadataOptionsResponse %s><requestId>%s</requestId><instanceId>%s</instanceId>`+
+		`<instanceMetadataOptions><state>applied</state><httpTokens>%s</httpTokens><httpPutResponseHopLimit>%d</httpPutResponseHopLimit><httpEndpoint>%s</httpEndpoint><instanceMetadataTags>%s</instanceMetadataTags></instanceMetadataOptions>`+
+		`</ModifyInstanceMetadataOptionsResponse>`,
+		ec2Xmlns(), generateUUID(), instanceID, inst.MetadataHttpTokens, hop, inst.MetadataHttpEndpoint, inst.MetadataInstanceTags)
+}
+
 func handleCreateTags(w http.ResponseWriter, r *http.Request) {
 	resources := ec2ParamList(r, "ResourceId")
 	tags := parseIndexedTags(r, "Tag")
@@ -4165,15 +4204,48 @@ func mergeEC2Tags(existing, updates []EC2Tag) []EC2Tag {
 	return out
 }
 
+// handleDescribeImages serves AMIs. The sim has no AMI registry — AMIs are
+// opaque to it — so it synthesizes a deterministic image for the request: an
+// explicit ImageId echoes back, and a `data.aws_ami` filter lookup (by name /
+// architecture / root-device-type / virtualization-type / owner-alias) returns
+// one image whose attributes match the query so the lookup resolves
+// deterministically. Filter values now flow into the synthesized image rather
+// than being ignored (the prior handler returned a fixed x86_64 image regardless).
 func handleDescribeImages(w http.ResponseWriter, r *http.Request) {
 	imageIDs := ec2ParamList(r, "ImageId")
-	if len(imageIDs) == 0 {
-		imageIDs = []string{"ami-simulated"}
+	filters := ec2Filters(r)
+	firstFilter := func(name, def string) string {
+		if vals := filters[name]; len(vals) > 0 {
+			return vals[0]
+		}
+		return def
 	}
+	arch := firstFilter("architecture", "x86_64")
+	rootType := firstFilter("root-device-type", "ebs")
+	virtType := firstFilter("virtualization-type", "hvm")
+	ownerAlias := firstFilter("owner-alias", "amazon")
+	nameFilter := firstFilter("name", "")
+
+	var ids []string
+	switch {
+	case len(imageIDs) > 0:
+		ids = imageIDs
+	case len(filters["image-id"]) > 0:
+		ids = filters["image-id"]
+	case nameFilter != "":
+		ids = []string{ec2AmiIDFromName(nameFilter)}
+	default:
+		ids = []string{"ami-simulated"}
+	}
+
 	var items strings.Builder
-	for _, id := range imageIDs {
-		fmt.Fprintf(&items, `<item><imageId>%s</imageId><imageLocation>%s</imageLocation><imageState>available</imageState><imageOwnerId>%s</imageOwnerId><isPublic>true</isPublic><architecture>x86_64</architecture><imageType>machine</imageType><rootDeviceType>ebs</rootDeviceType><rootDeviceName>/dev/sda1</rootDeviceName><blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><snapshotId>snap-%s</snapshotId><volumeSize>8</volumeSize><deleteOnTermination>true</deleteOnTermination><volumeType>gp3</volumeType></ebs></item></blockDeviceMapping><virtualizationType>hvm</virtualizationType><name>%s</name><hypervisor>xen</hypervisor></item>`,
-			id, id, ec2Owner(), strings.TrimPrefix(id, "ami-"), id)
+	for _, id := range ids {
+		name := nameFilter
+		if name == "" {
+			name = id
+		}
+		fmt.Fprintf(&items, `<item><imageId>%s</imageId><imageLocation>%s/%s</imageLocation><imageState>available</imageState><imageOwnerId>%s</imageOwnerId><imageOwnerAlias>%s</imageOwnerAlias><isPublic>true</isPublic><architecture>%s</architecture><imageType>machine</imageType><rootDeviceType>%s</rootDeviceType><rootDeviceName>/dev/sda1</rootDeviceName><blockDeviceMapping><item><deviceName>/dev/sda1</deviceName><ebs><snapshotId>snap-%s</snapshotId><volumeSize>8</volumeSize><deleteOnTermination>true</deleteOnTermination><volumeType>gp3</volumeType></ebs></item></blockDeviceMapping><virtualizationType>%s</virtualizationType><name>%s</name><creationDate>2024-01-01T00:00:00.000Z</creationDate><hypervisor>xen</hypervisor></item>`,
+			id, ownerAlias, name, ec2Owner(), ownerAlias, arch, rootType, strings.TrimPrefix(id, "ami-"), virtType, xmlEscape(name))
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeImagesResponse %s><requestId>%s</requestId><imagesSet>%s</imagesSet></DescribeImagesResponse>`, ec2Xmlns(), generateUUID(), items.String())
@@ -4194,11 +4266,6 @@ func handleDescribeInstanceTypes(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <instanceTypeSet>%s</instanceTypeSet>
 </DescribeInstanceTypesResponse>`, ec2Xmlns(), generateUUID(), items.String())
-}
-
-func handleDescribeKeyPairs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<DescribeKeyPairsResponse %s><requestId>%s</requestId><keySet/></DescribeKeyPairsResponse>`, ec2Xmlns(), generateUUID())
 }
 
 // handleDescribeInstanceTypeOfferings answers "is this instance type offered in

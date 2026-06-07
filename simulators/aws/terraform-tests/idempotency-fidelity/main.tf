@@ -255,6 +255,54 @@ data "aws_route_table" "main" {
   }
 }
 
+# Key pair: DescribeKeyPairs was always empty, so aws_key_pair drifted/recreated.
+resource "aws_key_pair" "deployer" {
+  key_name   = "fidelity-deployer"
+  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQexample fidelity@test"
+}
+
+# Launch template with credit_specification + instance_market_options: both were
+# dropped from the LT round-trip, so they drifted every plan.
+resource "aws_launch_template" "spot" {
+  name          = "fidelity-spot-lt"
+  image_id      = "ami-12345678"
+  instance_type = "t3.micro"
+  credit_specification {
+    cpu_credits = "unlimited"
+  }
+  instance_market_options {
+    market_type = "spot"
+    spot_options {
+      max_price                      = "0.05"
+      spot_instance_type             = "one-time"
+      instance_interruption_behavior = "terminate"
+    }
+  }
+}
+
+# data.aws_ami lookup: DescribeImages ignored Filters, so the name/architecture
+# filter couldn't actually select. The sim now resolves a deterministic image.
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["al2023-ami-minimal"]
+  }
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+}
+
+output "deployer_key_id" {
+  value = aws_key_pair.deployer.key_pair_id
+}
+
+output "resolved_ami_id" {
+  value = data.aws_ami.al2023.id
+}
+
 output "nat_gateway_id" {
   value = aws_nat_gateway.this.id
 }
