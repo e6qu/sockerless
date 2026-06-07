@@ -5,6 +5,9 @@ set -e
 
 PORT="${PORT:-15555}"
 
+# The admin token has no default in the binary — the E2E harness sets it.
+export BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000"
+
 "$SERVER_BIN" -addr ":${PORT}" -log-level debug &
 SERVER_PID=$!
 

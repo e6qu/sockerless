@@ -94,7 +94,7 @@ sudo security add-trusted-cert -d -r trustRoot \
 sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
   ./sockerless-bleephub --addr :443 &
 
-echo "ghp_0000000000000000000000000000000000000000" \
+echo "bleephub-admin-token-00000000000000000000" \
   | gh auth login --hostname localhost --with-token
 export GH_HOST=localhost
 

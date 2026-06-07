@@ -212,6 +212,17 @@ resource "aws_launch_template" "nat" {
 
 resource "aws_instance" "nat" {
   subnet_id = aws_subnet.a.id
+  # NAT-instance knobs the provider reads back — each was dropped/hardcoded and
+  # drifted every plan: source_dest_check (set via ModifyInstanceAttribute),
+  # monitoring, ebs_optimized, and metadata_options.
+  source_dest_check = false
+  monitoring        = false
+  ebs_optimized     = false
+  metadata_options {
+    http_tokens                 = "required"
+    http_endpoint               = "enabled"
+    http_put_response_hop_limit = 2
+  }
   launch_template {
     id      = aws_launch_template.nat.id
     version = "$Latest"

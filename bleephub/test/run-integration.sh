@@ -66,6 +66,8 @@ log "Docker frontend ready"
 
 # --- 3. Start bleephub ---
 log "Starting bleephub on $BLEEPHUB_ADDR"
+# The admin token has no default — the binary fails loudly if this is unset.
+export BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000"
 bleephub --addr "$BLEEPHUB_ADDR" --log-level info &
 PIDS+=($!)
 wait_for_url "http://$BLEEPHUB_ADDR/health"
@@ -317,7 +319,7 @@ sleep 3
 log "===== TEST 7: Secrets injection ====="
 
 # PUT a secret via API
-TOKEN="ghp_0000000000000000000000000000000000000000"
+TOKEN="bleephub-admin-token-00000000000000000000"
 curl -sf -X PUT "http://$BLEEPHUB_ADDR/api/v3/repos/bleephub/test/actions/secrets/TEST_SECRET" \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/json" \

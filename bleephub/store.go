@@ -5,12 +5,27 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
 	gitStorage "github.com/go-git/go-git/v5/storage"
 )
+
+// AdminToken returns the seeded admin token, which MUST be supplied via
+// BLEEPHUB_ADMIN_TOKEN. There is no default: the token is a credential, so the
+// sim fails loudly rather than seeding a guessable value (and a hardcoded value
+// would be GitHub-PAT-shaped, tripping secret scanners — issue #501). Consumers
+// and test harnesses set the env var explicitly.
+func AdminToken() string {
+	v := os.Getenv("BLEEPHUB_ADMIN_TOKEN")
+	if v == "" {
+		log.Fatal("bleephub: BLEEPHUB_ADMIN_TOKEN is required (the admin token has no default — set it explicitly)")
+	}
+	return v
+}
 
 // loadJSON is a thin wrapper to keep error wrapping uniform across persistence loaders.
 func loadJSON(raw []byte, v interface{}) error { return json.Unmarshal(raw, v) }
@@ -577,7 +592,7 @@ func (st *Store) SeedDefaultUser() {
 	}
 
 	t := &Token{
-		Value:     "ghp_0000000000000000000000000000000000000000",
+		Value:     AdminToken(),
 		UserID:    u.ID,
 		Scopes:    "repo, read:org, gist",
 		CreatedAt: now,

@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const defaultToken = "ghp_0000000000000000000000000000000000000000"
+const defaultToken = "bleephub-admin-token-00000000000000000000"
 
 func ghGet(t *testing.T, path string, token string) *http.Response {
 	t.Helper()

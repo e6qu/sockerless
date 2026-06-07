@@ -16,7 +16,7 @@ import (
 // a broken body would never learn its mistake. These tests pin the strict-decode
 // contract on every misc-endpoint write surface.
 
-const adminPAT = "ghp_0000000000000000000000000000000000000000"
+const adminPAT = "bleephub-admin-token-00000000000000000000"
 
 func miscEndpointsTestServer(t *testing.T) *Server {
 	t.Helper()

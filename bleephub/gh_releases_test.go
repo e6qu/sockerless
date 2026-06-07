@@ -28,7 +28,7 @@ func TestReleases_FullLifecycle(t *testing.T) {
 		} else {
 			req = httptest.NewRequest(method, path, nil)
 		}
-		req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
+		req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
 		w := httptest.NewRecorder()
 		s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 		return w
@@ -124,7 +124,7 @@ func TestReleases_GenerateNotes(t *testing.T) {
 		"previous_tag_name": "v1.0.0",
 	})
 	req := httptest.NewRequest("POST", "/api/v3/repos/admin/r/releases/generate-notes", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer ghp_0000000000000000000000000000000000000000")
+	req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
 	w := httptest.NewRecorder()
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
