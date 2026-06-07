@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
+	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -153,10 +154,25 @@ func TestCloudTrailRecordsAPICallsToS3SDK(t *testing.T) {
 	for _, event := range eventsOut.Events {
 		if aws.ToString(event.EventName) == "CreateVpc" {
 			foundCreateVpc = true
+			// EC2 is a query-protocol service; the recorded event must carry
+			// its real CloudTrail eventSource so EventSource-keyed LookupEvents
+			// filters work (not a generic aws.amazonaws.com).
+			assert.Equal(t, "ec2.amazonaws.com", aws.ToString(event.EventSource))
 			break
 		}
 	}
 	assert.True(t, foundCreateVpc, "LookupEvents must include the recorded EC2 CreateVpc management event")
+
+	// EventSource-keyed lookup must find the EC2 event (the filter real
+	// consumers use to scope CloudTrail to one service).
+	bySource, err := ctClient.LookupEvents(ctx, &cloudtrail.LookupEventsInput{
+		LookupAttributes: []cttypes.LookupAttribute{{
+			AttributeKey:   cttypes.LookupAttributeKeyEventSource,
+			AttributeValue: aws.String("ec2.amazonaws.com"),
+		}},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, bySource.Events, "LookupEvents filtered by EventSource=ec2.amazonaws.com must return the EC2 event")
 
 	objectsOut, err := s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),

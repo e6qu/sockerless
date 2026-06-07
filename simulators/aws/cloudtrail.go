@@ -453,7 +453,7 @@ func cloudTrailARN(name string) string {
 	return fmt.Sprintf("arn:aws:cloudtrail:%s:%s:trail/%s", awsRegion(), awsAccountID(), name)
 }
 
-func cloudTrailRecordAPICall(r *http.Request, status int) {
+func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, status int) {
 	if cloudTrailEvents == nil || status >= 500 {
 		return
 	}
@@ -461,10 +461,24 @@ func cloudTrailRecordAPICall(r *http.Request, status int) {
 	if eventName == "" {
 		return
 	}
+	source, ok := awsEventSource(r)
+	if !ok {
+		// A recognised operation whose service slice has no eventSource
+		// mapping. Surface it loudly instead of recording a fabricated source
+		// — the missing entry is a real gap in awsEventSourceByTargetPrefix /
+		// awsEventSourceByQueryVersion that must be added.
+		logger := srv.Logger()
+		logger.Warn().
+			Str("event", eventName).
+			Str("x-amz-target", r.Header.Get("X-Amz-Target")).
+			Str("version", r.FormValue("Version")).
+			Msg("cloudtrail: no eventSource mapping for service slice; event not recorded")
+		return
+	}
 	event := CloudTrailEvent{
 		EventId:     generateUUID(),
 		EventName:   eventName,
-		EventSource: awsEventSource(r),
+		EventSource: source,
 		EventTime:   time.Now().UTC().Format(time.RFC3339),
 		Username:    "sockerless",
 	}
@@ -485,22 +499,66 @@ func awsRequestOperationName(r *http.Request) string {
 	return ""
 }
 
-func awsEventSource(r *http.Request) string {
+// awsEventSourceByTargetPrefix maps an awsJson `X-Amz-Target` service prefix to
+// the CloudTrail `eventSource` value real AWS records for that service. The
+// prefixes are the per-service namespaces the sim registers (see each
+// service's Register call); the eventSource values are AWS's canonical
+// `<service>.amazonaws.com` endpoints. Order-independent: every prefix is
+// distinct after the point where sibling services diverge (e.g.
+// AmazonEC2ContainerService vs AmazonEC2ContainerRegistry).
+var awsEventSourceByTargetPrefix = []struct{ prefix, source string }{
+	{"com.amazonaws.cloudtrail", "cloudtrail.amazonaws.com"},
+	{"CloudTrail_", "cloudtrail.amazonaws.com"},
+	{"AmazonEC2ContainerServiceV", "ecs.amazonaws.com"},
+	{"AmazonEC2ContainerRegistry", "ecr.amazonaws.com"},
+	{"AmazonSQS", "sqs.amazonaws.com"},
+	{"AmazonSSM", "ssm.amazonaws.com"},
+	{"AnyScaleFrontendService", "application-autoscaling.amazonaws.com"},
+	{"AWSEvents", "events.amazonaws.com"},
+	{"AWSGlue", "glue.amazonaws.com"},
+	{"AWSStepFunctions", "states.amazonaws.com"},
+	{"AWSWAF_", "wafv2.amazonaws.com"},
+	{"CertificateManager", "acm.amazonaws.com"},
+	{"CodeBuild_", "codebuild.amazonaws.com"},
+	{"DynamoDB_", "dynamodb.amazonaws.com"},
+	{"GraniteServiceVersion", "monitoring.amazonaws.com"},
+	{"Kinesis_", "kinesis.amazonaws.com"},
+	{"Logs_", "logs.amazonaws.com"},
+	{"Route53AutoNaming", "servicediscovery.amazonaws.com"},
+	{"TrentService", "kms.amazonaws.com"},
+	{"secretsmanager", "secretsmanager.amazonaws.com"},
+}
+
+// awsEventSourceByQueryVersion maps a query-protocol service's request
+// `Version` (sent by the SDK, unique per service) to its eventSource.
+var awsEventSourceByQueryVersion = map[string]string{
+	"2016-11-15": "ec2.amazonaws.com",
+	"2011-01-01": "autoscaling.amazonaws.com",
+	"2010-03-31": "sns.amazonaws.com",
+	"2015-12-01": "elasticloadbalancing.amazonaws.com",
+	"2014-10-31": "rds.amazonaws.com",
+	"2010-05-08": "iam.amazonaws.com",
+	"2011-06-15": "sts.amazonaws.com",
+}
+
+// awsEventSource resolves the CloudTrail eventSource for an awsJson or
+// query-protocol request. It never guesses: an unmapped service returns
+// ok=false so the caller can surface the gap (and skip the event) rather than
+// record a fabricated source — a wrong source silently breaks LookupEvents
+// filtering, which is the exact defect a generic default would reintroduce.
+func awsEventSource(r *http.Request) (string, bool) {
 	if target := r.Header.Get("X-Amz-Target"); target != "" {
-		if strings.HasPrefix(target, "CloudTrail_") {
-			return "cloudtrail.amazonaws.com"
+		for _, m := range awsEventSourceByTargetPrefix {
+			if strings.HasPrefix(target, m.prefix) {
+				return m.source, true
+			}
 		}
-		if strings.HasPrefix(target, "AmazonEC2ContainerService") {
-			return "ecs.amazonaws.com"
-		}
-		return "aws.amazonaws.com"
+		return "", false
 	}
-	switch r.FormValue("Version") {
-	case "2011-01-01":
-		return "autoscaling.amazonaws.com"
-	default:
-		return "ec2.amazonaws.com"
+	if src, ok := awsEventSourceByQueryVersion[r.FormValue("Version")]; ok {
+		return src, true
 	}
+	return "", false
 }
 
 func cloudTrailDeliverEvent(event CloudTrailEvent) {

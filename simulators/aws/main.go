@@ -103,11 +103,11 @@ func main() {
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
 		if r.Header.Get("X-Amz-Target") != "" {
 			awsRouter.ServeHTTP(rec, r)
-			cloudTrailRecordAPICall(r, rec.statusCode())
+			cloudTrailRecordAPICall(srv, r, rec.statusCode())
 			return
 		}
 		queryRouter.ServeHTTP(rec, r)
-		cloudTrailRecordAPICall(r, rec.statusCode())
+		cloudTrailRecordAPICall(srv, r, rec.statusCode())
 	})
 
 	// Smithy RPCv2 CBOR services (path-based routing)
