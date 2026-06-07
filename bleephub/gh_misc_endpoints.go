@@ -294,10 +294,21 @@ func (s *Server) handleActionsOIDCToken(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 	base := s.baseURL(r)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"issuer":                   base + "/",
-		"jwks_uri":                 base + "/.well-known/jwks",
+		"issuer":   base + "/",
+		"jwks_uri": base + "/.well-known/jwks",
+		// bleephub is both a GitHub Actions OIDC token issuer (id_token) and a
+		// standard OAuth2/OIDC provider with a web authorization-code flow.
+		// Advertise the authorize/token/userinfo endpoints (all implemented —
+		// see gh_oauth.go / gh_rest.go) so relying parties that auto-configure
+		// from this document (Pomerium, Teleport, openid-client, …) can use
+		// bleephub as an IdP instead of choking on the missing required fields.
+		"authorization_endpoint":   base + "/login/oauth/authorize",
+		"token_endpoint":           base + "/login/oauth/access_token",
+		"userinfo_endpoint":        base + "/api/v3/user",
 		"subject_types_supported":  []string{"public", "pairwise"},
-		"response_types_supported": []string{"id_token"},
+		"response_types_supported": []string{"code", "id_token"},
+		"response_modes_supported": []string{"query"},
+		"grant_types_supported":    []string{"authorization_code"},
 		"claims_supported": []string{
 			"sub", "aud", "exp", "iat", "iss", "jti", "nbf",
 			"ref", "repository", "repository_id", "repository_owner",

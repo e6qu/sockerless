@@ -35,6 +35,19 @@ func TestSchedulerCronNext(t *testing.T) {
 			want: time.Date(2026, 6, 10, 13, 0, 0, 0, time.UTC),
 		},
 		{
+			// AWS start/step: 0/5 means minutes 0,5,…,55 (every 5 from 0), the
+			// idiomatic clock-aligned form. Must not collapse to just minute 0.
+			name: "start/step every 5 minutes (0/5)",
+			expr: "cron(0/5 * * * ? *)",
+			want: time.Date(2026, 6, 10, 12, 35, 0, 0, time.UTC),
+		},
+		{
+			// Non-zero start: 2/10 means minutes 2,12,22,32,42,52.
+			name: "start/step with offset (2/10)",
+			expr: "cron(2/10 * * * ? *)",
+			want: time.Date(2026, 6, 10, 12, 42, 0, 0, time.UTC),
+		},
+		{
 			name: "Jan 1 midnight -> next year",
 			expr: "cron(0 0 1 JAN ? *)",
 			want: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
