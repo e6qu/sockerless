@@ -20,7 +20,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -100,14 +102,22 @@ func main() {
 	// POST / handler: check X-Amz-Target first (JSON protocol),
 	// fall back to Action parameter (Query Protocol)
 	srv.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+		// Buffer the request body so the CloudTrail recorder can extract the
+		// resources[] the call acted on after the handler has consumed it.
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
 		if r.Header.Get("X-Amz-Target") != "" {
 			awsRouter.ServeHTTP(rec, r)
-			cloudTrailRecordAPICall(srv, r, rec.statusCode())
+			cloudTrailRecordAPICall(srv, r, body, rec.statusCode())
 			return
 		}
 		queryRouter.ServeHTTP(rec, r)
-		cloudTrailRecordAPICall(srv, r, rec.statusCode())
+		cloudTrailRecordAPICall(srv, r, body, rec.statusCode())
 	})
 
 	// Smithy RPCv2 CBOR services (path-based routing)

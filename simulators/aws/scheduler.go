@@ -56,19 +56,50 @@ func registerScheduler(srv *sim.Server) {
 	schedules = sim.MakeStore[Schedule](srv.DB(), "scheduler_schedules")
 	scheduleGroups = sim.MakeStore[ScheduleGroup](srv.DB(), "scheduler_schedule_groups")
 
-	srv.HandleFunc("POST /schedules/{Name}", handleSchedulerCreateSchedule)
-	srv.HandleFunc("GET /schedules/{Name}", handleSchedulerGetSchedule)
-	srv.HandleFunc("PUT /schedules/{Name}", handleSchedulerUpdateSchedule)
-	srv.HandleFunc("DELETE /schedules/{Name}", handleSchedulerDeleteSchedule)
-	srv.HandleFunc("GET /schedules", handleSchedulerListSchedules)
+	srv.HandleFunc("POST /schedules/{Name}", schedulerRecorded("CreateSchedule", handleSchedulerCreateSchedule))
+	srv.HandleFunc("GET /schedules/{Name}", schedulerRecorded("GetSchedule", handleSchedulerGetSchedule))
+	srv.HandleFunc("PUT /schedules/{Name}", schedulerRecorded("UpdateSchedule", handleSchedulerUpdateSchedule))
+	srv.HandleFunc("DELETE /schedules/{Name}", schedulerRecorded("DeleteSchedule", handleSchedulerDeleteSchedule))
+	srv.HandleFunc("GET /schedules", schedulerRecorded("ListSchedules", handleSchedulerListSchedules))
 
-	srv.HandleFunc("POST /schedule-groups/{Name}", handleSchedulerCreateScheduleGroup)
-	srv.HandleFunc("GET /schedule-groups/{Name}", handleSchedulerGetScheduleGroup)
-	srv.HandleFunc("DELETE /schedule-groups/{Name}", handleSchedulerDeleteScheduleGroup)
-	srv.HandleFunc("GET /schedule-groups", handleSchedulerListScheduleGroups)
+	srv.HandleFunc("POST /schedule-groups/{Name}", schedulerRecorded("CreateScheduleGroup", handleSchedulerCreateScheduleGroup))
+	srv.HandleFunc("GET /schedule-groups/{Name}", schedulerRecorded("GetScheduleGroup", handleSchedulerGetScheduleGroup))
+	srv.HandleFunc("DELETE /schedule-groups/{Name}", schedulerRecorded("DeleteScheduleGroup", handleSchedulerDeleteScheduleGroup))
+	srv.HandleFunc("GET /schedule-groups", schedulerRecorded("ListScheduleGroups", handleSchedulerListScheduleGroups))
 
 	// Evaluate ScheduleExpressions and invoke due targets (ECS/Lambda/SQS/SNS).
 	startSchedulerFiringLoop()
+}
+
+// schedulerRecorded wraps a Scheduler REST handler so its API call is recorded
+// in CloudTrail. Scheduler is a REST/JSON service registered directly on the
+// server mux (path-addressed, no X-Amz-Target), so it bypasses the central
+// `POST /` recording middleware — every Scheduler operation must record itself
+// (issue #498). Real CloudTrail captures all EventBridge Scheduler API calls
+// against scheduler.amazonaws.com.
+func schedulerRecorded(eventName string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
+		h(rec, r)
+		if rec.statusCode() >= 500 {
+			return
+		}
+		var resources []CloudTrailResource
+		if name := r.PathValue("Name"); name != "" {
+			typ := "AWS::Scheduler::Schedule"
+			if strings.Contains(r.URL.Path, "/schedule-groups/") {
+				typ = "AWS::Scheduler::ScheduleGroup"
+			}
+			resources = []CloudTrailResource{{ResourceType: typ, ResourceName: name}}
+		}
+		cloudTrailRecord(CloudTrailEvent{
+			EventName:   eventName,
+			EventSource: "scheduler.amazonaws.com",
+			AccessKeyId: cloudTrailAccessKeyID(r),
+			ReadOnly:    cloudTrailReadOnly(eventName),
+			Resources:   resources,
+		})
+	}
 }
 
 func schedulerScheduleARN(group, name string) string {

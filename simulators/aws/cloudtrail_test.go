@@ -40,6 +40,109 @@ func TestCloudTrailLookupEventsReturnsNewestMatchesFirst(t *testing.T) {
 	}
 }
 
+// TestCloudTrailEventMatchesAllKeys pins LookupEvents filtering for all eight
+// AttributeKey values (issue #496 — five were silently ignored, so any filter
+// using them returned every event).
+func TestCloudTrailEventMatchesAllKeys(t *testing.T) {
+	ev := CloudTrailEvent{
+		EventId:     "id-1",
+		EventName:   "CreateCluster",
+		EventSource: "ecs.amazonaws.com",
+		Username:    "alice",
+		AccessKeyId: "AKIATEST",
+		ReadOnly:    false,
+		Resources:   []CloudTrailResource{{ResourceType: "AWS::ECS::Cluster", ResourceName: "probe"}},
+	}
+	cases := []struct {
+		key, val string
+		want     bool
+	}{
+		{"EventId", "id-1", true}, {"EventId", "other", false},
+		{"EventName", "CreateCluster", true}, {"EventName", "X", false},
+		{"EventSource", "ecs.amazonaws.com", true}, {"EventSource", "s3.amazonaws.com", false},
+		{"Username", "alice", true}, {"Username", "bob", false},
+		{"AccessKeyId", "AKIATEST", true}, {"AccessKeyId", "X", false},
+		{"ReadOnly", "false", true}, {"ReadOnly", "true", false},
+		{"ResourceName", "probe", true}, {"ResourceName", "nope", false},
+		{"ResourceType", "AWS::ECS::Cluster", true}, {"ResourceType", "AWS::S3::Bucket", false},
+	}
+	for _, c := range cases {
+		got := cloudTrailEventMatches(ev, []cloudTrailLookupAttribute{{AttributeKey: c.key, AttributeValue: c.val}})
+		if got != c.want {
+			t.Errorf("filter %s=%q: got %v want %v", c.key, c.val, got, c.want)
+		}
+	}
+	// An unknown attribute key must never silently match-all (the #496 defect).
+	if cloudTrailEventMatches(ev, []cloudTrailLookupAttribute{{AttributeKey: "Bogus", AttributeValue: "x"}}) {
+		t.Error("unknown attribute key must not match")
+	}
+	// Multiple attributes are ANDed.
+	if !cloudTrailEventMatches(ev, []cloudTrailLookupAttribute{
+		{AttributeKey: "EventName", AttributeValue: "CreateCluster"},
+		{AttributeKey: "ResourceName", AttributeValue: "probe"},
+	}) {
+		t.Error("AND of two matching attributes should match")
+	}
+	if cloudTrailEventMatches(ev, []cloudTrailLookupAttribute{
+		{AttributeKey: "EventName", AttributeValue: "CreateCluster"},
+		{AttributeKey: "ResourceName", AttributeValue: "other"},
+	}) {
+		t.Error("AND with one non-matching attribute should not match")
+	}
+}
+
+func TestCloudTrailReadOnly(t *testing.T) {
+	for op, want := range map[string]bool{
+		"DescribeInstances": true, "GetParameter": true, "ListSchedules": true,
+		"LookupEvents": true, "ScanTable": true,
+		"CreateCluster": false, "RunTask": false, "PutItem": false, "DeleteTrail": false,
+	} {
+		if got := cloudTrailReadOnly(op); got != want {
+			t.Errorf("cloudTrailReadOnly(%q) = %v, want %v", op, got, want)
+		}
+	}
+}
+
+func TestCloudTrailAccessKeyID(t *testing.T) {
+	r := httptest.NewRequest("POST", "/", nil)
+	r.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/20260607/us-east-1/ecs/aws4_request, SignedHeaders=host, Signature=abc")
+	if got := cloudTrailAccessKeyID(r); got != "AKIAEXAMPLE" {
+		t.Fatalf("got %q, want AKIAEXAMPLE", got)
+	}
+	if got := cloudTrailAccessKeyID(httptest.NewRequest("POST", "/", nil)); got != "" {
+		t.Fatalf("unsigned request: got %q, want empty", got)
+	}
+}
+
+func TestCloudTrailResourcesExtraction(t *testing.T) {
+	jsonReq := httptest.NewRequest("POST", "/", nil)
+	jsonReq.Header.Set("X-Amz-Target", "AmazonEC2ContainerServiceV20141113.CreateCluster")
+
+	res := cloudTrailResources("ecs.amazonaws.com", "CreateCluster", []byte(`{"clusterName":"probe"}`), jsonReq)
+	if len(res) != 1 || res[0].ResourceName != "probe" || res[0].ResourceType != "AWS::ECS::Cluster" {
+		t.Fatalf("ecs create-cluster resources = %+v", res)
+	}
+	// PascalCase wire key resolved case-insensitively.
+	res = cloudTrailResources("dynamodb.amazonaws.com", "PutItem", []byte(`{"TableName":"orders"}`), jsonReq)
+	if len(res) != 1 || res[0].ResourceName != "orders" || res[0].ResourceType != "AWS::DynamoDB::Table" {
+		t.Fatalf("dynamodb resources = %+v", res)
+	}
+	// Query-protocol service: identifier comes from the form, not the JSON body.
+	form := url.Values{"Action": {"DescribeInstances"}, "InstanceId": {"i-0abc"}}
+	formReq := httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
+	formReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res = cloudTrailResources("ec2.amazonaws.com", "DescribeInstances", nil, formReq)
+	if len(res) != 1 || res[0].ResourceName != "i-0abc" || res[0].ResourceType != "AWS::EC2::Instance" {
+		t.Fatalf("ec2 resources = %+v", res)
+	}
+	// An operation acting on no named resource records none — never fabricated.
+	res = cloudTrailResources("sts.amazonaws.com", "GetCallerIdentity", nil, formReq)
+	if len(res) != 0 {
+		t.Fatalf("sts GetCallerIdentity should record no resource, got %+v", res)
+	}
+}
+
 // TestAWSEventSourceCoversAllServiceSlices pins the CloudTrail eventSource the
 // sim records for every awsJson and query-protocol service slice it implements.
 // Real CloudTrail labels each management event with the service's
