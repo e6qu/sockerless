@@ -480,7 +480,11 @@ func registerGCS(srv *sim.Server) {
 		data["etag"] = "CAE="
 		data["timeCreated"] = now
 		data["updated"] = now
-		if data["location"] == nil {
+		// GCS normalizes bucket locations to upper-case on read; echo that or
+		// terraform-provider-google replaces the bucket (location is ForceNew).
+		if loc, ok := data["location"].(string); ok && loc != "" {
+			data["location"] = strings.ToUpper(loc)
+		} else {
 			data["location"] = "US"
 		}
 		if data["storageClass"] == nil {
