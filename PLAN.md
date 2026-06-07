@@ -58,12 +58,27 @@ runs on Mac, compute verified blind via `tf (gcp)`):
 17. **virtual_network** (`network.go`) — `privateEndpointVNetPolicies=Disabled`.
 18. **eventgrid_system_topic** (`eventgrid.go`) — `tags={}`.
 
-**Watch (CI to confirm):** container_app_environment `log_analytics_workspace_id`
-— the ARM API does not return the workspace **resource id** (only the
-`customerId`), so this is provider-side; not guessed at — confirm via `tf (azure)`.
+**Second-pass residuals (after the cosmos provider-panic fix unblocked the azure
+apply), all fixed:**
+- cosmosdb_account — the geo_location fix had added read/writeLocations without
+  `provisioningState`; the provider's create poll dereferences it → nil panic
+  that aborted the whole apply. Rebuilt the shape with `failoverPolicies` (what
+  geo_location actually reads) + a shared id + `provisioningState=Succeeded`.
+- application_insights — round-trip `properties.WorkspaceResourceId` (workspace_id).
+- container_app_environment — `log_analytics_workspace_id` is resolved by the
+  provider via a subscription-scope workspace LIST matched by customerId; added
+  that LIST handler (monitor.go) so the read recovers it.
+- linux_function_app — mirror site-PUT siteConfig.appSettings into the
+  /config/appsettings store (functions_extension_version / storage_account_name
+  / builtin_logging_enabled); siteConfig minTlsVersion/scmMinTlsVersion/
+  scmIpSecurityRestrictionsDefaultAction defaults; backup config (POST
+  /config/backup/list) now 404s when unconfigured so the provider's
+  FlattenBackupConfig doesn't materialise a phantom backup{enabled=false} block.
 
-Approach: fix one cloud fully, push, read the next CI plan, repeat until `tf (gcp)`
-and `tf (azure)` are green.
+**DONE — `tf (gcp)` and `tf (azure)` both green; full PR #491 CI passes.**
+Approach used: fix one cloud fully, push, read the next CI plan, repeat. Azure
+verified blind via CI + per-resource curl wire-shape checks (azure terraform is
+Docker-only, can't run on Mac).
 
 ## Completed Phases
 
