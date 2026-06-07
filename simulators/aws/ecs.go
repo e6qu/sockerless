@@ -54,12 +54,42 @@ type ECSContainerDefinition struct {
 	Command           []string             `json:"command,omitempty"`
 	PseudoTerminal    bool                 `json:"pseudoTerminal,omitempty"`
 	Interactive       bool                 `json:"interactive,omitempty"`
-	// healthCheck and secrets are opaque passthrough: the provider folds the
-	// whole containerDefinitions JSON into a ForceNew hash, so dropping any
-	// registered field forces a new revision on every plan. RawMessage round-trips
-	// them byte-for-byte without enumerating every nested field.
+	// healthCheck and secrets are decoded for the runtime (secret injection reads
+	// Secrets); every other field rides the verbatim `raw` capture below.
 	HealthCheck json.RawMessage `json:"healthCheck,omitempty"`
 	Secrets     json.RawMessage `json:"secrets,omitempty"`
+
+	// raw holds the exact bytes the client registered. The provider folds the
+	// whole containerDefinitions JSON into a ForceNew hash, so dropping ANY
+	// registered field (ulimits, dependsOn, linuxParameters, dockerLabels, user,
+	// workingDirectory, privileged, stop/startTimeout, systemControls, …) forces
+	// a new revision every plan. Echoing the captured bytes round-trips every
+	// field faithfully while the typed fields above stay available to the runtime.
+	raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the typed fields the runtime needs and captures the
+// verbatim bytes so DescribeTaskDefinition can echo every registered field.
+func (c *ECSContainerDefinition) UnmarshalJSON(data []byte) error {
+	type alias ECSContainerDefinition
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*c = ECSContainerDefinition(a)
+	c.raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+// MarshalJSON re-emits the captured bytes verbatim when present, so no field is
+// silently dropped on read-back. Containers built in-process (no capture) fall
+// back to the typed encoding.
+func (c ECSContainerDefinition) MarshalJSON() ([]byte, error) {
+	if len(c.raw) > 0 {
+		return c.raw, nil
+	}
+	type alias ECSContainerDefinition
+	return json.Marshal(alias(c))
 }
 
 type ECSKeyValuePair struct {
@@ -144,6 +174,23 @@ type ECSTaskDefinition struct {
 	ExecutionRoleArn        string                   `json:"executionRoleArn,omitempty"`
 	TaskRoleArn             string                   `json:"taskRoleArn,omitempty"`
 	Volumes                 []ECSVolume              `json:"volumes,omitempty"`
+	// Top-level knobs the provider reads back (all ForceNew); each was dropped on
+	// register, so aws_ecs_task_definition.{runtime_platform,ephemeral_storage,
+	// proxy_configuration,pid_mode,ipc_mode,placement_constraints,…} drifted into
+	// a new revision every plan. Nested objects ride RawMessage (verbatim).
+	RuntimePlatform       json.RawMessage `json:"runtimePlatform,omitempty"`
+	EphemeralStorage      json.RawMessage `json:"ephemeralStorage,omitempty"`
+	ProxyConfiguration    json.RawMessage `json:"proxyConfiguration,omitempty"`
+	PlacementConstraints  json.RawMessage `json:"placementConstraints,omitempty"`
+	InferenceAccelerators json.RawMessage `json:"inferenceAccelerators,omitempty"`
+	PidMode               string          `json:"pidMode,omitempty"`
+	IpcMode               string          `json:"ipcMode,omitempty"`
+	EnableFaultInjection  *bool           `json:"enableFaultInjection,omitempty"`
+	// Compatibilities is the AWS-computed launch-type list (distinct from the
+	// requiresCompatibilities input). requiresAttributes is intentionally NOT
+	// modelled: it requires AWS's capability-attribute engine, no stable client
+	// reads it, and fabricating a list would be a fake.
+	Compatibilities []string `json:"compatibilities,omitempty"`
 	// Tags are internal-only: real AWS does not carry them inside the
 	// taskDefinition object — they surface at the response top level (from
 	// RegisterTaskDefinition always, DescribeTaskDefinition only with
@@ -475,6 +522,14 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		ExecutionRoleArn        string                   `json:"executionRoleArn,omitempty"`
 		TaskRoleArn             string                   `json:"taskRoleArn,omitempty"`
 		Volumes                 []ECSVolume              `json:"volumes,omitempty"`
+		RuntimePlatform         json.RawMessage          `json:"runtimePlatform,omitempty"`
+		EphemeralStorage        json.RawMessage          `json:"ephemeralStorage,omitempty"`
+		ProxyConfiguration      json.RawMessage          `json:"proxyConfiguration,omitempty"`
+		PlacementConstraints    json.RawMessage          `json:"placementConstraints,omitempty"`
+		InferenceAccelerators   json.RawMessage          `json:"inferenceAccelerators,omitempty"`
+		PidMode                 string                   `json:"pidMode,omitempty"`
+		IpcMode                 string                   `json:"ipcMode,omitempty"`
+		EnableFaultInjection    *bool                    `json:"enableFaultInjection,omitempty"`
 		Tags                    []ECSTag                 `json:"tags,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -516,6 +571,15 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		ExecutionRoleArn:        req.ExecutionRoleArn,
 		TaskRoleArn:             req.TaskRoleArn,
 		Volumes:                 req.Volumes,
+		RuntimePlatform:         req.RuntimePlatform,
+		EphemeralStorage:        req.EphemeralStorage,
+		ProxyConfiguration:      req.ProxyConfiguration,
+		PlacementConstraints:    req.PlacementConstraints,
+		InferenceAccelerators:   req.InferenceAccelerators,
+		PidMode:                 req.PidMode,
+		IpcMode:                 req.IpcMode,
+		EnableFaultInjection:    req.EnableFaultInjection,
+		Compatibilities:         ecsComputeCompatibilities(req.NetworkMode, req.RequiresCompatibilities),
 		Tags:                    req.Tags,
 		Status:                  "ACTIVE",
 	}
@@ -615,6 +679,26 @@ func handleECSDescribeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		resp["tags"] = td.Tags
 	}
 	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ecsComputeCompatibilities derives the AWS-computed launch-type list. Every
+// task definition is EC2-compatible; FARGATE additionally requires the awsvpc
+// network mode. requiresCompatibilities is always a subset of the result.
+func ecsComputeCompatibilities(networkMode string, requires []string) []string {
+	set := map[string]bool{"EC2": true}
+	for _, c := range requires {
+		set[strings.ToUpper(c)] = true
+	}
+	if strings.EqualFold(networkMode, "awsvpc") {
+		set["FARGATE"] = true
+	}
+	var out []string
+	for _, c := range []string{"EC2", "FARGATE", "EXTERNAL"} {
+		if set[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // ecsIncludeHasTags reports whether the DescribeTaskDefinition include list

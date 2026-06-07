@@ -132,6 +132,10 @@ resource "aws_ecr_repository" "this" {
 # Task-def tags are read by the provider via DescribeTaskDefinition
 # --include TAGS (response top-level tags); a simple container def keeps the
 # ForceNew containerDefinitions hash stable so only the tag path is exercised.
+# runtime_platform + ephemeral_storage are top-level ForceNew knobs the provider
+# reads back — each was dropped on register, so they drifted into a new revision
+# every plan. Keeping the container def minimal isolates them from container-def
+# normalization noise.
 resource "aws_ecs_task_definition" "this" {
   family                   = "fidelity-control-plane"
   network_mode             = "awsvpc"
@@ -143,6 +147,13 @@ resource "aws_ecs_task_definition" "this" {
     image     = "nginx"
     essential = true
   }])
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+  ephemeral_storage {
+    size_in_gib = 30
+  }
   tags = {
     Name            = "fidelity"
     "edd:component" = "ecs-dev-desktop"
