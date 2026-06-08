@@ -396,7 +396,7 @@ func ensureSimDefaults() {
 	if _, ok := ec2Vpcs.Get("vpc-sim"); !ok {
 		ec2Vpcs.Put("vpc-sim", EC2Vpc{
 			VpcId:              "vpc-sim",
-			CidrBlock:          "10.0.0.0/16",
+			CidrBlock:          "172.31.0.0/16",
 			State:              "available",
 			OwnerId:            ec2Owner(),
 			IsDefault:          true,
@@ -408,7 +408,7 @@ func ensureSimDefaults() {
 		ec2Subnets.Put("subnet-0123456789abcdef0", EC2Subnet{
 			SubnetId:            "subnet-0123456789abcdef0",
 			VpcId:               "vpc-sim",
-			CidrBlock:           "10.0.1.0/24",
+			CidrBlock:           "172.31.0.0/24",
 			AvailabilityZone:    awsAvailabilityZone(),
 			State:               "available",
 			OwnerId:             ec2Owner(),
@@ -653,12 +653,6 @@ func handleCreateVpc(w http.ResponseWriter, r *http.Request) {
 			Main:          true,
 		}},
 	})
-	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
-		if err2 := ec2CreateRealVPC(r.Context(), vpc); err2 != nil {
-			fmt.Fprintf(os.Stderr, "sim: real VPC %s network fabric unavailable: %v\n", id, err2)
-		}
-	}
-
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateVpcResponse %s>
   <requestId>%s</requestId>
@@ -868,11 +862,6 @@ func handleCreateSubnet(w http.ResponseWriter, r *http.Request) {
 		PrivateDnsHostnameTypeOnLaunch: "ip-name",
 	}
 	ec2Subnets.Put(id, subnet)
-	if err := realexec.DetectNetworkCapabilities().Require(); err == nil {
-		if err2 := ec2CreateRealSubnet(r.Context(), subnet); err2 != nil {
-			fmt.Fprintf(os.Stderr, "sim: real subnet %s network fabric unavailable: %v\n", id, err2)
-		}
-	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateSubnetResponse %s>
