@@ -665,6 +665,28 @@ func DisconnectContainerFromNetwork(containerName, networkName string) error {
 	return cli.NetworkDisconnect(ctx, networkName, containerName, true)
 }
 
+// DisconnectContainerNetworks detaches a running container from every Docker
+// network it currently has. The container keeps its process namespace alive,
+// which lets callers attach their own network fabric afterward.
+func DisconnectContainerNetworks(containerID string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	for networkName := range info.NetworkSettings.Networks {
+		if err := cli.NetworkDisconnect(ctx, networkName, containerID, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RuntimeInfo returns the container runtime name and version for display.
 func RuntimeInfo() string {
 	if dockerClient == nil {

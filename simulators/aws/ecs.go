@@ -1328,8 +1328,7 @@ func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSin
 			"sockerless-sim-task":       taskID,
 			"sockerless-sim-task-pause": "true",
 		},
-		NetworkMode: "none",
-		Sandbox:     sim.SandboxFargate,
+		Sandbox: sim.SandboxFargate,
 	}, sink)
 }
 
@@ -1391,6 +1390,10 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			return nil, perr
 		}
 		processes.Handles["__pause__"] = pause
+		if derr := sim.DisconnectContainerNetworks(pause.ContainerID); derr != nil {
+			cleanupECSTaskProcesses(taskID, processes)
+			return nil, fmt.Errorf("disconnect task netns pause from Docker networks: %w", derr)
+		}
 		pid, perr := sim.ContainerPID(pause.ContainerID)
 		if perr != nil {
 			cleanupECSTaskProcesses(taskID, processes)
@@ -1629,9 +1632,6 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
 		requestStopECSTaskProcesses(v.(*ecsTaskProcesses))
 	}
-	// Tear down the task's VPC veth (netns tier). The kernel also reaps it when
-	// the container is removed; this keeps the bookkeeping tidy.
-	ec2DetachRealECSTaskNIC(r.Context(), taskID)
 
 	now := time.Now().Unix()
 	found := ecsTasks.Update(taskID, func(t *ECSTask) {
@@ -1655,6 +1655,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 			"Task not found: %s", req.Task)
 		return
 	}
+
+	// Tear down the task's VPC veth (netns tier) after cloud-visible state is
+	// updated; Docker/netns cleanup can take seconds on CI.
+	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
 
 	task, _ := ecsTasks.Get(taskID)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
