@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"net"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,7 +40,10 @@ type Network struct {
 	runner        Runner
 }
 
-const MetadataIPv4 = "169.254.169.254"
+const (
+	MetadataIPv4        = "169.254.169.254"
+	ECSTaskMetadataIPv4 = "169.254.170.2"
+)
 
 type EgressLink struct {
 	HostVethName string
@@ -225,7 +229,49 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
 }
 
-func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
+func (n *Network) ConfigureHostEgress(ctx context.Context, sourceCIDR string, tableName string, cleanup *CleanupStack) error {
+	if tableName == "" {
+		tableName = deriveLinuxName("he"+n.NamespaceName, "he")
+	}
+	if _, _, err := net.ParseCIDR(sourceCIDR); err != nil {
+		return err
+	}
+	if _, err := n.EnsureEgress(ctx); err != nil {
+		return err
+	}
+	if err := n.runner.Run(ctx, "sysctl", "-w", "net.ipv4.ip_forward=1"); err != nil {
+		return err
+	}
+	_ = n.runner.Run(ctx, "nft", "delete", "table", "inet", tableName)
+	if err := n.runner.Run(ctx, "nft", "add", "table", "inet", tableName); err != nil {
+		return err
+	}
+	tableCreated := true
+	defer func() {
+		if tableCreated {
+			_ = n.runner.Run(context.Background(), "nft", "delete", "table", "inet", tableName)
+		}
+	}()
+	if cleanup != nil {
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "nft", "delete", "table", "inet", tableName)
+			return nil
+		})
+	}
+	if err := n.runner.Run(ctx, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
+		return err
+	}
+	if err := n.runner.Run(ctx, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "masquerade"); err != nil {
+		return err
+	}
+	tableCreated = false
+	return nil
+}
+
+func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, targetPort int, tableName string) error {
+	if net.ParseIP(targetIPv4).To4() == nil {
+		return fmt.Errorf("metadata target IPv4 address is required, got %q", targetIPv4)
+	}
 	if targetPort <= 0 || targetPort > 65535 {
 		return fmt.Errorf("metadata target port must be 1..65535, got %d", targetPort)
 	}
@@ -247,7 +293,11 @@ func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tab
 	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "ip", tableName, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"); err != nil {
 		return err
 	}
-	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", MetadataIPv4, "tcp", "dport", "80", "dnat", "to", net.JoinHostPort(link.HostIP.String(), strconv.Itoa(targetPort)))
+	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", targetIPv4, "tcp", "dport", "80", "dnat", "to", net.JoinHostPort(link.HostIP.String(), strconv.Itoa(targetPort)))
+}
+
+func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
+	return n.ConfigureAddressDNAT(ctx, MetadataIPv4, targetPort, tableName)
 }
 
 func (s *Subnet) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
@@ -255,6 +305,57 @@ func (s *Subnet) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tabl
 		return fmt.Errorf("subnet is not attached to a network")
 	}
 	return s.network.ConfigureMetadataDNAT(ctx, targetPort, tableName)
+}
+
+func (s *Subnet) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, targetPort int, tableName string) error {
+	if s == nil || s.network == nil {
+		return fmt.Errorf("subnet is not attached to a network")
+	}
+	return s.network.ConfigureAddressDNAT(ctx, targetIPv4, targetPort, tableName)
+}
+
+func (n *Network) ConfigureEgressPolicy(ctx context.Context, allowedSourceCIDRs []string, tableName string) error {
+	if tableName == "" {
+		tableName = deriveLinuxName("eg"+n.NamespaceName, "eg")
+	}
+	link, err := n.EnsureEgress(ctx)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var cidrs []string
+	for _, cidr := range allowedSourceCIDRs {
+		if cidr == "" || seen[cidr] {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("invalid allowed egress source CIDR %q: %w", cidr, err)
+		}
+		seen[cidr] = true
+		cidrs = append(cidrs, cidr)
+	}
+	sort.Strings(cidrs)
+
+	_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
+		return err
+	}
+	n.cleanup.Add(func(cleanupCtx context.Context) error {
+		_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+		return nil
+	})
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "}"); err != nil {
+		return err
+	}
+	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "daddr", link.HostIP.String(), "accept"); err != nil {
+		return err
+	}
+	for _, cidr := range cidrs {
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "saddr", cidr, "accept"); err != nil {
+			return err
+		}
+	}
+	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "drop")
 }
 
 func egressIPs(namespaceName string) (hostIP, netIP net.IP, prefixBits int) {
@@ -396,8 +497,15 @@ func (n *Network) CreateSubnet(ctx context.Context, spec SubnetSpec) (*Subnet, e
 		return nil, err
 	}
 	rollback.Add(func(cleanupCtx context.Context) error {
-		return n.runner.Run(cleanupCtx, "ip", "route", "del", network.String(), "via", egress.NetIP.String(), "dev", egress.HostVethName)
+		if err := n.runner.Run(cleanupCtx, "ip", "route", "del", network.String(), "via", egress.NetIP.String(), "dev", egress.HostVethName); err != nil && !strings.Contains(err.Error(), "No such process") {
+			return err
+		}
+		return nil
 	})
+	if err := n.ConfigureHostEgress(ctx, network.String(), deriveLinuxName("he"+n.NamespaceName+spec.Name, "he"), rollback); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
 
 	subnet := &Subnet{
 		Name:       spec.Name,

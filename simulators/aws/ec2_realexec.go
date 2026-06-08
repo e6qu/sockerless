@@ -64,6 +64,23 @@ func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid i
 	if err != nil {
 		return err
 	}
+	metadataPort, err := simHostMetadataPort()
+	if err != nil {
+		_ = nic.Close(context.Background())
+		return err
+	}
+	if err := subnet.ConfigureAddressDNAT(ctx, realexec.ECSTaskMetadataIPv4, metadataPort, ec2RealName("emd", sn.VpcId)); err != nil {
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure ECS task metadata routing for %s: %w", taskID, err)
+	}
+	if err := subnet.ConfigureMetadataDNAT(ctx, metadataPort, ec2RealName("imd", sn.VpcId)); err != nil {
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure ECS IMDS routing for %s: %w", taskID, err)
+	}
+	if err := ec2ApplyRealVPCEgressPolicy(ctx, sn.VpcId); err != nil {
+		_ = nic.Close(context.Background())
+		return fmt.Errorf("configure VPC egress policy for %s: %w", taskID, err)
+	}
 	ec2RealMu.Lock()
 	ec2RealECSNICs[taskID] = nic
 	ec2RealMu.Unlock()
@@ -714,6 +731,173 @@ func ec2ConfigureRealNATRoute(ctx context.Context, routeTableID, destinationCIDR
 		return fmt.Errorf("route table %s has no subnet CIDR for NAT source", routeTableID)
 	}
 	return network.ConfigureSNAT(ctx, sourceCIDR, net.ParseIP(nat.NatGatewayAddresses[0].PublicIp), ec2RealName("sn", routeTableID+destinationCIDR))
+}
+
+func ec2ApplyRealVPCEgressPolicy(ctx context.Context, vpcID string) error {
+	ec2RealMu.Lock()
+	network := ec2RealVPCs[vpcID]
+	ec2RealMu.Unlock()
+	if network == nil {
+		return nil
+	}
+	allowed, err := ec2AllowedRealEgressSources(vpcID)
+	if err != nil {
+		return err
+	}
+	return network.ConfigureEgressPolicy(ctx, allowed, ec2RealName("eg", vpcID))
+}
+
+func ec2ApplyRealRouteTableEgressPolicy(ctx context.Context, routeTableID string) error {
+	rt, ok := ec2RouteTables.Get(routeTableID)
+	if !ok {
+		return nil
+	}
+	return ec2ApplyRealVPCEgressPolicy(ctx, rt.VpcId)
+}
+
+func ec2AllowedRealEgressSources(vpcID string) ([]string, error) {
+	allowed := map[string]bool{}
+	for _, subnet := range ec2Subnets.List() {
+		if subnet.VpcId != vpcID {
+			continue
+		}
+		rt, ok := ec2EffectiveRouteTableForSubnet(subnet.SubnetId, vpcID)
+		if !ok || !ec2RouteTableHasDefaultExternalRoute(rt, vpcID) {
+			continue
+		}
+		if ec2RouteTableHasDefaultNATRoute(rt, vpcID) {
+			allowed[subnet.CidrBlock] = true
+			continue
+		}
+		if ec2RouteTableHasDefaultIGWRoute(rt, vpcID) {
+			for _, src := range ecsPublicEgressSourcesForSubnet(subnet.SubnetId) {
+				allowed[src] = true
+			}
+			for _, src := range ec2PublicInstanceSourcesForSubnet(subnet.SubnetId) {
+				allowed[src] = true
+			}
+		}
+	}
+	var out []string
+	for cidr := range allowed {
+		out = append(out, cidr)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func ec2EffectiveRouteTableForSubnet(subnetID, vpcID string) (EC2RouteTable, bool) {
+	var main *EC2RouteTable
+	for _, rt := range ec2RouteTables.List() {
+		if rt.VpcId != vpcID {
+			continue
+		}
+		for _, assoc := range rt.Associations {
+			if assoc.SubnetId == subnetID {
+				return rt, true
+			}
+			if assoc.Main {
+				copy := rt
+				main = &copy
+			}
+		}
+	}
+	if main != nil {
+		return *main, true
+	}
+	return EC2RouteTable{}, false
+}
+
+func ec2RouteTableHasDefaultExternalRoute(rt EC2RouteTable, vpcID string) bool {
+	return ec2RouteTableHasDefaultNATRoute(rt, vpcID) || ec2RouteTableHasDefaultIGWRoute(rt, vpcID)
+}
+
+func ec2RouteTableHasDefaultNATRoute(rt EC2RouteTable, vpcID string) bool {
+	if ec2NatGateways == nil {
+		return false
+	}
+	for _, route := range rt.Routes {
+		if route.DestinationCidrBlock != "0.0.0.0/0" || route.NatGatewayId == "" || route.State != "active" {
+			continue
+		}
+		if nat, ok := ec2NatGateways.Get(route.NatGatewayId); ok && nat.VpcId == vpcID && nat.State == "available" {
+			return true
+		}
+	}
+	return false
+}
+
+func ec2RouteTableHasDefaultIGWRoute(rt EC2RouteTable, vpcID string) bool {
+	for _, route := range rt.Routes {
+		if route.DestinationCidrBlock != "0.0.0.0/0" || route.GatewayId == "" || route.State != "active" {
+			continue
+		}
+		if !strings.HasPrefix(route.GatewayId, "igw-") {
+			continue
+		}
+		if ec2InternetGatewayAttachedToVPC(route.GatewayId, vpcID) {
+			return true
+		}
+	}
+	return false
+}
+
+func ec2InternetGatewayAttachedToVPC(igwID, vpcID string) bool {
+	if ec2InternetGateways == nil {
+		return false
+	}
+	igw, ok := ec2InternetGateways.Get(igwID)
+	if !ok {
+		return false
+	}
+	for _, att := range igw.Attachments {
+		if att.VpcId == vpcID && att.State == "available" {
+			return true
+		}
+	}
+	return false
+}
+
+func ecsPublicEgressSourcesForSubnet(subnetID string) []string {
+	if ecsTasks == nil {
+		return nil
+	}
+	var out []string
+	for _, task := range ecsTasks.List() {
+		cfg := task.NetworkConfiguration
+		if cfg == nil || cfg.AwsvpcConfiguration == nil || !strings.EqualFold(cfg.AwsvpcConfiguration.AssignPublicIp, "ENABLED") {
+			continue
+		}
+		for _, subnet := range cfg.AwsvpcConfiguration.Subnets {
+			if subnet != subnetID {
+				continue
+			}
+			for _, att := range task.Attachments {
+				if att.Type != "ElasticNetworkInterface" {
+					continue
+				}
+				for _, detail := range att.Details {
+					if detail.Name == "privateIPv4Address" && detail.Value != "" {
+						out = append(out, detail.Value+"/32")
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+func ec2PublicInstanceSourcesForSubnet(subnetID string) []string {
+	if ec2Instances == nil {
+		return nil
+	}
+	var out []string
+	for _, inst := range ec2Instances.List() {
+		if inst.SubnetId == subnetID && inst.PrivateIpAddress != "" && inst.PublicIpAddress != "" {
+			out = append(out, inst.PrivateIpAddress+"/32")
+		}
+	}
+	return out
 }
 
 func ec2AWSSubnetGateway(cidr string) net.IP {

@@ -173,21 +173,26 @@ func TestCloudMap_RegisterAndListInstances(t *testing.T) {
 	runCLI(t, awsCLI("servicediscovery", "delete-namespace", "--id", nsId))
 }
 
-// TestCloudMap_CrossTaskDNS_CLI exercises cross-task DNS end-to-end
-// through the aws CLI — creating a namespace backs a real Docker
-// network, running two ECS tasks + registering them in per-hostname
-// services connects both containers to that network with DNS aliases,
-// and one container can resolve the other's alias via Docker's
-// embedded DNS.
+// TestCloudMap_CrossTaskDNS_CLI exercises cross-task DNS end-to-end through
+// the aws CLI. awsvpc task registrations resolve to the registered task ENI
+// address, and one task can resolve the other's service name.
 func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("docker CLI required for cross-task DNS test (no fallback): %v", err)
 	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
-	// Namespace — backs a real Docker network sim-<nsId>
+	octet := unusedDockerVPCOctet(t, 130, nil)
+	vpcID, subnetID := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	t.Cleanup(func() {
+		q("ec2", "delete-subnet", "--subnet-id", subnetID)
+		q("ec2", "delete-vpc", "--vpc-id", vpcID)
+		rmDockerNetworks(ecsVPCNet(vpcID), ecsVPCNet(vpcID)+"-egress")
+	})
+
 	out := runCLI(t, awsCLI("servicediscovery", "create-private-dns-namespace",
 		"--name", "cli-xtask-dns.local",
-		"--vpc", "vpc-sim",
+		"--vpc", vpcID,
 		"--output", "json",
 	))
 	var createNs struct {
@@ -233,9 +238,9 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 
 	// Cluster + task def with awslogs config (sim only spawns Docker
 	// containers when awslogs is configured) + sleep command so the
-	// container stays alive.
+	// container stays alive through real resolver updates.
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-xtask-dns"))
-	containerDef := `[{"name":"app","image":"alpine:latest","entryPoint":["sh","-c"],"command":["sleep 30"],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":"/ecs/cli-xtask-dns","awslogs-stream-prefix":"ecs"}}}]`
+	containerDef := `[{"name":"app","image":"alpine:latest","entryPoint":["sh","-c"],"command":["sleep 120"],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":"/ecs/cli-xtask-dns","awslogs-stream-prefix":"ecs"}}}]`
 	out = runCLI(t, awsCLI("ecs", "register-task-definition",
 		"--family", "cli-xtask-dns-td",
 		"--requires-compatibilities", "FARGATE",
@@ -256,7 +261,7 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 			"--task-definition", regTd.TaskDefinition.TaskDefinitionArn,
 			"--count", "1",
 			"--launch-type", "FARGATE",
-			"--network-configuration", "awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}",
+			"--network-configuration", "awsvpcConfiguration={subnets=["+subnetID+"]}",
 			"--tags", "key=sockerless-container-id,value="+cid,
 			"--output", "json",
 		))
@@ -269,51 +274,137 @@ func TestCloudMap_CrossTaskDNS_CLI(t *testing.T) {
 	}
 	alphaCID := strings.Repeat("a", 64)
 	betaCID := strings.Repeat("b", 64)
-	alphaTask := runTask(alphaCID)
-	betaTask := runTask(betaCID)
-	cleanupCLIECSTask(t, "cli-xtask-dns", alphaTask)
-	cleanupCLIECSTask(t, "cli-xtask-dns", betaTask)
 
-	// Wait for Docker containers to exist
-	alphaName := "sockerless-sim-aws-task-" + alphaTask[strings.LastIndex(alphaTask, "/")+1:][:12]
-	betaName := "sockerless-sim-aws-task-" + betaTask[strings.LastIndex(betaTask, "/")+1:][:12]
-	require.Eventually(t, func() bool {
-		for _, n := range []string{alphaName, betaName} {
-			if err := exec.Command("docker", "inspect", n).Run(); err != nil {
-				return false
+	waitTasksRunning := func(tasks ...string) {
+		t.Helper()
+		var taskStatuses []string
+		deadline := time.Now().Add(45 * time.Second)
+		for time.Now().Before(deadline) {
+			taskStatuses = taskStatuses[:0]
+			allRunning := true
+			for _, taskArn := range tasks {
+				status := strings.TrimSpace(runCLI(t, awsCLI("ecs", "describe-tasks",
+					"--cluster", "cli-xtask-dns",
+					"--tasks", taskArn,
+					"--query", "tasks[0].lastStatus",
+					"--output", "text",
+				)))
+				taskStatuses = append(taskStatuses, taskArn+"="+status)
+				if status == "STOPPED" {
+					reason := strings.TrimSpace(runCLI(t, awsCLI("ecs", "describe-tasks",
+						"--cluster", "cli-xtask-dns",
+						"--tasks", taskArn,
+						"--query", "tasks[0].stoppedReason",
+						"--output", "text",
+					)))
+					taskStatuses[len(taskStatuses)-1] += " reason=" + reason
+					t.Fatalf("task stopped before RUNNING: %s", strings.Join(taskStatuses, ", "))
+				}
+				if status != "RUNNING" {
+					allRunning = false
+				}
+			}
+			if allRunning {
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		t.Fatalf("tasks should reach RUNNING: %s", strings.Join(taskStatuses, ", "))
+	}
+	containerName := func(taskArn string) string {
+		return "sockerless-sim-aws-task-" + taskArn[strings.LastIndex(taskArn, "/")+1:][:12]
+	}
+	waitContainer := func(name string) {
+		t.Helper()
+		var inspect []byte
+		var inspectErr error
+		require.Eventually(t, func() bool {
+			inspect, inspectErr = exec.Command("docker", "inspect", name).CombinedOutput()
+			return inspectErr == nil
+		}, 45*time.Second, 500*time.Millisecond, "task container %s should exist before Cloud Map registration: err=%v output=%q", name, inspectErr, inspect)
+	}
+
+	alphaTask := runTask(alphaCID)
+	cleanupCLIECSTask(t, "cli-xtask-dns", alphaTask)
+	waitTasksRunning(alphaTask)
+	alphaName := containerName(alphaTask)
+	waitContainer(alphaName)
+
+	betaTask := runTask(betaCID)
+	cleanupCLIECSTask(t, "cli-xtask-dns", betaTask)
+	waitTasksRunning(alphaTask, betaTask)
+	waitContainer(containerName(betaTask))
+
+	taskPrivateIPv4 := func(taskArn string) string {
+		out := runCLI(t, awsCLI("ecs", "describe-tasks",
+			"--cluster", "cli-xtask-dns",
+			"--tasks", taskArn,
+			"--output", "json",
+		))
+		var desc struct {
+			Tasks []struct {
+				Attachments []struct {
+					Type    string `json:"type"`
+					Details []struct {
+						Name  string `json:"name"`
+						Value string `json:"value"`
+					} `json:"details"`
+				} `json:"attachments"`
+			} `json:"tasks"`
+		}
+		parseJSON(t, out, &desc)
+		require.Len(t, desc.Tasks, 1)
+		for _, attachment := range desc.Tasks[0].Attachments {
+			if attachment.Type != "ElasticNetworkInterface" {
+				continue
+			}
+			for _, detail := range attachment.Details {
+				if detail.Name == "privateIPv4Address" {
+					require.NotEmpty(t, detail.Value)
+					return detail.Value
+				}
 			}
 		}
-		return true
-	}, 30*time.Second, 300*time.Millisecond, "Docker containers should be running")
+		t.Fatalf("task %s did not include an ElasticNetworkInterface privateIPv4Address", taskArn)
+		return ""
+	}
+	alphaIP := taskPrivateIPv4(alphaTask)
+	betaIP := taskPrivateIPv4(betaTask)
 
-	// Register instances — sim connects containers to the namespace's
-	// Docker network with the service name as alias.
-	runCLI(t, awsCLI("servicediscovery", "register-instance",
-		"--service-id", alphaSvc,
-		"--instance-id", alphaCID[:12],
-		"--attributes", "AWS_INSTANCE_IPV4=10.0.0.10",
-	))
+	// Register instances with the real task ENI addresses.
+	registerInstance := func(serviceID, instanceID, ip string) {
+		t.Helper()
+		var out []byte
+		var err error
+		require.Eventually(t, func() bool {
+			out, err = awsCLI("servicediscovery", "register-instance",
+				"--service-id", serviceID,
+				"--instance-id", instanceID,
+				"--attributes", "AWS_INSTANCE_IPV4="+ip,
+			).CombinedOutput()
+			return err == nil
+		}, 45*time.Second, 500*time.Millisecond, "register-instance should update task DNS state: %v %s", err, out)
+	}
+	registerInstance(alphaSvc, alphaCID[:12], alphaIP)
 	t.Cleanup(func() {
 		runCLI(t, awsCLI("servicediscovery", "deregister-instance",
 			"--service-id", alphaSvc, "--instance-id", alphaCID[:12]))
 	})
-	runCLI(t, awsCLI("servicediscovery", "register-instance",
-		"--service-id", betaSvc,
-		"--instance-id", betaCID[:12],
-		"--attributes", "AWS_INSTANCE_IPV4=10.0.0.20",
-	))
+	registerInstance(betaSvc, betaCID[:12], betaIP)
 	t.Cleanup(func() {
 		runCLI(t, awsCLI("servicediscovery", "deregister-instance",
 			"--service-id", betaSvc, "--instance-id", betaCID[:12]))
 	})
 
-	// Resolve beta from alpha via Docker's embedded DNS
+	// Resolve beta from alpha through the task's normal libc resolver.
 	var getent []byte
+	var hosts []byte
 	require.Eventually(t, func() bool {
 		var err error
 		getent, err = exec.Command("docker", "exec", alphaName, "getent", "hosts", "beta").CombinedOutput()
+		hosts, _ = exec.Command("docker", "exec", alphaName, "cat", "/etc/hosts").CombinedOutput()
 		return err == nil && len(getent) > 0
-	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud Map DNS; last output: %s", getent)
+	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud Map DNS; getent=%q hosts=%q", getent, hosts)
 	assert.Contains(t, string(getent), "beta", "getent output should mention beta: %s", getent)
 
 }

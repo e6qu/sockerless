@@ -96,13 +96,16 @@ func TestHealthCheckInit(t *testing.T) {
 	s.StartHealthCheck("hc-init")
 	defer s.StopHealthCheck("hc-init")
 
-	// Health state should be initialized immediately
+	// Health state is initialized synchronously; the first real check may finish
+	// before this goroutine gets scheduled again on fast runners.
 	c, _ := s.Store.Containers.Get("hc-init")
 	if c.State.Health == nil {
 		t.Fatal("expected State.Health to be initialized")
 	}
-	if c.State.Health.Status != "starting" {
-		t.Fatalf("expected status 'starting', got %q", c.State.Health.Status)
+	switch c.State.Health.Status {
+	case "starting", "healthy":
+	default:
+		t.Fatalf("expected status 'starting' or 'healthy', got %q", c.State.Health.Status)
 	}
 }
 

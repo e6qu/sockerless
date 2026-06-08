@@ -43,6 +43,7 @@ func TestScheduler_ECSRunTaskFailureSurfaced(t *testing.T) {
 	})
 	require.NoError(t, err)
 	tdArn := aws.ToString(td.TaskDefinition.TaskDefinitionArn)
+	subnetID := createECSTestSubnet(t, "scheduler-fail")
 
 	const scheduleName = "fire-ecs-badsg"
 	fireAt := time.Now().UTC().Add(4 * time.Second).Format("2006-01-02T15:04:05")
@@ -58,7 +59,7 @@ func TestScheduler_ECSRunTaskFailureSurfaced(t *testing.T) {
 				LaunchType:        schedtypes.LaunchTypeFargate,
 				NetworkConfiguration: &schedtypes.NetworkConfiguration{
 					AwsvpcConfiguration: &schedtypes.AwsVpcConfiguration{
-						Subnets:        []string{"subnet-0123456789abcdef0"},
+						Subnets:        []string{subnetID},
 						SecurityGroups: []string{"sg-doesnotexist0514"}, // not created in the sim
 					},
 				},
