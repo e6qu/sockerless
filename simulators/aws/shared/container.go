@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -685,6 +686,59 @@ func DisconnectContainerNetworks(containerID string) error {
 		}
 	}
 	return nil
+}
+
+type HostEntry struct {
+	IP   string
+	Name string
+}
+
+// SyncContainerHostEntries rewrites a simulator-managed block in a container's
+// /etc/hosts. Docker exposes the backing hosts file path in ContainerInspect;
+// updating it gives netns-backed tasks real libc name resolution without
+// attaching another Docker network to the namespace.
+func SyncContainerHostEntries(containerName, marker string, entries []HostEntry) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerName)
+	if err != nil {
+		return err
+	}
+	if info.HostsPath == "" {
+		return fmt.Errorf("container %s has no hosts path", containerName)
+	}
+	content, err := os.ReadFile(info.HostsPath)
+	if err != nil {
+		return err
+	}
+	markerText := "# " + marker
+	var kept []string
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.Contains(line, markerText) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name == entries[j].Name {
+			return entries[i].IP < entries[j].IP
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	for _, entry := range entries {
+		ip := strings.TrimSpace(entry.IP)
+		name := strings.TrimSpace(entry.Name)
+		if ip == "" || name == "" {
+			continue
+		}
+		kept = append(kept, fmt.Sprintf("%s\t%s\t%s", ip, name, markerText))
+	}
+	next := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
+	return os.WriteFile(info.HostsPath, []byte(next), 0644)
 }
 
 // RuntimeInfo returns the container runtime name and version for display.
