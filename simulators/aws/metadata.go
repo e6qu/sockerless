@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,11 +258,73 @@ func simHostMetadataPort() (int, error) {
 // SDK don't need the link-local hostname; ExtraHosts is best-effort
 // for raw HTTP clients.
 func hostMetadataExtraHosts() []string {
+	if entries := hostMetadataHostEntries(); len(entries) > 0 {
+		out := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			out = append(out, entry.Name+":"+entry.IP)
+		}
+		return out
+	}
 	info := strings.ToLower(sim.RuntimeInfo())
 	if strings.Contains(info, "podman") {
 		return nil
 	}
 	return []string{"host.docker.internal:host-gateway"}
+}
+
+func hostMetadataHostEntries() []sim.HostEntry {
+	if !runningInsideContainer() {
+		return nil
+	}
+	gateway := defaultRouteGatewayIPv4()
+	if gateway == "" {
+		return nil
+	}
+	return []sim.HostEntry{{IP: gateway, Name: "host.docker.internal"}}
+}
+
+func rewriteHostDockerInternalEnv(env map[string]string) map[string]string {
+	gateway := defaultRouteGatewayIPv4()
+	if gateway == "" {
+		return env
+	}
+	return rewriteHostDockerInternalEnvWithGateway(env, gateway)
+}
+
+func rewriteHostDockerInternalEnvWithGateway(env map[string]string, gateway string) map[string]string {
+	out := make(map[string]string, len(env))
+	for key, value := range env {
+		out[key] = strings.ReplaceAll(value, "host.docker.internal", gateway)
+	}
+	return out
+}
+
+func defaultRouteGatewayIPv4() string {
+	content, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return ""
+	}
+	return parseDefaultRouteGatewayIPv4(string(content))
+}
+
+func parseDefaultRouteGatewayIPv4(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[1] != "00000000" {
+			continue
+		}
+		gateway, err := strconv.ParseUint(fields[2], 16, 32)
+		if err != nil || gateway == 0 {
+			continue
+		}
+		return net.IPv4(
+			byte(gateway),
+			byte(gateway>>8),
+			byte(gateway>>16),
+			byte(gateway>>24),
+		).String()
+	}
+	return ""
 }
 
 // hostMetadataEnv returns env vars for every AWS workload host so SDKs

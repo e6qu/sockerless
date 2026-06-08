@@ -225,6 +225,45 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
 }
 
+func (n *Network) ConfigureHostEgress(ctx context.Context, sourceCIDR string, tableName string, cleanup *CleanupStack) error {
+	if tableName == "" {
+		tableName = deriveLinuxName("he"+n.NamespaceName, "he")
+	}
+	if _, _, err := net.ParseCIDR(sourceCIDR); err != nil {
+		return err
+	}
+	if _, err := n.EnsureEgress(ctx); err != nil {
+		return err
+	}
+	if err := n.runner.Run(ctx, "sysctl", "-w", "net.ipv4.ip_forward=1"); err != nil {
+		return err
+	}
+	_ = n.runner.Run(ctx, "nft", "delete", "table", "inet", tableName)
+	if err := n.runner.Run(ctx, "nft", "add", "table", "inet", tableName); err != nil {
+		return err
+	}
+	tableCreated := true
+	defer func() {
+		if tableCreated {
+			_ = n.runner.Run(context.Background(), "nft", "delete", "table", "inet", tableName)
+		}
+	}()
+	if cleanup != nil {
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "nft", "delete", "table", "inet", tableName)
+			return nil
+		})
+	}
+	if err := n.runner.Run(ctx, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
+		return err
+	}
+	if err := n.runner.Run(ctx, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "masquerade"); err != nil {
+		return err
+	}
+	tableCreated = false
+	return nil
+}
+
 func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
 	if targetPort <= 0 || targetPort > 65535 {
 		return fmt.Errorf("metadata target port must be 1..65535, got %d", targetPort)
@@ -396,8 +435,15 @@ func (n *Network) CreateSubnet(ctx context.Context, spec SubnetSpec) (*Subnet, e
 		return nil, err
 	}
 	rollback.Add(func(cleanupCtx context.Context) error {
-		return n.runner.Run(cleanupCtx, "ip", "route", "del", network.String(), "via", egress.NetIP.String(), "dev", egress.HostVethName)
+		if err := n.runner.Run(cleanupCtx, "ip", "route", "del", network.String(), "via", egress.NetIP.String(), "dev", egress.HostVethName); err != nil && !strings.Contains(err.Error(), "No such process") {
+			return err
+		}
+		return nil
 	})
+	if err := n.ConfigureHostEgress(ctx, network.String(), deriveLinuxName("he"+n.NamespaceName+spec.Name, "he"), rollback); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
 
 	subnet := &Subnet{
 		Name:       spec.Name,
