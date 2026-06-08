@@ -1564,11 +1564,10 @@ func ecsTaskDockerInfo(taskID, containerName string) (dockerID, dockerName strin
 	return dockerID, dockerName
 }
 
-func ecsTaskContainerMetadata(taskID string, task ECSTask, td ECSTaskDefinition, cd ECSContainerDefinition, eniIP string) map[string]any {
+func ecsTaskContainerMetadata(taskID string, task ECSTask, td ECSTaskDefinition, cd ECSContainerDefinition, eniIP string) (map[string]any, bool) {
 	dockerID, dockerName := ecsTaskDockerInfo(taskID, cd.Name)
 	if dockerID == "" {
-		dockerID = taskID
-		dockerName = taskID
+		return nil, false
 	}
 	out := map[string]any{
 		"DockerId":   dockerID,
@@ -1600,7 +1599,7 @@ func ecsTaskContainerMetadata(taskID string, task ECSTask, td ECSTaskDefinition,
 			"IPv4Addresses": []string{eniIP},
 		}}
 	}
-	return out
+	return out, true
 }
 
 func ecsTaskMetadataV4(taskID string) (map[string]any, bool) {
@@ -1613,7 +1612,11 @@ func ecsTaskMetadataV4(taskID string) (map[string]any, bool) {
 	family, revision := ecsTaskDefinitionFamilyRevision(task.TaskDefinitionArn)
 	var containers []map[string]any
 	for _, cd := range td.ContainerDefinitions {
-		containers = append(containers, ecsTaskContainerMetadata(taskID, task, td, cd, eniIP))
+		container, ok := ecsTaskContainerMetadata(taskID, task, td, cd, eniIP)
+		if !ok {
+			return nil, false
+		}
+		containers = append(containers, container)
 	}
 	return map[string]any{
 		"Cluster":       task.ClusterArn,
@@ -1637,7 +1640,7 @@ func ecsContainerMetadataV4(taskID string) (map[string]any, bool) {
 		return nil, false
 	}
 	eniIP, _, _ := ecsTaskENIInfo(taskID)
-	return ecsTaskContainerMetadata(taskID, task, td, td.ContainerDefinitions[0], eniIP), true
+	return ecsTaskContainerMetadata(taskID, task, td, td.ContainerDefinitions[0], eniIP)
 }
 
 // ecsTaskVPCNetwork resolves the VPC Docker network + ENI IP for an awsvpc task,

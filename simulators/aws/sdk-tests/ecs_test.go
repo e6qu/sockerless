@@ -564,8 +564,9 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 		Memory:                  aws.String("512"),
 		ContainerDefinitions: []ecstypes.ContainerDefinition{
 			{
-				Name:  aws.String("app"),
-				Image: aws.String("alpine:latest"),
+				Name:    aws.String("app"),
+				Image:   aws.String("alpine:latest"),
+				Command: []string{"sleep", "30"},
 			},
 		},
 	})
@@ -656,6 +657,12 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 
 func createECSTestSubnet(t *testing.T, name string) string {
 	t.Helper()
+	_, subnetID := createECSTestVPCSubnet(t, name)
+	return subnetID
+}
+
+func createECSTestVPCSubnet(t *testing.T, name string) (string, string) {
+	t.Helper()
 	ec2c := ec2Client()
 	n := ecsTestSubnetCounter.Add(1)
 	second := 200 + int(n%40)
@@ -694,7 +701,7 @@ func createECSTestSubnet(t *testing.T, name string) string {
 		_, _ = ec2c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)})
 		_, _ = ec2c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
 	})
-	return subnetID
+	return vpcID, subnetID
 }
 
 func cleanupECSTask(t *testing.T, client *ecs.Client, clusterName, taskArn string) {

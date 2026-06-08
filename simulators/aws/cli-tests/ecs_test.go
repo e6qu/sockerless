@@ -70,6 +70,8 @@ func TestECS_CLI_ServiceFamily(t *testing.T) {
 }
 
 func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
+	subnetID := createCLIECSTestSubnet(t, 142)
+
 	// Create cluster
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ecs-cluster"))
 
@@ -109,7 +111,7 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
 		"--output", "json",
 	))
 
@@ -166,6 +168,8 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 }
 
 func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {
+	subnetID := createCLIECSTestSubnet(t, 143)
+
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ebs-roundtrip"))
 	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", "/ecs/cli-ebs-roundtrip"))
 
@@ -196,7 +200,7 @@ func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {
 		"--cluster", "cli-ebs-roundtrip",
 		"--task-definition", writerTD.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
 		"--volume-configurations", `[{"name":"workspace","managedEBSVolume":{"roleArn":"arn:aws:iam::123456789012:role/ecsInfrastructureRole","sizeInGiB":1,"volumeType":"gp3","terminationPolicy":{"deleteOnTermination":false},"tagSpecifications":[{"resourceType":"volume","tags":[{"key":"purpose","value":"cli-roundtrip"}]}]}}]`,
 		"--output", "json",
 	))
@@ -276,7 +280,7 @@ func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {
 		"--cluster", "cli-ebs-roundtrip",
 		"--task-definition", readerTD.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
 		"--volume-configurations", `[{"name":"workspace","managedEBSVolume":{"roleArn":"arn:aws:iam::123456789012:role/ecsInfrastructureRole","snapshotId":"`+snapResult.SnapshotId+`","volumeType":"gp3"}}]`,
 		"--output", "json",
 	))
@@ -307,6 +311,8 @@ func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {
 }
 
 func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
+	subnetID := createCLIECSTestSubnet(t, 144)
+
 	// Create cluster
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ecs-fail-cluster"))
 
@@ -345,7 +351,7 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
 		"--launch-type", "FARGATE",
 		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
 		"--output", "json",
 	))
 
