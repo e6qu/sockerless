@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,11 +32,7 @@ var (
 // container's netns). When false the sim uses the cross-platform Docker-network
 // tier instead.
 func ec2ECSRealNetAvailable() bool {
-	if realexec.DetectNetworkCapabilities().Require() != nil {
-		return false
-	}
-	_, err := exec.LookPath("nsenter")
-	return err == nil
+	return realexec.DetectExternalNamespaceCapabilities().Require() == nil
 }
 
 // ec2AttachRealECSTaskNIC plumbs a veth from the task's VPC subnet bridge into
