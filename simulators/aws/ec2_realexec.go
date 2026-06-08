@@ -116,19 +116,16 @@ func ec2RealName(prefix, id string) string {
 
 func ec2CreateRealVPC(ctx context.Context, vpc EC2Vpc) error {
 	ec2RealMu.Lock()
+	defer ec2RealMu.Unlock()
 	if _, ok := ec2RealVPCs[vpc.VpcId]; ok {
-		ec2RealMu.Unlock()
 		return nil
 	}
-	ec2RealMu.Unlock()
 
 	network, err := ec2RealHost.CreateNetworkNamespace(ctx, ec2RealName("avn", vpc.VpcId))
 	if err != nil {
 		return err
 	}
-	ec2RealMu.Lock()
 	ec2RealVPCs[vpc.VpcId] = network
-	ec2RealMu.Unlock()
 	return nil
 }
 
@@ -218,9 +215,15 @@ func ec2CreateRealSubnet(ctx context.Context, subnet EC2Subnet) error {
 		if err := ec2CreateRealVPC(ctx, vpc); err != nil {
 			return err
 		}
-		ec2RealMu.Lock()
-		network = ec2RealVPCs[subnet.VpcId]
-		ec2RealMu.Unlock()
+	}
+	ec2RealMu.Lock()
+	defer ec2RealMu.Unlock()
+	if _, ok := ec2RealSubnets[subnet.SubnetId]; ok {
+		return nil
+	}
+	network = ec2RealVPCs[subnet.VpcId]
+	if network == nil {
+		return fmt.Errorf("real VPC %s not provisioned", subnet.VpcId)
 	}
 	realSubnet, err := network.CreateSubnet(ctx, realexec.SubnetSpec{
 		Name:       subnet.SubnetId,
@@ -231,9 +234,7 @@ func ec2CreateRealSubnet(ctx context.Context, subnet EC2Subnet) error {
 	if err != nil {
 		return err
 	}
-	ec2RealMu.Lock()
 	ec2RealSubnets[subnet.SubnetId] = realSubnet
-	ec2RealMu.Unlock()
 	return nil
 }
 
