@@ -4,11 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `test/aws-coverage-backfill-2` (PR pending — coverage audit batch 2: 3 real bug fixes + DynamoDB/ECR/misc backfill).
-- **3 bugs found by the audit + fixed:** BUG-1514 DynamoDB UpdateItem silent no-op (only legacy AttributeUpdates; ignored UpdateExpression → wrote a real evaluator `dynamodb_update_expression.go`); BUG-1515 ECR DescribeImages+ListImages missing (implemented); BUG-1516 ECR BatchDeleteImage left the digest alias (fixed — same class as the OCI manifest DELETE). SDK+CLI coverage for all + the remaining misc ops (SSM/Glue/CodeBuild/SFN/Logs/SQS/ElastiCache). **Only ECS ExecuteCommand still uncovered** — it needs a running-task fixture (reuse the run-task harness in a follow-up).
-- EC2/IAM coverage backfill (batch 1) merged as PR #476.
+- Branch: `fix/aca-apps-podman-reverse-agent` (PR pending — BUG-1576).
+- Current fix: ACA Apps attach-stdin under local Podman now registers the reverse-agent. The backend integration harness uses `host.containers.internal` when the Docker API reports Podman, and the Azure simulator injects explicit Podman-machine `/etc/hosts` mappings for `host.containers.internal` and `host.docker.internal` into workload containers when the Podman VM route exposes the host callback subnet.
+- Diagnostics added: ACA Apps reverse-agent bootstrap timeout errors include a recent real Log Analytics app log tail, so failed dials show DNS/connectivity root cause instead of a generic registration timeout.
+- Verification so far: `TestACAGitLabRunnerAttachStdin` passes locally on Podman; Azure simulator tests pass; ACA backend tests pass with `-tags noui`.
+- After this PR: likely next choices are BUG-1540 (AWS CloudTrail REST-protocol recording sweep) or a Phase G new-service-slice PR, unless new consumer issues arrive first.
 
 ## Prior current state
+
+- ECS VPC/netns/metadata/route-table/ExecuteCommand chain merged through PR #524. Earlier links in the chain: PR #520 netns metadata + route-table egress, PR #519 netns VPC fabric for overlapping CIDRs, PR #518 VPC isolation.
+
+## Older AWS coverage state
 - **Coverage audit:** cross-referenced all 380 registered AWS sim ops vs the SDK+CLI test corpus → **34 untested**. Probed all 34 against a running sim: all respond + round-trip correctly (no hidden bugs; this is regression exposure, not live defects). This PR backfills the 18 fck-nat-critical EC2 networking + IAM role-policy ops (SDK+CLI, real round-trip assertions). **Remaining 16 for follow-up:** DynamoDB (UpdateItem, TTL, continuous-backups), ECR (BatchDeleteImage, DeleteLifecyclePolicy), SSM GetParameters, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN (ListStateMachineVersions, ValidateStateMachineDefinition), ECS ExecuteCommand, Logs PutRetentionPolicy, SQS SetQueueAttributes, RemoveTagsFromResource.
 - **Audit method (reusable):** `grep -rhoE '\.Register(Versioned)?\("[^"]+"'` for ops; cross-ref against `.<Op>(` in sdk-tests + `"<kebab-op>"` in cli-tests; probe the gap against a running sim.
 

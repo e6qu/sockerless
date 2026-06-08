@@ -27,13 +27,14 @@ func (s *Server) runACAInitialStdinStage(id string, c api.Container) {
 	waitCtx, cancel := context.WithTimeout(s.ctx(), timeout)
 	defer cancel()
 	if werr := s.reverseAgents.WaitForAgent(waitCtx, id); werr != nil {
+		logTail := s.recentACAAppLogTail(id)
 		inv.ExitCode = 126
 		inv.Error = fmt.Sprintf(
 			"reverse-agent did not register for container %s within %s "+
 				"(SOCKERLESS_ACA_BOOTSTRAP_TIMEOUT_SEC). The App was created and "+
 				"started but the in-container bootstrap never dialled back to "+
-				"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet integration / NSG.",
-			id[:12], timeout, s.config.CallbackURL,
+				"SOCKERLESS_CALLBACK_URL=%s. Check egress / VNet integration / NSG.%s",
+			id[:12], timeout, s.config.CallbackURL, logTail,
 		)
 		s.finishACAInitialStdinStage(id, inv, nil, []byte(inv.Error))
 		return

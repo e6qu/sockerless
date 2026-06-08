@@ -489,11 +489,11 @@ func startACAAppContainer(ctx context.Context, resourceID string, app ContainerA
 	}
 	containerName := fmt.Sprintf("sockerless-sim-azure-app-%s-%d-%s-%s", shortName, replica, c.Name, randomSuffix(6))
 	sink := &acaAppLogSink{appName: app.Name}
+	localImage := sim.ResolveLocalImage(c.Image)
 	extraHosts := hostMetadataExtraHosts()
 	if networkMode != "" {
 		extraHosts = nil
 	}
-	localImage := sim.ResolveLocalImage(c.Image)
 	platform, err := localImagePlatform(ctx, localImage)
 	if err != nil {
 		return nil, err
@@ -523,6 +523,9 @@ func stopACAAppReplicas(resourceID string) {
 	if v, ok := acaAppReplicaHandles.LoadAndDelete(resourceID); ok {
 		for _, handle := range v.([]*sim.ContainerHandle) {
 			handle.Cancel()
+			if handle.ContainerID != "" {
+				sim.StopAndRemoveContainer(handle.ContainerID)
+			}
 		}
 	}
 }
@@ -531,6 +534,9 @@ func replaceACAAppReplicas(resourceID string, handles []*sim.ContainerHandle) {
 	if v, ok := acaAppReplicaHandles.Swap(resourceID, handles); ok {
 		for _, handle := range v.([]*sim.ContainerHandle) {
 			handle.Cancel()
+			if handle.ContainerID != "" {
+				sim.StopAndRemoveContainer(handle.ContainerID)
+			}
 		}
 	}
 }

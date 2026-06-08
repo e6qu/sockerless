@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -251,8 +254,7 @@ func azureCIDRAddressPrefix(cidr, defaultAddress, defaultPrefix string) (string,
 }
 
 // simListenAddr is captured by main() so host translators can wire it
-// into workload-host env. Workloads in Docker reach the sim host via
-// host.docker.internal.
+// into workload-host env.
 var simListenAddr string
 
 func simHostMetadataAddr() string {
@@ -275,19 +277,26 @@ func simHostMetadataPort() (int, error) {
 	return n, nil
 }
 
-// hostMetadataExtraHosts returns ExtraHosts entries needed for the
-// workload to resolve host.docker.internal to the sim's host gateway.
+// hostMetadataExtraHosts returns ExtraHosts entries needed for Docker
+// workloads to resolve host.docker.internal to the sim's host gateway.
 // Real Azure IMDS uses 169.254.169.254 (a link-local IP); workloads
 // that hard-code that address need a routing override which Linux
 // Docker can't easily express. The Azure SDK respects IDENTITY_ENDPOINT
 // + IDENTITY_HEADER + AZURE_INSTANCE_METADATA_ENDPOINT for redirection,
 // so SDK-based workloads route via env without needing the link-local.
 func hostMetadataExtraHosts() []string {
-	if workloadCallbackHost() != "host.docker.internal" {
+	host := workloadCallbackHost()
+	if host != "host.docker.internal" && host != "host.containers.internal" {
 		return nil
 	}
 	info := strings.ToLower(sim.RuntimeInfo())
 	if strings.Contains(info, "podman") {
+		if ip := podmanMachineHostIPv4(); ip != "" {
+			return []string{
+				"host.containers.internal:" + ip,
+				"host.docker.internal:" + ip,
+			}
+		}
 		return nil
 	}
 	return []string{"host.docker.internal:host-gateway"}
@@ -314,7 +323,39 @@ func workloadCallbackHost() string {
 			return host
 		}
 	}
+	if strings.Contains(strings.ToLower(sim.RuntimeInfo()), "podman") {
+		return "host.containers.internal"
+	}
 	return "host.docker.internal"
+}
+
+func podmanMachineHostIPv4() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "podman", "machine", "ssh", "--", "ip", "-4", "route", "show", "default").Output()
+	if err != nil {
+		return ""
+	}
+	return parsePodmanMachineHostIPv4(string(out))
+}
+
+func parsePodmanMachineHostIPv4(route string) string {
+	for _, line := range strings.Split(route, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "src" {
+				continue
+			}
+			ip := net.ParseIP(fields[i+1]).To4()
+			if ip == nil {
+				continue
+			}
+			// Podman machine user-mode networking exposes the macOS host at
+			// the final usable address on the VM's host subnet.
+			return net.IPv4(ip[0], ip[1], ip[2], 254).String()
+		}
+	}
+	return ""
 }
 
 func runningInsideContainer() bool {

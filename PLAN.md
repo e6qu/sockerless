@@ -18,15 +18,24 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Phase
 
-**Terraform idempotency drift sweep** (started in PR #491). The new
-second-plan `terraform plan -detailed-exitcode` drift assertions on the gcp +
-azure apply stacks (BUG-1532) surfaced ~13 pre-existing read-back fidelity bugs
-that cause a non-empty second plan. PR #491 already lands the green pieces
-(scheduler `cron(...)` evaluation BUG-1531, the drift assertions themselves, and
-the Docker-Hub→ECR-gallery harness fix BUG-1533); the drift fixes below are the
-remaining work to make `tf (gcp)` / `tf (azure)` green. These stacks cannot run
-on a Mac host (gcp needs Linux real-exec; azure-Docker times out locally), so
-each fix is verified blind via the CI `tf (...)` job.
+**Post-ECS networking cleanup / simulator fidelity maintenance.** The ECS
+VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524.
+The current PR fixes BUG-1576: ACA Apps attach-stdin under local Podman now gets
+a reachable reverse-agent callback path, with real app-log diagnostics on
+bootstrap timeout.
+
+Likely next work: BUG-1540 (AWS CloudTrail REST-protocol recording sweep) or a
+Phase G new-service-slice PR, unless new consumer issues arrive first.
+
+## Previous Completed Work
+
+**Terraform idempotency drift sweep** (started in PR #491). The new second-plan
+`terraform plan -detailed-exitcode` drift assertions on the gcp + azure apply
+stacks (BUG-1532) surfaced ~13 pre-existing read-back fidelity bugs that cause a
+non-empty second plan. PR #491 landed the green pieces (scheduler `cron(...)`
+evaluation BUG-1531, the drift assertions themselves, and the
+Docker-Hub→ECR-gallery harness fix BUG-1533), followed by the drift fixes below
+to make `tf (gcp)` / `tf (azure)` green.
 
 ### Terraform drift fixes (BUG-1534, closing BUG-1532)
 

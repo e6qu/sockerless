@@ -6,13 +6,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `test/aws-coverage-backfill-2` (PR pending — coverage audit batch 2: 3 bug fixes + DynamoDB/ECR/misc backfill) |
-| In-flight | Probing the remaining untested ops surfaced **3 real bugs**: BUG-1514 DynamoDB UpdateItem silent no-op (UpdateExpression ignored — wrote a real evaluator), BUG-1515 ECR DescribeImages+ListImages missing (implemented), BUG-1516 ECR BatchDeleteImage left the digest alias (fixed). SDK+CLI coverage for these + SSM/Glue/CodeBuild/SFN/Logs/SQS/ElastiCache. Only ECS ExecuteCommand deferred (needs running-task fixture). |
-| Last merged | PR #476 (EC2/IAM coverage backfill); PR #475 (#469–#473 + BUG-1512/1513); PR #474 (azf attach deadline) |
-| Open GitHub issues | All consumer issues #453–#473 closed; only #394 (azuread TF upstream) remains. |
-| Bugs | 1516 filed · 1472 fixed · 5 open · 4 false positives |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream |
-| Planned next | Finish the coverage backfill (16 remaining ops); then fresh fidelity audit / Phase G new slices / await new consumer issues |
+| Active branch | `fix/aca-apps-podman-reverse-agent` (PR pending — ACA Apps Podman reverse-agent callback + continuity refresh) |
+| In-flight | BUG-1576 is fixed on this branch: ACA Apps attach-stdin under local Podman now uses a runtime-reachable reverse-agent callback host, and Azure simulator workloads get explicit Podman-machine host alias mappings when needed. |
+| Last merged | ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524; prior merged PRs include #520 netns metadata + route-table egress, #519 netns VPC fabric, and #518 VPC isolation. |
+| Open GitHub issues | Only upstream/maintenance trackers are known active from the local continuity docs; check GitHub before starting the next consumer issue batch. |
+| Bugs | 1576 filed · 1531 fixed · 6 open · 5 false positives |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1540 AWS CloudTrail REST-protocol recording sweep. |
+| Planned next | After this PR: pick either BUG-1540 CloudTrail REST-protocol coverage or a Phase G service-slice PR, unless new consumer issues arrive first. |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 

@@ -14,7 +14,7 @@ import (
 // specs/SIMULATOR_REAL_EXECUTION.md and feedback_sim_host_model.md.
 func TestNoOsExecOfWorkloads(t *testing.T) {
 	allowList := map[string]string{
-		// (no production azure/*.go files use os/exec.)
+		"metadata.go": "queries Podman machine routing to discover the real host callback address; workloads still dispatch through Docker/Podman containers",
 	}
 
 	simDir, _ := filepath.Abs("..")
