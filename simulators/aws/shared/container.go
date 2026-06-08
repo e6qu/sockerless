@@ -122,6 +122,25 @@ func DockerClient() *client.Client {
 	return dockerClient
 }
 
+// ContainerPID returns the host PID of a running container's main process, used
+// to plumb a veth into the container's network namespace (the netns VPC fabric).
+func ContainerPID(containerID string) (int, error) {
+	cli := DockerClient()
+	if cli == nil {
+		return 0, fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return 0, err
+	}
+	if info.State == nil || info.State.Pid <= 0 {
+		return 0, fmt.Errorf("container %s has no running PID", containerID)
+	}
+	return info.State.Pid, nil
+}
+
 // managedContainers tracks containers created by this simulator instance for cleanup.
 var managedContainers sync.Map // containerID -> true
 

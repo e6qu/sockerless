@@ -771,6 +771,10 @@ func ec2TagFilterMatch(name string, vals []string, tags []EC2Tag) (handled, matc
 func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("VpcId")
 	ec2Vpcs.Delete(id)
+	// Tear down the VPC's Docker-tier network (faithful: VPC gone → networking
+	// gone; without this it leaks and blocks a re-created VPC reusing the CIDR).
+	// The netns-tier fabric is torn down by ec2DeleteRealVPC below.
+	_ = sim.RemoveDockerNetwork(ecsVPCNetworkName(id))
 	if err := ec2DeleteRealVPC(r.Context(), id); err != nil {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real VPC network fabric: %v", err), http.StatusServiceUnavailable)
 		return

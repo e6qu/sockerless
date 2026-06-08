@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,7 +25,66 @@ var (
 	ec2RealVMs      = map[string]*realexec.FirecrackerVM{}
 	ec2RealEBSSlots = map[string]map[string]string{}
 	ec2RealNATNICs  = map[string]*realexec.NamespaceNIC{}
+	ec2RealECSNICs  = map[string]*realexec.NamespaceNIC{} // taskID -> veth into the container netns
 )
+
+// ec2ECSRealNetAvailable reports whether ECS tasks can be plumbed into real VPC
+// network namespaces — Linux network capabilities plus nsenter (to configure the
+// container's netns). When false the sim uses the cross-platform Docker-network
+// tier instead.
+func ec2ECSRealNetAvailable() bool {
+	if realexec.DetectNetworkCapabilities().Require() != nil {
+		return false
+	}
+	_, err := exec.LookPath("nsenter")
+	return err == nil
+}
+
+// ec2AttachRealECSTaskNIC plumbs a veth from the task's VPC subnet bridge into
+// the container's network namespace, giving it eth0 at the ENI IP. Because each
+// VPC is its own netns, overlapping VPC CIDRs work natively — no remapping, the
+// ENI IP is the container's real address.
+func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid int, eniIP string) error {
+	sn, ok := ec2Subnets.Get(subnetID)
+	if !ok {
+		return fmt.Errorf("subnet %s not found", subnetID)
+	}
+	if err := ec2CreateRealSubnet(ctx, sn); err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	subnet := ec2RealSubnets[subnetID]
+	ec2RealMu.Unlock()
+	if subnet == nil {
+		return fmt.Errorf("real subnet %s not provisioned", subnetID)
+	}
+	nic, err := subnet.AttachExternalNamespaceNIC(ctx, realexec.ExternalNamespaceNICSpec{
+		PID:           pid,
+		HostVethName:  ec2RealName("eh", taskID),
+		GuestVethName: ec2RealName("eg", taskID),
+		GuestIfName:   "eth0",
+		MAC:           ec2ENIMAC(taskID),
+		PrivateIP:     net.ParseIP(eniIP),
+	})
+	if err != nil {
+		return err
+	}
+	ec2RealMu.Lock()
+	ec2RealECSNICs[taskID] = nic
+	ec2RealMu.Unlock()
+	return nil
+}
+
+// ec2DetachRealECSTaskNIC tears down a task's VPC veth when the task stops.
+func ec2DetachRealECSTaskNIC(ctx context.Context, taskID string) {
+	ec2RealMu.Lock()
+	nic := ec2RealECSNICs[taskID]
+	delete(ec2RealECSNICs, taskID)
+	ec2RealMu.Unlock()
+	if nic != nil {
+		_ = nic.Close(ctx)
+	}
+}
 
 const ec2RealEBSMaxSlots = 15
 
