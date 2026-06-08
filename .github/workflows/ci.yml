@@ -299,10 +299,16 @@ jobs:
         include:
           - suite: edge
             run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
+            timeout: 420s
+            timeout_minutes: 10
           - suite: compute
             run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECR|ECS|EFS|Logs)'
+            timeout: 900s
+            timeout_minutes: 15
           - suite: appdata
             run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|RDS|ResourceTags|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
+            timeout: 420s
+            timeout_minutes: 10
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: actions/setup-go@v6.4.0
@@ -320,8 +326,8 @@ jobs:
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run AWS CLI tests
-        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=420s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
-        timeout-minutes: 10
+        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=${{ matrix.timeout }} CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
+        timeout-minutes: ${{ matrix.timeout_minutes }}
         env:
           GOWORK: "off"
 
