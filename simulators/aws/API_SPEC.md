@@ -843,7 +843,61 @@ X-Amz-Target: AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition
 
 ---
 
-### 1.9 StopTask
+### 1.9 ExecuteCommand
+
+**X-Amz-Target:** `AmazonEC2ContainerServiceV20141113.ExecuteCommand`
+
+#### Request
+
+```json
+{
+  "cluster": "string",
+  "command": "string",
+  "container": "string",
+  "interactive": true,
+  "task": "string"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `cluster` | String | No | Cluster ARN or short name; defaults to `default` |
+| `command` | String | **Yes** | Command to run in the container |
+| `container` | String | No | Required when the task has multiple containers |
+| `interactive` | Boolean | **Yes** | Must be `true`; ECS only supports interactive exec sessions |
+| `task` | String | **Yes** | Task ARN or ID |
+
+#### Response (HTTP 200)
+
+```json
+{
+  "clusterArn": "string",
+  "containerArn": "string",
+  "containerName": "string",
+  "interactive": true,
+  "session": {
+    "sessionId": "string",
+    "streamUrl": "string",
+    "tokenValue": "string"
+  },
+  "taskArn": "string"
+}
+```
+
+#### Errors
+
+| Error | HTTP | Description |
+|-------|------|-------------|
+| `AccessDeniedException` | 400 | Caller is not authorized |
+| `ClientException` | 400 | Invalid permissions or identifier |
+| `ClusterNotFoundException` | 400 | Cluster not found |
+| `InvalidParameterException` | 400 | Invalid parameter or exec not enabled on the task |
+| `ServerException` | 500 | Server error |
+| `TargetNotConnectedException` | 400 | Execute-command target/agent is not connected |
+
+---
+
+### 1.10 StopTask
 
 **X-Amz-Target:** `AmazonEC2ContainerServiceV20141113.StopTask`
 
@@ -894,7 +948,7 @@ X-Amz-Target: AmazonEC2ContainerServiceV20141113.DeregisterTaskDefinition
 
 ---
 
-### 1.10 ListTasks
+### 1.11 ListTasks
 
 **X-Amz-Target:** `AmazonEC2ContainerServiceV20141113.ListTasks`
 

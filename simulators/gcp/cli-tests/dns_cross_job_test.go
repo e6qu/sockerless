@@ -46,7 +46,7 @@ func TestDNS_CrossJobResolution_CLI(t *testing.T) {
 	createJob := func(name string) string {
 		body := `{
 			"template":{"template":{
-				"containers":[{"image":"alpine:latest","command":["sh","-c"],"args":["sleep 30"]}],
+				"containers":[{"image":"` + evalImageName + `","command":["sh","-c"],"args":["sleep 30"]}],
 				"timeout":"60s"
 			}}
 		}`

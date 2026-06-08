@@ -2237,6 +2237,12 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 			sim.AWSError(w, "InvalidParameterException", "command is required", http.StatusBadRequest)
 			return
 		}
+		if !req.Interactive {
+			sim.AWSError(w, "InvalidParameterException",
+				"Amazon ECS only supports initiating interactive execute command sessions. Specify interactive as true.",
+				http.StatusBadRequest)
+			return
+		}
 
 		// Extract task ID from ARN
 		taskID := req.Task
@@ -2259,6 +2265,23 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 				"Execute command is not supported on task in %s status", task.LastStatus)
 			return
 		}
+		if req.Cluster != "" && task.ClusterArn != ecsArn("cluster", ecsClusterNameFromRef(req.Cluster)) {
+			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+				"Task not found: %s", req.Task)
+			return
+		}
+		container := ecsExecTargetContainer(task, req.Container)
+		if container == nil {
+			if req.Container == "" {
+				sim.AWSError(w, "InvalidParameterException",
+					"container is required when the task has multiple containers",
+					http.StatusBadRequest)
+			} else {
+				sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+					"Container not found: %s", req.Container)
+			}
+			return
+		}
 		// Real ECS rejects exec unless the task was started with
 		// enableExecuteCommand=true (the SSM exec agent is only injected then).
 		if !task.EnableExecuteCommand {
@@ -2276,7 +2299,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		var dockerContainerID string
 		for i := 0; i < 20; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				handle := v.(*ecsTaskProcesses).handleFor(req.Container)
+				handle := v.(*ecsTaskProcesses).handleFor(container.Name)
 				if handle == nil {
 					break
 				}
@@ -2284,6 +2307,12 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 				break
 			}
 			time.Sleep(250 * time.Millisecond)
+		}
+		if dockerContainerID == "" {
+			sim.AWSError(w, "TargetNotConnectedException",
+				"The execute command cannot run because the task target is not connected.",
+				http.StatusBadRequest)
+			return
 		}
 
 		ecsExecSessions.Store(sessionID, ecsExecSession{
@@ -2302,13 +2331,33 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		// WebSocket endpoint is registered statically as /ecs-exec/{sessionId}
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"clusterArn":    task.ClusterArn,
+			"containerArn":  container.ContainerArn,
+			"containerName": container.Name,
+			"interactive":   true,
 			"session": map[string]any{
 				"sessionId":  sessionID,
 				"streamUrl":  streamURL,
 				"tokenValue": "token-" + sessionID[:8],
 			},
+			"taskArn": task.TaskArn,
 		})
 	}
+}
+
+func ecsExecTargetContainer(task ECSTask, containerName string) *ECSTaskContainer {
+	if containerName != "" {
+		for i := range task.Containers {
+			if task.Containers[i].Name == containerName {
+				return &task.Containers[i]
+			}
+		}
+		return nil
+	}
+	if len(task.Containers) == 1 {
+		return &task.Containers[0]
+	}
+	return nil
 }
 
 // handleECSExecWebSocket returns a handler for an ECS exec WebSocket session.
