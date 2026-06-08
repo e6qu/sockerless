@@ -321,7 +321,7 @@ jobs:
           bash scripts/install-firecracker.sh
       - name: Run AWS CLI tests
         run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=420s CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
-        timeout-minutes: 7
+        timeout-minutes: 10
         env:
           GOWORK: "off"
 

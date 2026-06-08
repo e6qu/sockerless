@@ -305,6 +305,11 @@ func stopECSTaskProcesses(p *ecsTaskProcesses) {
 	}
 }
 
+func cleanupECSTaskProcesses(taskID string, p *ecsTaskProcesses) {
+	stopECSTaskProcesses(p)
+	ec2DetachRealECSTaskNIC(context.Background(), taskID)
+}
+
 func requestStopECSTaskProcesses(p *ecsTaskProcesses) {
 	if p == nil {
 		return
@@ -1263,7 +1268,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					go func(taskID, containerName string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
-						stopECSTaskProcesses(processes)
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == "STOPPED" {
@@ -1281,6 +1285,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 							}
 							ecsCleanupTaskManagedEBS(t)
 						})
+						cleanupECSTaskProcesses(taskID, processes)
 					}(id, name, handle)
 				}
 			}
@@ -1292,6 +1297,39 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		"tasks":    tasks,
 		"failures": []any{},
 	})
+}
+
+// ecsPauseImage is the image for the netns pause container — a long-lived sleep
+// that owns the task's VPC network namespace. Defaults to busybox from ECR
+// (always has `sleep`, avoids Docker Hub throttling); override with the env var.
+func ecsPauseImage() string {
+	if v := os.Getenv("SOCKERLESS_ECS_PAUSE_IMAGE"); v != "" {
+		return v
+	}
+	return "public.ecr.aws/docker/library/busybox:latest"
+}
+
+// startECSPauseContainer launches the netns pause container (Fargate-style): a
+// long-lived process that holds the task's network namespace so the ENI can be
+// plumbed in with no start-race, then shared by every task container.
+func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSink) (*sim.ContainerHandle, error) {
+	img := sim.ResolveLocalImage(ecsPauseImage())
+	platform, err := localImagePlatform(context.Background(), img)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pause image platform: %w", err)
+	}
+	return sim.StartContainerSync(sim.ContainerConfig{
+		Image:        img,
+		Architecture: platform,
+		Command:      []string{"sleep"},
+		Args:         []string{"2147483647"},
+		Name:         fmt.Sprintf("sockerless-sim-aws-task-%s-pause", taskID[:12]),
+		Labels: map[string]string{
+			"sockerless-sim-task":       taskID,
+			"sockerless-sim-task-pause": "true",
+		},
+		Sandbox: sim.SandboxFargate,
+	}, sink)
 }
 
 func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
@@ -1337,6 +1375,36 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		MainContainerName: td.ContainerDefinitions[0].Name,
 		Handles:           make(map[string]*sim.ContainerHandle, len(td.ContainerDefinitions)),
 	}
+	// awsvpc networking. netns tier (Linux + CAP_NET_ADMIN): a pause container
+	// holds the task's VPC network namespace (a long-lived sleep, so the ENI is
+	// plumbed with no start-race), the ENI veth is attached into it, and every
+	// task container shares that netns — overlapping VPC CIDRs work natively with
+	// the real ENI IP. Otherwise the cross-platform Docker-network tier pins the
+	// first container to a per-VPC bridge at the ENI IP.
+	eniIP, subnetID, hasENI := ecsTaskENIInfo(taskID)
+	netnsTier := ec2ECSRealNetAvailable()
+	var sharedNetMode string
+	if netnsTier && hasENI {
+		pause, perr := startECSPauseContainer(taskID, td, sink)
+		if perr != nil {
+			return nil, perr
+		}
+		processes.Handles["__pause__"] = pause
+		if derr := sim.DisconnectContainerNetworks(pause.ContainerID); derr != nil {
+			cleanupECSTaskProcesses(taskID, processes)
+			return nil, fmt.Errorf("disconnect task netns pause from Docker networks: %w", derr)
+		}
+		pid, perr := sim.ContainerPID(pause.ContainerID)
+		if perr != nil {
+			cleanupECSTaskProcesses(taskID, processes)
+			return nil, fmt.Errorf("task netns pause pid: %w", perr)
+		}
+		if aerr := ec2AttachRealECSTaskNIC(context.Background(), taskID, subnetID, pid, eniIP); aerr != nil {
+			cleanupECSTaskProcesses(taskID, processes)
+			return nil, fmt.Errorf("attach task to VPC netns: %w", aerr)
+		}
+		sharedNetMode = "container:" + pause.ContainerID
+	}
 	var mainDockerID string
 
 	for i, cd := range td.ContainerDefinitions {
@@ -1371,7 +1439,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		localImage := sim.ResolveLocalImage(cd.Image)
 		platform, err := localImagePlatform(context.Background(), localImage)
 		if err != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("resolve task container %q image platform: %w", cd.Name, err)
 		}
 
@@ -1391,29 +1459,30 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			Binds:     binds,
 			Sandbox:   sim.SandboxFargate,
 		}
-		if i == 0 {
+		switch {
+		case sharedNetMode != "":
+			// netns tier: share the pause container's ENI netns.
+			cfg.NetworkMode = sharedNetMode
+		case i == 0:
 			cfg.ExtraHosts = hostMetadataExtraHosts()
-			// awsvpc: pin the task's first container onto its VPC's Docker
-			// network at the ENI IP, so DescribeTasks's privateIPv4Address is the
-			// container's real, routable address — intra-VPC reachable, isolated
-			// across VPCs. Secondary containers share this netns (the shared ENI),
-			// exactly as real awsvpc tasks do.
-			netName, eniIP, ok, nerr := ecsTaskVPCNetwork(taskID)
-			if nerr != nil {
-				stopECSTaskProcesses(processes)
-				return nil, nerr
+			if !netnsTier {
+				netName, dockerIP, ok, nerr := ecsTaskVPCNetwork(taskID)
+				if nerr != nil {
+					cleanupECSTaskProcesses(taskID, processes)
+					return nil, nerr
+				}
+				if ok {
+					cfg.Network = netName
+					cfg.IPAddress = dockerIP
+				}
 			}
-			if ok {
-				cfg.Network = netName
-				cfg.IPAddress = eniIP
-			}
-		} else if mainDockerID != "" {
+		case mainDockerID != "":
 			cfg.NetworkMode = "container:" + mainDockerID
 		}
 
 		handle, err := sim.StartContainerSync(cfg, sink)
 		if err != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("start task container %q: %w", cd.Name, err)
 		}
 		if i == 0 {
@@ -1430,6 +1499,29 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 
 // ecsVPCNetworkName is the Docker network backing a VPC.
 func ecsVPCNetworkName(vpcID string) string { return "sockerless-sim-vpc-" + vpcID }
+
+// ecsTaskENIInfo reads a task's awsvpc ENI IP + subnet from its attachment.
+// Returns ok=false for tasks without an awsvpc ENI.
+func ecsTaskENIInfo(taskID string) (eniIP, subnetID string, ok bool) {
+	task, found := ecsTasks.Get(taskID)
+	if !found {
+		return "", "", false
+	}
+	for _, att := range task.Attachments {
+		if att.Type != "ElasticNetworkInterface" {
+			continue
+		}
+		for _, d := range att.Details {
+			switch d.Name {
+			case "subnetId":
+				subnetID = d.Value
+			case "privateIPv4Address":
+				eniIP = d.Value
+			}
+		}
+	}
+	return eniIP, subnetID, eniIP != "" && subnetID != ""
+}
 
 // ecsTaskVPCNetwork resolves the VPC Docker network + ENI IP for an awsvpc task,
 // ensuring the network exists. Returns ok=false for tasks with no awsvpc ENI
@@ -1563,6 +1655,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 			"Task not found: %s", req.Task)
 		return
 	}
+
+	// Tear down the task's VPC veth (netns tier) after cloud-visible state is
+	// updated; Docker/netns cleanup can take seconds on CI.
+	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
 
 	task, _ := ecsTasks.Get(taskID)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

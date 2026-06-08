@@ -1,7 +1,11 @@
 package aws_cli_test
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -9,82 +13,109 @@ import (
 
 const vpcNetBusybox = "public.ecr.aws/docker/library/busybox:latest"
 
-// TestECSVPCNetworking proves issue #516 end-to-end: an ECS task's ENI
-// privateIPv4Address is the container's REAL, routable IP (not a phantom VPC
-// address), reachable from another container in the same VPC and isolated from a
-// different VPC — i.e. VPCs are genuinely isolated networks with the implicit
-// local route enforced by a real Linux bridge.
+// vpcServerScript runs a long-lived HTTP server serving "ok" on :80, so probes
+// can test real TCP reachability/isolation between tasks.
+const vpcServerScript = "mkdir -p /www && echo ok > /www/index.html && httpd -f -p 80 -h /www"
+
+// TestECSVPCNetworking proves issue #516 end-to-end and is tier-agnostic (works
+// on both the netns and Docker-network fabrics, since it probes via the task
+// containers themselves): an ECS task's ENI privateIPv4Address is the
+// container's REAL eth0 address, reachable from another task in the same VPC and
+// isolated from a task in a different VPC.
 func TestECSVPCNetworking(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not available")
 	}
 	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
-	mkVPC := func(name, vpcCidr, snCidr string) (vpcID, subnetID string) {
-		vpcID = q("ec2", "create-vpc", "--cidr-block", vpcCidr, "--query", "Vpc.VpcId", "--output", "text")
-		subnetID = q("ec2", "create-subnet", "--vpc-id", vpcID, "--cidr-block", snCidr,
-			"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
-		return vpcID, subnetID
-	}
-	vpcA, subnetA := mkVPC("a", "10.91.0.0/16", "10.91.0.0/24")
-	vpcB, subnetB := mkVPC("b", "10.92.0.0/16", "10.92.0.0/24")
+	octetA := unusedDockerVPCOctet(t, 120, nil)
+	octetB := unusedDockerVPCOctet(t, octetA+1, map[int]bool{octetA: true})
+	vpcA, subnetA := mkVPCSubnet(t, q, vpcCIDR(octetA), subnetCIDR(octetA))
+	vpcB, subnetB := mkVPCSubnet(t, q, vpcCIDR(octetB), subnetCIDR(octetB))
 	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "vpc-server", vpcServerScript)
+	registerTaskDef(q, "vpc-client", "sleep 120")
 
-	// A long-lived HTTP server task in VPC-A.
-	serverScript := "mkdir -p /www && echo ok > /www/index.html && httpd -f -p 80 -h /www"
-	q("ecs", "register-task-definition", "--family", "vpc-server",
-		"--network-mode", "awsvpc", "--requires-compatibilities", "FARGATE", "--cpu", "256", "--memory", "512",
-		"--container-definitions", `[{"name":"app","image":"`+vpcNetBusybox+`","entryPoint":["sh","-c"],"command":["`+serverScript+`"]}]`,
-		"--query", "taskDefinition.taskDefinitionArn", "--output", "text")
-	// A second task in VPC-B materialises VPC-B's network for the isolation probe.
-	q("ecs", "register-task-definition", "--family", "vpc-idle",
-		"--network-mode", "awsvpc", "--requires-compatibilities", "FARGATE", "--cpu", "256", "--memory", "512",
-		"--container-definitions", `[{"name":"app","image":"`+vpcNetBusybox+`","entryPoint":["sh","-c"],"command":["sleep 120"]}]`,
-		"--query", "taskDefinition.taskDefinitionArn", "--output", "text")
-
-	taskA := q("ecs", "run-task", "--cluster", "default", "--task-definition", "vpc-server",
-		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetA+`]}`,
-		"--query", "tasks[0].taskArn", "--output", "text")
-	taskB := q("ecs", "run-task", "--cluster", "default", "--task-definition", "vpc-idle",
-		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetB+`]}`,
-		"--query", "tasks[0].taskArn", "--output", "text")
+	server := runTask(q, "vpc-server", subnetA)
+	clientSame := runTask(q, "vpc-client", subnetA)
+	clientOther := runTask(q, "vpc-client", subnetB)
 	t.Cleanup(func() {
-		runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", taskA))
-		runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", taskB))
-		_ = exec.Command("docker", "network", "rm", ecsVPCNet(vpcA), ecsVPCNet(vpcB)).Run()
-	})
-
-	// Wait for the server task to be RUNNING and read its ENI IP.
-	var eniIP string
-	deadline := time.Now().Add(40 * time.Second)
-	for time.Now().Before(deadline) {
-		st := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskA,
-			"--query", "tasks[0].lastStatus", "--output", "text")
-		if st == "RUNNING" {
-			eniIP = q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskA,
-				"--query", "tasks[0].containers[0].networkInterfaces[0].privateIpv4Address", "--output", "text")
-			break
+		for _, task := range []string{server, clientSame, clientOther} {
+			runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
 		}
-		time.Sleep(2 * time.Second)
+		rmDockerNetworks(ecsVPCNet(vpcA), ecsVPCNet(vpcB), ecsVPCNet(vpcA)+"-egress", ecsVPCNet(vpcB)+"-egress")
+	})
+	waitRunning(t, q, server)
+	waitRunning(t, q, clientSame)
+	waitRunning(t, q, clientOther)
+
+	// #516: the reported ENI IP is the container's real eth0 address.
+	eniIP := taskENIIP(q, server)
+	if !strings.HasPrefix(eniIP, vpcPrefix(octetA)) {
+		t.Fatalf("server ENI IP not in subnet-A CIDR: %q", eniIP)
 	}
-	if eniIP == "" || !strings.HasPrefix(eniIP, "10.91.0.") {
-		t.Fatalf("server task ENI IP not in subnet-A CIDR: got %q", eniIP)
+	if real := taskEth0IP(t, server); real != eniIP {
+		t.Fatalf("reported ENI IP %q != container's real eth0 IP %q (#516)", eniIP, real)
 	}
 
-	// #516 core: the container's REAL Docker IP equals the ENI IP.
-	realIP := dockerTaskIP(t, taskID(taskA), ecsVPCNet(vpcA))
-	if realIP != eniIP {
-		t.Fatalf("ENI privateIPv4Address %q != container's real IP %q (issue #516)", eniIP, realIP)
+	// Intra-VPC reachable; cross-VPC isolated.
+	if code, out := taskWget(t, clientSame, eniIP); code != 0 || !strings.Contains(out, "ok") {
+		t.Fatalf("same-VPC task should reach %s: exit=%d out=%q", eniIP, code, out)
 	}
+	if code, _ := taskWget(t, clientOther, eniIP); code == 0 {
+		t.Fatalf("different-VPC task should be isolated from %s", eniIP)
+	}
+}
 
-	// Intra-VPC: a probe in the same VPC reaches the task over TCP.
-	if code, out := dockerProbe(ecsVPCNet(vpcA), eniIP); code != 0 || !strings.Contains(out, "ok") {
-		t.Fatalf("same-VPC probe should reach %s: exit=%d out=%q", eniIP, code, out)
+// ---- shared helpers (tier-agnostic) ----
+
+func mkVPCSubnet(t *testing.T, q func(...string) string, vpcCidr, snCidr string) (vpcID, subnetID string) {
+	t.Helper()
+	vpcID = q("ec2", "create-vpc", "--cidr-block", vpcCidr, "--query", "Vpc.VpcId", "--output", "text")
+	subnetID = q("ec2", "create-subnet", "--vpc-id", vpcID, "--cidr-block", snCidr,
+		"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
+	return vpcID, subnetID
+}
+
+func vpcCIDR(octet int) string { return fmt.Sprintf("10.%d.0.0/16", octet) }
+
+func subnetCIDR(octet int) string { return fmt.Sprintf("10.%d.0.0/24", octet) }
+
+func vpcPrefix(octet int) string { return fmt.Sprintf("10.%d.0.", octet) }
+
+func unusedDockerVPCOctet(t *testing.T, start int, exclude map[int]bool) int {
+	t.Helper()
+	for octet := start; octet < 250; octet++ {
+		if exclude != nil && exclude[octet] {
+			continue
+		}
+		name := fmt.Sprintf("sockerless-cidr-probe-%d-%d", os.Getpid(), octet)
+		if exec.Command("docker", "network", "create", "--subnet", vpcCIDR(octet), name).Run() != nil {
+			continue
+		}
+		_ = exec.Command("docker", "network", "rm", name).Run()
+		return octet
 	}
-	// Cross-VPC: a probe in a different VPC cannot reach it (isolation).
-	if code, _ := dockerProbe(ecsVPCNet(vpcB), eniIP); code == 0 {
-		t.Fatalf("cross-VPC probe to %s should be isolated but succeeded", eniIP)
-	}
+	t.Fatal("no free 10.x.0.0/16 Docker CIDR available for ECS VPC test")
+	return 0
+}
+
+func registerTaskDef(q func(...string) string, family, script string) {
+	q("ecs", "register-task-definition", "--family", family,
+		"--network-mode", "awsvpc", "--requires-compatibilities", "FARGATE", "--cpu", "256", "--memory", "512",
+		"--container-definitions", `[{"name":"app","image":"`+vpcNetBusybox+`","entryPoint":["sh","-c"],"command":["`+script+`"]}]`,
+		"--query", "taskDefinition.taskDefinitionArn", "--output", "text")
+}
+
+func runTask(q func(...string) string, family, subnet string) string {
+	return q("ecs", "run-task", "--cluster", "default", "--task-definition", family,
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnet+`]}`,
+		"--query", "tasks[0].taskArn", "--output", "text")
+}
+
+func taskENIIP(q func(...string) string, taskArn string) string {
+	return q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
+		"--query", "tasks[0].containers[0].networkInterfaces[0].privateIpv4Address", "--output", "text")
 }
 
 func ecsVPCNet(vpcID string) string { return "sockerless-sim-vpc-" + vpcID }
@@ -94,15 +125,52 @@ func taskID(taskArn string) string {
 	return parts[len(parts)-1]
 }
 
-// dockerTaskIP returns the task container's IPv4 on the given network.
-func dockerTaskIP(t *testing.T, tid, netName string) string {
+func taskContainerID(t *testing.T, taskArn string) string {
 	t.Helper()
-	cid := strings.TrimSpace(dockerOut(t, "ps", "-q", "-f", "label=sockerless-sim-task="+tid))
+	cid := strings.TrimSpace(dockerOut(t, "ps", "-q",
+		"-f", "label=sockerless-sim-task="+taskID(taskArn),
+		"-f", "label=sockerless-sim-task-container=app"))
 	if cid == "" {
-		t.Fatalf("no running container for task %s", tid)
+		t.Fatalf("no running container for task %s", taskArn)
 	}
-	tmpl := "{{with index .NetworkSettings.Networks \"" + netName + "\"}}{{.IPAddress}}{{end}}"
-	return strings.TrimSpace(dockerOut(t, "inspect", "-f", tmpl, cid))
+	if strings.Contains(cid, "\n") {
+		t.Fatalf("multiple app containers for task %s: %q", taskArn, cid)
+	}
+	return cid
+}
+
+// taskEth0IP reads the container's real eth0 IPv4 (works in both tiers).
+func taskEth0IP(t *testing.T, taskArn string) string {
+	t.Helper()
+	cid := taskContainerID(t, taskArn)
+	// Retry: the netns veth is plumbed just as the task reaches RUNNING.
+	for attempt := 0; attempt < 10; attempt++ {
+		out, _ := exec.Command("docker", "exec", cid, "ip", "-4", "-o", "addr", "show", "eth0").CombinedOutput()
+		for _, f := range strings.Fields(string(out)) {
+			if strings.HasPrefix(f, "inet") {
+				continue
+			}
+			if i := strings.Index(f, "/"); i > 0 && strings.Count(f[:i], ".") == 3 {
+				return f[:i]
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	return ""
+}
+
+// taskWget fetches http://ip/index.html from inside a task container.
+func taskWget(t *testing.T, taskArn, ip string) (int, string) {
+	t.Helper()
+	cid := taskContainerID(t, taskArn)
+	out, err := exec.Command("docker", "exec", cid, "wget", "-T", "3", "-q", "-O", "-", "http://"+ip+"/index.html").CombinedOutput()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode(), string(out)
+		}
+		return -1, string(out)
+	}
+	return 0, string(out)
 }
 
 func dockerOut(t *testing.T, args ...string) string {
@@ -114,16 +182,190 @@ func dockerOut(t *testing.T, args ...string) string {
 	return string(out)
 }
 
-// dockerProbe runs a one-shot busybox on netName and TCP-fetches ip:80, returning
-// the exit code + stdout.
-func dockerProbe(netName, ip string) (int, string) {
-	out, err := exec.Command("docker", "run", "--rm", "--network", netName,
-		vpcNetBusybox, "wget", "-T", "3", "-q", "-O", "-", "http://"+ip+"/index.html").CombinedOutput()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode(), string(out)
-		}
-		return -1, string(out)
+// ecsNetnsTierActive mirrors the sim's netns-tier gate (Linux + tools +
+// CAP_NET_ADMIN/CAP_SYS_ADMIN) so tier-specific tests only run when ECS will
+// actually use the real netns fabric.
+func ecsNetnsTierActive() bool {
+	if runtime.GOOS != "linux" {
+		return false
 	}
-	return 0, string(out)
+	for _, bin := range []string{"ip", "nft", "nsenter", "sysctl"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			return false
+		}
+	}
+	caps, err := linuxEffectiveCapabilitiesForTest()
+	if err != nil {
+		return false
+	}
+	return hasLinuxCapability(caps, 12) && hasLinuxCapability(caps, 21)
+}
+
+func linuxEffectiveCapabilitiesForTest() (uint64, error) {
+	body, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "CapEff:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return 0, fmt.Errorf("malformed CapEff line: %q", line)
+		}
+		return strconv.ParseUint(fields[1], 16, 64)
+	}
+	return 0, fmt.Errorf("CapEff not found")
+}
+
+func hasLinuxCapability(mask uint64, capNumber uint) bool {
+	return mask&(uint64(1)<<capNumber) != 0
+}
+
+func waitRunning(t *testing.T, q func(...string) string, taskArn string) {
+	t.Helper()
+	deadline := time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		status := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
+			"--query", "tasks[0].lastStatus", "--output", "text")
+		if status == "RUNNING" {
+			return
+		}
+		if status == "STOPPED" {
+			reason := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
+				"--query", "tasks[0].stoppedReason", "--output", "text")
+			t.Fatalf("task %s stopped before RUNNING: %s", taskArn, reason)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("task %s never reached RUNNING", taskArn)
+}
+
+func waitTaskContainersGone(t *testing.T, taskArns ...string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		allGone := true
+		for _, taskArn := range taskArns {
+			if out := strings.TrimSpace(dockerOut(t, "ps", "-q", "-f", "label=sockerless-sim-task="+taskID(taskArn))); out != "" {
+				allGone = false
+				break
+			}
+		}
+		if allGone {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("task containers still running for %v", taskArns)
+}
+
+// rmDockerNetworks removes simulator VPC networks (Docker tier), retrying while
+// task containers detach. No-op for names that don't exist (netns tier).
+func rmDockerNetworks(names ...string) {
+	for attempt := 0; attempt < 12; attempt++ {
+		pending := false
+		for _, n := range names {
+			if exec.Command("docker", "network", "inspect", n).Run() != nil {
+				continue
+			}
+			if exec.Command("docker", "network", "rm", n).Run() != nil {
+				pending = true
+			}
+		}
+		if !pending {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// TestECSVPCDeleteVpcAllowsCIDRReuse covers the fabric cleanup needed by a
+// terraform destroy/apply cycle: once the task and subnet are gone, DeleteVpc
+// removes the real backing fabric so a new VPC can reuse the same CIDR.
+func TestECSVPCDeleteVpcAllowsCIDRReuse(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "vpc-reuse-client", "sleep 120")
+
+	octet := unusedDockerVPCOctet(t, 140, nil)
+	vpc1, subnet1 := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	task1 := runTask(q, "vpc-reuse-client", subnet1)
+	waitRunning(t, q, task1)
+	runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task1))
+	waitTaskContainersGone(t, task1)
+	q("ec2", "delete-subnet", "--subnet-id", subnet1)
+	q("ec2", "delete-vpc", "--vpc-id", vpc1)
+	if exec.Command("docker", "network", "inspect", ecsVPCNet(vpc1)).Run() == nil {
+		t.Fatalf("DeleteVpc left Docker VPC network %s behind", ecsVPCNet(vpc1))
+	}
+
+	vpc2, subnet2 := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	task2 := runTask(q, "vpc-reuse-client", subnet2)
+	t.Cleanup(func() {
+		_ = awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task2).Run()
+		waitTaskContainersGone(t, task2)
+		_ = awsCLI("ec2", "delete-subnet", "--subnet-id", subnet2).Run()
+		_ = awsCLI("ec2", "delete-vpc", "--vpc-id", vpc2).Run()
+		rmDockerNetworks(ecsVPCNet(vpc2))
+	})
+	waitRunning(t, q, task2)
+	if real := taskEth0IP(t, task2); !strings.HasPrefix(real, vpcPrefix(octet)) {
+		t.Fatalf("recreated VPC task should run in reused CIDR, got eth0 %q", real)
+	}
+}
+
+// TestECSVPCOverlappingCIDR proves the netns fabric does what Docker bridges
+// can't: two VPCs with the SAME AWS CIDR (legal — VPCs are isolated) both run
+// tasks that get the SAME real ENI IP, with no remapping and full isolation.
+// Netns-tier only (the Docker-network tier can't host overlapping bridges).
+func TestECSVPCOverlappingCIDR(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	if !ecsNetnsTierActive() {
+		t.Skip("overlapping VPC CIDRs require the netns fabric (Linux + CAP_NET_ADMIN)")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+
+	_, subnetA := mkVPCSubnet(t, q, "10.50.0.0/16", "10.50.0.0/24")
+	_, subnetB := mkVPCSubnet(t, q, "10.50.0.0/16", "10.50.0.0/24") // same CIDR
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "ovl-server", vpcServerScript)
+	registerTaskDef(q, "ovl-client", "sleep 120")
+
+	serverA := runTask(q, "ovl-server", subnetA)
+	clientA := runTask(q, "ovl-client", subnetA)
+	clientB := runTask(q, "ovl-client", subnetB)
+	t.Cleanup(func() {
+		for _, task := range []string{serverA, clientA, clientB} {
+			runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
+		}
+	})
+	waitRunning(t, q, serverA)
+	waitRunning(t, q, clientA)
+	waitRunning(t, q, clientB)
+
+	// Both VPCs keep the real CIDR — the server's ENI IP is its real eth0, and a
+	// task in VPC-B legitimately gets the same address (separate routing tables).
+	ip := taskENIIP(q, serverA)
+	if !strings.HasPrefix(ip, "10.50.0.") {
+		t.Fatalf("server should keep its real AWS CIDR (no remap): got %q", ip)
+	}
+	if real := taskEth0IP(t, serverA); real != ip {
+		t.Fatalf("reported ENI IP %q != real eth0 IP %q", ip, real)
+	}
+
+	// Same-VPC reaches the server; the same-CIDR VPC-B task is fully isolated.
+	if code, out := taskWget(t, clientA, ip); code != 0 || !strings.Contains(out, "ok") {
+		t.Fatalf("same-VPC task should reach %s: exit=%d out=%q", ip, code, out)
+	}
+	if code, _ := taskWget(t, clientB, ip); code == 0 {
+		t.Fatalf("overlapping-CIDR VPC-B task must be isolated from VPC-A's %s", ip)
+	}
 }

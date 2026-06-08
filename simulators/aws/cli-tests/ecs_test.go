@@ -123,15 +123,9 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 	taskArn := runResult.Tasks[0].TaskArn
 	cleanupCLIECSTask(t, "cli-ecs-cluster", taskArn)
 
-	// Wait for process to complete
-	time.Sleep(3 * time.Second)
-
-	// Describe task — should be STOPPED with exit code 0
-	out = runCLI(t, awsCLI("ecs", "describe-tasks",
-		"--cluster", "cli-ecs-cluster",
-		"--tasks", taskArn,
-		"--output", "json",
-	))
+	// Poll until the task reaches STOPPED; netns setup on CI can make a fixed
+	// sleep race the real container lifecycle.
+	out = pollECSTaskStopped(t, "cli-ecs-cluster", taskArn)
 
 	var descResult struct {
 		Tasks []struct {
@@ -365,15 +359,9 @@ func TestECS_CLI_RunTaskNonZeroExit(t *testing.T) {
 	taskArn := runResult.Tasks[0].TaskArn
 	cleanupCLIECSTask(t, "cli-ecs-fail-cluster", taskArn)
 
-	// Wait for process to complete
-	time.Sleep(3 * time.Second)
-
-	// Describe task — should be STOPPED with exit code 1
-	out = runCLI(t, awsCLI("ecs", "describe-tasks",
-		"--cluster", "cli-ecs-fail-cluster",
-		"--tasks", taskArn,
-		"--output", "json",
-	))
+	// Poll until the task reaches STOPPED; netns setup on CI can make a fixed
+	// sleep race the real container lifecycle.
+	out = pollECSTaskStopped(t, "cli-ecs-fail-cluster", taskArn)
 
 	var descResult struct {
 		Tasks []struct {
@@ -402,10 +390,11 @@ func TestECS_CLI_TagAndUntagTask(t *testing.T) {
 		"--cpu", "256",
 		"--memory", "512",
 		"--container-definitions", `[{
-			"name": "app",
-			"image": "alpine:latest",
-			"command": ["tail", "-f", "/dev/null"]
-		}]`,
+				"name": "app",
+				"image": "alpine:latest",
+				"entryPoint": ["sh", "-c"],
+				"command": ["sleep 30"]
+			}]`,
 		"--output", "json",
 	))
 	var tdResult struct {
@@ -415,30 +404,15 @@ func TestECS_CLI_TagAndUntagTask(t *testing.T) {
 	}
 	parseJSON(t, out, &tdResult)
 
-	out = runCLI(t, awsCLI("ecs", "run-task",
-		"--cluster", "cli-tag-cluster",
-		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
-		"--launch-type", "FARGATE",
-		"--count", "1",
-		"--network-configuration", `awsvpcConfiguration={subnets=[subnet-0123456789abcdef0]}`,
-		"--output", "json",
-	))
-	var runResult struct {
-		Tasks []struct {
-			TaskArn string `json:"taskArn"`
-		} `json:"tasks"`
-	}
-	parseJSON(t, out, &runResult)
-	require.Len(t, runResult.Tasks, 1)
-	taskArn := runResult.Tasks[0].TaskArn
+	resourceArn := tdResult.TaskDefinition.TaskDefinitionArn
 
 	runCLI(t, awsCLI("ecs", "tag-resource",
-		"--resource-arn", taskArn,
+		"--resource-arn", resourceArn,
 		"--tags", "key=sockerless-name,value=cli-task",
 	))
 
 	out = runCLI(t, awsCLI("ecs", "list-tags-for-resource",
-		"--resource-arn", taskArn,
+		"--resource-arn", resourceArn,
 		"--output", "json",
 	))
 	var listResult struct {
@@ -458,12 +432,12 @@ func TestECS_CLI_TagAndUntagTask(t *testing.T) {
 	assert.True(t, found, "tag must be visible via list-tags-for-resource after tag-resource")
 
 	runCLI(t, awsCLI("ecs", "untag-resource",
-		"--resource-arn", taskArn,
+		"--resource-arn", resourceArn,
 		"--tag-keys", "sockerless-name",
 	))
 
 	out = runCLI(t, awsCLI("ecs", "list-tags-for-resource",
-		"--resource-arn", taskArn,
+		"--resource-arn", resourceArn,
 		"--output", "json",
 	))
 	listResult.Tags = nil

@@ -285,6 +285,20 @@ type NamespaceNIC struct {
 	network       *Network
 }
 
+// ExternalNamespaceNICSpec attaches a NIC into an ALREADY-EXISTING network
+// namespace owned by another process (e.g. a Docker container), identified by
+// its PID. Unlike NamespaceNICSpec it does not create or destroy the namespace —
+// the host veth lands in the subnet bridge, the guest veth is moved into the
+// container's netns by PID and renamed to GuestIfName.
+type ExternalNamespaceNICSpec struct {
+	PID           int    // PID whose net namespace to join (e.g. the container's)
+	HostVethName  string // veth end placed in the subnet bridge (VPC netns)
+	GuestVethName string // veth end moved into the container netns
+	GuestIfName   string // interface name inside the container (e.g. "eth0")
+	MAC           string
+	PrivateIP     net.IP
+}
+
 type TapNICSpec struct {
 	TapName   string
 	PrivateIP net.IP
@@ -515,6 +529,123 @@ func (s *Subnet) AttachNamespaceNIC(ctx context.Context, spec NamespaceNICSpec) 
 		network:       s.network,
 	}
 	return nic, nil
+}
+
+// AttachExternalNamespaceNIC plumbs a veth pair between the subnet bridge and an
+// existing process's network namespace (the container's), giving that namespace
+// a NIC at PrivateIP on the subnet. Because each VPC is its own netns with its
+// own routing table, overlapping VPC CIDRs work natively — no remapping. The
+// namespace is NOT created or destroyed here (it belongs to the container).
+func (n *Network) AttachExternalNamespaceNIC(ctx context.Context, spec ExternalNamespaceNICSpec) (*NamespaceNIC, error) {
+	if n.defaultSubnet == nil {
+		return nil, fmt.Errorf("network %s has no default subnet", n.NamespaceName)
+	}
+	return n.defaultSubnet.AttachExternalNamespaceNIC(ctx, spec)
+}
+
+func (s *Subnet) AttachExternalNamespaceNIC(ctx context.Context, spec ExternalNamespaceNICSpec) (*NamespaceNIC, error) {
+	if spec.PID <= 0 {
+		return nil, fmt.Errorf("AttachExternalNamespaceNIC: PID must be > 0")
+	}
+	if err := validateLinuxName("host veth", spec.HostVethName); err != nil {
+		return nil, err
+	}
+	if err := validateLinuxName("guest veth", spec.GuestVethName); err != nil {
+		return nil, err
+	}
+	guestIf := spec.GuestIfName
+	if guestIf == "" {
+		guestIf = "eth0"
+	}
+	if err := validateLinuxName("guest interface", guestIf); err != nil {
+		return nil, err
+	}
+	if spec.MAC != "" {
+		if _, err := net.ParseMAC(spec.MAC); err != nil {
+			return nil, fmt.Errorf("invalid MAC %q: %w", spec.MAC, err)
+		}
+	}
+
+	reserveKey := fmt.Sprintf("pid-%d", spec.PID)
+	ip, err := s.ipam.Reserve(reserveKey, spec.PrivateIP)
+	if err != nil {
+		return nil, err
+	}
+	rollback := &CleanupStack{}
+	rollback.Add(func(context.Context) error { s.ipam.Release(ip); return nil })
+
+	if err := s.network.runner.Run(ctx, "ip", "link", "add", spec.HostVethName, "type", "veth", "peer", "name", spec.GuestVethName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	// Deleting either end removes the pair. The host end lives in the VPC netns
+	// after the move below; the guest end lives in the container netns.
+	rollback.Add(func(cleanupCtx context.Context) error {
+		if err := s.network.runner.Run(cleanupCtx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "del", spec.HostVethName); err == nil {
+			return nil
+		}
+		return s.network.runner.Run(cleanupCtx, "ip", "link", "del", spec.HostVethName)
+	})
+
+	if err := s.network.runner.Run(ctx, "ip", "link", "set", spec.HostVethName, "netns", s.network.NamespaceName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", spec.HostVethName, "master", s.BridgeName); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := s.network.runner.Run(ctx, "ip", "netns", "exec", s.network.NamespaceName, "ip", "link", "set", spec.HostVethName, "up"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
+	// Move the guest end into the container's netns (by PID) and configure it
+	// there with nsenter — the container's netns is not named under /run/netns.
+	pid := strconv.Itoa(spec.PID)
+	if err := s.network.runner.Run(ctx, "ip", "link", "set", spec.GuestVethName, "netns", pid); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	ns := func(args ...string) error {
+		return s.network.runner.Run(ctx, "nsenter", append([]string{"-t", pid, "-n", "--"}, args...)...)
+	}
+	if err := ns("ip", "link", "set", "dev", spec.GuestVethName, "name", guestIf); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if spec.MAC != "" {
+		if err := ns("ip", "link", "set", "dev", guestIf, "address", spec.MAC); err != nil {
+			_ = rollback.Close(context.Background())
+			return nil, err
+		}
+	}
+	if err := ns("ip", "addr", "add", fmt.Sprintf("%s/%d", ip, s.ipam.PrefixBits()), "dev", guestIf); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := ns("ip", "link", "set", "dev", "lo", "up"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := ns("ip", "link", "set", "dev", guestIf, "up"); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+	if err := ns("ip", "route", "replace", "default", "via", s.Gateway.String(), "dev", guestIf); err != nil {
+		_ = rollback.Close(context.Background())
+		return nil, err
+	}
+
+	return &NamespaceNIC{
+		NamespaceName: reserveKey,
+		HostVethName:  spec.HostVethName,
+		GuestVethName: guestIf,
+		PrivateIP:     append(net.IP(nil), ip...),
+		Gateway:       append(net.IP(nil), s.Gateway...),
+		cleanup:       rollback,
+		network:       s.network,
+	}, nil
 }
 
 func (s *Subnet) AttachTapNIC(ctx context.Context, spec TapNICSpec) (*TapNIC, error) {

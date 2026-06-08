@@ -10,10 +10,93 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestExternalNamespaceNICRoundTrip plumbs a veth into an EXISTING netns (a
+// stand-in for a Docker container, made with `unshare -n`), verifying the guest
+// gets eth0 at the leased IP and can reach the subnet gateway — the ECS netns
+// path.
+func TestExternalNamespaceNICRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if _, err := exec.LookPath("nsenter"); err != nil {
+		t.Skip("nsenter not available")
+	}
+
+	prefix := shortPrefix()
+	host := NewHost()
+	network, err := host.CreateNetwork(ctx, NetworkSpec{
+		NamespaceName: prefix + "nw",
+		BridgeName:    prefix + "br",
+		CIDR:          "10.204.0.0/29",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = network.Close(context.Background()) }()
+
+	// A process in its own (existing) network namespace — like a container.
+	holder := exec.Command("unshare", "-n", "sleep", "30")
+	if err := holder.Start(); err != nil {
+		t.Fatalf("unshare -n: %v", err)
+	}
+	defer func() { _ = holder.Process.Kill(); _ = holder.Wait() }()
+	pid := holder.Process.Pid
+	waitProcessNetnsChanged(t, pid)
+
+	nic, err := network.AttachExternalNamespaceNIC(ctx, ExternalNamespaceNICSpec{
+		PID:           pid,
+		HostVethName:  prefix + "eh",
+		GuestVethName: prefix + "eg",
+		GuestIfName:   "eth0",
+		MAC:           "02:00:5e:20:00:01",
+		PrivateIP:     net.ParseIP("10.204.0.4"),
+	})
+	if err != nil {
+		t.Fatalf("AttachExternalNamespaceNIC: %v", err)
+	}
+	defer func() { _ = nic.Close(context.Background()) }()
+
+	pidStr := fmt.Sprintf("%d", pid)
+	runner := Runner{}
+	out, err := runner.Output(ctx, "nsenter", "-t", pidStr, "-n", "--", "ip", "-4", "-o", "addr", "show", "eth0")
+	if err != nil {
+		t.Fatalf("inspect guest eth0: %v", err)
+	}
+	if !strings.Contains(out, "10.204.0.4") {
+		t.Fatalf("guest eth0 missing leased IP 10.204.0.4: %q", out)
+	}
+	if err := runner.Run(ctx, "nsenter", "-t", pidStr, "-n", "--", "ping", "-c", "1", "-W", "2", network.Gateway.String()); err != nil {
+		t.Fatalf("guest cannot reach subnet gateway %s: %v", network.Gateway, err)
+	}
+}
+
+func waitProcessNetnsChanged(t *testing.T, pid int) {
+	t.Helper()
+	self, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		t.Fatalf("read self netns: %v", err)
+	}
+	target := fmt.Sprintf("/proc/%d/ns/net", pid)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		current, err := os.Readlink(target)
+		if err == nil && current != self {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("wait for process netns %s: %v", target, err)
+			}
+			t.Fatalf("process %d did not enter a separate netns", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestHostCapabilitiesForRealExecution(t *testing.T) {
 	report := DetectCapabilities("firecracker", "jailer", "ip", "nft")

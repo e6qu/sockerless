@@ -61,7 +61,7 @@ control-plane or data-plane API checks that do not start workloads,
 
 **ECS managed EBS volumes** use Docker named volumes (`sockerless-ebs-<id>`) rather than bind-mounts on the sim process's filesystem. This means the sim can run in a container (with the Docker socket mounted) and task containers will see the correct volume data — no path-sharing between host and sim container is required.
 
-**VPC and Subnet creation** (`CreateVpc`, `CreateSubnet`) always succeeds at the control-plane level (API state is stored). Real Linux network-namespace fabric is set up in addition when host networking capabilities (`ip`, `nft`, `sysctl`) are present. Without those capabilities the API calls still succeed; tasks using `networkMode: none` work normally. Tasks requiring `awsvpc` mode with real packet routing need the host-networking caps to be present.
+**VPC and Subnet creation** (`CreateVpc`, `CreateSubnet`) always succeeds at the control-plane level (API state is stored). Real Linux network-namespace fabric is set up lazily when a data-plane resource attaches to the VPC/subnet and host networking capabilities (`ip`, `nft`, `sysctl`) are present. Without those capabilities the API calls still succeed; tasks using `networkMode: none` work normally. Tasks requiring `awsvpc` mode with real packet routing need the host-networking caps to be present.
 
 For Terraform:
 
@@ -197,7 +197,7 @@ None open for the services covered here. Selected closed items:
 
 - **BUG-991** — `docker run --rm` against `backends/docker` used to fail with `No such container`. Fixed by removing the Store-direct shortcut in `handleContainerWait`.
 - **BUG-992** — `docker images` used to return empty even when the upstream daemon had images. Fixed by delegating to `s.self.ImageList`.
-- **issue #381** — ECS managed EBS volumes were stored on the sim process's own filesystem and bind-mounted by path, so task containers launched as Docker siblings couldn't see the data. `CreateVpc`/`CreateSubnet` also hard-failed without host nftables even when only control-plane API calls were needed. Fixed: ECS EBS volumes now use Docker named volumes; VPC/Subnet store state unconditionally and set up real networking fabric only when host caps are present.
+- **issue #381** — ECS managed EBS volumes were stored on the sim process's own filesystem and bind-mounted by path, so task containers launched as Docker siblings couldn't see the data. `CreateVpc`/`CreateSubnet` also hard-failed without host nftables even when only control-plane API calls were needed. Fixed: ECS EBS volumes now use Docker named volumes; VPC/Subnet store state unconditionally and set up real networking fabric lazily when host caps are present and a data-plane resource attaches.
 
 ## What's out of scope
 

@@ -152,7 +152,7 @@ func TestECS_TaskArithmetic(t *testing.T) {
 		},
 	})
 
-	time.Sleep(2 * time.Second)
+	waitForECSTaskStatus(t, client, cluster, taskArn, "STOPPED")
 
 	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
 		Cluster: aws.String(cluster),
@@ -194,7 +194,7 @@ func TestECS_TaskArithmeticInvalid(t *testing.T) {
 		},
 	})
 
-	time.Sleep(2 * time.Second)
+	waitForECSTaskStatus(t, client, cluster, taskArn, "STOPPED")
 
 	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
 		Cluster: aws.String(cluster),

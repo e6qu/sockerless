@@ -104,6 +104,10 @@ func DetectNetworkCapabilities() CapabilityReport {
 	return DetectCapabilities("ip", "nft", "sysctl")
 }
 
+func DetectExternalNamespaceCapabilities() CapabilityReport {
+	return DetectCapabilities("ip", "nft", "sysctl", "nsenter")
+}
+
 func commandsRequireKVM(requiredCommands []string) bool {
 	for _, name := range requiredCommands {
 		if name == "firecracker" || name == "jailer" {

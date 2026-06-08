@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -122,6 +123,25 @@ func DockerClient() *client.Client {
 	return dockerClient
 }
 
+// ContainerPID returns the host PID of a running container's main process, used
+// to plumb a veth into the container's network namespace (the netns VPC fabric).
+func ContainerPID(containerID string) (int, error) {
+	cli := DockerClient()
+	if cli == nil {
+		return 0, fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return 0, err
+	}
+	if info.State == nil || info.State.Pid <= 0 {
+		return 0, fmt.Errorf("container %s has no running PID", containerID)
+	}
+	return info.State.Pid, nil
+}
+
 // managedContainers tracks containers created by this simulator instance for cleanup.
 var managedContainers sync.Map // containerID -> true
 
@@ -230,7 +250,7 @@ func StopContainer(containerID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	timeout := 10
+	timeout := 1
 	_ = dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
@@ -598,12 +618,25 @@ func RemoveDockerNetwork(name string) error {
 	if cli == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
-		return nil // already gone
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, inspectErr := cli.NetworkInspect(ctx, name, network.InspectOptions{})
+		if inspectErr != nil {
+			cancel()
+			return nil // already gone
+		}
+		lastErr = cli.NetworkRemove(ctx, name)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	return cli.NetworkRemove(ctx, name)
 }
 
 // ConnectContainerToNetwork connects a running container to a Docker
@@ -631,6 +664,81 @@ func DisconnectContainerFromNetwork(containerName, networkName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return cli.NetworkDisconnect(ctx, networkName, containerName, true)
+}
+
+// DisconnectContainerNetworks detaches a running container from every Docker
+// network it currently has. The container keeps its process namespace alive,
+// which lets callers attach their own network fabric afterward.
+func DisconnectContainerNetworks(containerID string) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	for networkName := range info.NetworkSettings.Networks {
+		if err := cli.NetworkDisconnect(ctx, networkName, containerID, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HostEntry struct {
+	IP   string
+	Name string
+}
+
+// SyncContainerHostEntries rewrites a simulator-managed block in a container's
+// /etc/hosts. Docker exposes the backing hosts file path in ContainerInspect;
+// updating it gives netns-backed tasks real libc name resolution without
+// attaching another Docker network to the namespace.
+func SyncContainerHostEntries(containerName, marker string, entries []HostEntry) error {
+	cli := DockerClient()
+	if cli == nil {
+		return fmt.Errorf("docker client not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	info, err := cli.ContainerInspect(ctx, containerName)
+	if err != nil {
+		return err
+	}
+	if info.HostsPath == "" {
+		return fmt.Errorf("container %s has no hosts path", containerName)
+	}
+	content, err := os.ReadFile(info.HostsPath)
+	if err != nil {
+		return err
+	}
+	markerText := "# " + marker
+	var kept []string
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.Contains(line, markerText) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name == entries[j].Name {
+			return entries[i].IP < entries[j].IP
+		}
+		return entries[i].Name < entries[j].Name
+	})
+	for _, entry := range entries {
+		ip := strings.TrimSpace(entry.IP)
+		name := strings.TrimSpace(entry.Name)
+		if ip == "" || name == "" {
+			continue
+		}
+		kept = append(kept, fmt.Sprintf("%s\t%s\t%s", ip, name, markerText))
+	}
+	next := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
+	return os.WriteFile(info.HostsPath, []byte(next), 0644)
 }
 
 // RuntimeInfo returns the container runtime name and version for display.

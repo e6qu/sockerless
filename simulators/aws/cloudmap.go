@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -72,10 +73,11 @@ type CMOperation struct {
 
 // State stores
 var (
-	cmNamespaces sim.Store[CMNamespace]
-	cmServices   sim.Store[CMService]
-	cmInstances  sim.Store[CMInstance]
-	cmOperations sim.Store[CMOperation]
+	cmNamespaces    sim.Store[CMNamespace]
+	cmNamespaceVPCs sim.Store[string]
+	cmServices      sim.Store[CMService]
+	cmInstances     sim.Store[CMInstance]
+	cmOperations    sim.Store[CMOperation]
 )
 
 func cmArn(resourceType, id string) string {
@@ -88,6 +90,7 @@ func cmInstanceKey(serviceId, instanceId string) string {
 
 func registerCloudMap(r *sim.AWSRouter, srv *sim.Server) {
 	cmNamespaces = sim.MakeStore[CMNamespace](srv.DB(), "cloudmap_namespaces")
+	cmNamespaceVPCs = sim.MakeStore[string](srv.DB(), "cloudmap_namespace_vpcs")
 	cmServices = sim.MakeStore[CMService](srv.DB(), "cloudmap_services")
 	cmInstances = sim.MakeStore[CMInstance](srv.DB(), "cloudmap_instances")
 	cmOperations = sim.MakeStore[CMOperation](srv.DB(), "cloudmap_operations")
@@ -141,6 +144,7 @@ func handleCMCreatePrivateDnsNamespace(w http.ResponseWriter, r *http.Request) {
 		CreateDate: time.Now().Unix(),
 	}
 	cmNamespaces.Put(nsId, ns)
+	cmNamespaceVPCs.Put(nsId, req.Vpc)
 
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
@@ -203,6 +207,7 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmNamespaces.Delete(req.Id)
+	cmNamespaceVPCs.Delete(req.Id)
 	operationId := generateUUID()
 	cmOperations.Put(operationId, CMOperation{
 		OperationId: operationId,
@@ -302,10 +307,12 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Connect the real Docker container for this task to the
-	// namespace's Docker network with the service name as DNS alias,
-	// so other containers on the same namespace resolve it by name.
-	if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
+	containerName := resolveTaskContainerForInstance(req.InstanceId)
+	usesHostEntries := cmContainerUsesHostEntries(containerName)
+	if containerName != "" && !usesHostEntries {
+		// Connect the real Docker container for this task to the
+		// namespace's Docker network with the service name as DNS alias,
+		// so other containers on the same namespace resolve it by name.
 		ns, nsOk := cmNamespaces.Get(svc.NamespaceId)
 		if !nsOk {
 			sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
@@ -337,6 +344,21 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 			svc.InstanceCount++
 		})
 	}
+	if usesHostEntries {
+		if err := syncCMNamespaceHosts(svc.NamespaceId); err != nil {
+			cmInstances.Delete(key)
+			if !existed {
+				cmServices.Update(req.ServiceId, func(svc *CMService) {
+					if svc.InstanceCount > 0 {
+						svc.InstanceCount--
+					}
+				})
+			}
+			sim.AWSErrorf(w, "InternalFailure", http.StatusInternalServerError,
+				"failed to update Cloud Map task hosts: %v", err)
+			return
+		}
+	}
 
 	operationId := generateUUID()
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -344,13 +366,12 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveTaskContainerForInstance maps a Cloud Map instance ID back to
-// the simulator's Docker container name for the corresponding ECS task.
-// Sockerless's ECS backend uses `containerID[:12]` as the instance ID
-// and tags each RunTask with `sockerless-container-id: <full id>`; we
-// match that tag and return `sockerless-sim-aws-task-<taskID[:12]>`.
-// Returns "" if no matching task is found (e.g. CRUD-only tests that
-// register synthetic instance IDs with no backing task).
+// resolveTaskContainerForInstance maps a Cloud Map instance ID back to the
+// simulator's Docker container. Sockerless's ECS backend uses `containerID[:12]`
+// as the instance ID and tags each RunTask with `sockerless-container-id: <full
+// id>`. On the netns awsvpc fabric the pause container owns the namespace; that
+// tier cannot be connected to Docker's DNS network after the real ENI occupies
+// eth0, so Cloud Map uses host entries in the task container instead.
 func resolveTaskContainerForInstance(instanceId string) string {
 	for _, task := range ecsTasks.List() {
 		for _, tag := range task.Tags {
@@ -363,11 +384,120 @@ func resolveTaskContainerForInstance(instanceId string) string {
 				if len(taskId) < 12 {
 					return ""
 				}
-				return "sockerless-sim-aws-task-" + taskId[:12]
+				containerName := "sockerless-sim-aws-task-" + taskId[:12]
+				if taskHasENI(task) && ec2ECSRealNetAvailable() {
+					return containerName + "-pause"
+				}
+				return containerName
 			}
 		}
 	}
 	return ""
+}
+
+func cmContainerUsesHostEntries(containerName string) bool {
+	return strings.HasSuffix(containerName, "-pause")
+}
+
+func cmNamespaceHasHostEntryTargets(namespaceID string) bool {
+	if _, ok := cmNamespaces.Get(namespaceID); !ok || !ec2ECSRealNetAvailable() {
+		return false
+	}
+	vpcID, _ := cmNamespaceVPCs.Get(namespaceID)
+	for _, task := range ecsTasks.List() {
+		if task.LastStatus != "RUNNING" || !taskHasENI(task) {
+			continue
+		}
+		if vpcID == "" || taskVPCID(task) == vpcID {
+			return true
+		}
+	}
+	return false
+}
+
+func cmTaskContainerName(task ECSTask) string {
+	taskID := task.TaskArn
+	if i := lastSlash(taskID); i >= 0 {
+		taskID = taskID[i+1:]
+	}
+	if len(taskID) < 12 {
+		return ""
+	}
+	return "sockerless-sim-aws-task-" + taskID[:12]
+}
+
+func taskVPCID(task ECSTask) string {
+	for _, att := range task.Attachments {
+		if att.Type != "ElasticNetworkInterface" {
+			continue
+		}
+		for _, d := range att.Details {
+			if d.Name != "subnetId" {
+				continue
+			}
+			if subnet, ok := ec2Subnets.Get(d.Value); ok {
+				return subnet.VpcId
+			}
+		}
+	}
+	return ""
+}
+
+func syncCMNamespaceHosts(namespaceID string) error {
+	ns, ok := cmNamespaces.Get(namespaceID)
+	if !ok {
+		return fmt.Errorf("namespace %s not found", namespaceID)
+	}
+	vpcID, _ := cmNamespaceVPCs.Get(namespaceID)
+
+	var entries []sim.HostEntry
+	for _, svc := range cmServices.List() {
+		if svc.NamespaceId != namespaceID {
+			continue
+		}
+		for _, inst := range cmInstances.List() {
+			key := cmInstanceKey(svc.Id, inst.Id)
+			stored, exists := cmInstances.Get(key)
+			if !exists {
+				continue
+			}
+			ip := stored.Attributes["AWS_INSTANCE_IPV4"]
+			if ip == "" {
+				continue
+			}
+			entries = append(entries, sim.HostEntry{IP: ip, Name: svc.Name})
+			if ns.Name != "" {
+				entries = append(entries, sim.HostEntry{IP: ip, Name: svc.Name + "." + ns.Name})
+			}
+		}
+	}
+
+	marker := "sockerless-cloudmap-" + namespaceID
+	for _, task := range ecsTasks.List() {
+		if task.LastStatus != "RUNNING" || !taskHasENI(task) {
+			continue
+		}
+		if vpcID != "" && taskVPCID(task) != vpcID {
+			continue
+		}
+		containerName := cmTaskContainerName(task)
+		if containerName == "" {
+			continue
+		}
+		if err := sim.SyncContainerHostEntries(containerName, marker, entries); err != nil {
+			return fmt.Errorf("sync hosts for %s: %w", containerName, err)
+		}
+	}
+	return nil
+}
+
+func taskHasENI(task ECSTask) bool {
+	for _, att := range task.Attachments {
+		if att.Type == "ElasticNetworkInterface" {
+			return true
+		}
+	}
+	return false
 }
 
 func lastSlash(s string) int {
@@ -407,11 +537,18 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	// Best-effort disconnect from the Docker network.
-	// Container shutdown will auto-clean so this is just tidier state.
 	if svc, ok := cmServices.Get(req.ServiceId); ok {
-		if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
-			if containerName := resolveTaskContainerForInstance(req.InstanceId); containerName != "" {
+		containerName := resolveTaskContainerForInstance(req.InstanceId)
+		if cmContainerUsesHostEntries(containerName) || cmNamespaceHasHostEntryTargets(svc.NamespaceId) {
+			if err := syncCMNamespaceHosts(svc.NamespaceId); err != nil {
+				sim.AWSErrorf(w, "InternalFailure", http.StatusInternalServerError,
+					"failed to update Cloud Map task hosts: %v", err)
+				return
+			}
+		} else if ns, nsOk := cmNamespaces.Get(svc.NamespaceId); nsOk && ns.DockerNetworkName != "" {
+			// Best-effort disconnect from the Docker network.
+			// Container shutdown will auto-clean so this is just tidier state.
+			if containerName != "" {
 				_ = sim.DisconnectContainerFromNetwork(containerName, ns.DockerNetworkName)
 			}
 		}
