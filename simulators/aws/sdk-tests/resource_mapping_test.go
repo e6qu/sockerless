@@ -163,6 +163,7 @@ func TestECS_RunTaskTags(t *testing.T) {
 		ClusterName: aws.String(clusterName),
 	})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "run-task-tags")
 
 	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String("tags-task"),
@@ -193,7 +194,7 @@ func TestECS_RunTaskTags(t *testing.T) {
 		Tags:           tags,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})

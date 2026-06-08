@@ -2,7 +2,6 @@ package aws_sdk_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -24,6 +23,7 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 
 	clusterName := "integration-ecs-cluster"
 	logGroup := "/ecs/integration-test"
+	subnetID := createECSTestSubnet(t, "integration-ecs")
 
 	// Setup: create cluster
 	_, err := ecsC.CreateCluster(ctx, &ecs.CreateClusterInput{
@@ -65,7 +65,7 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})
@@ -74,8 +74,7 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 	taskArn := *runOut.Tasks[0].TaskArn
 	cleanupECSTask(t, ecsC, clusterName, taskArn)
 
-	// Wait for container to start (image pull + create + start)
-	time.Sleep(10 * time.Second)
+	waitForECSTaskStatus(t, ecsC, clusterName, taskArn, "RUNNING")
 
 	descOut, err := ecsC.DescribeTasks(ctx, &ecs.DescribeTasksInput{
 		Cluster: aws.String(clusterName),

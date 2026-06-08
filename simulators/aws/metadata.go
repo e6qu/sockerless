@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
 
 // AWS host-metadata services.
@@ -182,27 +184,28 @@ func registerHostMetadata(srv *sim.Server) {
 	})
 
 	// ECS task metadata v4. Real ECS sets ECS_CONTAINER_METADATA_URI_V4
-	// to a per-task local URL like http://169.254.170.2/v4/<id>. Sim
-	// serves /v4/<id>/task on its main listener; cloud-product translator
-	// passes the full URL via ECS_CONTAINER_METADATA_URI_V4.
+	// to a per-task local URL like http://169.254.170.2/v4/<id>. Docker-tier
+	// tasks reach the same handler through the host callback address; netns-tier
+	// tasks reach it through link-local DNAT in the VPC namespace.
 	srv.HandleFunc("GET /v4/{id}/task", func(w http.ResponseWriter, r *http.Request) {
 		id := sim.PathParam(r, "id")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{
-			"Cluster": "sockerless-sim",
-			"TaskARN": "arn:aws:ecs:%s:000000000000:task/sockerless-sim/%s",
-			"Family": "sockerless-sim-task",
-			"Revision": "1",
-			"DesiredStatus": "RUNNING",
-			"KnownStatus": "RUNNING",
-			"Containers": [{"Name": "main", "DockerId": %q, "DockerName": %q, "Image": "alpine:latest"}],
-			"LaunchType": "FARGATE"
-		}`, defaultIMDSRegion(r), id, id, id)
+		taskMetadata, ok := ecsTaskMetadataV4(id)
+		if !ok {
+			http.Error(w, "ECS task metadata not found", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(taskMetadata)
 	})
 	srv.HandleFunc("GET /v4/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := sim.PathParam(r, "id")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"DockerId": %q, "Name": "main", "Image": "alpine:latest"}`, id)
+		containerMetadata, ok := ecsContainerMetadataV4(id)
+		if !ok {
+			http.Error(w, "ECS container metadata not found", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(containerMetadata)
 	})
 }
 
@@ -280,6 +283,19 @@ func hostMetadataEnv(taskID string) map[string]string {
 	if taskID != "" {
 		env["ECS_CONTAINER_METADATA_URI_V4"] = "http://" + addr + "/v4/" + taskID
 		env["ECS_CONTAINER_METADATA_URI"] = "http://" + addr + "/v4/" + taskID
+	}
+	return env
+}
+
+func hostMetadataLinkLocalEnv(taskID string) map[string]string {
+	env := map[string]string{
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT":      "http://" + realexec.MetadataIPv4,
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE": "IPv4",
+	}
+	if taskID != "" {
+		base := "http://" + realexec.ECSTaskMetadataIPv4 + "/v4/" + taskID
+		env["ECS_CONTAINER_METADATA_URI_V4"] = base
+		env["ECS_CONTAINER_METADATA_URI"] = base
 	}
 	return env
 }

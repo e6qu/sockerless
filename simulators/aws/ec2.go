@@ -1099,6 +1099,9 @@ func handleAttachInternetGateway(w http.ResponseWriter, r *http.Request) {
 	ec2InternetGateways.Update(igwId, func(igw *EC2InternetGateway) {
 		igw.Attachments = append(igw.Attachments, EC2IGWAttachment{VpcId: vpcId, State: "available"})
 	})
+	if err := ec2ApplyRealVPCEgressPolicy(r.Context(), vpcId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real VPC egress policy for %s unavailable after IGW attach: %v\n", vpcId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<AttachInternetGatewayResponse %s>
@@ -1119,6 +1122,9 @@ func handleDetachInternetGateway(w http.ResponseWriter, r *http.Request) {
 		}
 		igw.Attachments = filtered
 	})
+	if err := ec2ApplyRealVPCEgressPolicy(r.Context(), vpcId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real VPC egress policy for %s unavailable after IGW detach: %v\n", vpcId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DetachInternetGatewayResponse %s>
@@ -1809,6 +1815,9 @@ func handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 	ec2RouteTables.Update(rtId, func(rt *EC2RouteTable) {
 		rt.Routes = append(rt.Routes, route)
 	})
+	if err := ec2ApplyRealRouteTableEgressPolicy(r.Context(), rtId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real route-table egress policy for %s unavailable after route create: %v\n", rtId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateRouteResponse %s>
@@ -1855,6 +1864,9 @@ func handleReplaceRoute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
+	if err := ec2ApplyRealRouteTableEgressPolicy(r.Context(), rtId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real route-table egress policy for %s unavailable after route replace: %v\n", rtId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ReplaceRouteResponse %s>
@@ -1878,6 +1890,9 @@ func handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		rt.Routes = filtered
 	})
+	if err := ec2ApplyRealRouteTableEgressPolicy(r.Context(), rtId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real route-table egress policy for %s unavailable after route delete: %v\n", rtId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteRouteResponse %s>
@@ -1898,6 +1913,9 @@ func handleAssociateRouteTable(w http.ResponseWriter, r *http.Request) {
 			Main:          false,
 		})
 	})
+	if err := ec2ApplyRealRouteTableEgressPolicy(r.Context(), rtId); err != nil {
+		fmt.Fprintf(os.Stderr, "sim: real route-table egress policy for %s unavailable after association: %v\n", rtId, err)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<AssociateRouteTableResponse %s>
@@ -1922,6 +1940,9 @@ func handleDisassociateRouteTable(w http.ResponseWriter, r *http.Request) {
 					}
 					rt.Associations = filtered
 				})
+				if err := ec2ApplyRealRouteTableEgressPolicy(r.Context(), rt.RouteTableId); err != nil {
+					fmt.Fprintf(os.Stderr, "sim: real route-table egress policy for %s unavailable after disassociation: %v\n", rt.RouteTableId, err)
+				}
 				break
 			}
 		}

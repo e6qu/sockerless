@@ -2,6 +2,8 @@ package aws_cli_test
 
 import (
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -108,8 +110,12 @@ func registerTaskDef(q func(...string) string, family, script string) {
 }
 
 func runTask(q func(...string) string, family, subnet string) string {
+	return runTaskWithNetworkConfiguration(q, family, `awsvpcConfiguration={subnets=[`+subnet+`]}`)
+}
+
+func runTaskWithNetworkConfiguration(q func(...string) string, family, networkConfiguration string) string {
 	return q("ecs", "run-task", "--cluster", "default", "--task-definition", family,
-		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnet+`]}`,
+		"--network-configuration", networkConfiguration,
 		"--query", "tasks[0].taskArn", "--output", "text")
 }
 
@@ -162,8 +168,13 @@ func taskEth0IP(t *testing.T, taskArn string) string {
 // taskWget fetches http://ip/index.html from inside a task container.
 func taskWget(t *testing.T, taskArn, ip string) (int, string) {
 	t.Helper()
+	return taskWgetURL(t, taskArn, "http://"+ip+"/index.html")
+}
+
+func taskWgetURL(t *testing.T, taskArn, url string) (int, string) {
+	t.Helper()
 	cid := taskContainerID(t, taskArn)
-	out, err := exec.Command("docker", "exec", cid, "wget", "-T", "3", "-q", "-O", "-", "http://"+ip+"/index.html").CombinedOutput()
+	out, err := exec.Command("docker", "exec", cid, "wget", "-T", "3", "-q", "-O", "-", url).CombinedOutput()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode(), string(out)
@@ -180,6 +191,39 @@ func dockerOut(t *testing.T, args ...string) string {
 		t.Fatalf("docker %v: %v\n%s", args, err, out)
 	}
 	return string(out)
+}
+
+func hostPrimaryIPv4(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("ip", "route", "get", "1.1.1.1").CombinedOutput()
+	if err != nil {
+		t.Fatalf("ip route get host primary IPv4: %v\n%s", err, out)
+	}
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f == "src" && i+1 < len(fields) && net.ParseIP(fields[i+1]).To4() != nil {
+			return fields[i+1]
+		}
+	}
+	t.Fatalf("could not parse src IPv4 from ip route output: %s", out)
+	return ""
+}
+
+func startHostProbeServer(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen for host egress probe: %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("egress-ok\n"))
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	return "http://" + net.JoinHostPort(hostPrimaryIPv4(t), strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)) + "/probe"
 }
 
 // ecsNetnsTierActive mirrors the sim's netns-tier gate (Linux + tools +
@@ -367,5 +411,94 @@ func TestECSVPCOverlappingCIDR(t *testing.T) {
 	}
 	if code, _ := taskWget(t, clientB, ip); code == 0 {
 		t.Fatalf("overlapping-CIDR VPC-B task must be isolated from VPC-A's %s", ip)
+	}
+}
+
+func TestECSVPCNetnsTaskMetadataLinkLocal(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	if !ecsNetnsTierActive() {
+		t.Skip("link-local task metadata DNAT requires the netns fabric (Linux + CAP_NET_ADMIN)")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+
+	_, subnet := mkVPCSubnet(t, q, "10.62.0.0/16", "10.62.0.0/24")
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "metadata-netns-client", "sleep 120")
+	task := runTask(q, "metadata-netns-client", subnet)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
+	})
+	waitRunning(t, q, task)
+
+	cid := taskContainerID(t, task)
+	out, err := exec.Command("docker", "exec", cid, "sh", "-c", `printf '%s\n' "$ECS_CONTAINER_METADATA_URI_V4"; wget -T 3 -q -O - "$ECS_CONTAINER_METADATA_URI_V4/task"`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("task metadata link-local fetch failed: %v\n%s", err, out)
+	}
+	lines := strings.SplitN(string(out), "\n", 2)
+	if len(lines) != 2 {
+		t.Fatalf("metadata probe output missing URI/body split: %q", out)
+	}
+	if !strings.HasPrefix(lines[0], "http://169.254.170.2/v4/") {
+		t.Fatalf("ECS_CONTAINER_METADATA_URI_V4 = %q, want Fargate link-local URI", lines[0])
+	}
+	if !strings.Contains(lines[1], `"Family":"metadata-netns-client"`) || !strings.Contains(lines[1], `"TaskARN":"`+task+`"`) {
+		t.Fatalf("task metadata body did not contain real task identity:\n%s", lines[1])
+	}
+}
+
+func TestECSVPCNetnsRouteTableEgress(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	if !ecsNetnsTierActive() {
+		t.Skip("route-table egress enforcement requires the netns fabric (Linux + CAP_NET_ADMIN)")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+	probeURL := startHostProbeServer(t)
+
+	vpc := q("ec2", "create-vpc", "--cidr-block", "10.63.0.0/16", "--query", "Vpc.VpcId", "--output", "text")
+	isolatedSubnet := q("ec2", "create-subnet", "--vpc-id", vpc, "--cidr-block", "10.63.1.0/24",
+		"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
+	publicSubnet := q("ec2", "create-subnet", "--vpc-id", vpc, "--cidr-block", "10.63.2.0/24",
+		"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
+	privateSubnet := q("ec2", "create-subnet", "--vpc-id", vpc, "--cidr-block", "10.63.3.0/24",
+		"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
+	igw := q("ec2", "create-internet-gateway", "--query", "InternetGateway.InternetGatewayId", "--output", "text")
+	q("ec2", "attach-internet-gateway", "--internet-gateway-id", igw, "--vpc-id", vpc)
+	publicRT := q("ec2", "create-route-table", "--vpc-id", vpc, "--query", "RouteTable.RouteTableId", "--output", "text")
+	q("ec2", "create-route", "--route-table-id", publicRT, "--destination-cidr-block", "0.0.0.0/0", "--gateway-id", igw)
+	q("ec2", "associate-route-table", "--route-table-id", publicRT, "--subnet-id", publicSubnet)
+	eipAlloc := q("ec2", "allocate-address", "--domain", "vpc", "--query", "AllocationId", "--output", "text")
+	nat := q("ec2", "create-nat-gateway", "--subnet-id", publicSubnet, "--allocation-id", eipAlloc,
+		"--query", "NatGateway.NatGatewayId", "--output", "text")
+	privateRT := q("ec2", "create-route-table", "--vpc-id", vpc, "--query", "RouteTable.RouteTableId", "--output", "text")
+	q("ec2", "create-route", "--route-table-id", privateRT, "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id", nat)
+	q("ec2", "associate-route-table", "--route-table-id", privateRT, "--subnet-id", privateSubnet)
+
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "egress-netns-client", "sleep 120")
+	isolatedTask := runTask(q, "egress-netns-client", isolatedSubnet)
+	publicTask := runTaskWithNetworkConfiguration(q, "egress-netns-client", `awsvpcConfiguration={subnets=[`+publicSubnet+`],assignPublicIp=ENABLED}`)
+	privateTask := runTask(q, "egress-netns-client", privateSubnet)
+	t.Cleanup(func() {
+		for _, task := range []string{isolatedTask, publicTask, privateTask} {
+			runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
+		}
+	})
+	waitRunning(t, q, isolatedTask)
+	waitRunning(t, q, publicTask)
+	waitRunning(t, q, privateTask)
+
+	if code, out := taskWgetURL(t, isolatedTask, probeURL); code == 0 {
+		t.Fatalf("isolated subnet task unexpectedly reached host egress probe: exit=%d out=%q", code, out)
+	}
+	if code, out := taskWgetURL(t, publicTask, probeURL); code != 0 || !strings.Contains(out, "egress-ok") {
+		t.Fatalf("public subnet task with assignPublicIp should reach egress probe: exit=%d out=%q", code, out)
+	}
+	if code, out := taskWgetURL(t, privateTask, probeURL); code != 0 || !strings.Contains(out, "egress-ok") {
+		t.Fatalf("private subnet task with NAT route should reach egress probe: exit=%d out=%q", code, out)
 	}
 }

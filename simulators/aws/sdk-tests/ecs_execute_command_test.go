@@ -18,6 +18,7 @@ func runLongLivedECSTask(t *testing.T, client *ecs.Client, cluster, family strin
 	t.Helper()
 	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, family)
 
 	td, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(family),
@@ -40,7 +41,7 @@ func runLongLivedECSTask(t *testing.T, client *ecs.Client, cluster, family strin
 		LaunchType:           ecstypes.LaunchTypeFargate,
 		EnableExecuteCommand: enableExec,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
 		},
 	})
 	require.NoError(t, err)

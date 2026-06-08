@@ -2,13 +2,16 @@ package aws_sdk_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/stretchr/testify/assert"
@@ -20,6 +23,8 @@ func ecsClient() *ecs.Client {
 		o.BaseEndpoint = aws.String(baseURL)
 	})
 }
+
+var ecsTestSubnetCounter atomic.Uint32
 
 func TestECS_CreateCluster(t *testing.T) {
 	client := ecsClient()
@@ -265,6 +270,7 @@ exit 1`},
 		},
 	})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "pod-localhost")
 
 	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
 		Cluster:        aws.String(clusterName),
@@ -272,7 +278,7 @@ exit 1`},
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})
@@ -311,6 +317,7 @@ func TestECS_ManagedEBSVolumeSnapshotRoundTripSDK(t *testing.T) {
 	clusterName := "managed-ebs-roundtrip"
 	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "managed-ebs-roundtrip")
 
 	logGroupName := "/ecs/managed-ebs-roundtrip"
 	_, _ = cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(logGroupName)})
@@ -347,7 +354,7 @@ func TestECS_ManagedEBSVolumeSnapshotRoundTripSDK(t *testing.T) {
 		TaskDefinition: tdOut.TaskDefinition.TaskDefinitionArn,
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
 		},
 		VolumeConfigurations: []ecstypes.TaskVolumeConfiguration{{
 			Name: aws.String("workspace"),
@@ -427,7 +434,7 @@ echo EBS_ROUNDTRIP_OK`},
 		TaskDefinition: readerTD.TaskDefinition.TaskDefinitionArn,
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
 		},
 		VolumeConfigurations: []ecstypes.TaskVolumeConfiguration{{
 			Name: aws.String("workspace"),
@@ -463,6 +470,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 		ClusterName: aws.String(clusterName),
 	})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "exitcode")
 
 	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String("exitcode-task"),
@@ -488,7 +496,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})
@@ -497,8 +505,7 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 	taskArn := *runOut.Tasks[0].TaskArn
 	cleanupECSTask(t, client, clusterName, taskArn)
 
-	// Wait briefly for task to transition to RUNNING (500ms in simulator)
-	time.Sleep(800 * time.Millisecond)
+	waitForECSTaskStatus(t, client, clusterName, taskArn, "RUNNING")
 
 	// Describe task while RUNNING — ExitCode should be nil
 	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
@@ -547,6 +554,7 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 		ClusterName: aws.String(clusterName),
 	})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "stopcode-user")
 
 	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String("stopcode-task"),
@@ -570,7 +578,7 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})
@@ -579,8 +587,7 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 	taskArn := *runOut.Tasks[0].TaskArn
 	cleanupECSTask(t, client, clusterName, taskArn)
 
-	// Wait for RUNNING
-	time.Sleep(800 * time.Millisecond)
+	waitForECSTaskStatus(t, client, clusterName, taskArn, "RUNNING")
 
 	// Stop task via API
 	_, err = client.StopTask(ctx, &ecs.StopTaskInput{
@@ -610,6 +617,7 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 	t.Helper()
 	client := ecsClient()
 	clusterName := name + "-cluster"
+	subnetID := createECSTestSubnet(t, name)
 
 	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{
 		ClusterName: aws.String(clusterName),
@@ -633,7 +641,7 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
-				Subnets: []string{"subnet-0123456789abcdef0"},
+				Subnets: []string{subnetID},
 			},
 		},
 	})
@@ -644,6 +652,49 @@ func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.Container
 	cleanupECSTask(t, client, clusterName, taskArn)
 
 	return client, clusterName, taskArn
+}
+
+func createECSTestSubnet(t *testing.T, name string) string {
+	t.Helper()
+	ec2c := ec2Client()
+	n := ecsTestSubnetCounter.Add(1)
+	second := 200 + int(n%40)
+	third := int((n / 40) % 200)
+	vpcCIDR := fmt.Sprintf("10.%d.0.0/16", second)
+	subnetCIDR := fmt.Sprintf("10.%d.%d.0/24", second, third)
+
+	vpcOut, err := ec2c.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String(vpcCIDR),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeVpc,
+			Tags: []ec2types.Tag{{
+				Key:   aws.String("Name"),
+				Value: aws.String(name + "-vpc"),
+			}},
+		}},
+	})
+	require.NoError(t, err)
+	vpcID := aws.ToString(vpcOut.Vpc.VpcId)
+
+	subnetOut, err := ec2c.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     aws.String(vpcID),
+		CidrBlock: aws.String(subnetCIDR),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSubnet,
+			Tags: []ec2types.Tag{{
+				Key:   aws.String("Name"),
+				Value: aws.String(name + "-subnet"),
+			}},
+		}},
+	})
+	require.NoError(t, err)
+	subnetID := aws.ToString(subnetOut.Subnet.SubnetId)
+
+	t.Cleanup(func() {
+		_, _ = ec2c.DeleteSubnet(ctx, &ec2.DeleteSubnetInput{SubnetId: aws.String(subnetID)})
+		_, _ = ec2c.DeleteVpc(ctx, &ec2.DeleteVpcInput{VpcId: aws.String(vpcID)})
+	})
+	return subnetID
 }
 
 func cleanupECSTask(t *testing.T, client *ecs.Client, clusterName, taskArn string) {
@@ -713,10 +764,10 @@ func TestECS_TaskExecutesCommand(t *testing.T) {
 	require.Len(t, descOut.Tasks, 1)
 
 	task := descOut.Tasks[0]
-	assert.Equal(t, "STOPPED", *task.LastStatus)
+	assert.Equal(t, "STOPPED", *task.LastStatus, "stopped reason: %s", aws.ToString(task.StoppedReason))
 	require.NotEmpty(t, task.Containers)
 	require.NotNil(t, task.Containers[0].ExitCode)
-	assert.Equal(t, int32(0), *task.Containers[0].ExitCode)
+	assert.Equal(t, int32(0), *task.Containers[0].ExitCode, "stopped reason: %s", aws.ToString(task.StoppedReason))
 }
 
 func TestECS_TaskExitCodeNonZero(t *testing.T) {

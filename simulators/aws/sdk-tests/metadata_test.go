@@ -97,28 +97,5 @@ func TestECSTaskMetadataV4(t *testing.T) {
 	resp, err := http.Get(baseURL + "/v4/abc123/task")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var task struct {
-		Cluster       string
-		TaskARN       string
-		Family        string
-		Revision      string
-		DesiredStatus string
-		KnownStatus   string
-		Containers    []struct {
-			Name     string
-			DockerId string
-			Image    string
-		}
-		LaunchType string
-	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
-	assert.Equal(t, "sockerless-sim", task.Cluster)
-	assert.Contains(t, task.TaskARN, "arn:aws:ecs:")
-	assert.Contains(t, task.TaskARN, "abc123")
-	assert.Equal(t, "RUNNING", task.KnownStatus)
-	assert.Equal(t, "FARGATE", task.LaunchType)
-	require.Len(t, task.Containers, 1)
-	assert.Equal(t, "abc123", task.Containers[0].DockerId)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }

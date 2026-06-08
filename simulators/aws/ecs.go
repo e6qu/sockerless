@@ -1405,6 +1405,10 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		}
 		sharedNetMode = "container:" + pause.ContainerID
 	}
+	metadataEnv := hostMetadataEnv(taskID)
+	if netnsTier && hasENI {
+		metadataEnv = hostMetadataLinkLocalEnv(taskID)
+	}
 	var mainDockerID string
 
 	for i, cd := range td.ContainerDefinitions {
@@ -1448,7 +1452,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			Architecture: platform,
 			Command:      cd.EntryPoint,
 			Args:         cd.Command,
-			Env:          mergeEnv(cmdEnv, hostMetadataEnv(taskID)),
+			Env:          mergeEnv(cmdEnv, metadataEnv),
 			Name:         containerName,
 			Labels: map[string]string{
 				"sockerless-sim-task":           taskID,
@@ -1521,6 +1525,116 @@ func ecsTaskENIInfo(taskID string) (eniIP, subnetID string, ok bool) {
 		}
 	}
 	return eniIP, subnetID, eniIP != "" && subnetID != ""
+}
+
+func ecsTaskDefinitionFamilyRevision(taskDefinitionArn string) (family, revision string) {
+	ref := taskDefinitionArn
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		ref = ref[i+1:]
+	}
+	family = ref
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		family = ref[:i]
+		revision = ref[i+1:]
+	}
+	return family, revision
+}
+
+func ecsTaskDefinitionByArn(taskDefinitionArn string) (ECSTaskDefinition, bool) {
+	key := taskDefinitionArn
+	if i := strings.LastIndex(key, "/"); i >= 0 {
+		key = key[i+1:]
+	}
+	return ecsTaskDefinitions.Get(key)
+}
+
+func ecsTaskDockerInfo(taskID, containerName string) (dockerID, dockerName string) {
+	if v, ok := ecsProcessHandles.Load(taskID); ok {
+		if h := v.(*ecsTaskProcesses).handleFor(containerName); h != nil {
+			dockerID = h.ContainerID
+		}
+	}
+	if dockerID == "" {
+		return "", ""
+	}
+	dockerName = dockerID
+	return dockerID, dockerName
+}
+
+func ecsTaskContainerMetadata(taskID string, task ECSTask, td ECSTaskDefinition, cd ECSContainerDefinition, eniIP string) map[string]any {
+	dockerID, dockerName := ecsTaskDockerInfo(taskID, cd.Name)
+	if dockerID == "" {
+		dockerID = taskID
+		dockerName = taskID
+	}
+	out := map[string]any{
+		"DockerId":   dockerID,
+		"DockerName": dockerName,
+		"Name":       cd.Name,
+		"Image":      cd.Image,
+		"KnownStatus": func() string {
+			for _, c := range task.Containers {
+				if c.Name == cd.Name {
+					return c.LastStatus
+				}
+			}
+			return task.LastStatus
+		}(),
+	}
+	if td.Cpu != "" || td.Memory != "" {
+		limits := map[string]string{}
+		if td.Cpu != "" {
+			limits["CPU"] = td.Cpu
+		}
+		if td.Memory != "" {
+			limits["Memory"] = td.Memory
+		}
+		out["Limits"] = limits
+	}
+	if eniIP != "" {
+		out["Networks"] = []map[string]any{{
+			"NetworkMode":   "awsvpc",
+			"IPv4Addresses": []string{eniIP},
+		}}
+	}
+	return out
+}
+
+func ecsTaskMetadataV4(taskID string) (map[string]any, bool) {
+	task, ok := ecsTasks.Get(taskID)
+	if !ok {
+		return nil, false
+	}
+	td, _ := ecsTaskDefinitionByArn(task.TaskDefinitionArn)
+	eniIP, _, _ := ecsTaskENIInfo(taskID)
+	family, revision := ecsTaskDefinitionFamilyRevision(task.TaskDefinitionArn)
+	var containers []map[string]any
+	for _, cd := range td.ContainerDefinitions {
+		containers = append(containers, ecsTaskContainerMetadata(taskID, task, td, cd, eniIP))
+	}
+	return map[string]any{
+		"Cluster":       task.ClusterArn,
+		"TaskARN":       task.TaskArn,
+		"Family":        family,
+		"Revision":      revision,
+		"DesiredStatus": task.DesiredStatus,
+		"KnownStatus":   task.LastStatus,
+		"Containers":    containers,
+		"LaunchType":    task.LaunchType,
+	}, true
+}
+
+func ecsContainerMetadataV4(taskID string) (map[string]any, bool) {
+	task, ok := ecsTasks.Get(taskID)
+	if !ok {
+		return nil, false
+	}
+	td, ok := ecsTaskDefinitionByArn(task.TaskDefinitionArn)
+	if !ok || len(td.ContainerDefinitions) == 0 {
+		return nil, false
+	}
+	eniIP, _, _ := ecsTaskENIInfo(taskID)
+	return ecsTaskContainerMetadata(taskID, task, td, td.ContainerDefinitions[0], eniIP), true
 }
 
 // ecsTaskVPCNetwork resolves the VPC Docker network + ENI IP for an awsvpc task,

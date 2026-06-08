@@ -320,6 +320,7 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "xtask-dns")
 
 	runTask := func(containerID string) string {
 		runOut, err := ecsCli.RunTask(ctx, &ecs.RunTaskInput{
@@ -328,7 +329,7 @@ func TestECS_CrossTaskDNS(t *testing.T) {
 			Count:          aws.Int32(1),
 			LaunchType:     ecstypes.LaunchTypeFargate,
 			NetworkConfiguration: &ecstypes.NetworkConfiguration{
-				AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+				AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
 			},
 			Tags: []ecstypes.Tag{
 				{Key: aws.String("sockerless-container-id"), Value: aws.String(containerID)},

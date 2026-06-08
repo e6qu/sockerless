@@ -34,6 +34,7 @@ func TestECS_TaskDefinitionSecretsInjected(t *testing.T) {
 	const cluster = "ecs-secrets-cluster"
 	_, err = client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
 	require.NoError(t, err)
+	subnetID := createECSTestSubnet(t, "secrets")
 
 	const logGroup = "/ecs/secrets-inject"
 	_, _ = cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(logGroup)})
@@ -72,7 +73,7 @@ func TestECS_TaskDefinitionSecretsInjected(t *testing.T) {
 		TaskDefinition: td.TaskDefinition.TaskDefinitionArn,
 		LaunchType:     ecstypes.LaunchTypeFargate,
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
-			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{"subnet-0123456789abcdef0"}},
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
 		},
 	})
 	require.NoError(t, err)
