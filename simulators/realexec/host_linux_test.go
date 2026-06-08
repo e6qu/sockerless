@@ -46,6 +46,7 @@ func TestExternalNamespaceNICRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = holder.Process.Kill(); _ = holder.Wait() }()
 	pid := holder.Process.Pid
+	waitProcessNetnsChanged(t, pid)
 
 	nic, err := network.AttachExternalNamespaceNIC(ctx, ExternalNamespaceNICSpec{
 		PID:           pid,
@@ -71,6 +72,29 @@ func TestExternalNamespaceNICRoundTrip(t *testing.T) {
 	}
 	if err := runner.Run(ctx, "nsenter", "-t", pidStr, "-n", "--", "ping", "-c", "1", "-W", "2", network.Gateway.String()); err != nil {
 		t.Fatalf("guest cannot reach subnet gateway %s: %v", network.Gateway, err)
+	}
+}
+
+func waitProcessNetnsChanged(t *testing.T, pid int) {
+	t.Helper()
+	self, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		t.Fatalf("read self netns: %v", err)
+	}
+	target := fmt.Sprintf("/proc/%d/ns/net", pid)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		current, err := os.Readlink(target)
+		if err == nil && current != self {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("wait for process netns %s: %v", target, err)
+			}
+			t.Fatalf("process %d did not enter a separate netns", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
