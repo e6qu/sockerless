@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -181,8 +182,9 @@ func dockerOut(t *testing.T, args ...string) string {
 	return string(out)
 }
 
-// ecsNetnsTierActive approximates the sim's netns-tier gate (Linux + the network
-// tools) so tier-specific tests can opt in.
+// ecsNetnsTierActive mirrors the sim's netns-tier gate (Linux + tools +
+// CAP_NET_ADMIN/CAP_SYS_ADMIN) so tier-specific tests only run when ECS will
+// actually use the real netns fabric.
 func ecsNetnsTierActive() bool {
 	if runtime.GOOS != "linux" {
 		return false
@@ -192,7 +194,33 @@ func ecsNetnsTierActive() bool {
 			return false
 		}
 	}
-	return true
+	caps, err := linuxEffectiveCapabilitiesForTest()
+	if err != nil {
+		return false
+	}
+	return hasLinuxCapability(caps, 12) && hasLinuxCapability(caps, 21)
+}
+
+func linuxEffectiveCapabilitiesForTest() (uint64, error) {
+	body, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "CapEff:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return 0, fmt.Errorf("malformed CapEff line: %q", line)
+		}
+		return strconv.ParseUint(fields[1], 16, 64)
+	}
+	return 0, fmt.Errorf("CapEff not found")
+}
+
+func hasLinuxCapability(mask uint64, capNumber uint) bool {
+	return mask&(uint64(1)<<capNumber) != 0
 }
 
 func waitRunning(t *testing.T, q func(...string) string, taskArn string) {
