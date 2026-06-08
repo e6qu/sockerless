@@ -1425,6 +1425,9 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		for name, val := range resolveECSContainerSecrets(cd.Secrets) {
 			cmdEnv[name] = val
 		}
+		if sharedNetMode != "" {
+			cmdEnv = rewriteHostDockerInternalEnv(cmdEnv)
+		}
 		var binds []string
 		for _, mp := range cd.MountPoints {
 			if src, ok := volMap[mp.SourceVolume]; ok {
