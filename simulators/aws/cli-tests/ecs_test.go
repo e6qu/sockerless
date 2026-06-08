@@ -1,6 +1,7 @@
 package aws_cli_test
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,59 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected 'hello-from-ecs' in CloudWatch logs")
+}
+
+func TestECS_CLI_ExecuteCommandRejectedWhenNotEnabled(t *testing.T) {
+	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
+		t.Skip("session-manager-plugin is required because aws ecs execute-command checks it before calling the API")
+	}
+
+	subnetID := createCLIECSTestSubnet(t, 145)
+
+	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ecs-exec-disabled"))
+	runCLI(t, awsCLI("ecs", "register-task-definition",
+		"--family", "cli-ecs-exec-disabled",
+		"--requires-compatibilities", "FARGATE",
+		"--network-mode", "awsvpc",
+		"--cpu", "256",
+		"--memory", "512",
+		"--container-definitions", `[{
+			"name": "app",
+			"image": "public.ecr.aws/docker/library/busybox:latest",
+			"entryPoint": ["sh", "-c"],
+			"command": ["sleep 30"]
+		}]`,
+		"--output", "json",
+	))
+
+	out := runCLI(t, awsCLI("ecs", "run-task",
+		"--cluster", "cli-ecs-exec-disabled",
+		"--task-definition", "cli-ecs-exec-disabled",
+		"--launch-type", "FARGATE",
+		"--count", "1",
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
+		"--output", "json",
+	))
+	var runResult struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &runResult)
+	require.Len(t, runResult.Tasks, 1)
+	taskArn := runResult.Tasks[0].TaskArn
+	cleanupCLIECSTask(t, "cli-ecs-exec-disabled", taskArn)
+	waitCLITaskStatus(t, "cli-ecs-exec-disabled", taskArn, "RUNNING")
+
+	errOut := runCLIExpectError(t, awsCLI("ecs", "execute-command",
+		"--cluster", "cli-ecs-exec-disabled",
+		"--task", taskArn,
+		"--container", "app",
+		"--command", "echo hello",
+		"--interactive",
+	))
+	assert.Contains(t, errOut, "InvalidParameterException")
+	assert.Contains(t, errOut, "execute command was not enabled")
 }
 
 func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {

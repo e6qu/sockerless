@@ -32,7 +32,10 @@ var backendPort int
 var evalImageName string
 var acaOverlayImageName string
 
-const acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
+const (
+	acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
+	acaTestImage  = "public.ecr.aws/docker/library/alpine:latest"
+)
 
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
@@ -315,7 +318,7 @@ func TestACAContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, acaTestImage, image.PullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -327,7 +330,7 @@ func TestACAContainerLifecycle(t *testing.T) {
 	// Create
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: acaTestImage,
 			Cmd:   []string{"tail", "-f", "/dev/null"},
 		},
 		nil, nil, nil, "aca_"+testID,
@@ -386,7 +389,7 @@ func TestACAContainerLifecycle(t *testing.T) {
 func TestACAContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, "alpine:latest", image.PullOptions{})
+	rc, err := dockerClient.ImagePull(ctx, acaTestImage, image.PullOptions{})
 	if err != nil {
 		t.Fatalf("image pull failed: %v", err)
 	}
@@ -396,7 +399,7 @@ func TestACAContainerLogs(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:      "alpine:latest",
+			Image:      acaTestImage,
 			Entrypoint: []string{"sh", "-c", "echo hello-aca && sleep 5"},
 		},
 		nil, nil, nil, "aca_logs_"+testID,
@@ -439,7 +442,7 @@ func TestACAContainerList(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "alpine:latest",
+			Image: acaTestImage,
 		},
 		nil, nil, nil, "aca_list_"+testID,
 	)

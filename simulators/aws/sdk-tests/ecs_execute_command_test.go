@@ -67,6 +67,11 @@ func TestECS_ExecuteCommandOnRunningTask(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, out.Session)
+	assert.Equal(t, "arn:aws:ecs:us-east-1:123456789012:cluster/exec-cmd-enabled", aws.ToString(out.ClusterArn))
+	assert.NotEmpty(t, aws.ToString(out.ContainerArn))
+	assert.Equal(t, "app", aws.ToString(out.ContainerName))
+	assert.True(t, out.Interactive)
+	assert.Equal(t, taskArn, aws.ToString(out.TaskArn))
 	assert.NotEmpty(t, aws.ToString(out.Session.SessionId))
 	assert.Contains(t, aws.ToString(out.Session.StreamUrl), "/ecs-exec/")
 	assert.NotEmpty(t, aws.ToString(out.Session.TokenValue))
@@ -88,4 +93,34 @@ func TestECS_ExecuteCommandRejectedWhenNotEnabled(t *testing.T) {
 	})
 	require.Error(t, err, "exec must be rejected when execute command was not enabled at RunTask")
 	assert.Contains(t, err.Error(), "execute command was not enabled")
+}
+
+func TestECS_ExecuteCommandRejectsNonInteractive(t *testing.T) {
+	client := ecsClient()
+	taskArn := runLongLivedECSTask(t, client, "exec-cmd-noninteractive", "exec-cmd-noninteractive", true)
+
+	_, err := client.ExecuteCommand(ctx, &ecs.ExecuteCommandInput{
+		Cluster:     aws.String("exec-cmd-noninteractive"),
+		Task:        aws.String(taskArn),
+		Container:   aws.String("app"),
+		Command:     aws.String("echo hello"),
+		Interactive: false,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only supports initiating interactive")
+}
+
+func TestECS_ExecuteCommandRejectsUnknownContainer(t *testing.T) {
+	client := ecsClient()
+	taskArn := runLongLivedECSTask(t, client, "exec-cmd-container", "exec-cmd-container", true)
+
+	_, err := client.ExecuteCommand(ctx, &ecs.ExecuteCommandInput{
+		Cluster:     aws.String("exec-cmd-container"),
+		Task:        aws.String(taskArn),
+		Container:   aws.String("missing"),
+		Command:     aws.String("echo hello"),
+		Interactive: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Container not found")
 }

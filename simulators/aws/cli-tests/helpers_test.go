@@ -135,6 +135,23 @@ func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	return combined.String()
 }
 
+func runCLIExpectError(t *testing.T, cmd *exec.Cmd) string {
+	t.Helper()
+	const perCmdTimeout = 60 * time.Second
+	var combined bytes.Buffer
+	cmd.Stdout = &combined
+	cmd.Stderr = &combined
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("CLI command failed to start: %v\nCommand: %s", err, strings.Join(cmd.Args, " "))
+	}
+	timer := time.AfterFunc(perCmdTimeout, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	if err := cmd.Wait(); err == nil {
+		t.Fatalf("CLI command unexpectedly succeeded\nCommand: %s\nOutput: %s", strings.Join(cmd.Args, " "), combined.String())
+	}
+	return combined.String()
+}
+
 func parseJSON(t *testing.T, data string, target any) {
 	t.Helper()
 	if err := json.Unmarshal([]byte(data), target); err != nil {

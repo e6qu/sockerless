@@ -63,7 +63,7 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 				Template: &runpb.ExecutionTemplate{
 					Template: &runpb.TaskTemplate{
 						Containers: []*runpb.Container{{
-							Image:   "alpine:latest",
+							Image:   evalImageName,
 							Command: []string{"sh", "-c"},
 							Args:    []string{"sleep 30"},
 						}},
