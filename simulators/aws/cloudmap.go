@@ -344,13 +344,13 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveTaskContainerForInstance maps a Cloud Map instance ID back to
-// the simulator's Docker container name for the corresponding ECS task.
-// Sockerless's ECS backend uses `containerID[:12]` as the instance ID
-// and tags each RunTask with `sockerless-container-id: <full id>`; we
-// match that tag and return `sockerless-sim-aws-task-<taskID[:12]>`.
-// Returns "" if no matching task is found (e.g. CRUD-only tests that
-// register synthetic instance IDs with no backing task).
+// resolveTaskContainerForInstance maps a Cloud Map instance ID back to the
+// simulator's Docker container that owns the corresponding ECS task's network
+// namespace. Sockerless's ECS backend uses `containerID[:12]` as the instance ID
+// and tags each RunTask with `sockerless-container-id: <full id>`. On the netns
+// awsvpc fabric the pause container owns the namespace, so Cloud Map connects
+// that container; task containers sharing it cannot be attached to another
+// Docker network.
 func resolveTaskContainerForInstance(instanceId string) string {
 	for _, task := range ecsTasks.List() {
 		for _, tag := range task.Tags {
@@ -363,11 +363,24 @@ func resolveTaskContainerForInstance(instanceId string) string {
 				if len(taskId) < 12 {
 					return ""
 				}
-				return "sockerless-sim-aws-task-" + taskId[:12]
+				containerName := "sockerless-sim-aws-task-" + taskId[:12]
+				if taskHasENI(task) && ec2ECSRealNetAvailable() {
+					return containerName + "-pause"
+				}
+				return containerName
 			}
 		}
 	}
 	return ""
+}
+
+func taskHasENI(task ECSTask) bool {
+	for _, att := range task.Attachments {
+		if att.Type == "ElasticNetworkInterface" {
+			return true
+		}
+	}
+	return false
 }
 
 func lastSlash(s string) int {

@@ -1268,7 +1268,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					go func(taskID, containerName string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
-						cleanupECSTaskProcesses(taskID, processes)
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == "STOPPED" {
@@ -1286,6 +1285,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 							}
 							ecsCleanupTaskManagedEBS(t)
 						})
+						cleanupECSTaskProcesses(taskID, processes)
 					}(id, name, handle)
 				}
 			}

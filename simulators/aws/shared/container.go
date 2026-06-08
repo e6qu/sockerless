@@ -249,7 +249,7 @@ func StopContainer(containerID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	timeout := 10
+	timeout := 1
 	_ = dockerClient.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 }
 
