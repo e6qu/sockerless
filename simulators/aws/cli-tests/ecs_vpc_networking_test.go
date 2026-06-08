@@ -133,9 +133,17 @@ func taskID(taskArn string) string {
 
 func taskContainerID(t *testing.T, taskArn string) string {
 	t.Helper()
-	cid := strings.TrimSpace(dockerOut(t, "ps", "-q",
-		"-f", "label=sockerless-sim-task="+taskID(taskArn),
-		"-f", "label=sockerless-sim-task-container=app"))
+	var cid string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		cid = strings.TrimSpace(dockerOut(t, "ps", "-q",
+			"-f", "label=sockerless-sim-task="+taskID(taskArn),
+			"-f", "label=sockerless-sim-task-container=app"))
+		if cid != "" {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 	if cid == "" {
 		t.Fatalf("no running container for task %s", taskArn)
 	}
