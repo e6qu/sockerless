@@ -1,6 +1,8 @@
 package aws_cli_test
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -25,8 +27,10 @@ func TestECSVPCNetworking(t *testing.T) {
 	}
 	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
 
-	vpcA, subnetA := mkVPCSubnet(t, q, "10.91.0.0/16", "10.91.0.0/24")
-	_, subnetB := mkVPCSubnet(t, q, "10.92.0.0/16", "10.92.0.0/24")
+	octetA := unusedDockerVPCOctet(t, 120, nil)
+	octetB := unusedDockerVPCOctet(t, octetA+1, map[int]bool{octetA: true})
+	vpcA, subnetA := mkVPCSubnet(t, q, vpcCIDR(octetA), subnetCIDR(octetA))
+	vpcB, subnetB := mkVPCSubnet(t, q, vpcCIDR(octetB), subnetCIDR(octetB))
 	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
 	registerTaskDef(q, "vpc-server", vpcServerScript)
 	registerTaskDef(q, "vpc-client", "sleep 120")
@@ -38,7 +42,7 @@ func TestECSVPCNetworking(t *testing.T) {
 		for _, task := range []string{server, clientSame, clientOther} {
 			runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
 		}
-		rmDockerNetworks(ecsVPCNet(vpcA), ecsVPCNet(vpcA)+"-egress")
+		rmDockerNetworks(ecsVPCNet(vpcA), ecsVPCNet(vpcB), ecsVPCNet(vpcA)+"-egress", ecsVPCNet(vpcB)+"-egress")
 	})
 	waitRunning(t, q, server)
 	waitRunning(t, q, clientSame)
@@ -46,7 +50,7 @@ func TestECSVPCNetworking(t *testing.T) {
 
 	// #516: the reported ENI IP is the container's real eth0 address.
 	eniIP := taskENIIP(q, server)
-	if !strings.HasPrefix(eniIP, "10.91.0.") {
+	if !strings.HasPrefix(eniIP, vpcPrefix(octetA)) {
 		t.Fatalf("server ENI IP not in subnet-A CIDR: %q", eniIP)
 	}
 	if real := taskEth0IP(t, server); real != eniIP {
@@ -70,6 +74,29 @@ func mkVPCSubnet(t *testing.T, q func(...string) string, vpcCidr, snCidr string)
 	subnetID = q("ec2", "create-subnet", "--vpc-id", vpcID, "--cidr-block", snCidr,
 		"--availability-zone", "us-east-1a", "--query", "Subnet.SubnetId", "--output", "text")
 	return vpcID, subnetID
+}
+
+func vpcCIDR(octet int) string { return fmt.Sprintf("10.%d.0.0/16", octet) }
+
+func subnetCIDR(octet int) string { return fmt.Sprintf("10.%d.0.0/24", octet) }
+
+func vpcPrefix(octet int) string { return fmt.Sprintf("10.%d.0.", octet) }
+
+func unusedDockerVPCOctet(t *testing.T, start int, exclude map[int]bool) int {
+	t.Helper()
+	for octet := start; octet < 250; octet++ {
+		if exclude != nil && exclude[octet] {
+			continue
+		}
+		name := fmt.Sprintf("sockerless-cidr-probe-%d-%d", os.Getpid(), octet)
+		if exec.Command("docker", "network", "create", "--subnet", vpcCIDR(octet), name).Run() != nil {
+			continue
+		}
+		_ = exec.Command("docker", "network", "rm", name).Run()
+		return octet
+	}
+	t.Fatal("no free 10.x.0.0/16 Docker CIDR available for ECS VPC test")
+	return 0
 }
 
 func registerTaskDef(q func(...string) string, family, script string) {
@@ -99,9 +126,14 @@ func taskID(taskArn string) string {
 
 func taskContainerID(t *testing.T, taskArn string) string {
 	t.Helper()
-	cid := strings.TrimSpace(dockerOut(t, "ps", "-q", "-f", "label=sockerless-sim-task="+taskID(taskArn)))
+	cid := strings.TrimSpace(dockerOut(t, "ps", "-q",
+		"-f", "label=sockerless-sim-task="+taskID(taskArn),
+		"-f", "label=sockerless-sim-task-container=app"))
 	if cid == "" {
 		t.Fatalf("no running container for task %s", taskArn)
+	}
+	if strings.Contains(cid, "\n") {
+		t.Fatalf("multiple app containers for task %s: %q", taskArn, cid)
 	}
 	return cid
 }
@@ -167,13 +199,38 @@ func waitRunning(t *testing.T, q func(...string) string, taskArn string) {
 	t.Helper()
 	deadline := time.Now().Add(40 * time.Second)
 	for time.Now().Before(deadline) {
-		if q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
-			"--query", "tasks[0].lastStatus", "--output", "text") == "RUNNING" {
+		status := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
+			"--query", "tasks[0].lastStatus", "--output", "text")
+		if status == "RUNNING" {
 			return
+		}
+		if status == "STOPPED" {
+			reason := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", taskArn,
+				"--query", "tasks[0].stoppedReason", "--output", "text")
+			t.Fatalf("task %s stopped before RUNNING: %s", taskArn, reason)
 		}
 		time.Sleep(2 * time.Second)
 	}
 	t.Fatalf("task %s never reached RUNNING", taskArn)
+}
+
+func waitTaskContainersGone(t *testing.T, taskArns ...string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		allGone := true
+		for _, taskArn := range taskArns {
+			if out := strings.TrimSpace(dockerOut(t, "ps", "-q", "-f", "label=sockerless-sim-task="+taskID(taskArn))); out != "" {
+				allGone = false
+				break
+			}
+		}
+		if allGone {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("task containers still running for %v", taskArns)
 }
 
 // rmDockerNetworks removes simulator VPC networks (Docker tier), retrying while
@@ -193,6 +250,45 @@ func rmDockerNetworks(names ...string) {
 			return
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+// TestECSVPCDeleteVpcAllowsCIDRReuse covers the fabric cleanup needed by a
+// terraform destroy/apply cycle: once the task and subnet are gone, DeleteVpc
+// removes the real backing fabric so a new VPC can reuse the same CIDR.
+func TestECSVPCDeleteVpcAllowsCIDRReuse(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	registerTaskDef(q, "vpc-reuse-client", "sleep 120")
+
+	octet := unusedDockerVPCOctet(t, 140, nil)
+	vpc1, subnet1 := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	task1 := runTask(q, "vpc-reuse-client", subnet1)
+	waitRunning(t, q, task1)
+	runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task1))
+	waitTaskContainersGone(t, task1)
+	q("ec2", "delete-subnet", "--subnet-id", subnet1)
+	q("ec2", "delete-vpc", "--vpc-id", vpc1)
+	if exec.Command("docker", "network", "inspect", ecsVPCNet(vpc1)).Run() == nil {
+		t.Fatalf("DeleteVpc left Docker VPC network %s behind", ecsVPCNet(vpc1))
+	}
+
+	vpc2, subnet2 := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	task2 := runTask(q, "vpc-reuse-client", subnet2)
+	t.Cleanup(func() {
+		_ = awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task2).Run()
+		waitTaskContainersGone(t, task2)
+		_ = awsCLI("ec2", "delete-subnet", "--subnet-id", subnet2).Run()
+		_ = awsCLI("ec2", "delete-vpc", "--vpc-id", vpc2).Run()
+		rmDockerNetworks(ecsVPCNet(vpc2))
+	})
+	waitRunning(t, q, task2)
+	if real := taskEth0IP(t, task2); !strings.HasPrefix(real, vpcPrefix(octet)) {
+		t.Fatalf("recreated VPC task should run in reused CIDR, got eth0 %q", real)
 	}
 }
 

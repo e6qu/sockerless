@@ -617,12 +617,25 @@ func RemoveDockerNetwork(name string) error {
 	if cli == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := cli.NetworkInspect(ctx, name, network.InspectOptions{}); err != nil {
-		return nil // already gone
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, inspectErr := cli.NetworkInspect(ctx, name, network.InspectOptions{})
+		if inspectErr != nil {
+			cancel()
+			return nil // already gone
+		}
+		lastErr = cli.NetworkRemove(ctx, name)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	return cli.NetworkRemove(ctx, name)
 }
 
 // ConnectContainerToNetwork connects a running container to a Docker

@@ -136,6 +136,12 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 	ec2RealMu.Lock()
 	network := ec2RealVPCs[vpcID]
 	delete(ec2RealVPCs, vpcID)
+	for taskID, nic := range ec2RealECSNICs {
+		if ec2ECSTaskVPCID(taskID) == vpcID {
+			delete(ec2RealECSNICs, taskID)
+			_ = nic.Close(ctx)
+		}
+	}
 	for natID, nic := range ec2RealNATNICs {
 		if nat, ok := ec2NatGateways.Get(natID); ok && nat.VpcId == vpcID {
 			delete(ec2RealNATNICs, natID)
@@ -173,6 +179,27 @@ func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
 		return nil
 	}
 	return network.Close(ctx)
+}
+
+func ec2ECSTaskVPCID(taskID string) string {
+	task, ok := ecsTasks.Get(taskID)
+	if !ok {
+		return ""
+	}
+	for _, att := range task.Attachments {
+		if att.Type != "ElasticNetworkInterface" {
+			continue
+		}
+		for _, d := range att.Details {
+			if d.Name != "subnetId" {
+				continue
+			}
+			if subnet, ok := ec2Subnets.Get(d.Value); ok {
+				return subnet.VpcId
+			}
+		}
+	}
+	return ""
 }
 
 func ec2CreateRealSubnet(ctx context.Context, subnet EC2Subnet) error {

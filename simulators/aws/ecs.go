@@ -305,6 +305,11 @@ func stopECSTaskProcesses(p *ecsTaskProcesses) {
 	}
 }
 
+func cleanupECSTaskProcesses(taskID string, p *ecsTaskProcesses) {
+	stopECSTaskProcesses(p)
+	ec2DetachRealECSTaskNIC(context.Background(), taskID)
+}
+
 func requestStopECSTaskProcesses(p *ecsTaskProcesses) {
 	if p == nil {
 		return
@@ -1263,7 +1268,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					go func(taskID, containerName string, handle *sim.ContainerHandle) {
 						result := handle.Wait()
 						ecsProcessHandles.Delete(taskID)
-						stopECSTaskProcesses(processes)
+						cleanupECSTaskProcesses(taskID, processes)
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == "STOPPED" {
@@ -1388,11 +1393,11 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		processes.Handles["__pause__"] = pause
 		pid, perr := sim.ContainerPID(pause.ContainerID)
 		if perr != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("task netns pause pid: %w", perr)
 		}
 		if aerr := ec2AttachRealECSTaskNIC(context.Background(), taskID, subnetID, pid, eniIP); aerr != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("attach task to VPC netns: %w", aerr)
 		}
 		sharedNetMode = "container:" + pause.ContainerID
@@ -1431,7 +1436,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		localImage := sim.ResolveLocalImage(cd.Image)
 		platform, err := localImagePlatform(context.Background(), localImage)
 		if err != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("resolve task container %q image platform: %w", cd.Name, err)
 		}
 
@@ -1460,7 +1465,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			if !netnsTier {
 				netName, dockerIP, ok, nerr := ecsTaskVPCNetwork(taskID)
 				if nerr != nil {
-					stopECSTaskProcesses(processes)
+					cleanupECSTaskProcesses(taskID, processes)
 					return nil, nerr
 				}
 				if ok {
@@ -1474,7 +1479,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 
 		handle, err := sim.StartContainerSync(cfg, sink)
 		if err != nil {
-			stopECSTaskProcesses(processes)
+			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("start task container %q: %w", cd.Name, err)
 		}
 		if i == 0 {
