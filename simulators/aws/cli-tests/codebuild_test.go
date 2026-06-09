@@ -2,6 +2,7 @@ package aws_cli_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func TestCodeBuild_ProjectCRUD_CLI(t *testing.T) {
 func TestCodeBuild_Build_CLI(t *testing.T) {
 	runCLI(t, awsCLI("codebuild", "create-project",
 		"--name", "cb-cli-build-proj",
-		"--source", `{"type":"NO_SOURCE"}`,
+		"--source", `{"type":"NO_SOURCE","buildspec":"version: 0.2\nphases:\n  build:\n    commands:\n      - printf codebuild-cli-ready\n"}`,
 		"--artifacts", `{"type":"NO_ARTIFACTS"}`,
 		"--environment", `{"type":"LINUX_CONTAINER","image":"aws/codebuild/standard:7.0","computeType":"BUILD_GENERAL1_SMALL"}`,
 		"--service-role", "arn:aws:iam::123456789012:role/cb-role",
@@ -77,17 +78,19 @@ func TestCodeBuild_Build_CLI(t *testing.T) {
 	}
 	parseJSON(t, out, &startResult)
 	require.NotEmpty(t, startResult.Build.ID)
-	assert.Equal(t, "SUCCEEDED", startResult.Build.BuildStatus)
 
-	out = runCLI(t, awsCLI("codebuild", "batch-get-builds", "--ids", startResult.Build.ID))
 	var getBuilds struct {
 		Builds []struct {
 			ID          string `json:"id"`
 			BuildStatus string `json:"buildStatus"`
 		} `json:"builds"`
 	}
-	parseJSON(t, out, &getBuilds)
-	require.Len(t, getBuilds.Builds, 1)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, awsCLI("codebuild", "batch-get-builds", "--ids", startResult.Build.ID))
+		parseJSON(t, out, &getBuilds)
+		require.Len(t, getBuilds.Builds, 1)
+		return getBuilds.Builds[0].BuildStatus == "SUCCEEDED"
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, startResult.Build.ID, getBuilds.Builds[0].ID)
 	assert.Equal(t, "SUCCEEDED", getBuilds.Builds[0].BuildStatus)
 

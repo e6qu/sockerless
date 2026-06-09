@@ -114,6 +114,7 @@ cloud.google.com/go/bigquery v1.76.0/go.mod h1:J4wuqka/1hEpdJxH2oBrUR0vjTD+r7drG
 cloud.google.com/go/bigquery v1.77.0/go.mod h1:J4wuqka/1hEpdJxH2oBrUR0vjTD+r7drGkpcA3yqERM=
 cloud.google.com/go/bigtable v1.34.0/go.mod h1:p94uLf6cy6D73POkudMagaFF3x9c7ktZjRnOUVGjZAw=
 cloud.google.com/go/bigtable v1.42.0/go.mod h1:oZ30nofVB6/UYGg7lBwGLWSea7NZUvw/WvBBgLY07xU=
+cloud.google.com/go/bigtable v1.47.0 h1:NGLgDSr/i79BTGCjxH/maPKxyvl5q8/SsBsyLK52kdI=
 cloud.google.com/go/bigtable v1.47.0/go.mod h1:GUM6PdkG3rrDse9kugqvX5+ktwo3ldfLtLi1VFn5Wj4=
 cloud.google.com/go/billing v1.20.1/go.mod h1:DhT80hUZ9gz5UqaxtK/LNoDELfxH73704VTce+JZqrY=
 cloud.google.com/go/billing v1.21.0/go.mod h1:ZGairB3EVnb3i09E2SxFxo50p5unPaMTuo1jh6jW9js=

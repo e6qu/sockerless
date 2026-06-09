@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +16,7 @@ import (
 )
 
 // AWS Glue — AWS JSON 1.1 protocol (X-Amz-Target: AWSGlue.<Op>).
-// Job runs complete immediately with SUCCEEDED status.
+// Python shell job runs execute the script stored at the job's S3 script location.
 
 type GlueDatabase struct {
 	Name        string            `json:"Name"`
@@ -57,6 +61,7 @@ type GlueJobRun struct {
 	CompletedOn   float64           `json:"CompletedOn"`
 	ExecutionTime int               `json:"ExecutionTime"`
 	Arguments     map[string]string `json:"Arguments,omitempty"`
+	ErrorMessage  string            `json:"ErrorMessage,omitempty"`
 }
 
 var (
@@ -441,8 +446,14 @@ func handleGlueStartJobRun(w http.ResponseWriter, r *http.Request) {
 		glueWriteError(w, "InvalidInputException", "invalid JSON")
 		return
 	}
-	if _, ok := glueJobs.Get(req.JobName); !ok {
+	job, ok := glueJobs.Get(req.JobName)
+	if !ok {
 		glueWriteError(w, "EntityNotFoundException", "Job not found: "+req.JobName)
+		return
+	}
+	script, err := gluePythonScript(job)
+	if err != nil {
+		glueWriteError(w, "InvalidInputException", err.Error())
 		return
 	}
 
@@ -452,16 +463,97 @@ func handleGlueStartJobRun(w http.ResponseWriter, r *http.Request) {
 	runID := strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	now := glueEpochNow()
 	run := GlueJobRun{
-		ID:            runID,
-		JobName:       req.JobName,
-		JobRunState:   "SUCCEEDED",
-		StartedOn:     now,
-		CompletedOn:   now,
-		ExecutionTime: 1,
-		Arguments:     req.Arguments,
+		ID:          runID,
+		JobName:     req.JobName,
+		JobRunState: "RUNNING",
+		StartedOn:   now,
+		Arguments:   req.Arguments,
 	}
 	glueJobRuns.Put(req.JobName+"/"+runID, run)
+	go glueRunPythonJob(req.JobName, runID, script, req.Arguments)
 	glueWriteJSON(w, http.StatusOK, map[string]any{"JobRunId": runID})
+}
+
+func gluePythonScript(job GlueJob) ([]byte, error) {
+	commandName := glueString(job.Command["Name"])
+	if commandName == "" {
+		commandName = glueString(job.Command["name"])
+	}
+	if commandName != "pythonshell" {
+		return nil, fmt.Errorf("only pythonshell jobs execute in the simulator")
+	}
+	location := glueString(job.Command["ScriptLocation"])
+	if location == "" {
+		location = glueString(job.Command["scriptLocation"])
+	}
+	if location == "" {
+		return nil, fmt.Errorf("Command.ScriptLocation is required")
+	}
+	bucket, key, ok := glueS3Location(location)
+	if !ok {
+		return nil, fmt.Errorf("Command.ScriptLocation must be an s3:// URL")
+	}
+	obj, ok := s3Objects.Get(s3ObjectKey(bucket, key))
+	if !ok {
+		return nil, fmt.Errorf("script object not found: %s", location)
+	}
+	return obj.Data, nil
+}
+
+func glueRunPythonJob(jobName, runID string, script []byte, args map[string]string) {
+	workDir, err := os.MkdirTemp("", "sockerless-glue-*")
+	if err != nil {
+		glueCompleteRun(jobName, runID, "FAILED", 0, err.Error())
+		return
+	}
+	defer os.RemoveAll(workDir)
+
+	scriptPath := filepath.Join(workDir, "script.py")
+	if err := os.WriteFile(scriptPath, script, 0700); err != nil {
+		glueCompleteRun(jobName, runID, "FAILED", 0, err.Error())
+		return
+	}
+
+	command := append([]string{"python3", scriptPath}, glueArgs(args)...)
+	handle := sim.StartProcess(sim.ProcessConfig{
+		Command: command,
+		Dir:     filepath.Clean(workDir),
+		Env: map[string]string{
+			"PATH": os.Getenv("PATH"),
+			"HOME": os.Getenv("HOME"),
+		},
+	}, sim.NoopSink{})
+	result := handle.Wait()
+	status := "SUCCEEDED"
+	reason := ""
+	if result.Error != nil {
+		status = "FAILED"
+		reason = result.Error.Error()
+	} else if result.ExitCode != 0 {
+		status = "FAILED"
+		reason = fmt.Sprintf("Python shell script exited with status %d", result.ExitCode)
+	}
+	executionTime := int(result.StoppedAt.Sub(result.StartedAt).Seconds())
+	if executionTime < 1 {
+		executionTime = 1
+	}
+	glueCompleteRun(jobName, runID, status, executionTime, reason)
+}
+
+func glueCompleteRun(jobName, runID, status string, executionTime int, reason string) {
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	key := jobName + "/" + runID
+	run, ok := glueJobRuns.Get(key)
+	if !ok {
+		return
+	}
+	run.JobRunState = status
+	run.CompletedOn = glueEpochNow()
+	run.ExecutionTime = executionTime
+	run.ErrorMessage = reason
+	glueJobRuns.Put(key, run)
 }
 
 func handleGlueGetJobRun(w http.ResponseWriter, r *http.Request) {
@@ -535,6 +627,35 @@ func glueResourceFromARN(arn string) (resType, name string) {
 		return "job", resource
 	}
 	return resource[:slash], resource[slash+1:]
+}
+
+func glueString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func glueS3Location(location string) (bucket, key string, ok bool) {
+	if !strings.HasPrefix(location, "s3://") {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(location, "s3://"), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func glueArgs(args map[string]string) []string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(args)*2)
+	for _, k := range keys {
+		out = append(out, k, args[k])
+	}
+	return out
 }
 
 func handleGlueTagResource(w http.ResponseWriter, r *http.Request) {

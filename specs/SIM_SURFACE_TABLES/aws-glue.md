@@ -37,7 +37,7 @@ Protocol: AWS JSON 1.1 (`X-Amz-Target: AWSGlue.<Op>`).
 | GetJob | `AWSGlue.GetJob` | ✓ | ✓ | ✓ | |
 | GetJobs | `AWSGlue.GetJobs` | ✓ | ✓ | ✓ | Paginated via `NextToken`. |
 | DeleteJob | `AWSGlue.DeleteJob` | ✓ | ✓ | ✓ | |
-| StartJobRun | `AWSGlue.StartJobRun` | ✓ | ✓ | — | Completes immediately with `SUCCEEDED`. |
+| StartJobRun | `AWSGlue.StartJobRun` | ✓ | ✓ | — | Executes Python shell scripts stored at the job's S3 script location. |
 | GetJobRun | `AWSGlue.GetJobRun` | ✓ | ✓ | — | |
 | GetJobRuns | `AWSGlue.GetJobRuns` | ✓ | ✗ | — | All runs for a job. |
 

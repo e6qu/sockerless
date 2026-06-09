@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,7 +14,7 @@ import (
 )
 
 // AWS Step Functions — AWS JSON 1.0 protocol (X-Amz-Target: AWSStepFunctions.<Op>).
-// Executions complete immediately with SUCCEEDED status (no actual execution engine).
+// Executions run a small ASL interpreter for the state types exercised by sockerless.
 
 type SFNStateMachine struct {
 	StateMachineArn string   `json:"stateMachineArn"`
@@ -45,6 +46,7 @@ type SFNTag struct {
 var (
 	sfnStateMachines sim.Store[SFNStateMachine]
 	sfnExecutions    sim.Store[SFNExecution]
+	sfnCancels       sync.Map
 	sfnMu            sync.Mutex
 )
 
@@ -321,10 +323,21 @@ func handleSFNListStateMachineVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSFNValidateStateMachineDefinition(w http.ResponseWriter, r *http.Request) {
-	// TF provider calls this before CreateStateMachine. Always valid in sim.
-	sfnWriteJSON(w, http.StatusOK, map[string]any{
-		"result": "OK",
-	})
+	var req struct {
+		Definition string `json:"definition"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	if err := sfnValidateDefinition(req.Definition); err != nil {
+		sfnWriteJSON(w, http.StatusOK, map[string]any{
+			"result":      "FAIL",
+			"diagnostics": []map[string]string{{"message": err.Error()}},
+		})
+		return
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"result": "OK"})
 }
 
 func handleSFNStartExecution(w http.ResponseWriter, r *http.Request) {
@@ -339,8 +352,13 @@ func handleSFNStartExecution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := sfnNameFromARN(req.StateMachineArn)
-	if _, ok := sfnStateMachines.Get(name); !ok {
+	sm, ok := sfnStateMachines.Get(name)
+	if !ok {
 		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+req.StateMachineArn)
+		return
+	}
+	if err := sfnValidateDefinition(sm.Definition); err != nil {
+		sfnWriteError(w, "InvalidDefinition", err.Error())
 		return
 	}
 
@@ -359,7 +377,6 @@ func handleSFNStartExecution(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := sfnEpochNow()
-	stopDate := now
 	input := req.Input
 	if input == "" {
 		input = "{}"
@@ -368,17 +385,146 @@ func handleSFNStartExecution(w http.ResponseWriter, r *http.Request) {
 		ExecutionArn:    execARN,
 		StateMachineArn: req.StateMachineArn,
 		Name:            execName,
-		Status:          "SUCCEEDED",
+		Status:          "RUNNING",
 		StartDate:       now,
-		StopDate:        &stopDate,
 		Input:           input,
-		Output:          input,
 	}
 	sfnExecutions.Put(execARN, exec)
+	cancel := make(chan struct{})
+	sfnCancels.Store(execARN, cancel)
+	go sfnRunExecution(execARN, sm.Definition, input, cancel)
 	sfnWriteJSON(w, http.StatusOK, map[string]any{
 		"executionArn": execARN,
 		"startDate":    now,
 	})
+}
+
+type sfnDefinition struct {
+	StartAt string              `json:"StartAt"`
+	States  map[string]sfnState `json:"States"`
+}
+
+type sfnState struct {
+	Type    string           `json:"Type"`
+	Next    string           `json:"Next"`
+	End     bool             `json:"End"`
+	Result  *json.RawMessage `json:"Result"`
+	Seconds *int             `json:"Seconds"`
+	Error   string           `json:"Error"`
+	Cause   string           `json:"Cause"`
+}
+
+var errSFNAborted = errors.New("execution aborted")
+
+func sfnValidateDefinition(definition string) error {
+	var def sfnDefinition
+	if err := json.Unmarshal([]byte(definition), &def); err != nil {
+		return fmt.Errorf("invalid ASL JSON: %w", err)
+	}
+	if def.StartAt == "" {
+		return fmt.Errorf("StartAt is required")
+	}
+	if len(def.States) == 0 {
+		return fmt.Errorf("states is required")
+	}
+	if _, ok := def.States[def.StartAt]; !ok {
+		return fmt.Errorf("StartAt state %q does not exist", def.StartAt)
+	}
+	return nil
+}
+
+func sfnRunExecution(execARN, definition, input string, cancel <-chan struct{}) {
+	defer sfnCancels.Delete(execARN)
+
+	output, status, err := sfnExecute(definition, input, cancel)
+	if errors.Is(err, errSFNAborted) {
+		return
+	}
+	if err != nil {
+		status = "FAILED"
+		output = ""
+	}
+	sfnCompleteExecution(execARN, status, output)
+}
+
+func sfnExecute(definition, input string, cancel <-chan struct{}) (string, string, error) {
+	var def sfnDefinition
+	if err := json.Unmarshal([]byte(definition), &def); err != nil {
+		return "", "FAILED", err
+	}
+	current := def.StartAt
+	data := input
+	for steps := 0; steps < 1000; steps++ {
+		select {
+		case <-cancel:
+			return "", "ABORTED", errSFNAborted
+		default:
+		}
+		state, ok := def.States[current]
+		if !ok {
+			return "", "FAILED", fmt.Errorf("state %q does not exist", current)
+		}
+		switch state.Type {
+		case "Pass":
+			if state.Result != nil {
+				data = string(*state.Result)
+			}
+			if state.End {
+				return data, "SUCCEEDED", nil
+			}
+			if state.Next == "" {
+				return "", "FAILED", fmt.Errorf("pass state %q must declare End or Next", current)
+			}
+			current = state.Next
+		case "Succeed":
+			return data, "SUCCEEDED", nil
+		case "Fail":
+			msg := state.Cause
+			if msg == "" {
+				msg = state.Error
+			}
+			if msg == "" {
+				msg = "Fail state reached"
+			}
+			return "", "FAILED", fmt.Errorf("%s", msg)
+		case "Wait":
+			if state.Seconds == nil || *state.Seconds < 0 {
+				return "", "FAILED", fmt.Errorf("wait state %q requires non-negative Seconds", current)
+			}
+			timer := time.NewTimer(time.Duration(*state.Seconds) * time.Second)
+			select {
+			case <-cancel:
+				timer.Stop()
+				return "", "ABORTED", errSFNAborted
+			case <-timer.C:
+			}
+			if state.End {
+				return data, "SUCCEEDED", nil
+			}
+			if state.Next == "" {
+				return "", "FAILED", fmt.Errorf("wait state %q must declare End or Next", current)
+			}
+			current = state.Next
+		default:
+			return "", "FAILED", fmt.Errorf("unsupported state type %q", state.Type)
+		}
+	}
+	return "", "FAILED", fmt.Errorf("state transition limit exceeded")
+}
+
+func sfnCompleteExecution(execARN, status, output string) {
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	exec, ok := sfnExecutions.Get(execARN)
+	if !ok || exec.Status != "RUNNING" {
+		return
+	}
+	now := sfnEpochNow()
+	exec.Status = status
+	exec.StopDate = &now
+	exec.Output = output
+	sfnExecutions.Put(execARN, exec)
 }
 
 func handleSFNDescribeExecution(w http.ResponseWriter, r *http.Request) {
@@ -465,10 +611,17 @@ func handleSFNStopExecution(w http.ResponseWriter, r *http.Request) {
 		sfnWriteError(w, "ExecutionDoesNotExist", "Execution does not exist: "+req.ExecutionArn)
 		return
 	}
+	if exec.Status != "RUNNING" {
+		sfnWriteError(w, "ExecutionNotRunning", "Execution is not running: "+req.ExecutionArn)
+		return
+	}
 	now := sfnEpochNow()
 	exec.Status = "ABORTED"
 	exec.StopDate = &now
 	sfnExecutions.Put(req.ExecutionArn, exec)
+	if cancelAny, ok := sfnCancels.LoadAndDelete(req.ExecutionArn); ok {
+		close(cancelAny.(chan struct{}))
+	}
 	sfnWriteJSON(w, http.StatusOK, map[string]any{"stopDate": now})
 }
 

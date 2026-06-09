@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sfn"
@@ -128,10 +129,14 @@ func TestSFN_ExecutionLifecycle_SDK(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(start.ExecutionArn))
 
-	describe, err := c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
-		ExecutionArn: start.ExecutionArn,
-	})
-	require.NoError(t, err)
+	var describe *sfn.DescribeExecutionOutput
+	require.Eventually(t, func() bool {
+		describe, err = c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: start.ExecutionArn,
+		})
+		require.NoError(t, err)
+		return describe.Status == sfntypes.ExecutionStatusSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, aws.ToString(start.ExecutionArn), aws.ToString(describe.ExecutionArn))
 	assert.Equal(t, sfntypes.ExecutionStatusSucceeded, describe.Status)
 	assert.Equal(t, aws.ToString(create.StateMachineArn), aws.ToString(describe.StateMachineArn))
@@ -149,7 +154,7 @@ func TestSFN_StopExecution_SDK(t *testing.T) {
 
 	create, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
 		Name:       aws.String("sfn-sdk-stop-sm"),
-		Definition: aws.String(`{"StartAt":"Pass","States":{"Pass":{"Type":"Pass","End":true}}}`),
+		Definition: aws.String(`{"StartAt":"Wait","States":{"Wait":{"Type":"Wait","Seconds":5,"End":true}}}`),
 		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
 	})
 	require.NoError(t, err)
@@ -175,4 +180,34 @@ func TestSFN_StopExecution_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, sfntypes.ExecutionStatusAborted, describe.Status)
+}
+
+func TestSFN_FailState_SDK(t *testing.T) {
+	c := sfnClient()
+
+	create, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-sdk-fail-sm"),
+		Definition: aws.String(`{"StartAt":"Fail","States":{"Fail":{"Type":"Fail","Error":"Manual","Cause":"expected failure"}}}`),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: create.StateMachineArn})
+	})
+
+	start, err := c.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: create.StateMachineArn,
+		Input:           aws.String(`{}`),
+	})
+	require.NoError(t, err)
+
+	var describe *sfn.DescribeExecutionOutput
+	require.Eventually(t, func() bool {
+		describe, err = c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{
+			ExecutionArn: start.ExecutionArn,
+		})
+		require.NoError(t, err)
+		return describe.Status == sfntypes.ExecutionStatusFailed
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.Equal(t, sfntypes.ExecutionStatusFailed, describe.Status)
 }

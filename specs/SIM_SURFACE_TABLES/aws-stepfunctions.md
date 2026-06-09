@@ -28,7 +28,7 @@ Protocol: AWS JSON 1.0 (`X-Amz-Target: AWSStepFunctions.<Op>`).
 
 | Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
 |---|---|---|---|---|---|
-| StartExecution | `AWSStepFunctions.StartExecution` | ✓ `TestSFN_ExecutionLifecycle_SDK` | ✓ `TestSFN_ExecutionLifecycle_CLI` | — | Completes immediately with `SUCCEEDED`. |
+| StartExecution | `AWSStepFunctions.StartExecution` | ✓ `TestSFN_ExecutionLifecycle_SDK`; ✓ `TestSFN_FailState_SDK` | ✓ `TestSFN_ExecutionLifecycle_CLI` | — | Executes supported ASL states (`Pass`, `Succeed`, `Fail`, `Wait`) and records terminal status. |
 | DescribeExecution | `AWSStepFunctions.DescribeExecution` | ✓ | ✓ | — | |
 | ListExecutions | `AWSStepFunctions.ListExecutions` | ✓ | ✓ | — | Filterable by `statusFilter`. |
-| StopExecution | `AWSStepFunctions.StopExecution` | ✓ `TestSFN_StopExecution_SDK` | ✗ | — | Sets status to `ABORTED`. |
+| StopExecution | `AWSStepFunctions.StopExecution` | ✓ `TestSFN_StopExecution_SDK` | ✗ | — | Aborts running executions. |

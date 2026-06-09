@@ -4,16 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	sim "github.com/sockerless/simulator"
+	"gopkg.in/yaml.v3"
 )
 
 // AWS CodeBuild — AWS JSON 1.1 protocol (X-Amz-Target: CodeBuild_20161006.<Op>).
-// Builds complete immediately with SUCCEEDED status.
+// Builds execute project buildspec commands and record terminal state from exit status.
 
 type CBProject struct {
 	Name         string         `json:"name"`
@@ -271,6 +274,7 @@ func handleCBDeleteProject(w http.ResponseWriter, r *http.Request) {
 func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectName                  string           `json:"projectName"`
+		BuildspecOverride            string           `json:"buildspecOverride"`
 		EnvironmentVariablesOverride []map[string]any `json:"environmentVariablesOverride"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -283,6 +287,11 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+req.ProjectName)
 		return
 	}
+	commands, err := cbBuildCommands(p, req.BuildspecOverride)
+	if err != nil {
+		cbWriteError(w, "InvalidInputException", err.Error())
+		return
+	}
 
 	cbMu.Lock()
 	defer cbMu.Unlock()
@@ -293,21 +302,105 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		ID:          buildID,
 		Arn:         cbARN("build/" + buildID),
 		ProjectName: req.ProjectName,
-		BuildStatus: "SUCCEEDED",
+		BuildStatus: "IN_PROGRESS",
 		StartTime:   now,
 		EndTime:     now,
 		Environment: p.Environment,
 		Phases: []CBPhase{
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
-			{PhaseType: "INSTALL", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
-			{PhaseType: "BUILD", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
-			{PhaseType: "COMPLETED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
+			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
 		},
 		Logs:                         map[string]any{"enabled": false},
 		EnvironmentVariablesOverride: req.EnvironmentVariablesOverride,
 	}
 	cbBuilds.Put(buildID, build)
+	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
+}
+
+type cbBuildspec struct {
+	Phases map[string]struct {
+		Commands []string `yaml:"commands"`
+	} `yaml:"phases"`
+}
+
+func cbBuildCommands(p CBProject, override string) ([]string, error) {
+	buildspec := override
+	if buildspec == "" {
+		buildspec = cbString(p.Source["buildspec"])
+	}
+	if buildspec == "" {
+		return nil, fmt.Errorf("source.buildspec is required for NO_SOURCE builds")
+	}
+	var spec cbBuildspec
+	if err := yaml.Unmarshal([]byte(buildspec), &spec); err != nil {
+		return nil, fmt.Errorf("invalid buildspec: %w", err)
+	}
+	var commands []string
+	for _, phase := range []string{"install", "pre_build", "build", "post_build"} {
+		commands = append(commands, spec.Phases[phase].Commands...)
+	}
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("buildspec must contain at least one command")
+	}
+	return commands, nil
+}
+
+func cbRunBuild(buildID string, commands []string, env map[string]string) {
+	workDir, err := os.MkdirTemp("", "sockerless-codebuild-*")
+	if err != nil {
+		cbCompleteBuild(buildID, -1, err.Error())
+		return
+	}
+	defer os.RemoveAll(workDir)
+
+	exitCode := 0
+	var reason string
+	for _, command := range commands {
+		handle := sim.StartProcess(sim.ProcessConfig{
+			Command: []string{"/bin/sh", "-c", command},
+			Dir:     filepath.Clean(workDir),
+			Env:     env,
+		}, sim.NoopSink{})
+		result := handle.Wait()
+		if result.Error != nil {
+			exitCode = -1
+			reason = result.Error.Error()
+			break
+		}
+		if result.ExitCode != 0 {
+			exitCode = result.ExitCode
+			reason = fmt.Sprintf("Build command exited with status %d", result.ExitCode)
+			break
+		}
+	}
+	cbCompleteBuild(buildID, exitCode, reason)
+}
+
+func cbCompleteBuild(buildID string, exitCode int, reason string) {
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	build, ok := cbBuilds.Get(buildID)
+	if !ok {
+		return
+	}
+	now := cbEpochNow()
+	status := "SUCCEEDED"
+	if exitCode != 0 {
+		status = "FAILED"
+	}
+	build.BuildStatus = status
+	build.EndTime = now
+	build.Phases = []CBPhase{
+		{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: build.StartTime, EndTime: build.StartTime, DurationInSeconds: 0},
+		{PhaseType: "BUILD", PhaseStatus: status, StartTime: build.StartTime, EndTime: now, DurationInSeconds: now - build.StartTime},
+		{PhaseType: "COMPLETED", PhaseStatus: status, StartTime: now, EndTime: now, DurationInSeconds: 0},
+	}
+	if reason != "" {
+		build.Logs["reason"] = reason
+	}
+	cbBuilds.Put(buildID, build)
 }
 
 func handleCBBatchGetBuilds(w http.ResponseWriter, r *http.Request) {
@@ -471,6 +564,63 @@ func cbNameFromARN(arn string) string {
 		return parts[len(parts)-1]
 	}
 	return arn
+}
+
+func cbString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func cbEnvironment(projectEnv map[string]any, overrides []map[string]any) map[string]string {
+	env := map[string]string{
+		"PATH": os.Getenv("PATH"),
+		"HOME": os.Getenv("HOME"),
+	}
+	for k, v := range cbEnvironmentValues(projectEnv["environmentVariables"]) {
+		env[k] = v
+	}
+	for _, item := range overrides {
+		name := cbString(item["name"])
+		if name == "" {
+			name = cbString(item["Name"])
+		}
+		if name == "" {
+			continue
+		}
+		value := cbString(item["value"])
+		if value == "" {
+			value = cbString(item["Value"])
+		}
+		env[name] = value
+	}
+	return env
+}
+
+func cbEnvironmentValues(v any) map[string]string {
+	env := map[string]string{}
+	values, ok := v.([]any)
+	if !ok {
+		return env
+	}
+	for _, value := range values {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := cbString(item["name"])
+		if name == "" {
+			name = cbString(item["Name"])
+		}
+		if name == "" {
+			continue
+		}
+		value := cbString(item["value"])
+		if value == "" {
+			value = cbString(item["Value"])
+		}
+		env[name] = value
+	}
+	return env
 }
 
 func cbTagsToMap(tags []CBTag) map[string]string {

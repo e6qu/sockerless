@@ -22,14 +22,15 @@ import (
 )
 
 var (
-	baseURL     string
-	simCmd      *exec.Cmd
-	gatewayCmd  *exec.Cmd
-	binaryPath  string
-	simPort     int
-	gatewayPort int
-	caCertFile  string
-	tfEndpoint  string
+	baseURL      string
+	simCmd       *exec.Cmd
+	gatewayCmd   *exec.Cmd
+	binaryPath   string
+	simPort      int
+	gatewayPort  int
+	grpcEndpoint string
+	caCertFile   string
+	tfEndpoint   string
 )
 
 func TestMain(m *testing.M) {
@@ -69,6 +70,7 @@ func TestMain(m *testing.M) {
 	}
 	simPort = ln.Addr().(*net.TCPAddr).Port
 	grpcPort := ln2.Addr().(*net.TCPAddr).Port
+	grpcEndpoint = fmt.Sprintf("127.0.0.1:%d", grpcPort)
 	ln.Close()
 	ln2.Close()
 
@@ -179,6 +181,7 @@ func terraformCmd(args ...string) *exec.Cmd {
 	// orphaned, spinning plugins that starve later runs into cascading timeouts.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("BIGTABLE_EMULATOR_HOST=%s", grpcEndpoint),
 		fmt.Sprintf("TF_VAR_endpoint=%s", tfEndpoint),
 	)
 	if caCertFile != "" {

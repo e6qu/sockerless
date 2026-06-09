@@ -16,17 +16,17 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 6. User merges PRs. Agents create branches, commits, and PRs only.
 7. Continuity docs are updated in every PR and written so they remain correct after the PR merges.
 
-## Current Phase
+## Current Work
 
-**Post-ECS networking cleanup / simulator fidelity maintenance.** PR #529 fixed
-the Entra duplicate-UPN issue plus ECS Fargate `SYS_CHROOT` and managed-EBS
-awsvpc reachability blockers. The current PR closes consumer #530 by applying
-ECS `RunTask` container overrides to the real task runtime, and closes the AWS
-CloudTrail REST/RPC recording sweep for the remaining path-based management
-service slices.
+The current branch was simulator fidelity maintenance after the Azure/GCP/AWS
+coverage branch merged. It added direct GCP Bigtable Terraform provider coverage
+through the provider's official gRPC emulator route, removed synthetic
+terminal-success execution from AWS Batch, CodeBuild, Glue, and Step Functions,
+and refreshed the continuity and coverage docs.
 
-Likely next work: a Phase G new-service-slice PR or the next actionable consumer
-issue (#394 remains upstream-blocked).
+Likely next work: re-check open GitHub issues, then either take the next
+actionable consumer issue or run another focused simulator-surface audit. Issue
+#394 remained upstream-blocked.
 
 ## Previous Completed Work
 
@@ -97,44 +97,50 @@ Docker-only, can't run on Mac).
 - **Phase E** (PR #405): Azure KV data-plane CLI tests via `az rest` + Host header routing.
 - **Phase F** (PR #405): 12 bleephub surface table files + coverage matrix rows.
 
-### Phase G — New cloud service slices
+### Completed Cloud Service Slice Expansion
 
-The current branch intentionally combines the Azure and GCP service slices plus the AWS
-coverage-audit cleanup into one PR. Each new slice ships with SDK + CLI + Terraform
-coverage where the provider exposes the surface. Surface table file(s) and coverage
-matrix row(s) ship in the same PR.
+The merged service-slice branch combined Azure and GCP service slices plus AWS
+coverage-audit cleanup in one PR. Each new slice shipped with SDK + CLI +
+Terraform coverage where the provider exposed the surface. Surface tables and
+coverage matrix rows shipped in the same PR.
 
-#### Phase G-AWS
+#### AWS
 
 - **Step Functions**: state machine CRUD (`CreateStateMachine`, `DescribeStateMachine`,
   `ListStateMachines`, `DeleteStateMachine`) + execution lifecycle (`StartExecution`,
-  `DescribeExecution`, `ListExecutions`, `StopExecution`).
+  `DescribeExecution`, `ListExecutions`, `StopExecution`). The simulator now
+  executes supported ASL states instead of reporting unconditional success.
 - **Batch**: job definitions (`RegisterJobDefinition`, `DescribeJobDefinitions`,
   `DeregisterJobDefinition`), job queues (`CreateJobQueue`, `DescribeJobQueues`,
   `DeleteJobQueue`), compute environments (`CreateComputeEnvironment`,
   `DescribeComputeEnvironments`, `DeleteComputeEnvironment`), job submission
-  (`SubmitJob`, `DescribeJobs`, `CancelJob`).
+  (`SubmitJob`, `DescribeJobs`, `CancelJob`). Submitted jobs now run real
+  workload containers and report status from exit codes.
 - **CodeBuild**: build project CRUD (`CreateProject`, `BatchGetProjects`, `ListProjects`,
-  `DeleteProject`) + start build (`StartBuild`, `BatchGetBuilds`).
+  `DeleteProject`) + start build (`StartBuild`, `BatchGetBuilds`). Builds now
+  run buildspec commands through a real process path.
 - **Glue**: database CRUD (`CreateDatabase`, `GetDatabase`, `GetDatabases`,
   `DeleteDatabase`), table CRUD (`CreateTable`, `GetTable`, `GetTables`, `DeleteTable`),
   job CRUD (`CreateJob`, `GetJob`, `GetJobs`, `DeleteJob`, `StartJobRun`,
-  `GetJobRun`).
+  `GetJobRun`). Python shell job runs now execute S3-backed scripts.
 
-#### Phase G-GCP
+#### GCP
 
-- **Cloud Spanner**: implemented on the current branch. Instance CRUD (`projects.instances` Create/Get/List/Delete) +
+- **Cloud Spanner**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
   database CRUD (`projects.instances.databases` Create/Get/List/Delete) + session
   management (Create/Delete/List).
-- **Cloud Dataflow**: implemented on the current branch. Job submission (`projects.locations.jobs.create`) + status
+- **Cloud Dataflow**: job submission (`projects.locations.jobs.create`) + status
   (`projects.locations.jobs.get`, `projects.locations.jobs.list`).
-- **Bigtable**: implemented on the current branch. Instance CRUD (`projects.instances` Create/Get/List/Delete) + cluster
-  CRUD + table CRUD (`projects.instances.tables` Create/Get/List/Delete).
+- **Bigtable**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
+  cluster CRUD + table CRUD (`projects.instances.tables` Create/Get/List/Delete).
+  Terraform coverage was later added with `google_bigtable_instance` and
+  `google_bigtable_table`, using the provider's official Bigtable gRPC emulator
+  path for Admin calls.
 
-#### Phase G-Azure
+#### Azure
 
-- **Logic Apps**: implemented on the current branch. Workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + enable/disable/validate + trigger run history.
-- **Azure Container Instances (ACI)**: implemented on the current branch. Container group CRUD
+- **Logic Apps**: workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + enable/disable/validate + trigger run history.
+- **Azure Container Instances (ACI)**: container group CRUD
   (`PUT/GET/DELETE/LIST containerGroups`) + container exec + logs.
 
 ### Phase H — azuread Terraform provider (blocked upstream, BUG-1345)

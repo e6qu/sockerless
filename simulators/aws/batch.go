@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 )
 
 // AWS Batch — REST/JSON protocol with operation-specific POST paths (/v1/<opname>).
-// All operations are POST. Jobs complete immediately with SUCCEEDED status.
+// All operations are POST. Container jobs execute through the shared workload runner.
 
 type BatchComputeEnvironment struct {
 	ComputeEnvironmentName string            `json:"computeEnvironmentName"`
@@ -71,6 +72,7 @@ var (
 	batchJobDefs      sim.Store[BatchJobDefinition]
 	batchJobs         sim.Store[BatchJob]
 	batchJobRevisions sim.Store[int]
+	batchJobHandles   sync.Map
 	batchMu           sync.Mutex
 )
 
@@ -506,28 +508,99 @@ func handleBatchSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	queueName := batchNameFromARN(req.JobQueue)
+	if _, ok := batchJobQueues.Get(queueName); !ok {
+		batchWriteError(w, http.StatusBadRequest, "Job queue not found: "+req.JobQueue)
+		return
+	}
+	jd, ok := batchLookupJobDefinition(req.JobDefinition)
+	if !ok {
+		batchWriteError(w, http.StatusBadRequest, "Job definition not found: "+req.JobDefinition)
+		return
+	}
+	if jd.Status != "ACTIVE" {
+		batchWriteError(w, http.StatusBadRequest, "Job definition is not active: "+req.JobDefinition)
+		return
+	}
+	cfg, containerMeta, err := batchContainerConfig(jd, req.ContainerOverrides)
+	if err != nil {
+		batchWriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	batchMu.Lock()
 	defer batchMu.Unlock()
 
 	jobID := uuid.New().String()
 	now := batchEpochMs()
+	cfg.Name = "sockerless-batch-" + jobID
+	cfg.Labels = map[string]string{"aws-batch-job-id": jobID}
 	job := BatchJob{
 		JobID:         jobID,
 		JobName:       req.JobName,
 		JobQueue:      req.JobQueue,
-		Status:        "SUCCEEDED",
-		JobDefinition: req.JobDefinition,
+		Status:        "RUNNING",
+		JobDefinition: jd.JobDefinitionArn,
 		CreatedAt:     now,
 		StartedAt:     now,
-		StoppedAt:     now,
+		Container:     containerMeta,
 		Tags:          req.Tags,
 	}
 	batchJobs.Put(jobID, job)
+
+	handle, err := sim.StartContainerSync(cfg, sim.NoopSink{})
+	if err != nil {
+		job.Status = "FAILED"
+		job.StatusReason = err.Error()
+		job.StoppedAt = batchEpochMs()
+		job.Container["reason"] = err.Error()
+		batchJobs.Put(jobID, job)
+	} else {
+		job.Container["containerInstanceArn"] = batchARN("container/" + handle.ContainerID)
+		batchJobs.Put(jobID, job)
+		batchJobHandles.Store(jobID, handle)
+		go batchWaitForJob(jobID, handle)
+	}
 	batchWriteJSON(w, http.StatusOK, map[string]any{
 		"jobId":   jobID,
 		"jobName": req.JobName,
 		"jobArn":  batchARN("job/" + jobID),
 	})
+}
+
+func batchWaitForJob(jobID string, handle *sim.ContainerHandle) {
+	result := handle.Wait()
+	batchJobHandles.Delete(jobID)
+
+	batchMu.Lock()
+	defer batchMu.Unlock()
+
+	job, ok := batchJobs.Get(jobID)
+	if !ok {
+		return
+	}
+	if job.Status == "FAILED" && job.StoppedAt > 0 {
+		return
+	}
+	if result.ExitCode == 0 && result.Error == nil {
+		job.Status = "SUCCEEDED"
+	} else {
+		job.Status = "FAILED"
+		if result.Error != nil {
+			job.StatusReason = result.Error.Error()
+		} else {
+			job.StatusReason = fmt.Sprintf("Container exited with status %d", result.ExitCode)
+		}
+	}
+	job.StoppedAt = result.StoppedAt.UnixMilli()
+	if job.Container == nil {
+		job.Container = map[string]any{}
+	}
+	job.Container["exitCode"] = result.ExitCode
+	if result.Error != nil {
+		job.Container["reason"] = result.Error.Error()
+	}
+	batchJobs.Put(jobID, job)
 }
 
 func handleBatchDescribeJobs(w http.ResponseWriter, r *http.Request) {
@@ -598,8 +671,13 @@ func handleBatchCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if job.Status != "SUCCEEDED" && job.Status != "FAILED" {
+		if handleAny, ok := batchJobHandles.Load(req.JobID); ok {
+			handleAny.(*sim.ContainerHandle).Cancel()
+			batchJobHandles.Delete(req.JobID)
+		}
 		job.Status = "FAILED"
 		job.StatusReason = req.Reason
+		job.StoppedAt = batchEpochMs()
 		batchJobs.Put(req.JobID, job)
 	}
 	batchWriteJSON(w, http.StatusOK, map[string]any{})
@@ -715,4 +793,121 @@ func batchJobDefKey(nameOrARN string) string {
 	// Accept "name:rev" or ARN ending with "name:rev"
 	parts := strings.Split(nameOrARN, "/")
 	return parts[len(parts)-1]
+}
+
+func batchLookupJobDefinition(nameOrARN string) (BatchJobDefinition, bool) {
+	key := batchJobDefKey(nameOrARN)
+	if strings.Contains(key, ":") {
+		return batchJobDefs.Get(key)
+	}
+	rev, ok := batchJobRevisions.Get(key)
+	if !ok {
+		return BatchJobDefinition{}, false
+	}
+	for rev > 0 {
+		if jd, ok := batchJobDefs.Get(fmt.Sprintf("%s:%d", key, rev)); ok && jd.Status == "ACTIVE" {
+			return jd, true
+		}
+		rev--
+	}
+	return BatchJobDefinition{}, false
+}
+
+func batchContainerConfig(jd BatchJobDefinition, overrides map[string]any) (sim.ContainerConfig, map[string]any, error) {
+	image := batchString(jd.ContainerProperties["image"])
+	if image == "" {
+		return sim.ContainerConfig{}, nil, fmt.Errorf("containerProperties.image is required")
+	}
+	command := batchStringSlice(jd.ContainerProperties["command"])
+	env := batchEnvironment(jd.ContainerProperties["environment"])
+	if overrides != nil {
+		if overrideCommand := batchStringSlice(overrides["command"]); len(overrideCommand) > 0 {
+			command = overrideCommand
+		}
+		for k, v := range batchEnvironment(overrides["environment"]) {
+			env[k] = v
+		}
+	}
+	timeout := batchTimeout(jd.Timeout)
+	meta := map[string]any{
+		"image": image,
+	}
+	if len(command) > 0 {
+		meta["command"] = command
+	}
+	if len(env) > 0 {
+		meta["environment"] = batchEnvironmentList(env)
+	}
+	return sim.ContainerConfig{
+		Image:        sim.ResolveLocalImage(image),
+		Architecture: "linux/" + runtime.GOARCH,
+		Args:         command,
+		Env:          env,
+		Timeout:      timeout,
+		Sandbox:      sim.SandboxFargate,
+	}, meta, nil
+}
+
+func batchString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func batchStringSlice(v any) []string {
+	switch values := v.(type) {
+	case []string:
+		return values
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if s, ok := value.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func batchEnvironment(v any) map[string]string {
+	env := map[string]string{}
+	values, ok := v.([]any)
+	if !ok {
+		return env
+	}
+	for _, value := range values {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := batchString(item["name"])
+		if name == "" {
+			name = batchString(item["Name"])
+		}
+		if name == "" {
+			continue
+		}
+		env[name] = batchString(item["value"])
+		if env[name] == "" {
+			env[name] = batchString(item["Value"])
+		}
+	}
+	return env
+}
+
+func batchEnvironmentList(env map[string]string) []map[string]string {
+	out := make([]map[string]string, 0, len(env))
+	for k, v := range env {
+		out = append(out, map[string]string{"name": k, "value": v})
+	}
+	return out
+}
+
+func batchTimeout(timeout map[string]any) time.Duration {
+	seconds, ok := timeout["attemptDurationSeconds"].(float64)
+	if !ok || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
