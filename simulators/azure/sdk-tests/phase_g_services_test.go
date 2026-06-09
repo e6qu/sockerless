@@ -133,6 +133,16 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, created.Properties)
 		assert.Equal(t, "Succeeded", ptrVal(created.Properties.ProvisioningState))
+		require.NotEmpty(t, created.Properties.Containers)
+		require.NotNil(t, created.Properties.Containers[0].Properties)
+		require.NotNil(t, created.Properties.Containers[0].Properties.Resources)
+		require.NotNil(t, created.Properties.Containers[0].Properties.Resources.Requests)
+		assert.Equal(t, cpu, ptrVal(created.Properties.Containers[0].Properties.Resources.Requests.CPU))
+		assert.Equal(t, mem, ptrVal(created.Properties.Containers[0].Properties.Resources.Requests.MemoryInGB))
+		require.NotNil(t, created.Properties.Containers[0].Properties.Ports)
+		assert.Empty(t, created.Properties.Containers[0].Properties.Ports)
+		require.NotNil(t, created.Properties.Containers[0].Properties.EnvironmentVariables)
+		assert.Empty(t, created.Properties.Containers[0].Properties.EnvironmentVariables)
 	}
 
 	createACIGroup("sdk-aci-logs", []*string{to.Ptr("/bin/sh"), to.Ptr("-c"), to.Ptr("echo aci-sdk-ready")})

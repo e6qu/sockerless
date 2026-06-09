@@ -390,8 +390,19 @@ func aciApplyGroupDefaults(r *http.Request, group *ACIContainerGroup) {
 		if ip["fqdn"] == nil {
 			ip["fqdn"] = azureEndpointHostname(r, group.Name, "aci")
 		}
+		if _, ok := ip["ports"]; !ok {
+			ip["ports"] = []any{}
+		}
 		props["ipAddress"] = ip
 	}
+	containers := aciContainers(group)
+	for i, c := range containers {
+		containers[i] = aciNormalizeContainer(c)
+	}
+	if containers == nil {
+		containers = []map[string]any{}
+	}
+	props["containers"] = containers
 }
 
 func aciSetGroupProvisioning(group *ACIContainerGroup, state string) {
@@ -408,8 +419,10 @@ func aciSetGroupState(group *ACIContainerGroup, state string) {
 	group.Properties["instanceView"] = map[string]any{"state": state}
 	containers := aciContainers(group)
 	for i, c := range containers {
+		c = aciNormalizeContainer(c)
+		props := c["properties"].(map[string]any)
 		name, _ := c["name"].(string)
-		c["instanceView"] = map[string]any{
+		props["instanceView"] = map[string]any{
 			"currentState": map[string]any{
 				"state":        state,
 				"startTime":    time.Now().UTC().Format(time.RFC3339Nano),
@@ -418,9 +431,10 @@ func aciSetGroupState(group *ACIContainerGroup, state string) {
 		}
 		if name != "" {
 			if rec, ok := aciRuntimeRecords.Get(aciRuntimeKey(group.ID, name)); ok && rec.ExitCode != 0 {
-				c["instanceView"].(map[string]any)["currentState"].(map[string]any)["exitCode"] = rec.ExitCode
+				props["instanceView"].(map[string]any)["currentState"].(map[string]any)["exitCode"] = rec.ExitCode
 			}
 		}
+		c["properties"] = props
 		containers[i] = c
 	}
 	group.Properties["containers"] = containers
@@ -543,6 +557,21 @@ func aciContainers(group *ACIContainerGroup) []map[string]any {
 		}
 	}
 	return out
+}
+
+func aciNormalizeContainer(c map[string]any) map[string]any {
+	props, _ := c["properties"].(map[string]any)
+	if props == nil {
+		props = map[string]any{}
+	}
+	if _, ok := props["ports"]; !ok {
+		props["ports"] = []any{}
+	}
+	if _, ok := props["environmentVariables"]; !ok {
+		props["environmentVariables"] = []any{}
+	}
+	c["properties"] = props
+	return c
 }
 
 func stringSlice(v any) []string {
