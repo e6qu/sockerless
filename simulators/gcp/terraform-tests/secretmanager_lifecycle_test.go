@@ -33,12 +33,20 @@ func TestTerraformSecretManagerUpdateDelete(t *testing.T) {
 
 func terraformCmdInDir(dir string, args ...string) *exec.Cmd {
 	cmd := exec.Command("terraform", args...)
-	cmd.Dir = filepath.Join(filepath.Dir(mustAbs("main.tf")), dir)
+	if filepath.IsAbs(dir) {
+		cmd.Dir = dir
+	} else {
+		cmd.Dir = filepath.Join(filepath.Dir(mustAbs("main.tf")), dir)
+	}
 	// Own process group so runTimed can reap the terraform process tree.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(os.Environ(),
-		"TF_VAR_endpoint="+baseURL,
+		"BIGTABLE_EMULATOR_HOST="+grpcEndpoint,
+		"TF_VAR_endpoint="+tfEndpoint,
 	)
+	if caCertFile != "" {
+		cmd.Env = append(cmd.Env, "SSL_CERT_FILE="+caCertFile)
+	}
 	return cmd
 }
 

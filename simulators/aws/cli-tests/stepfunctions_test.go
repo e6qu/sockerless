@@ -3,6 +3,7 @@ package aws_cli_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,13 +110,16 @@ func TestSFN_ExecutionLifecycle_CLI(t *testing.T) {
 	parseJSON(t, out, &started)
 	require.NotEmpty(t, started.ExecutionArn)
 
-	out = runCLI(t, awsCLI("stepfunctions", "describe-execution",
-		"--execution-arn", started.ExecutionArn))
 	var exec struct {
 		Status string `json:"status"`
 		Name   string `json:"name"`
 	}
-	parseJSON(t, out, &exec)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, awsCLI("stepfunctions", "describe-execution",
+			"--execution-arn", started.ExecutionArn))
+		parseJSON(t, out, &exec)
+		return exec.Status == "SUCCEEDED"
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, "SUCCEEDED", exec.Status)
 	assert.Equal(t, "cli-exec-1", exec.Name)
 

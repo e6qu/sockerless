@@ -2,6 +2,7 @@ package aws_cli_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -154,7 +155,7 @@ func TestBatch_SubmitJob_CLI(t *testing.T) {
 	out := runCLI(t, awsCLI("batch", "register-job-definition",
 		"--job-definition-name", "batch-cli-jd-job",
 		"--type", "container",
-		"--container-properties", `{"image":"public.ecr.aws/docker/library/alpine:3","vcpus":1,"memory":512}`,
+		"--container-properties", `{"image":"`+containerCommandImage+`","command":["log","batch-cli-ready"],"vcpus":1,"memory":512}`,
 	))
 	var reg struct {
 		JobDefinitionArn string `json:"jobDefinitionArn"`
@@ -178,16 +179,19 @@ func TestBatch_SubmitJob_CLI(t *testing.T) {
 	require.NotEmpty(t, submitted.JobID)
 	assert.Equal(t, "batch-cli-job", submitted.JobName)
 
-	out = runCLI(t, awsCLI("batch", "describe-jobs",
-		"--jobs", submitted.JobID))
 	var described struct {
 		Jobs []struct {
 			JobID  string `json:"jobId"`
 			Status string `json:"status"`
 		} `json:"jobs"`
 	}
-	parseJSON(t, out, &described)
-	require.Len(t, described.Jobs, 1)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, awsCLI("batch", "describe-jobs",
+			"--jobs", submitted.JobID))
+		parseJSON(t, out, &described)
+		require.Len(t, described.Jobs, 1)
+		return described.Jobs[0].Status == "SUCCEEDED"
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, submitted.JobID, described.Jobs[0].JobID)
 	assert.Equal(t, "SUCCEEDED", described.Jobs[0].Status)
 

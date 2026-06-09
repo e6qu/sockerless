@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/batch"
@@ -125,9 +126,10 @@ func TestBatch_JobDefinition_SDK(t *testing.T) {
 		JobDefinitionName: aws.String("batch-sdk-jd"),
 		Type:              batchtypes.JobDefinitionTypeContainer,
 		ContainerProperties: &batchtypes.ContainerProperties{
-			Image:  aws.String("public.ecr.aws/docker/library/alpine:3"),
-			Vcpus:  aws.Int32(1),
-			Memory: aws.Int32(512),
+			Image:   aws.String(containerCommandImage),
+			Command: []string{"log", "batch-sdk-ready"},
+			Vcpus:   aws.Int32(1),
+			Memory:  aws.Int32(512),
 		},
 		Tags: map[string]string{"env": "sdk"},
 	})
@@ -206,13 +208,18 @@ func TestBatch_JobSubmitDescribe_SDK(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(submit.JobId))
 
-	describe, err := c.DescribeJobs(ctx, &batch.DescribeJobsInput{
-		Jobs: []string{aws.ToString(submit.JobId)},
-	})
-	require.NoError(t, err)
-	require.Len(t, describe.Jobs, 1)
-	job := describe.Jobs[0]
+	var job batchtypes.JobDetail
+	require.Eventually(t, func() bool {
+		describe, err := c.DescribeJobs(ctx, &batch.DescribeJobsInput{
+			Jobs: []string{aws.ToString(submit.JobId)},
+		})
+		require.NoError(t, err)
+		require.Len(t, describe.Jobs, 1)
+		job = describe.Jobs[0]
+		return job.Status == batchtypes.JobStatusSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, aws.ToString(submit.JobId), aws.ToString(job.JobId))
 	assert.Equal(t, "batch-sdk-job", aws.ToString(job.JobName))
 	assert.Equal(t, batchtypes.JobStatusSucceeded, job.Status)
+	assert.EqualValues(t, 0, aws.ToInt32(job.Container.ExitCode))
 }

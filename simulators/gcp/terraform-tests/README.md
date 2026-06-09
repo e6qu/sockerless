@@ -19,6 +19,7 @@ Resources covered:
 - `google_firestore_document`
 - `google_redis_instance`
 - `google_sql_database_instance` + `google_sql_database` + `google_sql_user`
+- `google_bigtable_instance` + `google_bigtable_table`
 - `google_secret_manager_secret` + `google_secret_manager_secret_version`
 - `google_service_account` (via `iam_beta_custom_endpoint`)
 
@@ -40,7 +41,7 @@ make terraform-https-test
 
 The HTTPS target uses Caddy's `https://localhost:<ephemeral-port>` single-simulator route so the test does not depend on wildcard `.localhost` DNS support. It still uses Caddy TLS and passes the generated root CA to Terraform through `SSL_CERT_FILE`. On macOS the Make target runs the same test inside the shared Linux simulator test image so the real provider honors that CA file.
 
-The test harness (`helpers_test.go`) handles simulator binary build, port allocation, server startup, Terraform init/apply/destroy, and shutdown. No external services required.
+The test harness (`helpers_test.go`) handles simulator binary build, port allocation, server startup, Terraform init/apply/destroy, and shutdown. It exports `BIGTABLE_EMULATOR_HOST` because the Google provider uses Bigtable Admin's official gRPC emulator route for Terraform resources. No external services required.
 
 ## Prerequisites
 

@@ -628,6 +628,37 @@ resource "google_spanner_database" "tf_spanner_db" {
   ]
 }
 
+# ---------- Cloud Bigtable ----------
+
+resource "google_bigtable_instance" "tf_bigtable" {
+  name                = "tf-bt1"
+  display_name        = "tf-bt1"
+  deletion_protection = false
+  deletion_policy     = "DELETE"
+
+  labels = {
+    env = "terraform"
+  }
+
+  cluster {
+    cluster_id   = "tf-bt1-c1"
+    zone         = "us-central1-a"
+    num_nodes    = 1
+    storage_type = "SSD"
+  }
+}
+
+resource "google_bigtable_table" "tf_bigtable_table" {
+  name                = "app_table"
+  instance_name       = google_bigtable_instance.tf_bigtable.name
+  deletion_protection = "UNPROTECTED"
+  deletion_policy     = "DELETE"
+
+  column_family {
+    family = "cf1"
+  }
+}
+
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
@@ -825,4 +856,12 @@ output "spanner_instance_id" {
 
 output "spanner_database_id" {
   value = google_spanner_database.tf_spanner_db.id
+}
+
+output "bigtable_instance_id" {
+  value = google_bigtable_instance.tf_bigtable.id
+}
+
+output "bigtable_table_id" {
+  value = google_bigtable_table.tf_bigtable_table.id
 }

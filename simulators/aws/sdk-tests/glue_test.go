@@ -1,11 +1,14 @@
 package aws_sdk_test
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
 	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -129,6 +132,20 @@ func TestGlue_GetPartitionIndexes_SDK(t *testing.T) {
 
 func TestGlue_JobCRUD_SDK(t *testing.T) {
 	c := glueClient()
+	s3c := s3Client()
+	bucket := "glue-sdk-scripts"
+	_, err := s3c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = s3c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("script.py")})
+		_, _ = s3c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+	})
+	_, err = s3c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String("script.py"),
+		Body:   bytes.NewReader([]byte("import sys\nprint('glue-sdk-ready')\nsys.exit(0)\n")),
+	})
+	require.NoError(t, err)
 
 	workers := 2
 	create, err := c.CreateJob(ctx, &glue.CreateJobInput{
@@ -139,8 +156,8 @@ func TestGlue_JobCRUD_SDK(t *testing.T) {
 		WorkerType:      gluetypes.WorkerTypeG1x,
 		NumberOfWorkers: aws.Int32(int32(workers)),
 		Command: &gluetypes.JobCommand{
-			Name:           aws.String("glueetl"),
-			ScriptLocation: aws.String("s3://bucket/script.py"),
+			Name:           aws.String("pythonshell"),
+			ScriptLocation: aws.String("s3://" + bucket + "/script.py"),
 		},
 		DefaultArguments: map[string]string{
 			"--job-language": "python",
@@ -177,11 +194,15 @@ func TestGlue_JobCRUD_SDK(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(runResp.JobRunId))
 
-	run, err := c.GetJobRun(ctx, &glue.GetJobRunInput{
-		JobName: aws.String("glue-sdk-job"),
-		RunId:   runResp.JobRunId,
-	})
-	require.NoError(t, err)
+	var run *glue.GetJobRunOutput
+	require.Eventually(t, func() bool {
+		run, err = c.GetJobRun(ctx, &glue.GetJobRunInput{
+			JobName: aws.String("glue-sdk-job"),
+			RunId:   runResp.JobRunId,
+		})
+		require.NoError(t, err)
+		return run.JobRun.JobRunState == gluetypes.JobRunStateSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, aws.ToString(runResp.JobRunId), aws.ToString(run.JobRun.Id))
 	assert.Equal(t, gluetypes.JobRunStateSucceeded, run.JobRun.JobRunState)
 

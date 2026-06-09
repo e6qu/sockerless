@@ -138,8 +138,9 @@ func startGRPCServer(port string) {
 
 	gs := grpc.NewServer()
 	registerCloudLoggingGRPC(gs)
+	registerBigtableGRPC(gs)
 
-	fmt.Fprintf(os.Stderr, "  gRPC Cloud Logging on :%s\n", port)
+	fmt.Fprintf(os.Stderr, "  gRPC Cloud Logging and Bigtable Admin on :%s\n", port)
 	if err := gs.Serve(lis); err != nil {
 		log.Fatalf("gRPC: failed to serve: %v", err)
 	}

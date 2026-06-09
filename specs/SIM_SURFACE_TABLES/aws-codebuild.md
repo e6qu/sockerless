@@ -28,7 +28,7 @@ Protocol: AWS JSON 1.1 (`X-Amz-Target: CodeBuild_20161006.<Op>`).
 
 | Operation | X-Amz-Target | SDK test | CLI test | TF resource | notes |
 |---|---|---|---|---|---|
-| StartBuild | `CodeBuild_20161006.StartBuild` | ✓ `TestCodeBuild_BuildLifecycle_SDK` | ✓ `TestCodeBuild_Build_CLI` | — | Completes immediately with `SUCCEEDED`. |
+| StartBuild | `CodeBuild_20161006.StartBuild` | ✓ `TestCodeBuild_BuildLifecycle_SDK` | ✓ `TestCodeBuild_Build_CLI` | — | Runs project buildspec commands and records status from process exits. |
 | BatchGetBuilds | `CodeBuild_20161006.BatchGetBuilds` | ✓ | ✓ | — | Returns `builds` + `buildsNotFound`. |
 | ListBuildsForProject | `CodeBuild_20161006.ListBuildsForProject` | ✓ | ✓ | — | Paginated build ID list. |
 | ListBuilds | `CodeBuild_20161006.ListBuilds` | ✗ | ✗ | — | All builds across all projects. |

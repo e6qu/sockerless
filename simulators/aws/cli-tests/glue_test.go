@@ -1,7 +1,10 @@
 package aws_cli_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,10 +84,20 @@ func TestGlue_TableCRUD_CLI(t *testing.T) {
 }
 
 func TestGlue_JobCRUD_CLI(t *testing.T) {
+	bucket := "glue-cli-scripts"
+	scriptPath := filepath.Join(tmpDir, "glue-cli-script.py")
+	require.NoError(t, os.WriteFile(scriptPath, []byte("import sys\nprint('glue-cli-ready')\nsys.exit(0)\n"), 0644))
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucket))
+	runCLI(t, awsCLI("s3api", "put-object", "--bucket", bucket, "--key", "script.py", "--body", scriptPath))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("s3api", "delete-object", "--bucket", bucket, "--key", "script.py"))
+		runCLI(t, awsCLI("s3api", "delete-bucket", "--bucket", bucket))
+	})
+
 	runCLI(t, awsCLI("glue", "create-job",
 		"--name", "glue-cli-job",
 		"--role", "arn:aws:iam::123456789012:role/glue-role",
-		"--command", `{"Name":"glueetl","ScriptLocation":"s3://bucket/script.py"}`,
+		"--command", `{"Name":"pythonshell","ScriptLocation":"s3://`+bucket+`/script.py"}`,
 		"--glue-version", "4.0",
 		"--worker-type", "G.1X",
 		"--number-of-workers", "2",
@@ -124,16 +137,19 @@ func TestGlue_JobCRUD_CLI(t *testing.T) {
 	parseJSON(t, out, &run)
 	require.NotEmpty(t, run.JobRunID)
 
-	out = runCLI(t, awsCLI("glue", "get-job-run",
-		"--job-name", "glue-cli-job",
-		"--run-id", run.JobRunID))
 	var getRun struct {
 		JobRun struct {
 			ID          string `json:"Id"`
 			JobRunState string `json:"JobRunState"`
 		} `json:"JobRun"`
 	}
-	parseJSON(t, out, &getRun)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, awsCLI("glue", "get-job-run",
+			"--job-name", "glue-cli-job",
+			"--run-id", run.JobRunID))
+		parseJSON(t, out, &getRun)
+		return getRun.JobRun.JobRunState == "SUCCEEDED"
+	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, run.JobRunID, getRun.JobRun.ID)
 	assert.Equal(t, "SUCCEEDED", getRun.JobRun.JobRunState)
 }

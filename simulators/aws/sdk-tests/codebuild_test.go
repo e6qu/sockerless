@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codebuild"
@@ -94,7 +95,8 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	_, err := c.CreateProject(ctx, &codebuild.CreateProjectInput{
 		Name: aws.String("cb-sdk-build-project"),
 		Source: &cbtypes.ProjectSource{
-			Type: cbtypes.SourceTypeNoSource,
+			Type:      cbtypes.SourceTypeNoSource,
+			Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - printf codebuild-sdk-ready\n"),
 		},
 		Artifacts: &cbtypes.ProjectArtifacts{
 			Type: cbtypes.ArtifactsTypeNoArtifacts,
@@ -118,16 +120,19 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	require.NotNil(t, startResp.Build)
 	buildID := aws.ToString(startResp.Build.Id)
 	assert.NotEmpty(t, buildID)
-	assert.Equal(t, cbtypes.StatusTypeSucceeded, startResp.Build.BuildStatus)
 
-	builds, err := c.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{
-		Ids: []string{buildID},
-	})
-	require.NoError(t, err)
-	require.Len(t, builds.Builds, 1)
-	assert.Equal(t, buildID, aws.ToString(builds.Builds[0].Id))
-	assert.Equal(t, cbtypes.StatusTypeSucceeded, builds.Builds[0].BuildStatus)
-	assert.NotEmpty(t, builds.Builds[0].Phases)
+	var build cbtypes.Build
+	require.Eventually(t, func() bool {
+		builds, err := c.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{
+			Ids: []string{buildID},
+		})
+		require.NoError(t, err)
+		require.Len(t, builds.Builds, 1)
+		build = builds.Builds[0]
+		return build.BuildStatus == cbtypes.StatusTypeSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.Equal(t, buildID, aws.ToString(build.Id))
+	assert.NotEmpty(t, build.Phases)
 
 	buildList, err := c.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
 		ProjectName: aws.String("cb-sdk-build-project"),

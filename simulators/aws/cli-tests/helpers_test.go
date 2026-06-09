@@ -22,6 +22,7 @@ var (
 	binaryPath             string
 	evalImageName          string
 	lambdaHandlerImageName string
+	containerCommandImage  string
 	tmpDir                 string
 )
 
@@ -51,6 +52,10 @@ func TestMain(m *testing.M) {
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
 	buildGoScratchImage(lambdaHandlerImageName, lambdaHandlerDir, "lambda-runtime-handler", workloadPlatform)
+
+	containerCommandDir, _ := filepath.Abs("../../testdata/container-command")
+	containerCommandImage = "sockerless-container-command:test"
+	buildGoScratchImage(containerCommandImage, containerCommandDir, "container-command", workloadPlatform)
 
 	// Find free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

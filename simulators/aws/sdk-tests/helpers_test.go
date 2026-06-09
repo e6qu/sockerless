@@ -24,6 +24,7 @@ var (
 	binaryPath             string
 	evalImageName          string // Docker image containing eval-arithmetic binary
 	lambdaHandlerImageName string // Docker image for Lambda Runtime API test handler
+	containerCommandImage  string // Docker image containing container-command binary
 	ctx                    = context.Background()
 )
 
@@ -54,6 +55,10 @@ func TestMain(m *testing.M) {
 	lambdaHandlerDir, _ := filepath.Abs("../../testdata/lambda-runtime-handler")
 	lambdaHandlerImageName = "sockerless-lambda-runtime-handler:test"
 	buildGoScratchImage(lambdaHandlerImageName, lambdaHandlerDir, "lambda-runtime-handler", workloadPlatform)
+
+	containerCommandDir, _ := filepath.Abs("../../testdata/container-command")
+	containerCommandImage = "sockerless-container-command:test"
+	buildGoScratchImage(containerCommandImage, containerCommandDir, "container-command", workloadPlatform)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

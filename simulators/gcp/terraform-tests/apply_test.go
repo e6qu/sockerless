@@ -45,6 +45,8 @@ import (
 //   - iam.googleapis.com (service account — via iam_beta_custom_endpoint;
 //     terraform-provider-google routes the resource through iambeta.NewClient
 //     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
+//   - spanner.googleapis.com (instance + database)
+//   - bigtableadmin.googleapis.com (instance + table)
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
@@ -182,6 +184,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	saName := outputs.must(t, "service_account_name")
 	require.Equal(t, "projects/test-project/serviceAccounts/tf-test-runner-sa@test-project.iam.gserviceaccount.com", saName,
 		"service-account name must include the canonical projects/{project}/serviceAccounts/{email} resource path; got %s", saName)
+
+	bigtableInstanceID := outputs.must(t, "bigtable_instance_id")
+	require.Contains(t, bigtableInstanceID, "projects/test-project/instances/tf-bt1",
+		"Bigtable instance id must include the canonical project instance path; got %s", bigtableInstanceID)
+
+	bigtableTableID := outputs.must(t, "bigtable_table_id")
+	require.Contains(t, bigtableTableID, "projects/test-project/instances/tf-bt1/tables/app_table",
+		"Bigtable table id must include the canonical project instance/table path; got %s", bigtableTableID)
 
 	bqTableID := outputs.must(t, "bigquery_table_id")
 	require.Contains(t, bqTableID, "/datasets/tf_test_dataset/tables/events",
