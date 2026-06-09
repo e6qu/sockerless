@@ -2,6 +2,8 @@ package bleephub
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +70,10 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
 
-	stor, _ := openOrInitGitStorage(GitDataDir(), fullName)
+	stor, err := openOrInitGitStorage(GitDataDir(), fullName)
+	if err != nil {
+		return nil
+	}
 	st.GitStorages[fullName] = stor
 
 	if st.persist != nil {
@@ -115,6 +120,12 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.GitStorages, fullName)
 	if st.persist != nil {
 		st.persist.MustDelete("repos", strconv.Itoa(repo.ID))
+	}
+
+	gitDir := GitDataDir()
+	if gitDir != "" {
+		repoDir := filepath.Join(gitDir, filepath.FromSlash(fullName))
+		_ = os.RemoveAll(repoDir)
 	}
 	return true
 }

@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, 3, and 4 completed:
+Subtasks 1, 2, 3, 4, and 5 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -27,6 +27,20 @@ Subtasks 1, 2, 3, and 4 completed:
   deployment_statuses, environments, pr_review_comments, reactions,
   projects_v2, project_v2_items, and project_v2_fields. All new buckets
   load correctly from disk on restart.
+- Subtask 5: Git storage hardening and permission enforcement.
+  - `CreateRepo` returns nil when `openOrInitGitStorage` fails (no more silent
+    discard). `loadFromPersistence` returns an error if git storage can't be
+    reopened for a persisted repo.
+  - `DeleteRepo` removes filesystem git data when `BLEEPHUB_GIT_DIR` is set.
+  - Git HTTP handlers (`info/refs`, `git-upload-pack`, `git-receive-pack`) now
+    authenticate requests and enforce permissions: read access for fetch, push
+    access for push. Supports `token`, `Bearer`, and `Basic` auth headers.
+  - New `canPushRepo` function in rbac.go checks ownership or org team push.
+  - Extracted `authenticateRequest` from `ghHeadersMiddleware` for reuse by git
+    HTTP handlers.
+  - 7 new tests: storage init failure, delete cleanup, unauthenticated push
+    rejection, public/private repo fetch auth, authenticated push, authenticated
+    private repo fetch.
   - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
     interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
   - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
@@ -38,14 +52,14 @@ Subtasks 1, 2, 3, and 4 completed:
 Verified:
 
 ```bash
-cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestPersistence' ./... -v
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestGit' ./... -v
 cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...
-gofmt -l bleephub/persistence.go bleephub/persistence_test.go bleephub/server.go
+gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bleephub/rbac.go bleephub/gh_middleware.go
 ```
 
 ## Current Subtask
 
-Subtask 5: Git storage hardening and git HTTP permission enforcement.
+Subtask 6: S3/MinIO-compatible git content storage.
 
 ## Ordered Subtasks For This PR
 

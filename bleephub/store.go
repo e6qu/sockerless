@@ -437,9 +437,10 @@ func (st *Store) loadFromPersistence() error {
 		// Re-open (or create) the git storage for this repo so git operations
 		// work immediately after restart.
 		stor, err := openOrInitGitStorage(GitDataDir(), r.FullName)
-		if err == nil {
-			st.GitStorages[r.FullName] = stor
+		if err != nil {
+			return fmt.Errorf("reopen git storage %s: %w", r.FullName, err)
 		}
+		st.GitStorages[r.FullName] = stor
 		return nil
 	}); err != nil {
 		return err
