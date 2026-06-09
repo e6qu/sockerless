@@ -38,6 +38,9 @@ provider "google" {
   redis_custom_endpoint             = "${var.endpoint}/v1/"
   sql_custom_endpoint               = "${var.endpoint}/sql/v1beta4/"
   vpc_access_custom_endpoint        = "${var.endpoint}/v1/"
+  spanner_custom_endpoint           = "${var.endpoint}/spanner/v1/"
+  bigtable_custom_endpoint          = "${var.endpoint}/v2/"
+  dataflow_custom_endpoint          = "${var.endpoint}/v1b3/"
   # iam_beta_custom_endpoint routes the `google_service_account` resource's
   # iambeta.NewClient → iam.googleapis.com surface; without it the resource
   # hits real iam.googleapis.com regardless of `iam_custom_endpoint`.
@@ -602,6 +605,54 @@ resource "google_sql_user" "tf_sql_user" {
   password = "Str0ng-password-12345!"
 }
 
+# ---------- Spanner + Bigtable ----------
+
+resource "google_spanner_instance" "tf_spanner" {
+  name         = "tf-spanner"
+  config       = "regional-us-central1"
+  display_name = "tf-spanner"
+  num_nodes    = 1
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_spanner_database" "tf_spanner_db" {
+  instance            = google_spanner_instance.tf_spanner.name
+  name                = "appdb"
+  deletion_protection = false
+
+  ddl = [
+    "CREATE TABLE Users (UserId STRING(36) NOT NULL, DisplayName STRING(MAX)) PRIMARY KEY (UserId)"
+  ]
+}
+
+resource "google_bigtable_instance" "tf_bigtable" {
+  name                = "tf-bigtable"
+  deletion_protection = false
+
+  cluster {
+    cluster_id   = "tf-bigtable-c1"
+    zone         = "us-central1-a"
+    num_nodes    = 1
+    storage_type = "SSD"
+  }
+
+  labels = {
+    env = "terraform"
+  }
+}
+
+resource "google_bigtable_table" "tf_bigtable_table" {
+  name          = "events"
+  instance_name = google_bigtable_instance.tf_bigtable.name
+
+  column_family {
+    family = "cf"
+  }
+}
+
 # ---------- Secret Manager ----------
 
 resource "google_secret_manager_secret" "tf_secret" {
@@ -791,4 +842,20 @@ output "sql_database_id" {
 
 output "sql_user_name" {
   value = google_sql_user.tf_sql_user.name
+}
+
+output "spanner_instance_id" {
+  value = google_spanner_instance.tf_spanner.id
+}
+
+output "spanner_database_id" {
+  value = google_spanner_database.tf_spanner_db.id
+}
+
+output "bigtable_instance_name" {
+  value = google_bigtable_instance.tf_bigtable.name
+}
+
+output "bigtable_table_name" {
+  value = google_bigtable_table.tf_bigtable_table.name
 }

@@ -102,6 +102,8 @@ func main() {
 	registerServiceBusDataPlane(srv)
 	registerEventHubs(srv)
 	registerEventGrid(srv)
+	registerLogicApps(srv)
+	registerContainerInstances(srv)
 	registerAPIM(srv)
 	registerAuthorization(srv)
 	registerContainerAppEnvironment(srv)

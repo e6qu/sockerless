@@ -41,6 +41,15 @@ func registerOperations(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"operations": out})
 	})
 
+	srv.HandleFunc("GET /v2/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("operations/%s", sim.PathParam(r, "operation"))
+		if op, ok := crOperations.Get(name); ok {
+			sim.WriteJSON(w, http.StatusOK, op)
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
+	})
+
 	// Get operation - v1 prefix
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")

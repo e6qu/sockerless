@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `fix/ecs-overrides-cloudtrail` (PR pending — BUG-1580/#530 + BUG-1540 CloudTrail REST sweep).
-- Current fix: ECS `RunTask.overrides.containerOverrides` is now modelled from the official ECS SDK/API shape, echoed on task responses, and applied to the real task container runtime for named-container `environment` and `command` overrides. CloudTrail now records REST/RPC management events for Lambda, S3, API Gateway v1/v2, Batch, EFS, CloudFront, Amplify, Route53, and CloudWatch metrics, with explicit SDK operation names and failed-call error fields.
-- Verification so far: focused ECS override SDK+CLI regressions pass; focused CloudTrail REST SDK+CLI regressions pass; full `simulators/aws` root, SDK test module, CLI test module, and shared simulator tests pass; `check-simulator-tests`, `check-cli-shard-coverage`, `check-latest-deps`, and `git diff --check` pass.
-- After this PR: likely next choices are a Phase G new-service-slice PR or the next actionable consumer issue (#394 remains upstream-blocked).
+- Branch: `phase-g-azure-gcp-aws-coverage` (PR pending — BUG-1581/1582/1583).
+- Current fix: one combined PR adds Azure Logic Apps + ACI, GCP Spanner/Dataflow/Bigtable, and AWS registered-operation coverage-audit cleanup. Azure ACI runs real local containers in Docker-runtime mode and exposes SDK-shaped websocket exec; GCP Spanner uses a `/spanner/v1` service endpoint base to avoid Cloud SQL route collision while preserving the official Spanner `/v1` API path for clients.
+- Verification so far: focused Azure SDK + CLI tests pass; focused GCP SDK + CLI tests pass; focused AWS SDK coverage-audit tests pass; Azure and GCP Terraform validate; Azure validate still emits the tracked AzureStack provider warning BUG-1584.
+- After this PR: likely next choices are the next actionable consumer issue, another simulator-surface audit batch, or live-cloud validation planning (#394 remains upstream-blocked).
 
 ## Prior current state
 

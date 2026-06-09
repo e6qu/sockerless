@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
+	ectypes "github.com/aws/aws-sdk-go-v2/service/elasticache/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
@@ -130,6 +131,31 @@ func TestElastiCache_ClusterLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, desc2.CacheClusters, 1)
 	assert.Equal(t, "cache.t3.small", aws.ToString(desc2.CacheClusters[0].CacheNodeType))
+
+	arn := "arn:aws:elasticache:us-east-1:123456789012:cluster:" + id
+	_, err = c.AddTagsToResource(ctx, &elasticache.AddTagsToResourceInput{
+		ResourceName: aws.String(arn),
+		Tags: []ectypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("sdk")},
+			{Key: aws.String("team"), Value: aws.String("runner")},
+		},
+	})
+	require.NoError(t, err)
+	_, err = c.RemoveTagsFromResource(ctx, &elasticache.RemoveTagsFromResourceInput{
+		ResourceName: aws.String(arn),
+		TagKeys:      []string{"team"},
+	})
+	require.NoError(t, err)
+	tags, err := c.ListTagsForResource(ctx, &elasticache.ListTagsForResourceInput{
+		ResourceName: aws.String(arn),
+	})
+	require.NoError(t, err)
+	tagMap := map[string]string{}
+	for _, tag := range tags.TagList {
+		tagMap[aws.ToString(tag.Key)] = aws.ToString(tag.Value)
+	}
+	assert.Equal(t, "sdk", tagMap["env"])
+	assert.NotContains(t, tagMap, "team")
 
 	_, err = c.DeleteCacheCluster(ctx, &elasticache.DeleteCacheClusterInput{
 		CacheClusterId: aws.String(id),

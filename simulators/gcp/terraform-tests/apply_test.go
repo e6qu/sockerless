@@ -213,6 +213,22 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Equal(t, "appuser", sqlUserName,
 		"Cloud SQL user name must round-trip through terraform state; got %s", sqlUserName)
 
+	spannerInstanceID := outputs.must(t, "spanner_instance_id")
+	require.Contains(t, spannerInstanceID, "projects/test-project/instances/tf-spanner",
+		"Spanner instance id must include canonical project instance path; got %s", spannerInstanceID)
+
+	spannerDatabaseID := outputs.must(t, "spanner_database_id")
+	require.Contains(t, spannerDatabaseID, "projects/test-project/instances/tf-spanner/databases/appdb",
+		"Spanner database id must include canonical instance database path; got %s", spannerDatabaseID)
+
+	bigtableInstanceName := outputs.must(t, "bigtable_instance_name")
+	require.Equal(t, "tf-bigtable", bigtableInstanceName,
+		"Bigtable instance name must round-trip through terraform state; got %s", bigtableInstanceName)
+
+	bigtableTableName := outputs.must(t, "bigtable_table_name")
+	require.Equal(t, "events", bigtableTableName,
+		"Bigtable table name must round-trip through terraform state; got %s", bigtableTableName)
+
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
 }

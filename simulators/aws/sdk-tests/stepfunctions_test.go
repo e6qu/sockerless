@@ -93,6 +93,18 @@ func TestSFN_StateMachineCRUD_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, aws.ToString(updated.Definition), "updated")
+
+	versions, err := c.ListStateMachineVersions(ctx, &sfn.ListStateMachineVersionsInput{
+		StateMachineArn: create.StateMachineArn,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, versions.StateMachineVersions)
+
+	validation, err := c.ValidateStateMachineDefinition(ctx, &sfn.ValidateStateMachineDefinitionInput{
+		Definition: aws.String(`{"StartAt":"Pass","States":{"Pass":{"Type":"Pass","End":true}}}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, sfntypes.ValidateStateMachineDefinitionResultCodeOk, validation.Result)
 }
 
 func TestSFN_ExecutionLifecycle_SDK(t *testing.T) {

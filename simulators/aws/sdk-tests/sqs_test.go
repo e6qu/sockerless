@@ -58,6 +58,20 @@ func TestSQS_QueueLifecycle(t *testing.T) {
 	assert.Equal(t, "0", attrs.Attributes["ApproximateNumberOfMessages"])
 	assert.NotEmpty(t, attrs.Attributes["QueueArn"])
 
+	_, err = client.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl: aws.String(queueURL),
+		Attributes: map[string]string{
+			"VisibilityTimeout": "7",
+		},
+	})
+	require.NoError(t, err)
+	updatedAttrs, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(queueURL),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameVisibilityTimeout},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "7", updatedAttrs.Attributes["VisibilityTimeout"])
+
 	// Send + Receive round-trip.
 	send, err := client.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(queueURL),

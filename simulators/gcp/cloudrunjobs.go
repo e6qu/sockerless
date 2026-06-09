@@ -255,6 +255,17 @@ func newLRO(project, location string, resource any, typeName string) Operation {
 	return op
 }
 
+func renameGCPOperation(op Operation, collection string) Operation {
+	oldName := op.Name
+	opID := oldName[strings.LastIndex(oldName, "/")+1:]
+	op.Name = strings.TrimRight(collection, "/") + "/" + opID
+	if crOperations != nil {
+		crOperations.Delete(oldName)
+		crOperations.Put(op.Name, op)
+	}
+	return op
+}
+
 func cloneAnyMap(src map[string]any) map[string]any {
 	if src == nil {
 		return nil
