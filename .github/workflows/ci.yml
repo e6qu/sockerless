@@ -255,12 +255,16 @@ jobs:
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run SDK tests
-        run: cd simulators/${{ matrix.cloud }} && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
+        run: |
+          cd simulators/${{ matrix.cloud }} && go mod download
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
       - name: Run CLI tests
-        run: cd simulators/${{ matrix.cloud }} && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test
+        run: |
+          cd simulators/${{ matrix.cloud }} && go mod download
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -285,7 +289,9 @@ jobs:
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run AWS SDK tests
-        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
+        run: |
+          cd simulators/aws && go mod download
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
@@ -331,7 +337,9 @@ jobs:
           sudo dpkg -i /tmp/session-manager-plugin.deb
           session-manager-plugin --version
       - name: Run AWS CLI tests
-        run: cd simulators/aws && sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=${{ matrix.timeout }} CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
+        run: |
+          cd simulators/aws && go mod download
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=${{ matrix.timeout }} CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
         timeout-minutes: ${{ matrix.timeout_minutes }}
         env:
           GOWORK: "off"
