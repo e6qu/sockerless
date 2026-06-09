@@ -272,7 +272,7 @@ func handleRedisCacheDelete(w http.ResponseWriter, r *http.Request) {
 			"The Resource 'Microsoft.Cache/Redis/%s' under resource group '%s' was not found.", name, rg)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleRedisCacheListByRG(w http.ResponseWriter, r *http.Request) {

@@ -215,7 +215,7 @@ func handleEHDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			ehAuthRules.Delete(rule.ID)
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleEHListNamespacesByRG(w http.ResponseWriter, r *http.Request) {

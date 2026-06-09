@@ -775,6 +775,14 @@ func handleDeleteVpc(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to delete real VPC network fabric: %v", err), http.StatusServiceUnavailable)
 		return
 	}
+	for _, rt := range ec2RouteTables.Filter(func(rt EC2RouteTable) bool { return rt.VpcId == id }) {
+		ec2RouteTables.Delete(rt.RouteTableId)
+	}
+	ec2SubnetIPCursorMu.Lock()
+	for _, s := range ec2Subnets.Filter(func(s EC2Subnet) bool { return s.VpcId == id }) {
+		delete(ec2SubnetIPCursor, s.SubnetId)
+	}
+	ec2SubnetIPCursorMu.Unlock()
 	ec2Vpcs.Delete(id)
 
 	w.Header().Set("Content-Type", "text/xml")

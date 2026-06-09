@@ -166,7 +166,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		}
 
 		environments.Delete(resourceID)
-		w.WriteHeader(http.StatusAccepted)
+		w.WriteHeader(http.StatusOK)
 	})
 
 	registerContainerAppEnvironmentStorages(srv, environments)

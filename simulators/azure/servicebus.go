@@ -258,7 +258,7 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			sbNetworkRules.Delete(ruleSet.ID)
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleSBListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
