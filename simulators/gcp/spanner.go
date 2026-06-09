@@ -28,6 +28,12 @@ type spannerDatabase struct {
 	EarliestVersionTime    string `json:"earliestVersionTime,omitempty"`
 }
 
+type spannerDatabaseDDL struct {
+	Database         string   `json:"database"`
+	Statements       []string `json:"statements,omitempty"`
+	ProtoDescriptors string   `json:"protoDescriptors,omitempty"`
+}
+
 type spannerSession struct {
 	Name       string            `json:"name"`
 	CreateTime string            `json:"createTime"`
@@ -37,12 +43,14 @@ type spannerSession struct {
 var (
 	spannerInstances sim.Store[spannerInstance]
 	spannerDatabases sim.Store[spannerDatabase]
+	spannerDDLs      sim.Store[spannerDatabaseDDL]
 	spannerSessions  sim.Store[spannerSession]
 )
 
 func registerSpanner(srv *sim.Server) {
 	spannerInstances = sim.MakeStore[spannerInstance](srv.DB(), "spanner_instances")
 	spannerDatabases = sim.MakeStore[spannerDatabase](srv.DB(), "spanner_databases")
+	spannerDDLs = sim.MakeStore[spannerDatabaseDDL](srv.DB(), "spanner_database_ddls")
 	spannerSessions = sim.MakeStore[spannerSession](srv.DB(), "spanner_sessions")
 
 	const base = "/spanner/v1/projects/{project}/instances"
@@ -50,6 +58,7 @@ func registerSpanner(srv *sim.Server) {
 	srv.HandleFunc("GET "+base, handleSpannerListInstances)
 	srv.HandleFunc("GET "+base+"/{rest...}", handleSpannerInstanceChild)
 	srv.HandleFunc("POST "+base+"/{rest...}", handleSpannerInstanceChild)
+	srv.HandleFunc("PATCH "+base+"/{rest...}", handleSpannerInstanceChild)
 	srv.HandleFunc("DELETE "+base+"/{rest...}", handleSpannerInstanceChild)
 }
 
@@ -102,6 +111,8 @@ func handleSpannerInstanceChild(w http.ResponseWriter, r *http.Request) {
 		handleSpannerGetDatabase(w, r)
 	case len(parts) == 3 && parts[1] == "databases" && r.Method == http.MethodDelete:
 		handleSpannerDeleteDatabase(w, r)
+	case len(parts) == 4 && parts[1] == "databases" && parts[3] == "ddl" && r.Method == http.MethodPatch:
+		handleSpannerUpdateDatabaseDdl(w, r)
 	case len(parts) == 5 && parts[1] == "databases" && parts[3] == "operations" && r.Method == http.MethodGet:
 		handleSpannerGetOperation(w, r)
 	case len(parts) == 4 && parts[1] == "databases" && parts[3] == "sessions":
@@ -295,7 +306,68 @@ func handleSpannerDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "database %q not found", name)
 		return
 	}
+	spannerDDLs.Delete(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSpannerUpdateDatabaseDdl(w http.ResponseWriter, r *http.Request) {
+	project, instance, database := sim.PathParam(r, "project"), spannerPathPart(r, "instance", 0), spannerPathPart(r, "database", 2)
+	name := spannerDatabaseName(project, instance, database)
+	if _, ok := spannerDatabases.Get(name); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "database %q not found", name)
+		return
+	}
+	var req struct {
+		OperationID      string   `json:"operationId"`
+		ProtoDescriptors string   `json:"protoDescriptors"`
+		Statements       []string `json:"statements"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	if len(req.Statements) == 0 {
+		sim.GCPError(w, http.StatusBadRequest, "statements is required", "INVALID_ARGUMENT")
+		return
+	}
+	if req.OperationID != "" {
+		opName := fmt.Sprintf("%s/operations/%s", name, req.OperationID)
+		if _, ok := crOperations.Get(opName); ok {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "operation %q already exists", opName)
+			return
+		}
+	}
+	ddl, _ := spannerDDLs.Get(name)
+	ddl.Database = name
+	ddl.Statements = append(ddl.Statements, req.Statements...)
+	if req.ProtoDescriptors != "" {
+		ddl.ProtoDescriptors = req.ProtoDescriptors
+	}
+	spannerDDLs.Put(name, ddl)
+	op := newSpannerDatabaseDDLOperation(name, req.OperationID, req.Statements)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func newSpannerDatabaseDDLOperation(database, operationID string, statements []string) Operation {
+	if operationID == "" {
+		operationID = "_" + strings.ReplaceAll(generateUUID(), "-", "_")
+	}
+	name := fmt.Sprintf("%s/operations/%s", database, operationID)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	op := Operation{
+		Name: name,
+		Metadata: map[string]any{
+			"@type":      "type.googleapis.com/google.spanner.admin.database.v1.UpdateDatabaseDdlMetadata",
+			"database":   database,
+			"statements": statements,
+			"commitTime": now,
+		},
+		Done: true,
+	}
+	if crOperations != nil {
+		crOperations.Put(op.Name, op)
+	}
+	return op
 }
 
 func handleSpannerCreateSession(w http.ResponseWriter, r *http.Request) {

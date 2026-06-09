@@ -40,6 +40,13 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "READY", db.State)
 
+	ddlOp, err := svc.Projects.Instances.Databases.UpdateDdl(db.Name, &spanner.UpdateDatabaseDdlRequest{
+		Statements: []string{"CREATE TABLE Users (UserId STRING(36) NOT NULL) PRIMARY KEY (UserId)"},
+	}).Do()
+	require.NoError(t, err)
+	assert.True(t, ddlOp.Done)
+	assert.Contains(t, ddlOp.Name, "/databases/sdkdb/operations/")
+
 	session, err := svc.Projects.Instances.Databases.Sessions.Create(db.Name, &spanner.CreateSessionRequest{
 		Session: &spanner.Session{Labels: map[string]string{"kind": "sdk"}},
 	}).Do()

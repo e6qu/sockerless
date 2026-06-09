@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	realexec "github.com/sockerless/simulator-realexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,6 +47,7 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
+	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
 	out, err := runTimed(t, "terraform init", terraformCmd("init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
@@ -280,6 +282,13 @@ func TestTerraformApplyDestroy(t *testing.T) {
 
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func requireTerraformNetworkHost(t *testing.T) {
+	t.Helper()
+	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
+		t.Skipf("skipping: Terraform Network coverage requires host capabilities the simulator cannot provide here: %v", err)
+	}
 }
 
 func cleanTerraformWorkspace(t *testing.T) {

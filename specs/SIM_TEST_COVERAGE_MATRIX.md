@@ -71,7 +71,7 @@ Legend:
 | `azure-private-dns` | direct | direct | direct | `simulators/azure/sdk-tests/dns_private_test.go`; `simulators/azure/cli-tests/dns_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `gcp-apigateway` | direct | direct | direct | `simulators/gcp/sdk-tests/memorystore_apigw_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-artifactregistry` | direct | direct | direct | `simulators/gcp/sdk-tests/artifactregistry_oci_test.go`; `simulators/gcp/cli-tests/artifactregistry_test.go`; `simulators/gcp/terraform-tests/main.tf` |
-| `gcp-bigtable` | direct | direct | direct | `simulators/gcp/sdk-tests/phase_g_services_test.go`; `simulators/gcp/cli-tests/phase_g_services_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-bigtable` | direct | direct | tracked BUG-1585 | `simulators/gcp/sdk-tests/phase_g_services_test.go`; `simulators/gcp/cli-tests/phase_g_services_test.go`; Terraform provider Bigtable Admin calls bypass the REST custom endpoint and hit real Google auth. |
 | `gcp-bigquery` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudbuild` | direct | direct | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |

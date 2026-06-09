@@ -22,6 +22,7 @@ Surface registered in `simulators/gcp/spanner.go`.
 | `GET /spanner/v1/projects/{project}/instances/{instance}/databases` | ✓ `handleSpannerListDatabases` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | ✓ | |
 | `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `handleSpannerGetDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `DELETE /spanner/v1/projects/{project}/instances/{instance}/databases/{database}` | ✓ `handleSpannerDeleteDatabase` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PATCH /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/ddl` | ✓ `handleSpannerUpdateDatabaseDdl` | ✓ (direct; see coverage matrix) | ✓ | n/a | Applies and persists database DDL statements; returns a database-scoped LRO. |
 | `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/operations/{operation}` | ✓ `handleSpannerGetOperation` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions` | ✓ `handleSpannerCreateSession` | ✓ (direct; see coverage matrix) | n/a | n/a | |
 | `GET /spanner/v1/projects/{project}/instances/{instance}/databases/{database}/sessions` | ✓ `handleSpannerListSessions` | ✓ (direct; see coverage matrix) | n/a | ✓ | |

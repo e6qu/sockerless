@@ -91,12 +91,7 @@ func handleLogicWorkflowPut(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Properties {
 		props[k] = v
 	}
-	if _, ok := props["definition"]; !ok {
-		props["definition"] = map[string]any{}
-	}
-	if _, ok := props["parameters"]; !ok {
-		props["parameters"] = map[string]any{}
-	}
+	logicNormalizeWorkflowProperties(props)
 	wf := LogicWorkflow{
 		ID:         id,
 		Name:       name,
@@ -135,6 +130,7 @@ func handleLogicWorkflowPatch(w http.ResponseWriter, r *http.Request) {
 				wf.Properties[k] = v
 			}
 			wf.Properties["changedTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+			logicNormalizeWorkflowProperties(wf.Properties)
 		}
 	})
 	if !ok {
@@ -143,6 +139,33 @@ func handleLogicWorkflowPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	wf, _ := logicWorkflows.Get(id)
 	sim.WriteJSON(w, http.StatusOK, wf)
+}
+
+func logicNormalizeWorkflowProperties(props map[string]any) {
+	if props == nil {
+		return
+	}
+	def, ok := props["definition"].(map[string]any)
+	if !ok || def == nil {
+		def = map[string]any{}
+	}
+	if def["$schema"] == nil {
+		def["$schema"] = "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#"
+	}
+	if def["contentVersion"] == nil {
+		def["contentVersion"] = "1.0.0.0"
+	}
+	for _, key := range []string{"parameters", "triggers", "actions", "outputs"} {
+		value, ok := def[key].(map[string]any)
+		if !ok || value == nil {
+			def[key] = map[string]any{}
+		}
+	}
+	props["definition"] = def
+	parameters, ok := props["parameters"].(map[string]any)
+	if !ok || parameters == nil {
+		props["parameters"] = map[string]any{}
+	}
 }
 
 func handleLogicWorkflowGet(w http.ResponseWriter, r *http.Request) {

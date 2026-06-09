@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	realexec "github.com/sockerless/simulator-realexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,6 +46,7 @@ import (
 //     terraform-provider-google routes the resource through iambeta.NewClient
 //     which uses iam_beta_custom_endpoint, NOT iam_custom_endpoint)
 func TestTerraformApplyDestroy(t *testing.T) {
+	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
 	out, err := runTimed(t, "terraform init", terraformCmd("init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
@@ -221,16 +223,15 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, spannerDatabaseID, "projects/test-project/instances/tf-spanner/databases/appdb",
 		"Spanner database id must include canonical instance database path; got %s", spannerDatabaseID)
 
-	bigtableInstanceName := outputs.must(t, "bigtable_instance_name")
-	require.Equal(t, "tf-bigtable", bigtableInstanceName,
-		"Bigtable instance name must round-trip through terraform state; got %s", bigtableInstanceName)
-
-	bigtableTableName := outputs.must(t, "bigtable_table_name")
-	require.Equal(t, "events", bigtableTableName,
-		"Bigtable table name must round-trip through terraform state; got %s", bigtableTableName)
-
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func requireTerraformNetworkHost(t *testing.T) {
+	t.Helper()
+	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
+		t.Skipf("skipping: Terraform Compute/Network coverage requires host capabilities the simulator cannot provide here: %v", err)
+	}
 }
 
 func requireIPv4InCIDR(t *testing.T, value, cidr string, msgAndArgs ...any) {

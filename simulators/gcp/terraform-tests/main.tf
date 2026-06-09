@@ -605,7 +605,7 @@ resource "google_sql_user" "tf_sql_user" {
   password = "Str0ng-password-12345!"
 }
 
-# ---------- Spanner + Bigtable ----------
+# ---------- Spanner ----------
 
 resource "google_spanner_instance" "tf_spanner" {
   name         = "tf-spanner"
@@ -626,31 +626,6 @@ resource "google_spanner_database" "tf_spanner_db" {
   ddl = [
     "CREATE TABLE Users (UserId STRING(36) NOT NULL, DisplayName STRING(MAX)) PRIMARY KEY (UserId)"
   ]
-}
-
-resource "google_bigtable_instance" "tf_bigtable" {
-  name                = "tf-bigtable"
-  deletion_protection = false
-
-  cluster {
-    cluster_id   = "tf-bigtable-c1"
-    zone         = "us-central1-a"
-    num_nodes    = 1
-    storage_type = "SSD"
-  }
-
-  labels = {
-    env = "terraform"
-  }
-}
-
-resource "google_bigtable_table" "tf_bigtable_table" {
-  name          = "events"
-  instance_name = google_bigtable_instance.tf_bigtable.name
-
-  column_family {
-    family = "cf"
-  }
 }
 
 # ---------- Secret Manager ----------
@@ -850,12 +825,4 @@ output "spanner_instance_id" {
 
 output "spanner_database_id" {
   value = google_spanner_database.tf_spanner_db.id
-}
-
-output "bigtable_instance_name" {
-  value = google_bigtable_instance.tf_bigtable.name
-}
-
-output "bigtable_table_name" {
-  value = google_bigtable_table.tf_bigtable_table.name
 }

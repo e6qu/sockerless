@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1584 filed - 1539 fixed - 6 open - 5 false positives.**
+**1585 filed - 1539 fixed - 7 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 1585 | P2 | gcp terraform — Bigtable Admin provider bypasses REST custom endpoint | provider endpoint gap / real-cloud escape | `google_bigtable_instance` and `google_bigtable_table` in the GCP Terraform apply stack bypass the simulator's REST Bigtable Admin custom endpoint and attempt real Google authentication. Keep SDK + `gcloud` REST coverage in this PR; add provider-compatible Bigtable Admin coverage once the simulator exposes the provider's Bigtable Admin path. |
 | 1584 | P3 | azure terraform — azurestack provider warning on custom cloud metadata | provider warning / stale deprecation diagnostic | `terraform validate` still emits the AzureStack provider's "`arm_endpoint` is deprecated in favour of `metadata_host`" warning even though the test config now uses only `metadata_host`. Track until the provider warning path is fixed upstream or the stack can move off the AzureStack compatibility provider without losing coverage. |
 | ~~1583~~ | P2 | aws simulator — registered-operation coverage audit residuals | test coverage gap / public client regression exposure | Fixed: the older AWS registered-operation residuals now have SDK regression coverage for SSM GetParameters and RemoveTagsFromResource, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN ListStateMachineVersions and ValidateStateMachineDefinition, CloudWatch Logs PutRetentionPolicy, SQS SetQueueAttributes, and ElastiCache tag removal. |
 | ~~1582~~ | P2 | gcp simulator — Spanner/Dataflow/Bigtable service slices missing | sim coverage gap / missing public APIs | Fixed: the GCP simulator now implements Cloud Spanner instance/database/session control-plane paths, Dataflow regional job create/get/list/update, and Bigtable instance/cluster/table REST admin paths with official SDK, `gcloud`, and Terraform coverage where the provider exposes the slice. |
