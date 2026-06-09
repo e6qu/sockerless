@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -436,7 +437,7 @@ func (st *Store) loadFromPersistence() error {
 		}
 		// Re-open (or create) the git storage for this repo so git operations
 		// work immediately after restart.
-		stor, err := openOrInitGitStorage(GitDataDir(), r.FullName)
+		stor, err := openOrInitGitStorage(context.Background(), r.FullName)
 		if err != nil {
 			return fmt.Errorf("reopen git storage %s: %w", r.FullName, err)
 		}

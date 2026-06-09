@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
 
-	stor, err := openOrInitGitStorage(GitDataDir(), fullName)
+	stor, err := openOrInitGitStorage(context.Background(), fullName)
 	if err != nil {
 		return nil
 	}
@@ -126,6 +127,12 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	if gitDir != "" {
 		repoDir := filepath.Join(gitDir, filepath.FromSlash(fullName))
 		_ = os.RemoveAll(repoDir)
+	}
+	if IsS3GitStorage() {
+		s3fs, err := getS3FS(context.Background())
+		if err == nil && s3fs != nil {
+			s3fs.deleteRepoPrefix(fullName)
+		}
 	}
 	return true
 }

@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, 3, 4, and 5 completed:
+Subtasks 1, 2, 3, 4, 5, and 6 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -41,6 +41,18 @@ Subtasks 1, 2, 3, 4, and 5 completed:
   - 7 new tests: storage init failure, delete cleanup, unauthenticated push
     rejection, public/private repo fetch auth, authenticated push, authenticated
     private repo fetch.
+- Subtask 6: S3/MinIO-compatible git content storage.
+  - Added `s3fs.go` implementing `billy.Filesystem` and `billy.File` over S3
+    using `aws-sdk-go-v2/service/s3`. Key layout: `prefix/{owner}/{repo}/` for
+    each repo's git data. Temp files use UUID-prefixed keys. Renames use
+    CopyObject+DeleteObject. Directories are emulated via prefix listing.
+  - `git_storage.go` now supports three backends: memory (default), filesystem
+    (`BLEEPHUB_GIT_DIR`), and S3 (`BLEEPHUB_S3_ENDPOINT` + `BLEEPHUB_S3_BUCKET`
+    + optional `BLEEPHUB_S3_PREFIX`). S3 takes priority when configured.
+  - `DeleteRepo` cleans up S3 objects by listing and deleting all objects under
+    the repo prefix.
+  - The S3 filesystem is lazily initialized and cached (singleton connection per
+    process). Uses path-style addressing for MinIO compatibility.
   - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
     interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
   - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
@@ -59,7 +71,7 @@ gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bl
 
 ## Current Subtask
 
-Subtask 6: S3/MinIO-compatible git content storage.
+Subtask 7: UI auth and operator storage/status views.
 
 ## Ordered Subtasks For This PR
 

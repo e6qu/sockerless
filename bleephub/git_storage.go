@@ -1,11 +1,14 @@
 package bleephub
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
+	"github.com/go-git/go-billy/v5/helper/polyfill"
 	"github.com/go-git/go-billy/v5/osfs"
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/cache"
@@ -14,18 +17,59 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 )
 
-// GitDataDir returns the configured root directory for persistent git storage.
-// Set BLEEPHUB_GIT_DIR to a directory path (e.g. "/data/git") to enable
-// filesystem-backed repos that survive restarts and can be mounted as a
-// Docker volume. When empty, repos use in-memory storage (ephemeral).
+var (
+	s3FSMu     sync.Mutex
+	s3FSCache  *s3FS
+	s3FSErr    error
+	s3FSInited bool
+)
+
+func getS3FS(ctx context.Context) (*s3FS, error) {
+	s3FSMu.Lock()
+	defer s3FSMu.Unlock()
+	if s3FSInited {
+		return s3FSCache, s3FSErr
+	}
+	s3FSInited = true
+
+	endpoint := os.Getenv("BLEEPHUB_S3_ENDPOINT")
+	bucket := os.Getenv("BLEEPHUB_S3_BUCKET")
+	if bucket == "" {
+		return nil, nil
+	}
+
+	prefix := os.Getenv("BLEEPHUB_S3_PREFIX")
+	fs, err := newS3FS(ctx, endpoint, bucket, prefix)
+	if err != nil {
+		s3FSErr = err
+		return nil, err
+	}
+	s3FSCache = fs
+	return fs, nil
+}
+
 func GitDataDir() string {
 	return os.Getenv("BLEEPHUB_GIT_DIR")
 }
 
-// newGitStorage allocates storage for a repo identified by fullName ("owner/repo").
-// Returns in-memory storage when gitDir is empty, filesystem storage otherwise.
-// Does NOT initialise the git repo itself (no git.Init call).
-func newGitStorage(gitDir, fullName string) (gitStorage.Storer, error) {
+func IsS3GitStorage() bool {
+	return os.Getenv("BLEEPHUB_S3_BUCKET") != ""
+}
+
+func newGitStorage(ctx context.Context, fullName string) (gitStorage.Storer, error) {
+	s3fs, err := getS3FS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s3fs != nil {
+		chrooted, err := s3fs.Chroot(fullName)
+		if err != nil {
+			return nil, fmt.Errorf("s3 chroot %s: %w", fullName, err)
+		}
+		return gitFilesystem.NewStorage(polyfill.New(chrooted), cache.NewObjectLRUDefault()), nil
+	}
+
+	gitDir := GitDataDir()
 	if gitDir == "" {
 		return memory.NewStorage(), nil
 	}
@@ -37,10 +81,8 @@ func newGitStorage(gitDir, fullName string) (gitStorage.Storer, error) {
 	return gitFilesystem.NewStorage(fs, cache.NewObjectLRUDefault()), nil
 }
 
-// openOrInitGitStorage returns storage for a repo, initialising the git
-// repository structure if it does not yet exist.
-func openOrInitGitStorage(gitDir, fullName string) (gitStorage.Storer, error) {
-	stor, err := newGitStorage(gitDir, fullName)
+func openOrInitGitStorage(ctx context.Context, fullName string) (gitStorage.Storer, error) {
+	stor, err := newGitStorage(ctx, fullName)
 	if err != nil {
 		return nil, err
 	}
