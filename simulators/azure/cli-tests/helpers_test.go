@@ -17,11 +17,12 @@ import (
 )
 
 var (
-	baseURL       string
-	simCmd        *exec.Cmd
-	binaryPath    string
-	evalImageName string
-	tmpDir        string
+	baseURL          string
+	simCmd           *exec.Cmd
+	binaryPath       string
+	evalImageName    string
+	commandImageName string
+	tmpDir           string
 
 	subscriptionID = "00000000-0000-0000-0000-000000000001"
 	resourceGroup  = "cli-test-rg"
@@ -49,6 +50,10 @@ func TestMain(m *testing.M) {
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
+
+	commandDir, _ := filepath.Abs("../../testdata/container-command")
+	commandImageName = "sockerless-container-command:test"
+	buildGoScratchImage(commandImageName, commandDir, "container-command", workloadPlatform)
 
 	// Find free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -181,6 +186,7 @@ func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
 	build.Dir = sourceDir
 	build.Env = append(os.Environ(),
 		"CGO_ENABLED=0",
+		"GOWORK=off",
 		"GOOS=linux",
 		"GOARCH="+runtime.GOARCH,
 	)

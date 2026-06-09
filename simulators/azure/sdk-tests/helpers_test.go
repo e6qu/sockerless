@@ -32,6 +32,7 @@ var (
 	binaryPath         string
 	evalImageName      string // Docker image containing eval-arithmetic binary
 	httpProbeImageName string // Docker image containing localhost probe/server binary
+	commandImageName   string // Docker image containing container-command binary
 	sbAMQPEndpoint     string
 	ctx                = context.Background()
 	subscriptionID     = "00000000-0000-0000-0000-000000000001"
@@ -79,6 +80,10 @@ func TestMain(m *testing.M) {
 	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
 	httpProbeImageName = "sockerless-http-localhost-probe:test"
 	buildGoScratchImage(httpProbeImageName, probeDir, "http-localhost-probe", workloadPlatform)
+
+	commandDir, _ := filepath.Abs("../../testdata/container-command")
+	commandImageName = "sockerless-container-command:test"
+	buildGoScratchImage(commandImageName, commandDir, "container-command", workloadPlatform)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

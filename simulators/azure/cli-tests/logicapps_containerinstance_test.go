@@ -35,7 +35,7 @@ func TestLogicAppsCLI_WorkflowLifecycle(t *testing.T) {
 
 func TestContainerInstancesCLI_GroupLogsLifecycle(t *testing.T) {
 	url := armURL("Microsoft.ContainerInstance", "containerGroups/cli-aci", "2023-05-01")
-	body := fmt.Sprintf(`{"location":"eastus","properties":{"osType":"Linux","restartPolicy":"Never","containers":[{"name":"main","properties":{"image":%q,"command":["/bin/sh","-c","echo aci-cli"],"resources":{"requests":{"cpu":1,"memoryInGB":1}}}}]}}`, evalImageName)
+	body := fmt.Sprintf(`{"location":"eastus","properties":{"osType":"Linux","restartPolicy":"Never","containers":[{"name":"main","properties":{"image":%q,"command":["/usr/local/bin/container-command","log","aci-cli"],"resources":{"requests":{"cpu":1,"memoryInGB":1}}}}]}}`, commandImageName)
 	runCLI(t, azRest("PUT", url, body))
 
 	logURL := strings.Replace(url, "?api-version=", "/containers/main/logs?api-version=", 1)

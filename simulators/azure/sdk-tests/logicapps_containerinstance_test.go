@@ -115,7 +115,7 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 				Containers: []*armcontainerinstance.Container{{
 					Name: to.Ptr("main"),
 					Properties: &armcontainerinstance.ContainerProperties{
-						Image:   to.Ptr("public.ecr.aws/docker/library/alpine:latest"),
+						Image:   to.Ptr(commandImageName),
 						Command: command,
 						Resources: &armcontainerinstance.ResourceRequirements{
 							Requests: &armcontainerinstance.ResourceRequests{
@@ -145,7 +145,7 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 		assert.Empty(t, created.Properties.Containers[0].Properties.EnvironmentVariables)
 	}
 
-	createACIGroup("sdk-aci-logs", []*string{to.Ptr("/bin/sh"), to.Ptr("-c"), to.Ptr("echo aci-sdk-ready")})
+	createACIGroup("sdk-aci-logs", []*string{to.Ptr("/usr/local/bin/container-command"), to.Ptr("log"), to.Ptr("aci-sdk-ready")})
 	t.Cleanup(func() {
 		deletePoller, err := groups.BeginDelete(ctx, "sdk-rg", "sdk-aci-logs", nil)
 		if err == nil {
@@ -159,7 +159,7 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 		return err == nil && logs.Content != nil && strings.Contains(ptrVal(logs.Content), "aci-sdk-ready")
 	}, 10*time.Second, 250*time.Millisecond)
 
-	createACIGroup("sdk-aci", []*string{to.Ptr("/bin/sh"), to.Ptr("-c"), to.Ptr("while true; do sleep 1; done")})
+	createACIGroup("sdk-aci", []*string{to.Ptr("/usr/local/bin/container-command"), to.Ptr("hold")})
 	t.Cleanup(func() {
 		deletePoller, err := groups.BeginDelete(ctx, "sdk-rg", "sdk-aci", nil)
 		if err == nil {
@@ -168,7 +168,7 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 	})
 
 	execResp, err := containers.ExecuteCommand(ctx, "sdk-rg", "sdk-aci", "main", armcontainerinstance.ContainerExecRequest{
-		Command: to.Ptr("echo aci-sdk-exec"),
+		Command: to.Ptr("/usr/local/bin/container-command print aci-sdk-exec"),
 	}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, ptrVal(execResp.WebSocketURI))

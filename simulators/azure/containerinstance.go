@@ -318,8 +318,14 @@ func handleACIContainerExecSession(w http.ResponseWriter, r *http.Request) {
 			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "docker client not initialised"))
 		return
 	}
+	command := strings.Fields(session.Command)
+	if len(command) == 0 {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "command is required"))
+		return
+	}
 	execCfg := dockercontainer.ExecOptions{
-		Cmd:          []string{"sh", "-c", session.Command},
+		Cmd:          command,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
