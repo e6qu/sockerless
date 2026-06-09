@@ -27,13 +27,14 @@ import (
 )
 
 var (
-	baseURL        string
-	simCmd         *exec.Cmd
-	binaryPath     string
-	evalImageName  string // Docker image containing eval-arithmetic binary
-	sbAMQPEndpoint string
-	ctx            = context.Background()
-	subscriptionID = "00000000-0000-0000-0000-000000000001"
+	baseURL            string
+	simCmd             *exec.Cmd
+	binaryPath         string
+	evalImageName      string // Docker image containing eval-arithmetic binary
+	httpProbeImageName string // Docker image containing localhost probe/server binary
+	sbAMQPEndpoint     string
+	ctx                = context.Background()
+	subscriptionID     = "00000000-0000-0000-0000-000000000001"
 )
 
 type fakeCredential struct{}
@@ -74,6 +75,10 @@ func TestMain(m *testing.M) {
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
+
+	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
+	httpProbeImageName = "sockerless-http-localhost-probe:test"
+	buildGoScratchImage(httpProbeImageName, probeDir, "http-localhost-probe", workloadPlatform)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -234,6 +239,7 @@ func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
 	build.Dir = sourceDir
 	build.Env = append(os.Environ(),
 		"CGO_ENABLED=0",
+		"GOWORK=off",
 		"GOOS=linux",
 		"GOARCH="+runtime.GOARCH,
 	)

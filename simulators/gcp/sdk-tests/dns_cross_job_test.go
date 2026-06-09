@@ -55,7 +55,7 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { jobsClient.Close() })
 
-	createJob := func(name string) string {
+	createJob := func(name string, args []string) string {
 		createOp, err := jobsClient.CreateJob(ctx, &runpb.CreateJobRequest{
 			Parent: "projects/" + project + "/locations/us-central1",
 			JobId:  name,
@@ -63,9 +63,8 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 				Template: &runpb.ExecutionTemplate{
 					Template: &runpb.TaskTemplate{
 						Containers: []*runpb.Container{{
-							Image:   evalImageName,
-							Command: []string{"sh", "-c"},
-							Args:    []string{"sleep 30"},
+							Image: commandImageName,
+							Args:  args,
 						}},
 						Timeout: durationpb.New(60 * time.Second),
 					},
@@ -85,9 +84,8 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 		return exec.Name
 	}
 
-	alphaExec := createJob("alpha")
-	betaExec := createJob("beta")
-	_, _ = alphaExec, betaExec
+	alphaExec := createJob("alpha", []string{"resolve", "beta", "30", "gcp-cross-job-dns-ok", "10"})
+	betaExec := createJob("beta", []string{"sleep", "60"})
 
 	// 3. Wait for the Docker containers to exist + inspect their IPs.
 	// Container name convention: sockerless-sim-gcp-job-<execID[:12]>
@@ -126,15 +124,16 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 	}).Do()
 	require.NoError(t, err)
 
-	// 5. Cross-job DNS lookup: alpha resolves "beta" via Docker's
-	// embedded resolver on the zone's network.
-	var getent []byte
+	// 5. Cross-job DNS lookup: alpha resolves "beta" through the
+	// container's own resolver after both A records have connected the
+	// containers to the zone's Docker network.
+	var logs []byte
 	require.Eventually(t, func() bool {
 		var err error
-		getent, err = exec.Command("docker", "exec", alphaContainer, "getent", "hosts", "beta").CombinedOutput()
-		return err == nil && len(getent) > 0
-	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud DNS private zone: %s", getent)
-	assert.Contains(t, string(getent), "beta", "getent output should mention beta: %s", getent)
+		logs, err = exec.Command("docker", "logs", alphaContainer).CombinedOutput()
+		return err == nil && strings.Contains(string(logs), "gcp-cross-job-dns-ok")
+	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud DNS private zone: %s", logs)
+	assert.Contains(t, string(logs), "gcp-cross-job-dns-ok")
 }
 
 // jobContainerName derives the simulator's Docker container name from

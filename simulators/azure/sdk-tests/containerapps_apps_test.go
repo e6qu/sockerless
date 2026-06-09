@@ -185,21 +185,14 @@ func TestSDK_ContainerAppsApps_MultiContainerSharesLocalhost(t *testing.T) {
 			Template: &armappcontainers.Template{
 				Containers: []*armappcontainers.Container{
 					{
-						Name:    to.Ptr("main"),
-						Image:   to.Ptr(evalImageName),
-						Command: []*string{to.Ptr("sh"), to.Ptr("-c")},
-						Args: []*string{to.Ptr(`for i in $(seq 1 50); do
-if nc -z 127.0.0.1 9090; then echo aca-app-sidecar-ok; exit 0; fi
-sleep 0.1
-done
-echo aca-app-sidecar-missing
-exit 1`)},
+						Name:  to.Ptr("main"),
+						Image: to.Ptr(httpProbeImageName),
+						Args:  []*string{to.Ptr("probe-once"), to.Ptr("aca-app-sidecar-ok")},
 					},
 					{
-						Name:    to.Ptr("sidecar"),
-						Image:   to.Ptr(evalImageName),
-						Command: []*string{to.Ptr("sh"), to.Ptr("-c")},
-						Args:    []*string{to.Ptr(`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`)},
+						Name:  to.Ptr("sidecar"),
+						Image: to.Ptr(httpProbeImageName),
+						Args:  []*string{to.Ptr("server")},
 					},
 				},
 				Scale: &armappcontainers.Scale{

@@ -21,6 +21,7 @@ var (
 	simCmd             *exec.Cmd
 	binaryPath         string
 	evalImageName      string // Docker image containing eval-arithmetic binary
+	commandImageName   string // Docker image containing container-command binary
 	httpProbeImageName string // Docker image containing localhost probe/server binary
 	ctx                = context.Background()
 )
@@ -41,6 +42,10 @@ func TestMain(m *testing.M) {
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
 	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
+
+	commandDir, _ := filepath.Abs("../../testdata/container-command")
+	commandImageName = "sockerless-container-command:test"
+	buildGoScratchImage(commandImageName, commandDir, "container-command", workloadPlatform)
 
 	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
 	httpProbeImageName = "sockerless-http-localhost-probe:test"
@@ -104,6 +109,7 @@ func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
 	build.Dir = sourceDir
 	build.Env = append(os.Environ(),
 		"CGO_ENABLED=0",
+		"GOWORK=off",
 		"GOOS=linux",
 		"GOARCH="+runtime.GOARCH,
 	)

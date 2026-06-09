@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
@@ -30,11 +29,11 @@ var dockerClient *client.Client
 // reverse-agent callback URL.
 var backendPort int
 var evalImageName string
+var commandImageName string
 var acaOverlayImageName string
 
 const (
 	acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
-	acaTestImage  = "public.ecr.aws/docker/library/alpine:latest"
 )
 
 // requireEnv reads a required env var or dies loud.
@@ -128,27 +127,46 @@ func TestMain(m *testing.M) {
 	}
 	repoRoot = absRepoRoot
 
-	// Multi-stage Docker build forced to linux/arm64 — sim's primary
-	// capacity contract. The eval-arithmetic image is the workload the
-	// test functions exec inside the cloud (sim or real).
-	evalDir := repoRoot + "/simulators/testdata/eval-arithmetic"
+	buildScratchGoImage := func(imageName, moduleRel, binaryName string) {
+		buildCtx, err := os.MkdirTemp("", "sockerless-"+binaryName+"-image-")
+		if err != nil {
+			failClean("ERROR: create %s image context: %v\n", binaryName, err)
+		}
+		cleanups = append(cleanups, func() { os.RemoveAll(buildCtx) })
+
+		binaryPath := filepath.Join(buildCtx, binaryName)
+		buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
+		buildCmd.Dir = filepath.Join(repoRoot, moduleRel)
+		buildCmd.Env = filterBuildEnv(os.Environ(), "GOWORK=off", "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
+		buildCmd.Stdout = os.Stderr
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			failClean("ERROR: build %s binary: %v\n", binaryName, err)
+		}
+
+		dockerfile := fmt.Sprintf(`FROM scratch
+COPY %s /usr/local/bin/%s
+ENTRYPOINT ["/usr/local/bin/%s"]
+`, binaryName, binaryName, binaryName)
+		imageBuild := exec.Command("docker", "build",
+			"--platform", "linux/arm64",
+			"-t", imageName, "-f", "-", buildCtx)
+		imageBuild.Stdin = strings.NewReader(dockerfile)
+		if out, err := imageBuild.CombinedOutput(); err != nil {
+			failClean("ERROR: docker build %s image failed: %v\n%s", binaryName, err, out)
+		}
+	}
+
+	// Build workload images forced to linux/arm64, the sim's primary
+	// capacity contract. The images are built from local Go binaries and
+	// scratch roots so the harness does not depend on external registries.
 	evalImageName = "sockerless-eval-arithmetic:test"
 	fmt.Printf("[setup] Building %s (linux/arm64)...\n", evalImageName)
-	evalDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM public.ecr.aws/docker/library/alpine:latest
-COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
-ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
-`
-	evalImageBuild := exec.Command("docker", "build",
-		"--platform", "linux/arm64",
-		"-t", evalImageName, "-f", "-", evalDir)
-	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)
-	if out, err := evalImageBuild.CombinedOutput(); err != nil {
-		failClean("ERROR: docker build eval-arithmetic image failed: %v\n%s", err, out)
-	}
+	buildScratchGoImage(evalImageName, "simulators/testdata/eval-arithmetic", "eval-arithmetic")
+
+	commandImageName = "sockerless-container-command:test"
+	fmt.Printf("[setup] Building %s (linux/arm64)...\n", commandImageName)
+	buildScratchGoImage(commandImageName, "simulators/testdata/container-command", "container-command")
 
 	if os.Getenv(acaAppsE2EEnv) == "1" {
 		bootstrapPath := filepath.Join(repoRoot, "agent", fmt.Sprintf("sockerless-cloudrun-bootstrap-aca-test-arm64-%d", os.Getpid()))
@@ -176,11 +194,20 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		if err := os.WriteFile(filepath.Join(overlayCtx, filepath.Base(bootstrapPath)), bootstrapBytes, 0o755); err != nil {
 			failClean("ERROR: write ACA app overlay bootstrap: %v\n", err)
 		}
+		overlayCommand := filepath.Join(overlayCtx, "container-command")
+		commandBuild := exec.Command("go", "build", "-o", overlayCommand, ".")
+		commandBuild.Dir = filepath.Join(repoRoot, "simulators/testdata/container-command")
+		commandBuild.Env = filterBuildEnv(os.Environ(), "GOWORK=off", "GOOS=linux", "GOARCH=arm64", "CGO_ENABLED=0")
+		commandBuild.Stdout = os.Stderr
+		commandBuild.Stderr = os.Stderr
+		if err := commandBuild.Run(); err != nil {
+			failClean("ERROR: build ACA app command workload: %v\n", err)
+		}
 
 		acaOverlayImageName = fmt.Sprintf("sockerless-overlay/aca:test-%d", os.Getpid())
-		overlayDockerfile := fmt.Sprintf(`FROM public.ecr.aws/docker/library/alpine:latest
+		overlayDockerfile := fmt.Sprintf(`FROM scratch
 COPY %s /opt/sockerless/sockerless-cloudrun-bootstrap
-RUN chmod +x /opt/sockerless/sockerless-cloudrun-bootstrap
+COPY container-command /opt/sockerless/container-command
 ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 `, filepath.Base(bootstrapPath))
 		overlayBuild := exec.Command("docker", "build",
@@ -350,21 +377,13 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 func TestACAContainerLifecycle(t *testing.T) {
 	ctx := context.Background()
 
-	// Pull image
-	rc, err := dockerClient.ImagePull(ctx, acaTestImage, image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 
 	// Create
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: acaTestImage,
-			Cmd:   []string{"tail", "-f", "/dev/null"},
+			Image: commandImageName,
+			Cmd:   []string{"hold"},
 		},
 		nil, nil, nil, "aca_"+testID,
 	)
@@ -422,18 +441,11 @@ func TestACAContainerLifecycle(t *testing.T) {
 func TestACAContainerLogs(t *testing.T) {
 	ctx := context.Background()
 
-	rc, err := dockerClient.ImagePull(ctx, acaTestImage, image.PullOptions{})
-	if err != nil {
-		t.Fatalf("image pull failed: %v", err)
-	}
-	io.Copy(io.Discard, rc)
-	rc.Close()
-
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image:      acaTestImage,
-			Entrypoint: []string{"sh", "-c", "echo hello-aca && sleep 5"},
+			Image: commandImageName,
+			Cmd:   []string{"log", "hello-aca", "5"},
 		},
 		nil, nil, nil, "aca_logs_"+testID,
 	)
@@ -475,7 +487,7 @@ func TestACAContainerList(t *testing.T) {
 	testID := generateTestID()
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: acaTestImage,
+			Image: commandImageName,
 		},
 		nil, nil, nil, "aca_list_"+testID,
 	)
@@ -521,7 +533,7 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image:        acaOverlayImageName,
-			Cmd:          []string{"sh"},
+			Cmd:          []string{"/opt/sockerless/container-command", "stdin-echo"},
 			OpenStdin:    true,
 			AttachStdin:  true,
 			AttachStdout: true,
@@ -545,7 +557,7 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 	}
 	defer hijacked.Close()
 
-	if _, err := hijacked.Conn.Write([]byte("echo aca-gitlab-stdin-ok\n")); err != nil {
+	if _, err := hijacked.Conn.Write([]byte("aca-gitlab-stdin-ok\n")); err != nil {
 		t.Fatalf("write attach stdin: %v", err)
 	}
 	if err := hijacked.CloseWrite(); err != nil {

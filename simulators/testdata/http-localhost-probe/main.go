@@ -10,7 +10,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: http-localhost-probe server|probe|probe-once")
+		fmt.Fprintln(os.Stderr, "usage: http-localhost-probe server|probe|probe-once [MESSAGE]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -42,13 +42,17 @@ func main() {
 			os.Exit(1)
 		}
 	case "probe-once":
+		message := "cloudrun-job-sidecar-ok"
+		if len(os.Args) >= 3 {
+			message = os.Args[2]
+		}
 		client := &http.Client{Timeout: 500 * time.Millisecond}
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			resp, err := client.Get("http://127.0.0.1:9090/")
 			if err == nil {
 				_ = resp.Body.Close()
-				fmt.Println("cloudrun-job-sidecar-ok")
+				fmt.Println(message)
 				return
 			}
 			if time.Now().After(deadline) {

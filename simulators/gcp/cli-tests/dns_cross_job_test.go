@@ -43,10 +43,12 @@ func TestDNS_CrossJobResolution_CLI(t *testing.T) {
 	// 2. Create + run two Cloud Run Jobs via direct HTTP (gcloud run
 	// jobs create against the simulator's v2 endpoint is not reliably
 	// supported; the SDK/REST path is the gcloud back-door).
-	createJob := func(name string) string {
+	createJob := func(name string, args []string) string {
+		argsJSON, err := json.Marshal(args)
+		require.NoError(t, err)
 		body := `{
 			"template":{"template":{
-				"containers":[{"image":"` + evalImageName + `","command":["sh","-c"],"args":["sleep 30"]}],
+				"containers":[{"image":"` + commandImageName + `","args":` + string(argsJSON) + `}],
 				"timeout":"60s"
 			}}
 		}`
@@ -75,8 +77,8 @@ func TestDNS_CrossJobResolution_CLI(t *testing.T) {
 		return execResp.Name
 	}
 
-	alphaExec := createJob("cli-alpha")
-	betaExec := createJob("cli-beta")
+	alphaExec := createJob("cli-alpha", []string{"resolve", "beta", "30", "gcp-cli-cross-job-dns-ok", "10"})
+	betaExec := createJob("cli-beta", []string{"sleep", "60"})
 
 	alphaContainer := jobContainerName(alphaExec)
 	betaContainer := jobContainerName(betaExec)
@@ -103,14 +105,16 @@ func TestDNS_CrossJobResolution_CLI(t *testing.T) {
 	httpDoJSON(t, "POST", rrURL, fmt.Sprintf(
 		`{"name":"beta.cli-xjob.local.","type":"A","ttl":60,"rrdatas":[%q]}`, betaIP))
 
-	// 4. Cross-job DNS: alpha resolves "beta".
-	var getent []byte
+	// 4. Cross-job DNS: alpha resolves "beta" through its own resolver
+	// once the private-zone A records have attached both containers to
+	// the zone's backing Docker network.
+	var logs []byte
 	require.Eventually(t, func() bool {
 		var err error
-		getent, err = exec.Command("docker", "exec", alphaContainer, "getent", "hosts", "beta").CombinedOutput()
-		return err == nil && len(getent) > 0
-	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via private zone: %s", getent)
-	assert.Contains(t, string(getent), "beta", "getent output should mention beta: %s", getent)
+		logs, err = exec.Command("docker", "logs", alphaContainer).CombinedOutput()
+		return err == nil && strings.Contains(string(logs), "gcp-cli-cross-job-dns-ok")
+	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via private zone: %s", logs)
+	assert.Contains(t, string(logs), "gcp-cli-cross-job-dns-ok")
 }
 
 // jobContainerName + containerIP mirror the SDK-test helpers.
