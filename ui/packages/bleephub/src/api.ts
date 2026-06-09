@@ -7,6 +7,7 @@ import type {
   BleephubMetrics,
   BleephubStatus,
   BleephubHealth,
+  BleephubStorageInfo,
   BleephubApp,
   BleephubInstallation,
   BleephubOAuthApp,
@@ -17,6 +18,30 @@ import type {
   GithubBranch,
   GithubCommit,
 } from "./types.js";
+
+const TOKEN_KEY = "bleephub_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+export function isLoggedIn(): boolean {
+  return !!getToken();
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
 
 async function fetchJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -57,10 +82,16 @@ export const fetchInstallations = () =>
 export const fetchOAuthState = () =>
   fetchJSON<BleephubOAuthState>("/internal/oauth/state");
 
-/**
- * Create a new GitHub App via bleephub's management endpoint.
- * Returns the created App entity (with PEM private key + client_secret).
- */
+export const fetchStorageInfo = () =>
+  fetchJSON<BleephubStorageInfo>("/internal/storage");
+
+export async function verifyToken(token: string): Promise<boolean> {
+  const res = await fetch("/api/v3/user", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
+}
+
 export async function createApp(payload: {
   name: string;
   description?: string;
@@ -71,7 +102,7 @@ export async function createApp(payload: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer bleephub-admin-token-00000000000000000000",
+      ...authHeaders(),
     },
     body: JSON.stringify(payload),
   });
@@ -84,7 +115,7 @@ export async function createApp(payload: {
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
   const res = await fetch("/api/v3/bleephub/oauth-apps", {
-    headers: { Authorization: "Bearer bleephub-admin-token-00000000000000000000" },
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
@@ -100,7 +131,7 @@ export async function createOAuthApp(payload: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer bleephub-admin-token-00000000000000000000",
+      ...authHeaders(),
     },
     body: JSON.stringify(payload),
   });
@@ -115,7 +146,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
   const verb = suspend ? "suspend" : "unsuspend";
   const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {
     method: "POST",
-    headers: { Authorization: "Bearer bleephub-admin-token-00000000000000000000" },
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 409) {
     const text = await res.text();
@@ -126,7 +157,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 export async function deleteInstallation(installationID: number): Promise<void> {
   const res = await fetch(`/api/v3/bleephub/installations/${installationID}`, {
     method: "DELETE",
-    headers: { Authorization: "Bearer bleephub-admin-token-00000000000000000000" },
+    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 404) {
     const text = await res.text();
@@ -134,11 +165,6 @@ export async function deleteInstallation(installationID: number): Promise<void> 
   }
 }
 
-/**
- * Trigger a workflow_dispatch run. The repo segment of the URL must
- * match the WorkflowFile's repoFullName; the workflow_id can be the
- * numeric ID or the YAML's filename.
- */
 export async function dispatchWorkflow(
   repoFullName: string,
   workflowId: number | string,
@@ -158,12 +184,8 @@ export async function dispatchWorkflow(
   }
 }
 
-// --- GitHub REST API calls (same origin in production; proxied in dev) ---
-
-const AUTH = "Bearer bleephub-admin-token-00000000000000000000";
-
 async function ghFetch<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: { Authorization: AUTH } });
+  const res = await fetch(path, { headers: authHeaders() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
 }
@@ -202,7 +224,7 @@ export async function createIssue(
 ): Promise<GithubIssue> {
   const res = await fetch(`/api/v3/repos/${owner}/${repo}/issues`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: AUTH },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`createIssue ${res.status}`);
@@ -217,7 +239,7 @@ export async function mergePR(
 ): Promise<void> {
   const res = await fetch(`/api/v3/repos/${owner}/${repo}/pulls/${number}/merge`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: AUTH },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ merge_method: mergeMethod }),
   });
   if (!res.ok && res.status !== 405) throw new Error(`merge ${res.status}`);

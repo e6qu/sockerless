@@ -233,3 +233,11 @@ export interface GithubBranch {
   name: string;
   commit: { sha: string };
 }
+
+/** Storage backend info from /internal/storage */
+export interface BleephubStorageInfo {
+  persistence: string;
+  dialect: string;
+  git: string;
+  git_details: Record<string, string>;
+}

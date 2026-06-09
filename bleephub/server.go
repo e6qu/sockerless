@@ -169,6 +169,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
 	s.registerMgmtRoutes()
 
+	s.mux.HandleFunc("GET /internal/storage", s.handleInternalStorage)
+
 	// UI dashboard
 	s.registerUI()
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +227,41 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 		"jobs_by_status":    jobsByStatus,
 		"connected_runners": sessions,
 		"uptime_seconds":    int(time.Since(s.metrics.StartedAt).Seconds()),
+	})
+}
+
+func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
+	persistenceBackend := "none"
+	dialectName := ""
+	if s.store.persist != nil {
+		persistenceBackend = s.store.persist.dialect.name
+		dialectName = s.store.persist.dialect.name
+	}
+
+	gitBackend := "memory"
+	gitDetails := map[string]string{}
+	gitDir := GitDataDir()
+	if IsS3GitStorage() {
+		gitBackend = "s3"
+		if bucket := os.Getenv("BLEEPHUB_S3_BUCKET"); bucket != "" {
+			gitDetails["bucket"] = bucket
+		}
+		if endpoint := os.Getenv("BLEEPHUB_S3_ENDPOINT"); endpoint != "" {
+			gitDetails["endpoint"] = endpoint
+		}
+		if prefix := os.Getenv("BLEEPHUB_S3_PREFIX"); prefix != "" {
+			gitDetails["prefix"] = prefix
+		}
+	} else if gitDir != "" {
+		gitBackend = "filesystem"
+		gitDetails["dir"] = gitDir
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"persistence": persistenceBackend,
+		"dialect":     dialectName,
+		"git":         gitBackend,
+		"git_details": gitDetails,
 	})
 }
 

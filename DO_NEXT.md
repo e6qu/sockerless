@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, 3, 4, 5, and 6 completed:
+Subtasks 1, 2, 3, 4, 5, 6, and 7 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -53,6 +53,20 @@ Subtasks 1, 2, 3, 4, 5, and 6 completed:
     the repo prefix.
   - The S3 filesystem is lazily initialized and cached (singleton connection per
     process). Uses path-style addressing for MinIO compatibility.
+- Subtask 7: UI auth and operator storage/status views.
+  - Removed hard-coded admin token from `api.ts`. All API calls now use
+    `authHeaders()` which reads the token from `localStorage`.
+  - Added `LoginPage` with password input that verifies the token against
+    `/api/v3/user` before storing it.
+  - Added auth guard: unauthenticated users are redirected to `/ui/login`.
+    All UI routes require a valid token.
+  - Added sign-out button in the AppShell nav.
+  - Added `/internal/storage` endpoint reporting persistence backend
+    (none/sqlite/postgres), dialect, git storage backend
+    (memory/filesystem/s3), and git storage details (dir/bucket/endpoint/prefix).
+  - OverviewPage shows storage backend info section with persistence and
+    git storage status.
+  - Added `BleephubStorageInfo` type to `types.ts`.
   - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
     interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
   - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
@@ -71,7 +85,7 @@ gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bl
 
 ## Current Subtask
 
-Subtask 7: UI auth and operator storage/status views.
+Subtask 8: UI/API coverage for cache, artifacts, webhooks, orgs/teams, branch protection, audit events, and repo git refs.
 
 ## Ordered Subtasks For This PR
 
