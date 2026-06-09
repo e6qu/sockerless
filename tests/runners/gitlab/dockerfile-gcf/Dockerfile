@@ -4,7 +4,7 @@
 # `sockerless-backend-gcf` + the gcf bootstrap binary. The runner's
 # docker executor routes each step container via DOCKER_HOST=
 # tcp://localhost:3376 → sockerless-backend-gcf → Cloud Run Function
-# (with Phase 118d pod overlay for `services:`).
+# with pod overlay support for `services:`.
 
 FROM ubuntu:22.04
 

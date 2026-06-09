@@ -10,10 +10,9 @@
 #     repo + label set via RUNNER_REG_TOKEN.
 #  3. Polls GitHub for one job, runs it, exits.
 #
-# Per BUG-862 (backend ↔ host primitive must match), this image bakes
-# `sockerless-backend-cloudrun` (NOT lambda or ecs); each step
-# container the runner spawns lands as a Cloud Run Job via the in-image
-# sockerless backend.
+# This image bakes `sockerless-backend-cloudrun` (NOT lambda or ecs) so
+# the backend matches the host primitive; each step container the runner
+# spawns lands as a Cloud Run Job via the in-image sockerless backend.
 
 FROM ubuntu:22.04
 
@@ -38,12 +37,11 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/d
 # Pre-built sockerless-backend-cloudrun (cross-compiled linux/amd64).
 COPY sockerless-backend-cloudrun /usr/local/bin/sockerless-backend-cloudrun
 
-# Phase 122g: cloudrun overlay-injects sockerless-cloudrun-bootstrap
-# into every per-step Cloud Run Service image so `docker exec` can
-# dispatch via Path B HTTP POST (specs/CLOUD_RESOURCE_MAPPING.md
-# § Lesson 8). The bootstrap binary lives on the runner image's disk
-# so the in-image cloudrun backend can stage it into Cloud Build
-# contexts when building per-image overlays.
+# cloudrun overlay-injects sockerless-cloudrun-bootstrap into every
+# per-step Cloud Run Service image so `docker exec` can dispatch via
+# the reverse-agent bootstrap. The bootstrap binary lives on the runner
+# image's disk so the in-image cloudrun backend can stage it into Cloud
+# Build contexts when building per-image overlays.
 COPY sockerless-cloudrun-bootstrap /opt/sockerless/sockerless-cloudrun-bootstrap
 RUN chmod +x /usr/local/bin/sockerless-backend-cloudrun \
              /opt/sockerless/sockerless-cloudrun-bootstrap

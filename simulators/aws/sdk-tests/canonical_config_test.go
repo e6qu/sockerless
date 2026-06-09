@@ -18,9 +18,9 @@ import (
 //
 // All three forms reconfigure a client around a sim wire-protocol
 // bug instead of fixing the sim. The S3 case (`baseURL + "/s3"`)
-// was load-bearing for 165+ phases because tests passed against the
-// quirk and the bug only surfaced when an unmodified consumer
-// pointed at the documented AWS_ENDPOINT_URL.
+// was load-bearing because tests passed against the quirk and the bug
+// only surfaced when an unmodified consumer pointed at the documented
+// AWS_ENDPOINT_URL.
 //
 // Allowed:
 //

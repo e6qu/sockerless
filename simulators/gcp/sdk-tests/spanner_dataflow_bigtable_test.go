@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,6 +47,9 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ddlOp.Done)
 	assert.Contains(t, ddlOp.Name, "/databases/sdkdb/operations/")
+	var ddlMetadata map[string]any
+	require.NoError(t, json.Unmarshal(ddlOp.Metadata, &ddlMetadata))
+	assert.Equal(t, db.Name, ddlMetadata["resource"])
 
 	session, err := svc.Projects.Instances.Databases.Sessions.Create(db.Name, &spanner.CreateSessionRequest{
 		Session: &spanner.Session{Labels: map[string]string{"kind": "sdk"}},

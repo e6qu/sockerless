@@ -75,8 +75,8 @@ func registerScheduler(srv *sim.Server) {
 // in CloudTrail. Scheduler is a REST/JSON service registered directly on the
 // server mux (path-addressed, no X-Amz-Target), so it bypasses the central
 // `POST /` recording middleware — every Scheduler operation must record itself
-// (issue #498). Real CloudTrail captures all EventBridge Scheduler API calls
-// against scheduler.amazonaws.com.
+// so real CloudTrail-style lookup surfaces Scheduler API calls against
+// scheduler.amazonaws.com.
 func schedulerRecorded(eventName string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}

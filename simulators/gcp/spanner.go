@@ -359,6 +359,7 @@ func newSpannerDatabaseDDLOperation(database, operationID string, statements []s
 		Metadata: map[string]any{
 			"@type":      "type.googleapis.com/google.spanner.admin.database.v1.UpdateDatabaseDdlMetadata",
 			"database":   database,
+			"resource":   database,
 			"statements": statements,
 			"commitTime": now,
 		},

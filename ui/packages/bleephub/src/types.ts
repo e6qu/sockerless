@@ -96,7 +96,7 @@ export interface BleephubHealth {
   service: string;
 }
 
-/** WorkflowFile is the file-level workflow YAML entity (Phase 131). */
+/** WorkflowFile is the file-level workflow YAML entity. */
 export interface BleephubWorkflowFile {
   id: number;
   name: string;
@@ -139,7 +139,7 @@ export interface BleephubInstallation {
   suspendedAt?: string | null;
 }
 
-/** OAuth App row from /internal/oauth-apps (Phase 153 — distinct from GitHub App). */
+/** OAuth App row from /internal/oauth-apps, distinct from GitHub App. */
 export interface BleephubOAuthApp {
   clientId: string;
   name: string;

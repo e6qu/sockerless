@@ -99,7 +99,7 @@ func ResolveDriverFor(backend, dimension string) (Driver, bool, error) {
 //
 // Centralising the message shape keeps every NotImpl response
 // shaped the same way across all backends + dimensions, with no
-// phase or bug references leaking into the operator-visible error.
+// internal tracking references leaking into the operator-visible error.
 // Pass the typed driver's `Describe()` value as `description`.
 func NotImplDriverError(action, description string) *api.NotImplementedError {
 	return &api.NotImplementedError{Message: "docker " + action + " requires " + description}

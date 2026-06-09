@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// TestCloudTrailLookupFilterKeysCLI covers issue #496: `cloudtrail
-// lookup-events` must honour the ResourceName / ResourceType / EventId /
-// ReadOnly attribute keys, not only EventName (the others were silently ignored
-// and returned every event).
+// TestCloudTrailLookupFilterKeysCLI verifies `cloudtrail lookup-events` honours
+// the ResourceName / ResourceType / EventId / ReadOnly attribute keys, not only
+// EventName.
 func TestCloudTrailLookupFilterKeysCLI(t *testing.T) {
 	const cluster = "cli-ct-filter-cluster"
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
@@ -54,9 +53,8 @@ func TestCloudTrailLookupFilterKeysCLI(t *testing.T) {
 	}
 }
 
-// TestCloudTrailRecordsSchedulerAPICallCLI covers issue #498: EventBridge
-// Scheduler API calls must be recorded in CloudTrail against
-// scheduler.amazonaws.com.
+// TestCloudTrailRecordsSchedulerAPICallCLI verifies EventBridge Scheduler API
+// calls are recorded in CloudTrail against scheduler.amazonaws.com.
 func TestCloudTrailRecordsSchedulerAPICallCLI(t *testing.T) {
 	const name = "cli-ct-schedule"
 	runCLI(t, awsCLI("scheduler", "create-schedule",

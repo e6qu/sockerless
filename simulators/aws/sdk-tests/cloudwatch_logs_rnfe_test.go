@@ -14,7 +14,7 @@ import (
 // TestCWLogs_ReadOpsRejectMissingGroup covers the group-existence contract for
 // the log-reading ops: FilterLogEvents / DescribeLogStreams / GetLogEvents must
 // return ResourceNotFoundException (a declared error for each) when the group
-// does not exist — not an empty result that masks misconfiguration (issue #483).
+// does not exist, not an empty result that masks misconfiguration.
 func TestCWLogs_ReadOpsRejectMissingGroup(t *testing.T) {
 	c := cwLogsClient()
 	const missing = "/does-not-exist-rnfe"

@@ -337,9 +337,9 @@ func fireSNSTarget(topicArn, input string) {
 // cloudTrailRecordSchedulerFire records a CloudTrail event for a target the
 // Scheduler firing loop invoked in-process. These invocations call the target
 // handler directly (callJSONHandler / httptest), bypassing the central `POST /`
-// recording middleware (issue #497). Real CloudTrail records the downstream
-// call (RunTask / SendMessage / Publish / Invoke) with
-// `userIdentity.invokedBy = scheduler.amazonaws.com`.
+// recording middleware. Real CloudTrail records the downstream call (RunTask /
+// SendMessage / Publish / Invoke) with `userIdentity.invokedBy =
+// scheduler.amazonaws.com`.
 func cloudTrailRecordSchedulerFire(eventName, source, resourceType, resourceName string) {
 	cloudTrailRecordSchedulerFireErr(eventName, source, resourceType, resourceName, "", "")
 }
