@@ -60,8 +60,8 @@ func registerCloudWatchMetrics(srv *sim.Server) {
 	cwMetrics = sim.MakeStore[[]CWMetricDatum](srv.DB(), "cw_metrics")
 
 	// Smithy RPCv2 CBOR uses URL path routing
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/GetMetricData", handleCWGetMetricData)
-	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutMetricData", handleCWPutMetricData)
+	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/GetMetricData", cloudTrailRecordedREST("GetMetricData", "monitoring.amazonaws.com", nil, handleCWGetMetricData))
+	srv.HandleFunc("POST /service/GraniteServiceVersion20100801/operation/PutMetricData", cloudTrailRecordedREST("PutMetricData", "monitoring.amazonaws.com", nil, handleCWPutMetricData))
 }
 
 // GetMetricData request/response types (CBOR)

@@ -138,21 +138,24 @@ func registerEFS(srv *sim.Server) {
 
 	mux := srv.Mux()
 
-	mux.HandleFunc("POST /2015-02-01/file-systems", handleEFSCreateFileSystem)
-	mux.HandleFunc("GET /2015-02-01/file-systems", handleEFSDescribeFileSystems)
-	mux.HandleFunc("DELETE /2015-02-01/file-systems/{id}", handleEFSDeleteFileSystem)
-	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/lifecycle-configuration", handleEFSPutLifecycleConfiguration)
-	mux.HandleFunc("GET /2015-02-01/file-systems/{id}/lifecycle-configuration", handleEFSDescribeLifecycleConfiguration)
+	fsResource := cloudTrailRESTResource("AWS::EFS::FileSystem", "id")
+	mtResource := cloudTrailRESTResource("AWS::EFS::MountTarget", "id")
+	apResource := cloudTrailRESTResource("AWS::EFS::AccessPoint", "id")
+	mux.HandleFunc("POST /2015-02-01/file-systems", cloudTrailRecordedREST("CreateFileSystem", "elasticfilesystem.amazonaws.com", nil, handleEFSCreateFileSystem))
+	mux.HandleFunc("GET /2015-02-01/file-systems", cloudTrailRecordedREST("DescribeFileSystems", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeFileSystems))
+	mux.HandleFunc("DELETE /2015-02-01/file-systems/{id}", cloudTrailRecordedREST("DeleteFileSystem", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDeleteFileSystem))
+	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/lifecycle-configuration", cloudTrailRecordedREST("PutLifecycleConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSPutLifecycleConfiguration))
+	mux.HandleFunc("GET /2015-02-01/file-systems/{id}/lifecycle-configuration", cloudTrailRecordedREST("DescribeLifecycleConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeLifecycleConfiguration))
 
-	mux.HandleFunc("POST /2015-02-01/mount-targets", handleEFSCreateMountTarget)
-	mux.HandleFunc("GET /2015-02-01/mount-targets", handleEFSDescribeMountTargets)
-	mux.HandleFunc("GET /2015-02-01/mount-targets/{id}/security-groups", handleEFSDescribeMountTargetSecurityGroups)
-	mux.HandleFunc("PUT /2015-02-01/mount-targets/{id}/security-groups", handleEFSModifyMountTargetSecurityGroups)
-	mux.HandleFunc("DELETE /2015-02-01/mount-targets/{id}", handleEFSDeleteMountTarget)
+	mux.HandleFunc("POST /2015-02-01/mount-targets", cloudTrailRecordedREST("CreateMountTarget", "elasticfilesystem.amazonaws.com", nil, handleEFSCreateMountTarget))
+	mux.HandleFunc("GET /2015-02-01/mount-targets", cloudTrailRecordedREST("DescribeMountTargets", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeMountTargets))
+	mux.HandleFunc("GET /2015-02-01/mount-targets/{id}/security-groups", cloudTrailRecordedREST("DescribeMountTargetSecurityGroups", "elasticfilesystem.amazonaws.com", mtResource, handleEFSDescribeMountTargetSecurityGroups))
+	mux.HandleFunc("PUT /2015-02-01/mount-targets/{id}/security-groups", cloudTrailRecordedREST("ModifyMountTargetSecurityGroups", "elasticfilesystem.amazonaws.com", mtResource, handleEFSModifyMountTargetSecurityGroups))
+	mux.HandleFunc("DELETE /2015-02-01/mount-targets/{id}", cloudTrailRecordedREST("DeleteMountTarget", "elasticfilesystem.amazonaws.com", mtResource, handleEFSDeleteMountTarget))
 
-	mux.HandleFunc("POST /2015-02-01/access-points", handleEFSCreateAccessPoint)
-	mux.HandleFunc("GET /2015-02-01/access-points", handleEFSDescribeAccessPoints)
-	mux.HandleFunc("DELETE /2015-02-01/access-points/{id}", handleEFSDeleteAccessPoint)
+	mux.HandleFunc("POST /2015-02-01/access-points", cloudTrailRecordedREST("CreateAccessPoint", "elasticfilesystem.amazonaws.com", nil, handleEFSCreateAccessPoint))
+	mux.HandleFunc("GET /2015-02-01/access-points", cloudTrailRecordedREST("DescribeAccessPoints", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeAccessPoints))
+	mux.HandleFunc("DELETE /2015-02-01/access-points/{id}", cloudTrailRecordedREST("DeleteAccessPoint", "elasticfilesystem.amazonaws.com", apResource, handleEFSDeleteAccessPoint))
 }
 
 func handleEFSCreateFileSystem(w http.ResponseWriter, r *http.Request) {

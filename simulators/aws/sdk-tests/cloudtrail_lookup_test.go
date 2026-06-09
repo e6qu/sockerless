@@ -6,9 +6,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	cttypes "github.com/aws/aws-sdk-go-v2/service/cloudtrail/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	schedtypes "github.com/aws/aws-sdk-go-v2/service/scheduler/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -179,4 +184,60 @@ func TestCloudTrailRecordsSchedulerFiredTargetSDK(t *testing.T) {
 		return false
 	}, 20*time.Second, 1*time.Second,
 		"scheduler-fired SendMessage must be recorded with invokedBy=scheduler.amazonaws.com")
+}
+
+func TestCloudTrailRecordsRESTServiceAPICallsSDK(t *testing.T) {
+	ct := cloudTrailClient()
+	s3c := s3Client()
+	lambdac := lambdaClient()
+	apigw := apigwv2Client()
+	cw := cloudwatchClient()
+
+	bucket := "sdk-ct-rest-bucket"
+	_, err := s3c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = s3c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucket)})
+	})
+
+	_, err = lambdac.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String("missing-ct-function")})
+	require.Error(t, err)
+
+	api, err := apigw.CreateApi(ctx, &apigatewayv2.CreateApiInput{
+		Name:         aws.String("ct-rest-api"),
+		ProtocolType: "HTTP",
+	})
+	require.NoError(t, err)
+	apiID := aws.ToString(api.ApiId)
+	t.Cleanup(func() {
+		_, _ = apigw.DeleteApi(ctx, &apigatewayv2.DeleteApiInput{ApiId: aws.String(apiID)})
+	})
+
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String("CT/REST"),
+		MetricData: []cwtypes.MetricDatum{{
+			MetricName: aws.String("Recorded"),
+			Value:      aws.Float64(1),
+		}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return ctHasEventNamed(ctLookup(t, ct, cttypes.LookupAttributeKeyEventSource, "s3.amazonaws.com"), "CreateBucket") &&
+			ctHasEventNamed(ctLookup(t, ct, cttypes.LookupAttributeKeyEventSource, "lambda.amazonaws.com"), "GetFunction") &&
+			ctHasEventNamed(ctLookup(t, ct, cttypes.LookupAttributeKeyEventSource, "apigateway.amazonaws.com"), "CreateApi") &&
+			ctHasEventNamed(ctLookup(t, ct, cttypes.LookupAttributeKeyEventSource, "monitoring.amazonaws.com"), "PutMetricData")
+	}, 10*time.Second, 500*time.Millisecond)
+
+	lambdaEvents := ctLookup(t, ct, cttypes.LookupAttributeKeyEventName, "GetFunction")
+	require.NotEmpty(t, lambdaEvents)
+	foundError := false
+	for _, ev := range lambdaEvents {
+		record := aws.ToString(ev.CloudTrailEvent)
+		if strings.Contains(record, "ResourceNotFoundException") && strings.Contains(record, "missing-ct-function") {
+			foundError = true
+			break
+		}
+	}
+	assert.True(t, foundError, "failed Lambda REST call must carry CloudTrail errorCode/errorMessage")
 }

@@ -18,13 +18,15 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Phase
 
-**Post-ECS networking cleanup / simulator fidelity maintenance.** PR #528 fixed
-ACA Apps attach-stdin under local Podman. The current PR closes the newest
-consumer simulator reports: Azure Entra duplicate UPN/ROPC determinism, AWS ECS
-Fargate `SYS_CHROOT`, and managed-EBS awsvpc same-VPC reachability coverage.
+**Post-ECS networking cleanup / simulator fidelity maintenance.** PR #529 fixed
+the Entra duplicate-UPN issue plus ECS Fargate `SYS_CHROOT` and managed-EBS
+awsvpc reachability blockers. The current PR closes consumer #530 by applying
+ECS `RunTask` container overrides to the real task runtime, and closes the AWS
+CloudTrail REST/RPC recording sweep for the remaining path-based management
+service slices.
 
-Likely next work: BUG-1540 (AWS CloudTrail REST-protocol recording sweep) or a
-Phase G new-service-slice PR, unless new consumer issues arrive first.
+Likely next work: a Phase G new-service-slice PR or the next actionable consumer
+issue (#394 remains upstream-blocked).
 
 ## Previous Completed Work
 

@@ -5,7 +5,9 @@ import (
 	"compress/gzip"
 	"crypto/md5"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -55,6 +57,7 @@ var (
 type cloudTrailStatusRecorder struct {
 	http.ResponseWriter
 	status int
+	body   bytes.Buffer
 }
 
 func (w *cloudTrailStatusRecorder) WriteHeader(status int) {
@@ -66,6 +69,7 @@ func (w *cloudTrailStatusRecorder) Write(p []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	_, _ = w.body.Write(p)
 	return w.ResponseWriter.Write(p)
 }
 
@@ -471,7 +475,7 @@ func cloudTrailARN(name string) string {
 // buffered request payload (the handler has already consumed r.Body), used to
 // extract the resources[] the call acted on for ResourceName/ResourceType
 // lookups.
-func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, status int) {
+func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, status int, respHeaders http.Header, respBody []byte) {
 	if cloudTrailEvents == nil || status >= 500 {
 		return
 	}
@@ -493,13 +497,137 @@ func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, s
 			Msg("cloudtrail: no eventSource mapping for service slice; event not recorded")
 		return
 	}
+	errorCode, errorMessage := cloudTrailErrorFields(status, respHeaders, respBody)
 	cloudTrailRecord(CloudTrailEvent{
-		EventName:   eventName,
-		EventSource: source,
-		AccessKeyId: cloudTrailAccessKeyID(r),
-		ReadOnly:    cloudTrailReadOnly(eventName),
-		Resources:   cloudTrailResources(source, eventName, reqBody, r),
+		EventName:    eventName,
+		EventSource:  source,
+		AccessKeyId:  cloudTrailAccessKeyID(r),
+		ReadOnly:     cloudTrailReadOnly(eventName),
+		Resources:    cloudTrailResources(source, eventName, reqBody, r),
+		ErrorCode:    errorCode,
+		ErrorMessage: errorMessage,
 	})
+}
+
+type cloudTrailRESTEventNameFunc func(*http.Request, []byte) string
+type cloudTrailRESTResourceFunc func(*http.Request, []byte) []CloudTrailResource
+
+func cloudTrailRecordedREST(eventName, source string, resources cloudTrailRESTResourceFunc, handler http.HandlerFunc) http.HandlerFunc {
+	return cloudTrailRecordedRESTDynamic(func(*http.Request, []byte) string { return eventName }, source, resources, handler)
+}
+
+func cloudTrailRecordedRESTDynamic(eventName cloudTrailRESTEventNameFunc, source string, resources cloudTrailRESTResourceFunc, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
+		handler(rec, r)
+		if cloudTrailEvents == nil || rec.statusCode() >= 500 {
+			return
+		}
+		name := eventName(r, body)
+		if name == "" {
+			return
+		}
+		errorCode, errorMessage := cloudTrailErrorFields(rec.statusCode(), rec.Header(), rec.body.Bytes())
+		ev := CloudTrailEvent{
+			EventName:    name,
+			EventSource:  source,
+			AccessKeyId:  cloudTrailAccessKeyID(r),
+			ReadOnly:     cloudTrailReadOnly(name),
+			ErrorCode:    errorCode,
+			ErrorMessage: errorMessage,
+		}
+		if resources != nil {
+			ev.Resources = resources(r, body)
+		}
+		cloudTrailRecord(ev)
+	}
+}
+
+func cloudTrailRESTResource(resourceType string, params ...string) cloudTrailRESTResourceFunc {
+	return func(r *http.Request, _ []byte) []CloudTrailResource {
+		for _, param := range params {
+			if value := r.PathValue(param); value != "" {
+				return []CloudTrailResource{{ResourceType: resourceType, ResourceName: cloudTrailShortName(value)}}
+			}
+		}
+		return nil
+	}
+}
+
+func cloudTrailErrorFields(status int, headers http.Header, body []byte) (string, string) {
+	if status < 400 {
+		return "", ""
+	}
+	code := cleanCloudTrailErrorCode(headers.Get("X-Amzn-Errortype"))
+	var msg string
+	if len(body) > 0 {
+		var raw map[string]any
+		if json.Unmarshal(body, &raw) == nil {
+			if code == "" {
+				code = cleanCloudTrailErrorCode(firstString(raw, "__type", "code", "Code"))
+			}
+			msg = firstString(raw, "message", "Message")
+		}
+		if code == "" || msg == "" {
+			xmlCode, xmlMsg := cloudTrailXMLErrorFields(body)
+			if code == "" {
+				code = xmlCode
+			}
+			if msg == "" {
+				msg = xmlMsg
+			}
+		}
+	}
+	return code, msg
+}
+
+func firstString(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := raw[key].(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func cleanCloudTrailErrorCode(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	if i := strings.Index(code, ":"); i >= 0 {
+		code = code[:i]
+	}
+	if i := strings.LastIndex(code, "#"); i >= 0 {
+		code = code[i+1:]
+	}
+	return code
+}
+
+func cloudTrailXMLErrorFields(body []byte) (string, string) {
+	var envelope struct {
+		Error struct {
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		} `xml:"Error"`
+	}
+	if err := xml.Unmarshal(body, &envelope); err == nil && (envelope.Error.Code != "" || envelope.Error.Message != "") {
+		return envelope.Error.Code, envelope.Error.Message
+	}
+	var direct struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	}
+	if err := xml.Unmarshal(body, &direct); err == nil {
+		return direct.Code, direct.Message
+	}
+	return "", ""
 }
 
 // cloudTrailRecord finalises and persists a management event: it stamps the
@@ -600,6 +728,7 @@ var awsEventSourceByTargetPrefix = []struct{ prefix, source string }{
 var awsEventSourceByQueryVersion = map[string]string{
 	"2016-11-15": "ec2.amazonaws.com",
 	"2011-01-01": "autoscaling.amazonaws.com",
+	"2010-08-01": "monitoring.amazonaws.com",
 	"2010-03-31": "sns.amazonaws.com",
 	"2015-12-01": "elasticloadbalancing.amazonaws.com",
 	"2014-10-31": "rds.amazonaws.com",

@@ -4,7 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
-## 2026-06-09 — Consumer batch: ECS workspace blockers + Entra duplicate UPN (BUG-1577–1579, PR pending)
+## 2026-06-09 — ECS RunTask overrides + CloudTrail REST sweep (BUG-1580, BUG-1540, PR pending)
+
+- **BUG-1580 / issue #530:** ECS `RunTask.overrides.containerOverrides` now follows the official ECS SDK/API shape. Task responses echo `overrides`, task-level CPU/memory overrides affect the task object, and named-container `environment` plus `command` overrides are applied to the real runtime container for that task. SDK + CLI regressions run real Fargate tasks and assert the override env reaches the process through CloudWatch Logs.
+- **BUG-1540:** CloudTrail now records path-based AWS management APIs, not only central `POST /` awsJson/query calls. Lambda, S3, API Gateway v1/v2, Batch, EFS, CloudFront, Amplify, Route53, and CloudWatch metrics RPCv2 registrations wrap their real handlers with explicit SDK operation names and canonical event sources. S3 derives operation names from method + subresource query, so events remain `CreateBucket`, `PutBucketPolicy`, `CreateMultipartUpload`, etc.
+- CloudTrail failed-call fidelity improved: response bodies are captured and 4xx API calls record `errorCode`/`errorMessage` in the embedded event record. SDK + CLI tests verify S3, Lambda failed-call errors, API Gateway v2, and CloudWatch metrics events.
+
+## 2026-06-09 — Consumer batch: ECS workspace blockers + Entra duplicate UPN (BUG-1577–1579, PR #529)
 
 - **BUG-1577 / issue #525:** Azure Entra Graph now rejects duplicate `userPrincipalName` values case-insensitively, and ROPC uses the same UPN resolver. SDK + CLI tests create a user, add a group, reject a duplicate create, and verify the `id_token` still carries the original user's `oid` and group claim.
 - **BUG-1578 / issue #527:** AWS ECS Fargate sandbox keeps `SYS_CHROOT`, matching real Fargate support for sshd-style containers that perform preauth chroot. Coverage includes the sandbox profile and a real ECS task invoking `chroot(2)`.

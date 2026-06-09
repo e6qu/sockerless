@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `fix/ecs-entra-consumer-issues` (PR pending — BUG-1577/1578/1579, issues #525/#526/#527).
-- Current fix: Azure Entra Graph rejects duplicate `userPrincipalName` values case-insensitively and ROPC uses the same resolver, so tokens cannot pick a stale duplicate user. AWS ECS Fargate keeps `SYS_CHROOT`, unblocking sshd preauth chroot. The ECS managed-EBS + awsvpc + same-VPC private-IP path is pinned by a real task-to-task CLI regression.
-- Verification so far: focused Azure SDK/CLI Entra regressions pass; AWS sandbox unit tests pass; focused AWS ECS CLI chroot and managed-EBS awsvpc reachability regressions pass; Azure simulator package tests pass; AWS simulator package tests pass.
-- After this PR: likely next choices are BUG-1540 (AWS CloudTrail REST-protocol coverage) or a Phase G new-service-slice PR, unless new consumer issues arrive first.
+- Branch: `fix/ecs-overrides-cloudtrail` (PR pending — BUG-1580/#530 + BUG-1540 CloudTrail REST sweep).
+- Current fix: ECS `RunTask.overrides.containerOverrides` is now modelled from the official ECS SDK/API shape, echoed on task responses, and applied to the real task container runtime for named-container `environment` and `command` overrides. CloudTrail now records REST/RPC management events for Lambda, S3, API Gateway v1/v2, Batch, EFS, CloudFront, Amplify, Route53, and CloudWatch metrics, with explicit SDK operation names and failed-call error fields.
+- Verification so far: focused ECS override SDK+CLI regressions pass; focused CloudTrail REST SDK+CLI regressions pass; full `simulators/aws` root, SDK test module, CLI test module, and shared simulator tests pass; `check-simulator-tests`, `check-cli-shard-coverage`, `check-latest-deps`, and `git diff --check` pass.
+- After this PR: likely next choices are a Phase G new-service-slice PR or the next actionable consumer issue (#394 remains upstream-blocked).
 
 ## Prior current state
 

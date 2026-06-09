@@ -121,19 +121,21 @@ func registerS3(srv *sim.Server) {
 	//     a bucket named "2015-03-31") plus a key whose path aligns
 	//     with the literal route — sim documents this as a known
 	//     edge case rather than rejecting such bucket names.
-	mux.HandleFunc("GET /{$}", handleS3ListBuckets)
-	mux.HandleFunc("PUT /{bucket}", handleS3PutBucketDispatch)
-	mux.HandleFunc("DELETE /{bucket}", handleS3DeleteBucketDispatch)
-	mux.HandleFunc("GET /{bucket}", handleS3GetOrHeadBucket)
-	mux.HandleFunc("PUT /{bucket}/{key...}", handleS3PutObjectDispatch)
-	mux.HandleFunc("GET /{bucket}/{key...}", handleS3GetOrHeadObjectDispatch)
-	mux.HandleFunc("DELETE /{bucket}/{key...}", handleS3DeleteObjectDispatch)
+	s3BucketResource := cloudTrailRESTResource("AWS::S3::Bucket", "bucket")
+	s3ObjectResource := cloudTrailRESTResource("AWS::S3::Object", "key", "bucket")
+	mux.HandleFunc("GET /{$}", cloudTrailRecordedREST("ListBuckets", "s3.amazonaws.com", nil, handleS3ListBuckets))
+	mux.HandleFunc("PUT /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3PutBucketDispatch))
+	mux.HandleFunc("DELETE /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3DeleteBucketDispatch))
+	mux.HandleFunc("GET /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3GetOrHeadBucket))
+	mux.HandleFunc("PUT /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3PutObjectDispatch))
+	mux.HandleFunc("GET /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3GetOrHeadObjectDispatch))
+	mux.HandleFunc("DELETE /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3DeleteObjectDispatch))
 	// POST routes for S3 subresource families. Without these, the
 	// catch-all `POST /` in main.go dispatches the request as awsQuery
 	// (looks for an `Action` parameter), which returns the wrong-
 	// protocol `MissingAction` envelope.
-	mux.HandleFunc("POST /{bucket}/{key...}", handleS3PostObjectDispatch)
-	mux.HandleFunc("POST /{bucket}", handleS3PostBucketDispatch)
+	mux.HandleFunc("POST /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3PostObjectDispatch))
+	mux.HandleFunc("POST /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3PostBucketDispatch))
 	// HEAD routes intentionally NOT registered: Go's net/http mux
 	// auto-routes HEAD requests to the matching GET handler when no
 	// HEAD-specific handler exists. Registering both forms together
@@ -141,6 +143,157 @@ func registerS3(srv *sim.Server) {
 	// existing literal routes (e.g., `GET /health`). The dispatch
 	// to HeadBucket / HeadObject happens by method check inside the
 	// GET handler.
+}
+
+func s3BucketOperationName(r *http.Request, _ []byte) string {
+	q := r.URL.Query()
+	switch r.Method {
+	case http.MethodHead:
+		return "HeadBucket"
+	case http.MethodPut:
+		if name, _, ok := firstBucketSubresource(q); ok {
+			return "PutBucket" + s3SubresourceOperationSuffix(name)
+		}
+		return "CreateBucket"
+	case http.MethodDelete:
+		if name, _, ok := firstBucketSubresource(q); ok {
+			return "DeleteBucket" + s3SubresourceOperationSuffix(name)
+		}
+		return "DeleteBucket"
+	case http.MethodPost:
+		if q.Has("delete") {
+			return "DeleteObjects"
+		}
+	case http.MethodGet:
+		switch {
+		case q.Has("policy"):
+			return "GetBucketPolicy"
+		case q.Has("uploads"):
+			return "ListMultipartUploads"
+		case q.Has("versions"):
+			return "ListObjectVersions"
+		case q.Has("location"):
+			return "GetBucketLocation"
+		case q.Has("policyStatus"):
+			return "GetBucketPolicyStatus"
+		case q.Has("intelligent-tiering"):
+			if q.Get("id") != "" {
+				return "GetBucketIntelligentTieringConfiguration"
+			}
+			return "ListBucketIntelligentTieringConfigurations"
+		case q.Has("inventory"):
+			if q.Get("id") != "" {
+				return "GetBucketInventoryConfiguration"
+			}
+			return "ListBucketInventoryConfigurations"
+		case q.Has("analytics"):
+			if q.Get("id") != "" {
+				return "GetBucketAnalyticsConfiguration"
+			}
+			return "ListBucketAnalyticsConfigurations"
+		case q.Has("metrics"):
+			if q.Get("id") != "" {
+				return "GetBucketMetricsConfiguration"
+			}
+			return "ListBucketMetricsConfigurations"
+		}
+		if name, _, ok := firstBucketSubresource(q); ok {
+			return "GetBucket" + s3SubresourceOperationSuffix(name)
+		}
+		return "ListObjectsV2"
+	}
+	return ""
+}
+
+func s3ObjectOperationName(r *http.Request, _ []byte) string {
+	q := r.URL.Query()
+	switch r.Method {
+	case http.MethodHead:
+		return "HeadObject"
+	case http.MethodPut:
+		switch {
+		case r.Header.Get("x-amz-copy-source") != "":
+			return "CopyObject"
+		case q.Has("uploadId") && q.Has("partNumber"):
+			return "UploadPart"
+		case q.Has("tagging"):
+			return "PutObjectTagging"
+		default:
+			return "PutObject"
+		}
+	case http.MethodGet:
+		switch {
+		case q.Has("uploadId"):
+			return "ListParts"
+		case q.Has("tagging"):
+			return "GetObjectTagging"
+		default:
+			return "GetObject"
+		}
+	case http.MethodPost:
+		switch {
+		case q.Has("uploads"):
+			return "CreateMultipartUpload"
+		case q.Has("uploadId"):
+			return "CompleteMultipartUpload"
+		}
+	case http.MethodDelete:
+		switch {
+		case q.Has("uploadId"):
+			return "AbortMultipartUpload"
+		case q.Has("tagging"):
+			return "DeleteObjectTagging"
+		default:
+			return "DeleteObject"
+		}
+	}
+	return ""
+}
+
+func s3SubresourceOperationSuffix(name string) string {
+	switch name {
+	case "acl":
+		return "Acl"
+	case "cors":
+		return "Cors"
+	case "lifecycle":
+		return "LifecycleConfiguration"
+	case "policy":
+		return "Policy"
+	case "versioning":
+		return "Versioning"
+	case "website":
+		return "Website"
+	case "logging":
+		return "Logging"
+	case "requestPayment":
+		return "RequestPayment"
+	case "accelerate":
+		return "AccelerateConfiguration"
+	case "replication":
+		return "Replication"
+	case "encryption":
+		return "Encryption"
+	case "tagging":
+		return "Tagging"
+	case "notification":
+		return "NotificationConfiguration"
+	case "publicAccessBlock":
+		return "PublicAccessBlock"
+	case "object-lock":
+		return "ObjectLockConfiguration"
+	case "ownershipControls":
+		return "OwnershipControls"
+	case "intelligent-tiering":
+		return "IntelligentTieringConfiguration"
+	case "inventory":
+		return "InventoryConfiguration"
+	case "analytics":
+		return "AnalyticsConfiguration"
+	case "metrics":
+		return "MetricsConfiguration"
+	}
+	return ""
 }
 
 // handleS3GetOrHeadBucket dispatches `HEAD /{bucket}` to HeadBucket

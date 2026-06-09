@@ -303,20 +303,22 @@ func registerRoute53(srv *sim.Server) {
 	r53Changes = sim.MakeStore[r53StoredChange](srv.DB(), "route53_changes")
 
 	mux := srv.Mux()
-	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone", handleR53CreateHostedZone)
-	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone", handleR53ListHostedZones)
-	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzonesbyname", handleR53ListHostedZonesByName)
-	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}", handleR53GetHostedZone)
-	mux.HandleFunc("DELETE /"+r53APIVersion+"/hostedzone/{id}", handleR53DeleteHostedZone)
-	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone/{id}/rrset", handleR53ChangeRRSets)
-	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone/{id}/rrset/", handleR53ChangeRRSets) // CLI uses trailing slash
-	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}/rrset", handleR53ListRRSets)
-	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}/rrset/", handleR53ListRRSets)
-	mux.HandleFunc("GET /"+r53APIVersion+"/change/{id}", handleR53GetChange)
+	hostedZoneResource := cloudTrailRESTResource("AWS::Route53::HostedZone", "id", "resourceId")
+	changeResource := cloudTrailRESTResource("AWS::Route53::Change", "id")
+	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone", cloudTrailRecordedREST("CreateHostedZone", "route53.amazonaws.com", nil, handleR53CreateHostedZone))
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone", cloudTrailRecordedREST("ListHostedZones", "route53.amazonaws.com", nil, handleR53ListHostedZones))
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzonesbyname", cloudTrailRecordedREST("ListHostedZonesByName", "route53.amazonaws.com", nil, handleR53ListHostedZonesByName))
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}", cloudTrailRecordedREST("GetHostedZone", "route53.amazonaws.com", hostedZoneResource, handleR53GetHostedZone))
+	mux.HandleFunc("DELETE /"+r53APIVersion+"/hostedzone/{id}", cloudTrailRecordedREST("DeleteHostedZone", "route53.amazonaws.com", hostedZoneResource, handleR53DeleteHostedZone))
+	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone/{id}/rrset", cloudTrailRecordedREST("ChangeResourceRecordSets", "route53.amazonaws.com", hostedZoneResource, handleR53ChangeRRSets))
+	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone/{id}/rrset/", cloudTrailRecordedREST("ChangeResourceRecordSets", "route53.amazonaws.com", hostedZoneResource, handleR53ChangeRRSets)) // CLI uses trailing slash
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}/rrset", cloudTrailRecordedREST("ListResourceRecordSets", "route53.amazonaws.com", hostedZoneResource, handleR53ListRRSets))
+	mux.HandleFunc("GET /"+r53APIVersion+"/hostedzone/{id}/rrset/", cloudTrailRecordedREST("ListResourceRecordSets", "route53.amazonaws.com", hostedZoneResource, handleR53ListRRSets))
+	mux.HandleFunc("GET /"+r53APIVersion+"/change/{id}", cloudTrailRecordedREST("GetChange", "route53.amazonaws.com", changeResource, handleR53GetChange))
 
 	// Tagging — path /2013-04-01/tags/{ResourceType}/{ResourceId}
-	mux.HandleFunc("GET /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", handleR53ListTagsForResource)
-	mux.HandleFunc("POST /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", handleR53ChangeTagsForResource)
+	mux.HandleFunc("GET /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", cloudTrailRecordedREST("ListTagsForResource", "route53.amazonaws.com", hostedZoneResource, handleR53ListTagsForResource))
+	mux.HandleFunc("POST /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", cloudTrailRecordedREST("ChangeTagsForResource", "route53.amazonaws.com", hostedZoneResource, handleR53ChangeTagsForResource))
 }
 
 // ---------- Tag types ----------

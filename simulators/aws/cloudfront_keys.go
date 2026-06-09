@@ -101,21 +101,23 @@ func registerCloudFrontKeys(srv *sim.Server) {
 
 	mux := srv.Mux()
 
+	publicKeyResource := cloudTrailRESTResource("AWS::CloudFront::PublicKey", "id")
+	keyGroupResource := cloudTrailRESTResource("AWS::CloudFront::KeyGroup", "id")
 	// PublicKey
-	mux.HandleFunc("POST /"+cfAPIVersion+"/public-key", handleCFCreatePublicKey)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key", handleCFListPublicKeys)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}", handleCFGetPublicKey)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}/config", handleCFGetPublicKeyConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/public-key/{id}", handleCFUpdatePublicKey)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/public-key/{id}", handleCFDeletePublicKey)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/public-key", cloudTrailRecordedREST("CreatePublicKey", "cloudfront.amazonaws.com", nil, handleCFCreatePublicKey))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key", cloudTrailRecordedREST("ListPublicKeys", "cloudfront.amazonaws.com", nil, handleCFListPublicKeys))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("GetPublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFGetPublicKey))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}/config", cloudTrailRecordedREST("GetPublicKeyConfig", "cloudfront.amazonaws.com", publicKeyResource, handleCFGetPublicKeyConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("UpdatePublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFUpdatePublicKey))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("DeletePublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFDeletePublicKey))
 
 	// KeyGroup
-	mux.HandleFunc("POST /"+cfAPIVersion+"/key-group", handleCFCreateKeyGroup)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group", handleCFListKeyGroups)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group/{id}", handleCFGetKeyGroup)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group/{id}/config", handleCFGetKeyGroupConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/key-group/{id}", handleCFUpdateKeyGroup)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/key-group/{id}", handleCFDeleteKeyGroup)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/key-group", cloudTrailRecordedREST("CreateKeyGroup", "cloudfront.amazonaws.com", nil, handleCFCreateKeyGroup))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group", cloudTrailRecordedREST("ListKeyGroups", "cloudfront.amazonaws.com", nil, handleCFListKeyGroups))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group/{id}", cloudTrailRecordedREST("GetKeyGroup", "cloudfront.amazonaws.com", keyGroupResource, handleCFGetKeyGroup))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/key-group/{id}/config", cloudTrailRecordedREST("GetKeyGroupConfig", "cloudfront.amazonaws.com", keyGroupResource, handleCFGetKeyGroupConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/key-group/{id}", cloudTrailRecordedREST("UpdateKeyGroup", "cloudfront.amazonaws.com", keyGroupResource, handleCFUpdateKeyGroup))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/key-group/{id}", cloudTrailRecordedREST("DeleteKeyGroup", "cloudfront.amazonaws.com", keyGroupResource, handleCFDeleteKeyGroup))
 }
 
 // ----- PublicKey handlers -----

@@ -146,19 +146,21 @@ func registerCloudFrontFunctions(srv *sim.Server) {
 
 	mux := srv.Mux()
 
+	functionResource := cloudTrailRESTResource("AWS::CloudFront::Function", "name")
+	distributionResource := cloudTrailRESTResource("AWS::CloudFront::Distribution", "distId")
 	// Functions
-	mux.HandleFunc("POST /"+cfAPIVersion+"/function", handleCFCreateFunction)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/function", handleCFListFunctions)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/function/{name}/describe", handleCFDescribeFunction)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/function/{name}", handleCFGetFunction)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/function/{name}", handleCFUpdateFunction)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/function/{name}", handleCFDeleteFunction)
-	mux.HandleFunc("POST /"+cfAPIVersion+"/function/{name}/publish", handleCFPublishFunction)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/function", cloudTrailRecordedREST("CreateFunction", "cloudfront.amazonaws.com", nil, handleCFCreateFunction))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/function", cloudTrailRecordedREST("ListFunctions", "cloudfront.amazonaws.com", nil, handleCFListFunctions))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/function/{name}/describe", cloudTrailRecordedREST("DescribeFunction", "cloudfront.amazonaws.com", functionResource, handleCFDescribeFunction))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/function/{name}", cloudTrailRecordedREST("GetFunction", "cloudfront.amazonaws.com", functionResource, handleCFGetFunction))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/function/{name}", cloudTrailRecordedREST("UpdateFunction", "cloudfront.amazonaws.com", functionResource, handleCFUpdateFunction))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/function/{name}", cloudTrailRecordedREST("DeleteFunction", "cloudfront.amazonaws.com", functionResource, handleCFDeleteFunction))
+	mux.HandleFunc("POST /"+cfAPIVersion+"/function/{name}/publish", cloudTrailRecordedREST("PublishFunction", "cloudfront.amazonaws.com", functionResource, handleCFPublishFunction))
 
 	// Invalidations
-	mux.HandleFunc("POST /"+cfAPIVersion+"/distribution/{distId}/invalidation", handleCFCreateInvalidation)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{distId}/invalidation", handleCFListInvalidations)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{distId}/invalidation/{id}", handleCFGetInvalidation)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/distribution/{distId}/invalidation", cloudTrailRecordedREST("CreateInvalidation", "cloudfront.amazonaws.com", distributionResource, handleCFCreateInvalidation))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{distId}/invalidation", cloudTrailRecordedREST("ListInvalidations", "cloudfront.amazonaws.com", distributionResource, handleCFListInvalidations))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{distId}/invalidation/{id}", cloudTrailRecordedREST("GetInvalidation", "cloudfront.amazonaws.com", distributionResource, handleCFGetInvalidation))
 }
 
 // ----- Function handlers -----
