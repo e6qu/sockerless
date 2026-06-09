@@ -369,7 +369,8 @@ func newSpannerDatabaseDDLOperation(database, operationID string, statements []s
 			"statements": statements,
 			"commitTime": now,
 		},
-		Done: true,
+		Done:     true,
+		Response: map[string]any{"resource": database},
 	}
 	if crOperations != nil {
 		crOperations.Put(op.Name, op)

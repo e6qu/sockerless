@@ -54,6 +54,9 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 	var ddlMetadata map[string]any
 	require.NoError(t, json.Unmarshal(ddlOp.Metadata, &ddlMetadata))
 	assert.Equal(t, db.Name, ddlMetadata["resource"])
+	var ddlResponse map[string]any
+	require.NoError(t, json.Unmarshal(ddlOp.Response, &ddlResponse))
+	assert.Equal(t, db.Name, ddlResponse["resource"])
 
 	session, err := svc.Projects.Instances.Databases.Sessions.Create(db.Name, &spanner.CreateSessionRequest{
 		Session: &spanner.Session{Labels: map[string]string{"kind": "sdk"}},
