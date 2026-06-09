@@ -154,7 +154,7 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 
 	// Delete server (cascade).
 	resp = armReq(t, "DELETE", armBase, "")
-	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	resp.Body.Close()
 
 	// Confirm database + firewall rule were cascaded.
