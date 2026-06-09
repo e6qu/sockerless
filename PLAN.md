@@ -44,6 +44,12 @@ implementation defects, not accepted compatibility shortcuts:
 - Git clone/fetch/push must enforce repo visibility and token permissions.
 - The UI hard-codes an admin token while the server requires
   `BLEEPHUB_ADMIN_TOKEN`; the UI needs a real operator/auth configuration path.
+- Externally observable names must match GitHub/GHES. Bleephub may use its own
+  internal package names and operator-only settings, but public API endpoints,
+  runner variables, workflow environment variables, request/response fields,
+  UI identity, and `GITHUB_*` variables must use the GitHub names clients
+  expect. Do not invent `bleephub` names where real GitHub exposes a
+  `github`/`GITHUB_*` name.
 - Advertised long-tail GitHub surfaces such as Pages builds, audit log content,
   run artifact listings, environment approvals, and GraphQL status rollups still
   include shape-only or empty responses.
@@ -77,11 +83,16 @@ temporary failing check and the next command to run.
    backend using an actual object-store client, with MinIO-based integration
    coverage and clear key layout docs.
 7. **UI auth and operator status** — remove hard-coded admin credentials, add a
-   real configured auth/session path, and expose storage/database/git backend
-   status in the UI.
+   real configured auth/session path, expose storage/database/git backend status
+   in the UI, and make the externally visible UI identity match GitHub/GHES for
+   client-facing screens while keeping Bleephub-specific operator controls
+   clearly separated.
 8. **UI/API parity gaps** — add or deepen UI/API coverage for caches, artifacts,
    webhooks/deliveries, orgs/teams, branch protection, audit events, and repo git
-   refs where Bleephub already exposes the backing API.
+   refs where Bleephub already exposes the backing API. Audit all externally
+   visible `bleephub` endpoint/field/env names and replace them with precise
+   GitHub/GHES names unless they are explicitly operator-only management
+   surfaces.
 9. **Long-tail fake removal and docs** — replace or explicitly delist shape-only
    endpoints for Pages builds, audit log events, run approvals, and GraphQL
    status rollups; update README, gh CLI docs, parity specs, build/run docs,

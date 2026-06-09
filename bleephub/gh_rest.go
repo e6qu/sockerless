@@ -31,7 +31,7 @@ func (s *Server) handleGHApiRoot(w http.ResponseWriter, r *http.Request) {
 	// Must be exact match for /api/v3/ — don't match sub-paths
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/v3")
 	if trimmed != "/" && trimmed != "" {
-		http.NotFound(w, r)
+		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 

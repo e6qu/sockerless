@@ -10,6 +10,17 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 - Recorded the current audit findings in [STATUS.md](STATUS.md): cache no-ops, catch-all `200 OK`, SQLite-only partial persistence, ignored git storage errors, missing object-store git backend, weak git auth, hard-coded UI admin token, and shape-only long-tail endpoints.
 - Reworked [PLAN.md](PLAN.md) and [DO_NEXT.md](DO_NEXT.md) around a multi-session handoff protocol: one PR, one natural commit per subtask, continuity docs updated before and after each completed chunk.
 
+## 2026-06-09 - Bleephub cache and unknown-route behavior
+
+- Replaced the Actions cache no-op handlers with real reserve/upload/finalize,
+  lookup, restore-key prefix matching, and download behavior.
+- Unknown GitHub API paths stopped returning successful/plain responses and now
+  return GitHub-shaped 404 JSON. Non-API unmatched paths return normal HTTP 404.
+- The continuity docs now also carry the external-identity rule: observable API
+  endpoints, parameters, response fields, UI identity, runner variables, and
+  `GITHUB_*` variables must match GitHub/GHES rather than Bleephub-branded
+  substitutes, except for internal or operator-only surfaces.
+
 ## 2026-06-09 - Bigtable Terraform + AWS execution semantics
 
 - **BUG-1585** was fixed as a coverage gap and provider-routing gap. The GCP Terraform apply stack now declared `google_bigtable_instance` and `google_bigtable_table`, the simulator exposed Bigtable Admin on the official gRPC emulator path used by the Google provider, and the apply harness asserted the provider-returned instance/table IDs. The coverage matrix and `gcp-bigtable` surface table now marked Terraform as direct coverage.

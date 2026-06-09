@@ -10,33 +10,65 @@ This branch is the single working branch for the Bleephub parity, durability,
 storage, UI, and docs PR. Keep one PR open for this branch. Make one natural
 commit per subtask, with tests and continuity docs included in the same commit.
 
+## Last Completed Subtask
+
+Subtask 1 completed:
+
+- [bleephub/artifacts.go](bleephub/artifacts.go) replaced the Actions cache
+  no-op handlers with real cache reserve/upload/finalize/lookup/download state.
+- Cache lookup now returns 204 for misses, 200 with `archiveLocation` and
+  `cacheKey` for hits, and supports exact keys before restore-key prefix
+  matching.
+- [bleephub/server.go](bleephub/server.go) and
+  [bleephub/gh_rest.go](bleephub/gh_rest.go) stopped returning successful or
+  plain responses for unknown GitHub API paths.
+- Tests cover cache round-trip, cache misses, restore-key prefix matching, and
+  unknown-route status/body behavior.
+
+Verified:
+
+```bash
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestCache|TestUnknownRoutesDoNotReturnSuccess' ./...
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...
+```
+
 ## Current Subtask
 
-Subtask 1: baseline Bleephub parity tests and error handling.
+Subtask 2: real Actions cache behavior and artifact indexing.
 
-Start by adding focused coverage for the known fake or misleading behavior, then
-fix the narrow behavior the tests prove:
+The cache now stores real data, but the next slice should finish the user-facing
+Actions cache/artifact behavior that callers see through REST and runner flows:
 
-- Actions cache routes in [bleephub/artifacts.go](bleephub/artifacts.go) currently
-  reserve no cache, discard uploads, and always return a miss.
-- The catch-all in [bleephub/server.go](bleephub/server.go) returns `200 OK` for
-  unknown API paths after smart-HTTP git routing fails.
-- Bleephub docs claim or imply support that is currently only shape-only for
-  cache, artifact listings, Pages builds, audit log, approvals, and some GraphQL
-  status fields.
+- Wire artifact list endpoints in
+  [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go) to
+  [bleephub/artifacts.go](bleephub/artifacts.go) instead of returning empty
+  lists.
+- Preserve run/repo linkage for artifacts created through the Twirp API, then
+  make run-level and repo-level artifact REST lists return real artifacts.
+- Add download/delete metadata surfaces if the real GitHub REST artifact API path
+  already exists in docs but Bleephub lacks it.
+- Audit whether cache keys need repo/ref/scope fields from the runner request
+  headers or query parameters. Add those fields if the official runner/client
+  sends them, and avoid global cache leakage across repos.
+- Audit public Bleephub-specific names while touching these paths. Externally
+  observable API paths, request fields, response fields, runner parameters,
+  workflow environment variables, and UI text must use the GitHub/GHES names
+  real clients expect, including `GITHUB_*` variables. Keep `bleephub` names only
+  for internal code or explicit operator-only management surfaces.
+- Add focused tests that exercise the same mux paths real clients use.
 
 First commands for the next session:
 
 ```bash
 git status --short --branch
-rg -n "Cache stubs|shape-only|stub|UNHANDLED REQUEST|StatusCheckRollup|hard-codes|Git storage stays" bleephub ui/packages/bleephub docs specs
-cd bleephub && GOWORK=off go test ./...
+rg -n "handleRunArtifacts|handleRepoArtifacts|ArtifactStore|WorkflowRunBackendID|RunID|artifactcache|actions/artifacts|GITHUB_|bleephub" bleephub ui/packages/bleephub
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestArtifact|TestCache|TestActions.*Artifact' ./...
 ```
 
 Expected first commit shape:
 
 ```text
-bleephub: replace fake cache and catch-all behavior with tracked parity gaps
+bleephub: return real actions artifacts
 ```
 
 Adjust the message to match the actual completed work. Do not mention internal

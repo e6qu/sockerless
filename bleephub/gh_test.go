@@ -132,6 +132,24 @@ func TestGHRequestIdHeader(t *testing.T) {
 	}
 }
 
+func TestUnknownRoutesDoNotReturnSuccess(t *testing.T) {
+	resp := ghGet(t, "/api/v3/definitely-not-a-route", defaultToken)
+	if resp.StatusCode != http.StatusNotFound {
+		resp.Body.Close()
+		t.Fatalf("GitHub API unknown route status = %d, want 404", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["message"] != "Not Found" {
+		t.Fatalf("GitHub API unknown route message = %v, want Not Found", data["message"])
+	}
+
+	resp = ghGet(t, "/definitely-not-a-route", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("non-API unknown route status = %d, want 404", resp.StatusCode)
+	}
+}
+
 // TestGHUser verifies GET /api/v3/user returns authenticated user.
 func TestGHUser(t *testing.T) {
 	resp := ghGet(t, "/api/v3/user", defaultToken)

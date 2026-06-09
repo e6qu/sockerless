@@ -189,7 +189,11 @@ func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 		Str("path", r.URL.Path).
 		Str("query", r.URL.RawQuery).
 		Msg("UNHANDLED REQUEST")
-	w.WriteHeader(http.StatusOK)
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	http.NotFound(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
