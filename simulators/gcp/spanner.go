@@ -187,6 +187,12 @@ func newSpannerInstanceLRO(project, instance string, resource any, typeName stri
 
 func newSpannerDatabaseLRO(project, instance, database string, resource any, typeName string) Operation {
 	op := newLRO(project, "global", resource, typeName)
+	databaseName := spannerDatabaseName(project, instance, database)
+	op.Metadata = map[string]any{
+		"@type":    "type.googleapis.com/google.spanner.admin.database.v1.CreateDatabaseMetadata",
+		"database": databaseName,
+		"resource": databaseName,
+	}
 	return renameGCPOperation(op, fmt.Sprintf("projects/%s/instances/%s/databases/%s/operations", project, instance, database))
 }
 

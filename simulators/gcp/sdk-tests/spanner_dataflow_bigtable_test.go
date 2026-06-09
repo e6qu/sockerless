@@ -36,6 +36,10 @@ func TestSpanner_InstanceDatabaseSessionSDK(t *testing.T) {
 	}).Do()
 	require.NoError(t, err)
 	assert.True(t, dbOp.Done)
+	var createMetadata map[string]any
+	require.NoError(t, json.Unmarshal(dbOp.Metadata, &createMetadata))
+	assert.Equal(t, "projects/test-project/instances/sdk-spanner/databases/sdkdb", createMetadata["database"])
+	assert.Equal(t, "projects/test-project/instances/sdk-spanner/databases/sdkdb", createMetadata["resource"])
 
 	db, err := svc.Projects.Instances.Databases.Get("projects/test-project/instances/sdk-spanner/databases/sdkdb").Do()
 	require.NoError(t, err)
