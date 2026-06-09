@@ -27,7 +27,7 @@ import (
 var dockerClient *client.Client
 
 // backendPort is set in TestMain; used by callers that construct the
-// reverse-agent callback URL (`ws://host.docker.internal:<port>/v1/aca/reverse`).
+// reverse-agent callback URL.
 var backendPort int
 var evalImageName string
 var acaOverlayImageName string
@@ -55,6 +55,23 @@ func requireExe(name string) {
 		fmt.Fprintf(os.Stderr, "ERROR: required tool %q not found on PATH (%v).\n", name, err)
 		os.Exit(1)
 	}
+}
+
+func reverseAgentCallbackHost(ctx context.Context, runtimeClient *client.Client) string {
+	version, err := runtimeClient.ServerVersion(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[backend] WARNING: docker server version unavailable, using host.docker.internal for reverse-agent callback: %v\n", err)
+		return "host.docker.internal"
+	}
+	for _, component := range version.Components {
+		if strings.Contains(strings.ToLower(component.Name), "podman") {
+			return "host.containers.internal"
+		}
+	}
+	if strings.Contains(strings.ToLower(version.Platform.Name), "podman") {
+		return "host.containers.internal"
+	}
+	return "host.docker.internal"
 }
 
 // TestMain wires the docker SDK to a running sockerless-backend-aca
@@ -245,6 +262,16 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 				simURL, subscriptionID, resourceGroup),
 			`{"location":"eastus","properties":{}}`,
 		)
+		cleanups = append(cleanups, func() {
+			req, _ := http.NewRequest("DELETE",
+				fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/sockerless?api-version=2024-03-01",
+					simURL, subscriptionID, resourceGroup),
+				nil,
+			)
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				resp.Body.Close()
+			}
+		})
 
 	case "cloud":
 		endpointURL = requireEnv("SOCKERLESS_ENDPOINT_URL")
@@ -267,6 +294,13 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	}
 	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
 
+	runtimeClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		failClean("ERROR: docker runtime client: %v\n", err)
+	}
+	defer runtimeClient.Close()
+	callbackHost := reverseAgentCallbackHost(context.Background(), runtimeClient)
+
 	// Start backend pointed at the resolved endpoint.
 	backendPort = findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
@@ -280,7 +314,7 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
 		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
 		// Required at NewServer (no fallback).
-		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/aca/reverse", backendPort),
+		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
 	)
 	if os.Getenv(acaAppsE2EEnv) == "1" {
 		backendCmd.Env = append(backendCmd.Env, "SOCKERLESS_ACA_USE_APP=1")
@@ -300,7 +334,6 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 
 	// The ACA backend serves the Docker API directly. Point the docker
 	// SDK at the backend's TCP port.
-	var err error
 	dockerClient, err = client.NewClientWithOpts(
 		client.WithHost(fmt.Sprintf("tcp://localhost:%d", backendPort)),
 		client.WithAPIVersionNegotiation(),

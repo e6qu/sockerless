@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-08 — ACA Apps Podman reverse-agent callback (BUG-1576, PR pending)
+
+Fixed local Podman ACA Apps attach-stdin: the ContainerApp replica started, but
+the bootstrap could not resolve the reverse-agent callback host on
+Docker-API-created Podman managed-environment networks. The ACA integration
+harness now chooses `host.containers.internal` when the runtime reports Podman,
+and the Azure simulator injects concrete Podman-machine `/etc/hosts` entries for
+both `host.containers.internal` and `host.docker.internal` into workload
+containers when the Podman VM route exposes the host callback subnet. ACA Apps
+reverse-agent timeout errors now include a real Log Analytics tail from the app
+logs, which made the failed DNS dial visible.
+
 ## 2026-06-06 — Coverage audit batch 2: 3 real bugs + DynamoDB/ECR/misc backfill (BUG-1514–1516, PR pending)
 
 Continuing the untested-op audit, probing the remaining gaps surfaced **three real bugs** (the audit paying off, not just adding tests):
