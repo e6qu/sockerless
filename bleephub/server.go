@@ -66,13 +66,14 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		maxConcurrentWorkflows: maxWF,
 	}
 
-	// Wire persistence if BLEEPHUB_PERSIST=true. Fail-loud on open failure.
+	// Wire persistence. PostgreSQL takes priority via BLEEPHUB_DATABASE_URL;
+	// otherwise BLEEPHUB_PERSIST=true enables SQLite. Both fail-loud on open failure.
 	persist := MustNewPersistence()
 	if persist != nil {
 		if err := s.store.SetPersistence(persist); err != nil {
 			logger.Fatal().Err(err).Msg("failed to load persisted state")
 		}
-		s.logger.Info().Str("data_dir", dataDir).Msg("bleephub persistence enabled (SQLite)")
+		s.logger.Info().Str("dialect", persist.dialect.name).Str("data_dir", dataDir).Msg("bleephub persistence enabled")
 	}
 
 	// Seed default user only if the store didn't load one from disk.

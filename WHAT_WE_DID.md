@@ -21,6 +21,17 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
   `GITHUB_*` variables must match GitHub/GHES rather than Bleephub-branded
   substitutes, except for internal or operator-only surfaces.
 
+## 2026-06-09 - Bleephub PostgreSQL persistence support
+
+- [bleephub/persistence.go](bleephub/persistence.go) now supports PostgreSQL
+  via pgx v5 in addition to SQLite. `BLEEPHUB_DATABASE_URL` activates the
+  PostgreSQL backend; `BLEEPHUB_PERSIST=true` continues to activate SQLite.
+- A `dbDialect` struct encapsulates dialect-specific SQL (placeholders, DDL,
+  type names) so both backends share the same `Persistence` method bodies.
+- The PostgreSQL persistence test requires a real PostgreSQL instance
+  (`BLEEPHUB_TEST_POSTGRES_URL`) and skips when unavailable. SQLite tests
+  continue to pass unchanged.
+
 ## 2026-06-09 - Bleephub Actions artifacts REST parity
 
 - Runner-created Actions artifacts now keep repository, GitHub run ID, and

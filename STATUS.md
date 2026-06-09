@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `bleephub-parity-storage` |
-| In-flight | Subtasks 1 and 2 completed on `bleephub-parity-storage`: Bleephub now has real in-process Actions cache reserve/upload/finalize/lookup/download behavior, unknown GitHub API paths return GitHub-shaped 404s, and GitHub REST artifact list/get/delete/download paths return real stored artifacts. Next work is SQLite/PostgreSQL persistence abstraction. |
+| In-flight | Subtasks 1-3 completed on `bleephub-parity-storage`: Bleephub has real Actions cache behavior, GitHub REST artifact endpoints, unknown-route GitHub-shaped 404s, and dual SQLite/PostgreSQL persistence via `BLEEPHUB_PERSIST=true` or `BLEEPHUB_DATABASE_URL`. Next work is broadening durable state to remaining public API objects. |
 | Last merged | The Bigtable Terraform coverage + AWS real-execution semantics branch was merged before this branch started. |
 | Open GitHub issues | #394 remained upstream-blocked from the previous issue sweep. Re-check GitHub before doing any non-Bleephub issue work. |
 | Bugs | 1590 filed - 1544 fixed - 7 open - 5 false positives. |
@@ -29,9 +29,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
   [bleephub/gh_rest.go](bleephub/gh_rest.go) no longer return success/plain
   responses for unknown GitHub API paths. Unknown REST paths return
   GitHub-shaped 404s; non-API unmatched paths return normal HTTP 404s.
-- [bleephub/persistence.go](bleephub/persistence.go) is SQLite-only and only
-  persists selected buckets. The branch must add PostgreSQL and broaden durable
-  state for public API objects.
+- [bleephub/persistence.go](bleephub/persistence.go) supports SQLite
+  (`BLEEPHUB_PERSIST=true`) and PostgreSQL (`BLEEPHUB_DATABASE_URL`) via
+  a `dbDialect` struct that holds dialect-specific SQL. Both backends share
+  the same `Persistence` methods. Operator-requested persistence that fails to
+  open will `log.Fatalf`. The next persistence work should extend write-through
+  coverage to remaining public API state (workflows, hooks, releases,
+  deployments, reactions, check runs, secrets, artifacts/cache).
 - [bleephub/git_storage.go](bleephub/git_storage.go) supports memory/filesystem
   git storage only; [bleephub/store_repos.go](bleephub/store_repos.go) ignores
   git-storage initialization errors. The branch must fail loudly and add real

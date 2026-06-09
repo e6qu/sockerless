@@ -63,15 +63,9 @@ separate commits unless a CI-only fix is needed after review. Each commit should
 leave the branch buildable or have the continuity docs explicitly call out the
 temporary failing check and the next command to run.
 
-1. **Baseline audit tests and error handling** — add focused tests for the known
-   fake paths, change unmatched routes to GitHub/git-shaped errors, and refresh
-   the parity notes with concrete current gaps.
-2. **Actions cache and artifact indexing** — replaced cache no-ops with real
-   cache records, restore-key lookup, upload/finalize/download behavior, and
-   run/repo artifact list/get/delete/download behavior.
-3. **Persistence abstraction** — keep SQLite support, add PostgreSQL support,
-   define explicit env/config names, and fail loudly if the requested database
-   cannot open or migrate.
+1. **Baseline audit tests and error handling** — DONE
+2. **Actions cache and artifact indexing** — DONE
+3. **Persistence abstraction** — DONE (SQLite + PostgreSQL via pgx)
 4. **Persist the Bleephub state that users expect to survive restarts** — extend
    write-through/load coverage beyond users/tokens/apps/repos to issues, PRs,
    workflows, runners, hooks, checks, deployments, releases, and other exposed
