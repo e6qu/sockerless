@@ -220,8 +220,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"Terraform google_spanner_instance.id follows the provider's {{project}}/{{name}} format")
 
 	spannerDatabaseID := outputs.must(t, "spanner_database_id")
-	require.Equal(t, "test-project/tf-spanner/appdb", spannerDatabaseID,
-		"Terraform google_spanner_database.id follows the provider's {{project}}/{{instance}}/{{name}} format")
+	require.Equal(t, "tf-spanner/appdb", spannerDatabaseID,
+		"Terraform google_spanner_database.id follows the provider's {{instance}}/{{name}} format")
 
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve", "-var", "secret_label_env=dev"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
