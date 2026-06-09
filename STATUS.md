@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `bleephub-parity-storage` |
-| In-flight | Subtasks 1-7 completed on `bleephub-parity-storage`. Next work is UI/API coverage for cache, artifacts, webhooks, orgs/teams, branch protection, audit events, and repo git refs. |
+| In-flight | Subtasks 1-8 completed on `bleephub-parity-storage`. Next work is long-tail shape-only endpoint cleanup and docs refresh. |
 | Last merged | The Bigtable Terraform coverage + AWS real-execution semantics branch was merged before this branch started. |
 | Open GitHub issues | #394 remained upstream-blocked from the previous issue sweep. Re-check GitHub before doing any non-Bleephub issue work. |
 | Bugs | 1590 filed - 1544 fixed - 7 open - 5 false positives. |

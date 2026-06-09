@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, 3, 4, 5, 6, and 7 completed:
+Subtasks 1, 2, 3, 4, 5, 6, 7, and 8 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -67,6 +67,16 @@ Subtasks 1, 2, 3, 4, 5, 6, and 7 completed:
   - OverviewPage shows storage backend info section with persistence and
     git storage status.
   - Added `BleephubStorageInfo` type to `types.ts`.
+- Subtask 8: UI/API coverage for webhooks, secrets, environments, releases.
+  - Added TypeScript types: `GithubWebhook`, `GithubSecret`,
+    `GithubEnvironment`, `GithubRelease` to `types.ts`.
+  - Added API functions: `fetchWebhooks`, `fetchSecrets`,
+    `fetchEnvironments`, `fetchReleases` to `api.ts`.
+  - RepoDetailPage now has 8 tabs: Code, Issues, PRs, Commits, Webhooks,
+    Secrets, Environments, Releases. Webhooks tab shows hook name, URL,
+    events, and active status. Secrets tab shows names with lock icon.
+    Environments tab shows environment names. Releases tab shows tag,
+    name, and publish date.
   - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
     interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
   - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
@@ -85,7 +95,7 @@ gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bl
 
 ## Current Subtask
 
-Subtask 8: UI/API coverage for cache, artifacts, webhooks, orgs/teams, branch protection, audit events, and repo git refs.
+Subtask 9: Remove or implement long-tail shape-only endpoints, then refresh all Bleephub docs and parity specs.
 
 ## Ordered Subtasks For This PR
 

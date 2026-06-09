@@ -244,3 +244,15 @@ export async function mergePR(
   });
   if (!res.ok && res.status !== 405) throw new Error(`merge ${res.status}`);
 }
+
+export const fetchWebhooks = (owner: string, repo: string) =>
+  ghFetch<GithubWebhook[]>(`/api/v3/repos/${owner}/${repo}/hooks`);
+
+export const fetchSecrets = (owner: string, repo: string) =>
+  ghFetch<GithubSecret[]>(`/api/v3/repos/${owner}/${repo}/actions/secrets`);
+
+export const fetchEnvironments = (owner: string, repo: string) =>
+  ghFetch<GithubEnvironment[]>(`/api/v3/repos/${owner}/${repo}/environments`);
+
+export const fetchReleases = (owner: string, repo: string) =>
+  ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);

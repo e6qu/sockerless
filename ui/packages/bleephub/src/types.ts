@@ -241,3 +241,40 @@ export interface BleephubStorageInfo {
   git: string;
   git_details: Record<string, string>;
 }
+
+export interface GithubWebhook {
+  id: number;
+  name: string;
+  active: boolean;
+  events: string[];
+  config: { url: string; content_type: string };
+  created_at: string;
+  updated_at: string;
+  url: string;
+  deliveries_url: string;
+  last_response: { code: number | null; status: string; message: string | null };
+}
+
+export interface GithubSecret {
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GithubEnvironment {
+  name: string;
+  node_id: string;
+  url: string;
+}
+
+export interface GithubRelease {
+  id: number;
+  tag_name: string;
+  name: string;
+  body: string;
+  draft: boolean;
+  prerelease: boolean;
+  created_at: string;
+  published_at: string;
+  html_url: string;
+}
