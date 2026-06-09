@@ -69,6 +69,78 @@ func TestECSVPCNetworking(t *testing.T) {
 	}
 }
 
+func TestECSManagedEBSAwsvpcReachability(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI not available")
+	}
+	q := func(args ...string) string { return strings.TrimSpace(runCLI(t, awsCLI(args...))) }
+
+	octet := unusedDockerVPCOctet(t, 150, nil)
+	vpcID, subnetID := mkVPCSubnet(t, q, vpcCIDR(octet), subnetCIDR(octet))
+	t.Cleanup(func() {
+		q("ec2", "delete-subnet", "--subnet-id", subnetID)
+		q("ec2", "delete-vpc", "--vpc-id", vpcID)
+		rmDockerNetworks(ecsVPCNet(vpcID), ecsVPCNet(vpcID)+"-egress")
+	})
+	q("ecs", "create-cluster", "--cluster-name", "default", "--query", "cluster.clusterName", "--output", "text")
+	q("ecs", "register-task-definition", "--family", "ebs-vpc-server",
+		"--network-mode", "awsvpc", "--requires-compatibilities", "FARGATE", "--cpu", "256", "--memory", "512",
+		"--volumes", `[{"name":"workspace","configuredAtLaunch":true}]`,
+		"--container-definitions", `[{"name":"app","image":"`+vpcNetBusybox+`","entryPoint":["sh","-c"],"command":["mkdir -p /workspace/www && echo ebs-ok > /workspace/www/index.html && httpd -f -p 80 -h /workspace/www"],"mountPoints":[{"sourceVolume":"workspace","containerPath":"/workspace"}]}]`,
+		"--query", "taskDefinition.taskDefinitionArn", "--output", "text")
+	registerTaskDef(q, "ebs-vpc-client", "sleep 120")
+
+	server := q("ecs", "run-task",
+		"--cluster", "default",
+		"--task-definition", "ebs-vpc-server",
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
+		"--volume-configurations", `[{"name":"workspace","managedEBSVolume":{"roleArn":"arn:aws:iam::123456789012:role/ecsInfrastructureRole","sizeInGiB":1,"volumeType":"gp3"}}]`,
+		"--query", "tasks[0].taskArn", "--output", "text")
+	client := runTask(q, "ebs-vpc-client", subnetID)
+	t.Cleanup(func() {
+		for _, task := range []string{server, client} {
+			runCLI(t, awsCLI("ecs", "stop-task", "--cluster", "default", "--task", task))
+		}
+	})
+	waitRunning(t, q, server)
+	waitRunning(t, q, client)
+
+	eniIP := taskENIIP(q, server)
+	if real := taskEth0IP(t, server); real != eniIP {
+		t.Fatalf("managed-EBS task reported ENI IP %q != real eth0 IP %q", eniIP, real)
+	}
+	out := q("ecs", "describe-tasks", "--cluster", "default", "--tasks", server, "--output", "json")
+	var desc struct {
+		Tasks []struct {
+			Attachments []struct {
+				Type    string `json:"type"`
+				Details []struct {
+					Name  string `json:"name"`
+					Value string `json:"value"`
+				} `json:"details"`
+			} `json:"attachments"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &desc)
+	if len(desc.Tasks) != 1 {
+		t.Fatalf("describe managed-EBS server task returned %d tasks", len(desc.Tasks))
+	}
+	if vol := cliEBSVolumeID(t, desc.Tasks[0].Attachments); !strings.HasPrefix(vol, "vol-") {
+		t.Fatalf("managed-EBS task volume id = %q, want vol-*", vol)
+	}
+
+	var body string
+	var code int
+	for attempt := 0; attempt < 10; attempt++ {
+		code, body = taskWget(t, client, eniIP)
+		if code == 0 && strings.Contains(body, "ebs-ok") {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("same-VPC task should reach managed-EBS task at %s: exit=%d out=%q", eniIP, code, body)
+}
+
 // ---- shared helpers (tier-agnostic) ----
 
 func mkVPCSubnet(t *testing.T, q func(...string) string, vpcCidr, snCidr string) (vpcID, subnetID string) {

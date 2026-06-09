@@ -80,6 +80,23 @@ func getEntraSimUser(oid string) EntraUser {
 	return entraDefaultUser
 }
 
+func findEntraUserByUPN(upn string) (EntraUser, bool) {
+	upn = strings.TrimSpace(upn)
+	if upn == "" {
+		return EntraUser{}, false
+	}
+	if strings.EqualFold(entraDefaultUser.PreferredUsername, upn) {
+		return entraDefaultUser, true
+	}
+	users := entraUsersStore.Filter(func(u EntraUser) bool {
+		return strings.EqualFold(u.PreferredUsername, upn)
+	})
+	if len(users) == 0 {
+		return EntraUser{}, false
+	}
+	return users[0], true
+}
+
 // newGraphID returns a random UUID-shaped object ID for Graph resources.
 func newGraphID() string {
 	b := make([]byte, 16)
@@ -274,6 +291,10 @@ func registerEntra(srv *sim.Server) {
 		}
 		if req.DisplayName == "" || req.UserPrincipalName == "" {
 			sim.AzureError(w, "Request_BadRequest", "displayName and userPrincipalName are required", http.StatusBadRequest)
+			return
+		}
+		if _, exists := findEntraUserByUPN(req.UserPrincipalName); exists {
+			sim.AzureError(w, "Request_BadRequest", fmt.Sprintf("Another object with the same value for property userPrincipalName already exists: %s", req.UserPrincipalName), http.StatusBadRequest)
 			return
 		}
 		oid := newGraphID()

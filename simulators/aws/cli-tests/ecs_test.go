@@ -221,6 +221,81 @@ func TestECS_CLI_ExecuteCommandRejectedWhenNotEnabled(t *testing.T) {
 	assert.Contains(t, errOut, "execute command was not enabled")
 }
 
+func TestECS_CLI_FargateSandboxAllowsChroot(t *testing.T) {
+	subnetID := createCLIECSTestSubnet(t, 146)
+
+	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", "cli-ecs-chroot"))
+	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", "/ecs/cli-chroot"))
+	runCLI(t, awsCLI("ecs", "register-task-definition",
+		"--family", "cli-ecs-chroot",
+		"--requires-compatibilities", "FARGATE",
+		"--network-mode", "awsvpc",
+		"--cpu", "256",
+		"--memory", "512",
+		"--container-definitions", `[{
+			"name": "app",
+			"image": "public.ecr.aws/docker/library/busybox:latest",
+			"entryPoint": ["sh", "-c"],
+			"command": ["mkdir -p /jail && chroot /jail /definitely-missing; code=$?; if [ \"$code\" = 127 ]; then echo CHROOT_OK; exit 0; fi; exit \"$code\""],
+			"logConfiguration": {"logDriver":"awslogs","options":{"awslogs-group":"/ecs/cli-chroot","awslogs-stream-prefix":"ecs"}}
+		}]`,
+		"--output", "json",
+	))
+
+	out := runCLI(t, awsCLI("ecs", "run-task",
+		"--cluster", "cli-ecs-chroot",
+		"--task-definition", "cli-ecs-chroot",
+		"--launch-type", "FARGATE",
+		"--count", "1",
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
+		"--output", "json",
+	))
+	var runResult struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &runResult)
+	require.Len(t, runResult.Tasks, 1)
+	taskArn := runResult.Tasks[0].TaskArn
+	cleanupCLIECSTask(t, "cli-ecs-chroot", taskArn)
+	waitCLITaskStatus(t, "cli-ecs-chroot", taskArn, "STOPPED")
+
+	out = runCLI(t, awsCLI("ecs", "describe-tasks",
+		"--cluster", "cli-ecs-chroot",
+		"--tasks", taskArn,
+		"--output", "json",
+	))
+	var descResult struct {
+		Tasks []struct {
+			Containers []struct {
+				ExitCode *int `json:"exitCode"`
+			} `json:"containers"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &descResult)
+	require.Len(t, descResult.Tasks, 1)
+	require.NotEmpty(t, descResult.Tasks[0].Containers)
+	require.NotNil(t, descResult.Tasks[0].Containers[0].ExitCode)
+	assert.Equal(t, 0, *descResult.Tasks[0].Containers[0].ExitCode)
+
+	out = runCLI(t, awsCLI("logs", "filter-log-events",
+		"--log-group-name", "/ecs/cli-chroot",
+		"--output", "json",
+	))
+	var logs struct {
+		Events []struct {
+			Message string `json:"message"`
+		} `json:"events"`
+	}
+	parseJSON(t, out, &logs)
+	var messages []string
+	for _, event := range logs.Events {
+		messages = append(messages, event.Message)
+	}
+	assert.Contains(t, strings.Join(messages, "\n"), "CHROOT_OK")
+}
+
 func TestECS_CLI_ManagedEBSVolumeSnapshotRoundTrip(t *testing.T) {
 	subnetID := createCLIECSTestSubnet(t, 143)
 

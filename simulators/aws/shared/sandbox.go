@@ -79,7 +79,7 @@ var SandboxFargate = SandboxProfile{
 	Privileged:       false,
 	ReadonlyRootfs:   false,
 	CapDrop:          []string{"ALL"},
-	CapAdd:           []string{"SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETPCAP", "NET_BIND_SERVICE", "SETFCAP"},
+	CapAdd:           []string{"SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETPCAP", "NET_BIND_SERVICE", "SETFCAP", "SYS_CHROOT"},
 	NoNewPrivileges:  true,
 	DenyDockerSocket: true,
 	DenyHostNetwork:  true,

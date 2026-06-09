@@ -19,9 +19,10 @@ func TestSandboxApplies(t *testing.T) {
 		wantUser       string
 		wantDropALL    bool
 		wantNoNewPriv  bool
+		wantCapAdd     []string
 	}{
-		{"lambda", SandboxLambda, false, true, "1051:1051", true, true},
-		{"fargate", SandboxFargate, false, false, "", true, true},
+		{"lambda", SandboxLambda, false, true, "1051:1051", true, true, nil},
+		{"fargate", SandboxFargate, false, false, "", true, true, []string{"SYS_CHROOT"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -56,6 +57,18 @@ func TestSandboxApplies(t *testing.T) {
 			}
 			if gotNoNewPriv != c.wantNoNewPriv {
 				t.Errorf("no-new-privileges = %v, want %v", gotNoNewPriv, c.wantNoNewPriv)
+			}
+			for _, want := range c.wantCapAdd {
+				found := false
+				for _, got := range hc.CapAdd {
+					if got == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("CapAdd missing %s (CapAdd=%v)", want, hc.CapAdd)
+				}
 			}
 		})
 	}
