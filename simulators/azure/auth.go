@@ -741,14 +741,11 @@ func handleAzureROPC(w http.ResponseWriter, r *http.Request, tenantID string) {
 		return
 	}
 
-	users := entraUsersStore.Filter(func(u EntraUser) bool {
-		return u.PreferredUsername == username
-	})
-	if len(users) == 0 {
+	u, ok := findEntraUserByUPN(username)
+	if !ok {
 		azureOAuthError(w, "invalid_grant", "user not found: "+username, http.StatusBadRequest)
 		return
 	}
-	u := users[0]
 
 	if scope == "" {
 		scope = "openid profile"

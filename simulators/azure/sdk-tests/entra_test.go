@@ -191,6 +191,47 @@ func TestEntra_ROPCIDTokenGroupsClaim(t *testing.T) {
 	assert.Contains(t, groups, grp.ID)
 }
 
+func TestEntra_DuplicateUPNRejectedAndROPCClaimsStayDeterministic(t *testing.T) {
+	grp := createGraphGroup(t, "ROPC-Duplicate-UPN")
+	u := createGraphUser(t, "Duplicate UPN User", "duplicate-upn-sdk@example.com")
+	addGroupMember(t, grp.ID, u.ID)
+
+	body, _ := json.Marshal(map[string]any{
+		"displayName":       "Duplicate UPN User Two",
+		"userPrincipalName": "DUPLICATE-UPN-SDK@example.com",
+		"mailNickname":      "Duplicate UPN User Two",
+		"accountEnabled":    true,
+		"passwordProfile": map[string]any{
+			"password":                      "Test1234!",
+			"forceChangePasswordNextSignIn": false,
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/users", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var errBody struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errBody))
+	assert.Equal(t, "Request_BadRequest", errBody.Error.Code)
+	assert.Contains(t, errBody.Error.Message, "userPrincipalName")
+
+	payload := doROPC(t, "tenant-ropc-duplicate", "client-ropc-duplicate", "duplicate-upn-sdk@example.com")
+	assert.Equal(t, u.ID, payload["oid"])
+	groupsRaw, ok := payload["groups"]
+	require.True(t, ok, "id_token must contain groups claim")
+	groups, ok := groupsRaw.([]any)
+	require.True(t, ok)
+	assert.Contains(t, groups, grp.ID)
+}
+
 func TestEntra_ROPCUnknownUserReturns400(t *testing.T) {
 	tokenResp, err := http.PostForm(baseURL+"/tenant-ropc-unknown/oauth2/v2.0/token", url.Values{
 		"grant_type": {"password"},

@@ -6,13 +6,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/aca-apps-podman-reverse-agent` (PR pending — ACA Apps Podman reverse-agent callback + continuity refresh) |
-| In-flight | BUG-1576 is fixed on this branch: ACA Apps attach-stdin under local Podman now uses a runtime-reachable reverse-agent callback host, and Azure simulator workloads get explicit Podman-machine host alias mappings when needed. |
-| Last merged | ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524; prior merged PRs include #520 netns metadata + route-table egress, #519 netns VPC fabric, and #518 VPC isolation. |
-| Open GitHub issues | Only upstream/maintenance trackers are known active from the local continuity docs; check GitHub before starting the next consumer issue batch. |
-| Bugs | 1576 filed · 1531 fixed · 6 open · 5 false positives |
+| Active branch | `fix/ecs-entra-consumer-issues` (PR pending — consumer #525/#526/#527 batch) |
+| In-flight | BUG-1577/1578/1579 are fixed on this branch: Azure Entra rejects duplicate UPNs and ROPC resolves deterministically; AWS ECS Fargate keeps `SYS_CHROOT`; managed-EBS awsvpc same-VPC reachability is covered by a real task-to-task regression. |
+| Last merged | PR #528 fixed ACA Apps attach-stdin under local Podman. ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524. |
+| Open GitHub issues | #394 remains upstream-blocked; #525/#526/#527 are addressed by this branch. Check GitHub before starting the next consumer batch. |
+| Bugs | 1579 filed · 1534 fixed · 6 open · 5 false positives |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1540 AWS CloudTrail REST-protocol recording sweep. |
-| Planned next | After this PR: pick either BUG-1540 CloudTrail REST-protocol coverage or a Phase G service-slice PR, unless new consumer issues arrive first. |
+| Planned next | After this PR: BUG-1540 CloudTrail REST-protocol coverage or a Phase G service-slice PR, unless new consumer issues arrive first. |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 

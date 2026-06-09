@@ -185,6 +185,65 @@ func TestEntra_IDTokenGroupsViaROPC(t *testing.T) {
 	assert.Contains(t, groups, groupID)
 }
 
+func TestEntra_DuplicateUPNRejectedAndROPCClaimsStayDeterministicCLI(t *testing.T) {
+	groupID := createEntraGroup(t, "CLI-Duplicate-UPN")
+	userID := createEntraUser(t, "CLI Duplicate UPN User", "duplicate-upn-cli@example.com")
+	addEntraGroupMember(t, groupID, userID)
+
+	body, _ := json.Marshal(map[string]any{
+		"displayName":       "CLI Duplicate UPN User Two",
+		"userPrincipalName": "DUPLICATE-UPN-CLI@example.com",
+		"mailNickname":      "CLI Duplicate UPN User Two",
+		"accountEnabled":    true,
+		"passwordProfile":   map[string]any{"password": "Test1234!", "forceChangePasswordNextSignIn": false},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/users", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var errBody struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&errBody))
+	assert.Equal(t, "Request_BadRequest", errBody.Error.Code)
+	assert.Contains(t, errBody.Error.Message, "userPrincipalName")
+
+	tokenResp, err := http.PostForm(baseURL+"/cli-duplicate-upn-tenant/oauth2/v2.0/token", url.Values{
+		"grant_type": {"password"},
+		"client_id":  {"cli-duplicate-upn-client"},
+		"username":   {"duplicate-upn-cli@example.com"},
+		"password":   {"x"},
+		"scope":      {"openid profile email"},
+	})
+	require.NoError(t, err)
+	defer tokenResp.Body.Close()
+	require.Equal(t, http.StatusOK, tokenResp.StatusCode)
+	var tokBody struct {
+		IDToken string `json:"id_token"`
+	}
+	require.NoError(t, json.NewDecoder(tokenResp.Body).Decode(&tokBody))
+	require.NotEmpty(t, tokBody.IDToken)
+
+	parts := strings.Split(tokBody.IDToken, ".")
+	require.Len(t, parts, 3)
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
+	assert.Equal(t, userID, payload["oid"])
+	groupsRaw, ok := payload["groups"]
+	require.True(t, ok, "id_token must contain groups claim")
+	groups, ok := groupsRaw.([]any)
+	require.True(t, ok)
+	assert.Contains(t, groups, groupID)
+}
+
 // TestEntra_IDTokenGroupsViaAuthCodeFlow provisions a user+group via standard Graph
 // endpoints, seeds that user as the sim-active user via the auth code flow's
 // auto-issue mechanism, then verifies the id_token carries groups from the

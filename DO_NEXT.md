@@ -4,11 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current State
 
-- Branch: `fix/aca-apps-podman-reverse-agent` (PR pending — BUG-1576).
-- Current fix: ACA Apps attach-stdin under local Podman now registers the reverse-agent. The backend integration harness uses `host.containers.internal` when the Docker API reports Podman, and the Azure simulator injects explicit Podman-machine `/etc/hosts` mappings for `host.containers.internal` and `host.docker.internal` into workload containers when the Podman VM route exposes the host callback subnet.
-- Diagnostics added: ACA Apps reverse-agent bootstrap timeout errors include a recent real Log Analytics app log tail, so failed dials show DNS/connectivity root cause instead of a generic registration timeout.
-- Verification so far: `TestACAGitLabRunnerAttachStdin` passes locally on Podman; Azure simulator tests pass; ACA backend tests pass with `-tags noui`.
-- After this PR: likely next choices are BUG-1540 (AWS CloudTrail REST-protocol recording sweep) or a Phase G new-service-slice PR, unless new consumer issues arrive first.
+- Branch: `fix/ecs-entra-consumer-issues` (PR pending — BUG-1577/1578/1579, issues #525/#526/#527).
+- Current fix: Azure Entra Graph rejects duplicate `userPrincipalName` values case-insensitively and ROPC uses the same resolver, so tokens cannot pick a stale duplicate user. AWS ECS Fargate keeps `SYS_CHROOT`, unblocking sshd preauth chroot. The ECS managed-EBS + awsvpc + same-VPC private-IP path is pinned by a real task-to-task CLI regression.
+- Verification so far: focused Azure SDK/CLI Entra regressions pass; AWS sandbox unit tests pass; focused AWS ECS CLI chroot and managed-EBS awsvpc reachability regressions pass; Azure simulator package tests pass; AWS simulator package tests pass.
+- After this PR: likely next choices are BUG-1540 (AWS CloudTrail REST-protocol coverage) or a Phase G new-service-slice PR, unless new consumer issues arrive first.
 
 ## Prior current state
 
