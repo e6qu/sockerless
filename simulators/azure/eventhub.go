@@ -215,7 +215,7 @@ func handleEHDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			ehAuthRules.Delete(rule.ID)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleEHListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +378,7 @@ func handleEHDeleteEventHub(w http.ResponseWriter, r *http.Request) {
 			ehAuthRules.Delete(rule.ID)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleEHListEventHubs(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +440,7 @@ func handleEHDeleteConsumerGroup(w http.ResponseWriter, r *http.Request) {
 		sim.AzureError(w, "ResourceNotFound", "consumer group not found", http.StatusNotFound)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleEHListConsumerGroups(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +514,7 @@ func ehAuthRuleDelete(scope string) http.HandlerFunc {
 			return
 		}
 		ehAuthRules.Delete(parent + "/authorizationRules/" + sim.PathParam(r, "rule"))
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

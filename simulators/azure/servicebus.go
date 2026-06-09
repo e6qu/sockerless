@@ -258,7 +258,7 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			sbNetworkRules.Delete(ruleSet.ID)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleSBListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +433,7 @@ func handleSBDeleteQueue(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "queue not found")
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleSBListQueues(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +513,7 @@ func handleSBDeleteTopic(w http.ResponseWriter, r *http.Request) {
 			sbRules.Delete(rule.ID)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleSBListTopics(w http.ResponseWriter, r *http.Request) {
@@ -582,7 +582,7 @@ func handleSBDeleteSubscription(w http.ResponseWriter, r *http.Request) {
 			sbRules.Delete(rule.ID)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // sbAuthRuleParentID returns the resource ID of the namespace / queue /
@@ -665,7 +665,7 @@ func sbAuthRuleDelete(scope string) http.HandlerFunc {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found: %s", id)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

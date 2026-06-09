@@ -166,7 +166,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		}
 
 		environments.Delete(resourceID)
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	registerContainerAppEnvironmentStorages(srv, environments)
@@ -259,7 +259,7 @@ func registerContainerAppEnvironmentStorages(srv *sim.Server, envs sim.Store[Con
 		id := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s/storages/%s",
 			sub, rg, envName, storageName)
 		acaEnvStorages.Delete(id)
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{envName}/storages", func(w http.ResponseWriter, r *http.Request) {

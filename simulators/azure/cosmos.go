@@ -349,7 +349,7 @@ func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {
 			cosmosThroughputs.Delete(t.ID)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleCosmosListKeys(w http.ResponseWriter, r *http.Request) {
@@ -510,7 +510,7 @@ func handleCosmosDeleteSQLDatabase(w http.ResponseWriter, r *http.Request) {
 			cosmosContainers.Delete(c.ID)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleCosmosCreateSQLContainer(w http.ResponseWriter, r *http.Request) {
@@ -565,7 +565,7 @@ func handleCosmosDeleteSQLContainer(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos SQL container not found: %s", container)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleCosmosGetThroughput(w http.ResponseWriter, r *http.Request) {
