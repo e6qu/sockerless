@@ -44,7 +44,7 @@ func TestAzureServiceBus_ARMLifecycle(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 	resp = armReq(t, "DELETE", deleteQPath, "")
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
 
 	// Create a topic + subscription.
