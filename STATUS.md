@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `bleephub-parity-storage` |
-| In-flight | Subtasks 1-3 completed on `bleephub-parity-storage`: Bleephub has real Actions cache behavior, GitHub REST artifact endpoints, unknown-route GitHub-shaped 404s, and dual SQLite/PostgreSQL persistence via `BLEEPHUB_PERSIST=true` or `BLEEPHUB_DATABASE_URL`. Next work is broadening durable state to remaining public API objects. |
+| In-flight | Subtasks 1-4 completed on `bleephub-parity-storage`: Bleephub has real Actions cache behavior, GitHub REST artifact endpoints, unknown-route GitHub-shaped 404s, dual SQLite/PostgreSQL persistence, and write-through durability for all public API objects. Next work is git storage hardening and permission enforcement. |
 | Last merged | The Bigtable Terraform coverage + AWS real-execution semantics branch was merged before this branch started. |
 | Open GitHub issues | #394 remained upstream-blocked from the previous issue sweep. Re-check GitHub before doing any non-Bleephub issue work. |
 | Bugs | 1590 filed - 1544 fixed - 7 open - 5 false positives. |

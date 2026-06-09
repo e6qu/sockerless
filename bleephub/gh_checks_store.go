@@ -1,6 +1,9 @@
 package bleephub
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // CheckRun is a single check execution attached to a git ref (commit SHA).
 // Mirrors GitHub's Checks API shape. Created and updated by a GitHub App's
@@ -96,6 +99,9 @@ func (st *Store) CreateCheckSuite(repoKey, headBranch, headSHA string, appID int
 		UpdatedAt:  now,
 	}
 	st.CheckSuites[id] = s
+	if st.persist != nil {
+		st.persist.MustPut("check_suites", strconv.FormatInt(id, 10), s)
+	}
 	return s
 }
 
@@ -151,6 +157,9 @@ func (st *Store) CreateCheckRun(repoKey, headSHA, name string, appID int, suiteI
 				CreatedAt: now,
 				UpdatedAt: now,
 			}
+			if st.persist != nil {
+				st.persist.MustPut("check_suites", strconv.FormatInt(suiteID, 10), st.CheckSuites[suiteID])
+			}
 		}
 	}
 
@@ -169,6 +178,9 @@ func (st *Store) CreateCheckRun(repoKey, headSHA, name string, appID int, suiteI
 		RepoKey:   repoKey,
 	}
 	st.CheckRuns[id] = cr
+	if st.persist != nil {
+		st.persist.MustPut("check_runs", strconv.FormatInt(id, 10), cr)
+	}
 	return cr
 }
 
@@ -188,6 +200,9 @@ func (st *Store) UpdateCheckRun(id int64, fn func(*CheckRun)) bool {
 		return false
 	}
 	fn(cr)
+	if st.persist != nil {
+		st.persist.MustPut("check_runs", strconv.FormatInt(id, 10), cr)
+	}
 	return true
 }
 
@@ -235,6 +250,9 @@ func (st *Store) SetCheckSuitePreferences(repoKey string, prefs []*CheckSuitePre
 		st.CheckSuitePrefs = make(map[string][]*CheckSuitePref)
 	}
 	st.CheckSuitePrefs[repoKey] = append([]*CheckSuitePref(nil), prefs...)
+	if st.persist != nil {
+		st.persist.MustPut("check_suite_prefs", repoKey, st.CheckSuitePrefs[repoKey])
+	}
 }
 
 // GetCheckSuitePreferences returns the configured auto-trigger flags, or empty.

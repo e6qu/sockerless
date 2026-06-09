@@ -96,9 +96,10 @@ type DeploymentStore struct {
 	nextDepID    int
 	nextStatusID int
 	nextEnvID    int
+	persist      *Persistence
 }
 
-func newDeploymentStore() *DeploymentStore {
+func newDeploymentStore(p *Persistence) *DeploymentStore {
 	return &DeploymentStore{
 		deployments:  map[int]*Deployment{},
 		byRepo:       map[int][]*Deployment{},
@@ -108,6 +109,7 @@ func newDeploymentStore() *DeploymentStore {
 		nextDepID:    1,
 		nextStatusID: 1,
 		nextEnvID:    1,
+		persist:      p,
 	}
 }
 
@@ -136,6 +138,9 @@ func (ds *DeploymentStore) CreateDeployment(repoID, creatorID int, ref, sha, tas
 	}
 	ds.deployments[id] = d
 	ds.byRepo[repoID] = append(ds.byRepo[repoID], d)
+	if ds.persist != nil {
+		ds.persist.MustPut("deployments", strconv.Itoa(id), d)
+	}
 	return d
 }
 
@@ -168,6 +173,9 @@ func (ds *DeploymentStore) DeleteDeployment(id int) bool {
 			break
 		}
 	}
+	if ds.persist != nil {
+		ds.persist.MustDelete("deployments", strconv.Itoa(id))
+	}
 	return true
 }
 
@@ -199,6 +207,10 @@ func (ds *DeploymentStore) AddStatus(deploymentID, creatorID int, state, descrip
 	ds.statuses[id] = status
 	d.Statuses = append(d.Statuses, status)
 	d.UpdatedAt = now
+	if ds.persist != nil {
+		ds.persist.MustPut("deployment_statuses", strconv.Itoa(id), status)
+		ds.persist.MustPut("deployments", strconv.Itoa(deploymentID), d)
+	}
 	return status
 }
 
@@ -241,6 +253,9 @@ func (ds *DeploymentStore) UpsertEnvironment(repoID int, name string) *Environme
 	}
 	ds.environments[key] = env
 	ds.envsByRepo[repoID] = append(ds.envsByRepo[repoID], env)
+	if ds.persist != nil {
+		ds.persist.MustPut("environments", key, env)
+	}
 	return env
 }
 
@@ -273,6 +288,9 @@ func (ds *DeploymentStore) DeleteEnvironment(repoID int, name string) bool {
 			ds.envsByRepo[repoID] = append(src[:i], src[i+1:]...)
 			break
 		}
+	}
+	if ds.persist != nil {
+		ds.persist.MustDelete("environments", key)
 	}
 	return true
 }

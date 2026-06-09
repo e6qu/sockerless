@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -95,9 +96,10 @@ type ProjectV2Store struct {
 	nextItemID     int
 	nextFieldID    int
 	nextOptionSeed int
+	persist        *Persistence
 }
 
-func newProjectV2Store() *ProjectV2Store {
+func newProjectV2Store(p *Persistence) *ProjectV2Store {
 	return &ProjectV2Store{
 		projects:       map[int]*ProjectV2{},
 		items:          map[int]*ProjectV2Item{},
@@ -108,6 +110,7 @@ func newProjectV2Store() *ProjectV2Store {
 		nextItemID:     1,
 		nextFieldID:    1,
 		nextOptionSeed: 1,
+		persist:        p,
 	}
 }
 
@@ -137,6 +140,9 @@ func (s *ProjectV2Store) CreateProject(ownerID int, ownerType, title string) *Pr
 		UpdatedAt: now,
 	}
 	s.projects[id] = p
+	if s.persist != nil {
+		s.persist.MustPut("projects_v2", strconv.Itoa(id), p)
+	}
 	return p
 }
 
@@ -186,6 +192,9 @@ func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID in
 	}
 	s.items[id] = it
 	s.itemsByOwner[contentID] = append(s.itemsByOwner[contentID], it)
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_items", strconv.Itoa(id), it)
+	}
 	return it
 }
 
@@ -265,6 +274,9 @@ func (s *ProjectV2Store) CreateField(projectID int, name string, dataType Projec
 	}
 	s.fields[id] = f
 	s.fieldsByProj[projectID] = append(s.fieldsByProj[projectID], f)
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_fields", strconv.Itoa(id), f)
+	}
 	return f
 }
 
@@ -356,5 +368,8 @@ func (s *ProjectV2Store) SetFieldValue(itemID, fieldID int, optionID, textValue 
 		item.FieldValues = map[int]*ProjectV2ItemFieldValue{}
 	}
 	item.FieldValues[fieldID] = val
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_items", strconv.Itoa(itemID), item)
+	}
 	return val, nil
 }

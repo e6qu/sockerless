@@ -257,12 +257,12 @@ func NewStore() *Store {
 		CheckRuns:          make(map[int64]*CheckRun),
 		CheckSuites:        make(map[int64]*CheckSuite),
 		CheckSuitePrefs:    make(map[string][]*CheckSuitePref),
-		Reactions:          newReactionStore(),
-		Releases:           newReleaseStore(),
-		Deployments:        newDeploymentStore(),
-		PRReviewComments:   newPRReviewCommentStore(),
+		Reactions:          newReactionStore(nil),
+		Releases:           newReleaseStore(nil),
+		Deployments:        newDeploymentStore(nil),
+		PRReviewComments:   newPRReviewCommentStore(nil),
 		Misc:               newMiscStore(),
-		ProjectsV2:         newProjectV2Store(),
+		ProjectsV2:         newProjectV2Store(nil),
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
@@ -304,6 +304,11 @@ func (st *Store) SetPersistence(p *Persistence) error {
 	}
 	st.mu.Lock()
 	st.persist = p
+	st.Reactions.persist = p
+	st.Releases.persist = p
+	st.Deployments.persist = p
+	st.PRReviewComments.persist = p
+	st.ProjectsV2.persist = p
 	st.mu.Unlock()
 	return st.loadFromPersistence()
 }
@@ -549,6 +554,233 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
+
+	for _, loadFn := range []struct {
+		name string
+		fn   func(string, []byte) error
+	}{
+		{"hooks", func(key string, raw []byte) error {
+			var hooks []*Webhook
+			if err := loadJSON(raw, &hooks); err != nil {
+				return err
+			}
+			st.Hooks[key] = hooks
+			for _, h := range hooks {
+				if h.ID >= st.NextHookID {
+					st.NextHookID = h.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"hook_deliveries", func(key string, raw []byte) error {
+			var deliveries []*WebhookDelivery
+			if err := loadJSON(raw, &deliveries); err != nil {
+				return err
+			}
+			hookID := 0
+			for _, d := range deliveries {
+				st.HookDeliveries[d.HookID] = append(st.HookDeliveries[d.HookID], d)
+				if d.ID >= st.NextDeliveryID {
+					st.NextDeliveryID = d.ID + 1
+				}
+				hookID = d.HookID
+			}
+			_ = hookID
+			return nil
+		}},
+		{"app_hook_deliveries", func(key string, raw []byte) error {
+			var deliveries []*WebhookDelivery
+			if err := loadJSON(raw, &deliveries); err != nil {
+				return err
+			}
+			for _, d := range deliveries {
+				st.AppHookDeliveries[d.HookID] = append(st.AppHookDeliveries[d.HookID], d)
+				if d.ID >= st.NextDeliveryID {
+					st.NextDeliveryID = d.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"check_suite_prefs", func(key string, raw []byte) error {
+			var prefs []*CheckSuitePref
+			if err := loadJSON(raw, &prefs); err != nil {
+				return err
+			}
+			st.CheckSuitePrefs[key] = prefs
+			return nil
+		}},
+		{"repo_secrets", func(key string, raw []byte) error {
+			var secrets map[string]*Secret
+			if err := loadJSON(raw, &secrets); err != nil {
+				return err
+			}
+			st.RepoSecrets[key] = secrets
+			return nil
+		}},
+		{"check_suites", func(_ string, raw []byte) error {
+			var s CheckSuite
+			if err := loadJSON(raw, &s); err != nil {
+				return err
+			}
+			st.CheckSuites[s.ID] = &s
+			if s.ID >= int64(st.NextCheckSuiteID) {
+				st.NextCheckSuiteID = s.ID + 1
+			}
+			return nil
+		}},
+		{"check_runs", func(_ string, raw []byte) error {
+			var cr CheckRun
+			if err := loadJSON(raw, &cr); err != nil {
+				return err
+			}
+			st.CheckRuns[cr.ID] = &cr
+			if cr.ID >= int64(st.NextCheckRunID) {
+				st.NextCheckRunID = cr.ID + 1
+			}
+			return nil
+		}},
+		{"workflow_files", func(_ string, raw []byte) error {
+			return nil
+		}},
+		{"pr_reviews", func(_ string, raw []byte) error {
+			var r PullRequestReview
+			if err := loadJSON(raw, &r); err != nil {
+				return err
+			}
+			st.PRReviews[r.ID] = &r
+			if r.ID >= st.NextPRReview {
+				st.NextPRReview = r.ID + 1
+			}
+			return nil
+		}},
+		{"releases", func(_ string, raw []byte) error {
+			var r Release
+			if err := loadJSON(raw, &r); err != nil {
+				return err
+			}
+			st.Releases.byID[r.ID] = &r
+			st.Releases.byRepo[r.RepoID] = append(st.Releases.byRepo[r.RepoID], &r)
+			if r.ID >= st.Releases.nextID {
+				st.Releases.nextID = r.ID + 1
+			}
+			return nil
+		}},
+		{"deployments", func(_ string, raw []byte) error {
+			var d Deployment
+			if err := loadJSON(raw, &d); err != nil {
+				return err
+			}
+			st.Deployments.deployments[d.ID] = &d
+			st.Deployments.byRepo[d.RepoID] = append(st.Deployments.byRepo[d.RepoID], &d)
+			if d.ID >= st.Deployments.nextDepID {
+				st.Deployments.nextDepID = d.ID + 1
+			}
+			return nil
+		}},
+		{"deployment_statuses", func(_ string, raw []byte) error {
+			var s DeploymentStatus
+			if err := loadJSON(raw, &s); err != nil {
+				return err
+			}
+			st.Deployments.statuses[s.ID] = &s
+			if s.ID >= st.Deployments.nextStatusID {
+				st.Deployments.nextStatusID = s.ID + 1
+			}
+			return nil
+		}},
+		{"environments", func(_ string, raw []byte) error {
+			var e Environment
+			if err := loadJSON(raw, &e); err != nil {
+				return err
+			}
+			key := fmt.Sprintf("%d:%s", e.RepoID, e.Name)
+			st.Deployments.environments[key] = &e
+			st.Deployments.envsByRepo[e.RepoID] = append(st.Deployments.envsByRepo[e.RepoID], &e)
+			if e.ID >= st.Deployments.nextEnvID {
+				st.Deployments.nextEnvID = e.ID + 1
+			}
+			return nil
+		}},
+		{"pr_review_comments", func(_ string, raw []byte) error {
+			var c PRReviewComment
+			if err := loadJSON(raw, &c); err != nil {
+				return err
+			}
+			st.PRReviewComments.byID[c.ID] = &c
+			st.PRReviewComments.byPR[c.PullRequestID] = append(st.PRReviewComments.byPR[c.PullRequestID], &c)
+			if c.InReplyToID > 0 {
+				if tr, ok := st.PRReviewComments.threadRoots[c.InReplyToID]; ok {
+					st.PRReviewComments.threadRoots[c.ID] = tr
+				}
+			} else {
+				st.PRReviewComments.threadRoots[c.ID] = c.ID
+			}
+			if c.ID >= st.PRReviewComments.nextID {
+				st.PRReviewComments.nextID = c.ID + 1
+			}
+			return nil
+		}},
+		{"reactions", func(_ string, raw []byte) error {
+			var reactions []*Reaction
+			if err := loadJSON(raw, &reactions); err != nil {
+				return err
+			}
+			for _, r := range reactions {
+				st.Reactions.byID[r.ID] = r
+				st.Reactions.byParent[reactionParentKey(r.ParentType, r.ParentID)] = append(st.Reactions.byParent[reactionParentKey(r.ParentType, r.ParentID)], r)
+				if r.ID >= st.Reactions.nextID {
+					st.Reactions.nextID = r.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"projects_v2", func(_ string, raw []byte) error {
+			var p ProjectV2
+			if err := loadJSON(raw, &p); err != nil {
+				return err
+			}
+			st.ProjectsV2.projects[p.ID] = &p
+			if p.ID >= st.ProjectsV2.nextProjectID {
+				st.ProjectsV2.nextProjectID = p.ID + 1
+			}
+			return nil
+		}},
+		{"project_v2_items", func(_ string, raw []byte) error {
+			var it ProjectV2Item
+			if err := loadJSON(raw, &it); err != nil {
+				return err
+			}
+			st.ProjectsV2.items[it.ID] = &it
+			st.ProjectsV2.itemsByOwner[it.ContentID] = append(st.ProjectsV2.itemsByOwner[it.ContentID], &it)
+			if it.ID >= st.ProjectsV2.nextItemID {
+				st.ProjectsV2.nextItemID = it.ID + 1
+			}
+			return nil
+		}},
+		{"project_v2_fields", func(_ string, raw []byte) error {
+			var f ProjectV2Field
+			if err := loadJSON(raw, &f); err != nil {
+				return err
+			}
+			st.ProjectsV2.fields[f.ID] = &f
+			st.ProjectsV2.fieldsByProj[f.ProjectID] = append(st.ProjectsV2.fieldsByProj[f.ProjectID], &f)
+			if f.ID >= st.ProjectsV2.nextFieldID {
+				st.ProjectsV2.nextFieldID = f.ID + 1
+			}
+			return nil
+		}},
+	} {
+		rows, err := st.persist.List(loadFn.name)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", loadFn.name, err)
+		}
+		for k, raw := range rows {
+			if err := loadFn.fn(k, raw); err != nil {
+				return fmt.Errorf("decode %s row: %w", loadFn.name, err)
+			}
+		}
+	}
+
 	return nil
 }
 

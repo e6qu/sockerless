@@ -11,7 +11,7 @@ type Secret struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Value     string    `json:"-"` // never exposed via GET
+	Value     string    `json:"-"`
 }
 
 func (s *Server) registerSecretsRoutes() {
@@ -107,19 +107,23 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	if existing != nil {
 		existing.Value = body.Value
 		existing.UpdatedAt = now
-		s.store.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
-		return
+	} else {
+		s.store.RepoSecrets[repoKey][name] = &Secret{
+			Name:      name,
+			CreatedAt: now,
+			UpdatedAt: now,
+			Value:     body.Value,
+		}
 	}
-
-	s.store.RepoSecrets[repoKey][name] = &Secret{
-		Name:      name,
-		CreatedAt: now,
-		UpdatedAt: now,
-		Value:     body.Value,
+	if s.store.persist != nil {
+		s.store.persist.MustPut("repo_secrets", repoKey, s.store.RepoSecrets[repoKey])
 	}
 	s.store.mu.Unlock()
-	w.WriteHeader(http.StatusCreated)
+	if existing != nil {
+		w.WriteHeader(http.StatusNoContent)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
 }
 
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +139,13 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.Lock()
 	if secrets, ok := s.store.RepoSecrets[repoKey]; ok {
 		delete(secrets, name)
+		if s.store.persist != nil {
+			if len(secrets) > 0 {
+				s.store.persist.MustPut("repo_secrets", repoKey, secrets)
+			} else {
+				s.store.persist.MustDelete("repo_secrets", repoKey)
+			}
+		}
 	}
 	s.store.mu.Unlock()
 

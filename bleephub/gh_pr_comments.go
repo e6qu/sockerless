@@ -58,16 +58,18 @@ type PRReviewCommentStore struct {
 	mu          sync.RWMutex
 	byID        map[int]*PRReviewComment
 	byPR        map[int][]*PRReviewComment
-	threadRoots map[int]int // childID → rootID
+	threadRoots map[int]int
 	nextID      int
+	persist     *Persistence
 }
 
-func newPRReviewCommentStore() *PRReviewCommentStore {
+func newPRReviewCommentStore(p *Persistence) *PRReviewCommentStore {
 	return &PRReviewCommentStore{
 		byID:        map[int]*PRReviewComment{},
 		byPR:        map[int][]*PRReviewComment{},
 		threadRoots: map[int]int{},
 		nextID:      1,
+		persist:     p,
 	}
 }
 
@@ -106,6 +108,9 @@ func (s *PRReviewCommentStore) CreateRootComment(prID, authorID int, path, body,
 	s.byID[id] = c
 	s.byPR[prID] = append(s.byPR[prID], c)
 	s.threadRoots[id] = id
+	if s.persist != nil {
+		s.persist.MustPut("pr_review_comments", strconv.Itoa(id), c)
+	}
 	return c
 }
 
@@ -149,6 +154,9 @@ func (s *PRReviewCommentStore) Reply(prID, rootID, authorID int, body string) *P
 	s.byID[id] = c
 	s.byPR[prID] = append(s.byPR[prID], c)
 	s.threadRoots[id] = threadRoot
+	if s.persist != nil {
+		s.persist.MustPut("pr_review_comments", strconv.Itoa(id), c)
+	}
 	return c
 }
 
@@ -175,6 +183,9 @@ func (s *PRReviewCommentStore) Update(id int, body string) bool {
 	}
 	c.Body = body
 	c.UpdatedAt = time.Now()
+	if s.persist != nil {
+		s.persist.MustPut("pr_review_comments", strconv.Itoa(id), c)
+	}
 	return true
 }
 
@@ -194,6 +205,9 @@ func (s *PRReviewCommentStore) Delete(id int) bool {
 		}
 	}
 	delete(s.threadRoots, id)
+	if s.persist != nil {
+		s.persist.MustDelete("pr_review_comments", strconv.Itoa(id))
+	}
 	return true
 }
 
@@ -207,6 +221,9 @@ func (s *PRReviewCommentStore) ResolveThread(threadID int, resolved bool) bool {
 	}
 	root.Resolved = resolved
 	root.UpdatedAt = time.Now()
+	if s.persist != nil {
+		s.persist.MustPut("pr_review_comments", strconv.Itoa(threadID), root)
+	}
 	return true
 }
 

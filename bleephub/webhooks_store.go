@@ -1,6 +1,9 @@
 package bleephub
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // Webhook represents a GitHub repository webhook.
 type Webhook struct {
@@ -68,6 +71,9 @@ func (st *Store) CreateHook(repoKey, url, secret string, events []string, active
 	}
 	st.NextHookID++
 	st.Hooks[repoKey] = append(st.Hooks[repoKey], hook)
+	if st.persist != nil {
+		st.persist.MustPut("hooks", repoKey, st.Hooks[repoKey])
+	}
 	return hook
 }
 
@@ -104,6 +110,9 @@ func (st *Store) UpdateHook(repoKey string, hookID int, fn func(h *Webhook)) boo
 		if h.ID == hookID {
 			fn(h)
 			h.UpdatedAt = time.Now()
+			if st.persist != nil {
+				st.persist.MustPut("hooks", repoKey, st.Hooks[repoKey])
+			}
 			return true
 		}
 	}
@@ -119,6 +128,13 @@ func (st *Store) DeleteHook(repoKey string, hookID int) bool {
 	for i, h := range hooks {
 		if h.ID == hookID {
 			st.Hooks[repoKey] = append(hooks[:i], hooks[i+1:]...)
+			if st.persist != nil {
+				if len(st.Hooks[repoKey]) > 0 {
+					st.persist.MustPut("hooks", repoKey, st.Hooks[repoKey])
+				} else {
+					st.persist.MustDelete("hooks", repoKey)
+				}
+			}
 			return true
 		}
 	}
@@ -137,6 +153,9 @@ func (st *Store) AddDelivery(delivery *WebhookDelivery) {
 	delivery.ID = st.NextDeliveryID
 	st.NextDeliveryID++
 	st.HookDeliveries[delivery.HookID] = append(st.HookDeliveries[delivery.HookID], delivery)
+	if st.persist != nil {
+		st.persist.MustPut("hook_deliveries", strconv.Itoa(delivery.HookID), st.HookDeliveries[delivery.HookID])
+	}
 }
 
 // ListDeliveries returns all deliveries for a webhook, newest first.

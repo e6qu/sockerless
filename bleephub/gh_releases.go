@@ -63,15 +63,17 @@ type ReleaseStore struct {
 	assetByID map[int]*ReleaseAsset
 	nextID    int
 	nextAsset int
+	persist   *Persistence
 }
 
-func newReleaseStore() *ReleaseStore {
+func newReleaseStore(p *Persistence) *ReleaseStore {
 	return &ReleaseStore{
 		byID:      map[int]*Release{},
 		byRepo:    map[int][]*Release{},
 		assetByID: map[int]*ReleaseAsset{},
 		nextID:    1,
 		nextAsset: 1,
+		persist:   p,
 	}
 }
 
@@ -99,6 +101,9 @@ func (rs *ReleaseStore) Create(repoID, authorID int, tagName, target, name, body
 	}
 	rs.byID[id] = r
 	rs.byRepo[repoID] = append(rs.byRepo[repoID], r)
+	if rs.persist != nil {
+		rs.persist.MustPut("releases", strconv.Itoa(id), r)
+	}
 	return r
 }
 
@@ -156,6 +161,9 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 		now := time.Now()
 		r.PublishedAt = &now
 	}
+	if rs.persist != nil {
+		rs.persist.MustPut("releases", strconv.Itoa(id), r)
+	}
 	return true
 }
 
@@ -173,6 +181,9 @@ func (rs *ReleaseStore) Delete(id int) bool {
 			rs.byRepo[r.RepoID] = append(src[:i], src[i+1:]...)
 			break
 		}
+	}
+	if rs.persist != nil {
+		rs.persist.MustDelete("releases", strconv.Itoa(id))
 	}
 	return true
 }

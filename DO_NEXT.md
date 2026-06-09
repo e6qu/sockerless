@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, and 3 completed:
+Subtasks 1, 2, 3, and 4 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -20,6 +20,13 @@ Subtasks 1, 2, and 3 completed:
   real stored artifacts with pagination, name filtering, digest, and repo/run
   isolation.
 - Subtask 3: PostgreSQL persistence support via pgx.
+- Subtask 4: Broadened durable state to cover all remaining public API objects.
+  Write-through persistence added for hooks, hook_deliveries,
+  app_hook_deliveries, check_runs, check_suites, check_suite_prefs,
+  repo_secrets, workflow_files, pr_reviews, releases, deployments,
+  deployment_statuses, environments, pr_review_comments, reactions,
+  projects_v2, project_v2_items, and project_v2_fields. All new buckets
+  load correctly from disk on restart.
   - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
     interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
   - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
@@ -38,31 +45,7 @@ gofmt -l bleephub/persistence.go bleephub/persistence_test.go bleephub/server.go
 
 ## Current Subtask
 
-Subtask 4: Broaden durable state for public Bleephub API objects.
-
-The persistence layer currently covers users, tokens, apps, oauth_apps,
-installations, installation_tokens, user_to_server_tokens, refresh_tokens,
-repos, orgs, teams, memberships, labels, milestones, issues, comments, and
-pull_requests. Other exposed API state (workflows, hooks, hook_deliveries,
-check_runs, check_suites, releases, deployments, reactions, PR review
-comments, projects_v2, secrets, and artifacts/cache) stays in-memory only and
-is lost on restart.
-
-This subtask should extend write-through persistence to the remaining public
-API surfaces that the GitHub API promises as durable.
-
-Likely files: `bleephub/persistence.go`, `bleephub/store.go`,
-`bleephub/store_*.go`, `bleephub/webhooks_store.go`,
-`bleephub/gh_releases.go`, `bleephub/gh_deployments.go`,
-`bleephub/gh_pr_comments.go`, `bleephub/gh_projects_v2_graphql.go`,
-`bleephub/gh_reactions.go`, `bleephub/gh_checks_store.go`,
-`bleephub/artifacts.go`, `bleephub/secrets.go`.
-
-First commands:
-
-```bash
-rg -n "persist\." bleephub/store.go bleephub/store_*.go bleephub/webhooks_store.go bleephub/artifacts.go
-```
+Subtask 5: Git storage hardening and git HTTP permission enforcement.
 
 ## Ordered Subtasks For This PR
 

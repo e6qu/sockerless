@@ -21,6 +21,20 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
   `GITHUB_*` variables must match GitHub/GHES rather than Bleephub-branded
   substitutes, except for internal or operator-only surfaces.
 
+## 2026-06-09 - Bleephub broadened durable state
+
+- [bleephub/persistence.go](bleephub/persistence.go) now writes through all
+  public API objects: hooks, hook_deliveries, app_hook_deliveries,
+  check_runs, check_suites, check_suite_prefs, repo_secrets,
+  workflow_files, pr_reviews, releases, deployments, deployment_statuses,
+  environments, pr_review_comments, reactions, projects_v2,
+  project_v2_items, and project_v2_fields.
+- Sub-stores (ReactionStore, ReleaseStore, DeploymentStore,
+  PRReviewCommentStore, ProjectV2Store) now accept `*Persistence` and
+  write through on every mutation.
+- All new buckets load correctly from disk on restart with proper ID
+  counter recovery.
+
 ## 2026-06-09 - Bleephub PostgreSQL persistence support
 
 - [bleephub/persistence.go](bleephub/persistence.go) now supports PostgreSQL
