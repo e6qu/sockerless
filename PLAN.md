@@ -51,8 +51,8 @@ implementation defects, not accepted compatibility shortcuts:
   expect. Do not invent `bleephub` names where real GitHub exposes a
   `github`/`GITHUB_*` name.
 - Advertised long-tail GitHub surfaces such as Pages builds, audit log content,
-  run artifact listings, environment approvals, and GraphQL status rollups still
-  include shape-only or empty responses.
+  environment approvals, and GraphQL status rollups still include shape-only or
+  empty responses.
 - Bleephub docs are stale around admin tokens, git storage, persistence, TLS, UI
   auth, and operator setup.
 
@@ -66,9 +66,9 @@ temporary failing check and the next command to run.
 1. **Baseline audit tests and error handling** — add focused tests for the known
    fake paths, change unmatched routes to GitHub/git-shaped errors, and refresh
    the parity notes with concrete current gaps.
-2. **Actions cache and artifact indexing** — replace cache no-ops with real
+2. **Actions cache and artifact indexing** — replaced cache no-ops with real
    cache records, restore-key lookup, upload/finalize/download behavior, and
-   run/repo artifact list indexing.
+   run/repo artifact list/get/delete/download behavior.
 3. **Persistence abstraction** — keep SQLite support, add PostgreSQL support,
    define explicit env/config names, and fail loudly if the requested database
    cannot open or migrate.

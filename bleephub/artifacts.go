@@ -27,13 +27,16 @@ type ArtifactStore struct {
 
 // Artifact represents an uploaded artifact.
 type Artifact struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Size      int64     `json:"size"`
-	Data      []byte    `json:"-"`
-	Finalized bool      `json:"finalized"`
-	RunID     string    `json:"runId"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID                   int64     `json:"id"`
+	Name                 string    `json:"name"`
+	Size                 int64     `json:"size"`
+	Data                 []byte    `json:"-"`
+	Finalized            bool      `json:"finalized"`
+	RunID                string    `json:"runId"`
+	GitHubRunID          int       `json:"githubRunId"`
+	RepoFullName         string    `json:"repoFullName"`
+	WorkflowRunBackendID string    `json:"workflowRunBackendId"`
+	CreatedAt            time.Time `json:"createdAt"`
 }
 
 // CacheEntry represents one immutable Actions dependency cache archive.
@@ -171,6 +174,49 @@ func (as *ArtifactStore) appendData(art *Artifact, chunk []byte) {
 	f.Close()
 }
 
+func (as *ArtifactStore) finalizedArtifacts() []*Artifact {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+
+	out := make([]*Artifact, 0, len(as.artifacts))
+	for _, art := range as.artifacts {
+		if !art.Finalized {
+			continue
+		}
+		copyArt := *art
+		copyArt.Data = append([]byte(nil), art.Data...)
+		out = append(out, &copyArt)
+	}
+	return out
+}
+
+func (as *ArtifactStore) artifactByID(id int64) (*Artifact, bool) {
+	as.mu.RLock()
+	defer as.mu.RUnlock()
+
+	art, ok := as.artifacts[id]
+	if !ok || !art.Finalized {
+		return nil, false
+	}
+	copyArt := *art
+	copyArt.Data = append([]byte(nil), art.Data...)
+	return &copyArt, true
+}
+
+func (as *ArtifactStore) deleteArtifact(id int64) bool {
+	as.mu.Lock()
+	_, ok := as.artifacts[id]
+	if ok {
+		delete(as.artifacts, id)
+	}
+	as.mu.Unlock()
+
+	if ok && as.dataDir != "" {
+		_ = os.RemoveAll(filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(id, 10)))
+	}
+	return ok
+}
+
 func (as *ArtifactStore) persistCacheMeta(entry *CacheEntry) {
 	if as.dataDir == "" {
 		return
@@ -229,14 +275,25 @@ func (s *Server) handleCreateArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wf := s.findWorkflowByBackendID(req.WorkflowRunBackendID)
+	repoFullName := ""
+	githubRunID := 0
+	if wf != nil {
+		repoFullName = wf.RepoFullName
+		githubRunID = wf.RunID
+	}
+
 	s.artifactStore.mu.Lock()
 	id := s.artifactStore.nextID
 	s.artifactStore.nextID++
 	art := &Artifact{
-		ID:        id,
-		Name:      req.Name,
-		RunID:     req.WorkflowRunBackendID,
-		CreatedAt: time.Now(),
+		ID:                   id,
+		Name:                 req.Name,
+		RunID:                req.WorkflowRunBackendID,
+		GitHubRunID:          githubRunID,
+		RepoFullName:         repoFullName,
+		WorkflowRunBackendID: req.WorkflowRunBackendID,
+		CreatedAt:            time.Now(),
 	}
 	s.artifactStore.artifacts[id] = art
 	s.artifactStore.persistMeta(art)

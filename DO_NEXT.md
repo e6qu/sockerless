@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtask 1 completed:
+Subtasks 1 and 2 completed:
 
 - [bleephub/artifacts.go](bleephub/artifacts.go) replaced the Actions cache
   no-op handlers with real cache reserve/upload/finalize/lookup/download state.
@@ -24,51 +24,64 @@ Subtask 1 completed:
   plain responses for unknown GitHub API paths.
 - Tests cover cache round-trip, cache misses, restore-key prefix matching, and
   unknown-route status/body behavior.
+- [bleephub/artifacts.go](bleephub/artifacts.go) now records artifact
+  `repoFullName`, GitHub `run_id`, and `workflow_run_backend_id` metadata when
+  the runner creates artifacts through the Twirp results API.
+- [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go) now serves real
+  finalized artifacts through the documented GitHub REST paths:
+  `/actions/runs/{run_id}/artifacts`, `/actions/artifacts`,
+  `/actions/artifacts/{artifact_id}`, DELETE, and `/zip` download redirect.
+- Artifact REST responses include GitHub-shaped artifact fields, workflow-run
+  linkage, digest, pagination, name filtering, and repo/run isolation.
+- [BUGS.md](BUGS.md) now records the separate environment approvals fidelity gap
+  instead of letting the empty approvals endpoint look like proof of modeled
+  state.
 
 Verified:
 
 ```bash
 cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestCache|TestUnknownRoutesDoNotReturnSuccess' ./...
 cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -c ./...
+git diff --check
 ```
+
+The focused artifact/cache test run was attempted with
+`go test -run 'TestActionsArtifacts|TestArtifact|TestCache' ./...`, but this
+sandbox could not bind `127.0.0.1:0`, and escalation was unavailable because the
+session hit its usage limit. Re-run that command before pushing the next commit.
 
 ## Current Subtask
 
-Subtask 2: real Actions cache behavior and artifact indexing.
+Subtask 3: SQLite/PostgreSQL persistence abstraction and configuration.
 
-The cache now stores real data, but the next slice should finish the user-facing
-Actions cache/artifact behavior that callers see through REST and runner flows:
+The next slice should make persistence an explicit backend choice instead of a
+SQLite-only switch:
 
-- Wire artifact list endpoints in
-  [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go) to
-  [bleephub/artifacts.go](bleephub/artifacts.go) instead of returning empty
-  lists.
-- Preserve run/repo linkage for artifacts created through the Twirp API, then
-  make run-level and repo-level artifact REST lists return real artifacts.
-- Add download/delete metadata surfaces if the real GitHub REST artifact API path
-  already exists in docs but Bleephub lacks it.
-- Audit whether cache keys need repo/ref/scope fields from the runner request
-  headers or query parameters. Add those fields if the official runner/client
-  sends them, and avoid global cache leakage across repos.
-- Audit public Bleephub-specific names while touching these paths. Externally
-  observable API paths, request fields, response fields, runner parameters,
-  workflow environment variables, and UI text must use the GitHub/GHES names
-  real clients expect, including `GITHUB_*` variables. Keep `bleephub` names only
-  for internal code or explicit operator-only management surfaces.
-- Add focused tests that exercise the same mux paths real clients use.
+- Keep SQLite support and its existing durability behavior.
+- Add PostgreSQL support with real migrations/schema creation and no in-memory
+  fallback if the configured database cannot open or migrate.
+- Define natural configuration names and preserve GitHub/GHES-facing external
+  API names. Bleephub-specific env vars are acceptable for operator-only server
+  configuration, but runner/API/workflow-visible names must stay GitHub-shaped.
+- Update [bleephub/persistence.go](bleephub/persistence.go), server startup
+  wiring, docs, and tests together.
+- Before changing database code, remove the generated local
+  `bleephub/bleephub.test` file if it is still present. It was produced by
+  compile-only validation and was not staged.
 
 First commands for the next session:
 
 ```bash
 git status --short --branch
-rg -n "handleRunArtifacts|handleRepoArtifacts|ArtifactStore|WorkflowRunBackendID|RunID|artifactcache|actions/artifacts|GITHUB_|bleephub" bleephub ui/packages/bleephub
-cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestArtifact|TestCache|TestActions.*Artifact' ./...
+cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestActionsArtifacts|TestArtifact|TestCache' ./...
+rg -n "NewPersistence|BLEEPHUB_PERSIST|BLEEPHUB_DATA_DIR|sqlite|postgres|database|persistence" bleephub docs README.md
 ```
 
 Expected first commit shape:
 
 ```text
-bleephub: return real actions artifacts
+bleephub: add postgresql persistence
 ```
 
 Adjust the message to match the actual completed work. Do not mention internal
@@ -121,10 +134,9 @@ cd ui/packages/bleephub && bun test
 
 ## Verification State
 
-No Bleephub implementation changes have been made on this branch yet. The last
-known repository state was clean on `main` before this branch was created. Run
-the Bleephub Go tests at the start of implementation to establish the local
-baseline.
+PR #534 existed for this branch and was green after subtask 1. Subtask 2 has
+compile-only validation and whitespace validation locally; the focused runtime
+tests still need to be rerun once loopback bind permission is available.
 
 ## Branch And PR Hygiene
 

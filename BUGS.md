@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1589 filed - 1544 fixed - 6 open - 5 false positives.**
+**1590 filed - 1544 fixed - 7 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 1590 | P2 | bleephub Actions REST — environment pending approvals | successful empty response / unmodeled GitHub state | `GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals` returns `200 []` regardless of run environment state. Real GitHub reports pending deployment/environment approvals. Fix shape: model environments, deployment protection/pending approval records, and return only the run's real pending approvals; until that lands this endpoint must be treated as an open fidelity gap, not proof that no approvals exist. |
 | ~~1589~~ | P1 | aws simulator — Batch, CodeBuild, Glue, and Step Functions reported terminal success without executing work | synthetic execution / false-positive success | Fixed: AWS Batch `SubmitJob` now runs the registered container image through the shared workload runner and updates job state from the container exit code; CodeBuild `StartBuild` runs inline buildspec commands with a real shell process; Glue `StartJobRun` executes Python shell scripts loaded from the simulator's S3 store; Step Functions `StartExecution` runs a small ASL interpreter for Pass/Succeed/Fail/Wait and `StopExecution` aborts real running Wait executions. SDK + CLI coverage was updated to wait on service state instead of assuming immediate success. |
 | ~~1585~~ | P2 | gcp terraform — Bigtable Admin provider coverage missing from apply stack | provider coverage gap | Fixed: the GCP Terraform apply stack now declares `google_bigtable_instance` and `google_bigtable_table` resources, the simulator exposes Bigtable Admin on the official gRPC emulator path used by the Google provider, and the apply/destroy harness asserts the provider-returned resource IDs. |
 | 1584 | P3 | azure terraform — azurestack provider warning on custom cloud metadata | provider warning / stale deprecation diagnostic | `terraform validate` still emits the AzureStack provider's "`arm_endpoint` is deprecated in favour of `metadata_host`" warning even though the test config now uses only `metadata_host`. Track until the provider warning path is fixed upstream or the stack can move off the AzureStack compatibility provider without losing coverage. |

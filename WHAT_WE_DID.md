@@ -21,6 +21,19 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
   `GITHUB_*` variables must match GitHub/GHES rather than Bleephub-branded
   substitutes, except for internal or operator-only surfaces.
 
+## 2026-06-09 - Bleephub Actions artifacts REST parity
+
+- Runner-created Actions artifacts now keep repository, GitHub run ID, and
+  workflow backend ID metadata, so artifacts can be joined back to real workflow
+  runs instead of floating in a global store.
+- GitHub REST artifact endpoints now return real stored artifacts for
+  repository and run-scoped lists, including pagination, `name` filtering,
+  metadata get, delete, `/zip` download redirect, digest, and workflow-run
+  fields.
+- The separate empty environment-approvals endpoint was recorded in
+  [BUGS.md](BUGS.md) as an open fidelity gap rather than being treated as a real
+  no-approval signal.
+
 ## 2026-06-09 - Bigtable Terraform + AWS execution semantics
 
 - **BUG-1585** was fixed as a coverage gap and provider-routing gap. The GCP Terraform apply stack now declared `google_bigtable_instance` and `google_bigtable_table`, the simulator exposed Bigtable Admin on the official gRPC emulator path used by the Google provider, and the apply harness asserted the provider-returned instance/table IDs. The coverage matrix and `gcp-bigtable` surface table now marked Terraform as direct coverage.

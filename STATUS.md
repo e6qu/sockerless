@@ -7,11 +7,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `bleephub-parity-storage` |
-| In-flight | Subtask 1 completed on `bleephub-parity-storage`: Bleephub now has real in-process Actions cache reserve/upload/finalize/lookup/download behavior instead of no-op cache handlers, and unknown GitHub API paths return GitHub-shaped 404s instead of silent success/plain 404s. Next work is deeper Actions artifact/cache indexing and durability. |
+| In-flight | Subtasks 1 and 2 completed on `bleephub-parity-storage`: Bleephub now has real in-process Actions cache reserve/upload/finalize/lookup/download behavior, unknown GitHub API paths return GitHub-shaped 404s, and GitHub REST artifact list/get/delete/download paths return real stored artifacts. Next work is SQLite/PostgreSQL persistence abstraction. |
 | Last merged | The Bigtable Terraform coverage + AWS real-execution semantics branch was merged before this branch started. |
 | Open GitHub issues | #394 remained upstream-blocked from the previous issue sweep. Re-check GitHub before doing any non-Bleephub issue work. |
-| Bugs | 1589 filed - 1544 fixed - 6 open - 5 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`. |
+| Bugs | 1590 filed - 1544 fixed - 7 open - 5 false positives. |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 Bleephub run approvals empty-success gap. |
 | Live infra | None up. |
 
 ## Current Bleephub Findings
@@ -20,6 +20,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
   records and downloadable saved entries for reserve/upload/finalize/lookup.
   Next cache work should index caches by run/repo/scope where the runner/API
   surfaces require it and wire the model into the later durable storage work.
+- [bleephub/artifacts.go](bleephub/artifacts.go) and
+  [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go) now join
+  runner-created artifacts to repositories and GitHub run IDs, then expose real
+  finalized artifacts through GitHub REST list/get/delete/download paths with
+  pagination, name filtering, digest fields, and repo/run isolation.
 - [bleephub/server.go](bleephub/server.go) and
   [bleephub/gh_rest.go](bleephub/gh_rest.go) no longer return success/plain
   responses for unknown GitHub API paths. Unknown REST paths return
@@ -45,8 +50,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 - [bleephub/gh_misc_endpoints.go](bleephub/gh_misc_endpoints.go),
   [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go), and
   [bleephub/gh_pulls_graphql.go](bleephub/gh_pulls_graphql.go) still contain
-  shape-only or empty responses for Pages builds, audit log, run artifact lists,
-  approvals, and status rollups.
+  shape-only or empty responses for Pages builds, audit log, approvals, and
+  status rollups. BUG-1590 tracks the approvals gap explicitly.
 
 ## Bleephub Branch Rules
 

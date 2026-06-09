@@ -3,10 +3,14 @@ package bleephub
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,7 +21,10 @@ import (
 //   GET  /repos/{o}/{r}/actions/runs/{run_id}/timing         per-job timing summary
 //   GET  /repos/{o}/{r}/actions/runs/{run_id}/artifacts      artifact list
 //   GET  /repos/{o}/{r}/actions/artifacts                    repo-wide artifact list
-//   GET  /repos/{o}/{r}/actions/runs/{run_id}/approvals      env-pending-approvals stub
+//   GET  /repos/{o}/{r}/actions/artifacts/{artifact_id}       artifact metadata
+//   DELETE /repos/{o}/{r}/actions/artifacts/{artifact_id}     delete artifact
+//   GET  /repos/{o}/{r}/actions/artifacts/{artifact_id}/zip   artifact download redirect
+//   GET  /repos/{o}/{r}/actions/runs/{run_id}/approvals      env-pending approvals
 
 func (s *Server) registerGHActionsExtrasRoutes() {
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/dispatches",
@@ -32,6 +39,12 @@ func (s *Server) registerGHActionsExtrasRoutes() {
 		s.handleRunArtifacts)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts",
 		s.handleRepoArtifacts)
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
+		s.handleGetArtifact)
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
+		s.requirePerm("actions", permWrite, s.handleDeleteArtifact))
+	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}",
+		s.handleDownloadArtifactArchive)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals",
 		s.handleRunApprovals)
 }
@@ -138,25 +151,220 @@ func (s *Server) handleRunTiming(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRunArtifacts + handleRepoArtifacts — bleephub stores artifacts in
-// ArtifactStore but doesn't index by run_id today. Returns empty list with
-// real-GH shape; future work to wire run linkage.
 func (s *Server) handleRunArtifacts(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_count": 0,
-		"artifacts":   []interface{}{},
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid run_id")
+		return
+	}
+	wf := s.findWorkflowByRunID(runID)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	matching := s.filterArtifacts(r, func(art *Artifact) bool {
+		return s.artifactBelongsToRun(art, wf)
 	})
+	s.writeArtifactList(w, r, matching)
 }
 
 func (s *Server) handleRepoArtifacts(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_count": 0,
-		"artifacts":   []interface{}{},
+	repo := repoFullName(r)
+	matching := s.filterArtifacts(r, func(art *Artifact) bool {
+		return s.artifactBelongsToRepo(art, repo)
+	})
+	s.writeArtifactList(w, r, matching)
+}
+
+func (s *Server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
+	art, ok := s.getRepoArtifact(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.artifactJSON(art, r))
+}
+
+func (s *Server) handleDeleteArtifact(w http.ResponseWriter, r *http.Request) {
+	art, ok := s.getRepoArtifact(w, r)
+	if !ok {
+		return
+	}
+	if !s.artifactStore.deleteArtifact(art.ID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleDownloadArtifactArchive(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("archive_format") != "zip" {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	art, ok := s.getRepoArtifact(w, r)
+	if !ok {
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("%s/_apis/v1/artifacts/%d/download", s.baseURL(r), art.ID), http.StatusFound)
+}
+
+func (s *Server) getRepoArtifact(w http.ResponseWriter, r *http.Request) (*Artifact, bool) {
+	artifactID, err := strconv.ParseInt(r.PathValue("artifact_id"), 10, 64)
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid artifact_id")
+		return nil, false
+	}
+	art, ok := s.artifactStore.artifactByID(artifactID)
+	if !ok || !s.artifactBelongsToRepo(art, repoFullName(r)) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, false
+	}
+	return art, true
+}
+
+func (s *Server) filterArtifacts(r *http.Request, keep func(*Artifact) bool) []*Artifact {
+	nameFilter := r.URL.Query().Get("name")
+	artifacts := s.artifactStore.finalizedArtifacts()
+	matching := make([]*Artifact, 0, len(artifacts))
+	for _, art := range artifacts {
+		if nameFilter != "" && art.Name != nameFilter {
+			continue
+		}
+		if keep(art) {
+			matching = append(matching, art)
+		}
+	}
+	sort.SliceStable(matching, func(i, j int) bool {
+		if matching[i].CreatedAt.Equal(matching[j].CreatedAt) {
+			return matching[i].ID > matching[j].ID
+		}
+		return matching[i].CreatedAt.After(matching[j].CreatedAt)
+	})
+	return matching
+}
+
+func (s *Server) writeArtifactList(w http.ResponseWriter, r *http.Request, matching []*Artifact) {
+	page := paginateAndLink(w, r, matching)
+	artifacts := make([]map[string]any, 0, len(page))
+	for _, art := range page {
+		artifacts = append(artifacts, s.artifactJSON(art, r))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_count": len(matching),
+		"artifacts":   artifacts,
 	})
 }
 
-// handleRunApprovals — env-pending-approvals stub. Empty until Environments
-// land.
+func (s *Server) artifactJSON(art *Artifact, r *http.Request) map[string]any {
+	repo := art.RepoFullName
+	if repo == "" {
+		if wf := s.workflowForArtifact(art); wf != nil {
+			repo = wf.RepoFullName
+		}
+	}
+	if repo == "" {
+		repo = repoFullName(r)
+	}
+	base := s.baseURL(r)
+	apiBase := fmt.Sprintf("%s/api/v3/repos/%s", base, repo)
+	created := art.CreatedAt.UTC()
+	if created.IsZero() {
+		created = time.Unix(0, 0).UTC()
+	}
+	hash := sha256.Sum256(art.Data)
+	runID := art.GitHubRunID
+	headBranch := ""
+	headSHA := ""
+	if wf := s.workflowForArtifact(art); wf != nil {
+		runID = wf.RunID
+		headBranch = headBranchOf(wf)
+		headSHA = wf.Sha
+	}
+	return map[string]any{
+		"id":                   art.ID,
+		"node_id":              base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("08:Artifact%d", art.ID))),
+		"name":                 art.Name,
+		"size_in_bytes":        art.Size,
+		"url":                  fmt.Sprintf("%s/actions/artifacts/%d", apiBase, art.ID),
+		"archive_download_url": fmt.Sprintf("%s/actions/artifacts/%d/zip", apiBase, art.ID),
+		"expired":              false,
+		"created_at":           created.Format("2006-01-02T15:04:05Z"),
+		"expires_at":           created.Add(90 * 24 * time.Hour).Format("2006-01-02T15:04:05Z"),
+		"updated_at":           created.Format("2006-01-02T15:04:05Z"),
+		"digest":               fmt.Sprintf("sha256:%x", hash),
+		"workflow_run": map[string]any{
+			"id":                 int64(runID),
+			"repository_id":      int64(s.repoIDByFullName(repo)),
+			"head_repository_id": int64(s.repoIDByFullName(repo)),
+			"head_branch":        headBranch,
+			"head_sha":           headSHA,
+		},
+	}
+}
+
+func (s *Server) artifactBelongsToRun(art *Artifact, wf *Workflow) bool {
+	if wf == nil {
+		return false
+	}
+	if art.GitHubRunID == wf.RunID || art.RunID == wf.ID || art.WorkflowRunBackendID == wf.ID {
+		return true
+	}
+	runID := strconv.Itoa(wf.RunID)
+	return art.RunID == runID || art.WorkflowRunBackendID == runID
+}
+
+func (s *Server) artifactBelongsToRepo(art *Artifact, repo string) bool {
+	if strings.EqualFold(art.RepoFullName, repo) {
+		return true
+	}
+	wf := s.workflowForArtifact(art)
+	return wf != nil && strings.EqualFold(wf.RepoFullName, repo)
+}
+
+func (s *Server) workflowForArtifact(art *Artifact) *Workflow {
+	if art == nil {
+		return nil
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for _, wf := range s.store.Workflows {
+		if s.artifactBelongsToRun(art, wf) {
+			return wf
+		}
+	}
+	return nil
+}
+
+func (s *Server) findWorkflowByBackendID(backendID string) *Workflow {
+	if backendID == "" {
+		return nil
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for _, wf := range s.store.Workflows {
+		if backendID == wf.ID || backendID == strconv.Itoa(wf.RunID) {
+			return wf
+		}
+	}
+	return nil
+}
+
+func (s *Server) repoIDByFullName(fullName string) int {
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	if repo := s.store.ReposByName[fullName]; repo != nil {
+		return repo.ID
+	}
+	lowerFullName := strings.ToLower(fullName)
+	for name, repo := range s.store.ReposByName {
+		if strings.ToLower(name) == lowerFullName {
+			return repo.ID
+		}
+	}
+	return 0
+}
+
+// handleRunApprovals reports environment approvals once Environments are modeled.
 func (s *Server) handleRunApprovals(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []interface{}{})
 }
