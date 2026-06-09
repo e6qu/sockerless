@@ -34,7 +34,7 @@ func TestACAFaaSE2ESmoke(t *testing.T) {
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image: acaOverlayImageName,
-			Cmd:   []string{"sh", "-c", "while [ ! -f /tmp/sockerless-done ]; do sleep 1; done"},
+			Cmd:   []string{"/opt/sockerless/container-command", "hold"},
 		},
 		nil, nil, nil, "aca_faas_smoke_"+testID,
 	)
@@ -49,8 +49,8 @@ func TestACAFaaSE2ESmoke(t *testing.T) {
 		t.Fatalf("container start failed: %v", err)
 	}
 
-	runACASmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf aca-step-1"}, "aca-step-1")
-	runACASmokeExec(t, ctx, resp.ID, []string{"sh", "-c", "printf aca-step-2"}, "aca-step-2")
+	runACASmokeExec(t, ctx, resp.ID, []string{"/opt/sockerless/container-command", "print", "aca-step-1"}, "aca-step-1")
+	runACASmokeExec(t, ctx, resp.ID, []string{"/opt/sockerless/container-command", "print", "aca-step-2"}, "aca-step-2")
 
 	waitCh, errCh := dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	timeout := 1

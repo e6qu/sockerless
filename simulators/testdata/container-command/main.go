@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: container-command hold|log|resolve|sleep|stdin-echo")
+		fmt.Fprintln(os.Stderr, "usage: container-command hold|log|print|resolve|sleep|stdin-echo")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -33,6 +33,12 @@ func main() {
 			}
 			time.Sleep(time.Duration(seconds) * time.Second)
 		}
+	case "print":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: container-command print MESSAGE")
+			os.Exit(2)
+		}
+		fmt.Print(os.Args[2])
 	case "resolve":
 		if len(os.Args) < 4 {
 			fmt.Fprintln(os.Stderr, "usage: container-command resolve HOST TIMEOUT_SECONDS [MESSAGE] [HOLD_SECONDS]")
