@@ -301,6 +301,7 @@ func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	release := s.store.Releases.Create(repo.ID, user.ID, req.TagName, target, req.Name, req.Body, bool(req.Draft), bool(req.Prerelease))
 	s.emitWebhookEvent(repo.FullName, "release", "published", buildReleaseEventPayload(repo, release, user, "published"))
+	s.recordAuditEvent("release.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": release.ID, "tag": release.TagName})
 	writeJSON(w, http.StatusCreated, releaseToJSON(release, s.store, s.baseURL(r), repo))
 }
 
@@ -419,6 +420,7 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
@@ -435,6 +437,7 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Releases.Delete(id)
+	s.recordAuditEvent("release.destroy", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }
 

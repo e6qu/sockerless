@@ -75,6 +75,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	repoKey := owner + "/" + name
 	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(repo, issue, user, "opened"))
 
+	s.recordAuditEvent("issues.create", user.Login, "", map[string]interface{}{"repo": repoKey, "issue_id": issue.ID, "title": issue.Title})
 	writeJSON(w, http.StatusCreated, issueToJSON(issue, s.store, s.baseURL(r), repo.FullName))
 }
 

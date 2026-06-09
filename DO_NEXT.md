@@ -12,7 +12,7 @@ commit per subtask, with tests and continuity docs included in the same commit.
 
 ## Last Completed Subtask
 
-Subtasks 1, 2, 3, 4, 5, 6, 7, and 8 completed:
+Subtasks 1, 2, 3, 4, 5, 6, 7, 8, and 9 completed:
 
 - Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
   replaced with real reserve/upload/finalize/lookup/download behavior.
@@ -84,6 +84,24 @@ Subtasks 1, 2, 3, 4, 5, 6, 7, and 8 completed:
   - The PostgreSQL test skips unless `BLEEPHUB_TEST_POSTGRES_URL` is set
     (requires a real PostgreSQL instance).
   - All existing SQLite persistence tests pass unchanged.
+- Subtask 9: Shape-only endpoints replaced with real implementations.
+  - GPG keys: full CRUD (create, list, get, delete, list-by-login) backed
+    by `MiscStore` with write-through persistence. Ownership enforced on
+    delete.
+  - Pages builds: `POST` trigger creates real `PagesBuild` records;
+    list/latest/get-by-id read from store with persistence.
+  - Audit log: `recordAuditEvent` method records events with GitHub-shaped
+    fields (`@timestamp`, `action`, `actor`, `org`, `data`, `version`).
+    Wired into 16 mutation handlers. Endpoint supports `phrase` and
+    `actor_id` filtering.
+  - Marketplace: plans seeded from store; account reads from persisted
+    purchases.
+  - OIDC claim keys: fixed missing `oidcClaimKeys` field on `MiscStore`;
+    loaded from `misc` persistence bucket.
+  - Added `persist` field to `MiscStore`, wired in `SetPersistence`. Six
+    new persistence buckets: `misc`, `gpg_keys`, `pages_builds`,
+    `audit_log`, `marketplace_plans`, `marketplace_purchases`.
+  - 7 new tests covering all new surface areas.
 
 Verified:
 
@@ -95,7 +113,7 @@ gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bl
 
 ## Current Subtask
 
-Subtask 9: Remove or implement long-tail shape-only endpoints, then refresh all Bleephub docs and parity specs.
+Subtask 10: Final verification, rebase, push.
 
 ## Ordered Subtasks For This PR
 

@@ -119,6 +119,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		s.store.persist.MustPut("repo_secrets", repoKey, s.store.RepoSecrets[repoKey])
 	}
 	s.store.mu.Unlock()
+	s.recordAuditEvent("secret.create", user.Login, "", map[string]interface{}{"repo": repoKey, "secret_name": name})
 	if existing != nil {
 		w.WriteHeader(http.StatusNoContent)
 	} else {
@@ -149,5 +150,6 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.mu.Unlock()
 
+	s.recordAuditEvent("secret.destroy", user.Login, "", map[string]interface{}{"repo": repoKey, "secret_name": name})
 	w.WriteHeader(http.StatusNoContent)
 }

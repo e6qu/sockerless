@@ -152,6 +152,7 @@ func (s *Server) registerRoutes() {
 	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
 	// Pages, branch protection, org members, marketplace.
 	s.registerGHMiscEndpoints()
+	s.seedDefaultMarketplacePlans()
 
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()

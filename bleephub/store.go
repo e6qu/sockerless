@@ -310,6 +310,7 @@ func (st *Store) SetPersistence(p *Persistence) error {
 	st.Deployments.persist = p
 	st.PRReviewComments.persist = p
 	st.ProjectsV2.persist = p
+	st.Misc.persist = p
 	st.mu.Unlock()
 	return st.loadFromPersistence()
 }
@@ -769,6 +770,85 @@ func (st *Store) loadFromPersistence() error {
 			if f.ID >= st.ProjectsV2.nextFieldID {
 				st.ProjectsV2.nextFieldID = f.ID + 1
 			}
+			return nil
+		}},
+	} {
+		rows, err := st.persist.List(loadFn.name)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", loadFn.name, err)
+		}
+		for k, raw := range rows {
+			if err := loadFn.fn(k, raw); err != nil {
+				return fmt.Errorf("decode %s row: %w", loadFn.name, err)
+			}
+		}
+	}
+
+	for _, loadFn := range []struct {
+		name string
+		fn   func(string, []byte) error
+	}{
+		{"misc", func(key string, raw []byte) error {
+			switch key {
+			case "oidc_claim_keys":
+				var keys []string
+				if err := loadJSON(raw, &keys); err != nil {
+					return err
+				}
+				st.Misc.oidcClaimKeys = keys
+			}
+			return nil
+		}},
+		{"gpg_keys", func(_ string, raw []byte) error {
+			var k GPGKey
+			if err := loadJSON(raw, &k); err != nil {
+				return err
+			}
+			st.Misc.gpgKeys[k.ID] = &k
+			st.Misc.gpgKeysByUser[k.UserID] = append(st.Misc.gpgKeysByUser[k.UserID], &k)
+			if k.ID >= st.Misc.nextGPGKeyID {
+				st.Misc.nextGPGKeyID = k.ID + 1
+			}
+			return nil
+		}},
+		{"pages_builds", func(key string, raw []byte) error {
+			var builds []*PagesBuild
+			if err := loadJSON(raw, &builds); err != nil {
+				return err
+			}
+			st.Misc.pagesBuilds[key] = builds
+			for _, b := range builds {
+				if b.ID >= st.Misc.nextAuditID {
+					st.Misc.nextAuditID = b.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"audit_log", func(_ string, raw []byte) error {
+			var e AuditEntry
+			if err := loadJSON(raw, &e); err != nil {
+				return err
+			}
+			st.Misc.auditLog = append([]*AuditEntry{&e}, st.Misc.auditLog...)
+			if e.ID >= st.Misc.nextAuditID {
+				st.Misc.nextAuditID = e.ID + 1
+			}
+			return nil
+		}},
+		{"marketplace_plans", func(_ string, raw []byte) error {
+			var p MarketplacePlan
+			if err := loadJSON(raw, &p); err != nil {
+				return err
+			}
+			st.Misc.marketplacePlans[p.ID] = &p
+			return nil
+		}},
+		{"marketplace_purchases", func(_ string, raw []byte) error {
+			var pur MarketplacePurchase
+			if err := loadJSON(raw, &pur); err != nil {
+				return err
+			}
+			st.Misc.marketplacePurchases[pur.AccountID] = &pur
 			return nil
 		}},
 	} {

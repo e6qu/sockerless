@@ -94,6 +94,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.recordAuditEvent("org.create", user.Login, org.Login, map[string]interface{}{"org_id": org.ID})
 	writeJSON(w, http.StatusCreated, orgToJSON(org, s.baseURL(r)))
 }
 
@@ -167,6 +168,7 @@ func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.DeleteOrg(login)
+	s.recordAuditEvent("org.delete", user.Login, login, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

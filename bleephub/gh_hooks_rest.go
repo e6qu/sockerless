@@ -55,6 +55,7 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret, events, active)
+	s.recordAuditEvent("hook.create", user.Login, "", map[string]interface{}{"repo": repoKey, "hook_id": hook.ID})
 	writeJSON(w, http.StatusCreated, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
@@ -170,6 +171,7 @@ func (s *Server) handleDeleteHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.recordAuditEvent("hook.destroy", user.Login, "", map[string]interface{}{"repo": repoKey, "hook_id": hookID})
 	w.WriteHeader(http.StatusNoContent)
 }
 

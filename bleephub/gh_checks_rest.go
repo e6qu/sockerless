@@ -76,6 +76,12 @@ func (s *Server) handleCreateCheckRun(w http.ResponseWriter, r *http.Request) {
 			c.Output.AnnotationsCount = len(req.Output.Annotations)
 		}
 	})
+	user := ghUserFromContext(r.Context())
+	actor := ""
+	if user != nil {
+		actor = user.Login
+	}
+	s.recordAuditEvent("check_run.create", actor, "", map[string]interface{}{"repo": repoKey, "check_run_id": cr.ID})
 	writeJSON(w, http.StatusCreated, checkRunToJSON(s.store.GetCheckRun(cr.ID)))
 }
 

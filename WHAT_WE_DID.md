@@ -4,6 +4,35 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-10 - Bleephub shape-only endpoints filled in
+
+- GPG keys: full CRUD — `POST/GET/DELETE /user/gpg_keys` and `GET
+  /users/{username}/gpg_keys` now backed by `MiscStore.gpgKeys` and
+  `gpgKeysByUser` maps. Key creation parses `armored_public_key` and
+  populates emails from the authenticated user. Ownership enforcement on
+  delete. Write-through to `gpg_keys` persistence bucket.
+- Pages builds: `POST` trigger creates a real `PagesBuild` record in
+  `MiscStore.pagesBuilds`; `GET /builds` lists, `/builds/latest` returns
+  newest, `/builds/{build_id}` fetches by ID. Builds are persisted in the
+  `pages_builds` bucket keyed by repo full name.
+- Audit log: `recordAuditEvent` method appends `AuditEntry` structs to
+  `MiscStore.auditLog` with `@timestamp`, `action`, `actor`, `org`,
+  `data`, `version` fields. Wired into 16 mutation handlers (repo, org,
+  team, hook, secret, issue, PR, release, label, milestone, deployment,
+  check_run, GPG key, user key, pages build). Audit endpoint supports
+  `phrase` and `actor_id` query filtering. Persisted in `audit_log` bucket.
+- Marketplace: plans seeded into `MiscStore.marketplacePlans` on startup via
+  `seedDefaultMarketplacePlans`; account endpoint reads from
+  `marketplacePurchases` store. Persisted in dedicated buckets.
+- OIDC claim keys: added missing `oidcClaimKeys` field to `MiscStore`,
+  loaded from `misc` persistence bucket on restart.
+- MiscStore: added `persist *Persistence` field, wired in `SetPersistence`.
+  New persistence loaders for `misc`, `gpg_keys`, `pages_builds`,
+  `audit_log`, `marketplace_plans`, and `marketplace_purchases` buckets.
+- 7 new tests: GPG key CRUD, GPG key ownership, Pages builds CRUD, audit
+  log recording, audit log from repo creation, marketplace plans, and
+  marketplace account.
+
 ## 2026-06-09 - Bleephub parity and durability branch planned
 
 - Started `bleephub-parity-storage` as the single planned branch for Bleephub UI/API parity, real Actions cache/artifact behavior, SQLite + PostgreSQL persistence, git storage hardening, S3/MinIO-shaped git content storage, UI auth, and full operator docs.

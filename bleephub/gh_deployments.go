@@ -350,6 +350,7 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 	s.store.Deployments.UpsertEnvironment(repo.ID, env)
 	d := s.store.Deployments.CreateDeployment(repo.ID, user.ID, req.Ref, req.Ref, req.Task, env, req.Description, req.Payload, bool(req.ProductionEnvironment), bool(req.TransientEnvironment))
 	s.emitWebhookEvent(repo.FullName, "deployment", "created", buildDeploymentEventPayload(repo, d, user, "created"))
+	s.recordAuditEvent("deployment.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "deployment_id": d.ID})
 	writeJSON(w, http.StatusCreated, deploymentToJSON(d, s.store, s.baseURL(r), repo))
 }
 
