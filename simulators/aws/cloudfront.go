@@ -573,17 +573,19 @@ func registerCloudFront(srv *sim.Server) {
 
 	mux := srv.Mux()
 
+	cfDistributionResource := cloudTrailRESTResource("AWS::CloudFront::Distribution", "id", "Resource")
+	cfOACResource := cloudTrailRESTResource("AWS::CloudFront::OriginAccessControl", "id")
 	// Distributions
-	mux.HandleFunc("POST /"+cfAPIVersion+"/distribution", handleCFCreateDistribution)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution", handleCFListDistributions)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{id}", handleCFGetDistribution)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{id}/config", handleCFGetDistributionConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/distribution/{id}/config", handleCFUpdateDistribution)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/distribution/{id}", handleCFDeleteDistribution)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/distribution", cloudTrailRecordedRESTDynamic(cfCreateDistributionOperationName, "cloudfront.amazonaws.com", nil, handleCFCreateDistribution))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution", cloudTrailRecordedREST("ListDistributions", "cloudfront.amazonaws.com", nil, handleCFListDistributions))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{id}", cloudTrailRecordedREST("GetDistribution", "cloudfront.amazonaws.com", cfDistributionResource, handleCFGetDistribution))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/distribution/{id}/config", cloudTrailRecordedREST("GetDistributionConfig", "cloudfront.amazonaws.com", cfDistributionResource, handleCFGetDistributionConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/distribution/{id}/config", cloudTrailRecordedREST("UpdateDistribution", "cloudfront.amazonaws.com", cfDistributionResource, handleCFUpdateDistribution))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/distribution/{id}", cloudTrailRecordedREST("DeleteDistribution", "cloudfront.amazonaws.com", cfDistributionResource, handleCFDeleteDistribution))
 
 	// Tagging — single endpoint dispatches on ?Operation= param
-	mux.HandleFunc("GET /"+cfAPIVersion+"/tagging", handleCFListTags)
-	mux.HandleFunc("POST /"+cfAPIVersion+"/tagging", handleCFTagDispatch)
+	mux.HandleFunc("GET /"+cfAPIVersion+"/tagging", cloudTrailRecordedREST("ListTagsForResource", "cloudfront.amazonaws.com", cfDistributionResource, handleCFListTags))
+	mux.HandleFunc("POST /"+cfAPIVersion+"/tagging", cloudTrailRecordedRESTDynamic(cfTagOperationName, "cloudfront.amazonaws.com", cfDistributionResource, handleCFTagDispatch))
 
 	// Policies (cache / origin-request / response-headers) — same wire shape
 	registerCloudFrontPolicies(srv)
@@ -595,12 +597,29 @@ func registerCloudFront(srv *sim.Server) {
 	registerCloudFrontKeys(srv)
 
 	// OriginAccessControl
-	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", handleCFCreateOAC)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", handleCFListOACs)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control/{id}", handleCFGetOAC)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control/{id}/config", handleCFGetOACConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/origin-access-control/{id}/config", handleCFUpdateOAC)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/origin-access-control/{id}", handleCFDeleteOAC)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("CreateOriginAccessControl", "cloudfront.amazonaws.com", nil, handleCFCreateOAC))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("ListOriginAccessControls", "cloudfront.amazonaws.com", nil, handleCFListOACs))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control/{id}", cloudTrailRecordedREST("GetOriginAccessControl", "cloudfront.amazonaws.com", cfOACResource, handleCFGetOAC))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control/{id}/config", cloudTrailRecordedREST("GetOriginAccessControlConfig", "cloudfront.amazonaws.com", cfOACResource, handleCFGetOACConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/origin-access-control/{id}/config", cloudTrailRecordedREST("UpdateOriginAccessControl", "cloudfront.amazonaws.com", cfOACResource, handleCFUpdateOAC))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/origin-access-control/{id}", cloudTrailRecordedREST("DeleteOriginAccessControl", "cloudfront.amazonaws.com", cfOACResource, handleCFDeleteOAC))
+}
+
+func cfCreateDistributionOperationName(r *http.Request, _ []byte) string {
+	if r.URL.Query().Has("WithTags") {
+		return "CreateDistributionWithTags"
+	}
+	return "CreateDistribution"
+}
+
+func cfTagOperationName(r *http.Request, _ []byte) string {
+	switch strings.ToLower(r.URL.Query().Get("Operation")) {
+	case "tag":
+		return "TagResource"
+	case "untag":
+		return "UntagResource"
+	}
+	return ""
 }
 
 // ----- Distribution handlers -----

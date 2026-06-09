@@ -158,6 +158,27 @@ type ECSTaskManagedEBSTagSpecification struct {
 	Tags         []ECSTag `json:"tags,omitempty"`
 }
 
+type ECSTaskOverride struct {
+	ContainerOverrides           []ECSContainerOverride `json:"containerOverrides,omitempty"`
+	Cpu                          string                 `json:"cpu,omitempty"`
+	Memory                       string                 `json:"memory,omitempty"`
+	ExecutionRoleArn             string                 `json:"executionRoleArn,omitempty"`
+	TaskRoleArn                  string                 `json:"taskRoleArn,omitempty"`
+	EphemeralStorage             json.RawMessage        `json:"ephemeralStorage,omitempty"`
+	InferenceAcceleratorOverride json.RawMessage        `json:"inferenceAcceleratorOverrides,omitempty"`
+}
+
+type ECSContainerOverride struct {
+	Name                 string            `json:"name,omitempty"`
+	Command              []string          `json:"command,omitempty"`
+	Cpu                  *int              `json:"cpu,omitempty"`
+	Environment          []ECSKeyValuePair `json:"environment,omitempty"`
+	EnvironmentFiles     json.RawMessage   `json:"environmentFiles,omitempty"`
+	Memory               *int              `json:"memory,omitempty"`
+	MemoryReservation    *int              `json:"memoryReservation,omitempty"`
+	ResourceRequirements json.RawMessage   `json:"resourceRequirements,omitempty"`
+}
+
 type ECSTag struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -240,6 +261,7 @@ type ECSTask struct {
 	Cpu                  string                `json:"cpu,omitempty"`
 	Memory               string                `json:"memory,omitempty"`
 	Group                string                `json:"group,omitempty"`
+	Overrides            *ECSTaskOverride      `json:"overrides,omitempty"`
 	EnableExecuteCommand bool                  `json:"enableExecuteCommand,omitempty"`
 	NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration,omitempty"`
 }
@@ -985,6 +1007,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		Tags                 []ECSTag                     `json:"tags,omitempty"`
 		PropagateTags        string                       `json:"propagateTags,omitempty"`
 		EnableExecuteCommand bool                         `json:"enableExecuteCommand,omitempty"`
+		Overrides            *ECSTaskOverride             `json:"overrides,omitempty"`
 		VolumeConfigurations []ECSTaskVolumeConfiguration `json:"volumeConfigurations,omitempty"`
 		NetworkConfiguration *struct {
 			AwsvpcConfiguration *struct {
@@ -1134,9 +1157,10 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:            &createdAt,
 			Tags:                 taskTags,
 			LaunchType:           req.LaunchType,
-			Cpu:                  td.Cpu,
-			Memory:               td.Memory,
+			Cpu:                  ecsTaskCPU(td, req.Overrides),
+			Memory:               ecsTaskMemory(td, req.Overrides),
 			Group:                req.Group,
+			Overrides:            req.Overrides,
 			EnableExecuteCommand: req.EnableExecuteCommand,
 			Attachments: []ECSAttachment{
 				{
@@ -1165,7 +1189,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		tasks = append(tasks, task)
 
 		// Simulate async transition: PROVISIONING → PENDING → RUNNING
-		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, taskVolumeHosts map[string]string) {
+		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
@@ -1245,7 +1269,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			processes, err := startECSTaskContainers(id, td, taskTags, taskVolumeHosts, sink)
+			processes, err := startECSTaskContainers(id, td, taskTags, overrides, taskVolumeHosts, sink)
 			if err != nil {
 				stoppedAt := time.Now().Unix()
 				ecsTasks.Update(id, func(t *ECSTask) {
@@ -1290,13 +1314,27 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-		}(taskID, td, taskTags, taskVolumeHosts)
+		}(taskID, td, taskTags, req.Overrides, taskVolumeHosts)
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"tasks":    tasks,
 		"failures": []any{},
 	})
+}
+
+func ecsTaskCPU(td ECSTaskDefinition, overrides *ECSTaskOverride) string {
+	if overrides != nil && overrides.Cpu != "" {
+		return overrides.Cpu
+	}
+	return td.Cpu
+}
+
+func ecsTaskMemory(td ECSTaskDefinition, overrides *ECSTaskOverride) string {
+	if overrides != nil && overrides.Memory != "" {
+		return overrides.Memory
+	}
+	return td.Memory
 }
 
 // ecsPauseImage is the image for the netns pause container — a long-lived sleep
@@ -1332,7 +1370,7 @@ func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSin
 	}, sink)
 }
 
-func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
+func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
 	if len(td.ContainerDefinitions) == 0 {
 		return nil, nil
 	}
@@ -1415,6 +1453,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		if cd.Image == "" {
 			continue
 		}
+		containerOverride := ecsContainerOverrideFor(overrides, cd.Name)
 		cmdEnv := make(map[string]string, len(cd.Environment))
 		for _, ev := range cd.Environment {
 			cmdEnv[ev.Name] = ev.Value
@@ -1424,6 +1463,9 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		// real ECS does — indistinguishable from `environment` to the container.
 		for name, val := range resolveECSContainerSecrets(cd.Secrets) {
 			cmdEnv[name] = val
+		}
+		for _, ev := range containerOverride.Environment {
+			cmdEnv[ev.Name] = ev.Value
 		}
 		if sharedNetMode != "" {
 			cmdEnv = rewriteHostDockerInternalEnv(cmdEnv)
@@ -1450,11 +1492,15 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			return nil, fmt.Errorf("resolve task container %q image platform: %w", cd.Name, err)
 		}
 
+		command := cd.Command
+		if len(containerOverride.Command) > 0 {
+			command = containerOverride.Command
+		}
 		cfg := sim.ContainerConfig{
 			Image:        localImage,
 			Architecture: platform,
 			Command:      cd.EntryPoint,
-			Args:         cd.Command,
+			Args:         command,
 			Env:          mergeEnv(cmdEnv, metadataEnv),
 			Name:         containerName,
 			Labels: map[string]string{
@@ -1502,6 +1548,18 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		return nil, nil
 	}
 	return processes, nil
+}
+
+func ecsContainerOverrideFor(overrides *ECSTaskOverride, containerName string) ECSContainerOverride {
+	if overrides == nil {
+		return ECSContainerOverride{}
+	}
+	for _, override := range overrides.ContainerOverrides {
+		if override.Name == containerName {
+			return override
+		}
+	}
+	return ECSContainerOverride{}
 }
 
 // ecsVPCNetworkName is the Docker network backing a VPC.

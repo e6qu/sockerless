@@ -6,13 +6,13 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/ecs-entra-consumer-issues` (PR pending — consumer #525/#526/#527 batch) |
-| In-flight | BUG-1577/1578/1579 are fixed on this branch: Azure Entra rejects duplicate UPNs and ROPC resolves deterministically; AWS ECS Fargate keeps `SYS_CHROOT`; managed-EBS awsvpc same-VPC reachability is covered by a real task-to-task regression. |
-| Last merged | PR #528 fixed ACA Apps attach-stdin under local Podman. ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524. |
-| Open GitHub issues | #394 remains upstream-blocked; #525/#526/#527 are addressed by this branch. Check GitHub before starting the next consumer batch. |
-| Bugs | 1579 filed · 1534 fixed · 6 open · 5 false positives |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1540 AWS CloudTrail REST-protocol recording sweep. |
-| Planned next | After this PR: BUG-1540 CloudTrail REST-protocol coverage or a Phase G service-slice PR, unless new consumer issues arrive first. |
+| Active branch | `fix/ecs-overrides-cloudtrail` (PR pending — consumer #530 + CloudTrail REST sweep) |
+| In-flight | BUG-1580 and BUG-1540 are fixed on this branch: ECS `RunTask.overrides.containerOverrides` now affects the real task container runtime and task response shape; CloudTrail records REST/RPC management calls for Lambda, S3, API Gateway v1/v2, Batch, EFS, CloudFront, Amplify, Route53, and CloudWatch metrics, including failed-call error fields. |
+| Last merged | PR #529 fixed ECS workspace blockers #526/#527 and Entra duplicate UPN #525. Earlier ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524. |
+| Open GitHub issues | #394 remains upstream-blocked; #530 is addressed by this branch. Check GitHub before starting the next consumer batch. |
+| Bugs | 1580 filed · 1536 fixed · 5 open · 5 false positives |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream. |
+| Planned next | After this PR: Phase G new-service-slice PR or the next actionable consumer issue. |
 | Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 

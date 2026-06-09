@@ -74,3 +74,51 @@ func TestCloudTrailRecordsSchedulerAPICallCLI(t *testing.T) {
 		t.Fatalf("CreateSchedule EventSource: got %q, want scheduler.amazonaws.com", src)
 	}
 }
+
+func TestCloudTrailRecordsRESTServiceAPICallsCLI(t *testing.T) {
+	const bucket = "cli-ct-rest-bucket"
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucket))
+	t.Cleanup(func() { _ = awsCLI("s3api", "delete-bucket", "--bucket", bucket).Run() })
+
+	if out, err := awsCLI("lambda", "get-function", "--function-name", "missing-cli-ct-function").CombinedOutput(); err == nil {
+		t.Fatalf("lambda get-function on a missing function should fail, got success:\n%s", out)
+	}
+
+	apiID := strings.TrimSpace(runCLI(t, awsCLI("apigatewayv2", "create-api",
+		"--name", "cli-ct-rest-api",
+		"--protocol-type", "HTTP",
+		"--query", "ApiId",
+		"--output", "text")))
+	if apiID == "" {
+		t.Fatal("apigatewayv2 create-api returned empty ApiId")
+	}
+	t.Cleanup(func() { _ = awsCLI("apigatewayv2", "delete-api", "--api-id", apiID).Run() })
+
+	runCLI(t, awsCLI("cloudwatch", "put-metric-data",
+		"--namespace", "CLI/CT",
+		"--metric-data", "MetricName=Recorded,Value=1",
+	))
+
+	check := func(source, name string) {
+		t.Helper()
+		got := strings.TrimSpace(runCLI(t, awsCLI("cloudtrail", "lookup-events",
+			"--lookup-attributes", "AttributeKey=EventSource,AttributeValue="+source,
+			"--query", "length(Events[?EventName=='"+name+"'])",
+			"--output", "text")))
+		if got == "0" || got == "" {
+			t.Fatalf("CloudTrail EventSource %s did not include %s (got %q)", source, name, got)
+		}
+	}
+	check("s3.amazonaws.com", "CreateBucket")
+	check("lambda.amazonaws.com", "GetFunction")
+	check("apigateway.amazonaws.com", "CreateApi")
+	check("monitoring.amazonaws.com", "PutMetricData")
+
+	record := strings.TrimSpace(runCLI(t, awsCLI("cloudtrail", "lookup-events",
+		"--lookup-attributes", "AttributeKey=EventName,AttributeValue=GetFunction",
+		"--query", "Events[0].CloudTrailEvent",
+		"--output", "text")))
+	if !strings.Contains(record, "ResourceNotFoundException") || !strings.Contains(record, "missing-cli-ct-function") {
+		t.Fatalf("failed Lambda REST event did not carry error details: %s", record)
+	}
+}

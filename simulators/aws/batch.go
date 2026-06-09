@@ -81,31 +81,32 @@ func registerBatch(srv *sim.Server) {
 	batchJobs = sim.MakeStore[BatchJob](srv.DB(), "batch_jobs")
 	batchJobRevisions = sim.MakeStore[int](srv.DB(), "batch_job_revisions")
 
+	batchResource := cloudTrailRESTResource("AWS::Batch::Resource", "resourceArn")
 	// All Batch ops are POST to /v1/<lowercaseopname>
-	srv.HandleFunc("POST /v1/createcomputeenvironment", handleBatchCreateComputeEnvironment)
-	srv.HandleFunc("POST /v1/describecomputeenvironments", handleBatchDescribeComputeEnvironments)
-	srv.HandleFunc("POST /v1/updatecomputeenvironment", handleBatchUpdateComputeEnvironment)
-	srv.HandleFunc("POST /v1/deletecomputeenvironment", handleBatchDeleteComputeEnvironment)
+	srv.HandleFunc("POST /v1/createcomputeenvironment", cloudTrailRecordedREST("CreateComputeEnvironment", "batch.amazonaws.com", nil, handleBatchCreateComputeEnvironment))
+	srv.HandleFunc("POST /v1/describecomputeenvironments", cloudTrailRecordedREST("DescribeComputeEnvironments", "batch.amazonaws.com", nil, handleBatchDescribeComputeEnvironments))
+	srv.HandleFunc("POST /v1/updatecomputeenvironment", cloudTrailRecordedREST("UpdateComputeEnvironment", "batch.amazonaws.com", nil, handleBatchUpdateComputeEnvironment))
+	srv.HandleFunc("POST /v1/deletecomputeenvironment", cloudTrailRecordedREST("DeleteComputeEnvironment", "batch.amazonaws.com", nil, handleBatchDeleteComputeEnvironment))
 
-	srv.HandleFunc("POST /v1/createjobqueue", handleBatchCreateJobQueue)
-	srv.HandleFunc("POST /v1/describejobqueues", handleBatchDescribeJobQueues)
-	srv.HandleFunc("POST /v1/updatejobqueue", handleBatchUpdateJobQueue)
-	srv.HandleFunc("POST /v1/deletejobqueue", handleBatchDeleteJobQueue)
+	srv.HandleFunc("POST /v1/createjobqueue", cloudTrailRecordedREST("CreateJobQueue", "batch.amazonaws.com", nil, handleBatchCreateJobQueue))
+	srv.HandleFunc("POST /v1/describejobqueues", cloudTrailRecordedREST("DescribeJobQueues", "batch.amazonaws.com", nil, handleBatchDescribeJobQueues))
+	srv.HandleFunc("POST /v1/updatejobqueue", cloudTrailRecordedREST("UpdateJobQueue", "batch.amazonaws.com", nil, handleBatchUpdateJobQueue))
+	srv.HandleFunc("POST /v1/deletejobqueue", cloudTrailRecordedREST("DeleteJobQueue", "batch.amazonaws.com", nil, handleBatchDeleteJobQueue))
 
-	srv.HandleFunc("POST /v1/registerjobdefinition", handleBatchRegisterJobDefinition)
-	srv.HandleFunc("POST /v1/describejobdefinitions", handleBatchDescribeJobDefinitions)
-	srv.HandleFunc("POST /v1/deregisterjobdefinition", handleBatchDeregisterJobDefinition)
+	srv.HandleFunc("POST /v1/registerjobdefinition", cloudTrailRecordedREST("RegisterJobDefinition", "batch.amazonaws.com", nil, handleBatchRegisterJobDefinition))
+	srv.HandleFunc("POST /v1/describejobdefinitions", cloudTrailRecordedREST("DescribeJobDefinitions", "batch.amazonaws.com", nil, handleBatchDescribeJobDefinitions))
+	srv.HandleFunc("POST /v1/deregisterjobdefinition", cloudTrailRecordedREST("DeregisterJobDefinition", "batch.amazonaws.com", nil, handleBatchDeregisterJobDefinition))
 
-	srv.HandleFunc("POST /v1/submitjob", handleBatchSubmitJob)
-	srv.HandleFunc("POST /v1/describejobs", handleBatchDescribeJobs)
-	srv.HandleFunc("POST /v1/listjobs", handleBatchListJobs)
-	srv.HandleFunc("POST /v1/canceljob", handleBatchCancelJob)
-	srv.HandleFunc("POST /v1/terminatejob", handleBatchTerminateJob)
+	srv.HandleFunc("POST /v1/submitjob", cloudTrailRecordedREST("SubmitJob", "batch.amazonaws.com", nil, handleBatchSubmitJob))
+	srv.HandleFunc("POST /v1/describejobs", cloudTrailRecordedREST("DescribeJobs", "batch.amazonaws.com", nil, handleBatchDescribeJobs))
+	srv.HandleFunc("POST /v1/listjobs", cloudTrailRecordedREST("ListJobs", "batch.amazonaws.com", nil, handleBatchListJobs))
+	srv.HandleFunc("POST /v1/canceljob", cloudTrailRecordedREST("CancelJob", "batch.amazonaws.com", nil, handleBatchCancelJob))
+	srv.HandleFunc("POST /v1/terminatejob", cloudTrailRecordedREST("TerminateJob", "batch.amazonaws.com", nil, handleBatchTerminateJob))
 
 	// Resource-level tags
-	srv.HandleFunc("GET /v1/tags/{resourceArn}", handleBatchListTagsForResource)
-	srv.HandleFunc("POST /v1/tags/{resourceArn}", handleBatchTagResource)
-	srv.HandleFunc("DELETE /v1/tags/{resourceArn}", handleBatchUntagResource)
+	srv.HandleFunc("GET /v1/tags/{resourceArn}", cloudTrailRecordedREST("ListTagsForResource", "batch.amazonaws.com", batchResource, handleBatchListTagsForResource))
+	srv.HandleFunc("POST /v1/tags/{resourceArn}", cloudTrailRecordedREST("TagResource", "batch.amazonaws.com", batchResource, handleBatchTagResource))
+	srv.HandleFunc("DELETE /v1/tags/{resourceArn}", cloudTrailRecordedREST("UntagResource", "batch.amazonaws.com", batchResource, handleBatchUntagResource))
 }
 
 func batchARN(resource string) string {

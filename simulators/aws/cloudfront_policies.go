@@ -285,29 +285,32 @@ func registerCloudFrontPolicies(srv *sim.Server) {
 
 	mux := srv.Mux()
 
+	cachePolicyResource := cloudTrailRESTResource("AWS::CloudFront::CachePolicy", "id")
+	originRequestPolicyResource := cloudTrailRESTResource("AWS::CloudFront::OriginRequestPolicy", "id")
+	responseHeadersPolicyResource := cloudTrailRESTResource("AWS::CloudFront::ResponseHeadersPolicy", "id")
 	// CachePolicy
-	mux.HandleFunc("POST /"+cfAPIVersion+"/cache-policy", handleCFCreateCachePolicy)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy", handleCFListCachePolicies)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy/{id}", handleCFGetCachePolicy)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy/{id}/config", handleCFGetCachePolicyConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/cache-policy/{id}", handleCFUpdateCachePolicy)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/cache-policy/{id}", handleCFDeleteCachePolicy)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/cache-policy", cloudTrailRecordedREST("CreateCachePolicy", "cloudfront.amazonaws.com", nil, handleCFCreateCachePolicy))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy", cloudTrailRecordedREST("ListCachePolicies", "cloudfront.amazonaws.com", nil, handleCFListCachePolicies))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy/{id}", cloudTrailRecordedREST("GetCachePolicy", "cloudfront.amazonaws.com", cachePolicyResource, handleCFGetCachePolicy))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/cache-policy/{id}/config", cloudTrailRecordedREST("GetCachePolicyConfig", "cloudfront.amazonaws.com", cachePolicyResource, handleCFGetCachePolicyConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/cache-policy/{id}", cloudTrailRecordedREST("UpdateCachePolicy", "cloudfront.amazonaws.com", cachePolicyResource, handleCFUpdateCachePolicy))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/cache-policy/{id}", cloudTrailRecordedREST("DeleteCachePolicy", "cloudfront.amazonaws.com", cachePolicyResource, handleCFDeleteCachePolicy))
 
 	// OriginRequestPolicy
-	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-request-policy", handleCFCreateORP)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy", handleCFListORPs)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy/{id}", handleCFGetORP)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy/{id}/config", handleCFGetORPConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/origin-request-policy/{id}", handleCFUpdateORP)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/origin-request-policy/{id}", handleCFDeleteORP)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-request-policy", cloudTrailRecordedREST("CreateOriginRequestPolicy", "cloudfront.amazonaws.com", nil, handleCFCreateORP))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy", cloudTrailRecordedREST("ListOriginRequestPolicies", "cloudfront.amazonaws.com", nil, handleCFListORPs))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy/{id}", cloudTrailRecordedREST("GetOriginRequestPolicy", "cloudfront.amazonaws.com", originRequestPolicyResource, handleCFGetORP))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-request-policy/{id}/config", cloudTrailRecordedREST("GetOriginRequestPolicyConfig", "cloudfront.amazonaws.com", originRequestPolicyResource, handleCFGetORPConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/origin-request-policy/{id}", cloudTrailRecordedREST("UpdateOriginRequestPolicy", "cloudfront.amazonaws.com", originRequestPolicyResource, handleCFUpdateORP))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/origin-request-policy/{id}", cloudTrailRecordedREST("DeleteOriginRequestPolicy", "cloudfront.amazonaws.com", originRequestPolicyResource, handleCFDeleteORP))
 
 	// ResponseHeadersPolicy
-	mux.HandleFunc("POST /"+cfAPIVersion+"/response-headers-policy", handleCFCreateRHP)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy", handleCFListRHPs)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy/{id}", handleCFGetRHP)
-	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy/{id}/config", handleCFGetRHPConfig)
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/response-headers-policy/{id}", handleCFUpdateRHP)
-	mux.HandleFunc("DELETE /"+cfAPIVersion+"/response-headers-policy/{id}", handleCFDeleteRHP)
+	mux.HandleFunc("POST /"+cfAPIVersion+"/response-headers-policy", cloudTrailRecordedREST("CreateResponseHeadersPolicy", "cloudfront.amazonaws.com", nil, handleCFCreateRHP))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy", cloudTrailRecordedREST("ListResponseHeadersPolicies", "cloudfront.amazonaws.com", nil, handleCFListRHPs))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy/{id}", cloudTrailRecordedREST("GetResponseHeadersPolicy", "cloudfront.amazonaws.com", responseHeadersPolicyResource, handleCFGetRHP))
+	mux.HandleFunc("GET /"+cfAPIVersion+"/response-headers-policy/{id}/config", cloudTrailRecordedREST("GetResponseHeadersPolicyConfig", "cloudfront.amazonaws.com", responseHeadersPolicyResource, handleCFGetRHPConfig))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/response-headers-policy/{id}", cloudTrailRecordedREST("UpdateResponseHeadersPolicy", "cloudfront.amazonaws.com", responseHeadersPolicyResource, handleCFUpdateRHP))
+	mux.HandleFunc("DELETE /"+cfAPIVersion+"/response-headers-policy/{id}", cloudTrailRecordedREST("DeleteResponseHeadersPolicy", "cloudfront.amazonaws.com", responseHeadersPolicyResource, handleCFDeleteRHP))
 }
 
 // ----- CachePolicy handlers -----

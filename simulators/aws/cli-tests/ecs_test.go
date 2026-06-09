@@ -168,6 +168,112 @@ func TestECS_CLI_RunTaskAndCheckLogs(t *testing.T) {
 	assert.True(t, found, "expected 'hello-from-ecs' in CloudWatch logs")
 }
 
+func TestECS_CLI_RunTaskContainerOverrideEnvironment(t *testing.T) {
+	subnetID := createCLIECSTestSubnet(t, 148)
+	cluster := "cli-ecs-override"
+	logGroup := "/ecs/cli-override"
+
+	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
+	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
+
+	out := runCLI(t, awsCLI("ecs", "register-task-definition",
+		"--family", "cli-ecs-override-task",
+		"--requires-compatibilities", "FARGATE",
+		"--network-mode", "awsvpc",
+		"--cpu", "256",
+		"--memory", "512",
+		"--container-definitions", `[{
+			"name": "workspace",
+			"image": "alpine:latest",
+			"command": ["sh", "-c", "echo taskdef:${EDD_WORKSPACE_ID:-missing}:${BASE_ONLY}:${OVERRIDE_ME}"],
+			"environment": [
+				{"name": "BASE_ONLY", "value": "from-task-definition"},
+				{"name": "OVERRIDE_ME", "value": "from-task-definition"}
+			],
+			"logConfiguration": {
+				"logDriver": "awslogs",
+				"options": {
+					"awslogs-group": "`+logGroup+`",
+					"awslogs-stream-prefix": "ecs"
+				}
+			}
+		}]`,
+		"--output", "json",
+	))
+	var tdResult struct {
+		TaskDefinition struct {
+			TaskDefinitionArn string `json:"taskDefinitionArn"`
+		} `json:"taskDefinition"`
+	}
+	parseJSON(t, out, &tdResult)
+	require.NotEmpty(t, tdResult.TaskDefinition.TaskDefinitionArn)
+
+	out = runCLI(t, awsCLI("ecs", "run-task",
+		"--cluster", cluster,
+		"--task-definition", tdResult.TaskDefinition.TaskDefinitionArn,
+		"--launch-type", "FARGATE",
+		"--network-configuration", `awsvpcConfiguration={subnets=[`+subnetID+`]}`,
+		"--overrides", `{
+			"cpu": "512",
+			"memory": "1024",
+			"containerOverrides": [{
+				"name": "workspace",
+				"command": ["sh", "-c", "echo override:${EDD_WORKSPACE_ID}:${BASE_ONLY}:${OVERRIDE_ME}"],
+				"environment": [
+					{"name": "EDD_WORKSPACE_ID", "value": "ws-cli"},
+					{"name": "OVERRIDE_ME", "value": "from-runtask"}
+				]
+			}]
+		}`,
+		"--output", "json",
+	))
+	var runResult struct {
+		Tasks []struct {
+			TaskArn   string `json:"taskArn"`
+			Cpu       string `json:"cpu"`
+			Memory    string `json:"memory"`
+			Overrides struct {
+				ContainerOverrides []struct {
+					Name        string `json:"name"`
+					Environment []struct {
+						Name  string `json:"name"`
+						Value string `json:"value"`
+					} `json:"environment"`
+				} `json:"containerOverrides"`
+			} `json:"overrides"`
+		} `json:"tasks"`
+	}
+	parseJSON(t, out, &runResult)
+	require.Len(t, runResult.Tasks, 1)
+	assert.Equal(t, "512", runResult.Tasks[0].Cpu)
+	assert.Equal(t, "1024", runResult.Tasks[0].Memory)
+	require.Len(t, runResult.Tasks[0].Overrides.ContainerOverrides, 1)
+	assert.Equal(t, "workspace", runResult.Tasks[0].Overrides.ContainerOverrides[0].Name)
+	taskArn := runResult.Tasks[0].TaskArn
+	cleanupCLIECSTask(t, cluster, taskArn)
+
+	pollECSTaskStopped(t, cluster, taskArn)
+
+	require.Eventually(t, func() bool {
+		logOut := runCLI(t, awsCLI("logs", "filter-log-events",
+			"--log-group-name", logGroup,
+			"--output", "json",
+		))
+		var logResult struct {
+			Events []struct {
+				Message string `json:"message"`
+			} `json:"events"`
+		}
+		parseJSON(t, logOut, &logResult)
+		for _, e := range logResult.Events {
+			if strings.Contains(e.Message, "override:ws-cli:from-task-definition:from-runtask") {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 500*time.Millisecond)
+}
+
 func TestECS_CLI_ExecuteCommandRejectedWhenNotEnabled(t *testing.T) {
 	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
 		t.Skip("session-manager-plugin is required because aws ecs execute-command checks it before calling the API")

@@ -461,6 +461,106 @@ echo EBS_ROUNDTRIP_OK`},
 	assert.Contains(t, strings.Join(messages, "\n"), "EBS_ROUNDTRIP_OK")
 }
 
+func TestECS_RunTaskContainerOverridesApplyToRuntimeSDK(t *testing.T) {
+	client := ecsClient()
+	cw := cwLogsClient()
+
+	clusterName := "override-runtime-sdk"
+	logGroup := "/ecs/override-runtime-sdk"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(clusterName)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(clusterName)})
+	})
+	subnetID := createECSTestSubnet(t, "override-runtime-sdk")
+
+	tdOut, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("override-runtime-sdk-task"),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String("256"),
+		Memory:                  aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:  aws.String("workspace"),
+			Image: aws.String("alpine:latest"),
+			Command: []string{
+				"sh", "-c",
+				`echo taskdef:${EDD_WORKSPACE_ID:-missing}:${BASE_ONLY}:${OVERRIDE_ME}`,
+			},
+			Environment: []ecstypes.KeyValuePair{
+				{Name: aws.String("BASE_ONLY"), Value: aws.String("from-task-definition")},
+				{Name: aws.String("OVERRIDE_ME"), Value: aws.String("from-task-definition")},
+			},
+			LogConfiguration: &ecstypes.LogConfiguration{
+				LogDriver: ecstypes.LogDriverAwslogs,
+				Options: map[string]string{
+					"awslogs-group":         logGroup,
+					"awslogs-stream-prefix": "ecs",
+				},
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	runOut, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(clusterName),
+		TaskDefinition: tdOut.TaskDefinition.TaskDefinitionArn,
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}},
+		},
+		Overrides: &ecstypes.TaskOverride{
+			ContainerOverrides: []ecstypes.ContainerOverride{{
+				Name: aws.String("workspace"),
+				Command: []string{
+					"sh", "-c",
+					`echo override:${EDD_WORKSPACE_ID}:${BASE_ONLY}:${OVERRIDE_ME}`,
+				},
+				Environment: []ecstypes.KeyValuePair{
+					{Name: aws.String("EDD_WORKSPACE_ID"), Value: aws.String("ws-sdk")},
+					{Name: aws.String("OVERRIDE_ME"), Value: aws.String("from-runtask")},
+				},
+			}},
+			Cpu:    aws.String("512"),
+			Memory: aws.String("1024"),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, runOut.Tasks, 1)
+	taskArn := aws.ToString(runOut.Tasks[0].TaskArn)
+	cleanupECSTask(t, client, clusterName, taskArn)
+
+	waitForECSTaskStatus(t, client, clusterName, taskArn, "STOPPED")
+
+	desc, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   []string{taskArn},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Tasks, 1)
+	assert.Equal(t, "512", aws.ToString(desc.Tasks[0].Cpu))
+	assert.Equal(t, "1024", aws.ToString(desc.Tasks[0].Memory))
+	require.NotNil(t, desc.Tasks[0].Overrides)
+	require.Len(t, desc.Tasks[0].Overrides.ContainerOverrides, 1)
+	assert.Equal(t, "workspace", aws.ToString(desc.Tasks[0].Overrides.ContainerOverrides[0].Name))
+	require.Len(t, desc.Tasks[0].Overrides.ContainerOverrides[0].Environment, 2)
+	assert.Equal(t, "ws-sdk", aws.ToString(desc.Tasks[0].Overrides.ContainerOverrides[0].Environment[0].Value))
+
+	require.Eventually(t, func() bool {
+		events, ferr := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+			LogGroupName: aws.String(logGroup),
+		})
+		if ferr != nil {
+			return false
+		}
+		var messages []string
+		for _, e := range events.Events {
+			messages = append(messages, aws.ToString(e.Message))
+		}
+		return strings.Contains(strings.Join(messages, "\n"), "override:ws-sdk:from-task-definition:from-runtask")
+	}, 10*time.Second, 500*time.Millisecond)
+}
+
 func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 	client := ecsClient()
 

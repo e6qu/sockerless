@@ -86,17 +86,19 @@ func registerAmplifyDomains(srv *sim.Server) {
 	amplifyBackends = sim.MakeStore[amplifyStoredBackend](srv.DB(), "amplify_backends")
 
 	mux := srv.Mux()
+	domainResource := cloudTrailRESTResource("AWS::Amplify::Domain", "domainName")
+	backendResource := cloudTrailRESTResource("AWS::Amplify::BackendEnvironment", "environmentName")
 	// Domains
-	mux.HandleFunc("POST /apps/{appId}/domains", handleAmplifyCreateDomain)
-	mux.HandleFunc("GET /apps/{appId}/domains", handleAmplifyListDomains)
-	mux.HandleFunc("GET /apps/{appId}/domains/{domainName}", handleAmplifyGetDomain)
-	mux.HandleFunc("POST /apps/{appId}/domains/{domainName}", handleAmplifyUpdateDomain)
-	mux.HandleFunc("DELETE /apps/{appId}/domains/{domainName}", handleAmplifyDeleteDomain)
+	mux.HandleFunc("POST /apps/{appId}/domains", cloudTrailRecordedREST("CreateDomainAssociation", "amplify.amazonaws.com", cloudTrailRESTResource("AWS::Amplify::App", "appId"), handleAmplifyCreateDomain))
+	mux.HandleFunc("GET /apps/{appId}/domains", cloudTrailRecordedREST("ListDomainAssociations", "amplify.amazonaws.com", cloudTrailRESTResource("AWS::Amplify::App", "appId"), handleAmplifyListDomains))
+	mux.HandleFunc("GET /apps/{appId}/domains/{domainName}", cloudTrailRecordedREST("GetDomainAssociation", "amplify.amazonaws.com", domainResource, handleAmplifyGetDomain))
+	mux.HandleFunc("POST /apps/{appId}/domains/{domainName}", cloudTrailRecordedREST("UpdateDomainAssociation", "amplify.amazonaws.com", domainResource, handleAmplifyUpdateDomain))
+	mux.HandleFunc("DELETE /apps/{appId}/domains/{domainName}", cloudTrailRecordedREST("DeleteDomainAssociation", "amplify.amazonaws.com", domainResource, handleAmplifyDeleteDomain))
 	// BackendEnvironments
-	mux.HandleFunc("POST /apps/{appId}/backendenvironments", handleAmplifyCreateBackend)
-	mux.HandleFunc("GET /apps/{appId}/backendenvironments", handleAmplifyListBackends)
-	mux.HandleFunc("GET /apps/{appId}/backendenvironments/{environmentName}", handleAmplifyGetBackend)
-	mux.HandleFunc("DELETE /apps/{appId}/backendenvironments/{environmentName}", handleAmplifyDeleteBackend)
+	mux.HandleFunc("POST /apps/{appId}/backendenvironments", cloudTrailRecordedREST("CreateBackendEnvironment", "amplify.amazonaws.com", cloudTrailRESTResource("AWS::Amplify::App", "appId"), handleAmplifyCreateBackend))
+	mux.HandleFunc("GET /apps/{appId}/backendenvironments", cloudTrailRecordedREST("ListBackendEnvironments", "amplify.amazonaws.com", cloudTrailRESTResource("AWS::Amplify::App", "appId"), handleAmplifyListBackends))
+	mux.HandleFunc("GET /apps/{appId}/backendenvironments/{environmentName}", cloudTrailRecordedREST("GetBackendEnvironment", "amplify.amazonaws.com", backendResource, handleAmplifyGetBackend))
+	mux.HandleFunc("DELETE /apps/{appId}/backendenvironments/{environmentName}", cloudTrailRecordedREST("DeleteBackendEnvironment", "amplify.amazonaws.com", backendResource, handleAmplifyDeleteBackend))
 }
 
 // ---------- Domain handlers ----------
