@@ -18,11 +18,12 @@ import (
 )
 
 var (
-	baseURL       string
-	simCmd        *exec.Cmd
-	binaryPath    string
-	evalImageName string
-	tmpDir        string
+	baseURL          string
+	simCmd           *exec.Cmd
+	binaryPath       string
+	evalImageName    string
+	commandImageName string
+	tmpDir           string
 
 	project  = "test-project"
 	location = "us-central1"
@@ -47,24 +48,13 @@ func TestMain(m *testing.M) {
 
 	workloadPlatform := nativeDockerPlatform()
 
-	// Multi-stage Docker build for the runner-native Linux platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM public.ecr.aws/docker/library/alpine:latest
-COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
-ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
-`
-	dockerBuild := exec.Command("docker", "build",
-		"--platform", workloadPlatform,
-		"-t", evalImageName, "-f", "-", evalDir)
-	dockerBuild.Stdin = strings.NewReader(dockerfile)
-	if out, err := dockerBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
+
+	commandDir, _ := filepath.Abs("../../testdata/container-command")
+	commandImageName = "sockerless-container-command:test"
+	buildGoScratchImage(commandImageName, commandDir, "container-command", workloadPlatform)
 
 	// Find free ports for HTTP and gRPC
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -157,6 +147,10 @@ func gcloudCLI(args ...string) *exec.Cmd {
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_FIRESTORE="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_REDIS="+baseURL+"/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SQL="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SPANNER="+baseURL+"/spanner/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_DATAFLOW="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_BIGTABLE="+baseURL+"/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_BIGTABLEADMIN="+baseURL+"/",
 	)
 	return cmd
 }
@@ -222,6 +216,40 @@ func runCLI(t *testing.T, cmd *exec.Cmd) string {
 
 func nativeDockerPlatform() string {
 	return "linux/" + runtime.GOARCH
+}
+
+func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
+	buildDir, err := os.MkdirTemp("", "sockerless-gcp-image-*")
+	if err != nil {
+		log.Fatalf("Failed to create image build dir: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	binaryPath := filepath.Join(buildDir, binaryName)
+	build := exec.Command("go", "build", "-o", binaryPath, ".")
+	build.Dir = sourceDir
+	build.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOWORK=off",
+		"GOOS=linux",
+		"GOARCH="+runtime.GOARCH,
+	)
+	if out, err := build.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s workload binary: %v\n%s", binaryName, err, out)
+	}
+
+	dockerfile := fmt.Sprintf(`FROM scratch
+COPY %s /usr/local/bin/%s
+ENTRYPOINT ["/usr/local/bin/%s"]
+`, binaryName, binaryName, binaryName)
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", platform,
+		"-t", imageName,
+		"-f", "-", buildDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s Docker image: %v\n%s", imageName, err, out)
+	}
 }
 
 func parseJSON(t *testing.T, data string, target any) {

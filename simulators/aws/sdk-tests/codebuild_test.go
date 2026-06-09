@@ -134,4 +134,8 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, buildList.Ids, buildID)
+
+	allBuilds, err := c.ListBuilds(ctx, &codebuild.ListBuildsInput{})
+	require.NoError(t, err)
+	require.Contains(t, allBuilds.Ids, buildID)
 }

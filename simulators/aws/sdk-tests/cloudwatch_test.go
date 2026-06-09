@@ -98,6 +98,31 @@ func TestCloudWatch_GetLogEventsPagination(t *testing.T) {
 	assert.NotEqual(t, *token, *result3.NextForwardToken, "token should change when new events exist")
 }
 
+func TestCloudWatch_PutRetentionPolicy_SDK(t *testing.T) {
+	cw := cwLogsClient()
+	logGroup := "/test/retention"
+
+	_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
+		LogGroupName: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(logGroup)})
+	})
+
+	_, err = cw.PutRetentionPolicy(ctx, &cloudwatchlogs.PutRetentionPolicyInput{
+		LogGroupName:    aws.String(logGroup),
+		RetentionInDays: aws.Int32(14),
+	})
+	require.NoError(t, err)
+	groups, err := cw.DescribeLogGroups(ctx, &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String(logGroup),
+	})
+	require.NoError(t, err)
+	require.Len(t, groups.LogGroups, 1)
+	assert.Equal(t, int32(14), aws.ToInt32(groups.LogGroups[0].RetentionInDays))
+}
+
 func TestCloudWatch_DescribeLogStreamsOrdering(t *testing.T) {
 	cw := cwLogsClient()
 

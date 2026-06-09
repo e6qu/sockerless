@@ -2,7 +2,10 @@ package aca
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sockerless/api"
@@ -40,10 +43,18 @@ func (s *Server) runACAInitialStdinStage(id string, c api.Container) {
 		return
 	}
 
+	argv, argvErr := acaInitialStdinArgv(c)
+	if argvErr != nil {
+		inv.ExitCode = 126
+		inv.Error = argvErr.Error()
+		s.finishACAInitialStdinStage(id, inv, nil, []byte(inv.Error))
+		return
+	}
+
 	stdout, stderr, exitCode, execErr := s.reverseAgents.RunAndCaptureWithStdin(
 		id,
 		"aca-stdin-"+id[:12],
-		[]string{"/bin/sh"},
+		argv,
 		nil,
 		c.Config.WorkingDir,
 		stdin,
@@ -88,4 +99,53 @@ func (s *Server) finishACAInitialStdinStage(id string, inv core.InvocationResult
 		close(ch.(chan struct{}))
 	}
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", inv.ExitCode)})
+}
+
+func acaInitialStdinArgv(c api.Container) ([]string, error) {
+	argv := append([]string{}, c.Config.Entrypoint...)
+	argv = append(argv, c.Config.Cmd...)
+	if len(argv) > 0 {
+		return argv, nil
+	}
+
+	env := map[string]string{}
+	for _, item := range c.Config.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	entrypoint, err := decodeACAOverlayArgv("SOCKERLESS_USER_ENTRYPOINT", env["SOCKERLESS_USER_ENTRYPOINT"])
+	if err != nil {
+		return nil, err
+	}
+	cmd, err := decodeACAOverlayArgv("SOCKERLESS_USER_CMD", env["SOCKERLESS_USER_CMD"])
+	if err != nil {
+		return nil, err
+	}
+	argv = append(argv, entrypoint...)
+	argv = append(argv, cmd...)
+	if len(argv) == 0 {
+		shortID := c.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
+		return nil, fmt.Errorf("container %s has no configured command for attached stdin", shortID)
+	}
+	return argv, nil
+}
+
+func decodeACAOverlayArgv(name, value string) ([]string, error) {
+	if value == "" {
+		return nil, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", name, err)
+	}
+	var argv []string
+	if err := json.Unmarshal(data, &argv); err != nil {
+		return nil, fmt.Errorf("decode %s JSON: %w", name, err)
+	}
+	return argv, nil
 }

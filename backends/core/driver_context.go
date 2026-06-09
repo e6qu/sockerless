@@ -52,7 +52,7 @@ type DriverContext struct {
 // by the NotImpl-composition rule: when an operator hits an action
 // whose driver is missing or returns NotImpl, the surfaced error
 // names the backend, the dimension, and the missing prerequisite,
-// without leaking phase or bug references into the operator-visible
+// without leaking internal tracking references into the operator-visible
 // error.
 //
 // Example Describe() values:

@@ -148,6 +148,64 @@ func TestSSMParameter_DeleteParameters(t *testing.T) {
 	assert.Equal(t, []string{"/del/missing"}, out.InvalidParameters)
 }
 
+func TestSSMParameter_GetParametersAndRemoveTags(t *testing.T) {
+	c := ssmClient()
+
+	for _, p := range []struct{ name, val string }{
+		{"/bulk/a", "one"},
+		{"/bulk/b", "two"},
+	} {
+		_, err := c.PutParameter(ctx, &ssm.PutParameterInput{
+			Name:  aws.String(p.name),
+			Type:  ssmtypes.ParameterTypeString,
+			Value: aws.String(p.val),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(p.name)})
+		})
+	}
+
+	got, err := c.GetParameters(ctx, &ssm.GetParametersInput{
+		Names: []string{"/bulk/a", "/bulk/b", "/bulk/missing"},
+	})
+	require.NoError(t, err)
+	values := map[string]string{}
+	for _, p := range got.Parameters {
+		values[aws.ToString(p.Name)] = aws.ToString(p.Value)
+	}
+	assert.Equal(t, "one", values["/bulk/a"])
+	assert.Equal(t, "two", values["/bulk/b"])
+	assert.Equal(t, []string{"/bulk/missing"}, got.InvalidParameters)
+
+	_, err = c.AddTagsToResource(ctx, &ssm.AddTagsToResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String("/bulk/a"),
+		Tags: []ssmtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("sdk")},
+			{Key: aws.String("team"), Value: aws.String("runner")},
+		},
+	})
+	require.NoError(t, err)
+	_, err = c.RemoveTagsFromResource(ctx, &ssm.RemoveTagsFromResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String("/bulk/a"),
+		TagKeys:      []string{"team"},
+	})
+	require.NoError(t, err)
+	tags, err := c.ListTagsForResource(ctx, &ssm.ListTagsForResourceInput{
+		ResourceType: ssmtypes.ResourceTypeForTaggingParameter,
+		ResourceId:   aws.String("/bulk/a"),
+	})
+	require.NoError(t, err)
+	tagMap := map[string]string{}
+	for _, tag := range tags.TagList {
+		tagMap[aws.ToString(tag.Key)] = aws.ToString(tag.Value)
+	}
+	assert.Equal(t, "sdk", tagMap["env"])
+	assert.NotContains(t, tagMap, "team")
+}
+
 // TestSSMParameter_ListTagsForResource verifies the ListTagsForResource round
 // trip. terraform-provider-aws calls this after PutParameter to populate the
 // resource's `tags` attribute; an absent TagList (instead of []) causes the

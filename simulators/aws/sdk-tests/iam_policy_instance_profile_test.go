@@ -21,7 +21,7 @@ func TestIAM_CreatePolicy_RoundTrip(t *testing.T) {
 	created, err := client.CreatePolicy(ctx, &iam.CreatePolicyInput{
 		PolicyName:     aws.String("test-policy"),
 		PolicyDocument: aws.String(doc),
-		Description:    aws.String("phase 179 round-trip test"),
+		Description:    aws.String("iam policy round-trip test"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.Policy)

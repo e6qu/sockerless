@@ -14,11 +14,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// TestAzureEntra_V2UserInfoEndpoint covers issue #508: the v2.0 discovery must
-// advertise a working userinfo_endpoint so coreos/go-oidc's provider.UserInfo()
-// — called by Pomerium after the token exchange — resolves. Verified with the
-// real go-oidc client. UserInfo requires a valid bearer token (OIDC Core §5.3);
-// there is no fallback identity.
+// TestAzureEntra_V2UserInfoEndpoint verifies v2.0 discovery advertises a
+// working userinfo_endpoint so coreos/go-oidc's provider.UserInfo() — called by
+// Pomerium after the token exchange — resolves. Verified with the real go-oidc
+// client. UserInfo requires a valid bearer token (OIDC Core §5.3); there is no
+// fallback identity.
 func TestAzureEntra_V2UserInfoEndpoint(t *testing.T) {
 	tenant := "edd-e2e-tenant"
 	clientID := "pomerium-userinfo-client"
@@ -61,11 +61,11 @@ func TestAzureEntra_V2UserInfoEndpoint(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, badResp.StatusCode, "an unverifiable token must be 401")
 }
 
-// TestAzureEntra_V2DiscoveryIssuerMatchesFetchURL covers issue #504: the v2.0
-// OIDC discovery document must advertise an issuer equal to the URL it was
-// fetched from (RFC 8414 §3) so strict OIDC clients (coreos/go-oidc, Pomerium)
-// can initialise. The v1 discovery keeps the real AAD sts.windows.net issuer
-// that the Azure SDK expects.
+// TestAzureEntra_V2DiscoveryIssuerMatchesFetchURL verifies the v2.0 OIDC
+// discovery document advertises an issuer equal to the URL it was fetched from
+// (RFC 8414 §3) so strict OIDC clients (coreos/go-oidc, Pomerium) can
+// initialise. The v1 discovery keeps the real AAD sts.windows.net issuer that
+// the Azure SDK expects.
 func TestAzureEntra_V2DiscoveryIssuerMatchesFetchURL(t *testing.T) {
 	tenant := "edd-e2e-tenant"
 

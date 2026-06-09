@@ -164,13 +164,13 @@ func TestELBv2LoadBalancerCLI(t *testing.T) {
 
 	runCLI(t, awsCLI("elbv2", "add-tags",
 		"--resource-arns", lbArn,
-		"--tags", "Key=phase,Value=cli"))
+		"--tags", "Key=scenario,Value=cli"))
 	out = runCLI(t, awsCLI("elbv2", "describe-tags",
 		"--resource-arns", lbArn,
-		"--query", "TagDescriptions[0].Tags[?Key=='phase'].Value|[0]",
+		"--query", "TagDescriptions[0].Tags[?Key=='scenario'].Value|[0]",
 		"--output", "text"))
 	if strings.TrimSpace(out) != "cli" {
-		t.Fatalf("expected phase tag from describe-tags, got %q", out)
+		t.Fatalf("expected scenario tag from describe-tags, got %q", out)
 	}
 
 	runCLI(t, awsCLI("elbv2", "delete-listener", "--listener-arn", listenerArn))

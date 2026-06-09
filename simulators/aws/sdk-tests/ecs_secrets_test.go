@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestECS_TaskDefinitionSecretsInjected covers issue #488: a container
-// definition's `secrets` array (valueFrom → SecretsManager) must be resolved at
-// task launch and injected as the named environment variable, indistinguishable
-// from a plain `environment` entry to the container.
+// TestECS_TaskDefinitionSecretsInjected covers the ECS secrets contract: a
+// container definition's `secrets` array (valueFrom → SecretsManager) must be
+// resolved at task launch and injected as the named environment variable,
+// indistinguishable from a plain `environment` entry to the container.
 func TestECS_TaskDefinitionSecretsInjected(t *testing.T) {
 	client := ecsClient()
 	sm := smClient()

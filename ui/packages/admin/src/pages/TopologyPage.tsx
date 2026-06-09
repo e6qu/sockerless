@@ -179,9 +179,9 @@ function rebuildCommand(inst: TopologyInstance): string {
  * edit/delete + live status indicator. New projects + new instances are
  * added via the per-form modals (ProjectForm, InstanceForm).
  *
- * Backend wiring lives in the `/api/v1/topology/*` surface (Phase 79
- * step 7). This page is pure UI on top — no business logic in the
- * client beyond querying / posting / surfacing errors.
+ * Backend wiring lives in the `/api/v1/topology/*` surface. This page is pure
+ * UI on top — no business logic in the client beyond querying / posting /
+ * surfacing errors.
  */
 export function TopologyPage() {
   const queryClient = useQueryClient();

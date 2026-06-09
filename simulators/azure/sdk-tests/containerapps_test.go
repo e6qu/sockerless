@@ -162,21 +162,14 @@ func TestContainerApps_MultiContainerJobSharesLocalhost(t *testing.T) {
 			"template": map[string]any{
 				"containers": []map[string]any{
 					{
-						"name":    "main",
-						"image":   evalImageName,
-						"command": []string{"sh", "-c"},
-						"args": []string{`for i in $(seq 1 50); do
-if nc -z 127.0.0.1 9090; then echo aca-sidecar-ok; exit 0; fi
-sleep 0.1
-done
-echo aca-sidecar-missing
-exit 1`},
+						"name":  "main",
+						"image": httpProbeImageName,
+						"args":  []string{"probe-once", "aca-sidecar-ok"},
 					},
 					{
-						"name":    "sidecar",
-						"image":   evalImageName,
-						"command": []string{"sh", "-c"},
-						"args":    []string{`while true; do { printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'; } | nc -l -p 9090; done`},
+						"name":  "sidecar",
+						"image": httpProbeImageName,
+						"args":  []string{"server"},
 					},
 				},
 			},

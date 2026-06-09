@@ -425,65 +425,65 @@ APP=$(api "$BASE/api/v3/bleephub/apps" -f name="Parity App" -f description="pari
     -f 'events[]=push' -f 'events[]=installation')
 APP_ID=$(echo "$APP" | jq -r '.id')
 APP_SLUG=$(echo "$APP" | jq -r '.slug')
-assert_not_empty "Phase153 app id"   "$APP_ID"
-assert_not_empty "Phase153 app slug" "$APP_SLUG"
+assert_not_empty "app id"   "$APP_ID"
+assert_not_empty "app slug" "$APP_SLUG"
 
 # Public app lookup (anonymous)
 APP_BY_SLUG=$(curl -sSk "$BASE/api/v3/apps/$APP_SLUG")
 SLUG_FROM_PUBLIC=$(echo "$APP_BY_SLUG" | jq -r '.slug')
-assert_eq "Phase153 GET /apps/{slug} anon" "$APP_SLUG" "$SLUG_FROM_PUBLIC"
+assert_eq "GET /apps/{slug} anon" "$APP_SLUG" "$SLUG_FROM_PUBLIC"
 PEM_LEAK=$(echo "$APP_BY_SLUG" | jq -r '.pem // ""')
-assert_eq "Phase153 public app no PEM leak" "" "$PEM_LEAK"
+assert_eq "public app no PEM leak" "" "$PEM_LEAK"
 
 # Create an installation
 INST=$(api "$BASE/api/v3/bleephub/apps/$APP_ID/installations" \
     -f target_type=User -f target_id=1 -f target_login=admin \
     -f 'permissions[issues]=write' -f 'permissions[checks]=write')
 INST_ID=$(echo "$INST" | jq -r '.id')
-assert_not_empty "Phase153 installation id" "$INST_ID"
+assert_not_empty "installation id" "$INST_ID"
 SELECTION=$(echo "$INST" | jq -r '.repository_selection')
-assert_eq "Phase153 installation default repository_selection" "all" "$SELECTION"
+assert_eq "installation default repository_selection" "all" "$SELECTION"
 # HATEOAS url fields
 ACCESS_URL=$(echo "$INST" | jq -r '.access_tokens_url')
 case "$ACCESS_URL" in
-    *"/api/v3/app/installations/$INST_ID/access_tokens"*) pass "Phase153 installation access_tokens_url" ;;
-    *) fail "Phase153 access_tokens_url shape: $ACCESS_URL" ;;
+    *"/api/v3/app/installations/$INST_ID/access_tokens"*) pass "installation access_tokens_url" ;;
+    *) fail "access_tokens_url shape: $ACCESS_URL" ;;
 esac
 
 # Suspend / unsuspend (sim mgmt path)
 SUSPEND_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
     "$BASE/api/v3/bleephub/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase153 suspend installation 204" "204" "$SUSPEND_CODE"
+assert_eq "suspend installation 204" "204" "$SUSPEND_CODE"
 UNSUSP_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
     "$BASE/api/v3/bleephub/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase153 unsuspend installation 204" "204" "$UNSUSP_CODE"
+assert_eq "unsuspend installation 204" "204" "$UNSUSP_CODE"
 
 # Installation lookup by user
 USR_INST=$(curl -sSk -H "Authorization: token $TOKEN" "$BASE/api/v3/users/admin/installation")
 USR_INST_ID=$(echo "$USR_INST" | jq -r '.id // 0')
-assert_eq "Phase153 GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
+assert_eq "GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
 
 # OAuth App create + Basic-auth on /applications/{client_id}/token
 OA=$(api "$BASE/api/v3/bleephub/oauth-apps" -f name="OA Parity" -f description="parity" \
     -f url="https://example.test" -f callback_url="https://example.test/cb")
 OA_CID=$(echo "$OA" | jq -r '.client_id')
 OA_CSEC=$(echo "$OA" | jq -r '.client_secret')
-assert_not_empty "Phase153 oauth app client_id"     "$OA_CID"
-assert_not_empty "Phase153 oauth app client_secret" "$OA_CSEC"
+assert_not_empty "oauth app client_id"     "$OA_CID"
+assert_not_empty "oauth app client_secret" "$OA_CSEC"
 
 # Unknown token → 404
 ACTOK_404=$(curl -sSk -X POST -u "$OA_CID:$OA_CSEC" \
     -H "Content-Type: application/json" \
     -d '{"access_token":"gho_does_not_exist"}' \
     "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase153 /applications/{client_id}/token unknown → 404" "404" "$ACTOK_404"
+assert_eq "/applications/{client_id}/token unknown → 404" "404" "$ACTOK_404"
 
 # Wrong client secret → 401
 ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
     -H "Content-Type: application/json" \
     -d '{"access_token":"gho_x"}' \
     "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase153 /applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
+assert_eq "/applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
 
 log "Apps parity probes complete"
 
@@ -494,40 +494,40 @@ log "Apps parity probes complete"
 # ============================================================
 log "PR-conversation parity probes…"
 
-P161_REPO="admin/gh-test-repo"
+PR_REPO="admin/gh-test-repo"
 
 # --- PR.comments — gh pr comment + gh pr view --json comments ---
-if gh pr comment 2 --repo "$P161_REPO" --body "P161 first comment" >/dev/null 2>&1; then
-    pass "Phase161 gh pr comment exited 0"
+if gh pr comment 2 --repo "$PR_REPO" --body "first review comment" >/dev/null 2>&1; then
+    pass "gh pr comment exited 0"
 else
-    fail "Phase161 gh pr comment exited non-zero"
+    fail "gh pr comment exited non-zero"
 fi
-PR_COMMENTS=$(gh pr view 2 --repo "$P161_REPO" --json comments 2>/dev/null || echo '{}')
+PR_COMMENTS=$(gh pr view 2 --repo "$PR_REPO" --json comments 2>/dev/null || echo '{}')
 PR_COMMENT_COUNT=$(echo "$PR_COMMENTS" | jq '.comments | length')
 if [ "$PR_COMMENT_COUNT" -ge 1 ]; then
-    pass "Phase161 PR.comments includes the new comment"
+    pass "PR.comments includes the new comment"
 else
-    fail "Phase161 PR.comments empty after gh pr comment ($PR_COMMENTS)"
+    fail "PR.comments empty after gh pr comment ($PR_COMMENTS)"
 fi
 PR_COMMENT_BODY=$(echo "$PR_COMMENTS" | jq -r '.comments[0].body')
-assert_eq "Phase161 PR.comments[0].body" "P161 first comment" "$PR_COMMENT_BODY"
+assert_eq "PR.comments[0].body" "first review comment" "$PR_COMMENT_BODY"
 
 # --- Comment edit history — PATCH a comment and verify lastEditedAt + body ---
-PR_COMMENT_ID=$(api "$BASE/api/v3/repos/$P161_REPO/issues/2/comments" | jq -r '.[0].id')
+PR_COMMENT_ID=$(api "$BASE/api/v3/repos/$PR_REPO/issues/2/comments" | jq -r '.[0].id')
 if [ -n "$PR_COMMENT_ID" ] && [ "$PR_COMMENT_ID" != "null" ]; then
-    EDITED=$(api -X PATCH "$BASE/api/v3/repos/$P161_REPO/issues/comments/$PR_COMMENT_ID" -f body="P161 edited")
+    EDITED=$(api -X PATCH "$BASE/api/v3/repos/$PR_REPO/issues/comments/$PR_COMMENT_ID" -f body="edited review comment")
     EDITED_BODY=$(echo "$EDITED" | jq -r '.body')
-    assert_eq "Phase161 edited comment body" "P161 edited" "$EDITED_BODY"
+    assert_eq "edited comment body" "edited review comment" "$EDITED_BODY"
     # GraphQL view should report includesCreatedEdit=true now.
-    EDIT_FLAG=$(gh pr view 2 --repo "$P161_REPO" --json comments \
+    EDIT_FLAG=$(gh pr view 2 --repo "$PR_REPO" --json comments \
         | jq -r '.comments[0].includesCreatedEdit // empty')
     if [ "$EDIT_FLAG" = "true" ]; then
-        pass "Phase161 comments[0].includesCreatedEdit after PATCH"
+        pass "comments[0].includesCreatedEdit after PATCH"
     else
-        fail "Phase161 includesCreatedEdit not flipped after PATCH (got $EDIT_FLAG)"
+        fail "includesCreatedEdit not flipped after PATCH (got $EDIT_FLAG)"
     fi
 else
-    fail "Phase161 could not resolve PR comment id for edit test"
+    fail "could not resolve PR comment id for edit test"
 fi
 
 # --- Minimization — direct GraphQL minimizeComment ---
@@ -538,34 +538,34 @@ if [ -n "$COMMENT_NODE_ID" ] && [ "$COMMENT_NODE_ID" != "null" ]; then
         "$BASE/api/graphql")
     IS_MIN=$(echo "$MIN_RESP" | jq -r '.data.minimizeComment.minimizedComment.isMinimized')
     MIN_REASON=$(echo "$MIN_RESP" | jq -r '.data.minimizeComment.minimizedComment.minimizedReason')
-    assert_eq "Phase161 minimizeComment isMinimized=true" "true" "$IS_MIN"
-    assert_eq "Phase161 minimizeComment minimizedReason" "OFF_TOPIC" "$MIN_REASON"
+    assert_eq "minimizeComment isMinimized=true" "true" "$IS_MIN"
+    assert_eq "minimizeComment minimizedReason" "OFF_TOPIC" "$MIN_REASON"
 fi
 
 # --- Locking — REST PUT /lock then attempt a new comment → expect 403 ---
 LOCK_CODE=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
     -d '{"lock_reason":"too heated"}' \
-    "$BASE/api/v3/repos/$P161_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase161 lock PR 204" "204" "$LOCK_CODE"
+    "$BASE/api/v3/repos/$PR_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
+assert_eq "lock PR 204" "204" "$LOCK_CODE"
 POST_COMMENT_LOCKED=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
     -d '{"body":"should be rejected"}' \
-    "$BASE/api/v3/repos/$P161_REPO/issues/2/comments" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase161 comment on locked PR 403" "403" "$POST_COMMENT_LOCKED"
+    "$BASE/api/v3/repos/$PR_REPO/issues/2/comments" -w "%{http_code}" -o /dev/null)
+assert_eq "comment on locked PR 403" "403" "$POST_COMMENT_LOCKED"
 UNLOCK_CODE=$(curl -sSk -X DELETE -H "Authorization: token $TOKEN" \
-    "$BASE/api/v3/repos/$P161_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
-assert_eq "Phase161 unlock PR 204" "204" "$UNLOCK_CODE"
+    "$BASE/api/v3/repos/$PR_REPO/issues/2/lock" -w "%{http_code}" -o /dev/null)
+assert_eq "unlock PR 204" "204" "$UNLOCK_CODE"
 
 # --- ProjectV2 — createProjectV2 + createProjectV2Field + addProjectV2ItemById + updateProjectV2ItemFieldValue ---
 ADMIN_NODE_ID=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
     -d '{"query":"{ viewer { id } }"}' "$BASE/api/graphql" | jq -r '.data.viewer.id')
 if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
     CREATE_PROJ=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
-        -d "{\"query\":\"mutation { createProjectV2(input: {ownerId: \\\"$ADMIN_NODE_ID\\\", title: \\\"P161 Board\\\"}) { projectV2 { id title number } } }\"}" \
+        -d "{\"query\":\"mutation { createProjectV2(input: {ownerId: \\\"$ADMIN_NODE_ID\\\", title: \\\"Review Board\\\"}) { projectV2 { id title number } } }\"}" \
         "$BASE/api/graphql")
     PROJ_NODE_ID=$(echo "$CREATE_PROJ" | jq -r '.data.createProjectV2.projectV2.id')
     PROJ_TITLE=$(echo "$CREATE_PROJ" | jq -r '.data.createProjectV2.projectV2.title')
-    assert_not_empty "Phase161 createProjectV2 id" "$PROJ_NODE_ID"
-    assert_eq "Phase161 createProjectV2 title" "P161 Board" "$PROJ_TITLE"
+    assert_not_empty "createProjectV2 id" "$PROJ_NODE_ID"
+    assert_eq "createProjectV2 title" "Review Board" "$PROJ_TITLE"
 
     # Add a field with single-select options.
     CREATE_FIELD=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
@@ -573,10 +573,10 @@ if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
         "$BASE/api/graphql")
     FIELD_NODE_ID=$(echo "$CREATE_FIELD" | jq -r '.data.createProjectV2Field.projectV2Field.id')
     FIELD_NAME=$(echo "$CREATE_FIELD" | jq -r '.data.createProjectV2Field.projectV2Field.name')
-    assert_not_empty "Phase161 createProjectV2Field id" "$FIELD_NODE_ID"
-    assert_eq "Phase161 createProjectV2Field name" "Status" "$FIELD_NAME"
+    assert_not_empty "createProjectV2Field id" "$FIELD_NODE_ID"
+    assert_eq "createProjectV2Field name" "Status" "$FIELD_NAME"
 
-    # Add issue #1 as a project item.
+    # Add the seeded issue as a project item.
     ISSUE_NODE_ID=$(curl -sSk -X POST -H "Authorization: bearer $TOKEN" -H "Content-Type: application/json" \
         -d "{\"query\":\"{ repository(owner: \\\"admin\\\", name: \\\"gh-test-repo\\\") { issue(number: 1) { id } } }\"}" \
         "$BASE/api/graphql" | jq -r '.data.repository.issue.id')
@@ -585,22 +585,22 @@ if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
             -d "{\"query\":\"mutation { addProjectV2ItemById(input: {projectId: \\\"$PROJ_NODE_ID\\\", contentId: \\\"$ISSUE_NODE_ID\\\"}) { item { id } } }\"}" \
             "$BASE/api/graphql")
         ITEM_NODE_ID=$(echo "$ADD_ITEM" | jq -r '.data.addProjectV2ItemById.item.id')
-        assert_not_empty "Phase161 addProjectV2ItemById id" "$ITEM_NODE_ID"
+        assert_not_empty "addProjectV2ItemById id" "$ITEM_NODE_ID"
 
         # Verify Issue.projectItems now returns the item via gh issue view --json projectItems
         # (gh CLI shells the GraphQL query for us).
-        if gh issue view 1 --repo "$P161_REPO" --json projectItems >/tmp/p161.json 2>/dev/null; then
-            ITEMS_LEN=$(jq '.projectItems | length' /tmp/p161.json)
+        if gh issue view 1 --repo "$PR_REPO" --json projectItems >/tmp/bleephub-project-items.json 2>/dev/null; then
+            ITEMS_LEN=$(jq '.projectItems | length' /tmp/bleephub-project-items.json)
             if [ "$ITEMS_LEN" -ge 1 ]; then
-                pass "Phase161 Issue.projectItems has the added item"
+                pass "Issue.projectItems has the added item"
             else
-                fail "Phase161 Issue.projectItems empty after addItem"
+                fail "Issue.projectItems empty after addItem"
             fi
         else
-            fail "Phase161 gh issue view --json projectItems failed"
+            fail "gh issue view --json projectItems failed"
         fi
     else
-        fail "Phase161 could not resolve issue node id"
+        fail "could not resolve issue node id"
     fi
 fi
 

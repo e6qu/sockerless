@@ -91,6 +91,42 @@ func TestGlue_TableCRUD_SDK(t *testing.T) {
 	assert.Equal(t, "glue-sdk-table", aws.ToString(tables.TableList[0].Name))
 }
 
+func TestGlue_GetPartitionIndexes_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("glue-sdk-index-db")},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &glue.DeleteTableInput{
+			DatabaseName: aws.String("glue-sdk-index-db"),
+			Name:         aws.String("glue-sdk-index-table"),
+		})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-index-db")})
+	})
+
+	_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableInput: &gluetypes.TableInput{
+			Name: aws.String("glue-sdk-index-table"),
+			StorageDescriptor: &gluetypes.StorageDescriptor{
+				Location: aws.String("s3://bucket/indexed/"),
+			},
+			PartitionKeys: []gluetypes.Column{{Name: aws.String("dt"), Type: aws.String("string")}},
+		},
+	})
+	require.NoError(t, err)
+
+	indexes, err := c.GetPartitionIndexes(ctx, &glue.GetPartitionIndexesInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableName:    aws.String("glue-sdk-index-table"),
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, indexes.PartitionIndexDescriptorList)
+	assert.Empty(t, indexes.PartitionIndexDescriptorList)
+}
+
 func TestGlue_JobCRUD_SDK(t *testing.T) {
 	c := glueClient()
 

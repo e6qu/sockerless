@@ -39,11 +39,10 @@ func ctHasEventNamed(events []cttypes.Event, name string) bool {
 	return false
 }
 
-// TestCloudTrailLookupFilterKeysSDK covers issue #496: LookupEvents must filter
-// on all eight AttributeKey values, not just EventName/EventSource/Username
-// (the other five were silently ignored, so any filter using them returned
-// every event). Creates an ECS cluster — a resource-bearing management event —
-// and exercises the EventId / ResourceName / ResourceType / ReadOnly filters.
+// TestCloudTrailLookupFilterKeysSDK verifies LookupEvents filters on all eight
+// AttributeKey values, not just EventName/EventSource/Username. Creates an ECS
+// cluster — a resource-bearing management event — and exercises the EventId /
+// ResourceName / ResourceType / ReadOnly filters.
 func TestCloudTrailLookupFilterKeysSDK(t *testing.T) {
 	ct := cloudTrailClient()
 	ecsc := ecsClient()
@@ -91,17 +90,16 @@ func TestCloudTrailLookupFilterKeysSDK(t *testing.T) {
 	assert.False(t, ctHasEventNamed(ro, "CreateCluster"), "CreateCluster must not appear under ReadOnly=true")
 
 	// Negative: a non-matching ResourceName returns nothing — proves the filter
-	// is applied, not silently ignored (the #496 defect returned all events).
+	// is applied, not silently ignored.
 	none := ctLookup(t, ct, cttypes.LookupAttributeKeyResourceName, "no-such-resource-xyz")
 	assert.False(t, ctHasEventNamed(none, "CreateCluster"),
 		"a non-matching ResourceName filter must not return the CreateCluster event")
 }
 
-// TestCloudTrailRecordsSchedulerAPICallsSDK covers issue #498: EventBridge
-// Scheduler is a REST service registered off the central POST / router, so its
-// API calls bypassed the CloudTrail recording middleware. CreateSchedule (and
-// the other Scheduler operations) must now appear in LookupEvents against
-// scheduler.amazonaws.com.
+// TestCloudTrailRecordsSchedulerAPICallsSDK verifies EventBridge Scheduler REST
+// API calls are recorded in CloudTrail. Scheduler is registered off the central
+// POST / router, so CreateSchedule and the other Scheduler operations must
+// appear in LookupEvents against scheduler.amazonaws.com.
 func TestCloudTrailRecordsSchedulerAPICallsSDK(t *testing.T) {
 	ct := cloudTrailClient()
 	sched := schedulerClient()
@@ -136,11 +134,12 @@ func TestCloudTrailRecordsSchedulerAPICallsSDK(t *testing.T) {
 		"the CreateSchedule event must carry the schedule as a ResourceName")
 }
 
-// TestCloudTrailRecordsSchedulerFiredTargetSDK covers issue #497: when the
-// Scheduler firing loop invokes a target it calls the target handler directly,
-// bypassing the POST / recording middleware. The downstream call (here SQS
-// SendMessage) must be recorded with userIdentity.invokedBy =
-// scheduler.amazonaws.com, as real CloudTrail records scheduler-driven calls.
+// TestCloudTrailRecordsSchedulerFiredTargetSDK verifies scheduler-fired targets
+// are recorded in CloudTrail. When the Scheduler firing loop invokes a target it
+// calls the target handler directly, bypassing the POST / recording middleware.
+// The downstream call (here SQS SendMessage) must be recorded with
+// userIdentity.invokedBy = scheduler.amazonaws.com, as real CloudTrail records
+// scheduler-driven calls.
 func TestCloudTrailRecordsSchedulerFiredTargetSDK(t *testing.T) {
 	ct := cloudTrailClient()
 	sched := schedulerClient()

@@ -4,6 +4,13 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed per-phase history lives in PR descriptions and `git log`. This file keeps only the last few phases and a compressed summary of completed foundations.
 
+## 2026-06-09 — Phase G combined: Azure/GCP service slices + AWS audit cleanup (BUG-1581–1583, PR pending)
+
+- **BUG-1581:** Azure now has Microsoft.Logic workflow lifecycle/enable/disable/validate plus trigger run/run-history records, and Microsoft.ContainerInstance containerGroups lifecycle/start/stop/restart/logs/exec. ACI launches real local containers in Docker-runtime mode, captures real stdout/stderr for `ListLogs`, and bridges SDK websocket exec sessions to Docker exec.
+- **BUG-1582:** GCP now has Cloud Spanner instance/database/session REST paths, Dataflow regional job create/get/list/update, and Bigtable Admin instance/cluster/table paths. Spanner uses a service endpoint base (`/spanner/v1`) so official Spanner clients do not collide with the existing Cloud SQL `/v1/projects/{project}/instances` compatibility path; `gcloud` operation polling uses Spanner/Bigtable-specific LRO names.
+- **BUG-1583:** AWS registered-operation residuals gained SDK regressions for SSM GetParameters/tag removal, Glue GetPartitionIndexes, CodeBuild ListBuilds, SFN version-list/definition-validate, CloudWatch Logs retention policy, SQS attribute updates, and ElastiCache tag removal.
+- Coverage docs were extended with new Azure/GCP surface tables and coverage-matrix rows. Verification: focused Azure SDK+CLI, GCP SDK+CLI, AWS SDK audit tests pass; Azure/GCP Terraform validate passes, with the AzureStack provider deprecation warning tracked as BUG-1584. CI follow-up fixed Spanner `UpdateDatabaseDdl` route handling and metadata, Logic Apps ARM definition normalization, GCP/Azure SDK+CLI helper-image builds that pulled remote Go/Alpine bases, and ACI repeated-field response normalization for the AzureRM provider. Bigtable Terraform provider coverage is tracked as BUG-1585 because the provider escapes the REST custom endpoint and attempts real Google auth.
+
 ## 2026-06-09 — ECS RunTask overrides + CloudTrail REST sweep (BUG-1580, BUG-1540, PR pending)
 
 - **BUG-1580 / issue #530:** ECS `RunTask.overrides.containerOverrides` now follows the official ECS SDK/API shape. Task responses echo `overrides`, task-level CPU/memory overrides affect the task object, and named-container `environment` plus `command` overrides are applied to the real runtime container for that task. SDK + CLI regressions run real Fargate tasks and assert the override env reaches the process through CloudWatch Logs.

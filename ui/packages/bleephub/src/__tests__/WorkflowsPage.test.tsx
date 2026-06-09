@@ -32,7 +32,6 @@ function renderPage() {
   );
 }
 
-// Phase 131 — UI now has two tabs:
 // - Workflows (files) — backed by GET /internal/workflow_files
 // - Runs           — backed by GET /internal/workflows
 const workflowFilesData = [

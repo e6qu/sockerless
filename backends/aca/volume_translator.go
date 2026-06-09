@@ -17,9 +17,9 @@ import (
 
 // resolveVolumeForName returns the cloud-native Volume entry to attach
 // to the JobTemplate. Honors the storage-backing registry's default
-// (after P168.5 that's BackingMemory for ACA, materialising as
-// StorageTypeEmptyDir / tmpfs). Operators wanting persistence pick
-// it up by overriding the registry default at NewServer.
+// (BackingMemory for ACA, materialising as StorageTypeEmptyDir / tmpfs).
+// Operators wanting persistence pick it up by overriding the registry default
+// at NewServer.
 //
 // Azure Files share provisioning only happens when the resolved
 // backing actually needs it (BackingAzureFilesEphemeral). Memory-

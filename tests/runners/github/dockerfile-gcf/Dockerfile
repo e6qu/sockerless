@@ -1,10 +1,10 @@
 # GitHub Actions runner image for sockerless gcf dispatch.
 #
 # Mirror of dockerfile-cloudrun/Dockerfile but bakes
-# `sockerless-backend-gcf` (per BUG-862 — backend matches host
-# primitive). The gcf backend's image-inject path needs the
+# `sockerless-backend-gcf` so the backend matches the host primitive.
+# The gcf backend's image-inject path needs the
 # `sockerless-gcf-bootstrap` binary on disk so it can be COPY'd into
-# every per-step Cloud Run Function overlay image (Phase 118d).
+# every per-step Cloud Run Function overlay image.
 
 FROM ubuntu:22.04
 

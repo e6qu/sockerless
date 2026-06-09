@@ -11,7 +11,7 @@ terraform {
 }
 
 provider "azurestack" {
-  arm_endpoint    = var.endpoint
+  metadata_host   = trimprefix(trimprefix(var.endpoint, "https://"), "http://")
   client_id       = "test-client-id"
   client_secret   = "test-client-secret"
   tenant_id       = "11111111-1111-1111-1111-111111111111"
@@ -563,6 +563,45 @@ resource "azurerm_container_app_job" "az_caj" {
   }
 }
 
+# Logic App workflow — runner orchestration stacks often use Logic Apps for
+# webhook fan-in around Azure-hosted jobs. This drives Microsoft.Logic/workflows
+# through the real azurerm resource.
+resource "azurerm_logic_app_workflow" "az_logic" {
+  provider            = azurerm
+  name                = "tf-azrm-logic"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+# Azure Container Instance — the direct container primitive beneath a number
+# of small-runner and one-shot task deployments. Uses the cached alpine image
+# pre-pulled by the Terraform test harness so the simulator starts a real
+# Docker container without hitting the network during apply.
+resource "azurerm_container_group" "az_aci" {
+  provider            = azurerm
+  name                = "tf-azrm-aci"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  os_type             = "Linux"
+  restart_policy      = "Never"
+
+  container {
+    name     = "main"
+    image    = "alpine:latest"
+    cpu      = 0.25
+    memory   = 0.5
+    commands = ["sh", "-c", "echo terraform-aci"]
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
 # Service Plan — Function App host.
 resource "azurerm_service_plan" "az_sp" {
   provider            = azurerm
@@ -902,6 +941,14 @@ output "azrm_container_app_job_id" {
   value = azurerm_container_app_job.az_caj.id
 }
 
+output "azrm_logic_app_workflow_id" {
+  value = azurerm_logic_app_workflow.az_logic.id
+}
+
+output "azrm_container_group_id" {
+  value = azurerm_container_group.az_aci.id
+}
+
 output "azrm_service_plan_id" {
   value = azurerm_service_plan.az_sp.id
 }
@@ -914,16 +961,8 @@ output "azrm_storage_container_id" {
   value = azurerm_storage_container.az_st_container.id
 }
 
-output "azrm_storage_container_resource_manager_id" {
-  value = azurerm_storage_container.az_st_container.resource_manager_id
-}
-
 output "azrm_storage_table_id" {
   value = azurerm_storage_table.az_st_table.id
-}
-
-output "azrm_storage_table_resource_manager_id" {
-  value = azurerm_storage_table.az_st_table.resource_manager_id
 }
 
 output "azrm_function_app_id" {

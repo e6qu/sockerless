@@ -7,13 +7,13 @@ import (
 )
 
 // cloudTrailResources extracts the resources[] a recorded API call acted on, so
-// the ResourceName / ResourceType LookupEvents attributes can filter on them
-// (issue #496). Real CloudTrail records the resource(s) an operation touches;
-// the resource identifier is carried in the request, so we read it from the
-// buffered awsJson body (or, for query-protocol services, the parsed form) and
-// pair it with the resource's AWS::Service::Type. Operations that act on no
-// named resource (or whose identifier is not in the request) record none —
-// never a fabricated resource.
+// the ResourceName / ResourceType LookupEvents attributes can filter on them.
+// Real CloudTrail records the resource(s) an operation touches; the resource
+// identifier is carried in the request, so we read it from the buffered awsJson
+// body (or, for query-protocol services, the parsed form) and pair it with the
+// resource's AWS::Service::Type. Operations that act on no named resource (or
+// whose identifier is not in the request) record none — never a fabricated
+// resource.
 func cloudTrailResources(source, eventName string, reqBody []byte, r *http.Request) []CloudTrailResource {
 	get := cloudTrailFieldGetter(reqBody, r)
 	add := func(typ, name string) []CloudTrailResource {

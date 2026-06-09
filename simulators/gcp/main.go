@@ -84,6 +84,9 @@ func main() {
 	registerBigQuery(srv)
 	registerFirestore(srv)
 	registerCloudBuild(srv)
+	registerSpanner(srv)
+	registerDataflow(srv)
+	registerBigtable(srv)
 
 	// Infrastructure services
 	registerServiceUsage(srv)

@@ -21,6 +21,7 @@ var (
 	simCmd             *exec.Cmd
 	binaryPath         string
 	evalImageName      string // Docker image containing eval-arithmetic binary
+	commandImageName   string // Docker image containing container-command binary
 	httpProbeImageName string // Docker image containing localhost probe/server binary
 	ctx                = context.Background()
 )
@@ -38,44 +39,17 @@ func TestMain(m *testing.M) {
 
 	workloadPlatform := nativeDockerPlatform()
 
-	// Build the Docker image hosting eval-arithmetic. The build is a
-	// multi-stage Docker build so the workload binary's architecture
-	// matches the image's platform.
 	evalDir, _ := filepath.Abs("../../testdata/eval-arithmetic")
 	evalImageName = "sockerless-eval-arithmetic:test"
-	dockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /eval-arithmetic .
-FROM public.ecr.aws/docker/library/alpine:latest
-COPY --from=build /eval-arithmetic /usr/local/bin/eval-arithmetic
-ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
-`
-	dockerBuild := exec.Command("docker", "build",
-		"--platform", workloadPlatform,
-		"-t", evalImageName, "-f", "-", evalDir)
-	dockerBuild.Stdin = strings.NewReader(dockerfile)
-	if out, err := dockerBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build eval-arithmetic Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage(evalImageName, evalDir, "eval-arithmetic", workloadPlatform)
+
+	commandDir, _ := filepath.Abs("../../testdata/container-command")
+	commandImageName = "sockerless-container-command:test"
+	buildGoScratchImage(commandImageName, commandDir, "container-command", workloadPlatform)
 
 	probeDir, _ := filepath.Abs("../../testdata/http-localhost-probe")
 	httpProbeImageName = "sockerless-http-localhost-probe:test"
-	probeDockerfile := `FROM public.ecr.aws/docker/library/golang:1.25-alpine AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -o /http-localhost-probe .
-FROM public.ecr.aws/docker/library/alpine:latest
-COPY --from=build /http-localhost-probe /usr/local/bin/http-localhost-probe
-ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
-`
-	probeBuild := exec.Command("docker", "build",
-		"--platform", workloadPlatform,
-		"-t", httpProbeImageName, "-f", "-", probeDir)
-	probeBuild.Stdin = strings.NewReader(probeDockerfile)
-	if out, err := probeBuild.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build http-localhost-probe Docker image: %v\n%s", err, out)
-	}
+	buildGoScratchImage(httpProbeImageName, probeDir, "http-localhost-probe", workloadPlatform)
 
 	// Allocate both ports while both listeners are open. Closing the first
 	// before allocating the second lets the OS re-assign the just-freed
@@ -121,6 +95,40 @@ ENTRYPOINT ["/usr/local/bin/http-localhost-probe"]
 
 func nativeDockerPlatform() string {
 	return "linux/" + runtime.GOARCH
+}
+
+func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
+	buildDir, err := os.MkdirTemp("", "sockerless-gcp-image-*")
+	if err != nil {
+		log.Fatalf("Failed to create image build dir: %v", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	binaryPath := filepath.Join(buildDir, binaryName)
+	build := exec.Command("go", "build", "-o", binaryPath, ".")
+	build.Dir = sourceDir
+	build.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOWORK=off",
+		"GOOS=linux",
+		"GOARCH="+runtime.GOARCH,
+	)
+	if out, err := build.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s workload binary: %v\n%s", binaryName, err, out)
+	}
+
+	dockerfile := fmt.Sprintf(`FROM scratch
+COPY %s /usr/local/bin/%s
+ENTRYPOINT ["/usr/local/bin/%s"]
+`, binaryName, binaryName, binaryName)
+	dockerBuild := exec.Command("docker", "build",
+		"--platform", platform,
+		"-t", imageName,
+		"-f", "-", buildDir)
+	dockerBuild.Stdin = strings.NewReader(dockerfile)
+	if out, err := dockerBuild.CombinedOutput(); err != nil {
+		log.Fatalf("Failed to build %s Docker image: %v\n%s", imageName, err, out)
+	}
 }
 
 func waitForHealth(url string) error {

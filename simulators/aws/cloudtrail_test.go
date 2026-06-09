@@ -41,8 +41,7 @@ func TestCloudTrailLookupEventsReturnsNewestMatchesFirst(t *testing.T) {
 }
 
 // TestCloudTrailEventMatchesAllKeys pins LookupEvents filtering for all eight
-// AttributeKey values (issue #496 — five were silently ignored, so any filter
-// using them returned every event).
+// AttributeKey values, so every supported filter key narrows the event stream.
 func TestCloudTrailEventMatchesAllKeys(t *testing.T) {
 	ev := CloudTrailEvent{
 		EventId:     "id-1",

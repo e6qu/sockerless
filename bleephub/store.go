@@ -17,8 +17,8 @@ import (
 // AdminToken returns the seeded admin token, which MUST be supplied via
 // BLEEPHUB_ADMIN_TOKEN. There is no default: the token is a credential, so the
 // sim fails loudly rather than seeding a guessable value (and a hardcoded value
-// would be GitHub-PAT-shaped, tripping secret scanners — issue #501). Consumers
-// and test harnesses set the env var explicitly.
+// would be GitHub-PAT-shaped, tripping secret scanners). Consumers and test
+// harnesses set the env var explicitly.
 func AdminToken() string {
 	v := os.Getenv("BLEEPHUB_ADMIN_TOKEN")
 	if v == "" {

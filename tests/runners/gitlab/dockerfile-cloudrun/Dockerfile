@@ -6,10 +6,9 @@
 # DOCKER_HOST=tcp://localhost:3375 routes step containers through
 # sockerless to Cloud Run Jobs.
 #
-# Deployed once via `docker run -d` against the operator's
-# DOCKER_HOST that points at sockerless-cloudrun. Per BUG-862, the
-# runner runs as a sockerless-managed Cloud Run Service (long-lived,
-# minScale=1).
+# Deployed once via `docker run -d` against the operator's DOCKER_HOST
+# that points at sockerless-cloudrun. The runner runs as a
+# sockerless-managed Cloud Run Service (long-lived, minScale=1).
 
 FROM ubuntu:22.04
 
@@ -35,12 +34,11 @@ RUN curl -fsSL "https://gitlab-runner-downloads.s3.amazonaws.com/${GITLAB_RUNNER
     /usr/local/bin/gitlab-runner --version
 
 COPY sockerless-backend-cloudrun /usr/local/bin/sockerless-backend-cloudrun
-# Phase 122g: cloudrun overlay-injects sockerless-cloudrun-bootstrap
-# into every per-step Cloud Run Service image so `docker exec` can
-# dispatch via Path B HTTP POST (specs/CLOUD_RESOURCE_MAPPING.md
-# § Lesson 8). The bootstrap binary lives on the runner image's disk
-# so the in-image cloudrun backend can stage it into Cloud Build
-# contexts when building per-image overlays.
+# cloudrun overlay-injects sockerless-cloudrun-bootstrap into every
+# per-step Cloud Run Service image so `docker exec` can dispatch via
+# the reverse-agent bootstrap. The bootstrap binary lives on the runner
+# image's disk so the in-image cloudrun backend can stage it into Cloud
+# Build contexts when building per-image overlays.
 COPY sockerless-cloudrun-bootstrap /opt/sockerless/sockerless-cloudrun-bootstrap
 RUN chmod +x /usr/local/bin/sockerless-backend-cloudrun \
              /opt/sockerless/sockerless-cloudrun-bootstrap

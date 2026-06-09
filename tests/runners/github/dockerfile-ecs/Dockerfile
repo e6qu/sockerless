@@ -80,8 +80,8 @@ COPY --chown=runner:runner entrypoint-ecs.sh /home/runner/entrypoint.sh
 
 # Sockerless ECS backend recognises the runner-task workload by image
 # label and uses the pre-registered task definition (not implemented
-# yet — Phase 110b follow-up; for now the harness calls ECS RunTask
-# directly with the runner-task task-definition ARN).
+# yet; for now the harness calls ECS RunTask directly with the
+# runner-task task-definition ARN).
 LABEL com.sockerless.ecs.task-definition-family="sockerless-runner"
 
 ENTRYPOINT ["/home/runner/entrypoint.sh"]

@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestScheduler_ECSRunTaskFailureSurfaced covers issue #514: a scheduler-fired
-// RunTask whose target API rejects the request (here, a security group that does
-// not exist) must NOT be recorded as a phantom success. Real CloudTrail records
-// the RunTask attempt WITH an errorCode, and — because RunTask failed — no task
-// is created and none ever transitions to STOPPED.
+// TestScheduler_ECSRunTaskFailureSurfaced covers scheduler-fired RunTask error
+// reporting: when the target API rejects the request (here, a security group
+// that does not exist), it must NOT be recorded as a phantom success. Real
+// CloudTrail records the RunTask attempt WITH an errorCode, and — because
+// RunTask failed — no task is created and none ever transitions to STOPPED.
 func TestScheduler_ECSRunTaskFailureSurfaced(t *testing.T) {
 	ecsc := ecsClient()
 	sched := schedulerClient()

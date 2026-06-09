@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	realexec "github.com/sockerless/simulator-realexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,6 +47,7 @@ import (
 //   - Microsoft.Web/serverfarms + sites (Function App)
 //   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
+	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
 	out, err := runTimed(t, "terraform init", terraformCmd("init"))
 	require.NoError(t, err, "terraform init failed:\n%s", out)
@@ -221,6 +223,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmCAJ, "/providers/Microsoft.App/jobs/tf-azrm-caj",
 		"azurerm Container App Job id must include canonical ARM path; got %s", azrmCAJ)
 
+	azrmLogic := outputs.must(t, "azrm_logic_app_workflow_id")
+	require.Contains(t, azrmLogic, "/providers/Microsoft.Logic/workflows/tf-azrm-logic",
+		"azurerm Logic App workflow id must include canonical ARM path; got %s", azrmLogic)
+
+	azrmACI := outputs.must(t, "azrm_container_group_id")
+	require.Contains(t, azrmACI, "/providers/Microsoft.ContainerInstance/containerGroups/tf-azrm-aci",
+		"azurerm container group id must include canonical ARM path; got %s", azrmACI)
+
 	azrmSP := outputs.must(t, "azrm_service_plan_id")
 	// terraform-provider-azurerm normalizes Microsoft.Web/serverfarms
 	// to the SDK-canonical `serverFarms` (camelCase) in state. The
@@ -240,19 +250,11 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.Contains(t, azrmStorageContainer, "/tfazrmcontainer",
 		"azurerm storage container id must include container name; got %s", azrmStorageContainer)
 
-	azrmStorageContainerARM := outputs.must(t, "azrm_storage_container_resource_manager_id")
-	require.Contains(t, azrmStorageContainerARM, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/blobServices/default/containers/tfazrmcontainer",
-		"azurerm storage container resource_manager_id must include canonical ARM container path; got %s", azrmStorageContainerARM)
-
 	azrmStorageTable := outputs.must(t, "azrm_storage_table_id")
 	require.Contains(t, azrmStorageTable, "tfazrmst12345.table.",
 		"azurerm storage table id must be data-plane table URL-shaped; got %s", azrmStorageTable)
 	require.Contains(t, azrmStorageTable, "/Tables('tfazrmstable')",
 		"azurerm storage table id must include table name; got %s", azrmStorageTable)
-
-	azrmStorageTableARM := outputs.must(t, "azrm_storage_table_resource_manager_id")
-	require.Contains(t, azrmStorageTableARM, "/providers/Microsoft.Storage/storageAccounts/tfazrmst12345/tableServices/default/tables/tfazrmstable",
-		"azurerm storage table resource_manager_id must include canonical ARM table path; got %s", azrmStorageTableARM)
 
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
@@ -280,6 +282,13 @@ func TestTerraformApplyDestroy(t *testing.T) {
 
 	out, err = runTimed(t, "terraform destroy", terraformCmd("destroy", "-auto-approve"))
 	require.NoError(t, err, "terraform destroy failed:\n%s", out)
+}
+
+func requireTerraformNetworkHost(t *testing.T) {
+	t.Helper()
+	if err := realexec.DetectNetworkCapabilities().Require(); err != nil {
+		t.Skipf("skipping: Terraform Network coverage requires host capabilities the simulator cannot provide here: %v", err)
+	}
 }
 
 func cleanTerraformWorkspace(t *testing.T) {

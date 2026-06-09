@@ -259,7 +259,6 @@ func TestListPRReviewsREST(t *testing.T) {
 func TestSharedNumbering(t *testing.T) {
 	createTestPRRepo(t, "shared-num")
 
-	// Issue #1
 	r1 := ghPost(t, "/api/v3/repos/admin/shared-num/issues", defaultToken, map[string]interface{}{
 		"title": "Issue 1",
 	})
@@ -268,7 +267,6 @@ func TestSharedNumbering(t *testing.T) {
 		t.Fatalf("expected issue number=1, got %v", d1["number"])
 	}
 
-	// PR #2
 	r2 := ghPost(t, "/api/v3/repos/admin/shared-num/pulls", defaultToken, map[string]interface{}{
 		"title": "PR 2", "head": "feat", "base": "main",
 	})

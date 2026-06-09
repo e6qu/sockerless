@@ -32,8 +32,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			ctx := context.Background()
 			testID := generateTestID(name)
 
-			// === Phase 1: Pull images ===
-			t.Log("Phase 1: Pulling images")
+			// === Step 1: Pull images ===
+			t.Log("Step 1: Pulling images")
 			pullImg := func(ref string) {
 				rc, err := c.ImagePull(ctx, ref, image.PullOptions{})
 				if err != nil {
@@ -44,8 +44,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			}
 			pullImg("alpine:latest")
 
-			// === Phase 2: Create network ===
-			t.Log("Phase 2: Creating network")
+			// === Step 2: Create network ===
+			t.Log("Step 2: Creating network")
 			netResp, err := c.NetworkCreate(ctx, "runner-net-"+testID, network.CreateOptions{
 				Driver: "bridge",
 			})
@@ -54,8 +54,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			}
 			defer c.NetworkRemove(ctx, netResp.ID)
 
-			// === Phase 3: Create build container (with attach-before-start pattern) ===
-			t.Log("Phase 3: Creating build container")
+			// === Step 3: Create build container (with attach-before-start pattern) ===
+			t.Log("Step 3: Creating build container")
 			buildResp, err := c.ContainerCreate(ctx, &container.Config{
 				Image:     "alpine:latest",
 				Cmd:       []string{"tail", "-f", "/dev/null"},
@@ -71,8 +71,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			}
 			defer c.ContainerRemove(ctx, buildResp.ID, container.RemoveOptions{Force: true})
 
-			// === Phase 4: Attach to build container BEFORE start (GitLab Runner pattern) ===
-			t.Log("Phase 4: Attaching to build container (before start)")
+			// === Step 4: Attach to build container BEFORE start (GitLab Runner pattern) ===
+			t.Log("Step 4: Attaching to build container (before start)")
 			attachDone := make(chan struct{})
 			go func() {
 				defer close(attachDone)
@@ -87,8 +87,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			// Give attach time to register
 			time.Sleep(200 * time.Millisecond)
 
-			// === Phase 5: Start build container ===
-			t.Log("Phase 5: Starting build container")
+			// === Step 5: Start build container ===
+			t.Log("Step 5: Starting build container")
 			if err := c.ContainerStart(ctx, buildResp.ID, container.StartOptions{}); err != nil {
 				t.Fatalf("build container start failed: %v", err)
 			}
@@ -102,8 +102,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 				t.Fatalf("expected container to be running, status: %s", info.State.Status)
 			}
 
-			// === Phase 6: Exec commands (simulating git clone + script execution) ===
-			t.Log("Phase 6: Executing commands")
+			// === Step 6: Exec commands (simulating git clone + script execution) ===
+			t.Log("Step 6: Executing commands")
 
 			// Exec 1: Setup script
 			execAndWait := func(execName string, cmd []string) string {
@@ -142,15 +142,15 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			output = execAndWait("artifacts", []string{"echo", "Uploading artifacts..."})
 			t.Logf("Artifacts output: %q", output)
 
-			// === Phase 7: Stop build container ===
-			t.Log("Phase 7: Stopping build container")
+			// === Step 7: Stop build container ===
+			t.Log("Step 7: Stopping build container")
 			timeout := 10
 			if err := c.ContainerStop(ctx, buildResp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
 				t.Logf("container stop error (may be expected): %v", err)
 			}
 
-			// === Phase 8: Wait for container ===
-			t.Log("Phase 8: Waiting for container exit")
+			// === Step 8: Wait for container ===
+			t.Log("Step 8: Waiting for container exit")
 			waitCh, errCh := c.ContainerWait(ctx, buildResp.ID, container.WaitConditionNotRunning)
 			select {
 			case result := <-waitCh:
@@ -161,8 +161,8 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 				t.Log("Timeout waiting for container — proceeding with cleanup")
 			}
 
-			// === Phase 9: Cleanup ===
-			t.Log("Phase 9: Cleanup")
+			// === Step 9: Cleanup ===
+			t.Log("Step 9: Cleanup")
 
 			// List containers with label filter to verify our container is tracked
 			containers, err := c.ContainerList(ctx, container.ListOptions{All: true})

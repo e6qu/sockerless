@@ -50,6 +50,7 @@ Legend:
 | `azure-acr` | direct | direct | direct | `simulators/azure/sdk-tests/acr_test.go`; `simulators/azure/cli-tests/acr_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cache_redis` | direct | direct | direct | `simulators/azure/sdk-tests/redis_pg_test.go`; `simulators/azure/cli-tests/redis_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-compute` | direct | direct | direct | `simulators/azure/sdk-tests/compute_test.go`; `simulators/azure/sdk-tests/network_test.go`; `simulators/azure/cli-tests/compute_test.go`; `simulators/azure/cli-tests/loadbalancer_test.go`; `simulators/azure/cli-tests/nat_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-containerinstance` | direct | direct | direct | `simulators/azure/sdk-tests/logicapps_containerinstance_test.go`; `simulators/azure/cli-tests/logicapps_containerinstance_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-containerapps` | direct | direct | direct | `simulators/azure/sdk-tests/containerapps_test.go`; `simulators/azure/cli-tests/containerapps_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-cosmos` | direct | direct | direct | `simulators/azure/sdk-tests/cosmos_test.go`; `simulators/azure/cli-tests/cosmos_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-eventgrid` | direct | direct | direct | `simulators/azure/sdk-tests/eventgrid_test.go`; `simulators/azure/cli-tests/eventgrid_test.go`; `simulators/azure/terraform-tests/main.tf` |
@@ -57,6 +58,7 @@ Legend:
 | `azure-functions` | direct | direct | direct | `simulators/azure/sdk-tests/functions_test.go`; `simulators/azure/cli-tests/functions_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-keyvault` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-kv-data-plane` | direct | direct | direct | `simulators/azure/sdk-tests/keyvault_sdk_test.go`; `simulators/azure/cli-tests/keyvault_dataplane_test.go`; `simulators/azure/terraform-tests/main.tf` |
+| `azure-logicapps` | direct | direct | direct | `simulators/azure/sdk-tests/logicapps_containerinstance_test.go`; `simulators/azure/cli-tests/logicapps_containerinstance_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-monitor` | direct | direct | direct | `simulators/azure/sdk-tests/monitor_test.go`; `simulators/azure/cli-tests/monitor_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-resourcegroups` | direct | direct | direct | `simulators/azure/sdk-tests/resourcegroup_test.go`; `simulators/azure/cli-tests/arm_foundation_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `azure-servicebus-admin` | direct | not applicable | not applicable | `simulators/azure/sdk-tests/servicebus_admin_test.go` |
@@ -69,6 +71,7 @@ Legend:
 | `azure-private-dns` | direct | direct | direct | `simulators/azure/sdk-tests/dns_private_test.go`; `simulators/azure/cli-tests/dns_test.go`; `simulators/azure/terraform-tests/main.tf` |
 | `gcp-apigateway` | direct | direct | direct | `simulators/gcp/sdk-tests/memorystore_apigw_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-artifactregistry` | direct | direct | direct | `simulators/gcp/sdk-tests/artifactregistry_oci_test.go`; `simulators/gcp/cli-tests/artifactregistry_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-bigtable` | direct | direct | tracked BUG-1585 | `simulators/gcp/sdk-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/cli-tests/spanner_dataflow_bigtable_test.go`; Terraform provider Bigtable Admin calls bypass the REST custom endpoint and hit real Google auth. |
 | `gcp-bigquery` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudbuild` | direct | direct | direct | `simulators/gcp/sdk-tests/build_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-cloudfunctions` | direct | direct | direct | `simulators/gcp/sdk-tests/functions_sdk_test.go`; `simulators/gcp/cli-tests/functions_test.go`; `simulators/gcp/terraform-tests/main.tf` |
@@ -76,6 +79,7 @@ Legend:
 | `gcp-cloudrun` | direct | direct | direct | `simulators/gcp/sdk-tests/run_sdk_test.go`; `simulators/gcp/cli-tests/run_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_disks_test.go`; `simulators/gcp/cli-tests/compute_instances_test.go`; `simulators/gcp/cli-tests/compute_nat_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-compute_loadbalancing` | direct | direct | direct | `simulators/gcp/sdk-tests/compute_test.go`; `simulators/gcp/cli-tests/compute_loadbalancing_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-dataflow` | direct | direct | not applicable | `simulators/gcp/sdk-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/cli-tests/spanner_dataflow_bigtable_test.go` |
 | `gcp-dns` | direct | direct | direct | `simulators/gcp/sdk-tests/dns_test.go`; `simulators/gcp/cli-tests/dns_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-eventarc` | direct | direct | direct | `simulators/gcp/sdk-tests/eventarc_test.go`; `simulators/gcp/cli-tests/eventarc_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-firestore` | direct | direct | direct | `simulators/gcp/sdk-tests/data_saas_test.go`; `simulators/gcp/cli-tests/data_saas_test.go`; `simulators/gcp/terraform-tests/main.tf` |
@@ -86,6 +90,7 @@ Legend:
 | `gcp-pubsub` | direct | direct | direct | `simulators/gcp/sdk-tests/pubsub_test.go`; `simulators/gcp/cli-tests/client_surface_audit_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-secretmanager` | direct | direct | direct | `simulators/gcp/sdk-tests/secretmanager_test.go`; `simulators/gcp/cli-tests/secretmanager_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-sqladmin` | direct | direct | direct | `simulators/gcp/sdk-tests/cloudsql_test.go`; `simulators/gcp/cli-tests/redis_sql_test.go`; `simulators/gcp/terraform-tests/main.tf` |
+| `gcp-spanner` | direct | direct | direct | `simulators/gcp/sdk-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/cli-tests/spanner_dataflow_bigtable_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `gcp-vpcaccess` | direct | direct | direct | `simulators/gcp/sdk-tests/integration_test.go`; `simulators/gcp/cli-tests/vpcaccess_test.go`; `simulators/gcp/terraform-tests/main.tf` |
 | `bleephub-actions` | direct | direct | not applicable | `bleephub/gh_actions_test.go`; `bleephub/gh_workflows_test.go` |
 | `bleephub-apps` | direct | direct | not applicable | `bleephub/gh_apps_test.go`; `bleephub/gh_apps_more_test.go`; `bleephub/gh_apps_events_test.go`; `bleephub/gh_apps_oauth_mgmt_test.go`; `bleephub/gh_apps_perms_test.go`; `bleephub/gh_app_hooks_test.go`; `bleephub/gh_oauth_test.go`; `bleephub/gh_user_installations_test.go` |

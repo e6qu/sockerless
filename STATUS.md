@@ -6,14 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/ecs-overrides-cloudtrail` (PR pending — consumer #530 + CloudTrail REST sweep) |
-| In-flight | BUG-1580 and BUG-1540 are fixed on this branch: ECS `RunTask.overrides.containerOverrides` now affects the real task container runtime and task response shape; CloudTrail records REST/RPC management calls for Lambda, S3, API Gateway v1/v2, Batch, EFS, CloudFront, Amplify, Route53, and CloudWatch metrics, including failed-call error fields. |
-| Last merged | PR #529 fixed ECS workspace blockers #526/#527 and Entra duplicate UPN #525. Earlier ECS VPC/netns/metadata/route-table/ExecuteCommand chain is merged through PR #524. |
-| Open GitHub issues | #394 remains upstream-blocked; #530 is addressed by this branch. Check GitHub before starting the next consumer batch. |
-| Bugs | 1580 filed · 1536 fixed · 5 open · 5 false positives |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream. |
-| Planned next | After this PR: Phase G new-service-slice PR or the next actionable consumer issue. |
-| Test-host gating | GCP/Azure Compute+Network real-exec tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
+| Active branch | `phase-g-azure-gcp-aws-coverage` (PR pending — Azure/GCP service slices + AWS coverage audit cleanup) |
+| In-flight | BUG-1581, BUG-1582, and BUG-1583 are fixed on this branch: Azure Logic Apps + ACI, GCP Spanner/Dataflow/Bigtable, and the AWS registered-operation residual coverage backfill. |
+| Last merged | PR for BUG-1580/#530 + BUG-1540 CloudTrail REST sweep is merged. Earlier ECS workspace blockers #526/#527 and Entra duplicate UPN #525 are merged through PR #529. |
+| Open GitHub issues | #394 remains upstream-blocked. Check GitHub before starting the next consumer batch. |
+| Bugs | 1588 filed · 1542 fixed · 7 open · 5 false positives |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1585 Bigtable Terraform provider endpoint gap. |
+| Planned next | After this PR: next actionable consumer issue or another simulator-surface audit batch. |
+| Test-host gating | GCP/Azure Compute+Network SDK/CLI/Terraform apply tests skip off-Linux via `realexec.DetectNetworkCapabilities().Require()` (run for real on the sudo+iproute2/nftables CI runner). EventGrid CLI publish uses loopback + `Host` header (no `*.localhost` DNS dependency). |
 | Live infra | None up |
 
 ## Invariants

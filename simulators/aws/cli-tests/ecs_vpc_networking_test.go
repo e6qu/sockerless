@@ -19,11 +19,11 @@ const vpcNetBusybox = "public.ecr.aws/docker/library/busybox:latest"
 // can test real TCP reachability/isolation between tasks.
 const vpcServerScript = "mkdir -p /www && echo ok > /www/index.html && httpd -f -p 80 -h /www"
 
-// TestECSVPCNetworking proves issue #516 end-to-end and is tier-agnostic (works
-// on both the netns and Docker-network fabrics, since it probes via the task
-// containers themselves): an ECS task's ENI privateIPv4Address is the
-// container's REAL eth0 address, reachable from another task in the same VPC and
-// isolated from a task in a different VPC.
+// TestECSVPCNetworking proves the VPC task-networking contract end-to-end and
+// is tier-agnostic (works on both the netns and Docker-network fabrics, since it
+// probes via the task containers themselves): an ECS task's ENI
+// privateIPv4Address is the container's REAL eth0 address, reachable from
+// another task in the same VPC and isolated from a task in a different VPC.
 func TestECSVPCNetworking(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not available")

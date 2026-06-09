@@ -97,10 +97,12 @@ Docker-only, can't run on Mac).
 - **Phase E** (PR #405): Azure KV data-plane CLI tests via `az rest` + Host header routing.
 - **Phase F** (PR #405): 12 bleephub surface table files + coverage matrix rows.
 
-### Phase G — New cloud service slices (one PR per cloud)
+### Phase G — New cloud service slices
 
-Three sequential PRs. Each new slice ships with SDK + CLI + Terraform coverage per the
-standard contract. Surface table file(s) and coverage matrix row(s) ship in the same PR.
+The current branch intentionally combines the Azure and GCP service slices plus the AWS
+coverage-audit cleanup into one PR. Each new slice ships with SDK + CLI + Terraform
+coverage where the provider exposes the surface. Surface table file(s) and coverage
+matrix row(s) ship in the same PR.
 
 #### Phase G-AWS
 
@@ -121,20 +123,18 @@ standard contract. Surface table file(s) and coverage matrix row(s) ship in the 
 
 #### Phase G-GCP
 
-- **Cloud Spanner**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
+- **Cloud Spanner**: implemented on the current branch. Instance CRUD (`projects.instances` Create/Get/List/Delete) +
   database CRUD (`projects.instances.databases` Create/Get/List/Delete) + session
   management (Create/Delete/List).
-- **Cloud Dataflow**: job submission (`projects.locations.jobs.create`) + status
+- **Cloud Dataflow**: implemented on the current branch. Job submission (`projects.locations.jobs.create`) + status
   (`projects.locations.jobs.get`, `projects.locations.jobs.list`).
-- **Bigtable**: instance CRUD (`projects.instances` Create/Get/List/Delete) + cluster
+- **Bigtable**: implemented on the current branch. Instance CRUD (`projects.instances` Create/Get/List/Delete) + cluster
   CRUD + table CRUD (`projects.instances.tables` Create/Get/List/Delete).
 
 #### Phase G-Azure
 
-- **Logic Apps**: workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + run trigger
-  (`POST workflows/{name}/triggers/{trigger}/run`) + run history
-  (`GET workflows/{name}/runs`).
-- **Azure Container Instances (ACI)**: container group CRUD
+- **Logic Apps**: implemented on the current branch. Workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + enable/disable/validate + trigger run history.
+- **Azure Container Instances (ACI)**: implemented on the current branch. Container group CRUD
   (`PUT/GET/DELETE/LIST containerGroups`) + container exec + logs.
 
 ### Phase H — azuread Terraform provider (blocked upstream, BUG-1345)
