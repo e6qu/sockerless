@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-09 - Bleephub parity and durability branch planned
+
+- Started `bleephub-parity-storage` as the single planned branch for Bleephub UI/API parity, real Actions cache/artifact behavior, SQLite + PostgreSQL persistence, git storage hardening, S3/MinIO-shaped git content storage, UI auth, and full operator docs.
+- Recorded the current audit findings in [STATUS.md](STATUS.md): cache no-ops, catch-all `200 OK`, SQLite-only partial persistence, ignored git storage errors, missing object-store git backend, weak git auth, hard-coded UI admin token, and shape-only long-tail endpoints.
+- Reworked [PLAN.md](PLAN.md) and [DO_NEXT.md](DO_NEXT.md) around a multi-session handoff protocol: one PR, one natural commit per subtask, continuity docs updated before and after each completed chunk.
+
 ## 2026-06-09 - Bigtable Terraform + AWS execution semantics
 
 - **BUG-1585** was fixed as a coverage gap and provider-routing gap. The GCP Terraform apply stack now declared `google_bigtable_instance` and `google_bigtable_table`, the simulator exposed Bigtable Admin on the official gRPC emulator path used by the Google provider, and the apply harness asserted the provider-returned instance/table IDs. The coverage matrix and `gcp-bigtable` surface table now marked Terraform as direct coverage.
