@@ -121,7 +121,7 @@ func handleRedisCacheDeleteFirewallRule(w http.ResponseWriter, r *http.Request) 
 			"Firewall rule %q not found on cache %q", rule, cache)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleRedisCacheListFirewallRules(w http.ResponseWriter, r *http.Request) {
@@ -272,7 +272,7 @@ func handleRedisCacheDelete(w http.ResponseWriter, r *http.Request) {
 			"The Resource 'Microsoft.Cache/Redis/%s' under resource group '%s' was not found.", name, rg)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleRedisCacheListByRG(w http.ResponseWriter, r *http.Request) {

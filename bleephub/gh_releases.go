@@ -63,15 +63,17 @@ type ReleaseStore struct {
 	assetByID map[int]*ReleaseAsset
 	nextID    int
 	nextAsset int
+	persist   *Persistence
 }
 
-func newReleaseStore() *ReleaseStore {
+func newReleaseStore(p *Persistence) *ReleaseStore {
 	return &ReleaseStore{
 		byID:      map[int]*Release{},
 		byRepo:    map[int][]*Release{},
 		assetByID: map[int]*ReleaseAsset{},
 		nextID:    1,
 		nextAsset: 1,
+		persist:   p,
 	}
 }
 
@@ -99,6 +101,9 @@ func (rs *ReleaseStore) Create(repoID, authorID int, tagName, target, name, body
 	}
 	rs.byID[id] = r
 	rs.byRepo[repoID] = append(rs.byRepo[repoID], r)
+	if rs.persist != nil {
+		rs.persist.MustPut("releases", strconv.Itoa(id), r)
+	}
 	return r
 }
 
@@ -156,6 +161,9 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 		now := time.Now()
 		r.PublishedAt = &now
 	}
+	if rs.persist != nil {
+		rs.persist.MustPut("releases", strconv.Itoa(id), r)
+	}
 	return true
 }
 
@@ -173,6 +181,9 @@ func (rs *ReleaseStore) Delete(id int) bool {
 			rs.byRepo[r.RepoID] = append(src[:i], src[i+1:]...)
 			break
 		}
+	}
+	if rs.persist != nil {
+		rs.persist.MustDelete("releases", strconv.Itoa(id))
 	}
 	return true
 }
@@ -290,6 +301,7 @@ func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	release := s.store.Releases.Create(repo.ID, user.ID, req.TagName, target, req.Name, req.Body, bool(req.Draft), bool(req.Prerelease))
 	s.emitWebhookEvent(repo.FullName, "release", "published", buildReleaseEventPayload(repo, release, user, "published"))
+	s.recordAuditEvent("release.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": release.ID, "tag": release.TagName})
 	writeJSON(w, http.StatusCreated, releaseToJSON(release, s.store, s.baseURL(r), repo))
 }
 
@@ -408,6 +420,7 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
@@ -424,6 +437,7 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Releases.Delete(id)
+	s.recordAuditEvent("release.destroy", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }
 

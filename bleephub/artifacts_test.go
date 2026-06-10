@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestArtifactCreateUploadFinalize(t *testing.T) {
@@ -124,7 +126,76 @@ func TestArtifactDownloadNotFound(t *testing.T) {
 	}
 }
 
-func TestCacheLookupReturns204(t *testing.T) {
+func TestCacheRoundTrip(t *testing.T) {
+	s := newTestServer()
+
+	reserveReq := httptest.NewRequest("POST", "/_apis/artifactcache/cache", bytes.NewBufferString(`{"key":"linux-go-main","version":"abc"}`))
+	reserveW := httptest.NewRecorder()
+	s.handleCacheReserve(reserveW, reserveReq)
+
+	if reserveW.Code != http.StatusOK {
+		t.Fatalf("reserve status = %d, want 200; body=%s", reserveW.Code, reserveW.Body.String())
+	}
+	var reserveResp struct {
+		CacheID int64 `json:"cacheId"`
+	}
+	if err := json.Unmarshal(reserveW.Body.Bytes(), &reserveResp); err != nil {
+		t.Fatalf("decode reserve: %v", err)
+	}
+	if reserveResp.CacheID == 0 {
+		t.Fatal("reserve returned cacheId=0")
+	}
+
+	uploadReq := httptest.NewRequest("PATCH", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), bytes.NewBufferString("cache-data"))
+	uploadReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
+	uploadW := httptest.NewRecorder()
+	s.handleCacheUpload(uploadW, uploadReq)
+	if uploadW.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200; body=%s", uploadW.Code, uploadW.Body.String())
+	}
+
+	finalizeReq := httptest.NewRequest("POST", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), bytes.NewBufferString(`{"size":10}`))
+	finalizeReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
+	finalizeW := httptest.NewRecorder()
+	s.handleCacheFinalize(finalizeW, finalizeReq)
+	if finalizeW.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", finalizeW.Code, finalizeW.Body.String())
+	}
+
+	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=linux-go-main&version=abc", nil)
+	w := httptest.NewRecorder()
+	s.handleCacheLookup(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var lookupResp struct {
+		ArchiveLocation string `json:"archiveLocation"`
+		CacheKey        string `json:"cacheKey"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &lookupResp); err != nil {
+		t.Fatalf("decode lookup: %v", err)
+	}
+	if lookupResp.CacheKey != "linux-go-main" {
+		t.Fatalf("lookup cacheKey = %q, want linux-go-main", lookupResp.CacheKey)
+	}
+	if lookupResp.ArchiveLocation == "" {
+		t.Fatal("lookup archiveLocation is empty")
+	}
+
+	downloadReq := httptest.NewRequest("GET", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), nil)
+	downloadReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
+	downloadW := httptest.NewRecorder()
+	s.handleCacheDownload(downloadW, downloadReq)
+	if downloadW.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200; body=%s", downloadW.Code, downloadW.Body.String())
+	}
+	if downloadW.Body.String() != "cache-data" {
+		t.Fatalf("download body = %q, want cache-data", downloadW.Body.String())
+	}
+}
+
+func TestCacheLookupMissReturns204(t *testing.T) {
 	s := newTestServer()
 
 	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=test-key&version=abc", nil)
@@ -136,15 +207,33 @@ func TestCacheLookupReturns204(t *testing.T) {
 	}
 }
 
-func TestCacheReserveReturns204(t *testing.T) {
+func TestCacheRestoreKeyUsesNewestPrefixMatch(t *testing.T) {
 	s := newTestServer()
 
-	req := httptest.NewRequest("POST", "/_apis/artifactcache/cache", bytes.NewBufferString(`{"key":"test","version":"abc"}`))
-	w := httptest.NewRecorder()
-	s.handleCacheReserve(w, req)
+	old := &CacheEntry{ID: 1, Key: "linux-go-old", Version: "abc", Data: []byte("old"), Finalized: true, CreatedAt: time.Now().Add(-time.Hour)}
+	newer := &CacheEntry{ID: 2, Key: "linux-go-main", Version: "abc", Data: []byte("new"), Finalized: true, CreatedAt: time.Now()}
+	s.artifactStore.mu.Lock()
+	s.artifactStore.caches[old.ID] = old
+	s.artifactStore.caches[newer.ID] = newer
+	s.artifactStore.cacheIndex[cacheLookupKey(old.Key, old.Version)] = old.ID
+	s.artifactStore.cacheIndex[cacheLookupKey(newer.Key, newer.Version)] = newer.ID
+	s.artifactStore.mu.Unlock()
 
-	if w.Code != http.StatusNoContent {
-		t.Errorf("cache reserve status = %d, want 204", w.Code)
+	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=linux-go-missing,linux-go-&version=abc", nil)
+	w := httptest.NewRecorder()
+	s.handleCacheLookup(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		CacheKey string `json:"cacheKey"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode lookup: %v", err)
+	}
+	if resp.CacheKey != "linux-go-main" {
+		t.Fatalf("cacheKey = %q, want newest prefix match linux-go-main", resp.CacheKey)
 	}
 }
 

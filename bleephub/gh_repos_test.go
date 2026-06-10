@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -511,4 +512,147 @@ func storeCommit(s *memory.Storage, treeHash, parentHash plumbing.Hash, msg stri
 		return plumbing.ZeroHash, err
 	}
 	return s.SetEncodedObject(obj)
+}
+
+func TestGitStorageInitFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	readOnlyDir := tmpDir + "/readonly"
+	if err := os.Mkdir(readOnlyDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLEEPHUB_GIT_DIR", readOnlyDir)
+
+	repo := testServer.store.CreateRepo(&User{Login: "admin", ID: 1}, "git-init-fail", "", false)
+	if repo != nil {
+		t.Fatal("expected nil repo when git storage init fails")
+	}
+}
+
+func TestGitDeleteCleanup(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("BLEEPHUB_GIT_DIR", tmpDir)
+
+	repo := testServer.store.CreateRepo(&User{Login: "admin", ID: 1}, "git-cleanup", "", false)
+	if repo == nil {
+		t.Fatal("expected repo to be created")
+	}
+
+	repoDir := tmpDir + "/admin/git-cleanup"
+	if _, err := os.Stat(repoDir); err != nil {
+		t.Fatalf("expected git dir to exist: %v", err)
+	}
+
+	deleted := testServer.store.DeleteRepo("admin", "git-cleanup")
+	if !deleted {
+		t.Fatal("expected repo to be deleted")
+	}
+
+	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
+		t.Fatalf("expected git dir to be removed after delete: %v", err)
+	}
+}
+
+func TestGitFetchNoAuthPublicRepo(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":    "public-clone",
+		"private": false,
+	})
+
+	resp, err := http.Get(testBaseURL + "/admin/public-clone.git/info/refs?service=git-upload-pack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for unauthenticated fetch on public repo, got %d", resp.StatusCode)
+	}
+}
+
+func TestGitFetchNoAuthPrivateRepo(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":    "private-clone",
+		"private": true,
+	})
+
+	resp, err := http.Get(testBaseURL + "/admin/private-clone.git/info/refs?service=git-upload-pack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated fetch on private repo, got %d", resp.StatusCode)
+	}
+}
+
+func TestGitPushNoAuth(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "no-auth-push",
+	})
+
+	resp, err := http.Get(testBaseURL + "/admin/no-auth-push.git/info/refs?service=git-receive-pack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("expected 401 for unauthenticated push, got %d", resp.StatusCode)
+	}
+}
+
+func TestGitPushWithAuth(t *testing.T) {
+	repo := testServer.store.CreateRepo(&User{Login: "admin", ID: 1}, "auth-push", "", false)
+	if repo == nil {
+		t.Fatal("expected repo to be created")
+	}
+
+	cloneStorage := memory.NewStorage()
+	gitRepo, err := git.Init(cloneStorage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blobHash, _ := storeBlob(cloneStorage, []byte("auth test\n"))
+	treeHash, _ := storeTree(cloneStorage, []object.TreeEntry{
+		{Name: "test.txt", Mode: 0100644, Hash: blobHash},
+	})
+	commitHash, _ := storeCommit(cloneStorage, treeHash, plumbing.ZeroHash, "auth commit")
+	cloneStorage.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), commitHash))
+	cloneStorage.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main")))
+
+	_, err = gitRepo.CreateRemote(&config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{testBaseURL + "/admin/auth-push.git"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = gitRepo.Push(&git.PushOptions{
+		RemoteName: "origin",
+		Auth:       &githttp.BasicAuth{Username: "x", Password: defaultToken},
+	})
+	if err != nil {
+		t.Fatalf("expected push to succeed with auth, got: %v", err)
+	}
+}
+
+func TestGitFetchPrivateRepoWithAuth(t *testing.T) {
+	repo := testServer.store.CreateRepo(&User{Login: "admin", ID: 1}, "private-auth-fetch", "", true)
+	if repo == nil {
+		t.Fatal("expected repo to be created")
+	}
+
+	resp, err := http.NewRequest("GET", testBaseURL+"/admin/private-auth-fetch.git/info/refs?service=git-upload-pack", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Header.Set("Authorization", "token "+defaultToken)
+	httpResp, err := http.DefaultClient.Do(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer httpResp.Body.Close()
+	if httpResp.StatusCode != 200 {
+		t.Fatalf("expected 200 for authenticated fetch on private repo, got %d", httpResp.StatusCode)
+	}
 }

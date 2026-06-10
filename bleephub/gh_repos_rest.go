@@ -43,6 +43,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.recordAuditEvent("repo.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "repo_id": repo.ID})
 	writeJSON(w, http.StatusCreated, repoToJSON(repo, s.baseURL(r)))
 }
 
@@ -130,6 +131,7 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.store.DeleteRepo(owner, name)
+	s.recordAuditEvent("repo.destroy", user.Login, "", map[string]interface{}{"repo": owner + "/" + name})
 	w.WriteHeader(http.StatusNoContent)
 }
 

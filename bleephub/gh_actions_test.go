@@ -59,6 +59,34 @@ func runRequest(s *Server, method, path string) *httptest.ResponseRecorder {
 	return w
 }
 
+func runAuthedRequest(s *Server, method, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	return w
+}
+
+func seedFinalizedArtifact(s *Server, id int64, wf *Workflow, name string, createdAt time.Time) {
+	s.artifactStore.mu.Lock()
+	s.artifactStore.artifacts[id] = &Artifact{
+		ID:                   id,
+		Name:                 name,
+		Size:                 int64(len("artifact-data")),
+		Data:                 []byte("artifact-data"),
+		Finalized:            true,
+		RunID:                wf.ID,
+		GitHubRunID:          wf.RunID,
+		RepoFullName:         wf.RepoFullName,
+		WorkflowRunBackendID: wf.ID,
+		CreatedAt:            createdAt,
+	}
+	if id >= s.artifactStore.nextID {
+		s.artifactStore.nextID = id + 1
+	}
+	s.artifactStore.mu.Unlock()
+}
+
 func TestActionsRuns_List(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
@@ -205,6 +233,129 @@ func TestActionsJobs_Logs(t *testing.T) {
 	got := string(body)
 	if got != "line one\nline two\n" {
 		t.Errorf("logs body = %q, want \"line one\\nline two\\n\"", got)
+	}
+}
+
+func TestActionsArtifacts_ListRunArtifacts(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	s.registerGHActionsExtrasRoutes()
+	s.store.CreateRepo(s.store.LookupUserByLogin("admin"), "repo", "", false)
+	wf, _ := seedRun(t, s, "admin/repo", "completed", "success")
+	other, _ := seedRun(t, s, "admin/repo", "completed", "success")
+	seedFinalizedArtifact(s, 1, wf, "logs", time.Now().Add(-time.Minute))
+	seedFinalizedArtifact(s, 2, other, "other-run", time.Now())
+
+	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/admin/repo/actions/runs/%d/artifacts", wf.RunID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TotalCount int `json:"total_count"`
+		Artifacts  []struct {
+			ID                 int64  `json:"id"`
+			Name               string `json:"name"`
+			SizeInBytes        int64  `json:"size_in_bytes"`
+			ArchiveDownloadURL string `json:"archive_download_url"`
+			Digest             string `json:"digest"`
+			WorkflowRun        struct {
+				ID           int64  `json:"id"`
+				HeadBranch   string `json:"head_branch"`
+				HeadSHA      string `json:"head_sha"`
+				RepositoryID int64  `json:"repository_id"`
+				HeadRepoID   int64  `json:"head_repository_id"`
+			} `json:"workflow_run"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TotalCount != 1 || len(resp.Artifacts) != 1 {
+		t.Fatalf("artifact count = total:%d len:%d, want 1", resp.TotalCount, len(resp.Artifacts))
+	}
+	artifact := resp.Artifacts[0]
+	if artifact.ID != 1 || artifact.Name != "logs" || artifact.SizeInBytes != int64(len("artifact-data")) {
+		t.Fatalf("artifact payload mismatch: %+v", artifact)
+	}
+	if artifact.ArchiveDownloadURL != "http://example.com/api/v3/repos/admin/repo/actions/artifacts/1/zip" {
+		t.Fatalf("archive_download_url = %q", artifact.ArchiveDownloadURL)
+	}
+	if artifact.Digest == "" {
+		t.Fatal("digest is empty")
+	}
+	if artifact.WorkflowRun.ID != int64(wf.RunID) || artifact.WorkflowRun.HeadBranch != "main" || artifact.WorkflowRun.HeadSHA != wf.Sha {
+		t.Fatalf("workflow_run mismatch: %+v", artifact.WorkflowRun)
+	}
+	if artifact.WorkflowRun.RepositoryID == 0 || artifact.WorkflowRun.HeadRepoID == 0 {
+		t.Fatalf("repository IDs not populated: %+v", artifact.WorkflowRun)
+	}
+}
+
+func TestActionsArtifacts_ListRepoArtifactsWithNameFilter(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsExtrasRoutes()
+	wf, _ := seedRun(t, s, "admin/repo", "completed", "success")
+	otherRepo, _ := seedRun(t, s, "other/repo", "completed", "success")
+	now := time.Now()
+	seedFinalizedArtifact(s, 1, wf, "logs", now.Add(-2*time.Minute))
+	seedFinalizedArtifact(s, 2, wf, "coverage", now)
+	seedFinalizedArtifact(s, 3, otherRepo, "logs", now.Add(time.Minute))
+
+	w := runRequest(s, "GET", "/api/v3/repos/admin/repo/actions/artifacts?name=logs")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TotalCount int `json:"total_count"`
+		Artifacts  []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TotalCount != 1 || len(resp.Artifacts) != 1 || resp.Artifacts[0].ID != 1 {
+		t.Fatalf("filtered artifacts = %+v, total=%d; want only repo artifact 1", resp.Artifacts, resp.TotalCount)
+	}
+}
+
+func TestActionsArtifacts_GetDownloadAndDelete(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsExtrasRoutes()
+	wf, _ := seedRun(t, s, "admin/repo", "completed", "success")
+	seedFinalizedArtifact(s, 1, wf, "logs", time.Now())
+
+	getResp := runRequest(s, "GET", "/api/v3/repos/admin/repo/actions/artifacts/1")
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", getResp.Code, getResp.Body.String())
+	}
+	var artifact struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(getResp.Body.Bytes(), &artifact); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if artifact.ID != 1 || artifact.Name != "logs" {
+		t.Fatalf("artifact = %+v, want id=1 name=logs", artifact)
+	}
+
+	downloadResp := runRequest(s, "GET", "/api/v3/repos/admin/repo/actions/artifacts/1/zip")
+	if downloadResp.Code != http.StatusFound {
+		t.Fatalf("download status = %d, want 302; body=%s", downloadResp.Code, downloadResp.Body.String())
+	}
+	if got := downloadResp.Header().Get("Location"); got != "http://example.com/_apis/v1/artifacts/1/download" {
+		t.Fatalf("download Location = %q", got)
+	}
+
+	deleteResp := runAuthedRequest(s, "DELETE", "/api/v3/repos/admin/repo/actions/artifacts/1")
+	if deleteResp.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body=%s", deleteResp.Code, deleteResp.Body.String())
+	}
+	afterDelete := runRequest(s, "GET", "/api/v3/repos/admin/repo/actions/artifacts/1")
+	if afterDelete.Code != http.StatusNotFound {
+		t.Fatalf("after delete status = %d, want 404", afterDelete.Code)
 	}
 }
 

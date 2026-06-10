@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -33,6 +34,9 @@ func (s *Server) registerGHMiscEndpoints() {
 	s.mux.HandleFunc("GET /api/v3/user/keys/{key_id}", s.handleGetUserKey)
 	s.mux.HandleFunc("DELETE /api/v3/user/keys/{key_id}", s.requirePerm("administration", permWrite, s.handleDeleteUserKey))
 	s.mux.HandleFunc("GET /api/v3/user/gpg_keys", s.handleListGPGKeys)
+	s.mux.HandleFunc("POST /api/v3/user/gpg_keys", s.requirePerm("administration", permWrite, s.handleCreateGPGKey))
+	s.mux.HandleFunc("GET /api/v3/user/gpg_keys/{gpg_key_id}", s.handleGetGPGKey)
+	s.mux.HandleFunc("DELETE /api/v3/user/gpg_keys/{gpg_key_id}", s.requirePerm("administration", permWrite, s.handleDeleteGPGKey))
 	s.mux.HandleFunc("GET /api/v3/user/emails", s.handleListUserEmails)
 	s.mux.HandleFunc("GET /api/v3/users/{username}/keys", s.handleListUserKeysByLogin)
 	s.mux.HandleFunc("GET /api/v3/users/{username}/gpg_keys", s.handleListGPGKeysByLogin)
@@ -101,27 +105,108 @@ type PagesSite struct {
 	Public  bool                   `json:"public"`
 }
 
+type GPGKey struct {
+	ID                int           `json:"id"`
+	KeyID             string        `json:"key_id"`
+	PublicKey         string        `json:"public_key"`
+	Name              string        `json:"name,omitempty"`
+	Emails            []GPGKeyEmail `json:"emails"`
+	CanSign           bool          `json:"can_sign"`
+	CanEncryptCommits bool          `json:"can_encrypt_commits"`
+	CanCertify        bool          `json:"can_certify"`
+	CreatedAt         time.Time     `json:"created_at"`
+	ExpiresAt         *time.Time    `json:"expires_at,omitempty"`
+	UserID            int           `json:"-"`
+}
+
+type GPGKeyEmail struct {
+	Email    string `json:"email"`
+	Verified bool   `json:"verified"`
+	Primary  bool   `json:"primary"`
+}
+
+type PagesBuild struct {
+	ID        int64          `json:"id"`
+	URL       string         `json:"url"`
+	Status    string         `json:"status"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	Duration  int            `json:"duration"`
+	Error     *PagesBuildErr `json:"error,omitempty"`
+}
+
+type PagesBuildErr struct {
+	Message string `json:"message,omitempty"`
+}
+
+type AuditEntry struct {
+	ID        int64                  `json:"_document_id"`
+	Timestamp string                 `json:"@timestamp"`
+	Action    string                 `json:"action"`
+	Actor     string                 `json:"actor"`
+	Org       string                 `json:"org,omitempty"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+	Version   string                 `json:"version"`
+}
+
+type MarketplacePlan struct {
+	ID                  int      `json:"id"`
+	Name                string   `json:"name"`
+	Description         string   `json:"description"`
+	MonthlyPriceInCents int      `json:"monthly_price_in_cents"`
+	YearlyPriceInCents  int      `json:"yearly_price_in_cents"`
+	PriceModel          string   `json:"price_model"`
+	HasFreeTrial        bool     `json:"has_free_trial"`
+	State               string   `json:"state"`
+	Bullets             []string `json:"bullets"`
+}
+
+type MarketplacePurchase struct {
+	AccountID     int        `json:"account_id"`
+	BillingCycle  string     `json:"billing_cycle"`
+	PlanID        int        `json:"plan_id"`
+	PlanName      string     `json:"plan_name"`
+	OnFreeTrial   bool       `json:"on_free_trial"`
+	FreeTrialEnds *time.Time `json:"free_trial_ends_on,omitempty"`
+}
+
 type BranchProtection map[string]interface{}
 
 type MiscStore struct {
-	mu               sync.RWMutex
-	userKeys         map[int]*UserKey
-	keysByUser       map[int][]*UserKey
-	follows          map[string]map[string]bool
-	pagesByRepo      map[int]*PagesSite
-	branchProtection map[string]BranchProtection
-	nextKeyID        int
-	oidcKey          *rsa.PrivateKey
+	mu                   sync.RWMutex
+	userKeys             map[int]*UserKey
+	keysByUser           map[int][]*UserKey
+	gpgKeys              map[int]*GPGKey
+	gpgKeysByUser        map[int][]*GPGKey
+	follows              map[string]map[string]bool
+	pagesByRepo          map[int]*PagesSite
+	pagesBuilds          map[string][]*PagesBuild
+	branchProtection     map[string]BranchProtection
+	auditLog             []*AuditEntry
+	marketplacePlans     map[int]*MarketplacePlan
+	marketplacePurchases map[int]*MarketplacePurchase
+	oidcClaimKeys        []string
+	nextKeyID            int
+	nextGPGKeyID         int
+	nextAuditID          int64
+	oidcKey              *rsa.PrivateKey
+	persist              *Persistence
 }
 
 func newMiscStore() *MiscStore {
 	return &MiscStore{
-		userKeys:         map[int]*UserKey{},
-		keysByUser:       map[int][]*UserKey{},
-		follows:          map[string]map[string]bool{},
-		pagesByRepo:      map[int]*PagesSite{},
-		branchProtection: map[string]BranchProtection{},
-		nextKeyID:        1,
+		userKeys:             map[int]*UserKey{},
+		keysByUser:           map[int][]*UserKey{},
+		gpgKeys:              map[int]*GPGKey{},
+		gpgKeysByUser:        map[int][]*GPGKey{},
+		follows:              map[string]map[string]bool{},
+		pagesByRepo:          map[int]*PagesSite{},
+		pagesBuilds:          map[string][]*PagesBuild{},
+		branchProtection:     map[string]BranchProtection{},
+		marketplacePlans:     map[int]*MarketplacePlan{},
+		marketplacePurchases: map[int]*MarketplacePurchase{},
+		nextKeyID:            1,
+		nextGPGKeyID:         1,
 	}
 }
 
@@ -163,6 +248,7 @@ func (s *Server) handleCreateUserKey(w http.ResponseWriter, r *http.Request) {
 	s.store.Misc.userKeys[id] = k
 	s.store.Misc.keysByUser[user.ID] = append(s.store.Misc.keysByUser[user.ID], k)
 	s.store.Misc.mu.Unlock()
+	s.recordAuditEvent("ssh_key.create", user.Login, "", map[string]interface{}{"key_id": k.ID})
 	writeJSON(w, http.StatusCreated, userKeyToJSON(k))
 }
 
@@ -179,11 +265,12 @@ func (s *Server) handleGetUserKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
 	id, _ := strconv.Atoi(r.PathValue("key_id"))
 	s.store.Misc.mu.Lock()
-	defer s.store.Misc.mu.Unlock()
 	k := s.store.Misc.userKeys[id]
 	if k == nil {
+		s.store.Misc.mu.Unlock()
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -195,11 +282,135 @@ func (s *Server) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	s.store.Misc.mu.Unlock()
+	s.recordAuditEvent("ssh_key.delete", user.Login, "", map[string]interface{}{"key_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleListGPGKeys(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	s.store.Misc.mu.RLock()
+	out := make([]map[string]interface{}, 0, len(s.store.Misc.gpgKeysByUser[user.ID]))
+	for _, k := range s.store.Misc.gpgKeysByUser[user.ID] {
+		out = append(out, gpgKeyToJSON(k))
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateGPGKey(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	var req struct {
+		ArmoredPublicKey string `json:"armored_public_key"`
+		Name             string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ArmoredPublicKey == "" {
+		writeGHValidationError(w, "ArmoredPublicKey", "armored_public_key", "missing_field")
+		return
+	}
+	s.store.Misc.mu.Lock()
+	id := s.store.Misc.nextGPGKeyID
+	s.store.Misc.nextGPGKeyID++
+	email := ""
+	if user.Email != "" {
+		email = user.Email
+	}
+	k := &GPGKey{
+		ID: id, PublicKey: req.ArmoredPublicKey, Name: req.Name, UserID: user.ID,
+		CreatedAt: time.Now(), CanSign: true, CanEncryptCommits: true, CanCertify: true,
+		Emails: []GPGKeyEmail{{Email: email, Verified: true, Primary: true}},
+	}
+	s.store.Misc.gpgKeys[id] = k
+	s.store.Misc.gpgKeysByUser[user.ID] = append(s.store.Misc.gpgKeysByUser[user.ID], k)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("gpg_keys", strconv.Itoa(id), k)
+	}
+	s.store.Misc.mu.Unlock()
+	s.recordAuditEvent("gpg_key.create", user.Login, "", map[string]interface{}{"gpg_key_id": id})
+	writeJSON(w, http.StatusCreated, gpgKeyToJSON(k))
+}
+
+func (s *Server) handleGetGPGKey(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("gpg_key_id"))
+	s.store.Misc.mu.RLock()
+	k := s.store.Misc.gpgKeys[id]
+	s.store.Misc.mu.RUnlock()
+	if k == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, gpgKeyToJSON(k))
+}
+
+func (s *Server) handleDeleteGPGKey(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	id, _ := strconv.Atoi(r.PathValue("gpg_key_id"))
+	s.store.Misc.mu.Lock()
+	k := s.store.Misc.gpgKeys[id]
+	if k == nil || k.UserID != user.ID {
+		s.store.Misc.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	delete(s.store.Misc.gpgKeys, id)
+	src := s.store.Misc.gpgKeysByUser[user.ID]
+	for i, x := range src {
+		if x.ID == id {
+			s.store.Misc.gpgKeysByUser[user.ID] = append(src[:i], src[i+1:]...)
+			break
+		}
+	}
+	if s.store.Misc.persist != nil {
+		_ = s.store.Misc.persist.Delete("gpg_keys", strconv.Itoa(id))
+	}
+	s.store.Misc.mu.Unlock()
+	s.recordAuditEvent("gpg_key.delete", user.Login, "", map[string]interface{}{"gpg_key_id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListGPGKeysByLogin(w http.ResponseWriter, r *http.Request) {
+	user := s.store.LookupUserByLogin(r.PathValue("username"))
+	if user == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.Misc.mu.RLock()
+	out := make([]map[string]interface{}, 0, len(s.store.Misc.gpgKeysByUser[user.ID]))
+	for _, k := range s.store.Misc.gpgKeysByUser[user.ID] {
+		out = append(out, gpgKeyToJSON(k))
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, out)
+}
+
+func gpgKeyToJSON(k *GPGKey) map[string]interface{} {
+	m := map[string]interface{}{
+		"id": k.ID, "key_id": k.KeyID, "public_key": k.PublicKey,
+		"can_sign": k.CanSign, "can_encrypt_commits": k.CanEncryptCommits,
+		"can_certify": k.CanCertify, "created_at": k.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if k.Name != "" {
+		m["name"] = k.Name
+	}
+	if len(k.Emails) > 0 {
+		m["emails"] = k.Emails
+	}
+	if k.ExpiresAt != nil {
+		m["expires_at"] = k.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	return m
 }
 
 func (s *Server) handleListUserEmails(w http.ResponseWriter, r *http.Request) {
@@ -228,21 +439,61 @@ func (s *Server) handleListUserKeysByLogin(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) handleListGPGKeysByLogin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
-}
-
 func (s *Server) handleListFollowers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	target := r.PathValue("username")
+	s.store.Misc.mu.RLock()
+	followers := []map[string]interface{}{}
+	if s.store.Misc.follows != nil {
+		for user, follows := range s.store.Misc.follows {
+			if follows[target] {
+				followers = append(followers, map[string]interface{}{"login": user})
+			}
+		}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, followers)
 }
 func (s *Server) handleListFollowing(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	target := r.PathValue("username")
+	s.store.Misc.mu.RLock()
+	following := []map[string]interface{}{}
+	if s.store.Misc.follows != nil {
+		if follows, ok := s.store.Misc.follows[target]; ok {
+			for user := range follows {
+				following = append(following, map[string]interface{}{"login": user})
+			}
+		}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, following)
 }
 func (s *Server) handleListMyFollowers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	user := ghUserFromContext(r.Context())
+	s.store.Misc.mu.RLock()
+	followers := []map[string]interface{}{}
+	if user != nil && s.store.Misc.follows != nil {
+		for follower, follows := range s.store.Misc.follows {
+			if follows[user.Login] {
+				followers = append(followers, map[string]interface{}{"login": follower})
+			}
+		}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, followers)
 }
 func (s *Server) handleListMyFollowing(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	user := ghUserFromContext(r.Context())
+	s.store.Misc.mu.RLock()
+	following := []map[string]interface{}{}
+	if user != nil && s.store.Misc.follows != nil {
+		if follows, ok := s.store.Misc.follows[user.Login]; ok {
+			for target := range follows {
+				following = append(following, map[string]interface{}{"login": target})
+			}
+		}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, following)
 }
 
 func (s *Server) handleFollowUser(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +582,13 @@ func (s *Server) handleJWKS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOIDCCustomSubGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"include_claim_keys": []string{}})
+	s.store.Misc.mu.RLock()
+	keys := s.store.Misc.oidcClaimKeys
+	if keys == nil {
+		keys = []string{}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"include_claim_keys": keys})
 }
 
 func (s *Server) handleOIDCCustomSubPut(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +599,13 @@ func (s *Server) handleOIDCCustomSubPut(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
+	s.store.Misc.mu.Lock()
+	s.store.Misc.oidcClaimKeys = req.IncludeClaimKeys
+	if s.store.persist != nil {
+		s.store.persist.MustPut("misc", "oidc_claim_keys", req.IncludeClaimKeys)
+	}
+	s.store.Misc.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"include_claim_keys": req.IncludeClaimKeys, "use_default": false})
 }
 
 func (s *Server) oidcKey() *rsa.PrivateKey {
@@ -487,16 +750,76 @@ func (s *Server) handlePagesDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePagesListBuilds(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.Misc.mu.RLock()
+	builds := s.store.Misc.pagesBuilds[repo.FullName]
+	s.store.Misc.mu.RUnlock()
+	if builds == nil {
+		builds = []*PagesBuild{}
+	}
+	writeJSON(w, http.StatusOK, builds)
 }
 func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "queued"})
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	actor := "bleephub-system"
+	if user := ghUserFromContext(r.Context()); user != nil {
+		actor = user.Login
+	}
+	now := time.Now()
+	s.store.Misc.mu.Lock()
+	s.store.Misc.nextAuditID++
+	buildID := s.store.Misc.nextAuditID
+	build := &PagesBuild{
+		ID: buildID, Status: "queued", CreatedAt: now, UpdatedAt: now,
+	}
+	s.store.Misc.pagesBuilds[repo.FullName] = append([]*PagesBuild{build}, s.store.Misc.pagesBuilds[repo.FullName]...)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("pages_builds", repo.FullName, s.store.Misc.pagesBuilds[repo.FullName])
+	}
+	s.store.Misc.mu.Unlock()
+	s.recordAuditEvent("pages.build", actor, "", map[string]interface{}{"repo": repo.FullName, "build_id": buildID})
+	writeJSON(w, http.StatusCreated, build)
 }
 func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "built", "duration": 0})
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.Misc.mu.RLock()
+	builds := s.store.Misc.pagesBuilds[repo.FullName]
+	s.store.Misc.mu.RUnlock()
+	if len(builds) == 0 {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, builds[0])
 }
 func (s *Server) handlePagesGetBuild(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "built", "duration": 0})
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	buildID, _ := strconv.ParseInt(r.PathValue("build_id"), 10, 64)
+	s.store.Misc.mu.RLock()
+	for _, b := range s.store.Misc.pagesBuilds[repo.FullName] {
+		if b.ID == buildID {
+			s.store.Misc.mu.RUnlock()
+			writeJSON(w, http.StatusOK, b)
+			return
+		}
+	}
+	s.store.Misc.mu.RUnlock()
+	writeGHError(w, http.StatusNotFound, "Not Found")
 }
 
 // --- Branch protection ---
@@ -552,39 +875,108 @@ func (s *Server) handleBranchProtectionDelete(w http.ResponseWriter, r *http.Req
 
 // --- Orgs depth ---
 
-// handleOrgAuditLog — bleephub doesn't record an audit log; shape-only empty.
 func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	orgName := r.PathValue("org")
+	s.store.Misc.mu.RLock()
+	entries := make([]*AuditEntry, 0, len(s.store.Misc.auditLog))
+	for _, e := range s.store.Misc.auditLog {
+		if e.Org != "" && e.Org != orgName {
+			continue
+		}
+		if action := r.URL.Query().Get("phrase"); action != "" {
+			if e.Action != action {
+				continue
+			}
+		}
+		if actorID := r.URL.Query().Get("actor_id"); actorID != "" {
+			if e.Actor != actorID {
+				continue
+			}
+		}
+		entries = append(entries, e)
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, entries)
 }
 
-// --- Marketplace ---
+func (s *Server) recordAuditEvent(action, actor, org string, data map[string]interface{}) {
+	s.store.Misc.mu.Lock()
+	defer s.store.Misc.mu.Unlock()
+	s.store.Misc.nextAuditID++
+	entry := &AuditEntry{
+		ID:        s.store.Misc.nextAuditID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Action:    action,
+		Actor:     actor,
+		Org:       org,
+		Data:      data,
+		Version:   "1.1",
+	}
+	s.store.Misc.auditLog = append([]*AuditEntry{entry}, s.store.Misc.auditLog...)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("audit_log", fmt.Sprintf("%d", entry.ID), entry)
+	}
+}
+
+func (s *Server) seedDefaultMarketplacePlans() {
+	s.store.Misc.mu.Lock()
+	defer s.store.Misc.mu.Unlock()
+	if len(s.store.Misc.marketplacePlans) == 0 {
+		free := &MarketplacePlan{
+			ID: 1, Name: "Free", Description: "Free tier",
+			PriceModel: "FREE", State: "published",
+			Bullets: []string{"All features"},
+		}
+		s.store.Misc.marketplacePlans[free.ID] = free
+		if s.store.Misc.persist != nil {
+			s.store.Misc.persist.MustPut("marketplace_plans", strconv.Itoa(free.ID), free)
+		}
+	}
+}
 
 func (s *Server) handleMarketplacePlans(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []map[string]interface{}{
-		{
-			"id":                     1,
-			"name":                   "Free",
-			"description":            "Free tier — sim default plan",
-			"monthly_price_in_cents": 0,
-			"yearly_price_in_cents":  0,
-			"price_model":            "FREE",
-			"bullets":                []string{"All features", "Sim mode"},
-			"state":                  "published",
-		},
-	})
+	s.store.Misc.mu.RLock()
+	out := make([]map[string]interface{}, 0, len(s.store.Misc.marketplacePlans))
+	for _, p := range s.store.Misc.marketplacePlans {
+		out = append(out, map[string]interface{}{
+			"id": p.ID, "name": p.Name, "description": p.Description,
+			"monthly_price_in_cents": p.MonthlyPriceInCents,
+			"yearly_price_in_cents":  p.YearlyPriceInCents,
+			"price_model":            p.PriceModel, "has_free_trial": p.HasFreeTrial,
+			"state": p.State, "bullets": p.Bullets,
+		})
+	}
+	s.store.Misc.mu.RUnlock()
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleMarketplaceAccount(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(r.PathValue("account_id"))
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":                         id,
+	accountID, _ := strconv.Atoi(r.PathValue("account_id"))
+	s.store.Misc.mu.RLock()
+	purchase := s.store.Misc.marketplacePurchases[accountID]
+	s.store.Misc.mu.RUnlock()
+	if purchase == nil {
+		purchase = &MarketplacePurchase{
+			AccountID: accountID, BillingCycle: "monthly", PlanID: 1, PlanName: "Free",
+		}
+	}
+	resp := map[string]interface{}{
+		"id":                         accountID,
 		"type":                       "User",
 		"marketplace_pending_change": nil,
 		"marketplace_purchase": map[string]interface{}{
-			"billing_cycle": "monthly",
-			"plan":          map[string]interface{}{"id": 1, "name": "Free"},
+			"billing_cycle": purchase.BillingCycle,
+			"on_free_trial": purchase.OnFreeTrial,
+			"plan":          map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
 		},
-	})
+	}
+	if purchase.FreeTrialEnds != nil {
+		resp["marketplace_pending_change"] = map[string]interface{}{
+			"old_plan": map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
+			"new_plan": map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- Helpers ---

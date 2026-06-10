@@ -96,7 +96,7 @@ func TestAzureRedisCache_ARMLifecycle(t *testing.T) {
 	assert.Contains(t, string(listBody), name)
 
 	resp = armReq(t, "DELETE", path, "")
-	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
 
 	resp = armReq(t, "GET", path, "")

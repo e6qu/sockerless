@@ -8,14 +8,18 @@ import {
   fetchRepoCommits,
   fetchRepoIssues,
   fetchRepoPRs,
+  fetchWebhooks,
+  fetchSecrets,
+  fetchEnvironments,
+  fetchReleases,
 } from "../api.js";
-import type { GithubIssue, GithubPR, GithubCommit } from "../types.js";
+import type { GithubIssue, GithubPR, GithubCommit, GithubWebhook, GithubSecret, GithubEnvironment, GithubRelease } from "../types.js";
 import { rowHoverProps } from "../components/RowHover.js";
 import { LabelPills } from "../components/LabelPills.js";
 
 export function RepoDetailPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
-  const [tab, setTab] = useState<"code" | "issues" | "pulls" | "commits">("code");
+  const [tab, setTab] = useState<"code" | "issues" | "pulls" | "commits" | "webhooks" | "secrets" | "environments" | "releases">("code");
 
   const { data: repoData, isLoading: repoLoading, isError: repoError, error: repoErr } = useQuery({
     queryKey: ["repo", owner, repo],
@@ -45,6 +49,30 @@ export function RepoDetailPage() {
     queryKey: ["prs", owner, repo, "open"],
     queryFn: () => fetchRepoPRs(owner, repo, "open"),
     enabled: !!owner && !!repo,
+  });
+
+  const { data: webhooks = [] } = useQuery({
+    queryKey: ["webhooks", owner, repo],
+    queryFn: () => fetchWebhooks(owner, repo),
+    enabled: tab === "webhooks" && !!owner && !!repo,
+  });
+
+  const { data: secrets = [] } = useQuery({
+    queryKey: ["secrets", owner, repo],
+    queryFn: () => fetchSecrets(owner, repo),
+    enabled: tab === "secrets" && !!owner && !!repo,
+  });
+
+  const { data: environments = [] } = useQuery({
+    queryKey: ["environments", owner, repo],
+    queryFn: () => fetchEnvironments(owner, repo),
+    enabled: tab === "environments" && !!owner && !!repo,
+  });
+
+  const { data: releases = [] } = useQuery({
+    queryKey: ["releases", owner, repo],
+    queryFn: () => fetchReleases(owner, repo),
+    enabled: tab === "releases" && !!owner && !!repo,
   });
 
   if (repoLoading) return <Spinner label={`loading ${owner}/${repo}`} />;
@@ -115,9 +143,9 @@ export function RepoDetailPage() {
 
       {/* Tabs */}
       <div style={{ marginBottom: "1.25rem" }}>
-        {(["code", "issues", "pulls", "commits"] as const).map((t) => (
+        {(["code", "issues", "pulls", "commits", "webhooks", "secrets", "environments", "releases"] as const).map((t) => (
           <button key={t} style={tabStyle(tab === t)} onClick={() => setTab(t)}>
-            {t === "code" ? "Code" : t === "issues" ? `Issues (${issues.length})` : t === "pulls" ? `PRs (${prs.length})` : "Commits"}
+            {t === "code" ? "Code" : t === "issues" ? `Issues (${issues.length})` : t === "pulls" ? `PRs (${prs.length})` : t.charAt(0).toUpperCase() + t.slice(1) + (t === "webhooks" ? ` (${webhooks.length})` : t === "secrets" ? ` (${secrets.length})` : t === "environments" ? ` (${environments.length})` : t === "releases" ? ` (${releases.length})` : "")}
           </button>
         ))}
       </div>
@@ -196,6 +224,22 @@ export function RepoDetailPage() {
 
       {tab === "commits" && (
         <CommitsList commits={commits} isLoading={commitsLoading} />
+      )}
+
+      {tab === "webhooks" && (
+        <WebhooksList hooks={webhooks} owner={owner} repo={repo} />
+      )}
+
+      {tab === "secrets" && (
+        <SecretsList secrets={secrets} />
+      )}
+
+      {tab === "environments" && (
+        <EnvironmentsList environments={environments} />
+      )}
+
+      {tab === "releases" && (
+        <ReleasesList releases={releases} />
       )}
     </div>
   );
@@ -345,6 +389,142 @@ function CommitsList({
             </div>
             <div style={{ fontSize: "0.72rem", color: "var(--color-fg-subtle)", fontFamily: "var(--font-mono)", marginTop: "0.1rem" }}>
               {c.commit.author.name} · {new Date(c.commit.author.date).toLocaleDateString()}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WebhooksList({ hooks, owner, repo }: { hooks: GithubWebhook[]; owner: string; repo: string }) {
+  if (hooks.length === 0) return (
+    <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
+      No webhooks configured.
+    </div>
+  );
+  return (
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+      {hooks.map((h, i) => (
+        <div
+          key={h.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.75rem",
+            padding: "0.85rem 1rem",
+            borderBottom: i < hooks.length - 1 ? "1px solid var(--color-border)" : "none",
+            background: "var(--color-surface-raised)",
+          }}
+        >
+          <span style={{ color: h.active ? "var(--color-status-ok)" : "var(--color-fg-subtle)", fontFamily: "var(--font-mono)", fontSize: "0.85rem" }}>
+            {h.active ? "●" : "○"}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
+              {h.name} <span style={{ color: "var(--color-fg-subtle)", fontSize: "0.75rem" }}>#{h.id}</span>
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "var(--color-fg-subtle)", fontFamily: "var(--font-mono)" }}>
+              {h.config?.url || "no url"} · events: {h.events?.join(", ") || "none"}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SecretsList({ secrets }: { secrets: GithubSecret[] }) {
+  if (secrets.length === 0) return (
+    <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
+      No secrets configured.
+    </div>
+  );
+  return (
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+      {secrets.map((s, i) => (
+        <div
+          key={s.name}
+          style={{
+            padding: "0.7rem 1rem",
+            borderBottom: i < secrets.length - 1 ? "1px solid var(--color-border)" : "none",
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.85rem",
+            color: "var(--color-fg)",
+          }}
+        >
+          🔒 {s.name}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EnvironmentsList({ environments }: { environments: GithubEnvironment[] }) {
+  if (environments.length === 0) return (
+    <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
+      No environments.
+    </div>
+  );
+  return (
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+      {environments.map((e, i) => (
+        <div
+          key={e.name}
+          style={{
+            padding: "0.7rem 1rem",
+            borderBottom: i < environments.length - 1 ? "1px solid var(--color-border)" : "none",
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.85rem",
+            color: "var(--color-fg)",
+          }}
+        >
+          {e.name}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReleasesList({ releases }: { releases: GithubRelease[] }) {
+  if (releases.length === 0) return (
+    <div style={{ color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.85rem", padding: "2rem 0" }}>
+      No releases.
+    </div>
+  );
+  return (
+    <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+      {releases.map((r, i) => (
+        <div
+          key={r.id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.75rem",
+            padding: "0.85rem 1rem",
+            borderBottom: i < releases.length - 1 ? "1px solid var(--color-border)" : "none",
+            background: "var(--color-surface-raised)",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.72rem",
+              color: "var(--color-accent)",
+              background: "var(--color-accent-soft)",
+              padding: "0.1rem 0.4rem",
+              borderRadius: "var(--radius-sm)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {r.tag_name}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
+              {r.name || r.tag_name}
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "var(--color-fg-subtle)", fontFamily: "var(--font-mono)" }}>
+              published {new Date(r.published_at).toLocaleDateString()}
             </div>
           </div>
         </div>

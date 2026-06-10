@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from "react-router";
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router";
 import {
   AppShell,
   ErrorBoundary,
@@ -6,6 +6,8 @@ import {
   ToastProvider,
   type NavItem,
 } from "@sockerless/ui-core/components";
+import { isLoggedIn, clearToken } from "./api.js";
+import { LoginPage } from "./pages/LoginPage.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { WorkflowsPage } from "./pages/WorkflowsPage.js";
 import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
@@ -36,7 +38,46 @@ function renderNavLink(item: NavItem) {
   );
 }
 
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  if (!isLoggedIn()) {
+    return <Navigate to="/ui/login" replace />;
+  }
+  return <>{children}</>;
+}
+
+function AppNav() {
+  return (
+    <div
+      className="flex items-center justify-end px-3 py-1"
+      style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
+    >
+      <button
+        onClick={() => {
+          clearToken();
+          window.location.href = "/ui/login";
+        }}
+        className="hover:underline"
+      >
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 export function App() {
+  if (!isLoggedIn()) {
+    return (
+      <ErrorBoundary>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/ui/login" element={<LoginPage />} />
+            <Route path="/ui/*" element={<Navigate to="/ui/login" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <ToastProvider>
@@ -47,6 +88,7 @@ export function App() {
             navItems={navItems}
             renderLink={renderNavLink}
           >
+            <AppNav />
             <Routes>
               <Route path="/ui/" element={<OverviewPage />} />
               <Route path="/ui/workflows" element={<WorkflowsPage />} />

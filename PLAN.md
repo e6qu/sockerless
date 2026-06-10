@@ -18,15 +18,101 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Work
 
-The current branch was simulator fidelity maintenance after the Azure/GCP/AWS
-coverage branch merged. It added direct GCP Bigtable Terraform provider coverage
-through the provider's official gRPC emulator route, removed synthetic
-terminal-success execution from AWS Batch, CodeBuild, Glue, and Step Functions,
-and refreshed the continuity and coverage docs.
+The current branch is `bleephub-parity-storage`. It is the single working branch
+for a multi-session Bleephub parity and durability PR. Keep one PR open for this
+branch, make granular commits, and update the continuity files before and after
+each subtask so the next session can resume without relying on chat history.
 
-Likely next work: re-check open GitHub issues, then either take the next
-actionable consumer issue or run another focused simulator-surface audit. Issue
-#394 remained upstream-blocked.
+### Bleephub parity and durability target
+
+Bleephub should behave like a real GitHub Enterprise-style server for the
+surfaces it exposes. The current audit found several gaps that must be treated as
+implementation defects, not accepted compatibility shortcuts:
+
+- Actions cache routes currently reserve nothing, discard uploads, and always
+  miss. They must implement real cache records, immutable saved entries, restore
+  key lookup, chunk upload storage, and successful restore/download behavior.
+- Unhandled API paths currently return `200 OK`; they must return GitHub-shaped
+  errors or Git smart-HTTP statuses.
+- Persistence is SQLite-only and covers only a subset of state. Bleephub must
+  support SQLite and PostgreSQL, with explicit configuration and no silent
+  in-memory fallback when persistence is requested.
+- Git smart HTTP exists and uses real go-git plumbing, but repo creation ignores
+  git storage errors and git content only supports memory/filesystem storage.
+  Bleephub must fail loudly on git-storage errors and support an S3/MinIO-shaped
+  object-store backend for git content.
+- Git clone/fetch/push must enforce repo visibility and token permissions.
+- The UI hard-codes an admin token while the server requires
+  `BLEEPHUB_ADMIN_TOKEN`; the UI needs a real operator/auth configuration path.
+- Externally observable names must match GitHub/GHES. Bleephub may use its own
+  internal package names and operator-only settings, but public API endpoints,
+  runner variables, workflow environment variables, request/response fields,
+  UI identity, and `GITHUB_*` variables must use the GitHub names clients
+  expect. Do not invent `bleephub` names where real GitHub exposes a
+  `github`/`GITHUB_*` name.
+- Advertised long-tail GitHub surfaces such as Pages builds, audit log content,
+  environment approvals, and GraphQL status rollups still include shape-only or
+  empty responses.
+- Bleephub docs are stale around admin tokens, git storage, persistence, TLS, UI
+  auth, and operator setup.
+
+### Subtask queue for the single PR
+
+Aim for one commit per item below. Do not split implementation and tests into
+separate commits unless a CI-only fix is needed after review. Each commit should
+leave the branch buildable or have the continuity docs explicitly call out the
+temporary failing check and the next command to run.
+
+1. **Baseline audit tests and error handling** — DONE
+2. **Actions cache and artifact indexing** — DONE
+3. **Persistence abstraction** — DONE (SQLite + PostgreSQL via pgx)
+4. **Persist the Bleephub state that users expect to survive restarts** — extend
+   write-through/load coverage beyond users/tokens/apps/repos to issues, PRs,
+   workflows, runners, hooks, checks, deployments, releases, and other exposed
+   API state where the public API promises durability.
+5. **Git storage hardening** — stop ignoring git init/storage errors, make repo
+   deletion clean up durable git data where applicable, and enforce clone/fetch
+   and push permissions.
+6. **S3/MinIO git object storage** — add a real S3-compatible git content
+   backend using an actual object-store client, with MinIO-based integration
+   coverage and clear key layout docs.
+7. **UI auth and operator status** — remove hard-coded admin credentials, add a
+   real configured auth/session path, expose storage/database/git backend status
+   in the UI, and make the externally visible UI identity match GitHub/GHES for
+   client-facing screens while keeping Bleephub-specific operator controls
+   clearly separated.
+8. **UI/API parity gaps** — add or deepen UI/API coverage for caches, artifacts,
+   webhooks/deliveries, orgs/teams, branch protection, audit events, and repo git
+   refs where Bleephub already exposes the backing API. Audit all externally
+   visible `bleephub` endpoint/field/env names and replace them with precise
+   GitHub/GHES names unless they are explicitly operator-only management
+   surfaces.
+9. **Long-tail fake removal and docs** — replace or explicitly delist shape-only
+   endpoints for Pages builds, audit log events, run approvals, and GraphQL
+   status rollups; update README, gh CLI docs, parity specs, build/run docs,
+   Caddy/TLS notes, SQLite/PostgreSQL notes, and S3/MinIO git storage docs.
+10. **Final verification and PR hygiene** — run Bleephub Go/UI tests, targeted
+    real-client smoke tests, lint/guard checks, rebase on `origin/main`, push one
+    PR, then sync local `main` after the user merges.
+
+### Continuity protocol for this branch
+
+Before starting any subtask:
+
+1. Read `STATUS.md` and `DO_NEXT.md`.
+2. Confirm the active branch and current subtask.
+3. Check `git status --short --branch`.
+4. Update `DO_NEXT.md` if the next command list is stale.
+
+After finishing each subtask:
+
+1. Run the narrowest meaningful tests for the touched area.
+2. Update `STATUS.md` with completed work, current risks, and test state.
+3. Update `DO_NEXT.md` with the next subtask, exact files likely involved, and
+   the first verification command to run.
+4. Add a short `WHAT_WE_DID.md` entry only when a meaningful chunk completed.
+5. Commit the code, tests, and continuity docs together with a natural commit
+   message that describes the user-facing change.
 
 ## Previous Completed Work
 

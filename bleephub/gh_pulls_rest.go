@@ -61,6 +61,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	s.emitWebhookEvent(repoKey, "pull_request", "opened", buildPullRequestPayload(repo, pr, user, "opened"))
 	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "refs/heads/"+pr.HeadRefName)
 
+	s.recordAuditEvent("pull_request.create", user.Login, "", map[string]interface{}{"repo": repoKey, "pr_id": pr.ID})
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
 }
 

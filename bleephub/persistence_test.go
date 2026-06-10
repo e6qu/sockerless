@@ -1,27 +1,52 @@
 package bleephub
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
-
-// SQLite persistence round-trip — create entities, close the store, reopen,
-// verify they're still there. Exercises BLEEPHUB_PERSIST=true + the
-// MustPut / MustDelete fail-loud-on-write contract.
 
 func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BLEEPHUB_PERSIST", "true")
 	t.Setenv("BLEEPHUB_DATA_DIR", dir)
 
-	// --- Round 1: write some state. ---
-	p1, err := NewPersistence()
-	if err != nil {
-		t.Fatalf("NewPersistence: %v", err)
+	persistRoundTrip(t, func() (*Persistence, error) { return NewPersistence() })
+}
+
+func TestPersistence_PostgresRoundTrip(t *testing.T) {
+	pgURL := os.Getenv("BLEEPHUB_TEST_POSTGRES_URL")
+	if pgURL == "" {
+		t.Skip("BLEEPHUB_TEST_POSTGRES_URL not set")
 	}
-	if p1 == nil {
-		t.Fatal("expected persistence enabled")
+
+	uniqueDB := fmt.Sprintf("%s_db=%s", pgURL, t.Name())
+	t.Setenv("BLEEPHUB_DATABASE_URL", uniqueDB)
+
+	persistRoundTrip(t, func() (*Persistence, error) {
+		p, err := NewPersistence()
+		if err != nil {
+			return nil, err
+		}
+		if p == nil {
+			return nil, fmt.Errorf("expected persistence enabled")
+		}
+		return p, nil
+	})
+
+	if err := dropTestDB(t, pgURL, t.Name()); err != nil {
+		t.Logf("cleanup: drop db: %v", err)
+	}
+}
+
+func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
+	t.Helper()
+
+	p1, err := open()
+	if err != nil {
+		t.Fatalf("open: %v", err)
 	}
 	st1 := NewStore()
 	if err := st1.SetPersistence(p1); err != nil {
@@ -40,10 +65,9 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// --- Round 2: reopen the same DB. State must survive. ---
-	p2, err := NewPersistence()
+	p2, err := open()
 	if err != nil {
-		t.Fatalf("re-open NewPersistence: %v", err)
+		t.Fatalf("re-open: %v", err)
 	}
 	st2 := NewStore()
 	if err := st2.SetPersistence(p2); err != nil {
@@ -51,12 +75,10 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 	}
 	defer p2.Close()
 
-	// User
 	if got := st2.UsersByLogin["admin"]; got == nil {
 		t.Fatal("admin user did not persist")
 	}
 
-	// App
 	got := st2.GetApp(app.ID)
 	if got == nil {
 		t.Fatalf("app %d did not persist", app.ID)
@@ -68,7 +90,6 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 		t.Errorf("app permissions round-trip: got %v", got.Permissions)
 	}
 
-	// AppsByClientID + AppsBySlug indexes rebuilt on load
 	if st2.GetAppBySlug(app.Slug) == nil {
 		t.Error("AppsBySlug index missing after reload")
 	}
@@ -76,7 +97,6 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 		t.Error("AppsByClientID index missing after reload")
 	}
 
-	// Installation + suspension state
 	gotInst := st2.GetInstallation(inst.ID)
 	if gotInst == nil {
 		t.Fatal("installation did not persist")
@@ -85,27 +105,41 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 		t.Error("installation SuspendedAt did not persist")
 	}
 
-	// Installation token
 	if gotTok, gotInstFromTok := st2.LookupInstallationToken(tok.Token); gotTok == nil || gotInstFromTok == nil {
 		t.Error("installation token did not persist")
 	}
 
-	// OAuth app
 	if got := st2.GetOAuthApp(oapp.ClientID); got == nil {
 		t.Error("OAuth app did not persist")
 	}
 
-	// User-to-server token
 	if gotUts, _ := st2.LookupUserToServerToken(utsTok.Token); gotUts == nil {
 		t.Error("user-to-server token did not persist")
 	}
 
-	// Repo
 	if got := st2.GetRepo(user.Login, "persist-target"); got == nil {
 		t.Fatal("repo did not persist")
 	} else if got.ID != repo.ID {
 		t.Errorf("repo ID round-trip: got %d want %d", got.ID, repo.ID)
 	}
+}
+
+func dropTestDB(t *testing.T, baseURL, dbName string) error {
+	t.Helper()
+	postgresURL := baseURL
+	for i := 0; i < len(baseURL); i++ {
+		if baseURL[i] == '?' {
+			postgresURL = baseURL[:i]
+			break
+		}
+	}
+	db, err := sql.Open("pgx", postgresURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, dbName))
+	return err
 }
 
 func TestPersistence_DisabledWhenEnvUnset(t *testing.T) {

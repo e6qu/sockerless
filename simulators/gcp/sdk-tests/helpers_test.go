@@ -51,6 +51,14 @@ func TestMain(m *testing.M) {
 	httpProbeImageName = "sockerless-http-localhost-probe:test"
 	buildGoScratchImage(httpProbeImageName, probeDir, "http-localhost-probe", workloadPlatform)
 
+	if _, err := exec.LookPath("docker"); err == nil {
+		pullCtx, pullCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := exec.CommandContext(pullCtx, "docker", "pull", "alpine:latest").Run(); err != nil {
+			log.Printf("Warning: docker pull alpine:latest failed (Cloud Build tests may flake): %v", err)
+		}
+		pullCancel()
+	}
+
 	// Allocate both ports while both listeners are open. Closing the first
 	// before allocating the second lets the OS re-assign the just-freed
 	// port to the second listener, causing the sim's HTTP and gRPC servers

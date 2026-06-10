@@ -39,13 +39,15 @@ type ReactionStore struct {
 	byParent map[string][]*Reaction
 	byID     map[int]*Reaction
 	nextID   int
+	persist  *Persistence
 }
 
-func newReactionStore() *ReactionStore {
+func newReactionStore(p *Persistence) *ReactionStore {
 	return &ReactionStore{
 		byParent: make(map[string][]*Reaction),
 		byID:     make(map[int]*Reaction),
 		nextID:   1,
+		persist:  p,
 	}
 }
 
@@ -90,6 +92,9 @@ func (rs *ReactionStore) AddReaction(parentType string, parentID int, userID int
 	rs.nextID++
 	rs.byParent[key] = append(rs.byParent[key], r)
 	rs.byID[r.ID] = r
+	if rs.persist != nil {
+		rs.persist.MustPut("reactions", reactionParentKey(parentType, parentID), rs.byParent[key])
+	}
 	return r, false, nil
 }
 
@@ -130,6 +135,13 @@ func (rs *ReactionStore) DeleteReaction(parentType string, parentID, reactionID 
 		}
 	}
 	delete(rs.byID, reactionID)
+	if rs.persist != nil {
+		if len(rs.byParent[key]) > 0 {
+			rs.persist.MustPut("reactions", key, rs.byParent[key])
+		} else {
+			rs.persist.MustDelete("reactions", key)
+		}
+	}
 	return true
 }
 

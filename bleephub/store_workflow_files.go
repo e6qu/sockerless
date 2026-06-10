@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,6 +80,9 @@ func (st *Store) RegisterWorkflowFile(repoFullName, path, name, yamlBody, source
 		UpdatedAt:    now,
 	}
 	st.WorkflowFiles[id] = wf
+	if st.persist != nil {
+		st.persist.MustPut("workflow_files", strconv.FormatInt(id, 10), wf)
+	}
 	return wf
 }
 

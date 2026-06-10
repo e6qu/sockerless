@@ -157,6 +157,9 @@ func (st *Store) AddAppDelivery(appID int, d *WebhookDelivery) {
 	d.ID = st.NextDeliveryID
 	st.NextDeliveryID++
 	st.AppHookDeliveries[appID] = append(st.AppHookDeliveries[appID], d)
+	if st.persist != nil {
+		st.persist.MustPut("app_hook_deliveries", strconv.Itoa(appID), st.AppHookDeliveries[appID])
+	}
 }
 
 // ListAppDeliveries returns app-level deliveries newest-first.

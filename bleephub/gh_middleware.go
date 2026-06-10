@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
@@ -66,10 +67,11 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Parse Authorization header: "token {pat}", "Bearer {pat}", JWT, or ghs_ token
+		ctx := s.authenticateRequest(r)
+		r = r.WithContext(ctx)
+
+		// Parse token for rate-limit header info
 		var token *Token
-		var user *User
-		ctx := r.Context()
 		if auth := r.Header.Get("Authorization"); auth != "" {
 			var tokenStr string
 			if strings.HasPrefix(auth, "token ") {
@@ -77,46 +79,18 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 			} else if strings.HasPrefix(auth, "Bearer ") {
 				tokenStr = strings.TrimPrefix(auth, "Bearer ")
 			}
-			if tokenStr != "" {
-				switch {
-				case looksLikeJWT(tokenStr):
-					if app, err := s.store.parseAndVerifyAppJWT(tokenStr); err == nil {
-						ctx = context.WithValue(ctx, ctxApp, app)
+			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, "ghs_") && !strings.HasPrefix(tokenStr, "gho_") && !strings.HasPrefix(tokenStr, "ghu_") && !strings.HasPrefix(tokenStr, "ghr_") {
+				token, _ = s.store.LookupToken(tokenStr)
+			} else if strings.HasPrefix(auth, "Basic ") {
+				decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+				if err == nil {
+					parts := strings.SplitN(string(decoded), ":", 2)
+					if len(parts) == 2 && parts[1] != "" {
+						token, _ = s.store.LookupToken(parts[1])
 					}
-				case strings.HasPrefix(tokenStr, "ghs_"):
-					if instToken, inst := s.store.LookupInstallationToken(tokenStr); instToken != nil {
-						ctx = context.WithValue(ctx, ctxInstallation, inst)
-						ctx = context.WithValue(ctx, ctxInstallationToken, instToken)
-						app := s.store.GetApp(instToken.AppID)
-						if app != nil {
-							botUser := &User{Login: app.Slug + "[bot]", Type: "Bot", ID: -app.ID}
-							ctx = context.WithValue(ctx, ctxUser, botUser)
-						}
-					}
-				case strings.HasPrefix(tokenStr, "gho_"), strings.HasPrefix(tokenStr, "ghu_"):
-					if utsTok, u := s.store.LookupUserToServerToken(tokenStr); utsTok != nil {
-						ctx = context.WithValue(ctx, ctxUserToServerToken, utsTok)
-						if u != nil {
-							ctx = context.WithValue(ctx, ctxUser, u)
-							user = u
-						}
-					}
-				case strings.HasPrefix(tokenStr, "ghr_"):
-					// Refresh tokens are not bearer credentials; they only work
-					// through POST /login/oauth/access_token with grant_type=refresh_token
-					// or PATCH /applications/{client_id}/token. Reject as bad credentials
-					// on Authorization-header use.
-				default:
-					token, user = s.store.LookupToken(tokenStr)
 				}
 			}
 		}
-
-		// Store user in context
-		if user != nil {
-			ctx = context.WithValue(ctx, ctxUser, user)
-		}
-		r = r.WithContext(ctx)
 
 		// Wrap response writer to inject headers
 		rw := &ghResponseWriter{
@@ -126,6 +100,63 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rw, r)
 	})
+}
+
+// authenticateRequest parses the Authorization header and returns a context
+// with the authenticated user/app/installation set. Used by both /api/
+// middleware and git HTTP handlers.
+func (s *Server) authenticateRequest(r *http.Request) context.Context {
+	ctx := r.Context()
+	var user *User
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		var tokenStr string
+		if strings.HasPrefix(auth, "token ") {
+			tokenStr = strings.TrimPrefix(auth, "token ")
+		} else if strings.HasPrefix(auth, "Bearer ") {
+			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+		}
+		if tokenStr != "" {
+			switch {
+			case looksLikeJWT(tokenStr):
+				if app, err := s.store.parseAndVerifyAppJWT(tokenStr); err == nil {
+					ctx = context.WithValue(ctx, ctxApp, app)
+				}
+			case strings.HasPrefix(tokenStr, "ghs_"):
+				if instToken, inst := s.store.LookupInstallationToken(tokenStr); instToken != nil {
+					ctx = context.WithValue(ctx, ctxInstallation, inst)
+					ctx = context.WithValue(ctx, ctxInstallationToken, instToken)
+					app := s.store.GetApp(instToken.AppID)
+					if app != nil {
+						botUser := &User{Login: app.Slug + "[bot]", Type: "Bot", ID: -app.ID}
+						ctx = context.WithValue(ctx, ctxUser, botUser)
+					}
+				}
+			case strings.HasPrefix(tokenStr, "gho_"), strings.HasPrefix(tokenStr, "ghu_"):
+				if utsTok, u := s.store.LookupUserToServerToken(tokenStr); utsTok != nil {
+					ctx = context.WithValue(ctx, ctxUserToServerToken, utsTok)
+					if u != nil {
+						ctx = context.WithValue(ctx, ctxUser, u)
+						user = u
+					}
+				}
+			case strings.HasPrefix(tokenStr, "ghr_"):
+			default:
+				_, user = s.store.LookupToken(tokenStr)
+			}
+		} else if strings.HasPrefix(auth, "Basic ") {
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+			if err == nil {
+				parts := strings.SplitN(string(decoded), ":", 2)
+				if len(parts) == 2 && parts[1] != "" {
+					_, user = s.store.LookupToken(parts[1])
+				}
+			}
+		}
+	}
+	if user != nil {
+		ctx = context.WithValue(ctx, ctxUser, user)
+	}
+	return ctx
 }
 
 // ghResponseWriter injects GitHub API headers before the first write.

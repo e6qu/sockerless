@@ -13,6 +13,11 @@ import (
 	gitserver "github.com/go-git/go-git/v5/plumbing/transport/server"
 )
 
+func (s *Server) authenticateGitRequest(r *http.Request) *User {
+	ctx := s.authenticateRequest(r)
+	return ghUserFromContext(ctx)
+}
+
 // storeLoader implements transport.Loader to look up go-git storages from the Store.
 type storeLoader struct {
 	store *Store
@@ -95,9 +100,39 @@ func (s *Server) handleGitInfoRefs(w http.ResponseWriter, r *http.Request, owner
 		return
 	}
 
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		http.NotFound(w, r)
+		return
+	}
+
 	service := r.URL.Query().Get("service")
 	if service == "" {
 		http.Error(w, "service parameter required", http.StatusBadRequest)
+		return
+	}
+
+	user := s.authenticateGitRequest(r)
+
+	switch service {
+	case "git-upload-pack":
+		if !canReadRepo(s.store, user, repo) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+			http.Error(w, "401 Authorization Required", http.StatusUnauthorized)
+			return
+		}
+	case "git-receive-pack":
+		if !canPushRepo(s.store, user, repo) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+			if user == nil {
+				http.Error(w, "401 Authorization Required", http.StatusUnauthorized)
+			} else {
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+			}
+			return
+		}
+	default:
+		http.Error(w, "unsupported service", http.StatusBadRequest)
 		return
 	}
 
@@ -168,9 +203,6 @@ func (s *Server) handleGitInfoRefs(w http.ResponseWriter, r *http.Request, owner
 		if err := info.Encode(w); err != nil {
 			s.logger.Error().Err(err).Msg("failed to encode advertised refs")
 		}
-
-	default:
-		http.Error(w, "unsupported service", http.StatusBadRequest)
 	}
 }
 
@@ -178,6 +210,19 @@ func (s *Server) handleGitUploadPack(w http.ResponseWriter, r *http.Request, own
 	stor := s.resolveGitRepo(owner, repoName)
 	if stor == nil {
 		http.NotFound(w, r)
+		return
+	}
+
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	user := s.authenticateGitRequest(r)
+	if !canReadRepo(s.store, user, repo) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+		http.Error(w, "401 Authorization Required", http.StatusUnauthorized)
 		return
 	}
 
@@ -221,6 +266,23 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 		return
 	}
 
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	user := s.authenticateGitRequest(r)
+	if !canPushRepo(s.store, user, repo) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+		if user == nil {
+			http.Error(w, "401 Authorization Required", http.StatusUnauthorized)
+		} else {
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+		}
+		return
+	}
+
 	loader := &storeLoader{store: s.store}
 	server := gitserver.NewServer(loader)
 
@@ -256,8 +318,8 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 	})
 
 	// Update HEAD to point to a valid branch if the current target doesn't exist
-	repo := s.store.GetRepo(owner, repoName)
-	if repo != nil {
+	headRepo := s.store.GetRepo(owner, repoName)
+	if headRepo != nil {
 		needsUpdate := false
 		headRef, headErr := stor.Reference(plumbing.HEAD)
 		if headErr != nil {

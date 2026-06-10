@@ -180,6 +180,9 @@ func (st *Store) CreatePRReview(prID, authorID int, state, body string) *PullReq
 	}
 	st.NextPRReview++
 	st.PRReviews[review.ID] = review
+	if st.persist != nil {
+		st.persist.MustPut("pr_reviews", strconv.Itoa(review.ID), review)
+	}
 	return review
 }
 

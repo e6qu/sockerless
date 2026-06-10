@@ -53,6 +53,7 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.recordAuditEvent("team.create", user.Login, orgLogin, map[string]interface{}{"team_id": team.ID, "team_slug": team.Slug})
 	writeJSON(w, http.StatusCreated, teamToJSON(team, org, s.baseURL(r)))
 }
 
@@ -183,6 +184,7 @@ func (s *Server) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.recordAuditEvent("team.delete", user.Login, orgLogin, map[string]interface{}{"team_slug": slug})
 	w.WriteHeader(http.StatusNoContent)
 }
 

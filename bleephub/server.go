@@ -66,13 +66,14 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		maxConcurrentWorkflows: maxWF,
 	}
 
-	// Wire persistence if BLEEPHUB_PERSIST=true. Fail-loud on open failure.
+	// Wire persistence. PostgreSQL takes priority via BLEEPHUB_DATABASE_URL;
+	// otherwise BLEEPHUB_PERSIST=true enables SQLite. Both fail-loud on open failure.
 	persist := MustNewPersistence()
 	if persist != nil {
 		if err := s.store.SetPersistence(persist); err != nil {
 			logger.Fatal().Err(err).Msg("failed to load persisted state")
 		}
-		s.logger.Info().Str("data_dir", dataDir).Msg("bleephub persistence enabled (SQLite)")
+		s.logger.Info().Str("dialect", persist.dialect.name).Str("data_dir", dataDir).Msg("bleephub persistence enabled")
 	}
 
 	// Seed default user only if the store didn't load one from disk.
@@ -151,6 +152,7 @@ func (s *Server) registerRoutes() {
 	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
 	// Pages, branch protection, org members, marketplace.
 	s.registerGHMiscEndpoints()
+	s.seedDefaultMarketplacePlans()
 
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
@@ -167,6 +169,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)
 	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
 	s.registerMgmtRoutes()
+
+	s.mux.HandleFunc("GET /internal/storage", s.handleInternalStorage)
 
 	// UI dashboard
 	s.registerUI()
@@ -189,7 +193,11 @@ func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 		Str("path", r.URL.Path).
 		Str("query", r.URL.RawQuery).
 		Msg("UNHANDLED REQUEST")
-	w.WriteHeader(http.StatusOK)
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	http.NotFound(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +228,41 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 		"jobs_by_status":    jobsByStatus,
 		"connected_runners": sessions,
 		"uptime_seconds":    int(time.Since(s.metrics.StartedAt).Seconds()),
+	})
+}
+
+func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
+	persistenceBackend := "none"
+	dialectName := ""
+	if s.store.persist != nil {
+		persistenceBackend = s.store.persist.dialect.name
+		dialectName = s.store.persist.dialect.name
+	}
+
+	gitBackend := "memory"
+	gitDetails := map[string]string{}
+	gitDir := GitDataDir()
+	if IsS3GitStorage() {
+		gitBackend = "s3"
+		if bucket := os.Getenv("BLEEPHUB_S3_BUCKET"); bucket != "" {
+			gitDetails["bucket"] = bucket
+		}
+		if endpoint := os.Getenv("BLEEPHUB_S3_ENDPOINT"); endpoint != "" {
+			gitDetails["endpoint"] = endpoint
+		}
+		if prefix := os.Getenv("BLEEPHUB_S3_PREFIX"); prefix != "" {
+			gitDetails["prefix"] = prefix
+		}
+	} else if gitDir != "" {
+		gitBackend = "filesystem"
+		gitDetails["dir"] = gitDir
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"persistence": persistenceBackend,
+		"dialect":     dialectName,
+		"git":         gitBackend,
+		"git_details": gitDetails,
 	})
 }
 

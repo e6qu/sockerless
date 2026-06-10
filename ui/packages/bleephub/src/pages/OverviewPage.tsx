@@ -8,7 +8,7 @@ import {
 } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
-import { fetchHealth, fetchMetrics, fetchWorkflows } from "../api.js";
+import { fetchHealth, fetchMetrics, fetchWorkflows, fetchStorageInfo } from "../api.js";
 import type { BleephubWorkflow } from "../types.js";
 import { formatUptime } from "../utils/format.js";
 
@@ -30,6 +30,11 @@ export function OverviewPage() {
     queryKey: ["workflows"],
     queryFn: fetchWorkflows,
     refetchInterval: 3000,
+  });
+  const { data: storageInfo } = useQuery({
+    queryKey: ["storage"],
+    queryFn: fetchStorageInfo,
+    refetchInterval: 30000,
   });
 
   if (isLoading || !metrics) return <Spinner label="loading overview" />;
@@ -107,6 +112,43 @@ export function OverviewPage() {
         <MetricsCard title="Job dispatches" value={metrics.job_dispatches} />
         <MetricsCard title="Uptime" value={formatUptime(metrics.uptime_seconds)} />
       </div>
+
+      {storageInfo && (
+        <div
+          className="mb-8 rounded border p-3"
+          style={{
+            borderColor: "var(--color-border)",
+            background: "var(--color-bg-elevated)",
+          }}
+        >
+          <h3
+            className="mb-2 text-[10px] uppercase tracking-[0.22em]"
+            style={{ color: "var(--color-fg-subtle)" }}
+          >
+            Storage backends
+          </h3>
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            <div>
+              <span style={{ color: "var(--color-fg-subtle)" }}>Persistence</span>
+              <span className="ml-2 font-mono" style={{ color: "var(--color-fg)" }}>
+                {storageInfo.persistence === "none" ? "none (in-memory)" : storageInfo.dialect}
+              </span>
+            </div>
+            <div>
+              <span style={{ color: "var(--color-fg-subtle)" }}>Git storage</span>
+              <span className="ml-2 font-mono" style={{ color: "var(--color-fg)" }}>
+                {storageInfo.git === "memory" ? "memory (ephemeral)" : storageInfo.git}
+                {storageInfo.git === "filesystem" && storageInfo.git_details.dir
+                  ? ` (${storageInfo.git_details.dir})`
+                  : ""}
+                {storageInfo.git === "s3" && storageInfo.git_details.bucket
+                  ? ` (${storageInfo.git_details.bucket})`
+                  : ""}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <h3
         className="mb-3 text-[10px] uppercase tracking-[0.22em]"

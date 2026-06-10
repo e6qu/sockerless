@@ -9,58 +9,24 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "modernc.org/sqlite" // SQLite driver — pure Go, no CGO
+	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (database/sql interface)
+	_ "modernc.org/sqlite"             // SQLite driver — pure Go, no CGO
 )
 
-// SQLite persistence for bleephub state.
-// Strategy: KV-style table `kv(bucket, key, value)` where value is the
-// JSON-encoded entity. Memory-first design — on startup, persistence layer
-// loads every row of each bucket into the corresponding in-memory map, then
-// every Create/Update/Delete writes through to disk. Reads are always served
-// from the in-memory map (RWMutex-protected).
-//
-// Gated on `BLEEPHUB_PERSIST=true`. The on-disk path defaults to
-// `${BLEEPHUB_DATA_DIR}/bleephub.db` or `./bleephub.db` if the env is unset.
-//
-// Fail-loud invariant: if the operator requested
-// persistence and the DB can't be opened, server startup `log.Fatalf`s
-// instead of silently falling back to in-memory.
-//
-// Git storage (go-git in-memory) is not persisted — switching to
-// `filesystem.Storage` is a separate refactor; repos do not survive
-// a restart even with BLEEPHUB_PERSIST=true.
-
-type Persistence struct {
-	db *sql.DB
-	mu sync.Mutex // serialises writes (sqlite WAL handles concurrent reads fine)
+type dbDialect struct {
+	name      string // "sqlite" or "postgres", for logging
+	schema    string // DDL to create tables
+	putSQL    string // INSERT … ON CONFLICT upsert
+	deleteSQL string
+	listSQL   string
+	getSQL    string
+	setSQL    string
 }
 
-// NewPersistence opens (or creates) the bleephub SQLite database. Returns
-// nil + nil if persistence is disabled (BLEEPHUB_PERSIST != "true").
-func NewPersistence() (*Persistence, error) {
-	if os.Getenv("BLEEPHUB_PERSIST") != "true" {
-		return nil, nil //nolint:nilnil // intentional: nil persistence = disabled
-	}
-
-	dataDir := os.Getenv("BLEEPHUB_DATA_DIR")
-	if dataDir == "" {
-		dataDir = "."
-	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", dataDir, err)
-	}
-	dbPath := filepath.Join(dataDir, "bleephub.db")
-
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
-	}
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping sqlite %s: %w", dbPath, err)
-	}
-
-	// Single KV table. bucket+key form the composite primary key; value is JSON.
-	const schema = `
+var (
+	sqliteDialect = dbDialect{
+		name: "sqlite",
+		schema: `
 CREATE TABLE IF NOT EXISTS kv (
 	bucket TEXT NOT NULL,
 	key    TEXT NOT NULL,
@@ -70,42 +36,124 @@ CREATE TABLE IF NOT EXISTS kv (
 CREATE TABLE IF NOT EXISTS counters (
 	name  TEXT NOT NULL PRIMARY KEY,
 	value INTEGER NOT NULL
-);
-`
-	if _, err := db.Exec(schema); err != nil {
-		return nil, fmt.Errorf("apply schema: %w", err)
+);`,
+		putSQL:    `INSERT INTO kv (bucket, key, value) VALUES (?, ?, ?) ON CONFLICT(bucket, key) DO UPDATE SET value = excluded.value`,
+		deleteSQL: `DELETE FROM kv WHERE bucket = ? AND key = ?`,
+		listSQL:   `SELECT key, value FROM kv WHERE bucket = ?`,
+		getSQL:    `SELECT value FROM counters WHERE name = ?`,
+		setSQL:    `INSERT INTO counters (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`,
 	}
-	return &Persistence{db: db}, nil
+
+	postgresDialect = dbDialect{
+		name: "postgres",
+		schema: `
+CREATE TABLE IF NOT EXISTS kv (
+	bucket TEXT NOT NULL,
+	key    TEXT NOT NULL,
+	value  BYTEA NOT NULL,
+	PRIMARY KEY (bucket, key)
+);
+CREATE TABLE IF NOT EXISTS counters (
+	name  TEXT NOT NULL PRIMARY KEY,
+	value BIGINT NOT NULL
+);`,
+		putSQL:    `INSERT INTO kv (bucket, key, value) VALUES ($1, $2, $3) ON CONFLICT(bucket, key) DO UPDATE SET value = excluded.value`,
+		deleteSQL: `DELETE FROM kv WHERE bucket = $1 AND key = $2`,
+		listSQL:   `SELECT key, value FROM kv WHERE bucket = $1`,
+		getSQL:    `SELECT value FROM counters WHERE name = $1`,
+		setSQL:    `INSERT INTO counters (name, value) VALUES ($1, $2) ON CONFLICT(name) DO UPDATE SET value = excluded.value`,
+	}
+)
+
+type Persistence struct {
+	db      *sql.DB
+	dialect dbDialect
+	mu      sync.Mutex
 }
 
-// MustNewPersistence is NewPersistence with the fail-loud behaviour:
-// persistence requested + open failure → log.Fatalf.
+func openSQLite(dataDir string) (*sql.DB, error) {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", dataDir, err)
+	}
+	dbPath := filepath.Join(dataDir, "bleephub.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping sqlite %s: %w", dbPath, err)
+	}
+	return db, nil
+}
+
+func openPostgres(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	db.SetMaxOpenConns(10)
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+	return db, nil
+}
+
+func NewPersistence() (*Persistence, error) {
+	pgURL := os.Getenv("BLEEPHUB_DATABASE_URL")
+	if pgURL != "" {
+		db, err := openPostgres(pgURL)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := db.Exec(postgresDialect.schema); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("postgres schema: %w", err)
+		}
+		return &Persistence{db: db, dialect: postgresDialect}, nil
+	}
+
+	if os.Getenv("BLEEPHUB_PERSIST") != "true" {
+		return nil, nil //nolint:nilnil // intentional: nil persistence = disabled
+	}
+
+	dataDir := os.Getenv("BLEEPHUB_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "."
+	}
+	db, err := openSQLite(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(sqliteDialect.schema); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite schema: %w", err)
+	}
+	return &Persistence{db: db, dialect: sqliteDialect}, nil
+}
+
 func MustNewPersistence() *Persistence {
 	p, err := NewPersistence()
 	if err != nil {
+		if os.Getenv("BLEEPHUB_DATABASE_URL") != "" {
+			log.Fatalf("BLEEPHUB_DATABASE_URL requested but persistence failed: %v", err)
+		}
 		log.Fatalf("BLEEPHUB_PERSIST=true requested but persistence failed: %v", err)
 	}
 	return p
 }
 
-// MustPut wraps Put with the fail-loud invariant: if persistence is enabled
-// and the write fails, the process exits via log.Fatalf rather than silently
-// diverging on-disk state from the in-memory map. Mirrors MustNewPersistence
-// for write failures.
 func (p *Persistence) MustPut(bucket, key string, v interface{}) {
 	if err := p.Put(bucket, key, v); err != nil {
 		log.Fatalf("bleephub persistence write %s/%s failed: %v", bucket, key, err)
 	}
 }
 
-// MustDelete is the Delete counterpart to MustPut.
 func (p *Persistence) MustDelete(bucket, key string) {
 	if err := p.Delete(bucket, key); err != nil {
 		log.Fatalf("bleephub persistence delete %s/%s failed: %v", bucket, key, err)
 	}
 }
 
-// Put writes/replaces a JSON-encoded entity under (bucket, key).
 func (p *Persistence) Put(bucket, key string, v interface{}) error {
 	if p == nil {
 		return nil
@@ -116,31 +164,27 @@ func (p *Persistence) Put(bucket, key string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	_, err = p.db.Exec(`INSERT INTO kv (bucket, key, value) VALUES (?, ?, ?)
-		ON CONFLICT(bucket, key) DO UPDATE SET value = excluded.value`,
-		bucket, key, raw)
+	_, err = p.db.Exec(p.dialect.putSQL, bucket, key, raw)
 	return err
 }
 
-// Delete removes (bucket, key). Returns nil if the row didn't exist.
 func (p *Persistence) Delete(bucket, key string) error {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, err := p.db.Exec(`DELETE FROM kv WHERE bucket = ? AND key = ?`, bucket, key)
+	_, err := p.db.Exec(p.dialect.deleteSQL, bucket, key)
 	return err
 }
 
-// List returns every (key, raw) pair in a bucket, suitable for boot-time load.
 func (p *Persistence) List(bucket string) (map[string][]byte, error) {
 	if p == nil {
 		return nil, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	rows, err := p.db.Query(`SELECT key, value FROM kv WHERE bucket = ?`, bucket)
+	rows, err := p.db.Query(p.dialect.listSQL, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +201,6 @@ func (p *Persistence) List(bucket string) (map[string][]byte, error) {
 	return out, rows.Err()
 }
 
-// GetCounter returns the named counter (atomic increments via NextCounter).
 func (p *Persistence) GetCounter(name string) (int64, error) {
 	if p == nil {
 		return 0, nil
@@ -165,27 +208,23 @@ func (p *Persistence) GetCounter(name string) (int64, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var v int64
-	err := p.db.QueryRow(`SELECT value FROM counters WHERE name = ?`, name).Scan(&v)
+	err := p.db.QueryRow(p.dialect.getSQL, name).Scan(&v)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
 	return v, err
 }
 
-// SetCounter writes a counter value (used during boot to seed Next*ID from
-// `max(id) + 1` after loading rows from kv).
 func (p *Persistence) SetCounter(name string, value int64) error {
 	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, err := p.db.Exec(`INSERT INTO counters (name, value) VALUES (?, ?)
-		ON CONFLICT(name) DO UPDATE SET value = excluded.value`, name, value)
+	_, err := p.db.Exec(p.dialect.setSQL, name, value)
 	return err
 }
 
-// Close flushes + closes the underlying connection.
 func (p *Persistence) Close() error {
 	if p == nil {
 		return nil

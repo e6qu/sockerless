@@ -99,6 +99,31 @@ func hasTeamAccess(st *Store, orgLogin string, userID int, repoFullName, minPerm
 	return false
 }
 
+// canPushRepo checks if a user can push to a repository.
+// Push requires ownership or org team-level "push" permission.
+func canPushRepo(st *Store, user *User, repo *Repo) bool {
+	if user == nil {
+		return false
+	}
+	if repo.Owner != nil && repo.Owner.ID == user.ID {
+		return true
+	}
+	parts := strings.SplitN(repo.FullName, "/", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	orgLogin := parts[0]
+	org := st.GetOrg(orgLogin)
+	if org == nil {
+		return false
+	}
+	m := st.GetMembership(orgLogin, user.ID)
+	if m != nil && m.State == "active" {
+		return true
+	}
+	return hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "push")
+}
+
 // permissionAtLeast returns true if perm is at least minPerm.
 // Permission hierarchy: pull < push < admin.
 func permissionAtLeast(perm, minPerm string) bool {

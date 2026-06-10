@@ -4,6 +4,90 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-10 - Bleephub shape-only endpoints filled in
+
+- GPG keys: full CRUD — `POST/GET/DELETE /user/gpg_keys` and `GET
+  /users/{username}/gpg_keys` now backed by `MiscStore.gpgKeys` and
+  `gpgKeysByUser` maps. Key creation parses `armored_public_key` and
+  populates emails from the authenticated user. Ownership enforcement on
+  delete. Write-through to `gpg_keys` persistence bucket.
+- Pages builds: `POST` trigger creates a real `PagesBuild` record in
+  `MiscStore.pagesBuilds`; `GET /builds` lists, `/builds/latest` returns
+  newest, `/builds/{build_id}` fetches by ID. Builds are persisted in the
+  `pages_builds` bucket keyed by repo full name.
+- Audit log: `recordAuditEvent` method appends `AuditEntry` structs to
+  `MiscStore.auditLog` with `@timestamp`, `action`, `actor`, `org`,
+  `data`, `version` fields. Wired into 16 mutation handlers (repo, org,
+  team, hook, secret, issue, PR, release, label, milestone, deployment,
+  check_run, GPG key, user key, pages build). Audit endpoint supports
+  `phrase` and `actor_id` query filtering. Persisted in `audit_log` bucket.
+- Marketplace: plans seeded into `MiscStore.marketplacePlans` on startup via
+  `seedDefaultMarketplacePlans`; account endpoint reads from
+  `marketplacePurchases` store. Persisted in dedicated buckets.
+- OIDC claim keys: added missing `oidcClaimKeys` field to `MiscStore`,
+  loaded from `misc` persistence bucket on restart.
+- MiscStore: added `persist *Persistence` field, wired in `SetPersistence`.
+  New persistence loaders for `misc`, `gpg_keys`, `pages_builds`,
+  `audit_log`, `marketplace_plans`, and `marketplace_purchases` buckets.
+- 7 new tests: GPG key CRUD, GPG key ownership, Pages builds CRUD, audit
+  log recording, audit log from repo creation, marketplace plans, and
+  marketplace account.
+
+## 2026-06-09 - Bleephub parity and durability branch planned
+
+- Started `bleephub-parity-storage` as the single planned branch for Bleephub UI/API parity, real Actions cache/artifact behavior, SQLite + PostgreSQL persistence, git storage hardening, S3/MinIO-shaped git content storage, UI auth, and full operator docs.
+- Recorded the current audit findings in [STATUS.md](STATUS.md): cache no-ops, catch-all `200 OK`, SQLite-only partial persistence, ignored git storage errors, missing object-store git backend, weak git auth, hard-coded UI admin token, and shape-only long-tail endpoints.
+- Reworked [PLAN.md](PLAN.md) and [DO_NEXT.md](DO_NEXT.md) around a multi-session handoff protocol: one PR, one natural commit per subtask, continuity docs updated before and after each completed chunk.
+
+## 2026-06-09 - Bleephub cache and unknown-route behavior
+
+- Replaced the Actions cache no-op handlers with real reserve/upload/finalize,
+  lookup, restore-key prefix matching, and download behavior.
+- Unknown GitHub API paths stopped returning successful/plain responses and now
+  return GitHub-shaped 404 JSON. Non-API unmatched paths return normal HTTP 404.
+- The continuity docs now also carry the external-identity rule: observable API
+  endpoints, parameters, response fields, UI identity, runner variables, and
+  `GITHUB_*` variables must match GitHub/GHES rather than Bleephub-branded
+  substitutes, except for internal or operator-only surfaces.
+
+## 2026-06-09 - Bleephub broadened durable state
+
+- [bleephub/persistence.go](bleephub/persistence.go) now writes through all
+  public API objects: hooks, hook_deliveries, app_hook_deliveries,
+  check_runs, check_suites, check_suite_prefs, repo_secrets,
+  workflow_files, pr_reviews, releases, deployments, deployment_statuses,
+  environments, pr_review_comments, reactions, projects_v2,
+  project_v2_items, and project_v2_fields.
+- Sub-stores (ReactionStore, ReleaseStore, DeploymentStore,
+  PRReviewCommentStore, ProjectV2Store) now accept `*Persistence` and
+  write through on every mutation.
+- All new buckets load correctly from disk on restart with proper ID
+  counter recovery.
+
+## 2026-06-09 - Bleephub PostgreSQL persistence support
+
+- [bleephub/persistence.go](bleephub/persistence.go) now supports PostgreSQL
+  via pgx v5 in addition to SQLite. `BLEEPHUB_DATABASE_URL` activates the
+  PostgreSQL backend; `BLEEPHUB_PERSIST=true` continues to activate SQLite.
+- A `dbDialect` struct encapsulates dialect-specific SQL (placeholders, DDL,
+  type names) so both backends share the same `Persistence` method bodies.
+- The PostgreSQL persistence test requires a real PostgreSQL instance
+  (`BLEEPHUB_TEST_POSTGRES_URL`) and skips when unavailable. SQLite tests
+  continue to pass unchanged.
+
+## 2026-06-09 - Bleephub Actions artifacts REST parity
+
+- Runner-created Actions artifacts now keep repository, GitHub run ID, and
+  workflow backend ID metadata, so artifacts can be joined back to real workflow
+  runs instead of floating in a global store.
+- GitHub REST artifact endpoints now return real stored artifacts for
+  repository and run-scoped lists, including pagination, `name` filtering,
+  metadata get, delete, `/zip` download redirect, digest, and workflow-run
+  fields.
+- The separate empty environment-approvals endpoint was recorded in
+  [BUGS.md](BUGS.md) as an open fidelity gap rather than being treated as a real
+  no-approval signal.
+
 ## 2026-06-09 - Bigtable Terraform + AWS execution semantics
 
 - **BUG-1585** was fixed as a coverage gap and provider-routing gap. The GCP Terraform apply stack now declared `google_bigtable_instance` and `google_bigtable_table`, the simulator exposed Bigtable Admin on the official gRPC emulator path used by the Google provider, and the apply harness asserted the provider-returned instance/table IDs. The coverage matrix and `gcp-bigtable` surface table now marked Terraform as direct coverage.

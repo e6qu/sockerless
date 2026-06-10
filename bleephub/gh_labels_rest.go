@@ -81,6 +81,8 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoKey := owner + "/" + name
+	s.recordAuditEvent("label.create", user.Login, "", map[string]interface{}{"repo": repoKey, "label_id": label.ID, "name": label.Name})
 	writeJSON(w, http.StatusCreated, issueLabelToJSON(label, s.baseURL(r), repo.FullName))
 }
 
@@ -186,7 +188,9 @@ func (s *Server) handleDeleteLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoKey := owner + "/" + repoName
 	s.store.DeleteLabel(label.ID)
+	s.recordAuditEvent("label.delete", user.Login, "", map[string]interface{}{"repo": repoKey, "label_id": label.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -235,6 +239,8 @@ func (s *Server) handleCreateMilestone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoKey := owner + "/" + name
+	s.recordAuditEvent("milestone.create", user.Login, "", map[string]interface{}{"repo": repoKey, "milestone_id": ms.ID, "title": ms.Title})
 	writeJSON(w, http.StatusCreated, milestoneToJSON(ms, s.baseURL(r), repo.FullName))
 }
 
@@ -363,7 +369,9 @@ func (s *Server) handleDeleteMilestone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoKey := owner + "/" + repoName
 	s.store.DeleteMilestone(ms.ID)
+	s.recordAuditEvent("milestone.delete", user.Login, "", map[string]interface{}{"repo": repoKey, "milestone_id": ms.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
