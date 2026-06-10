@@ -864,7 +864,11 @@ func cacheLookupKey(repo, key, version string) string {
 
 func newCacheDownloadToken() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failure is unrecoverable; an unguessable token is a
+		// security property, so fail loudly rather than emit a weak one.
+		panic("bleephub: crypto/rand failed generating cache download token: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
