@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -127,9 +128,17 @@ func batchWriteJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func batchWriteError(w http.ResponseWriter, status int, msg string) {
+	code := "ClientException"
+	if status >= 500 {
+		code = "ServerException"
+	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Amzn-Errortype", code)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"__type":  code,
+		"message": msg,
+	})
 }
 
 // ---------- Compute Environments ----------
@@ -203,11 +212,17 @@ func handleBatchDescribeComputeEnvironments(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		result = batchComputeEnvs.List()
+		sort.Slice(result, func(i, j int) bool { return result[i].ComputeEnvironmentName < result[j].ComputeEnvironmentName })
 	}
 	if result == nil {
 		result = []BatchComputeEnvironment{}
 	}
-	batchWriteJSON(w, http.StatusOK, map[string]any{"computeEnvironments": result})
+	page, next := awsPageExplicit(result, req.NextToken, awsMaxResults(req.MaxResults))
+	out := map[string]any{"computeEnvironments": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	batchWriteJSON(w, http.StatusOK, out)
 }
 
 func handleBatchUpdateComputeEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -331,11 +346,17 @@ func handleBatchDescribeJobQueues(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		result = batchJobQueues.List()
+		sort.Slice(result, func(i, j int) bool { return result[i].JobQueueName < result[j].JobQueueName })
 	}
 	if result == nil {
 		result = []BatchJobQueue{}
 	}
-	batchWriteJSON(w, http.StatusOK, map[string]any{"jobQueues": result})
+	page, next := awsPageExplicit(result, req.NextToken, awsMaxResults(req.MaxResults))
+	out := map[string]any{"jobQueues": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	batchWriteJSON(w, http.StatusOK, out)
 }
 
 func handleBatchUpdateJobQueue(w http.ResponseWriter, r *http.Request) {
@@ -463,10 +484,16 @@ func handleBatchDescribeJobDefinitions(w http.ResponseWriter, r *http.Request) {
 		}
 		result = append(result, jd)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].JobDefinitionArn < result[j].JobDefinitionArn })
 	if result == nil {
 		result = []BatchJobDefinition{}
 	}
-	batchWriteJSON(w, http.StatusOK, map[string]any{"jobDefinitions": result})
+	page, next := awsPageExplicit(result, req.NextToken, awsMaxResults(req.MaxResults))
+	out := map[string]any{"jobDefinitions": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	batchWriteJSON(w, http.StatusOK, out)
 }
 
 func handleBatchDeregisterJobDefinition(w http.ResponseWriter, r *http.Request) {
@@ -651,10 +678,18 @@ func handleBatchListJobs(w http.ResponseWriter, r *http.Request) {
 			"status":  job.Status,
 		})
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i]["jobId"].(string) < result[j]["jobId"].(string)
+	})
 	if result == nil {
 		result = []map[string]any{}
 	}
-	batchWriteJSON(w, http.StatusOK, map[string]any{"jobSummaryList": result})
+	page, next := awsPageExplicit(result, req.NextToken, awsMaxResults(req.MaxResults))
+	out := map[string]any{"jobSummaryList": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	batchWriteJSON(w, http.StatusOK, out)
 }
 
 func handleBatchCancelJob(w http.ResponseWriter, r *http.Request) {

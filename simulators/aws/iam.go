@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -142,6 +143,10 @@ func iamRoleXML(role IAMRole) string {
 
 func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("RoleName")
+	if _, ok := iamRoles.Get(name); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("Role with name %s already exists.", name), http.StatusConflict)
+		return
+	}
 	path := r.FormValue("Path")
 	if path == "" {
 		path = "/"
@@ -405,9 +410,12 @@ func handleIAMListAttachedRolePolicies(w http.ResponseWriter, r *http.Request) {
 	policies := iamAttachedPolicies.Filter(func(p IAMAttachedPolicy) bool {
 		return p.RoleName == roleName
 	})
+	sort.Slice(policies, func(i, j int) bool { return policies[i].PolicyArn < policies[j].PolicyArn })
+
+	page, next := awsPageExplicit(policies, r.FormValue("Marker"), atoiDefault(r.FormValue("MaxItems"), 0))
 
 	var members strings.Builder
-	for _, p := range policies {
+	for _, p := range page {
 		fmt.Fprintf(&members, "<member><PolicyName>%s</PolicyName><PolicyArn>%s</PolicyArn></member>", p.PolicyName, p.PolicyArn)
 	}
 
@@ -415,10 +423,10 @@ func handleIAMListAttachedRolePolicies(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<ListAttachedRolePoliciesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ListAttachedRolePoliciesResult>
     <AttachedPolicies>%s</AttachedPolicies>
-    <IsTruncated>false</IsTruncated>
+    <IsTruncated>%t</IsTruncated>%s
   </ListAttachedRolePoliciesResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListAttachedRolePoliciesResponse>`, members.String(), generateUUID())
+</ListAttachedRolePoliciesResponse>`, members.String(), next != "", iamMarkerXML(next), generateUUID())
 }
 
 func handleIAMListInstanceProfilesForRole(w http.ResponseWriter, r *http.Request) {
@@ -500,10 +508,15 @@ func handleIAMCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	if decoded, err := url.QueryUnescape(doc); err == nil {
 		doc = decoded
 	}
+	arn := fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name)
+	if _, ok := iamPolicies.Get(arn); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("A policy called %s already exists. Duplicate names are not allowed.", name), http.StatusConflict)
+		return
+	}
 	policy := IAMPolicy{
 		PolicyName:       name,
 		PolicyId:         "ANPA" + strings.ToUpper(generateUUID()[:16]),
-		Arn:              fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name),
+		Arn:              arn,
 		Path:             path,
 		Description:      r.FormValue("Description"),
 		PolicyDocument:   doc,
@@ -546,15 +559,20 @@ func handleIAMDeletePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleIAMListPolicies(w http.ResponseWriter, r *http.Request) {
+	policies := iamPolicies.List()
+	sort.Slice(policies, func(i, j int) bool { return policies[i].Arn < policies[j].Arn })
+
+	page, next := awsPageExplicit(policies, r.FormValue("Marker"), atoiDefault(r.FormValue("MaxItems"), 0))
+
 	var members strings.Builder
-	for _, p := range iamPolicies.List() {
+	for _, p := range page {
 		fmt.Fprint(&members, "<member>", iamPolicyXML(p), "</member>")
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ListPoliciesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
-  <ListPoliciesResult><Policies>%s</Policies><IsTruncated>false</IsTruncated></ListPoliciesResult>
+  <ListPoliciesResult><Policies>%s</Policies><IsTruncated>%t</IsTruncated>%s</ListPoliciesResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListPoliciesResponse>`, members.String(), generateUUID())
+</ListPoliciesResponse>`, members.String(), next != "", iamMarkerXML(next), generateUUID())
 }
 
 func handleIAMGetPolicyVersion(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +597,10 @@ func handleIAMCreateInstanceProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("InstanceProfileName")
 	if name == "" {
 		iamErrorXML(w, "ValidationError", "InstanceProfileName is required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := iamInstanceProfiles.Get(name); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("Instance Profile %s already exists.", name), http.StatusConflict)
 		return
 	}
 	path := r.FormValue("Path")
@@ -627,15 +649,20 @@ func handleIAMDeleteInstanceProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleIAMListInstanceProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles := iamInstanceProfiles.List()
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].InstanceProfileName < profiles[j].InstanceProfileName })
+
+	page, next := awsPageExplicit(profiles, r.FormValue("Marker"), atoiDefault(r.FormValue("MaxItems"), 0))
+
 	var members strings.Builder
-	for _, ip := range iamInstanceProfiles.List() {
+	for _, ip := range page {
 		fmt.Fprint(&members, "<member>", iamInstanceProfileXML(ip), "</member>")
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ListInstanceProfilesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
-  <ListInstanceProfilesResult><InstanceProfiles>%s</InstanceProfiles><IsTruncated>false</IsTruncated></ListInstanceProfilesResult>
+  <ListInstanceProfilesResult><InstanceProfiles>%s</InstanceProfiles><IsTruncated>%t</IsTruncated>%s</ListInstanceProfilesResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListInstanceProfilesResponse>`, members.String(), generateUUID())
+</ListInstanceProfilesResponse>`, members.String(), next != "", iamMarkerXML(next), generateUUID())
 }
 
 func handleIAMAddRoleToInstanceProfile(w http.ResponseWriter, r *http.Request) {

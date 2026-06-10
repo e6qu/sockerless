@@ -19,6 +19,19 @@ func nowTimestamp() string {
 }
 
 func paginateList[T any](w http.ResponseWriter, r *http.Request, items []T) ([]T, string, bool) {
+	return paginateListParam(w, r, items, "pageSize")
+}
+
+// paginateListCompute paginates using the Compute API page-size parameter name
+// ("maxResults"), which the Compute REST API + Go SDK send instead of "pageSize".
+func paginateListCompute[T any](w http.ResponseWriter, r *http.Request, items []T) ([]T, string, bool) {
+	return paginateListParam(w, r, items, "maxResults")
+}
+
+// paginateListParam slices items by an opaque numeric index page token. It only
+// paginates when the client supplies an explicit positive page size under
+// sizeParam; an unset/zero size returns the full list with no token.
+func paginateListParam[T any](w http.ResponseWriter, r *http.Request, items []T, sizeParam string) ([]T, string, bool) {
 	start := 0
 	if token := r.URL.Query().Get("pageToken"); token != "" {
 		n, err := strconv.Atoi(token)
@@ -30,10 +43,10 @@ func paginateList[T any](w http.ResponseWriter, r *http.Request, items []T) ([]T
 	}
 
 	pageSize := len(items)
-	if raw := r.URL.Query().Get("pageSize"); raw != "" {
+	if raw := r.URL.Query().Get(sizeParam); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid pageSize %q", raw)
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid %s %q", sizeParam, raw)
 			return nil, "", false
 		}
 		if n > 0 && n < pageSize {

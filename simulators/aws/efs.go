@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -224,14 +225,18 @@ func handleEFSDescribeFileSystems(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		fileSystems = efsFileSystems.List()
+		sort.Slice(fileSystems, func(i, j int) bool { return fileSystems[i].FileSystemId < fileSystems[j].FileSystemId })
 	}
 	if fileSystems == nil {
 		fileSystems = []EFSFileSystem{}
 	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"FileSystems": fileSystems,
-	})
+	page, next := awsPageExplicit(fileSystems, r.URL.Query().Get("Marker"), atoiDefault(r.URL.Query().Get("MaxItems"), 0))
+	resp := map[string]any{"FileSystems": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleEFSDeleteFileSystem(w http.ResponseWriter, r *http.Request) {
@@ -340,30 +345,48 @@ func handleEFSCreateMountTarget(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, mt)
 }
 
-func handleEFSDescribeMountTargets(w http.ResponseWriter, r *http.Request) {
-	fsId := r.URL.Query().Get("FileSystemId")
-	mtId := r.URL.Query().Get("MountTargetId")
-
-	var targets []EFSMountTarget
-	if mtId != "" {
-		mt, ok := efsMountTargets.Get(mtId)
-		if ok {
-			targets = append(targets, mt)
+// efsDescribeList renders the common EFS describe-list shape: optional
+// single-id lookup, else optional FileSystemId filter, else list-all; a
+// deterministic sort; explicit-page-size pagination; a token-keyed body.
+// Shared by DescribeMountTargets and DescribeAccessPoints (which differ only
+// in element type, id field, and the marker/token query+response key names).
+func efsDescribeList[T any](
+	r *http.Request,
+	store sim.Store[T],
+	idParam, fsParam string,
+	matchesFS func(item T, fsID string) bool,
+	less func(a, b T) bool,
+	markerParam, maxParam, listKey, tokenKey string,
+) map[string]any {
+	var items []T
+	if id := r.URL.Query().Get(idParam); id != "" {
+		if it, ok := store.Get(id); ok {
+			items = append(items, it)
 		}
-	} else if fsId != "" {
-		targets = efsMountTargets.Filter(func(mt EFSMountTarget) bool {
-			return mt.FileSystemId == fsId
-		})
+	} else if fsID := r.URL.Query().Get(fsParam); fsID != "" {
+		items = store.Filter(func(it T) bool { return matchesFS(it, fsID) })
+		sort.Slice(items, func(i, j int) bool { return less(items[i], items[j]) })
 	} else {
-		targets = efsMountTargets.List()
+		items = store.List()
+		sort.Slice(items, func(i, j int) bool { return less(items[i], items[j]) })
 	}
-	if targets == nil {
-		targets = []EFSMountTarget{}
+	if items == nil {
+		items = []T{}
 	}
+	page, next := awsPageExplicit(items, r.URL.Query().Get(markerParam), atoiDefault(r.URL.Query().Get(maxParam), 0))
+	resp := map[string]any{listKey: page}
+	if next != "" {
+		resp[tokenKey] = next
+	}
+	return resp
+}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"MountTargets": targets,
-	})
+func handleEFSDescribeMountTargets(w http.ResponseWriter, r *http.Request) {
+	resp := efsDescribeList(r, efsMountTargets, "MountTargetId", "FileSystemId",
+		func(mt EFSMountTarget, fsID string) bool { return mt.FileSystemId == fsID },
+		func(a, b EFSMountTarget) bool { return a.MountTargetId < b.MountTargetId },
+		"Marker", "MaxItems", "MountTargets", "NextMarker")
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
@@ -418,29 +441,11 @@ func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleEFSDescribeAccessPoints(w http.ResponseWriter, r *http.Request) {
-	apId := r.URL.Query().Get("AccessPointId")
-	fsId := r.URL.Query().Get("FileSystemId")
-
-	var accessPoints []EFSAccessPoint
-	if apId != "" {
-		ap, ok := efsAccessPoints.Get(apId)
-		if ok {
-			accessPoints = append(accessPoints, ap)
-		}
-	} else if fsId != "" {
-		accessPoints = efsAccessPoints.Filter(func(ap EFSAccessPoint) bool {
-			return ap.FileSystemId == fsId
-		})
-	} else {
-		accessPoints = efsAccessPoints.List()
-	}
-	if accessPoints == nil {
-		accessPoints = []EFSAccessPoint{}
-	}
-
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"AccessPoints": accessPoints,
-	})
+	resp := efsDescribeList(r, efsAccessPoints, "AccessPointId", "FileSystemId",
+		func(ap EFSAccessPoint, fsID string) bool { return ap.FileSystemId == fsID },
+		func(a, b EFSAccessPoint) bool { return a.AccessPointId < b.AccessPointId },
+		"NextToken", "MaxResults", "AccessPoints", "NextToken")
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleEFSDeleteAccessPoint(w http.ResponseWriter, r *http.Request) {

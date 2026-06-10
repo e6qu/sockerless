@@ -36,6 +36,10 @@ type IAMPolicy struct {
 type IAMBinding struct {
 	Role    string   `json:"role"`
 	Members []string `json:"members"`
+	// Condition is a nested writable object (CEL expression + title)
+	// the sim persists verbatim so setIamPolicy→getIamPolicy round-trips
+	// byte-exact for conditional bindings.
+	Condition json.RawMessage `json:"condition,omitempty"`
 }
 
 // gcpResourcePolicies is the shared IAM policy store for GCP resources
@@ -314,6 +318,10 @@ func registerIAM(srv *sim.Server) {
 					Etag:     gcpPolicyETag(),
 					Version:  1,
 				}
+				// Persist the synthesized default so its etag is stable across
+				// reads — the optimistic-concurrency check on setIamPolicy
+				// validates against the etag a prior getIamPolicy returned.
+				projectPolicies.Put(project, policy)
 			}
 			sim.WriteJSON(w, http.StatusOK, policy)
 		case "setIamPolicy":
@@ -325,6 +333,10 @@ func registerIAM(srv *sim.Server) {
 				return
 			}
 
+			current, present := projectPolicies.Get(project)
+			if gcpIAMETagConflict(w, req.Policy.Etag, current.Etag, present) {
+				return
+			}
 			req.Policy.Etag = gcpPolicyETag()
 			if req.Policy.Version == 0 {
 				req.Policy.Version = 1
@@ -397,6 +409,23 @@ func registerIAM(srv *sim.Server) {
 	})
 }
 
+// gcpIAMETagConflict enforces the optimistic-concurrency contract real Cloud
+// IAM applies on setIamPolicy: a request whose policy carries a non-empty etag
+// that does not match the currently-stored policy's etag is rejected with 409
+// ABORTED so the caller re-reads and retries. An empty request etag means the
+// caller opted out of the check (a blind overwrite), which GCP permits.
+func gcpIAMETagConflict(w http.ResponseWriter, reqEtag, currentEtag string, present bool) bool {
+	if reqEtag == "" {
+		return false
+	}
+	if !present || reqEtag != currentEtag {
+		sim.GCPErrorf(w, http.StatusConflict, "ABORTED",
+			"There were concurrent policy changes. Please retry the whole read-modify-write with exponential backoff.")
+		return true
+	}
+	return false
+}
+
 // handleResourceIAM processes the three AIP-141 IAM verbs against a named
 // resource: getIamPolicy / setIamPolicy / testIamPermissions. Every GCP
 // resource type exposes this triple; the sim's per-resource handlers
@@ -411,6 +440,10 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 				Etag:     gcpPolicyETag(),
 				Version:  1,
 			}
+			// Persist the synthesized default so its etag is stable across
+			// reads — the optimistic-concurrency check on setIamPolicy
+			// validates against the etag a prior getIamPolicy returned.
+			store.Put(resource, policy)
 		}
 		sim.WriteJSON(w, http.StatusOK, policy)
 	case "setIamPolicy":
@@ -419,6 +452,10 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		current, present := store.Get(resource)
+		if gcpIAMETagConflict(w, req.Policy.Etag, current.Etag, present) {
 			return
 		}
 		req.Policy.Etag = gcpPolicyETag()

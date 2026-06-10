@@ -76,7 +76,15 @@ func handleDataflowListJobs(w http.ResponseWriter, r *http.Request) {
 		return strings.HasPrefix(dataflowJobKey(job.ProjectID, job.Location, job.ID), prefix)
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"jobs": out})
+	page, next, ok := paginateList(w, r, out)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"jobs": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleDataflowGetJob(w http.ResponseWriter, r *http.Request) {

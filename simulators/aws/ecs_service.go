@@ -390,6 +390,11 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clusterName := ecsClusterNameFromRef(req.Cluster)
+	if _, ok := ecsClusters.Get(clusterName); !ok {
+		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest,
+			"Cluster not found: %s", clusterName)
+		return
+	}
 	services := make([]ECSService, 0, len(req.Services))
 	failures := make([]map[string]string, 0)
 	for _, ref := range req.Services {

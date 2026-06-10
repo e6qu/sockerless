@@ -43,6 +43,15 @@ func iamParseTags(r *http.Request) []IAMTag {
 	return tags
 }
 
+// iamMarkerXML renders the optional `<Marker>` element IAM list ops emit when
+// the result is truncated. An empty next token yields no element.
+func iamMarkerXML(next string) string {
+	if next == "" {
+		return ""
+	}
+	return "<Marker>" + xmlEscape(next) + "</Marker>"
+}
+
 func iamTagsXML(tags []IAMTag) string {
 	var b strings.Builder
 	b.WriteString("<Tags>")

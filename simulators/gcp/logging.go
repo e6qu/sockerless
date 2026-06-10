@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -69,14 +71,22 @@ type LoggingMetric struct {
 	Description      string            `json:"description,omitempty"`
 	Filter           string            `json:"filter"`
 	Disabled         bool              `json:"disabled,omitempty"`
+	ValueExtractor   string            `json:"valueExtractor,omitempty"`
+	Version          string            `json:"version,omitempty"`
 	LabelExtractors  map[string]string `json:"labelExtractors,omitempty"`
 	MetricDescriptor map[string]any    `json:"metricDescriptor,omitempty"`
-	BucketName       string            `json:"bucketName,omitempty"`
+	// BucketOptions is a nested writable object the sim persists verbatim
+	// so create→get round-trips byte-exact for distribution metrics.
+	BucketOptions json.RawMessage `json:"bucketOptions,omitempty"`
+	BucketName    string          `json:"bucketName,omitempty"`
 }
 
 // listLogEntries is the shared implementation for listing log entries,
-// used by both the REST handler and the gRPC server.
-func listLogEntries(filter string, resourceNames []string, pageSize int) []LogEntry {
+// used by both the REST handler and the gRPC server. It returns the requested
+// page plus an opaque numeric next-page token (empty when no more entries
+// remain). The token is a start index into the deterministically-ordered,
+// filtered entry set; pageSize/pageToken only take effect when pageSize > 0.
+func listLogEntries(filter string, resourceNames []string, pageSize int, pageToken string) ([]LogEntry, string) {
 	var allEntries []LogEntry
 	all := logEntries.List()
 	for _, entries := range all {
@@ -108,15 +118,32 @@ func listLogEntries(filter string, resourceNames []string, pageSize int) []LogEn
 		allEntries = filtered
 	}
 
-	// Apply page size
+	// Deterministic ordering so page tokens are stable across calls.
+	sort.SliceStable(allEntries, func(i, j int) bool {
+		if allEntries[i].Timestamp != allEntries[j].Timestamp {
+			return allEntries[i].Timestamp < allEntries[j].Timestamp
+		}
+		return allEntries[i].InsertID < allEntries[j].InsertID
+	})
+
+	start := 0
+	if pageToken != "" {
+		if n, err := strconv.Atoi(pageToken); err == nil && n >= 0 && n <= len(allEntries) {
+			start = n
+		}
+	}
+	allEntries = allEntries[start:]
+
+	next := ""
 	if pageSize > 0 && len(allEntries) > pageSize {
+		next = strconv.Itoa(start + pageSize)
 		allEntries = allEntries[:pageSize]
 	}
 
 	if allEntries == nil {
 		allEntries = []LogEntry{}
 	}
-	return allEntries
+	return allEntries, next
 }
 
 // writeLogEntries is the shared implementation for writing log entries,
@@ -196,9 +223,10 @@ func registerCloudLogging(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		entries := listLogEntries(req.Filter, req.ResourceNames, req.PageSize)
+		entries, next := listLogEntries(req.Filter, req.ResourceNames, req.PageSize, req.PageToken)
 		sim.WriteJSON(w, http.StatusOK, ListLogEntriesRESTResponse{
-			Entries: entries,
+			Entries:       entries,
+			NextPageToken: next,
 		})
 	})
 
@@ -345,7 +373,11 @@ func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteLoggingSink(w http.ResponseWriter, r *http.Request) {
-	logSinks.Delete(loggingSinkRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "sink")))
+	sink := sim.PathParam(r, "sink")
+	if !logSinks.Delete(loggingSinkRequestKey(sim.PathParam(r, "project"), sink)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "sink %q not found", sink)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -407,7 +439,11 @@ func handleUpdateLoggingMetric(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteLoggingMetric(w http.ResponseWriter, r *http.Request) {
-	logMetrics.Delete(loggingMetricRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "metric")))
+	metric := sim.PathParam(r, "metric")
+	if !logMetrics.Delete(loggingMetricRequestKey(sim.PathParam(r, "project"), metric)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "metric %q not found", metric)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -437,7 +473,7 @@ func (s *loggingServer) WriteLogEntries(_ context.Context, req *loggingpb.WriteL
 }
 
 func (s *loggingServer) ListLogEntries(_ context.Context, req *loggingpb.ListLogEntriesRequest) (*loggingpb.ListLogEntriesResponse, error) {
-	entries := listLogEntries(req.Filter, req.ResourceNames, int(req.PageSize))
+	entries, next := listLogEntries(req.Filter, req.ResourceNames, int(req.PageSize), req.PageToken)
 
 	var pbEntries []*loggingpb.LogEntry
 	for _, e := range entries {
@@ -445,7 +481,8 @@ func (s *loggingServer) ListLogEntries(_ context.Context, req *loggingpb.ListLog
 	}
 
 	return &loggingpb.ListLogEntriesResponse{
-		Entries: pbEntries,
+		Entries:       pbEntries,
+		NextPageToken: next,
 	}, nil
 }
 

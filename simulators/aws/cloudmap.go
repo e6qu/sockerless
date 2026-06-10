@@ -172,7 +172,7 @@ func handleCMGetNamespace(w http.ResponseWriter, r *http.Request) {
 
 	ns, ok := cmNamespaces.Get(req.Id)
 	if !ok {
-		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
 			"Namespace '%s' not found", req.Id)
 		return
 	}
@@ -196,7 +196,7 @@ func handleCMDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, ok := cmNamespaces.Get(req.Id); !ok {
-		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
 			"Namespace '%s' not found", req.Id)
 		return
 	}
@@ -237,7 +237,7 @@ func handleCMCreateService(w http.ResponseWriter, r *http.Request) {
 
 	if req.NamespaceId != "" {
 		if _, ok := cmNamespaces.Get(req.NamespaceId); !ok {
-			sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
+			sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
 				"Namespace '%s' not found", req.NamespaceId)
 			return
 		}
@@ -275,7 +275,7 @@ func handleCMGetService(w http.ResponseWriter, r *http.Request) {
 
 	svc, ok := cmServices.Get(req.Id)
 	if !ok {
-		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found", req.Id)
 		return
 	}
@@ -302,7 +302,7 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 
 	svc, ok := cmServices.Get(req.ServiceId)
 	if !ok {
-		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found", req.ServiceId)
 		return
 	}
@@ -525,7 +525,7 @@ func handleCMDeregisterInstance(w http.ResponseWriter, r *http.Request) {
 
 	key := cmInstanceKey(req.ServiceId, req.InstanceId)
 	if !cmInstances.Delete(key) {
-		sim.AWSErrorf(w, "InstanceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "InstanceNotFound", http.StatusBadRequest,
 			"Instance '%s' not found", req.InstanceId)
 		return
 	}
@@ -679,7 +679,7 @@ func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, ok := cmServices.Get(req.Id); !ok {
-		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found", req.Id)
 		return
 	}
@@ -799,7 +799,7 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if targetNs == nil {
-		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "NamespaceNotFound", http.StatusBadRequest,
 			"Namespace '%s' not found", req.NamespaceName)
 		return
 	}
@@ -814,7 +814,7 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if targetSvc == nil {
-		sim.AWSErrorf(w, "ServiceNotFound", http.StatusNotFound,
+		sim.AWSErrorf(w, "ServiceNotFound", http.StatusBadRequest,
 			"Service '%s' not found in namespace '%s'", req.ServiceName, req.NamespaceName)
 		return
 	}

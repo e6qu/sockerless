@@ -20,14 +20,21 @@ import (
 
 // Repository represents an Artifact Registry repository.
 type Repository struct {
-	Name                   string         `json:"name"`
-	Format                 string         `json:"format"`
-	Mode                   string         `json:"mode,omitempty"`
-	Description            string         `json:"description,omitempty"`
-	RemoteRepositoryConfig map[string]any `json:"remoteRepositoryConfig,omitempty"`
-	RegistryURI            string         `json:"registryUri,omitempty"` // external: canonical `<location>-docker.pkg.dev/<project>/<repo>` URI; sim serves OCI at the configured endpoint, not pkg.dev
-	CreateTime             string         `json:"createTime"`
-	UpdateTime             string         `json:"updateTime"`
+	Name                   string            `json:"name"`
+	Format                 string            `json:"format"`
+	Mode                   string            `json:"mode,omitempty"`
+	Description            string            `json:"description,omitempty"`
+	Labels                 map[string]string `json:"labels,omitempty"`
+	KmsKeyName             string            `json:"kmsKeyName,omitempty"`
+	CleanupPolicyDryRun    *bool             `json:"cleanupPolicyDryRun,omitempty"`
+	RemoteRepositoryConfig map[string]any    `json:"remoteRepositoryConfig,omitempty"`
+	// Nested writable configs the sim persists verbatim so the
+	// terraform-provider-google read path round-trips without drift.
+	CleanupPolicies json.RawMessage `json:"cleanupPolicies,omitempty"`
+	DockerConfig    json.RawMessage `json:"dockerConfig,omitempty"`
+	RegistryURI     string          `json:"registryUri,omitempty"` // external: canonical `<location>-docker.pkg.dev/<project>/<repo>` URI; sim serves OCI at the configured endpoint, not pkg.dev
+	CreateTime      string          `json:"createTime"`
+	UpdateTime      string          `json:"updateTime"`
 }
 
 // DockerImage represents a Docker image in Artifact Registry.

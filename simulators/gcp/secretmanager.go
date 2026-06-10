@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -26,10 +27,18 @@ var errSecretVersionNotEnabled = errors.New("secret version is not enabled")
 
 // Secret represents a Cloud Secret Manager secret resource.
 type Secret struct {
-	Name        string            `json:"name"`
-	CreateTime  string            `json:"createTime"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Replication map[string]any    `json:"replication,omitempty"`
+	Name           string            `json:"name"`
+	CreateTime     string            `json:"createTime"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Annotations    map[string]string `json:"annotations,omitempty"`
+	VersionAliases map[string]string `json:"versionAliases,omitempty"`
+	Ttl            string            `json:"ttl,omitempty"`
+	ExpireTime     string            `json:"expireTime,omitempty"`
+	Replication    map[string]any    `json:"replication,omitempty"`
+	// Nested writable objects the sim persists verbatim so create→get
+	// round-trips byte-exact for the terraform-provider-google read path.
+	Rotation json.RawMessage `json:"rotation,omitempty"`
+	Topics   json.RawMessage `json:"topics,omitempty"`
 }
 
 // SecretVersion is the wire shape for a single secret version —
@@ -77,8 +86,14 @@ func registerSecretManager(srv *sim.Server) {
 		}
 
 		var req struct {
-			Labels      map[string]string `json:"labels,omitempty"`
-			Replication map[string]any    `json:"replication,omitempty"`
+			Labels         map[string]string `json:"labels,omitempty"`
+			Annotations    map[string]string `json:"annotations,omitempty"`
+			VersionAliases map[string]string `json:"versionAliases,omitempty"`
+			Ttl            string            `json:"ttl,omitempty"`
+			ExpireTime     string            `json:"expireTime,omitempty"`
+			Replication    map[string]any    `json:"replication,omitempty"`
+			Rotation       json.RawMessage   `json:"rotation,omitempty"`
+			Topics         json.RawMessage   `json:"topics,omitempty"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -92,10 +107,16 @@ func registerSecretManager(srv *sim.Server) {
 		}
 
 		secret := Secret{
-			Name:        name,
-			CreateTime:  time.Now().UTC().Format(time.RFC3339),
-			Labels:      req.Labels,
-			Replication: req.Replication,
+			Name:           name,
+			CreateTime:     time.Now().UTC().Format(time.RFC3339),
+			Labels:         req.Labels,
+			Annotations:    req.Annotations,
+			VersionAliases: req.VersionAliases,
+			Ttl:            req.Ttl,
+			ExpireTime:     req.ExpireTime,
+			Replication:    req.Replication,
+			Rotation:       req.Rotation,
+			Topics:         req.Topics,
 		}
 		smSecrets.Put(name, secret)
 		sim.WriteJSON(w, http.StatusOK, secret)
@@ -158,7 +179,10 @@ func registerSecretManager(srv *sim.Server) {
 		}
 
 		var req struct {
-			Labels map[string]string `json:"labels"`
+			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
+			Topics      json.RawMessage   `json:"topics"`
+			Rotation    json.RawMessage   `json:"rotation"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
@@ -169,6 +193,12 @@ func registerSecretManager(srv *sim.Server) {
 			switch strings.TrimSpace(field) {
 			case "labels":
 				secret.Labels = copyLabels(req.Labels)
+			case "annotations":
+				secret.Annotations = copyLabels(req.Annotations)
+			case "topics":
+				secret.Topics = req.Topics
+			case "rotation":
+				secret.Rotation = req.Rotation
 			case "":
 			default:
 				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported updateMask field %q", field)

@@ -260,6 +260,7 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LookupAttributes []cloudTrailLookupAttribute
 		MaxResults       int
+		NextToken        string
 	}
 	_ = readAWSJSONAllowEmpty(r, &req)
 	for _, attr := range req.LookupAttributes {
@@ -269,12 +270,18 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	max := req.MaxResults
-	if max <= 0 || max > 50 {
-		max = 50
+	// The full matched, time-ordered event list; pagination then slices it.
+	all := cloudTrailLookupEvents(cloudTrailEvents.List(), req.LookupAttributes, 0)
+	pageSize := req.MaxResults
+	if pageSize > 50 {
+		pageSize = 50
 	}
-	out := cloudTrailLookupEvents(cloudTrailEvents.List(), req.LookupAttributes, max)
-	writeAWSJSON(w, http.StatusOK, map[string]any{"Events": out})
+	page, next := awsPageExplicit(all, req.NextToken, pageSize)
+	resp := map[string]any{"Events": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	writeAWSJSON(w, http.StatusOK, resp)
 }
 
 type cloudTrailLookupAttribute struct {
@@ -282,10 +289,10 @@ type cloudTrailLookupAttribute struct {
 	AttributeValue string
 }
 
+// cloudTrailLookupEvents returns matched events in descending time order. A
+// max of 0 means no cap (the caller paginates the full list); a positive max
+// truncates the result.
 func cloudTrailLookupEvents(events []CloudTrailEvent, attrs []cloudTrailLookupAttribute, max int) []map[string]any {
-	if max <= 0 || max > 50 {
-		max = 50
-	}
 	ordered := append([]CloudTrailEvent(nil), events...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		left, leftErr := time.Parse(time.RFC3339, ordered[i].EventTime)
@@ -300,7 +307,7 @@ func cloudTrailLookupEvents(events []CloudTrailEvent, attrs []cloudTrailLookupAt
 	})
 	out := make([]map[string]any, 0, len(events))
 	for _, ev := range ordered {
-		if len(out) >= max {
+		if max > 0 && len(out) >= max {
 			break
 		}
 		if !cloudTrailEventMatches(ev, attrs) {

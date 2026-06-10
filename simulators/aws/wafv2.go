@@ -167,6 +167,11 @@ func wafWriteError(w http.ResponseWriter, code, msg string) {
 	})
 }
 
+func wafWriteDuplicate(w http.ResponseWriter, kind, name string) {
+	wafWriteError(w, "WAFDuplicateItemException",
+		fmt.Sprintf("AWS WAF couldn't perform the operation because some resource in your request is a duplicate of an existing one: %s %s", kind, name))
+}
+
 // ---------- Registration ----------
 
 func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
@@ -238,6 +243,12 @@ func handleWAFCreateWebACL(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || req.Scope == "" {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
 		return
+	}
+	for _, s := range wafWebACLs.List() {
+		if s.Scope == req.Scope && s.WebACL.Name == req.Name {
+			wafWriteDuplicate(w, "WebACL", req.Name)
+			return
+		}
 	}
 	id := wafRandomID()
 	lock := wafLockToken()
@@ -509,6 +520,12 @@ func handleWAFCreateIPSet(w http.ResponseWriter, r *http.Request) {
 		wafWriteError(w, "WAFInvalidParameterException", "Name, Scope, IPAddressVersion are required")
 		return
 	}
+	for _, s := range wafIPSets.List() {
+		if s.Scope == req.Scope && s.IPSet.Name == req.Name {
+			wafWriteDuplicate(w, "IPSet", req.Name)
+			return
+		}
+	}
 	if req.Addresses == nil {
 		req.Addresses = []string{}
 	}
@@ -650,6 +667,12 @@ func handleWAFCreateRuleGroup(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || req.Scope == "" {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
 		return
+	}
+	for _, s := range wafRuleGroups.List() {
+		if s.Scope == req.Scope && s.RuleGroup.Name == req.Name {
+			wafWriteDuplicate(w, "RuleGroup", req.Name)
+			return
+		}
 	}
 	id := wafRandomID()
 	lock := wafLockToken()
@@ -805,6 +828,12 @@ func handleWAFCreateRegexSet(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || req.Scope == "" {
 		wafWriteError(w, "WAFInvalidParameterException", "Name and Scope are required")
 		return
+	}
+	for _, s := range wafRegexSets.List() {
+		if s.Scope == req.Scope && s.RegexSet.Name == req.Name {
+			wafWriteDuplicate(w, "RegexPatternSet", req.Name)
+			return
+		}
 	}
 	id := wafRandomID()
 	lock := wafLockToken()

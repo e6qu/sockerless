@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +67,9 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		if hc.Type == "HTTP" && hc.HttpHealthCheck == nil {
 			hc.HttpHealthCheck = &ComputeHTTPHealthCheck{Port: 80, RequestPath: "/", ProxyHeader: "NONE"}
 		}
+		if _, exists := healthChecks.Get(hc.SelfLink); computeConflict(w, exists, "healthChecks", hc.Name) {
+			return
+		}
 		healthChecks.Put(hc.SelfLink, hc)
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, hc.SelfLink, "insert"))
 	})
@@ -104,6 +108,9 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 			bs.TimeoutSec = 30
 		}
 		bs.Fingerprint = computeFingerprint()
+		if _, exists := backendServices.Get(bs.SelfLink); computeConflict(w, exists, "backendServices", bs.Name) {
+			return
+		}
 		backendServices.Put(bs.SelfLink, bs)
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, bs.SelfLink, "insert"))
 	})
@@ -191,6 +198,9 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		um.SelfLink = computeGlobalLink(project, "urlMaps", um.Name)
 		um.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
 		um.Fingerprint = computeFingerprint()
+		if _, exists := urlMaps.Get(um.SelfLink); computeConflict(w, exists, "urlMaps", um.Name) {
+			return
+		}
 		urlMaps.Put(um.SelfLink, um)
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, um.SelfLink, "insert"))
 	})
@@ -219,6 +229,9 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		proxy.Id = computeNumericID()
 		proxy.SelfLink = computeGlobalLink(project, "targetHttpProxies", proxy.Name)
 		proxy.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if _, exists := targetHTTPProxies.Get(proxy.SelfLink); computeConflict(w, exists, "targetHttpProxies", proxy.Name) {
+			return
+		}
 		targetHTTPProxies.Put(proxy.SelfLink, proxy)
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, proxy.SelfLink, "insert"))
 	})
@@ -247,6 +260,9 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		fr.Id = computeNumericID()
 		fr.SelfLink = computeGlobalLink(project, "forwardingRules", fr.Name)
 		fr.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if _, exists := forwardingRules.Get(fr.SelfLink); computeConflict(w, exists, "forwardingRules", fr.Name) {
+			return
+		}
 		if fr.IPAddress == "" {
 			ip, err := realexec.ReserveGCPPublicIPv4(fr.SelfLink, nil)
 			if err != nil {
@@ -277,9 +293,11 @@ func registerComputeLoadBalancing(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		name := sim.PathParam(r, "name")
 		selfLink := computeGlobalLink(project, "forwardingRules", name)
-		if fr, ok := forwardingRules.Get(selfLink); ok {
-			realexec.ReleasePublicIPv4(net.ParseIP(fr.IPAddress))
+		fr, ok := forwardingRules.Get(selfLink)
+		if computeNotFound(w, ok, "forwardingRules", name) {
+			return
 		}
+		realexec.ReleasePublicIPv4(net.ParseIP(fr.IPAddress))
 		forwardingRules.Delete(selfLink)
 		sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "delete"))
 	})
@@ -320,10 +338,18 @@ func computeWriteGlobalList[T computeNamedResource](w http.ResponseWriter, r *ht
 	if items == nil {
 		items = []T{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"kind":  kind,
-		"items": items,
+	sort.Slice(items, func(i, j int) bool {
+		return computeResourceSelfLink(items[i]) < computeResourceSelfLink(items[j])
 	})
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"kind": kind, "items": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func computeResourceSelfLink[T computeNamedResource](resource T) string {
@@ -347,7 +373,9 @@ func computeDeleteGlobalResource[T computeNamedResource](w http.ResponseWriter, 
 	project := sim.PathParam(r, "project")
 	name := sim.PathParam(r, "name")
 	selfLink := computeGlobalLink(project, collection, name)
-	store.Delete(selfLink)
+	if computeNotFound(w, store.Delete(selfLink), collection, name) {
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "delete"))
 }
 

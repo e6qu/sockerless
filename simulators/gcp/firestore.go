@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -143,7 +144,15 @@ func handleFSListDocuments(w http.ResponseWriter, r *http.Request, collection st
 		return rest != "" && !strings.Contains(rest, "/")
 	})
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"documents": docs})
+	page, next, ok := paginateList(w, r, docs)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"documents": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 // fsApplyUpdateMask merges incoming fields into existing per the Firestore
@@ -292,42 +301,54 @@ func handleFSRunQuery(w http.ResponseWriter, r *http.Request, parentPath string)
 	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
 	parent := fsFullName(project, database, strings.Trim(parentPath, "/"))
 	var req struct {
-		StructuredQuery struct {
-			From []struct {
-				CollectionID string `json:"collectionId"`
-			} `json:"from"`
-			Where *struct {
-				FieldFilter *struct {
-					Field struct {
-						FieldPath string `json:"fieldPath"`
-					} `json:"field"`
-					Op    string  `json:"op"`
-					Value FSValue `json:"value"`
-				} `json:"fieldFilter,omitempty"`
-			} `json:"where,omitempty"`
-		} `json:"structuredQuery"`
+		StructuredQuery fsStructuredQuery `json:"structuredQuery"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid runQuery body: %v", err)
 		return
 	}
-	if len(req.StructuredQuery.From) == 0 || req.StructuredQuery.From[0].CollectionID == "" {
+	q := req.StructuredQuery
+	if len(q.From) == 0 || q.From[0].CollectionID == "" {
 		sim.GCPError(w, http.StatusBadRequest, "structuredQuery.from[0].collectionId is required", "INVALID_ARGUMENT")
 		return
 	}
-	collection := strings.TrimSuffix(parent, "/") + "/" + req.StructuredQuery.From[0].CollectionID
+	collection := strings.TrimSuffix(parent, "/") + "/" + q.From[0].CollectionID
 	docs := fsDocuments.Filter(func(d FSDocument) bool {
-		if fsCollectionParent(d.Name) != collection {
-			return false
-		}
-		ff := req.StructuredQuery.Where
-		if ff == nil || ff.FieldFilter == nil {
-			return true
-		}
-		got, ok := d.Fields[ff.FieldFilter.Field.FieldPath]
-		return ok && fsValuesEqual(got, ff.FieldFilter.Value)
+		return fsCollectionParent(d.Name) == collection && fsWhereMatches(d, q.Where)
 	})
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
+
+	// Ordering: explicit orderBy fields (with direction) take precedence,
+	// otherwise documents sort by name (Firestore's implicit __name__ order).
+	sort.SliceStable(docs, func(i, j int) bool {
+		for _, ob := range q.OrderBy {
+			path := ob.Field.FieldPath
+			if path == "" || path == "__name__" {
+				continue
+			}
+			cmp := fsCompareValues(docs[i].Fields[path], docs[j].Fields[path])
+			if cmp == 0 {
+				continue
+			}
+			if strings.EqualFold(ob.Direction, "DESCENDING") {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+		return docs[i].Name < docs[j].Name
+	})
+
+	// Honor offset + limit (the StructuredQuery cursor controls page size).
+	if q.Offset > 0 {
+		if q.Offset >= len(docs) {
+			docs = nil
+		} else {
+			docs = docs[q.Offset:]
+		}
+	}
+	if q.Limit != nil && *q.Limit >= 0 && *q.Limit < len(docs) {
+		docs = docs[:*q.Limit]
+	}
+
 	out := make([]map[string]any, 0, len(docs)+1)
 	for _, d := range docs {
 		out = append(out, map[string]any{"document": d, "readTime": fsNow()})
@@ -336,6 +357,187 @@ func handleFSRunQuery(w http.ResponseWriter, r *http.Request, parentPath string)
 		out = append(out, map[string]any{"readTime": fsNow(), "done": true})
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+type fsStructuredQuery struct {
+	From []struct {
+		CollectionID string `json:"collectionId"`
+	} `json:"from"`
+	Where   *fsFilter `json:"where,omitempty"`
+	OrderBy []struct {
+		Field struct {
+			FieldPath string `json:"fieldPath"`
+		} `json:"field"`
+		Direction string `json:"direction"`
+	} `json:"orderBy,omitempty"`
+	Limit  *int `json:"limit,omitempty"`
+	Offset int  `json:"offset,omitempty"`
+}
+
+type fsFilter struct {
+	CompositeFilter *struct {
+		Op      string     `json:"op"`
+		Filters []fsFilter `json:"filters"`
+	} `json:"compositeFilter,omitempty"`
+	FieldFilter *struct {
+		Field struct {
+			FieldPath string `json:"fieldPath"`
+		} `json:"field"`
+		Op    string  `json:"op"`
+		Value FSValue `json:"value"`
+	} `json:"fieldFilter,omitempty"`
+	UnaryFilter *struct {
+		Op    string `json:"op"`
+		Field struct {
+			FieldPath string `json:"fieldPath"`
+		} `json:"field"`
+	} `json:"unaryFilter,omitempty"`
+}
+
+// fsWhereMatches evaluates a Firestore structured-query filter (field, unary, or
+// composite AND/OR) against a document. A nil filter matches every document.
+func fsWhereMatches(d FSDocument, f *fsFilter) bool {
+	if f == nil {
+		return true
+	}
+	switch {
+	case f.CompositeFilter != nil:
+		isOr := strings.EqualFold(f.CompositeFilter.Op, "OR")
+		for i := range f.CompositeFilter.Filters {
+			m := fsWhereMatches(d, &f.CompositeFilter.Filters[i])
+			if isOr && m {
+				return true
+			}
+			if !isOr && !m {
+				return false
+			}
+		}
+		return !isOr
+	case f.UnaryFilter != nil:
+		got, ok := d.Fields[f.UnaryFilter.Field.FieldPath]
+		switch strings.ToUpper(f.UnaryFilter.Op) {
+		case "IS_NULL":
+			return ok && got.NullValue != nil
+		case "IS_NOT_NULL":
+			return ok && got.NullValue == nil
+		default:
+			return false
+		}
+	case f.FieldFilter != nil:
+		got, ok := d.Fields[f.FieldFilter.Field.FieldPath]
+		want := f.FieldFilter.Value
+		switch strings.ToUpper(f.FieldFilter.Op) {
+		case "EQUAL":
+			return ok && fsValuesEqual(got, want)
+		case "NOT_EQUAL":
+			return ok && !fsValuesEqual(got, want)
+		case "LESS_THAN":
+			return ok && fsCompareValues(got, want) < 0
+		case "LESS_THAN_OR_EQUAL":
+			return ok && fsCompareValues(got, want) <= 0
+		case "GREATER_THAN":
+			return ok && fsCompareValues(got, want) > 0
+		case "GREATER_THAN_OR_EQUAL":
+			return ok && fsCompareValues(got, want) >= 0
+		case "IN":
+			return ok && fsValueInArray(got, want)
+		case "NOT_IN":
+			return ok && !fsValueInArray(got, want)
+		case "ARRAY_CONTAINS":
+			return ok && fsArrayContains(got, want)
+		case "ARRAY_CONTAINS_ANY":
+			return ok && fsArrayContainsAny(got, want)
+		default:
+			return false
+		}
+	default:
+		return true
+	}
+}
+
+// fsValueInArray reports whether got equals any element of want's arrayValue.
+func fsValueInArray(got, want FSValue) bool {
+	if want.ArrayValue == nil {
+		return false
+	}
+	for _, v := range want.ArrayValue.Values {
+		if fsValuesEqual(got, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// fsArrayContains reports whether got's arrayValue contains want.
+func fsArrayContains(got, want FSValue) bool {
+	if got.ArrayValue == nil {
+		return false
+	}
+	for _, v := range got.ArrayValue.Values {
+		if fsValuesEqual(v, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// fsArrayContainsAny reports whether got's arrayValue contains any element of
+// want's arrayValue.
+func fsArrayContainsAny(got, want FSValue) bool {
+	if want.ArrayValue == nil {
+		return false
+	}
+	for _, v := range want.ArrayValue.Values {
+		if fsArrayContains(got, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// fsCompareValues orders two scalar Firestore values of the same type, returning
+// -1, 0, or 1. Numeric values (integer/double) compare numerically; strings and
+// timestamps compare lexically; unknown/mixed types fall back to string form.
+func fsCompareValues(a, b FSValue) int {
+	an, aIsNum := fsNumeric(a)
+	bn, bIsNum := fsNumeric(b)
+	if aIsNum && bIsNum {
+		switch {
+		case an < bn:
+			return -1
+		case an > bn:
+			return 1
+		default:
+			return 0
+		}
+	}
+	as, bs := fsScalarString(a), fsScalarString(b)
+	return strings.Compare(as, bs)
+}
+
+func fsNumeric(v FSValue) (float64, bool) {
+	if v.DoubleValue != nil {
+		return *v.DoubleValue, true
+	}
+	if v.IntegerValue != "" {
+		if n, err := strconv.ParseFloat(v.IntegerValue, 64); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func fsScalarString(v FSValue) string {
+	switch {
+	case v.StringValue != "":
+		return v.StringValue
+	case v.TimestampValue != "":
+		return v.TimestampValue
+	case v.ReferenceValue != "":
+		return v.ReferenceValue
+	default:
+		return fmt.Sprintf("%#v", v)
+	}
 }
 
 func fsValuesEqual(a, b FSValue) bool {

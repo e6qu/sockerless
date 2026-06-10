@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,12 +41,24 @@ type EBEventBus struct {
 }
 
 type EBTarget struct {
-	ID        string         `json:"Id"`
-	Arn       string         `json:"Arn"`
-	RoleArn   string         `json:"RoleArn,omitempty"`
-	Input     string         `json:"Input,omitempty"`
-	InputPath string         `json:"InputPath,omitempty"`
-	Extra     map[string]any `json:"-"`
+	ID        string `json:"Id"`
+	Arn       string `json:"Arn"`
+	RoleArn   string `json:"RoleArn,omitempty"`
+	Input     string `json:"Input,omitempty"`
+	InputPath string `json:"InputPath,omitempty"`
+	// Structured target parameters round-trip byte-exact: storing and
+	// re-emitting the raw JSON preserves every sub-shape so ListTargetsByRule
+	// returns what PutTargets received (terraform aws_cloudwatch_event_target
+	// reads these back).
+	EcsParameters        json.RawMessage `json:"EcsParameters,omitempty"`
+	InputTransformer     json.RawMessage `json:"InputTransformer,omitempty"`
+	RetryPolicy          json.RawMessage `json:"RetryPolicy,omitempty"`
+	DeadLetterConfig     json.RawMessage `json:"DeadLetterConfig,omitempty"`
+	SqsParameters        json.RawMessage `json:"SqsParameters,omitempty"`
+	HttpParameters       json.RawMessage `json:"HttpParameters,omitempty"`
+	BatchParameters      json.RawMessage `json:"BatchParameters,omitempty"`
+	RunCommandParameters json.RawMessage `json:"RunCommandParameters,omitempty"`
+	KinesisParameters    json.RawMessage `json:"KinesisParameters,omitempty"`
 }
 
 type EBEventRecord struct {
@@ -265,6 +278,8 @@ func handleEBDescribeEventBus(w http.ResponseWriter, r *http.Request) {
 func handleEBListEventBuses(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NamePrefix string `json:"NamePrefix"`
+		Limit      int    `json:"Limit"`
+		NextToken  string `json:"NextToken"`
 	}
 	_ = sim.ReadJSON(r, &req)
 	_, _ = ebGetBus("default")
@@ -275,7 +290,13 @@ func handleEBListEventBuses(w http.ResponseWriter, r *http.Request) {
 		}
 		buses = append(buses, bus)
 	}
-	writeEBJSON(w, http.StatusOK, map[string]any{"EventBuses": buses})
+	sort.Slice(buses, func(i, j int) bool { return buses[i].Name < buses[j].Name })
+	page, next := awsPageExplicit(buses, req.NextToken, req.Limit)
+	out := map[string]any{"EventBuses": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
 }
 
 func handleEBDeleteEventBus(w http.ResponseWriter, r *http.Request) {
@@ -514,6 +535,7 @@ func handleEBListRules(w http.ResponseWriter, r *http.Request) {
 		NamePrefix   string `json:"NamePrefix"`
 		EventBusName string `json:"EventBusName"`
 		Limit        int    `json:"Limit"`
+		NextToken    string `json:"NextToken"`
 	}
 	_ = sim.ReadJSON(r, &req)
 	bus := ebBusName(req.EventBusName)
@@ -527,7 +549,13 @@ func handleEBListRules(w http.ResponseWriter, r *http.Request) {
 		}
 		rules = append(rules, rule)
 	}
-	writeEBJSON(w, http.StatusOK, map[string]any{"Rules": rules})
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
+	page, next := awsPageExplicit(rules, req.NextToken, req.Limit)
+	out := map[string]any{"Rules": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
 }
 
 func handleEBDeleteRule(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +648,8 @@ func handleEBListTargetsByRule(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Rule         string `json:"Rule"`
 		EventBusName string `json:"EventBusName"`
+		Limit        int    `json:"Limit"`
+		NextToken    string `json:"NextToken"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -634,7 +664,13 @@ func handleEBListTargetsByRule(w http.ResponseWriter, r *http.Request) {
 	if targets == nil {
 		targets = []EBTarget{}
 	}
-	writeEBJSON(w, http.StatusOK, map[string]any{"Targets": targets})
+	sort.Slice(targets, func(i, j int) bool { return targets[i].ID < targets[j].ID })
+	page, next := awsPageExplicit(targets, req.NextToken, req.Limit)
+	out := map[string]any{"Targets": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
 }
 
 func handleEBRemoveTargets(w http.ResponseWriter, r *http.Request) {
@@ -882,6 +918,8 @@ func handleEBListArchives(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EventSourceArn string `json:"EventSourceArn"`
 		NamePrefix     string `json:"NamePrefix"`
+		Limit          int    `json:"Limit"`
+		NextToken      string `json:"NextToken"`
 	}
 	_ = sim.ReadJSON(r, &req)
 	archives := make([]EBArchive, 0)
@@ -894,7 +932,13 @@ func handleEBListArchives(w http.ResponseWriter, r *http.Request) {
 		}
 		archives = append(archives, archive)
 	}
-	writeEBJSON(w, http.StatusOK, map[string]any{"Archives": archives})
+	sort.Slice(archives, func(i, j int) bool { return archives[i].ArchiveName < archives[j].ArchiveName })
+	page, next := awsPageExplicit(archives, req.NextToken, req.Limit)
+	out := map[string]any{"Archives": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
 }
 
 func handleEBDeleteArchive(w http.ResponseWriter, r *http.Request) {
@@ -989,6 +1033,8 @@ func handleEBListReplays(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EventSourceArn string `json:"EventSourceArn"`
 		NamePrefix     string `json:"NamePrefix"`
+		Limit          int    `json:"Limit"`
+		NextToken      string `json:"NextToken"`
 	}
 	_ = sim.ReadJSON(r, &req)
 	replays := make([]EBReplay, 0)
@@ -1001,7 +1047,13 @@ func handleEBListReplays(w http.ResponseWriter, r *http.Request) {
 		}
 		replays = append(replays, replay)
 	}
-	writeEBJSON(w, http.StatusOK, map[string]any{"Replays": replays})
+	sort.Slice(replays, func(i, j int) bool { return replays[i].ReplayName < replays[j].ReplayName })
+	page, next := awsPageExplicit(replays, req.NextToken, req.Limit)
+	out := map[string]any{"Replays": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
 }
 
 func ebParseJSONTime(raw json.RawMessage) (int64, error) {

@@ -264,7 +264,11 @@ func handleELBv2CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleELBv2DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) {
-	lbs := filterELBv2LoadBalancers(r)
+	lbs, nf := filterELBv2LoadBalancers(r)
+	if nf != nil {
+		elbv2ErrorXML(w, nf.code, nf.message, http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	var b strings.Builder
 	b.WriteString("<LoadBalancers>")
 	for _, lb := range lbs {
@@ -412,7 +416,11 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleELBv2DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
-	tgs := filterELBv2TargetGroups(r)
+	tgs, nf := filterELBv2TargetGroups(r)
+	if nf != nil {
+		elbv2ErrorXML(w, nf.code, nf.message, http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	var b strings.Builder
 	b.WriteString("<TargetGroups>")
 	for _, tg := range tgs {
@@ -622,7 +630,11 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleELBv2DescribeListeners(w http.ResponseWriter, r *http.Request) {
-	listeners := filterELBv2Listeners(r)
+	listeners, nf := filterELBv2Listeners(r)
+	if nf != nil {
+		elbv2ErrorXML(w, nf.code, nf.message, http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	var b strings.Builder
 	b.WriteString("<Listeners>")
 	for _, listener := range listeners {
@@ -700,65 +712,94 @@ func handleELBv2DescribeAccountLimits(w http.ResponseWriter, r *http.Request) {
 	elbv2XMLResponse(w, "DescribeAccountLimits", body, sim.RequestID(r.Context()))
 }
 
-func filterELBv2LoadBalancers(r *http.Request) []ELBv2LoadBalancer {
+// elbv2NotFound names the typed error a Describe must raise when an explicit
+// identifier in the request is absent from the store.
+type elbv2NotFound struct {
+	code    string
+	message string
+}
+
+func filterELBv2LoadBalancers(r *http.Request) ([]ELBv2LoadBalancer, *elbv2NotFound) {
 	if arns := queryList(r, "LoadBalancerArns"); len(arns) > 0 {
 		var out []ELBv2LoadBalancer
 		for _, arn := range arns {
-			if lb, ok := elbv2LoadBalancers.Get(arn); ok {
-				out = append(out, lb)
+			lb, ok := elbv2LoadBalancers.Get(arn)
+			if !ok {
+				return nil, &elbv2NotFound{"LoadBalancerNotFound", fmt.Sprintf("Load balancers '[%s]' not found", arn)}
 			}
+			out = append(out, lb)
 		}
-		return out
+		return out, nil
 	}
 	if names := queryList(r, "Names"); len(names) > 0 {
-		nameSet := make(map[string]bool, len(names))
-		for _, n := range names {
-			nameSet[n] = true
+		byName := make(map[string]ELBv2LoadBalancer)
+		for _, lb := range elbv2LoadBalancers.List() {
+			byName[lb.Name] = lb
 		}
-		return elbv2LoadBalancers.Filter(func(lb ELBv2LoadBalancer) bool { return nameSet[lb.Name] })
+		var out []ELBv2LoadBalancer
+		for _, n := range names {
+			lb, ok := byName[n]
+			if !ok {
+				return nil, &elbv2NotFound{"LoadBalancerNotFound", fmt.Sprintf("Load balancers '[%s]' not found", n)}
+			}
+			out = append(out, lb)
+		}
+		return out, nil
 	}
-	return elbv2LoadBalancers.List()
+	return elbv2LoadBalancers.List(), nil
 }
 
-func filterELBv2TargetGroups(r *http.Request) []ELBv2TargetGroup {
+func filterELBv2TargetGroups(r *http.Request) ([]ELBv2TargetGroup, *elbv2NotFound) {
 	if arns := queryList(r, "TargetGroupArns"); len(arns) > 0 {
 		var out []ELBv2TargetGroup
 		for _, arn := range arns {
-			if tg, ok := elbv2TargetGroups.Get(arn); ok {
-				out = append(out, tg)
+			tg, ok := elbv2TargetGroups.Get(arn)
+			if !ok {
+				return nil, &elbv2NotFound{"TargetGroupNotFound", fmt.Sprintf("Target groups '[%s]' not found", arn)}
 			}
+			out = append(out, tg)
 		}
-		return out
+		return out, nil
 	}
 	if names := queryList(r, "Names"); len(names) > 0 {
-		nameSet := make(map[string]bool, len(names))
-		for _, n := range names {
-			nameSet[n] = true
+		byName := make(map[string]ELBv2TargetGroup)
+		for _, tg := range elbv2TargetGroups.List() {
+			byName[tg.Name] = tg
 		}
-		return elbv2TargetGroups.Filter(func(tg ELBv2TargetGroup) bool { return nameSet[tg.Name] })
+		var out []ELBv2TargetGroup
+		for _, n := range names {
+			tg, ok := byName[n]
+			if !ok {
+				return nil, &elbv2NotFound{"TargetGroupNotFound", fmt.Sprintf("Target groups '[%s]' not found", n)}
+			}
+			out = append(out, tg)
+		}
+		return out, nil
 	}
 	if lbArn := r.FormValue("LoadBalancerArn"); lbArn != "" {
 		return elbv2TargetGroups.Filter(func(tg ELBv2TargetGroup) bool {
 			return containsString(tg.LoadBalancerArns, lbArn)
-		})
+		}), nil
 	}
-	return elbv2TargetGroups.List()
+	return elbv2TargetGroups.List(), nil
 }
 
-func filterELBv2Listeners(r *http.Request) []ELBv2Listener {
+func filterELBv2Listeners(r *http.Request) ([]ELBv2Listener, *elbv2NotFound) {
 	if arns := queryList(r, "ListenerArns"); len(arns) > 0 {
 		var out []ELBv2Listener
 		for _, arn := range arns {
-			if listener, ok := elbv2Listeners.Get(arn); ok {
-				out = append(out, listener)
+			listener, ok := elbv2Listeners.Get(arn)
+			if !ok {
+				return nil, &elbv2NotFound{"ListenerNotFound", fmt.Sprintf("Listener '%s' not found", arn)}
 			}
+			out = append(out, listener)
 		}
-		return out
+		return out, nil
 	}
 	if lbArn := r.FormValue("LoadBalancerArn"); lbArn != "" {
-		return elbv2Listeners.Filter(func(l ELBv2Listener) bool { return l.LoadBalancerArn == lbArn })
+		return elbv2Listeners.Filter(func(l ELBv2Listener) bool { return l.LoadBalancerArn == lbArn }), nil
 	}
-	return elbv2Listeners.List()
+	return elbv2Listeners.List(), nil
 }
 
 // elbv2DefaultEnforceSG: NLBs carry
