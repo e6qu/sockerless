@@ -8,15 +8,15 @@ import (
 )
 
 func (s *Server) registerGHHookRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm(scopeAdministration, permWrite, s.handleCreateHook))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm(scopeAdministration, permRead, s.handleListHooks))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permRead, s.handleGetHook))
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateHook))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteHook))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries", s.requirePerm(scopeAdministration, permRead, s.handleListHookDeliveries))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}", s.requirePerm(scopeAdministration, permRead, s.handleGetHookDelivery))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}/attempts", s.requirePerm(scopeAdministration, permWrite, s.handleRedeliverHookDelivery))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/pings", s.requirePerm(scopeAdministration, permWrite, s.handlePingHook))
+	s.route("POST /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm(scopeAdministration, permWrite, s.handleCreateHook))
+	s.route("GET /api/v3/repos/{owner}/{repo}/hooks", s.requirePerm(scopeAdministration, permRead, s.handleListHooks))
+	s.route("GET /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permRead, s.handleGetHook))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateHook))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/hooks/{id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteHook))
+	s.route("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries", s.requirePerm(scopeAdministration, permRead, s.handleListHookDeliveries))
+	s.route("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}", s.requirePerm(scopeAdministration, permRead, s.handleGetHookDelivery))
+	s.route("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}/attempts", s.requirePerm(scopeAdministration, permWrite, s.handleRedeliverHookDelivery))
+	s.route("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/pings", s.requirePerm(scopeAdministration, permWrite, s.handlePingHook))
 }
 
 func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {

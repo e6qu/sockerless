@@ -6,14 +6,14 @@ import (
 )
 
 func (s *Server) registerGHOrgRoutes() {
-	s.mux.HandleFunc("POST /api/v3/admin/organizations", s.handleAdminCreateOrg)
-	s.mux.HandleFunc("POST /api/v3/user/orgs", s.handleCreateOrg)
-	s.mux.HandleFunc("GET /api/v3/user/orgs", s.handleListAuthUserOrgs)
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}", s.handleGetOrg)
-	s.mux.HandleFunc("PATCH /api/v3/orgs/{org}", s.handleUpdateOrg)
-	s.mux.HandleFunc("DELETE /api/v3/orgs/{org}", s.handleDeleteOrg)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/orgs", s.handleListUserOrgs)
-	s.mux.HandleFunc("POST /api/v3/orgs/{org}/repos", s.handleCreateOrgRepo)
+	s.route("POST /api/v3/admin/organizations", s.handleAdminCreateOrg)
+	s.route("POST /api/v3/user/orgs", s.handleCreateOrg)
+	s.route("GET /api/v3/user/orgs", s.handleListAuthUserOrgs)
+	s.route("GET /api/v3/orgs/{org}", s.handleGetOrg)
+	s.route("PATCH /api/v3/orgs/{org}", s.handleUpdateOrg)
+	s.route("DELETE /api/v3/orgs/{org}", s.handleDeleteOrg)
+	s.route("GET /api/v3/users/{username}/orgs", s.handleListUserOrgs)
+	s.route("POST /api/v3/orgs/{org}/repos", s.handleCreateOrgRepo)
 
 	s.registerGHTeamRoutes()
 	s.registerGHMemberRoutes()

@@ -11,9 +11,9 @@ import (
 )
 
 func (s *Server) registerGHRepoRefRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/branches", s.handleListBranches)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/branches/{branch}", s.handleGetBranch)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleDeleteRef)
+	s.route("GET /api/v3/repos/{owner}/{repo}/branches", s.handleListBranches)
+	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}", s.handleGetBranch)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleDeleteRef)
 }
 
 func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {

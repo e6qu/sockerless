@@ -264,23 +264,23 @@ func (as *ArtifactStore) writeCacheDataAt(entry *CacheEntry, chunk []byte, offse
 
 func (s *Server) registerArtifactRoutes() {
 	// Twirp-style artifact service (JSON over HTTP, @actions/artifact v4)
-	s.mux.HandleFunc("POST /twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", s.handleCreateArtifact)
-	s.mux.HandleFunc("POST /twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact", s.handleFinalizeArtifact)
-	s.mux.HandleFunc("POST /twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts", s.handleListArtifacts)
-	s.mux.HandleFunc("POST /twirp/github.actions.results.api.v1.ArtifactService/GetSignedArtifactURL", s.handleGetSignedArtifactURL)
+	s.route("POST /twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", s.handleCreateArtifact)
+	s.route("POST /twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact", s.handleFinalizeArtifact)
+	s.route("POST /twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts", s.handleListArtifacts)
+	s.route("POST /twirp/github.actions.results.api.v1.ArtifactService/GetSignedArtifactURL", s.handleGetSignedArtifactURL)
 
 	// Artifact upload/download blob endpoints
-	s.mux.HandleFunc("PUT /_apis/v1/artifacts/{artifactId}/upload", s.handleUploadArtifact)
-	s.mux.HandleFunc("GET /_apis/v1/artifacts/{artifactId}/download", s.handleDownloadArtifact)
+	s.route("PUT /_apis/v1/artifacts/{artifactId}/upload", s.handleUploadArtifact)
+	s.route("GET /_apis/v1/artifacts/{artifactId}/download", s.handleDownloadArtifact)
 
 	// Actions cache API used by actions/cache. The @actions/cache toolkit
 	// reserves at the plural `caches` path (getCacheApiUrl('caches')) and
 	// looks up at the singular `cache?keys=`.
-	s.mux.HandleFunc("POST /_apis/artifactcache/caches", s.handleCacheReserve)
-	s.mux.HandleFunc("GET /_apis/artifactcache/cache", s.handleCacheLookup)
-	s.mux.HandleFunc("PATCH /_apis/artifactcache/caches/{cacheId}", s.handleCacheUpload)
-	s.mux.HandleFunc("POST /_apis/artifactcache/caches/{cacheId}", s.handleCacheFinalize)
-	s.mux.HandleFunc("GET /_apis/artifactcache/caches/{cacheId}", s.handleCacheDownload)
+	s.route("POST /_apis/artifactcache/caches", s.handleCacheReserve)
+	s.route("GET /_apis/artifactcache/cache", s.handleCacheLookup)
+	s.route("PATCH /_apis/artifactcache/caches/{cacheId}", s.handleCacheUpload)
+	s.route("POST /_apis/artifactcache/caches/{cacheId}", s.handleCacheFinalize)
+	s.route("GET /_apis/artifactcache/caches/{cacheId}", s.handleCacheDownload)
 }
 
 // --- Artifact Twirp handlers ---

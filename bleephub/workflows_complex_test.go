@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -286,7 +285,7 @@ func TestConcurrentWorkflowLimit(t *testing.T) {
 
 	// First workflow should succeed
 	wf1 := `{"workflow":"name: w1\njobs:\n  a:\n    runs-on: self-hosted\n    steps:\n      - run: echo 1","image":"alpine:latest"}`
-	resp1, err := http.Post(testBaseURL+"/api/v3/bleephub/workflow", "application/json", bytes.NewBufferString(wf1))
+	resp1, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewBufferString(wf1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,7 +924,7 @@ func TestCancelWorkflowHTTP(t *testing.T) {
 	}
 
 	// Cancel via HTTP endpoint
-	resp, err := http.Post(testBaseURL+"/api/v3/bleephub/workflows/"+workflow.ID+"/cancel", "", nil)
+	resp, err := authedPost("/internal/exec/workflows/"+workflow.ID+"/cancel", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +941,7 @@ func TestCancelWorkflowHTTP(t *testing.T) {
 }
 
 func TestCancelNonexistentWorkflow404(t *testing.T) {
-	resp, err := http.Post(testBaseURL+"/api/v3/bleephub/workflows/nonexistent/cancel", "", nil)
+	resp, err := authedPost("/internal/exec/workflows/nonexistent/cancel", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,7 +954,7 @@ func TestCancelNonexistentWorkflow404(t *testing.T) {
 func TestCancelCompletedWorkflow409(t *testing.T) {
 	// Submit a workflow that will complete quickly (single echo job)
 	wfJSON := `{"workflow":"name: done\njobs:\n  a:\n    runs-on: self-hosted\n    steps:\n      - run: echo done","image":"alpine:latest"}`
-	resp, err := http.Post(testBaseURL+"/api/v3/bleephub/workflow", "application/json", bytes.NewBufferString(wfJSON))
+	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewBufferString(wfJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +971,7 @@ func TestCancelCompletedWorkflow409(t *testing.T) {
 	// We need to find the workflow and manually complete it
 	// Since it might be dispatched but not completed yet, just test the cancel path
 	// on an already-completed workflow by completing all jobs first
-	resp2, err := http.Post(testBaseURL+"/api/v3/bleephub/workflows/"+wfID+"/cancel", "", nil)
+	resp2, err := authedPost("/internal/exec/workflows/"+wfID+"/cancel", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

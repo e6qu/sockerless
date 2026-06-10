@@ -6,12 +6,12 @@ import (
 )
 
 func (s *Server) registerGHRepoRoutes() {
-	s.mux.HandleFunc("POST /api/v3/user/repos", s.requirePerm(scopeContents, permWrite, s.handleCreateRepo))
-	s.mux.HandleFunc("GET /api/v3/user/repos", s.handleListAuthUserRepos)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}", s.handleGetRepo)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateRepo))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRepo))
-	s.mux.HandleFunc("GET /api/v3/users/{username}/repos", s.handleListUserRepos)
+	s.route("POST /api/v3/user/repos", s.requirePerm(scopeContents, permWrite, s.handleCreateRepo))
+	s.route("GET /api/v3/user/repos", s.handleListAuthUserRepos)
+	s.route("GET /api/v3/repos/{owner}/{repo}", s.handleGetRepo)
+	s.route("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateRepo))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRepo))
+	s.route("GET /api/v3/users/{username}/repos", s.handleListUserRepos)
 	s.registerGHRepoRefRoutes()
 	s.registerGHRepoObjectRoutes()
 }

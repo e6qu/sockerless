@@ -111,7 +111,7 @@ export async function verifyToken(token: string): Promise<boolean> {
   return res.ok;
 }
 
-// The `/api/v3/bleephub/*` create + oauth-apps endpoints return GitHub's
+// The /internal/* create + oauth-apps management endpoints return GitHub's
 // snake_case wire shape (client_id, callback_url, created_at). The UI's
 // types are camelCase, so normalize at this boundary. Fields are mapped
 // 1:1 from the server contract — no defaults, so a contract break shows
@@ -134,7 +134,7 @@ export async function createApp(payload: {
   permissions?: Record<string, string>;
   events?: string[];
 }): Promise<{ clientId: string; pem: string; client_secret: string; webhook_secret: string }> {
-  const res = await fetch("/api/v3/bleephub/apps", {
+  const res = await fetch("/internal/apps", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -159,7 +159,7 @@ export async function createApp(payload: {
 }
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
-  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+  const res = await fetch("/internal/oauth-apps", {
     headers: authHeaders(),
   });
   if (!res.ok) {
@@ -176,7 +176,7 @@ export async function createOAuthApp(payload: {
   url?: string;
   callback_url?: string;
 }): Promise<BleephubOAuthApp & { client_secret: string }> {
-  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+  const res = await fetch("/internal/oauth-apps", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -197,7 +197,7 @@ export async function createOAuthApp(payload: {
 
 export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
   const verb = suspend ? "suspend" : "unsuspend";
-  const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {
+  const res = await fetch(`/internal/installations/${installationID}/${verb}`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -208,7 +208,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 }
 
 export async function deleteInstallation(installationID: number): Promise<void> {
-  const res = await fetch(`/api/v3/bleephub/installations/${installationID}`, {
+  const res = await fetch(`/internal/installations/${installationID}`, {
     method: "DELETE",
     headers: authHeaders(),
   });

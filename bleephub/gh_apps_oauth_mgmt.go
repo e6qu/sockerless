@@ -22,15 +22,16 @@ import (
 //   DELETE /applications/{client_id}/grant         revoke user grant
 
 func (s *Server) registerGHAppsOAuthMgmtRoutes() {
-	s.mux.HandleFunc("POST /api/v3/applications/{client_id}/token", s.handleCheckOAuthToken)
-	s.mux.HandleFunc("PATCH /api/v3/applications/{client_id}/token", s.handleResetOAuthToken)
-	s.mux.HandleFunc("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
-	s.mux.HandleFunc("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
-	s.mux.HandleFunc("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
+	s.route("POST /api/v3/applications/{client_id}/token", s.handleCheckOAuthToken)
+	s.route("PATCH /api/v3/applications/{client_id}/token", s.handleResetOAuthToken)
+	s.route("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
+	s.route("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
+	s.route("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
 
-	// OAuth App management (sim-only convenience for the UI / tests).
-	s.mux.HandleFunc("POST /api/v3/bleephub/oauth-apps", s.handleCreateOAuthAppMgmt)
-	s.mux.HandleFunc("GET /api/v3/bleephub/oauth-apps", s.handleListOAuthAppsMgmt)
+	// OAuth App management. GitHub has NO REST API to create/list OAuth Apps
+	// (web UI only), so this is sim-control under /internal/, never /api/.
+	s.route("POST /internal/oauth-apps", s.handleCreateOAuthAppMgmt)
+	s.route("GET /internal/oauth-apps", s.handleListOAuthAppsMgmt)
 }
 
 // authenticateClientCreds reads + verifies HTTP Basic auth carrying

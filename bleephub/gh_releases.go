@@ -194,22 +194,22 @@ func (rs *ReleaseStore) Delete(id int) bool {
 }
 
 func (s *Server) registerGHReleasesRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases",
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases",
 		s.requirePerm(scopeContents, permWrite, s.handleCreateRelease))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases",
 		s.handleListReleases)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/latest",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/latest",
 		s.handleGetLatestRelease)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases/generate-notes",
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases/generate-notes",
 		s.requirePerm(scopeContents, permWrite, s.handleGenerateReleaseNotes))
 
 	// Single-segment after /releases/ is GET-release-by-id. Use {release_id}
 	// directly here — these patterns don't conflict with the two-segment ones.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/{release_id}",
 		s.handleGetRelease)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/releases/{release_id}",
 		s.requirePerm(scopeContents, permWrite, s.handleUpdateRelease))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}",
 		s.requirePerm(scopeContents, permWrite, s.handleDeleteRelease))
 
 	// `/releases/{p1}/{p2}` dispatches by segment value:
@@ -217,11 +217,11 @@ func (s *Server) registerGHReleasesRoutes() {
 	//   p1==numeric     → reactions on release {p1} when p2 == "reactions"
 	// Go 1.22's mux refuses to register the two distinct patterns directly,
 	// so a single dispatcher handles both real-GH paths.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("GET"))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("POST"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}/{p3}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}/{p3}",
 		s.handleReleaseThreeSegDispatch("DELETE"))
 }
 

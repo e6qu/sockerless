@@ -11,35 +11,40 @@ import (
 
 func (s *Server) registerGHAppsRoutes() {
 	// GitHub App API endpoints
-	s.mux.HandleFunc("POST /api/v3/app-manifests/{code}/conversions", s.handleManifestConversion)
-	s.mux.HandleFunc("GET /api/v3/app", s.handleGetAuthenticatedApp)
-	s.mux.HandleFunc("GET /api/v3/apps/{app_slug}", s.handleGetAppBySlug)
-	s.mux.HandleFunc("GET /api/v3/app/installations", s.handleListAppInstallations)
-	s.mux.HandleFunc("GET /api/v3/app/installations/{id}", s.handleGetAppInstallation)
-	s.mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", s.handleCreateInstallationToken)
-	s.mux.HandleFunc("DELETE /api/v3/app/installations/{id}", s.handleDeleteAppInstallation)
-	s.mux.HandleFunc("PUT /api/v3/app/installations/{id}/suspended", s.handleSuspendInstallation)
-	s.mux.HandleFunc("DELETE /api/v3/app/installations/{id}/suspended", s.handleUnsuspendInstallation)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/installation", s.handleGetRepoInstallation)
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/installation", s.handleGetOrgInstallation)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/installation", s.handleGetUserInstallation)
+	s.route("POST /api/v3/app-manifests/{code}/conversions", s.handleManifestConversion)
+	s.route("GET /api/v3/app", s.handleGetAuthenticatedApp)
+	s.route("GET /api/v3/apps/{app_slug}", s.handleGetAppBySlug)
+	s.route("GET /api/v3/app/installations", s.handleListAppInstallations)
+	s.route("GET /api/v3/app/installations/{id}", s.handleGetAppInstallation)
+	s.route("POST /api/v3/app/installations/{id}/access_tokens", s.handleCreateInstallationToken)
+	s.route("DELETE /api/v3/app/installations/{id}", s.handleDeleteAppInstallation)
+	s.route("PUT /api/v3/app/installations/{id}/suspended", s.handleSuspendInstallation)
+	s.route("DELETE /api/v3/app/installations/{id}/suspended", s.handleUnsuspendInstallation)
+	s.route("GET /api/v3/repos/{owner}/{repo}/installation", s.handleGetRepoInstallation)
+	s.route("GET /api/v3/orgs/{org}/installation", s.handleGetOrgInstallation)
+	s.route("GET /api/v3/users/{username}/installation", s.handleGetUserInstallation)
 
 	// installations from the authenticated user's perspective.
-	s.mux.HandleFunc("GET /api/v3/user/installations", s.handleListUserInstallations)
-	s.mux.HandleFunc("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
-	s.mux.HandleFunc("PUT /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleAddUserInstallationRepo)
-	s.mux.HandleFunc("DELETE /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleRemoveUserInstallationRepo)
-	s.mux.HandleFunc("DELETE /api/v3/installation/token", s.handleRevokeInstallationToken)
+	s.route("GET /api/v3/user/installations", s.handleListUserInstallations)
+	s.route("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
+	s.route("PUT /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleAddUserInstallationRepo)
+	s.route("DELETE /api/v3/user/installations/{id}/repositories/{repo_id}", s.handleRemoveUserInstallationRepo)
+	s.route("DELETE /api/v3/installation/token", s.handleRevokeInstallationToken)
 
 	// installation-token-scoped repositories list.
-	s.mux.HandleFunc("GET /api/v3/installation/repositories", s.handleListInstallationRepositories)
+	s.route("GET /api/v3/installation/repositories", s.handleListInstallationRepositories)
 
-	// Management endpoints for testing
-	s.mux.HandleFunc("POST /api/v3/bleephub/apps", s.handleCreateApp)
-	s.mux.HandleFunc("POST /api/v3/bleephub/apps/{app_id}/installations", s.handleCreateInstallationMgmt)
-	s.mux.HandleFunc("POST /api/v3/bleephub/installations/{id}/suspend", s.handleSuspendInstallationMgmt)
-	s.mux.HandleFunc("POST /api/v3/bleephub/installations/{id}/unsuspend", s.handleUnsuspendInstallationMgmt)
-	s.mux.HandleFunc("DELETE /api/v3/bleephub/installations/{id}", s.handleDeleteInstallationMgmt)
+	// Operator/UI management surface. App + installation creation have no
+	// GitHub REST equivalent (real GitHub uses the browser manifest/install
+	// flows); suspend/unsuspend/delete DO have real JWT-gated endpoints above
+	// (PUT|DELETE /app/installations/{id}/suspended, DELETE /app/installations/{id})
+	// — these are the PAT-auth operator equivalents. Both are sim-control, so
+	// they live under /internal/, not the GitHub-compatible /api/ surface.
+	s.route("POST /internal/apps", s.handleCreateApp)
+	s.route("POST /internal/apps/{app_id}/installations", s.handleCreateInstallationMgmt)
+	s.route("POST /internal/installations/{id}/suspend", s.handleSuspendInstallationMgmt)
+	s.route("POST /internal/installations/{id}/unsuspend", s.handleUnsuspendInstallationMgmt)
+	s.route("DELETE /internal/installations/{id}", s.handleDeleteInstallationMgmt)
 }
 
 // handleSuspendInstallationMgmt — sim-only convenience that lets the UI suspend

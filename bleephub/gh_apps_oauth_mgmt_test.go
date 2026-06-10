@@ -164,7 +164,7 @@ func TestOAuthAppManagement(t *testing.T) {
 		"url":          "https://example.test",
 		"callback_url": "https://example.test/cb",
 	})
-	req := httptest.NewRequest("POST", "/api/v3/bleephub/oauth-apps", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/internal/oauth-apps", bytes.NewReader(body))
 	user := s.store.UsersByLogin["admin"]
 	req = req.WithContext(setUserCtx(req, user))
 	w := httptest.NewRecorder()
@@ -179,7 +179,7 @@ func TestOAuthAppManagement(t *testing.T) {
 	}
 
 	// List
-	req = httptest.NewRequest("GET", "/api/v3/bleephub/oauth-apps", nil)
+	req = httptest.NewRequest("GET", "/internal/oauth-apps", nil)
 	req = req.WithContext(setUserCtx(req, user))
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)

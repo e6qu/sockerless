@@ -6,15 +6,15 @@ import (
 )
 
 func (s *Server) registerMgmtRoutes() {
-	s.mux.HandleFunc("GET /internal/workflows", s.handleListWorkflows)
-	s.mux.HandleFunc("GET /internal/workflows/{workflowId}", s.handleGetWorkflow)
-	s.mux.HandleFunc("GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs)
-	s.mux.HandleFunc("GET /internal/workflow_files", s.handleListWorkflowFilesInternal)
-	s.mux.HandleFunc("GET /internal/apps", s.handleListAppsInternal)
-	s.mux.HandleFunc("GET /internal/installations", s.handleListInstallationsInternal)
-	s.mux.HandleFunc("GET /internal/oauth/state", s.handleOAuthStateInternal)
-	s.mux.HandleFunc("GET /internal/sessions", s.handleListSessions)
-	s.mux.HandleFunc("GET /internal/repos", s.handleListRepos)
+	s.route("GET /internal/workflows", s.handleListWorkflows)
+	s.route("GET /internal/workflows/{workflowId}", s.handleGetWorkflow)
+	s.route("GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs)
+	s.route("GET /internal/workflow_files", s.handleListWorkflowFilesInternal)
+	s.route("GET /internal/apps", s.handleListAppsInternal)
+	s.route("GET /internal/installations", s.handleListInstallationsInternal)
+	s.route("GET /internal/oauth/state", s.handleOAuthStateInternal)
+	s.route("GET /internal/sessions", s.handleListSessions)
+	s.route("GET /internal/repos", s.handleListRepos)
 }
 
 // appView / installationView / oauthState — operator-facing admin

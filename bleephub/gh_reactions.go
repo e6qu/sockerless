@@ -178,35 +178,35 @@ func (rs *ReactionStore) SummarizeReactions(parentType string, parentID int) map
 
 func (s *Server) registerGHReactionsRoutes() {
 	// Issue reactions
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
+	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue", "number")))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
 		s.handleListReactions("issue", "number"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/reactions/{reaction_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/reactions/{reaction_id}",
 		s.requirePerm(scopeIssues, permWrite, s.handleDeleteReaction("issue", "number")))
 
 	// Issue comment reactions
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+	s.route("POST /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue_comment", "comment_id")))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
 		s.handleListReactions("issue_comment", "comment_id"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}",
 		s.requirePerm(scopeIssues, permWrite, s.handleDeleteReaction("issue_comment", "comment_id")))
 
 	// PR review-comment reactions
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
 		s.requirePerm(scopePullRequests, permWrite, s.handleCreateReaction("pull_request_review_comment", "comment_id")))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
 		s.handleListReactions("pull_request_review_comment", "comment_id"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}",
 		s.requirePerm(scopePullRequests, permWrite, s.handleDeleteReaction("pull_request_review_comment", "comment_id")))
 
 	// Commit comment reactions
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions",
+	s.route("POST /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions",
 		s.requirePerm(scopeContents, permWrite, s.handleCreateReaction("commit_comment", "comment_id")))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions",
+	s.route("GET /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions",
 		s.handleListReactions("commit_comment", "comment_id"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions/{reaction_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions/{reaction_id}",
 		s.requirePerm(scopeContents, permWrite, s.handleDeleteReaction("commit_comment", "comment_id")))
 
 	// Release reactions — register via the disambiguation dispatcher in

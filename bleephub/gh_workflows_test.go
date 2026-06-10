@@ -120,7 +120,7 @@ func TestWorkflows_AutoRegisterOnSubmit(t *testing.T) {
 		"workflow": sampleWorkflowYAML,
 		"repo":     "octo/repo",
 	})
-	req := httptest.NewRequest("POST", "/api/v3/bleephub/workflow", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/internal/exec/workflow", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)

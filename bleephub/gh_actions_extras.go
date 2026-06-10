@@ -27,25 +27,25 @@ import (
 //   GET  /repos/{o}/{r}/actions/runs/{run_id}/approvals      env-pending approvals
 
 func (s *Server) registerGHActionsExtrasRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/dispatches",
+	s.route("POST /api/v3/repos/{owner}/{repo}/dispatches",
 		s.requirePerm(scopeContents, permWrite, s.handleRepositoryDispatch))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/logs",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/logs",
 		s.handleRunLogs)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
 		s.requirePerm(scopeActions, permWrite, s.handleRerunFailedJobs))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/timing",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/timing",
 		s.handleRunTiming)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
 		s.handleRunArtifacts)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/artifacts",
 		s.handleRepoArtifacts)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
 		s.handleGetArtifact)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
 		s.requirePerm(scopeActions, permWrite, s.handleDeleteArtifact))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}",
 		s.handleDownloadArtifactArchive)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals",
 		s.handleRunApprovals)
 }
 

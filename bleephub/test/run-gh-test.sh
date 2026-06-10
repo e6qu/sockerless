@@ -420,7 +420,7 @@ fi
 log "GitHub Apps + OAuth Apps surface"
 
 # Create a GitHub App with explicit permissions + events
-APP=$(api "$BASE/api/v3/bleephub/apps" -f name="Parity App" -f description="parity test" \
+APP=$(api "$BASE/internal/apps" -f name="Parity App" -f description="parity test" \
     -f 'permissions[issues]=write' -f 'permissions[checks]=write' \
     -f 'events[]=push' -f 'events[]=installation')
 APP_ID=$(echo "$APP" | jq -r '.id')
@@ -436,7 +436,7 @@ PEM_LEAK=$(echo "$APP_BY_SLUG" | jq -r '.pem // ""')
 assert_eq "public app no PEM leak" "" "$PEM_LEAK"
 
 # Create an installation
-INST=$(api "$BASE/api/v3/bleephub/apps/$APP_ID/installations" \
+INST=$(api "$BASE/internal/apps/$APP_ID/installations" \
     -f target_type=User -f target_id=1 -f target_login=admin \
     -f 'permissions[issues]=write' -f 'permissions[checks]=write')
 INST_ID=$(echo "$INST" | jq -r '.id')
@@ -452,10 +452,10 @@ esac
 
 # Suspend / unsuspend (sim mgmt path)
 SUSPEND_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
-    "$BASE/api/v3/bleephub/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
+    "$BASE/internal/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
 assert_eq "suspend installation 204" "204" "$SUSPEND_CODE"
 UNSUSP_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
-    "$BASE/api/v3/bleephub/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
+    "$BASE/internal/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
 assert_eq "unsuspend installation 204" "204" "$UNSUSP_CODE"
 
 # Installation lookup by user
@@ -464,7 +464,7 @@ USR_INST_ID=$(echo "$USR_INST" | jq -r '.id // 0')
 assert_eq "GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
 
 # OAuth App create + Basic-auth on /applications/{client_id}/token
-OA=$(api "$BASE/api/v3/bleephub/oauth-apps" -f name="OA Parity" -f description="parity" \
+OA=$(api "$BASE/internal/oauth-apps" -f name="OA Parity" -f description="parity" \
     -f url="https://example.test" -f callback_url="https://example.test/cb")
 OA_CID=$(echo "$OA" | jq -r '.client_id')
 OA_CSEC=$(echo "$OA" | jq -r '.client_secret')

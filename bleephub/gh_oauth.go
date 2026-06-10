@@ -39,15 +39,15 @@ func writeOAuthTokenResponse(w http.ResponseWriter, r *http.Request, fields map[
 }
 
 func (s *Server) registerGHOAuthRoutes() {
-	s.mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
-	s.mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)
-	s.mux.HandleFunc("GET /login/device", s.handleDevicePage)
+	s.route("POST /login/device/code", s.handleDeviceCode)
+	s.route("POST /login/oauth/access_token", s.handleOAuthAccessToken)
+	s.route("GET /login/device", s.handleDevicePage)
 	// Session login (required before the web-flow authorize step).
-	s.mux.HandleFunc("GET /login", s.handleLoginPage)
-	s.mux.HandleFunc("POST /login", s.handleLoginPost)
+	s.route("GET /login", s.handleLoginPage)
+	s.route("POST /login", s.handleLoginPost)
 	// OAuth web flow.
-	s.mux.HandleFunc("GET /login/oauth/authorize", s.handleOAuthAuthorize)
-	s.mux.HandleFunc("POST /login/oauth/authorize", s.handleOAuthAuthorizeApprove)
+	s.route("GET /login/oauth/authorize", s.handleOAuthAuthorize)
+	s.route("POST /login/oauth/authorize", s.handleOAuthAuthorizeApprove)
 }
 
 // authCode is a one-time-use OAuth authorization code keyed off a

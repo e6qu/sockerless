@@ -43,6 +43,21 @@ func authedGet(t *testing.T, path string) *http.Response {
 	return resp
 }
 
+// authedPost mirrors http.Post but adds the admin token, for the /internal/*
+// sim-control endpoints which the internal-auth middleware gates. The path is
+// relative to testBaseURL; signature matches http.Post for drop-in use.
+func authedPost(path, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest("POST", testBaseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	return http.DefaultClient.Do(req)
+}
+
 func TestMain(m *testing.M) {
 	// The admin token has no default — every consumer (incl. the test harness)
 	// must set it explicitly. defaultToken is the non-PAT value the tests use.
@@ -344,7 +359,7 @@ func TestSessionAndMessage(t *testing.T) {
 
 	// Submit a job
 	jobBody := `{"image":"alpine:latest","steps":[{"run":"echo hello"}]}`
-	resp2, err := http.Post(testBaseURL+"/api/v3/bleephub/submit", "application/json", bytes.NewBufferString(jobBody))
+	resp2, err := authedPost("/internal/exec/submit", "application/json", bytes.NewBufferString(jobBody))
 	if err != nil {
 		t.Fatal(err)
 	}

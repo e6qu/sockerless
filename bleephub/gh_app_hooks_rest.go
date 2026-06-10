@@ -16,11 +16,11 @@ import (
 // deliveries (Store.AppHookDeliveries, keyed by app ID).
 
 func (s *Server) registerGHAppHookRoutes() {
-	s.mux.HandleFunc("GET /api/v3/app/hook/config", s.handleGetAppHookConfig)
-	s.mux.HandleFunc("PATCH /api/v3/app/hook/config", s.handleUpdateAppHookConfig)
-	s.mux.HandleFunc("GET /api/v3/app/hook/deliveries", s.handleListAppHookDeliveries)
-	s.mux.HandleFunc("GET /api/v3/app/hook/deliveries/{delivery_id}", s.handleGetAppHookDelivery)
-	s.mux.HandleFunc("POST /api/v3/app/hook/deliveries/{delivery_id}/attempts", s.handleRedeliverAppHookDelivery)
+	s.route("GET /api/v3/app/hook/config", s.handleGetAppHookConfig)
+	s.route("PATCH /api/v3/app/hook/config", s.handleUpdateAppHookConfig)
+	s.route("GET /api/v3/app/hook/deliveries", s.handleListAppHookDeliveries)
+	s.route("GET /api/v3/app/hook/deliveries/{delivery_id}", s.handleGetAppHookDelivery)
+	s.route("POST /api/v3/app/hook/deliveries/{delivery_id}/attempts", s.handleRedeliverAppHookDelivery)
 }
 
 func (s *Server) handleGetAppHookConfig(w http.ResponseWriter, r *http.Request) {

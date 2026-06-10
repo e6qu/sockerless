@@ -9,22 +9,22 @@ import (
 
 func (s *Server) registerTimelineRoutes() {
 	// Timeline CRUD
-	s.mux.HandleFunc("POST /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline", s.handleCreateTimeline)
-	s.mux.HandleFunc("POST /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline/{timelineId}", s.handleCreateTimeline)
-	s.mux.HandleFunc("PUT /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline/{timelineId}", s.handleCreateTimeline)
+	s.route("POST /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline", s.handleCreateTimeline)
+	s.route("POST /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline/{timelineId}", s.handleCreateTimeline)
+	s.route("PUT /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/timeline/{timelineId}", s.handleCreateTimeline)
 
 	// Timeline records
-	s.mux.HandleFunc("PATCH /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/{timelineId}", s.handleUpdateRecords)
+	s.route("PATCH /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/{timelineId}", s.handleUpdateRecords)
 
 	// Log files
-	s.mux.HandleFunc("POST /_apis/v1/Logfiles/{scopeId}/{hubName}/{planId}", s.handleCreateLog)
-	s.mux.HandleFunc("POST /_apis/v1/Logfiles/{scopeId}/{hubName}/{planId}/{logId}", s.handleUploadLog)
+	s.route("POST /_apis/v1/Logfiles/{scopeId}/{hubName}/{planId}", s.handleCreateLog)
+	s.route("POST /_apis/v1/Logfiles/{scopeId}/{hubName}/{planId}/{logId}", s.handleUploadLog)
 
 	// Web console log (live output)
-	s.mux.HandleFunc("POST /_apis/v1/TimeLineWebConsoleLog/{scopeId}/{hubName}/{planId}/{timelineId}/{recordId}", s.handleWebConsoleLog)
+	s.route("POST /_apis/v1/TimeLineWebConsoleLog/{scopeId}/{hubName}/{planId}/{timelineId}/{recordId}", s.handleWebConsoleLog)
 
 	// Timeline attachments
-	s.mux.HandleFunc("PUT /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/{timelineId}/attachments/{recordId}/{attachType}/{name}", s.handleTimelineAttachment)
+	s.route("PUT /_apis/v1/Timeline/{scopeId}/{hubName}/{planId}/{timelineId}/attachments/{recordId}/{attachType}/{name}", s.handleTimelineAttachment)
 }
 
 func (s *Server) handleCreateTimeline(w http.ResponseWriter, r *http.Request) {

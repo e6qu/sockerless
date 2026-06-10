@@ -18,14 +18,14 @@ import (
 
 func (s *Server) registerAuthRoutes() {
 	// Runner registration (GHES-style)
-	s.mux.HandleFunc("POST /api/v3/actions/runner-registration", s.handleRunnerRegistration)
+	s.route("POST /api/v3/actions/runner-registration", s.handleRunnerRegistration)
 
 	// Connection data (service discovery)
-	s.mux.HandleFunc("GET /_apis/connectionData", s.handleConnectionData)
+	s.route("GET /_apis/connectionData", s.handleConnectionData)
 
 	// OAuth token exchange
-	s.mux.HandleFunc("POST /_apis/v1/auth/", s.handleOAuthToken)
-	s.mux.HandleFunc("POST /_apis/v1/auth", s.handleOAuthToken)
+	s.route("POST /_apis/v1/auth/", s.handleOAuthToken)
+	s.route("POST /_apis/v1/auth", s.handleOAuthToken)
 }
 
 // handleRunnerRegistration returns the tenant URL and a management token.

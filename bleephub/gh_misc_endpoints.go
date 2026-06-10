@@ -29,60 +29,60 @@ import (
 
 func (s *Server) registerGHMiscEndpoints() {
 	// Users keys + emails + follow
-	s.mux.HandleFunc("GET /api/v3/user/keys", s.handleListUserKeys)
-	s.mux.HandleFunc("POST /api/v3/user/keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateUserKey))
-	s.mux.HandleFunc("GET /api/v3/user/keys/{key_id}", s.handleGetUserKey)
-	s.mux.HandleFunc("DELETE /api/v3/user/keys/{key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteUserKey))
-	s.mux.HandleFunc("GET /api/v3/user/gpg_keys", s.handleListGPGKeys)
-	s.mux.HandleFunc("POST /api/v3/user/gpg_keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateGPGKey))
-	s.mux.HandleFunc("GET /api/v3/user/gpg_keys/{gpg_key_id}", s.handleGetGPGKey)
-	s.mux.HandleFunc("DELETE /api/v3/user/gpg_keys/{gpg_key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteGPGKey))
-	s.mux.HandleFunc("GET /api/v3/user/emails", s.handleListUserEmails)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/keys", s.handleListUserKeysByLogin)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/gpg_keys", s.handleListGPGKeysByLogin)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/followers", s.handleListFollowers)
-	s.mux.HandleFunc("GET /api/v3/users/{username}/following", s.handleListFollowing)
-	s.mux.HandleFunc("GET /api/v3/user/followers", s.handleListMyFollowers)
-	s.mux.HandleFunc("GET /api/v3/user/following", s.handleListMyFollowing)
-	s.mux.HandleFunc("PUT /api/v3/user/following/{username}", s.handleFollowUser)
-	s.mux.HandleFunc("DELETE /api/v3/user/following/{username}", s.handleUnfollowUser)
+	s.route("GET /api/v3/user/keys", s.handleListUserKeys)
+	s.route("POST /api/v3/user/keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateUserKey))
+	s.route("GET /api/v3/user/keys/{key_id}", s.handleGetUserKey)
+	s.route("DELETE /api/v3/user/keys/{key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteUserKey))
+	s.route("GET /api/v3/user/gpg_keys", s.handleListGPGKeys)
+	s.route("POST /api/v3/user/gpg_keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateGPGKey))
+	s.route("GET /api/v3/user/gpg_keys/{gpg_key_id}", s.handleGetGPGKey)
+	s.route("DELETE /api/v3/user/gpg_keys/{gpg_key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteGPGKey))
+	s.route("GET /api/v3/user/emails", s.handleListUserEmails)
+	s.route("GET /api/v3/users/{username}/keys", s.handleListUserKeysByLogin)
+	s.route("GET /api/v3/users/{username}/gpg_keys", s.handleListGPGKeysByLogin)
+	s.route("GET /api/v3/users/{username}/followers", s.handleListFollowers)
+	s.route("GET /api/v3/users/{username}/following", s.handleListFollowing)
+	s.route("GET /api/v3/user/followers", s.handleListMyFollowers)
+	s.route("GET /api/v3/user/following", s.handleListMyFollowing)
+	s.route("PUT /api/v3/user/following/{username}", s.handleFollowUser)
+	s.route("DELETE /api/v3/user/following/{username}", s.handleUnfollowUser)
 
 	// Actions OIDC
-	s.mux.HandleFunc("GET /token", s.handleActionsOIDCToken)
-	s.mux.HandleFunc("GET /.well-known/openid-configuration", s.handleOIDCDiscovery)
-	s.mux.HandleFunc("GET /.well-known/jwks", s.handleJWKS)
-	s.mux.HandleFunc("GET /api/v3/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
-	s.mux.HandleFunc("PUT /api/v3/actions/oidc/customization/sub",
+	s.route("GET /token", s.handleActionsOIDCToken)
+	s.route("GET /.well-known/openid-configuration", s.handleOIDCDiscovery)
+	s.route("GET /.well-known/jwks", s.handleJWKS)
+	s.route("GET /api/v3/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
+	s.route("PUT /api/v3/actions/oidc/customization/sub",
 		s.requirePerm(scopeAdministration, permWrite, s.handleOIDCCustomSubPut))
 
 	// Pages
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages", s.handlePagesGet)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pages",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages", s.handlePagesGet)
+	s.route("POST /api/v3/repos/{owner}/{repo}/pages",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesCreate))
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pages",
+	s.route("PUT /api/v3/repos/{owner}/{repo}/pages",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesUpdate))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/pages",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pages",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDelete))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds", s.handlePagesListBuilds)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pages/builds",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds", s.handlePagesListBuilds)
+	s.route("POST /api/v3/repos/{owner}/{repo}/pages/builds",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesTriggerBuild))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.handlePagesLatestBuild)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.handlePagesGetBuild)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.handlePagesLatestBuild)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.handlePagesGetBuild)
 
 	// Branch protection
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection", s.handleBranchProtectionGet)
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
+	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection", s.handleBranchProtectionGet)
+	s.route("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
 		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionPut))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
 		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionDelete))
 
 	// Orgs depth (members listing + memberships CRUD already covered in
 	// gh_members_rest.go — implementation).
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/audit-log", s.handleOrgAuditLog)
+	s.route("GET /api/v3/orgs/{org}/audit-log", s.handleOrgAuditLog)
 
 	// Marketplace
-	s.mux.HandleFunc("GET /api/v3/marketplace_listing/plans", s.handleMarketplacePlans)
-	s.mux.HandleFunc("GET /api/v3/marketplace_listing/accounts/{account_id}", s.handleMarketplaceAccount)
+	s.route("GET /api/v3/marketplace_listing/plans", s.handleMarketplacePlans)
+	s.route("GET /api/v3/marketplace_listing/accounts/{account_id}", s.handleMarketplaceAccount)
 }
 
 // --- Store ---

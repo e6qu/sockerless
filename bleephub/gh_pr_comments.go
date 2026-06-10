@@ -263,15 +263,15 @@ func (s *PRReviewCommentStore) ListThreads(prID int) []*ReviewThread {
 
 func (s *Server) registerGHPRCommentsRoutes() {
 	// `/pulls/{number}/comments` (3 segments, literal "comments" at pos 3)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
 		s.requirePerm(scopePullRequests, permWrite, s.handleCreatePRComment))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
 		s.handleListPRComments)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
 		s.requirePerm(scopePullRequests, permWrite, s.handleReplyPRComment))
 
 	// `/pulls/{number}/review-threads` (3 segments, literal at pos 3)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads",
 		s.handleListReviewThreads)
 
 	// `/pulls/comments/{comment_id}` — single-review-comment surface.
@@ -281,11 +281,11 @@ func (s *Server) registerGHPRCommentsRoutes() {
 	// when comment subpath is intended). The existing /pulls/{number}/<literal>
 	// routes are strictly more specific (literal at pos 3) and continue to win
 	// for their URLs.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("GET"))
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("PATCH"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("DELETE"))
 }
 

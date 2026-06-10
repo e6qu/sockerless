@@ -15,10 +15,10 @@ type Secret struct {
 }
 
 func (s *Server) registerSecretsRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/secrets", s.requirePerm(scopeSecrets, permRead, s.handleListSecrets))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permRead, s.handleGetSecret))
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permWrite, s.handlePutSecret))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permWrite, s.handleDeleteSecret))
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/secrets", s.requirePerm(scopeSecrets, permRead, s.handleListSecrets))
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permRead, s.handleGetSecret))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permWrite, s.handlePutSecret))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/secrets/{name}", s.requirePerm(scopeSecrets, permWrite, s.handleDeleteSecret))
 }
 
 func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {

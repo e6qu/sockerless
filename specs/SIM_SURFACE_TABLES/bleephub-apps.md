@@ -66,13 +66,13 @@ Canonical reference: <https://docs.github.com/en/enterprise-server/rest/apps>
 
 | Operation | Verb + path | sim handler | test | notes |
 |---|---|---|---|---|
-| Create app | `POST /api/v3/bleephub/apps` | ✓ `handleCreateApp` | ✓ `gh_apps_test.go` | Internal provisioning endpoint. |
-| Create installation | `POST /api/v3/bleephub/apps/{app_id}/installations` | ✓ `handleCreateInstallationMgmt` | ✓ same | |
-| Suspend installation | `POST /api/v3/bleephub/installations/{id}/suspend` | ✓ `handleSuspendInstallationMgmt` | ✓ same | |
-| Unsuspend installation | `POST /api/v3/bleephub/installations/{id}/unsuspend` | ✓ `handleUnsuspendInstallationMgmt` | ✓ same | |
-| Delete installation | `DELETE /api/v3/bleephub/installations/{id}` | ✓ `handleDeleteInstallationMgmt` | ✓ same | |
-| Create OAuth app | `POST /api/v3/bleephub/oauth-apps` | ✓ `handleCreateOAuthAppMgmt` | ✓ `gh_apps_oauth_mgmt_test.go` | |
-| List OAuth apps | `GET /api/v3/bleephub/oauth-apps` | ✓ `handleListOAuthAppsMgmt` | ✓ same | |
+| Create app | `POST /internal/apps` | ✓ `handleCreateApp` | ✓ `gh_apps_test.go` | Internal provisioning endpoint. |
+| Create installation | `POST /internal/apps/{app_id}/installations` | ✓ `handleCreateInstallationMgmt` | ✓ same | |
+| Suspend installation | `POST /internal/installations/{id}/suspend` | ✓ `handleSuspendInstallationMgmt` | ✓ same | |
+| Unsuspend installation | `POST /internal/installations/{id}/unsuspend` | ✓ `handleUnsuspendInstallationMgmt` | ✓ same | |
+| Delete installation | `DELETE /internal/installations/{id}` | ✓ `handleDeleteInstallationMgmt` | ✓ same | |
+| Create OAuth app | `POST /internal/oauth-apps` | ✓ `handleCreateOAuthAppMgmt` | ✓ `gh_apps_oauth_mgmt_test.go` | |
+| List OAuth apps | `GET /internal/oauth-apps` | ✓ `handleListOAuthAppsMgmt` | ✓ same | |
 
 ## OAuth / device flows
 

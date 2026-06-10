@@ -37,7 +37,7 @@ echo "$TOKEN" | gh auth login --hostname "$BLEEPHUB_HOST" --with-token
 export GH_HOST="$BLEEPHUB_HOST"
 ```
 
-Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or `POST /api/v3/bleephub/apps/{id}/installations/.../access_tokens` — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
+Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or the real GitHub endpoint `POST /api/v3/app/installations/{installation_id}/access_tokens` (JWT-authenticated) — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
 
 That's it. `gh` is now authenticated against bleephub.
 

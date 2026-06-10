@@ -10,21 +10,25 @@ import (
 )
 
 func (s *Server) registerJobRoutes() {
-	s.mux.HandleFunc("POST /api/v3/bleephub/submit", s.handleSubmitJob)
-	s.mux.HandleFunc("GET /api/v3/bleephub/jobs/{jobId}", s.handleGetJobStatus)
+	// Sim-only job/workflow control plane. GitHub has NO equivalent (jobs are
+	// children of workflow runs created via dispatch/push), so these live
+	// under /internal/exec/ — the sim-control namespace — never under the
+	// GitHub-compatible /api/ surface.
+	s.route("POST /internal/exec/submit", s.handleSubmitJob)
+	s.route("GET /internal/exec/jobs/{jobId}", s.handleGetJobStatus)
 
 	// Workflow YAML submission
-	s.mux.HandleFunc("POST /api/v3/bleephub/workflow", s.handleSubmitWorkflow)
-	s.mux.HandleFunc("GET /api/v3/bleephub/workflows/{workflowId}", s.handleGetWorkflowStatus)
+	s.route("POST /internal/exec/workflow", s.handleSubmitWorkflow)
+	s.route("GET /internal/exec/workflows/{workflowId}", s.handleGetWorkflowStatus)
 
 	// Workflow cancellation
-	s.mux.HandleFunc("POST /api/v3/bleephub/workflows/{workflowId}/cancel", s.handleCancelWorkflow)
+	s.route("POST /internal/exec/workflows/{workflowId}/cancel", s.handleCancelWorkflow)
 
 	// ActionDownloadInfo — runner requests download URLs for actions (handler in actions.go)
-	s.mux.HandleFunc("POST /_apis/v1/ActionDownloadInfo/{scopeId}/{hubName}/{planId}", s.handleActionDownloadInfo)
+	s.route("POST /_apis/v1/ActionDownloadInfo/{scopeId}/{hubName}/{planId}", s.handleActionDownloadInfo)
 
 	// Tasks endpoint (runner may request task definitions)
-	s.mux.HandleFunc("GET /_apis/v1/tasks/{taskId}/{versionString}", s.handleGetTask)
+	s.route("GET /_apis/v1/tasks/{taskId}/{versionString}", s.handleGetTask)
 }
 
 // SubmitRequest is the simplified job submission format.

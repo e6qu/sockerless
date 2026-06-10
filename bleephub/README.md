@@ -92,7 +92,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 | Broker | `/_apis/v1/AgentSession/`, `/_apis/v1/Message/` | Session management, 30s message long-poll |
 | Run service | `/_apis/v1/AgentRequest/`, `/_apis/v1/FinishJob/` | Job acquire/renew/complete |
 | Timeline + logs | `/_apis/v1/Timeline/`, `/_apis/v1/Logfiles/` | Step status tracking, log upload |
-| Job submission | `/api/v3/bleephub/submit` | Simplified JSON job input (not part of runner protocol) |
+| Job submission | `/internal/exec/submit` | Simplified JSON job input — sim-control, NOT a GitHub API (lives under `/internal/`, not `/api/v3/`) |
 
 ### GitHub REST API (`/api/v3/`) — supported surface
 
@@ -122,7 +122,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 - Installation events: `installation`, `installation_repositories` fire on store transitions.
 - JWT verification: RS256, 600s max lifetime, iat/exp validation.
 
-**OAuth Apps.** Distinct entity from GitHub Apps. `POST /api/v3/bleephub/oauth-apps` (sim management). OAuth web flow (`/login/oauth/authorize`) + device flow (`/login/device/code`). Token-management family on `/api/v3/applications/{client_id}/{token,grant}` (check / reset / revoke / scope).
+**OAuth Apps.** Distinct entity from GitHub Apps. Created/listed via the sim-control surface `POST/GET /internal/oauth-apps` (GitHub has no REST API to create OAuth Apps, so this is NOT under `/api/v3/`). OAuth web flow (`/login/oauth/authorize`) + device flow (`/login/device/code`). Token-management family on the real `/api/v3/applications/{client_id}/{token,grant}` (check / reset / revoke / scope).
 
 **Token prefixes.** Match real GH exactly: `ghp_` (PAT), `gho_` (OAuth App user-to-server), `ghu_` (GitHub App user-to-server), `ghs_` (server-to-server installation), `ghr_` (refresh). Middleware distinguishes all five.
 
@@ -204,7 +204,7 @@ For local end-to-end workflow runs:
 1. Runner calls `config.sh --url http://bleephub/owner/repo --token ...`
 2. bleephub returns registration data, agent pool, credentials.
 3. Runner starts `run.sh`, creates a session, long-polls `/_apis/v1/Message/`.
-4. A job is submitted via `POST /api/v3/bleephub/submit` (simplified JSON).
+4. A job is submitted via `POST /internal/exec/submit` (simplified JSON; sim-control, not a GitHub API path).
 5. bleephub converts to the internal job-message format and delivers it.
 6. Runner creates a Docker container through `DOCKER_HOST` (pointing at Sockerless).
 7. Runner execs each `run:` step inside the container via `docker exec`.

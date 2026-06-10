@@ -14,12 +14,12 @@ const messagePollTimeout = 30 * time.Second
 
 func (s *Server) registerBrokerRoutes() {
 	// Sessions
-	s.mux.HandleFunc("POST /_apis/v1/AgentSession/{poolId}", s.handleCreateSession)
-	s.mux.HandleFunc("DELETE /_apis/v1/AgentSession/{poolId}/{sessionId}", s.handleDeleteSession)
+	s.route("POST /_apis/v1/AgentSession/{poolId}", s.handleCreateSession)
+	s.route("DELETE /_apis/v1/AgentSession/{poolId}/{sessionId}", s.handleDeleteSession)
 
 	// Message polling
-	s.mux.HandleFunc("GET /_apis/v1/Message/{poolId}", s.handleGetMessage)
-	s.mux.HandleFunc("DELETE /_apis/v1/Message/{poolId}/{messageId}", s.handleDeleteMessage)
+	s.route("GET /_apis/v1/Message/{poolId}", s.handleGetMessage)
+	s.route("DELETE /_apis/v1/Message/{poolId}/{messageId}", s.handleDeleteMessage)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

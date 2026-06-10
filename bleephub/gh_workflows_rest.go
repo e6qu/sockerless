@@ -13,10 +13,10 @@ import (
 )
 
 func (s *Server) registerGHWorkflowsRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/workflows", s.handleListGHWorkflows)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}", s.handleGetGHWorkflow)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", s.handleListWorkflowFileRuns)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/workflows", s.handleListGHWorkflows)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}", s.handleGetGHWorkflow)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", s.handleListWorkflowFileRuns)
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
 		s.requirePerm(scopeActions, permWrite, s.handleDispatchWorkflow))
 }
 

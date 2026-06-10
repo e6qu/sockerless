@@ -68,10 +68,10 @@ func TestInstallationCreatedFiresAppWebhook(t *testing.T) {
 		"target_id":    1,
 		"target_login": user.Login,
 	})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", app.ID), bytes.NewReader(reqBody))
+	req := httptest.NewRequest("POST", fmt.Sprintf("/internal/apps/%d/installations", app.ID), bytes.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
 	w := httptest.NewRecorder()
-	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	s.internalAuthMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create installation status = %d body = %s", w.Code, w.Body.String())
 	}

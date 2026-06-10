@@ -71,7 +71,7 @@ func parsePermLevel(s string) permLevel {
 //
 // Usage:
 //
-//	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeContents, permWrite, s.handleUpdateRepo))
+//	s.route("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeContents, permWrite, s.handleUpdateRepo))
 func (s *Server) requirePerm(scope permScope, level permLevel, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// PAT path → bypass (PATs are full-scope in real GH; sim follows suit).

@@ -296,28 +296,28 @@ func (ds *DeploymentStore) DeleteEnvironment(repoID int, name string) bool {
 }
 
 func (s *Server) registerGHDeploymentsRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/deployments",
+	s.route("POST /api/v3/repos/{owner}/{repo}/deployments",
 		s.requirePerm(scopeDeployments, permWrite, s.handleCreateDeployment))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments",
+	s.route("GET /api/v3/repos/{owner}/{repo}/deployments",
 		s.handleListDeployments)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
 		s.handleGetDeployment)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
 		s.requirePerm(scopeDeployments, permWrite, s.handleDeleteDeployment))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
+	s.route("POST /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
 		s.requirePerm(scopeDeployments, permWrite, s.handleCreateDeploymentStatus))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
+	s.route("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
 		s.handleListDeploymentStatuses)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses/{status_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses/{status_id}",
 		s.handleGetDeploymentStatus)
 
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/environments",
+	s.route("GET /api/v3/repos/{owner}/{repo}/environments",
 		s.handleListEnvironments)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/environments/{env_name}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/environments/{env_name}",
 		s.handleGetEnvironment)
-	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/environments/{env_name}",
+	s.route("PUT /api/v3/repos/{owner}/{repo}/environments/{env_name}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleUpsertEnvironment))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/environments/{env_name}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/environments/{env_name}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteEnvironment))
 }
 

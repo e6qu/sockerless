@@ -22,19 +22,19 @@ import (
 )
 
 func (s *Server) registerGHActionsRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs", s.handleListWorkflowRuns)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs", s.handleListWorkflowRuns)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}",
 		s.requirePerm(scopeActions, permWrite, s.handleDeleteWorkflowRun))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel",
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel",
 		s.requirePerm(scopeActions, permWrite, s.handleCancelWorkflowRun))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
 		s.requirePerm(scopeActions, permWrite, s.handleRerunWorkflowRun))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
 }
 

@@ -18,9 +18,9 @@ import (
 // gh CLI's `gh pr review --thread` calls the GraphQL mutations.
 
 func (s *Server) registerGHPRThreadsRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/resolve",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/resolve",
 		s.requirePerm(scopePullRequests, permWrite, s.handleResolveThreadREST(true)))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/unresolve",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/unresolve",
 		s.requirePerm(scopePullRequests, permWrite, s.handleResolveThreadREST(false)))
 }
 

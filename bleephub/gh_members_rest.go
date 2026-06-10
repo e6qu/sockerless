@@ -5,17 +5,17 @@ import (
 )
 
 func (s *Server) registerGHMemberRoutes() {
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/members", s.handleListOrgMembers)
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/memberships/{username}", s.handleGetOrgMembership)
-	s.mux.HandleFunc("PUT /api/v3/orgs/{org}/memberships/{username}", s.handleSetOrgMembership)
-	s.mux.HandleFunc("DELETE /api/v3/orgs/{org}/memberships/{username}", s.handleRemoveOrgMembership)
+	s.route("GET /api/v3/orgs/{org}/members", s.handleListOrgMembers)
+	s.route("GET /api/v3/orgs/{org}/memberships/{username}", s.handleGetOrgMembership)
+	s.route("PUT /api/v3/orgs/{org}/memberships/{username}", s.handleSetOrgMembership)
+	s.route("DELETE /api/v3/orgs/{org}/memberships/{username}", s.handleRemoveOrgMembership)
 
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/teams/{team_slug}/members", s.handleListTeamMembers)
-	s.mux.HandleFunc("PUT /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.handleAddTeamMember)
-	s.mux.HandleFunc("DELETE /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.handleRemoveTeamMember)
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/members", s.handleListTeamMembers)
+	s.route("PUT /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.handleAddTeamMember)
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.handleRemoveTeamMember)
 
-	s.mux.HandleFunc("PUT /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.handleAddTeamRepo)
-	s.mux.HandleFunc("DELETE /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.handleRemoveTeamRepo)
+	s.route("PUT /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.handleAddTeamRepo)
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.handleRemoveTeamRepo)
 }
 
 func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {

@@ -44,7 +44,7 @@ func (ac *ActionCache) Put(key string, entry *ActionCacheEntry) {
 
 func (s *Server) registerActionRoutes() {
 	// Tarball proxy — serves cached action tarballs
-	s.mux.HandleFunc("GET /_apis/v1/actions/tarball/{owner}/{repo}/{ref...}", s.handleActionTarball)
+	s.route("GET /_apis/v1/actions/tarball/{owner}/{repo}/{ref...}", s.handleActionTarball)
 }
 
 // handleActionDownloadInfo returns tarball URLs for requested actions.
