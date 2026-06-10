@@ -28,11 +28,11 @@ import (
 
 func (s *Server) registerGHActionsExtrasRoutes() {
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/dispatches",
-		s.requirePerm("contents", permWrite, s.handleRepositoryDispatch))
+		s.requirePerm(scopeContents, permWrite, s.handleRepositoryDispatch))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/logs",
 		s.handleRunLogs)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
-		s.requirePerm("actions", permWrite, s.handleRerunFailedJobs))
+		s.requirePerm(scopeActions, permWrite, s.handleRerunFailedJobs))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/timing",
 		s.handleRunTiming)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
@@ -42,7 +42,7 @@ func (s *Server) registerGHActionsExtrasRoutes() {
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
 		s.handleGetArtifact)
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}",
-		s.requirePerm("actions", permWrite, s.handleDeleteArtifact))
+		s.requirePerm(scopeActions, permWrite, s.handleDeleteArtifact))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}",
 		s.handleDownloadArtifactArchive)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals",

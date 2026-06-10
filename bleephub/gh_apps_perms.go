@@ -34,6 +34,27 @@ const (
 	permAdmin
 )
 
+// permScope is a GitHub fine-grained permission name. The values are the
+// exact keys used in an installation token's Permissions map and in the
+// App API, so they must not change — but call sites reference the named
+// constants, making a mistyped scope a compile error rather than a silent
+// always-deny gate.
+type permScope string
+
+const (
+	scopeMetadata          permScope = "metadata"
+	scopeContents          permScope = "contents"
+	scopeIssues            permScope = "issues"
+	scopePullRequests      permScope = "pull_requests"
+	scopeActions           permScope = "actions"
+	scopeChecks            permScope = "checks"
+	scopeSecrets           permScope = "secrets"
+	scopeDeployments       permScope = "deployments"
+	scopeAdministration    permScope = "administration"
+	scopeMembers           permScope = "members"
+	scopeOrgAdministration permScope = "organization_administration"
+)
+
 func parsePermLevel(s string) permLevel {
 	switch strings.ToLower(s) {
 	case "admin":
@@ -50,8 +71,8 @@ func parsePermLevel(s string) permLevel {
 //
 // Usage:
 //
-//	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm("contents", permWrite, s.handleUpdateRepo))
-func (s *Server) requirePerm(scope string, level permLevel, next http.HandlerFunc) http.HandlerFunc {
+//	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeContents, permWrite, s.handleUpdateRepo))
+func (s *Server) requirePerm(scope permScope, level permLevel, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// PAT path → bypass (PATs are full-scope in real GH; sim follows suit).
 		// Detected by: user present, no installation token, no user-to-server token,
@@ -90,15 +111,15 @@ func (s *Server) requirePerm(scope string, level permLevel, next http.HandlerFun
 
 // hasPerm checks an installation-token permissions map against (scope, level).
 // Missing scope = no grant. Admin implies write, write implies read.
-func hasPerm(perms map[string]string, scope string, level permLevel) bool {
+func hasPerm(perms map[string]string, scope permScope, level permLevel) bool {
 	if perms == nil {
 		return false
 	}
-	got, ok := perms[scope]
+	got, ok := perms[string(scope)]
 	if !ok {
 		// "metadata" is auto-granted on every installation per real GH; honour it
 		// for readability checks.
-		if scope == "metadata" && level == permRead {
+		if scope == scopeMetadata && level == permRead {
 			return true
 		}
 		return false
@@ -108,7 +129,7 @@ func hasPerm(perms map[string]string, scope string, level permLevel) bool {
 
 // userToServerHasPerm dispatches a user-to-server token to either the App
 // installation permissions map (ghu_) or the classic OAuth scopes (gho_).
-func userToServerHasPerm(tok *UserToServerToken, scope string, level permLevel, st *Store) bool {
+func userToServerHasPerm(tok *UserToServerToken, scope permScope, level permLevel, st *Store) bool {
 	if tok.AppID > 0 {
 		// ghu_: find any installation of this App on the user, use its perms.
 		st.mu.RLock()
@@ -129,7 +150,7 @@ func userToServerHasPerm(tok *UserToServerToken, scope string, level permLevel, 
 // the App API expresses.
 //
 // This is intentionally conservative — only canonical mappings.
-func classicScopeCovers(scopes string, scope string, level permLevel) bool {
+func classicScopeCovers(scopes string, scope permScope, level permLevel) bool {
 	set := map[string]struct{}{}
 	for _, s := range strings.Split(scopes, ",") {
 		s = strings.TrimSpace(s)
@@ -140,9 +161,9 @@ func classicScopeCovers(scopes string, scope string, level permLevel) bool {
 	has := func(s string) bool { _, ok := set[s]; return ok }
 
 	switch scope {
-	case "metadata":
+	case scopeMetadata:
 		return level == permRead || has("repo") || has("public_repo")
-	case "contents", "issues", "pull_requests":
+	case scopeContents, scopeIssues, scopePullRequests:
 		if has("repo") {
 			return level <= permWrite
 		}
@@ -150,14 +171,14 @@ func classicScopeCovers(scopes string, scope string, level permLevel) bool {
 			return level <= permWrite
 		}
 		return false
-	case "checks":
+	case scopeChecks:
 		if has("repo") {
 			return level <= permWrite
 		}
 		return false
-	case "administration":
+	case scopeAdministration:
 		return has("admin:repo_hook") && level <= permWrite
-	case "members", "organization_administration":
+	case scopeMembers, scopeOrgAdministration:
 		if has("admin:org") {
 			return level <= permAdmin
 		}
@@ -168,7 +189,7 @@ func classicScopeCovers(scopes string, scope string, level permLevel) bool {
 			return level == permRead
 		}
 		return false
-	case "secrets":
+	case scopeSecrets:
 		if has("repo") {
 			return level <= permWrite
 		}

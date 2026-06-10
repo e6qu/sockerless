@@ -195,22 +195,22 @@ func (rs *ReleaseStore) Delete(id int) bool {
 
 func (s *Server) registerGHReleasesRoutes() {
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases",
-		s.requirePerm("contents", permWrite, s.handleCreateRelease))
+		s.requirePerm(scopeContents, permWrite, s.handleCreateRelease))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases",
 		s.handleListReleases)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/latest",
 		s.handleGetLatestRelease)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases/generate-notes",
-		s.requirePerm("contents", permWrite, s.handleGenerateReleaseNotes))
+		s.requirePerm(scopeContents, permWrite, s.handleGenerateReleaseNotes))
 
 	// Single-segment after /releases/ is GET-release-by-id. Use {release_id}
 	// directly here — these patterns don't conflict with the two-segment ones.
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/{release_id}",
 		s.handleGetRelease)
 	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/releases/{release_id}",
-		s.requirePerm("contents", permWrite, s.handleUpdateRelease))
+		s.requirePerm(scopeContents, permWrite, s.handleUpdateRelease))
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}",
-		s.requirePerm("contents", permWrite, s.handleDeleteRelease))
+		s.requirePerm(scopeContents, permWrite, s.handleDeleteRelease))
 
 	// `/releases/{p1}/{p2}` dispatches by segment value:
 	//   p1=="tags"      → GET release-by-tag (real GH path: releases/tags/{tag})
@@ -244,7 +244,7 @@ func (s *Server) handleReleaseTwoSegDispatch(method string) http.HandlerFunc {
 			case "GET":
 				s.handleListReactions("release", "release_id")(w, r)
 			case "POST":
-				s.requirePerm("contents", permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
+				s.requirePerm(scopeContents, permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
 			}
 		default:
 			writeGHError(w, http.StatusNotFound, "Not Found")
@@ -263,7 +263,7 @@ func (s *Server) handleReleaseThreeSegDispatch(method string) http.HandlerFunc {
 		if p2 == "reactions" && method == "DELETE" {
 			r.SetPathValue("release_id", p1)
 			r.SetPathValue("reaction_id", p3)
-			s.requirePerm("contents", permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
+			s.requirePerm(scopeContents, permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
 			return
 		}
 		writeGHError(w, http.StatusNotFound, "Not Found")

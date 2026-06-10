@@ -30,13 +30,13 @@ import (
 func (s *Server) registerGHMiscEndpoints() {
 	// Users keys + emails + follow
 	s.mux.HandleFunc("GET /api/v3/user/keys", s.handleListUserKeys)
-	s.mux.HandleFunc("POST /api/v3/user/keys", s.requirePerm("administration", permWrite, s.handleCreateUserKey))
+	s.mux.HandleFunc("POST /api/v3/user/keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateUserKey))
 	s.mux.HandleFunc("GET /api/v3/user/keys/{key_id}", s.handleGetUserKey)
-	s.mux.HandleFunc("DELETE /api/v3/user/keys/{key_id}", s.requirePerm("administration", permWrite, s.handleDeleteUserKey))
+	s.mux.HandleFunc("DELETE /api/v3/user/keys/{key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteUserKey))
 	s.mux.HandleFunc("GET /api/v3/user/gpg_keys", s.handleListGPGKeys)
-	s.mux.HandleFunc("POST /api/v3/user/gpg_keys", s.requirePerm("administration", permWrite, s.handleCreateGPGKey))
+	s.mux.HandleFunc("POST /api/v3/user/gpg_keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateGPGKey))
 	s.mux.HandleFunc("GET /api/v3/user/gpg_keys/{gpg_key_id}", s.handleGetGPGKey)
-	s.mux.HandleFunc("DELETE /api/v3/user/gpg_keys/{gpg_key_id}", s.requirePerm("administration", permWrite, s.handleDeleteGPGKey))
+	s.mux.HandleFunc("DELETE /api/v3/user/gpg_keys/{gpg_key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteGPGKey))
 	s.mux.HandleFunc("GET /api/v3/user/emails", s.handleListUserEmails)
 	s.mux.HandleFunc("GET /api/v3/users/{username}/keys", s.handleListUserKeysByLogin)
 	s.mux.HandleFunc("GET /api/v3/users/{username}/gpg_keys", s.handleListGPGKeysByLogin)
@@ -53,28 +53,28 @@ func (s *Server) registerGHMiscEndpoints() {
 	s.mux.HandleFunc("GET /.well-known/jwks", s.handleJWKS)
 	s.mux.HandleFunc("GET /api/v3/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
 	s.mux.HandleFunc("PUT /api/v3/actions/oidc/customization/sub",
-		s.requirePerm("administration", permWrite, s.handleOIDCCustomSubPut))
+		s.requirePerm(scopeAdministration, permWrite, s.handleOIDCCustomSubPut))
 
 	// Pages
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages", s.handlePagesGet)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm("administration", permWrite, s.handlePagesCreate))
+		s.requirePerm(scopeAdministration, permWrite, s.handlePagesCreate))
 	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm("administration", permWrite, s.handlePagesUpdate))
+		s.requirePerm(scopeAdministration, permWrite, s.handlePagesUpdate))
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/pages",
-		s.requirePerm("administration", permWrite, s.handlePagesDelete))
+		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDelete))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds", s.handlePagesListBuilds)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pages/builds",
-		s.requirePerm("administration", permWrite, s.handlePagesTriggerBuild))
+		s.requirePerm(scopeAdministration, permWrite, s.handlePagesTriggerBuild))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.handlePagesLatestBuild)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.handlePagesGetBuild)
 
 	// Branch protection
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection", s.handleBranchProtectionGet)
 	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
-		s.requirePerm("administration", permWrite, s.handleBranchProtectionPut))
+		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionPut))
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
-		s.requirePerm("administration", permWrite, s.handleBranchProtectionDelete))
+		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionDelete))
 
 	// Orgs depth (members listing + memberships CRUD already covered in
 	// gh_members_rest.go — implementation).

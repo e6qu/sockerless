@@ -12,6 +12,8 @@ import type {
   BleephubInstallation,
   BleephubOAuthApp,
   BleephubOAuthState,
+  WireOAuthApp,
+  WireAppCreated,
   GithubIssue,
   GithubComment,
   GithubPR,
@@ -114,15 +116,15 @@ export async function verifyToken(token: string): Promise<boolean> {
 // types are camelCase, so normalize at this boundary. Fields are mapped
 // 1:1 from the server contract — no defaults, so a contract break shows
 // as undefined rather than a plausible-looking blank.
-function normalizeOAuthApp(raw: Record<string, unknown>): BleephubOAuthApp {
+function normalizeOAuthApp(raw: WireOAuthApp): BleephubOAuthApp {
   return {
-    clientId: raw.client_id as string,
-    name: raw.name as string,
-    description: raw.description as string,
-    url: raw.url as string,
-    callbackUrl: raw.callback_url as string,
-    ownerId: raw.owner_id as number,
-    createdAt: raw.created_at as string,
+    clientId: raw.client_id,
+    name: raw.name,
+    description: raw.description,
+    url: raw.url,
+    callbackUrl: raw.callback_url,
+    ownerId: raw.owner_id,
+    createdAt: raw.created_at,
   };
 }
 
@@ -131,7 +133,7 @@ export async function createApp(payload: {
   description?: string;
   permissions?: Record<string, string>;
   events?: string[];
-}): Promise<BleephubApp & { pem: string; client_secret: string; webhook_secret: string }> {
+}): Promise<{ clientId: string; pem: string; client_secret: string; webhook_secret: string }> {
   const res = await fetch("/api/v3/bleephub/apps", {
     method: "POST",
     headers: {
@@ -144,15 +146,15 @@ export async function createApp(payload: {
     const text = await res.text();
     throw new Error(`createApp ${res.status}: ${text || res.statusText}`);
   }
-  const raw = (await res.json()) as Record<string, unknown>;
-  // appToJSON emits client_id (snake_case); surface it as the camelCase
-  // clientId the UI reads, mapped directly from the contract.
+  // appToJSON returns the GitHub snake_case app shape plus the once-shown
+  // secrets; the create dialog only needs the client id + secrets, surfaced
+  // here as the camelCase clientId it reads.
+  const raw = (await res.json()) as WireAppCreated;
   return {
-    ...(raw as unknown as BleephubApp),
-    clientId: raw.client_id as string,
-    pem: raw.pem as string,
-    client_secret: raw.client_secret as string,
-    webhook_secret: raw.webhook_secret as string,
+    clientId: raw.client_id,
+    pem: raw.pem,
+    client_secret: raw.client_secret,
+    webhook_secret: raw.webhook_secret,
   };
 }
 
@@ -164,7 +166,7 @@ export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
     handleUnauthorized(res);
     throw new Error(`${res.status} ${res.statusText}`);
   }
-  const raw = (await res.json()) as Record<string, unknown>[];
+  const raw = (await res.json()) as WireOAuthApp[];
   return raw.map(normalizeOAuthApp);
 }
 
@@ -186,10 +188,10 @@ export async function createOAuthApp(payload: {
     const text = await res.text();
     throw new Error(`createOAuthApp ${res.status}: ${text || res.statusText}`);
   }
-  const raw = (await res.json()) as Record<string, unknown>;
+  const raw = (await res.json()) as WireOAuthApp & { client_secret: string };
   return {
     ...normalizeOAuthApp(raw),
-    client_secret: (raw.client_secret as string) ?? "",
+    client_secret: raw.client_secret,
   };
 }
 

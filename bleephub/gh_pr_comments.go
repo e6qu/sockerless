@@ -264,11 +264,11 @@ func (s *PRReviewCommentStore) ListThreads(prID int) []*ReviewThread {
 func (s *Server) registerGHPRCommentsRoutes() {
 	// `/pulls/{number}/comments` (3 segments, literal "comments" at pos 3)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
-		s.requirePerm("pull_requests", permWrite, s.handleCreatePRComment))
+		s.requirePerm(scopePullRequests, permWrite, s.handleCreatePRComment))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
 		s.handleListPRComments)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
-		s.requirePerm("pull_requests", permWrite, s.handleReplyPRComment))
+		s.requirePerm(scopePullRequests, permWrite, s.handleReplyPRComment))
 
 	// `/pulls/{number}/review-threads` (3 segments, literal at pos 3)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads",
@@ -304,9 +304,9 @@ func (s *Server) handlePRCommentTwoSegDispatch(method string) http.HandlerFunc {
 		case "GET":
 			s.handleGetPRComment(w, r)
 		case "PATCH":
-			s.requirePerm("pull_requests", permWrite, s.handleUpdatePRComment)(w, r)
+			s.requirePerm(scopePullRequests, permWrite, s.handleUpdatePRComment)(w, r)
 		case "DELETE":
-			s.requirePerm("pull_requests", permWrite, s.handleDeletePRComment)(w, r)
+			s.requirePerm(scopePullRequests, permWrite, s.handleDeletePRComment)(w, r)
 		}
 	}
 }

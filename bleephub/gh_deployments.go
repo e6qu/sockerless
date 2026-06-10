@@ -297,15 +297,15 @@ func (ds *DeploymentStore) DeleteEnvironment(repoID int, name string) bool {
 
 func (s *Server) registerGHDeploymentsRoutes() {
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/deployments",
-		s.requirePerm("deployments", permWrite, s.handleCreateDeployment))
+		s.requirePerm(scopeDeployments, permWrite, s.handleCreateDeployment))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments",
 		s.handleListDeployments)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
 		s.handleGetDeployment)
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}",
-		s.requirePerm("deployments", permWrite, s.handleDeleteDeployment))
+		s.requirePerm(scopeDeployments, permWrite, s.handleDeleteDeployment))
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
-		s.requirePerm("deployments", permWrite, s.handleCreateDeploymentStatus))
+		s.requirePerm(scopeDeployments, permWrite, s.handleCreateDeploymentStatus))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses",
 		s.handleListDeploymentStatuses)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/deployments/{deployment_id}/statuses/{status_id}",
@@ -316,9 +316,9 @@ func (s *Server) registerGHDeploymentsRoutes() {
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/environments/{env_name}",
 		s.handleGetEnvironment)
 	s.mux.HandleFunc("PUT /api/v3/repos/{owner}/{repo}/environments/{env_name}",
-		s.requirePerm("administration", permWrite, s.handleUpsertEnvironment))
+		s.requirePerm(scopeAdministration, permWrite, s.handleUpsertEnvironment))
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/environments/{env_name}",
-		s.requirePerm("administration", permWrite, s.handleDeleteEnvironment))
+		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteEnvironment))
 }
 
 func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) {

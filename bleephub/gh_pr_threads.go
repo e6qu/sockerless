@@ -19,9 +19,9 @@ import (
 
 func (s *Server) registerGHPRThreadsRoutes() {
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/resolve",
-		s.requirePerm("pull_requests", permWrite, s.handleResolveThreadREST(true)))
+		s.requirePerm(scopePullRequests, permWrite, s.handleResolveThreadREST(true)))
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/unresolve",
-		s.requirePerm("pull_requests", permWrite, s.handleResolveThreadREST(false)))
+		s.requirePerm(scopePullRequests, permWrite, s.handleResolveThreadREST(false)))
 }
 
 func (s *Server) handleResolveThreadREST(resolved bool) http.HandlerFunc {

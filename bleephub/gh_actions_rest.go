@@ -26,16 +26,16 @@ func (s *Server) registerGHActionsRoutes() {
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}",
-		s.requirePerm("actions", permWrite, s.handleDeleteWorkflowRun))
+		s.requirePerm(scopeActions, permWrite, s.handleDeleteWorkflowRun))
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel",
-		s.requirePerm("actions", permWrite, s.handleCancelWorkflowRun))
+		s.requirePerm(scopeActions, permWrite, s.handleCancelWorkflowRun))
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
-		s.requirePerm("actions", permWrite, s.handleRerunWorkflowRun))
+		s.requirePerm(scopeActions, permWrite, s.handleRerunWorkflowRun))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
 	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
-		s.requirePerm("administration", permWrite, s.handleDeleteRunner))
+		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
 }
 
 // repoFullName returns "owner/repo" for the request's path params,

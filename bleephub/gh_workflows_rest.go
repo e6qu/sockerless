@@ -17,7 +17,7 @@ func (s *Server) registerGHWorkflowsRoutes() {
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}", s.handleGetGHWorkflow)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", s.handleListWorkflowFileRuns)
 	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
-		s.requirePerm("actions", permWrite, s.handleDispatchWorkflow))
+		s.requirePerm(scopeActions, permWrite, s.handleDispatchWorkflow))
 }
 
 // workflowFileJSON converts a WorkflowFile to GitHub's `Workflow`
