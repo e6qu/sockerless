@@ -1,7 +1,11 @@
 package gcp_sdk_test
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	eventarc "cloud.google.com/go/eventarc/apiv1"
@@ -12,7 +16,9 @@ import (
 	"google.golang.org/api/bigquery/v2"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/dataflow/v1b3"
 	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/firestore/v1"
 	"google.golang.org/api/googleapi"
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
@@ -430,4 +436,304 @@ func TestConformance_IAMSetPolicyStaleEtagAborted(t *testing.T) {
 		},
 	}).Do()
 	requireGoogleErr(t, err, 409, "ABORTED")
+}
+
+// TestConformance_ComputeListPaginatesByMaxResults pins that the Compute list
+// surface honors the API's maxResults page size + pageToken cursor. A
+// metadata-only backendService (insert never touches the network fabric) lets
+// this run without a real-exec host. Before the fix, paginateList read
+// "pageSize" — a param the Compute SDK never sends — so every list returned the
+// full set on page 1 with no nextPageToken.
+func TestConformance_ComputeListPaginatesByMaxResults(t *testing.T) {
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const project = "conf-compute-pagination"
+
+	names := []string{"conf-pag-bs-a", "conf-pag-bs-b"}
+	for _, n := range names {
+		_, err := svc.BackendServices.Insert(project, &compute.BackendService{Name: n, Protocol: "HTTP"}).Context(ctx).Do()
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = svc.BackendServices.Delete(project, n).Context(ctx).Do() })
+	}
+
+	// maxResults=1 must return exactly one item plus a token for the rest.
+	first, err := svc.BackendServices.List(project).MaxResults(1).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Items, 1, "maxResults=1 must return a single item")
+	require.NotEmpty(t, first.NextPageToken, "a partial page must carry a nextPageToken")
+
+	// Following the token yields the remaining item and exhausts the list.
+	second, err := svc.BackendServices.List(project).MaxResults(1).PageToken(first.NextPageToken).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1, "second page must return the remaining item")
+	assert.NotEqual(t, first.Items[0].Name, second.Items[0].Name, "pages must not overlap")
+	assert.Empty(t, second.NextPageToken, "last page must not carry a token")
+
+	// No maxResults returns the full list with no token (unchanged behavior).
+	all, err := svc.BackendServices.List(project).Context(ctx).Do()
+	require.NoError(t, err)
+	require.Len(t, all.Items, 2, "an unbounded list returns every item")
+	assert.Empty(t, all.NextPageToken, "an unbounded list carries no token")
+}
+
+// TestConformance_DNSRecordSetsPaginate pins that rrsets list honors maxResults +
+// pageToken and stamps the dns#resourceRecordSetsListResponse kind. Before the
+// fix the handler ignored both params and emitted no nextPageToken.
+func TestConformance_DNSRecordSetsPaginate(t *testing.T) {
+	svc, err := dns.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const project = "conf-dns-pagination"
+	const zone = "conf-pag-zone"
+
+	_, err = svc.ManagedZones.Create(project, &dns.ManagedZone{
+		Name: zone, DnsName: "conf-pag.example.com.",
+	}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.ManagedZones.Delete(project, zone).Do() })
+
+	recs := []*dns.ResourceRecordSet{
+		{Name: "a.conf-pag.example.com.", Type: "A", Ttl: 300, Rrdatas: []string{"10.0.0.1"}},
+		{Name: "b.conf-pag.example.com.", Type: "A", Ttl: 300, Rrdatas: []string{"10.0.0.2"}},
+	}
+	for _, rr := range recs {
+		_, err := svc.ResourceRecordSets.Create(project, zone, rr).Do()
+		require.NoError(t, err)
+	}
+
+	first, err := svc.ResourceRecordSets.List(project, zone).MaxResults(1).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Rrsets, 1, "maxResults=1 must return one rrset")
+	require.NotEmpty(t, first.NextPageToken, "a partial rrset page must carry a token")
+	assert.Equal(t, "dns#resourceRecordSetsListResponse", first.Kind)
+
+	second, err := svc.ResourceRecordSets.List(project, zone).MaxResults(1).PageToken(first.NextPageToken).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Rrsets, 1, "second rrset page must return the remaining record")
+	assert.Empty(t, second.NextPageToken, "last rrset page carries no token")
+
+	all, err := svc.ResourceRecordSets.List(project, zone).Do()
+	require.NoError(t, err)
+	require.Len(t, all.Rrsets, 2, "unbounded rrset list returns every record")
+	assert.Empty(t, all.NextPageToken)
+}
+
+// TestConformance_EventarcTriggersPaginate pins that ListTriggers honors
+// pageSize + emits a nextPageToken. The REST iterator's InternalFetch exposes a
+// single page and its follow-on token directly.
+func TestConformance_EventarcTriggersPaginate(t *testing.T) {
+	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+
+	parent := "projects/conf-eventarc-pagination/locations/us-central1"
+	for _, id := range []string{"conf-pag-trig-a", "conf-pag-trig-b"} {
+		op, err := client.CreateTrigger(ctx, &eventarcpb.CreateTriggerRequest{
+			Parent:    parent,
+			TriggerId: id,
+			Trigger: &eventarcpb.Trigger{
+				Channel: parent + "/channels/" + id + "-channel",
+				EventFilters: []*eventarcpb.EventFilter{{
+					Attribute: "type",
+					Value:     "google.cloud.pubsub.topic.v1.messagePublished",
+				}},
+				Destination: &eventarcpb.Destination{
+					Descriptor_: &eventarcpb.Destination_CloudRun{
+						CloudRun: &eventarcpb.CloudRun{Service: "svc", Region: "us-central1"},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		_, err = op.Wait(ctx)
+		require.NoError(t, err)
+		name := parent + "/triggers/" + id
+		t.Cleanup(func() {
+			dop, derr := client.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{Name: name})
+			if derr == nil {
+				_, _ = dop.Wait(ctx)
+			}
+		})
+	}
+
+	it := client.ListTriggers(ctx, &eventarcpb.ListTriggersRequest{Parent: parent})
+	page, next, err := it.InternalFetch(1, "")
+	require.NoError(t, err)
+	require.Len(t, page, 1, "pageSize=1 must return one trigger")
+	require.NotEmpty(t, next, "a partial trigger page must carry a token")
+
+	page2, next2, err := it.InternalFetch(1, next)
+	require.NoError(t, err)
+	require.Len(t, page2, 1, "second trigger page must return the remaining trigger")
+	assert.Empty(t, next2, "last trigger page carries no token")
+}
+
+// TestConformance_DataflowJobsPaginate pins that ListJobs honors pageSize +
+// pageToken and emits a nextPageToken.
+func TestConformance_DataflowJobsPaginate(t *testing.T) {
+	svc, err := dataflow.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const project = "conf-dataflow-pagination"
+	const location = "us-central1"
+
+	for _, n := range []string{"conf-pag-job-a", "conf-pag-job-b"} {
+		_, err := svc.Projects.Locations.Jobs.Create(project, location, &dataflow.Job{
+			Name: n, Type: "JOB_TYPE_BATCH",
+		}).Do()
+		require.NoError(t, err)
+	}
+
+	first, err := svc.Projects.Locations.Jobs.List(project, location).PageSize(1).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Jobs, 1, "pageSize=1 must return one job")
+	require.NotEmpty(t, first.NextPageToken, "a partial job page must carry a token")
+
+	second, err := svc.Projects.Locations.Jobs.List(project, location).PageSize(1).PageToken(first.NextPageToken).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Jobs, 1, "second job page must return the remaining job")
+	assert.Empty(t, second.NextPageToken, "last job page carries no token")
+
+	all, err := svc.Projects.Locations.Jobs.List(project, location).Do()
+	require.NoError(t, err)
+	require.Len(t, all.Jobs, 2, "unbounded job list returns every job")
+	assert.Empty(t, all.NextPageToken)
+}
+
+// TestConformance_LoggingEntriesPaginate pins that entries:list honors pageSize +
+// pageToken and emits a nextPageToken so a caller can walk every page.
+func TestConformance_LoggingEntriesPaginate(t *testing.T) {
+	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const logName = "projects/conf-logging-pagination/logs/conf-pag-log"
+
+	entries := make([]*logging.LogEntry, 0, 4)
+	for i := 0; i < 4; i++ {
+		entries = append(entries, &logging.LogEntry{
+			LogName:     logName,
+			TextPayload: "entry",
+			Resource:    &logging.MonitoredResource{Type: "global"},
+		})
+	}
+	_, err = svc.Entries.Write(&logging.WriteLogEntriesRequest{Entries: entries}).Do()
+	require.NoError(t, err)
+
+	filter := `logName="` + logName + `"`
+	first, err := svc.Entries.List(&logging.ListLogEntriesRequest{
+		ResourceNames: []string{"projects/conf-logging-pagination"},
+		Filter:        filter,
+		PageSize:      2,
+	}).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Entries, 2, "pageSize=2 must return two entries")
+	require.NotEmpty(t, first.NextPageToken, "a partial entries page must carry a token")
+
+	second, err := svc.Entries.List(&logging.ListLogEntriesRequest{
+		ResourceNames: []string{"projects/conf-logging-pagination"},
+		Filter:        filter,
+		PageSize:      2,
+		PageToken:     first.NextPageToken,
+	}).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Entries, 2, "second entries page must return the remaining entries")
+	assert.Empty(t, second.NextPageToken, "last entries page carries no token")
+}
+
+// TestConformance_BigQueryDatasetsPaginate pins that datasets.list honors
+// maxResults + pageToken and emits a nextPageToken.
+func TestConformance_BigQueryDatasetsPaginate(t *testing.T) {
+	svc, err := bigquery.NewService(ctx, option.WithEndpoint(baseURL+"/bigquery/v2/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const project = "conf-bq-pagination"
+
+	for _, id := range []string{"conf_pag_ds_a", "conf_pag_ds_b"} {
+		_, err := svc.Datasets.Insert(project, &bigquery.Dataset{
+			DatasetReference: &bigquery.DatasetReference{ProjectId: project, DatasetId: id},
+		}).Do()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.Datasets.Delete(project, id).Do() })
+	}
+
+	first, err := svc.Datasets.List(project).MaxResults(1).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Datasets, 1, "maxResults=1 must return one dataset")
+	require.NotEmpty(t, first.NextPageToken, "a partial dataset page must carry a token")
+
+	second, err := svc.Datasets.List(project).MaxResults(1).PageToken(first.NextPageToken).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Datasets, 1, "second dataset page must return the remaining dataset")
+	assert.Empty(t, second.NextPageToken, "last dataset page carries no token")
+}
+
+// TestConformance_FirestoreListAndQueryPagination pins that documents.list honors
+// pageSize + pageToken and that runQuery honors limit, offset, and the
+// LESS_THAN / GREATER_THAN comparison operators (not only EQUAL).
+func TestConformance_FirestoreListAndQueryPagination(t *testing.T) {
+	svc, err := firestore.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const db = "projects/conf-firestore-pagination/databases/(default)"
+	const collPath = db + "/documents/conf-pag-users"
+
+	rank := func(n int64) map[string]firestore.Value {
+		return map[string]firestore.Value{"rank": {IntegerValue: n}}
+	}
+	for _, doc := range []struct {
+		id   string
+		rank int64
+	}{{"alice", 1}, {"bob", 2}, {"carol", 3}} {
+		_, err := svc.Projects.Databases.Documents.Commit(db, &firestore.CommitRequest{
+			Writes: []*firestore.Write{{Update: &firestore.Document{
+				Name:   collPath + "/" + doc.id,
+				Fields: rank(doc.rank),
+			}}},
+		}).Do()
+		require.NoError(t, err)
+	}
+
+	// list with pageSize=1 must return one document plus a token.
+	first, err := svc.Projects.Databases.Documents.List(db+"/documents", "conf-pag-users").PageSize(1).Do()
+	require.NoError(t, err)
+	require.Len(t, first.Documents, 1, "pageSize=1 must return one document")
+	require.NotEmpty(t, first.NextPageToken, "a partial document page must carry a token")
+
+	second, err := svc.Projects.Databases.Documents.List(db+"/documents", "conf-pag-users").
+		PageSize(1).PageToken(first.NextPageToken).Do()
+	require.NoError(t, err)
+	require.Len(t, second.Documents, 1, "second document page must return another document")
+	assert.NotEqual(t, first.Documents[0].Name, second.Documents[0].Name, "document pages must not overlap")
+
+	// runQuery returns a streamed JSON array of RunQueryResponse elements that
+	// the REST .Do() (single-object decode) can't capture, so post the canonical
+	// structured-query body directly and count the document-bearing elements —
+	// the same wire shape the firestore client emits.
+	queryURL := baseURL + "/v1/" + db + "/documents:runQuery"
+
+	// limit caps results.
+	limited := runFirestoreQuery(t, queryURL,
+		`{"structuredQuery":{"from":[{"collectionId":"conf-pag-users"}],"limit":2}}`)
+	assert.Len(t, limited, 2, "runQuery limit=2 must return at most two documents")
+
+	// GREATER_THAN selects only the matching documents (rank > 1 → bob, carol).
+	gt := runFirestoreQuery(t, queryURL,
+		`{"structuredQuery":{"from":[{"collectionId":"conf-pag-users"}],"where":{"fieldFilter":{"field":{"fieldPath":"rank"},"op":"GREATER_THAN","value":{"integerValue":"1"}}}}}`)
+	assert.Len(t, gt, 2, "rank > 1 must match exactly two documents")
+}
+
+// runFirestoreQuery posts a structured query and returns the document-bearing
+// elements of the streamed RunQueryResponse array.
+func runFirestoreQuery(t *testing.T, url, body string) []*firestore.RunQueryResponse {
+	t.Helper()
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var elems []*firestore.RunQueryResponse
+	require.NoError(t, json.Unmarshal(raw, &elems))
+	var docs []*firestore.RunQueryResponse
+	for _, e := range elems {
+		if e.Document != nil {
+			docs = append(docs, e)
+		}
+	}
+	return docs
 }

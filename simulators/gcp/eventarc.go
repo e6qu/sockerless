@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -10,6 +11,22 @@ import (
 
 // Eventarc v1 REST surface. Triggers are regional resources and
 // mutating operations return AIP-151 long-running operations.
+
+// writeEventarcList sorts items by name, paginates by pageSize/pageToken, and
+// writes the AIP-132 list response under itemsKey with a nextPageToken when more
+// items remain.
+func writeEventarcList[T any](w http.ResponseWriter, r *http.Request, items []T, name func(T) string, itemsKey string) {
+	sort.Slice(items, func(i, j int) bool { return name(items[i]) < name(items[j]) })
+	page, next, ok := paginateList(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{itemsKey: page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
 
 type EventarcTrigger struct {
 	Name                 string                 `json:"name"`
@@ -237,7 +254,7 @@ func handleEventarcListTriggers(w http.ResponseWriter, r *http.Request) {
 			out = append(out, t)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"triggers": out})
+	writeEventarcList(w, r, out, func(t EventarcTrigger) string { return t.Name }, "triggers")
 }
 
 func handleEventarcPatchTrigger(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +362,7 @@ func handleEventarcListChannels(w http.ResponseWriter, r *http.Request) {
 			out = append(out, c)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"channels": out})
+	writeEventarcList(w, r, out, func(c EventarcChannel) string { return c.Name }, "channels")
 }
 
 func handleEventarcPatchChannel(w http.ResponseWriter, r *http.Request) {
@@ -491,7 +508,7 @@ func handleEventarcListChannelConnections(w http.ResponseWriter, r *http.Request
 			out = append(out, cc)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"channelConnections": out})
+	writeEventarcList(w, r, out, func(cc EventarcChannelConnection) string { return cc.Name }, "channelConnections")
 }
 
 func handleEventarcDeleteChannelConnection(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -337,10 +338,18 @@ func computeWriteGlobalList[T computeNamedResource](w http.ResponseWriter, r *ht
 	if items == nil {
 		items = []T{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"kind":  kind,
-		"items": items,
+	sort.Slice(items, func(i, j int) bool {
+		return computeResourceSelfLink(items[i]) < computeResourceSelfLink(items[j])
 	})
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"kind": kind, "items": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func computeResourceSelfLink[T computeNamedResource](resource T) string {

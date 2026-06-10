@@ -234,10 +234,25 @@ func registerCloudDNS(srv *sim.Server) {
 		if filtered == nil {
 			filtered = []ResourceRecordSet{}
 		}
-
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"rrsets": filtered,
+		sort.Slice(filtered, func(i, j int) bool {
+			if filtered[i].Name != filtered[j].Name {
+				return filtered[i].Name < filtered[j].Name
+			}
+			return filtered[i].Type < filtered[j].Type
 		})
+
+		page, next, ok := paginateListCompute(w, r, filtered)
+		if !ok {
+			return
+		}
+		resp := map[string]any{
+			"kind":   "dns#resourceRecordSetsListResponse",
+			"rrsets": page,
+		}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Create record set

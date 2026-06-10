@@ -281,7 +281,15 @@ func handleBQListDatasets(w http.ResponseWriter, r *http.Request) {
 			"location":         d.Location,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#datasetList", "datasets": items})
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"kind": "bigquery#datasetList", "datasets": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleBQPatchDataset(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +393,15 @@ func handleBQListTables(w http.ResponseWriter, r *http.Request) {
 			"labels":         t.Labels,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#tableList", "tables": items})
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"kind": "bigquery#tableList", "tables": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleBQPatchTable(w http.ResponseWriter, r *http.Request) {
@@ -577,7 +593,15 @@ func handleBQListJobs(w http.ResponseWriter, r *http.Request) {
 			"user_email":    j.UserEmail,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "bigquery#jobList", "jobs": items})
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"kind": "bigquery#jobList", "jobs": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleBQGetQueryResults(w http.ResponseWriter, r *http.Request) {
