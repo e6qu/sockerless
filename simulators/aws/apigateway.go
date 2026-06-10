@@ -14,11 +14,12 @@ import (
 // `terraform-provider-aws::aws_api_gateway_rest_api` exercises.
 
 type APIGWRestApi struct {
-	Id          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	CreatedDate int64             `json:"createdDate"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Id             string            `json:"id"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
+	CreatedDate    int64             `json:"createdDate"`
+	RootResourceId string            `json:"rootResourceId,omitempty"`
+	Tags           map[string]string `json:"tags,omitempty"`
 }
 
 // Inner fields use the `restApiIdRef` tag (or similar non-canonical
@@ -166,13 +167,15 @@ func handleAPIGWCreateRestApi(w http.ResponseWriter, r *http.Request) {
 		CreatedDate: time.Now().Unix(),
 		Tags:        req.Tags,
 	}
-	apigwRestApis.Put(api.Id, api)
-	// Real API Gateway auto-creates the root "/" resource on Create.
+	// Real API Gateway auto-creates the root "/" resource on Create and
+	// surfaces its id as rootResourceId.
 	root := APIGWResource{
 		Id:        generateUUID()[:10],
 		RestApiId: api.Id,
 		Path:      "/",
 	}
+	api.RootResourceId = root.Id
+	apigwRestApis.Put(api.Id, api)
 	apigwResources.Put(api.Id+"/"+root.Id, root)
 	sim.WriteJSON(w, http.StatusCreated, api)
 }

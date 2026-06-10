@@ -54,6 +54,7 @@ type BatchJobDefinition struct {
 
 type BatchJob struct {
 	JobID         string            `json:"jobId"`
+	JobArn        string            `json:"jobArn,omitempty"`
 	JobName       string            `json:"jobName"`
 	JobQueue      string            `json:"jobQueue"`
 	Status        string            `json:"status"`
@@ -537,6 +538,7 @@ func handleBatchSubmitJob(w http.ResponseWriter, r *http.Request) {
 	cfg.Labels = map[string]string{"aws-batch-job-id": jobID}
 	job := BatchJob{
 		JobID:         jobID,
+		JobArn:        batchARN("job/" + jobID),
 		JobName:       req.JobName,
 		JobQueue:      req.JobQueue,
 		Status:        "RUNNING",

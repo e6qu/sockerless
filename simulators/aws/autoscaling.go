@@ -20,10 +20,13 @@ type ASLaunchConfiguration struct {
 
 type AutoScalingGroup struct {
 	Name                    string
+	ARN                     string
 	LaunchConfigurationName string
 	MinSize                 int
 	MaxSize                 int
 	DesiredCapacity         int
+	HealthCheckType         string
+	HealthCheckGracePeriod  int
 	VPCZoneIdentifier       string
 	InstanceIds             []string
 	CreatedTime             string
@@ -126,12 +129,19 @@ func handleASCreateAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
 	if desired > maxSize {
 		maxSize = desired
 	}
+	healthCheckType := r.FormValue("HealthCheckType")
+	if healthCheckType == "" {
+		healthCheckType = "EC2"
+	}
 	asg := AutoScalingGroup{
 		Name:                    name,
+		ARN:                     autoScalingGroupARN(name),
 		LaunchConfigurationName: r.FormValue("LaunchConfigurationName"),
 		MinSize:                 minSize,
 		MaxSize:                 maxSize,
 		DesiredCapacity:         desired,
+		HealthCheckType:         healthCheckType,
+		HealthCheckGracePeriod:  asAtoiDefault(r.FormValue("HealthCheckGracePeriod"), 0),
 		VPCZoneIdentifier:       r.FormValue("VPCZoneIdentifier"),
 		CreatedTime:             time.Now().UTC().Format(time.RFC3339),
 		Tags:                    autoscalingTags(r),
@@ -386,6 +396,11 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 	return nil
 }
 
+func autoScalingGroupARN(name string) string {
+	return fmt.Sprintf("arn:aws:autoscaling:%s:%s:autoScalingGroup:%s:autoScalingGroupName/%s",
+		awsRegion(), awsAccountID(), generateUUID(), name)
+}
+
 func autoScalingGroupXML(asg AutoScalingGroup) string {
 	var instances strings.Builder
 	for _, id := range asg.InstanceIds {
@@ -393,8 +408,16 @@ func autoScalingGroupXML(asg AutoScalingGroup) string {
 		instances.WriteString(id)
 		instances.WriteString("</InstanceId><LifecycleState>InService</LifecycleState><HealthStatus>Healthy</HealthStatus></member>")
 	}
-	return fmt.Sprintf(`<member><AutoScalingGroupName>%s</AutoScalingGroupName><LaunchConfigurationName>%s</LaunchConfigurationName><MinSize>%d</MinSize><MaxSize>%d</MaxSize><DesiredCapacity>%d</DesiredCapacity><DefaultCooldown>300</DefaultCooldown><AvailabilityZones><member>%s</member></AvailabilityZones><VPCZoneIdentifier>%s</VPCZoneIdentifier><CreatedTime>%s</CreatedTime><Instances>%s</Instances><Tags>%s</Tags></member>`,
-		xmlEscape(asg.Name), xmlEscape(asg.LaunchConfigurationName), asg.MinSize, asg.MaxSize, asg.DesiredCapacity, awsAvailabilityZone(), xmlEscape(asg.VPCZoneIdentifier), asg.CreatedTime, instances.String(), autoscalingTagXML(asg.Tags))
+	arn := asg.ARN
+	if arn == "" {
+		arn = autoScalingGroupARN(asg.Name)
+	}
+	healthCheckType := asg.HealthCheckType
+	if healthCheckType == "" {
+		healthCheckType = "EC2"
+	}
+	return fmt.Sprintf(`<member><AutoScalingGroupName>%s</AutoScalingGroupName><AutoScalingGroupARN>%s</AutoScalingGroupARN><LaunchConfigurationName>%s</LaunchConfigurationName><MinSize>%d</MinSize><MaxSize>%d</MaxSize><DesiredCapacity>%d</DesiredCapacity><DefaultCooldown>300</DefaultCooldown><HealthCheckType>%s</HealthCheckType><HealthCheckGracePeriod>%d</HealthCheckGracePeriod><AvailabilityZones><member>%s</member></AvailabilityZones><VPCZoneIdentifier>%s</VPCZoneIdentifier><CreatedTime>%s</CreatedTime><Instances>%s</Instances><Tags>%s</Tags></member>`,
+		xmlEscape(asg.Name), xmlEscape(arn), xmlEscape(asg.LaunchConfigurationName), asg.MinSize, asg.MaxSize, asg.DesiredCapacity, xmlEscape(healthCheckType), asg.HealthCheckGracePeriod, awsAvailabilityZone(), xmlEscape(asg.VPCZoneIdentifier), asg.CreatedTime, instances.String(), autoscalingTagXML(asg.Tags))
 }
 
 func autoscalingTagXML(tags []EC2Tag) string {

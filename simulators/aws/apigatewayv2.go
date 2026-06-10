@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,6 +19,7 @@ type APIGWv2Api struct {
 	Name         string            `json:"name"`
 	ProtocolType string            `json:"protocolType"`
 	RouteKey     string            `json:"routeSelectionExpression,omitempty"`
+	ApiEndpoint  string            `json:"apiEndpoint,omitempty"`
 	CreatedDate  string            `json:"createdDate"`
 	Tags         map[string]string `json:"tags,omitempty"`
 }
@@ -120,11 +122,13 @@ func handleAPIGWv2CreateApi(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "BadRequestException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	apiID := generateUUID()[:10]
 	api := APIGWv2Api{
-		ApiId:        generateUUID()[:10],
+		ApiId:        apiID,
 		Name:         req.Name,
 		ProtocolType: req.ProtocolType,
 		RouteKey:     req.RouteSelectionExpression,
+		ApiEndpoint:  fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", apiID, awsRegion()),
 		CreatedDate:  time.Now().UTC().Format(time.RFC3339),
 		Tags:         req.Tags,
 	}

@@ -200,6 +200,12 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 		}
 		dvOpts = append(dvOpts, opt)
 	}
+	options := req.Options
+	if options == nil {
+		// Real ACM defaults certificate transparency logging to ENABLED
+		// and returns it on DescribeCertificate.
+		options = &ACMCertificateOptions{CertificateTransparencyLoggingPreference: "ENABLED"}
+	}
 	cert := ACMCertificate{
 		CertificateArn:          acmCertARN(id),
 		DomainName:              req.DomainName,
@@ -210,7 +216,7 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 		RenewalEligibility:      "INELIGIBLE",
 		KeyAlgorithm:            firstNonEmpty(req.KeyAlgorithm, "RSA-2048"),
 		SignatureAlgorithm:      "SHA256WITHRSA",
-		Options:                 req.Options,
+		Options:                 options,
 		CreatedAt:               now,
 		InUseBy:                 []string{},
 	}
