@@ -120,7 +120,7 @@ func TestWorkflows_AutoRegisterOnSubmit(t *testing.T) {
 		"workflow": sampleWorkflowYAML,
 		"repo":     "octo/repo",
 	})
-	req := httptest.NewRequest("POST", "/api/v3/bleephub/workflow", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/internal/exec/workflow", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
@@ -210,8 +210,9 @@ func TestWorkflows_Dispatch(t *testing.T) {
 	req := httptest.NewRequest("POST",
 		fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID),
 		bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -237,7 +238,7 @@ func TestWorkflows_Dispatch_NoYAMLCached(t *testing.T) {
 	// edge case where the file was indexed without contents).
 	wf := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", "", "discovered")
 
-	w := runRequest(s, "POST",
+	w := runAuthedRequest(s, "POST",
 		fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID))
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422 when YAML body is empty", w.Code)
@@ -256,9 +257,24 @@ func TestWorkflows_Rerun_ViaCachedYAML(t *testing.T) {
 	run, _ := seedRun(t, s, "octo/repo", "completed", "success")
 	run.Name = "ci"
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", run.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", run.RunID))
 	if w.Code != http.StatusCreated {
 		t.Errorf("rerun status = %d, want 201 (cached YAML present); body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRepositoryDispatchPayload_IncludesBranch(t *testing.T) {
+	repo := &Repo{FullName: "octo/repo", DefaultBranch: "trunk"}
+	user := &User{Login: "octocat"}
+	payload := repositoryDispatchPayload(repo, user, "deploy", map[string]interface{}{"v": "1"})
+	if payload["branch"] != "trunk" {
+		t.Errorf("branch = %v, want trunk (repo default branch)", payload["branch"])
+	}
+	if payload["action"] != "deploy" || payload["event_type"] != "deploy" {
+		t.Errorf("action/event_type mismatch: %v", payload)
+	}
+	if payload["client_payload"] == nil || payload["repository"] == nil || payload["sender"] == nil {
+		t.Errorf("missing standard fields: %v", payload)
 	}
 }
 

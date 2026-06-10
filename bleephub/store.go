@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,23 @@ func AdminToken() string {
 
 // loadJSON is a thin wrapper to keep error wrapping uniform across persistence loaders.
 func loadJSON(raw []byte, v interface{}) error { return json.Unmarshal(raw, v) }
+
+// ReserveRunID hands out the next workflow run ID and persists the
+// counter. Artifacts persist on disk keyed by their run ID, so the
+// sequence must never restart from 1 after a reload — a new run #1
+// would inherit the previous epoch's run-1 artifacts.
+func (st *Store) ReserveRunID() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	id := st.NextRunID
+	st.NextRunID++
+	if st.persist != nil {
+		if err := st.persist.SetCounter("next_run_id", int64(st.NextRunID)); err != nil {
+			log.Fatalf("bleephub persistence counter next_run_id failed: %v", err)
+		}
+	}
+	return id
+}
 
 // User represents a GitHub user account.
 type User struct {
@@ -425,12 +443,28 @@ func (st *Store) loadFromPersistence() error {
 		if err := loadJSON(raw, &r); err != nil {
 			return err
 		}
-		// Owner is encoded as User pointer; ensure linkage to the loaded user.
-		if r.Owner != nil {
-			if owner := st.Users[r.Owner.ID]; owner != nil {
-				r.Owner = owner
-			}
+		// Owner (a *User) is relinked from the persisted OwnerID; users load
+		// before repos. For org-owned repos the FullName segment is the org
+		// login, so OwnerID (the creator's user ID) is the reliable key.
+		// Legacy rows without owner_id fall back to the FullName user segment.
+		// A repo without a resolvable owner is unusable (RBAC denies the
+		// owner, refs handlers dereference Owner), so fail loud.
+		var owner *User
+		if r.OwnerID != 0 {
+			owner = st.Users[r.OwnerID]
+		} else {
+			ownerLogin, _, _ := strings.Cut(r.FullName, "/")
+			owner = st.UsersByLogin[ownerLogin]
 		}
+		if owner == nil {
+			return fmt.Errorf("repo %s: owner (id=%d) not found in loaded users", r.FullName, r.OwnerID)
+		}
+		r.Owner = owner
+		r.OwnerID = owner.ID
+		// Per-repo number counters are recomputed from loaded issues/PRs/
+		// milestones below (their loaders bump these past every seen number).
+		r.NextIssueNumber = 1
+		r.NextMilestoneNumber = 1
 		st.Repos[r.ID] = &r
 		st.ReposByName[r.FullName] = &r
 		if r.ID >= st.NextRepo {
@@ -514,6 +548,9 @@ func (st *Store) loadFromPersistence() error {
 		if m.ID >= st.NextMilestone {
 			st.NextMilestone = m.ID + 1
 		}
+		if repo := st.Repos[m.RepoID]; repo != nil && m.Number >= repo.NextMilestoneNumber {
+			repo.NextMilestoneNumber = m.Number + 1
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -526,6 +563,9 @@ func (st *Store) loadFromPersistence() error {
 		st.Issues[i.ID] = &i
 		if i.ID >= st.NextIssue {
 			st.NextIssue = i.ID + 1
+		}
+		if repo := st.Repos[i.RepoID]; repo != nil && i.Number >= repo.NextIssueNumber {
+			repo.NextIssueNumber = i.Number + 1
 		}
 		return nil
 	}); err != nil {
@@ -552,6 +592,10 @@ func (st *Store) loadFromPersistence() error {
 		st.PullRequests[pr.ID] = &pr
 		if pr.ID >= st.NextPR {
 			st.NextPR = pr.ID + 1
+		}
+		// PRs share the per-repo issue-number sequence with issues.
+		if repo := st.Repos[pr.RepoID]; repo != nil && pr.Number >= repo.NextIssueNumber {
+			repo.NextIssueNumber = pr.Number + 1
 		}
 		return nil
 	}); err != nil {
@@ -643,6 +687,14 @@ func (st *Store) loadFromPersistence() error {
 			return nil
 		}},
 		{"workflow_files", func(_ string, raw []byte) error {
+			var wf WorkflowFile
+			if err := loadJSON(raw, &wf); err != nil {
+				return err
+			}
+			if st.WorkflowFiles == nil {
+				st.WorkflowFiles = map[int64]*WorkflowFile{}
+			}
+			st.WorkflowFiles[wf.ID] = &wf
 			return nil
 		}},
 		{"pr_reviews", func(_ string, raw []byte) error {
@@ -796,7 +848,45 @@ func (st *Store) loadFromPersistence() error {
 					return err
 				}
 				st.Misc.oidcClaimKeys = keys
+			case "follows":
+				var follows map[string]map[string]bool
+				if err := loadJSON(raw, &follows); err != nil {
+					return err
+				}
+				st.Misc.follows = follows
 			}
+			return nil
+		}},
+		{"user_keys", func(_ string, raw []byte) error {
+			var k UserKey
+			if err := loadJSON(raw, &k); err != nil {
+				return err
+			}
+			st.Misc.userKeys[k.ID] = &k
+			st.Misc.keysByUser[k.UserID] = append(st.Misc.keysByUser[k.UserID], &k)
+			if k.ID >= st.Misc.nextKeyID {
+				st.Misc.nextKeyID = k.ID + 1
+			}
+			return nil
+		}},
+		{"pages_sites", func(key string, raw []byte) error {
+			repoID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("pages_sites key %q: %w", key, err)
+			}
+			var site PagesSite
+			if err := loadJSON(raw, &site); err != nil {
+				return err
+			}
+			st.Misc.pagesByRepo[repoID] = &site
+			return nil
+		}},
+		{"branch_protection", func(key string, raw []byte) error {
+			var bp BranchProtection
+			if err := loadJSON(raw, &bp); err != nil {
+				return err
+			}
+			st.Misc.branchProtection[key] = bp
 			return nil
 		}},
 		{"gpg_keys", func(_ string, raw []byte) error {
@@ -863,6 +953,12 @@ func (st *Store) loadFromPersistence() error {
 		}
 	}
 
+	if v, err := st.persist.GetCounter("next_run_id"); err != nil {
+		return fmt.Errorf("load counter next_run_id: %w", err)
+	} else if int(v) > st.NextRunID {
+		st.NextRunID = int(v)
+	}
+
 	return nil
 }
 
@@ -884,7 +980,7 @@ func (st *Store) SeedDefaultUser() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	now := time.Now()
+	now := time.Now().UTC()
 	u := &User{
 		ID:        st.NextUser,
 		NodeID:    "U_kgDOBdefault",

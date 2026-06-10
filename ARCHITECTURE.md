@@ -488,7 +488,7 @@ sequenceDiagram
     R->>BPH: GET /_apis/v1/Message/{poolId} (30s poll)
 
     Note over J,BPH: 3. Test submits job
-    J->>BPH: POST /api/v3/bleephub/submit
+    J->>BPH: POST /internal/exec/submit
     BPH-->>R: Job message (via long-poll response)
 
     Note over R,S: 4. Runner executes via Docker API

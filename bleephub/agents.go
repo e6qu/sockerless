@@ -12,17 +12,17 @@ import (
 
 func (s *Server) registerAgentRoutes() {
 	// Registration token (for config.sh)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runners/registration-token", s.handleRegistrationToken)
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/registration-token", s.handleRegistrationToken)
 
 	// Agent pools
-	s.mux.HandleFunc("GET /_apis/v1/AgentPools", s.handleListPools)
+	s.route("GET /_apis/v1/AgentPools", s.handleListPools)
 
 	// Agent CRUD — order matters: more specific patterns first
-	s.mux.HandleFunc("POST /_apis/v1/Agent/{poolId}", s.handleRegisterAgent)
-	s.mux.HandleFunc("GET /_apis/v1/Agent/{poolId}/{agentId}", s.handleGetAgent)
-	s.mux.HandleFunc("PUT /_apis/v1/Agent/{poolId}/{agentId}", s.handleUpdateAgent)
-	s.mux.HandleFunc("DELETE /_apis/v1/Agent/{poolId}/{agentId}", s.handleDeleteAgent)
-	s.mux.HandleFunc("GET /_apis/v1/Agent/{poolId}", s.handleListAgents)
+	s.route("POST /_apis/v1/Agent/{poolId}", s.handleRegisterAgent)
+	s.route("GET /_apis/v1/Agent/{poolId}/{agentId}", s.handleGetAgent)
+	s.route("PUT /_apis/v1/Agent/{poolId}/{agentId}", s.handleUpdateAgent)
+	s.route("DELETE /_apis/v1/Agent/{poolId}/{agentId}", s.handleDeleteAgent)
+	s.route("GET /_apis/v1/Agent/{poolId}", s.handleListAgents)
 }
 
 func (s *Server) handleRegistrationToken(w http.ResponseWriter, r *http.Request) {

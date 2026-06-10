@@ -83,12 +83,12 @@ Fix: each store method emits the matching event through `emitAppWebhookEvent(eve
 
 ### G5 — OAuth token prefixes + refresh tokens
 
-Real GH prefixes: `ghp_` (classic PAT), `gho_` (OAuth user-to-server), `ghu_` (App user-to-server), `ghs_` (server-to-server installation), `ghr_` (refresh), `github_pat_` (fine-grained). bleephub today: `bph_` for everything except `ghs_`; both device flow and web flow mint `bph_…` (`gh_oauth.go:285-295`).
+Real GH prefixes: `ghp_` (classic PAT), `gho_` (OAuth user-to-server), `ghu_` (App user-to-server), `ghs_` (server-to-server installation), `ghr_` (refresh), `github_pat_` (fine-grained). **Landed:** bleephub now mints the real prefixes (`generateTokenValue` → `ghp_`; `CreateUserToServerToken` → `gho_`/`ghu_` + `ghr_`); the admin token is the operator-supplied `BLEEPHUB_ADMIN_TOKEN` value. See [bleephub/README.md](../bleephub/README.md) § "Token prefixes". Original fix shape kept below for the record.
 
 Fix:
 - Web flow `/login/oauth/access_token` mints `gho_…` (OAuth app context) or `ghu_…` (when client_id maps to a GitHub App's client_id).
 - Add `ghr_` refresh tokens with longer expiry (default: 6 months); `PATCH /applications/{client_id}/token` rotates user-to-server token + returns new `gho_`/`ghu_` + new `ghr_`.
-- Middleware recognises every prefix; `ghp_` still maps to PAT semantics for compat with the seeded admin user (token currently `bph_…` — leave a backwards-compat alias).
+- Middleware recognises every prefix; `ghp_` still maps to PAT semantics. (The admin token has since moved to the operator-supplied `BLEEPHUB_ADMIN_TOKEN` env var — no seeded `bph_…` value exists anymore.)
 
 ### G6 — App-level webhook config
 

@@ -67,7 +67,7 @@ export function MetricsPage() {
                   key={result}
                   title={result}
                   value={count}
-                  emphasized={result === "Failed" || result === "failed"}
+                  emphasized={result === "failure"}
                 />
               ))
             )}

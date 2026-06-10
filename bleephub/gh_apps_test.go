@@ -302,7 +302,7 @@ func TestDeleteInstallation(t *testing.T) {
 // --- Integration tests (HTTP) ---
 
 func TestCreateAppViaManagement(t *testing.T) {
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name":        "Integration Test App",
 		"description": "An app for testing",
 		"permissions": map[string]string{"contents": "read", "issues": "write"},
@@ -327,7 +327,7 @@ func TestCreateAppViaManagement(t *testing.T) {
 
 func TestAppManifestFlow(t *testing.T) {
 	// Create app via management
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Manifest Flow App",
 	})
 	if resp.StatusCode != 201 {
@@ -372,7 +372,7 @@ func TestAppManifestFlow(t *testing.T) {
 
 func TestGetAuthenticatedApp(t *testing.T) {
 	// Create app
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "JWT Auth App",
 	})
 	if resp.StatusCode != 201 {
@@ -407,6 +407,33 @@ func TestGetAuthenticatedApp(t *testing.T) {
 	if data["pem"] != nil {
 		t.Fatal("PEM should not be in GET /app response")
 	}
+	// GitHub's GET /app has none of these fields.
+	for _, f := range []string{"events_url", "hooks_url", "installations_url"} {
+		if _, present := data[f]; present {
+			t.Errorf("GET /app must not include %q", f)
+		}
+	}
+	// installations_count is a real integer (no installations here → 0).
+	if c, ok := data["installations_count"].(float64); !ok || c != 0 {
+		t.Errorf("installations_count = %v, want 0", data["installations_count"])
+	}
+	// owner is the real owning user (admin), not a hardcoded placeholder.
+	owner, _ := data["owner"].(map[string]interface{})
+	if owner == nil {
+		t.Fatal("missing owner object")
+	}
+	if owner["login"] != "admin" {
+		t.Errorf("owner.login = %v, want admin", owner["login"])
+	}
+	if owner["html_url"] != "https://github.com/admin" {
+		t.Errorf("owner.html_url = %v, want https://github.com/admin", owner["html_url"])
+	}
+	if _, present := owner["node_id"]; !present {
+		t.Error("owner missing node_id")
+	}
+	if _, present := owner["site_admin"]; !present {
+		t.Error("owner missing site_admin")
+	}
 }
 
 func TestGetAuthenticatedAppNoJWT401(t *testing.T) {
@@ -421,14 +448,14 @@ func TestGetAuthenticatedAppNoJWT401(t *testing.T) {
 
 func TestCreateInstallationHTTP(t *testing.T) {
 	// Create app
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Install HTTP App",
 	})
 	appData := decodeJSON(t, resp)
 	appID := int(appData["id"].(float64))
 
 	// Create installation via management
-	resp2 := ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_type":  "User",
 		"target_id":    1,
 		"target_login": "admin",
@@ -450,14 +477,14 @@ func TestCreateInstallationHTTP(t *testing.T) {
 
 func TestListAppInstallationsHTTP(t *testing.T) {
 	// Create app + installation
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "List Inst App",
 	})
 	appData := decodeJSON(t, resp)
 	appID := int(appData["id"].(float64))
 	pem := appData["pem"].(string)
 
-	ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "admin",
 	}).Body.Close()
 
@@ -483,7 +510,7 @@ func TestListAppInstallationsHTTP(t *testing.T) {
 
 func TestCreateInstallationTokenHTTP(t *testing.T) {
 	// Create app + installation
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name":        "Token HTTP App",
 		"permissions": map[string]string{"contents": "write"},
 	})
@@ -491,7 +518,7 @@ func TestCreateInstallationTokenHTTP(t *testing.T) {
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "admin",
 		"permissions":  map[string]string{"contents": "write"},
 	})
@@ -518,18 +545,26 @@ func TestCreateInstallationTokenHTTP(t *testing.T) {
 	if tokData["expires_at"] == nil {
 		t.Fatal("expected expires_at in response")
 	}
+	// repository_selection reflects the installation (all) when no subset given.
+	if tokData["repository_selection"] != "all" {
+		t.Errorf("repository_selection = %v, want all", tokData["repository_selection"])
+	}
+	// No repository subset requested → no repositories array.
+	if _, present := tokData["repositories"]; present {
+		t.Error("repositories should be absent when no subset requested")
+	}
 }
 
 func TestInstallationTokenAuth(t *testing.T) {
 	// Create app + installation + token
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Token Auth App",
 	})
 	appData := decodeJSON(t, resp)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "admin",
 	})
 	instData := decodeJSON(t, resp2)
@@ -562,13 +597,13 @@ func TestInstallationTokenAuth(t *testing.T) {
 
 func TestInstallationTokenWrongApp(t *testing.T) {
 	// Create two apps
-	resp1 := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp1 := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "App A Wrong",
 	})
 	appA := decodeJSON(t, resp1)
 	appAID := int(appA["id"].(float64))
 
-	resp2 := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp2 := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "App B Wrong",
 	})
 	appB := decodeJSON(t, resp2)
@@ -576,7 +611,7 @@ func TestInstallationTokenWrongApp(t *testing.T) {
 	appBID := int(appB["id"].(float64))
 
 	// Create installation for app A
-	resp3 := ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appAID), defaultToken, map[string]interface{}{
+	resp3 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appAID), defaultToken, map[string]interface{}{
 		"target_login": "admin",
 	})
 	instData := decodeJSON(t, resp3)
@@ -599,13 +634,13 @@ func TestInstallationTokenWrongApp(t *testing.T) {
 
 func TestGetRepoInstallationHTTP(t *testing.T) {
 	// Create app + installation with target_login matching a repo owner
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Repo Inst App",
 	})
 	appData := decodeJSON(t, resp)
 	appID := int(appData["id"].(float64))
 
-	ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "repo-inst-owner",
 	}).Body.Close()
 
@@ -631,14 +666,14 @@ func TestGetRepoInstallationHTTP(t *testing.T) {
 
 func TestDeleteInstallationHTTP(t *testing.T) {
 	// Create app + installation
-	resp := ghPost(t, "/api/v3/bleephub/apps", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Delete Inst App",
 	})
 	appData := decodeJSON(t, resp)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/api/v3/bleephub/apps/%d/installations", appID), defaultToken, map[string]interface{}{
+	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "admin",
 	})
 	instData := decodeJSON(t, resp2)

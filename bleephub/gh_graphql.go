@@ -77,7 +77,7 @@ func (s *Server) initGraphQLSchema() {
 }
 
 func (s *Server) registerGHGraphQLRoutes() {
-	s.mux.HandleFunc("POST /api/graphql", s.handleGraphQL)
+	s.route("POST /api/graphql", s.handleGraphQL)
 }
 
 // handleGraphQL executes a GraphQL query.

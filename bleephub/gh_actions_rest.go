@@ -16,27 +16,39 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 func (s *Server) registerGHActionsRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs", s.handleListWorkflowRuns)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleDeleteWorkflowRun)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel", s.handleCancelWorkflowRun)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun", s.handleRerunWorkflowRun)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}", s.handleDeleteRunner)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs", s.handleListWorkflowRuns)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}",
+		s.requirePerm(scopeActions, permWrite, s.handleDeleteWorkflowRun))
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel",
+		s.requirePerm(scopeActions, permWrite, s.handleCancelWorkflowRun))
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
+		s.requirePerm(scopeActions, permWrite, s.handleRerunWorkflowRun))
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
+		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
 }
 
 // repoFullName returns "owner/repo" for the request's path params,
 // matching the format Workflow.RepoFullName uses (set at submit time).
 func repoFullName(r *http.Request) string {
 	return r.PathValue("owner") + "/" + r.PathValue("repo")
+}
+
+// sortRunsNewestFirst orders runs the way real GitHub lists them
+// (most recent run first). Run lists are collected from a map, so
+// without an explicit sort the page boundaries shift between requests.
+func sortRunsNewestFirst(runs []*Workflow) {
+	sort.Slice(runs, func(i, j int) bool { return runs[i].RunID > runs[j].RunID })
 }
 
 // stableJobID maps a WorkflowJob's UUID to a stable int64 GitHub-shape
@@ -116,30 +128,44 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
 	apiBase := fmt.Sprintf("%s/api/v3/repos/%s", baseURL, repoPath)
 	htmlBase := fmt.Sprintf("%s/%s", baseURL, repoPath)
 	status := runStatus(wf.Status)
+	// workflow_id / workflow_url / path reference the originating workflow
+	// FILE, which is stable across every run produced from it — never the
+	// per-run RunID. Use the values resolved at submit/dispatch time; fall
+	// back to a deterministic derivation for runs created without a backing
+	// file (e.g. directly seeded in tests).
+	fileID := wf.WorkflowFileID
+	filePath := wf.WorkflowFilePath
+	if filePath == "" {
+		filePath = ".github/workflows/" + wf.Name + ".yml"
+	}
+	if fileID == 0 {
+		fileID = stableWorkflowFileID(wf.RepoFullName, filePath)
+	}
+	created := wf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
 	return map[string]any{
 		"id":                   int64(wf.RunID),
 		"name":                 wf.Name,
 		"node_id":              "WFR_" + wf.ID,
 		"head_branch":          headBranchOf(wf),
 		"head_sha":             wf.Sha,
-		"path":                 ".github/workflows/" + wf.Name + ".yml",
+		"path":                 filePath,
 		"display_title":        wf.Name,
 		"run_number":           wf.RunNumber,
 		"event":                eventOf(wf),
 		"status":               status,
 		"conclusion":           runConclusion(status, wf.Result),
-		"workflow_id":          int64(wf.RunID),
+		"workflow_id":          fileID,
 		"check_suite_id":       int64(wf.RunID),
 		"check_suite_node_id":  "CS_" + wf.ID,
 		"url":                  fmt.Sprintf("%s/actions/runs/%d", apiBase, wf.RunID),
 		"html_url":             fmt.Sprintf("%s/actions/runs/%d", htmlBase, wf.RunID),
 		"pull_requests":        []any{},
-		"created_at":           wf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		"updated_at":           wf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		"created_at":           created,
+		"updated_at":           created,
 		"actor":                nil,
 		"run_attempt":          1,
 		"referenced_workflows": []any{},
-		"run_started_at":       wf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		"run_started_at":       created,
 		"triggering_actor":     nil,
 		"jobs_url":             fmt.Sprintf("%s/actions/runs/%d/jobs", apiBase, wf.RunID),
 		"logs_url":             fmt.Sprintf("%s/actions/runs/%d/logs", apiBase, wf.RunID),
@@ -147,10 +173,14 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
 		"artifacts_url":        fmt.Sprintf("%s/actions/runs/%d/artifacts", apiBase, wf.RunID),
 		"cancel_url":           fmt.Sprintf("%s/actions/runs/%d/cancel", apiBase, wf.RunID),
 		"rerun_url":            fmt.Sprintf("%s/actions/runs/%d/rerun", apiBase, wf.RunID),
-		"workflow_url":         fmt.Sprintf("%s/actions/workflows/%d", apiBase, wf.RunID),
+		"workflow_url":         fmt.Sprintf("%s/actions/workflows/%d", apiBase, fileID),
 		"head_commit": map[string]any{
-			"id":      wf.Sha,
-			"message": wf.Name,
+			"id":        wf.Sha,
+			"tree_id":   wf.Sha,
+			"message":   wf.Name,
+			"timestamp": created,
+			"author":    map[string]any{"name": "bleephub", "email": "actions@bleephub"},
+			"committer": map[string]any{"name": "bleephub", "email": "actions@bleephub"},
 		},
 	}
 }
@@ -181,6 +211,18 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 	htmlBase := fmt.Sprintf("%s/%s", baseURL, repoPath)
 	status := jobStatus(wfJob.Status)
 	id := stableJobID(wfJob.JobID)
+	startedAt := wfJob.StartedAt.UTC().Format("2006-01-02T15:04:05Z")
+	// created_at is the queue time; bleephub records StartedAt at queue
+	// (dispatchReadyJobs sets it when the job is marked queued), so it
+	// doubles as the created timestamp.
+	var completedAt any
+	if status == "completed" {
+		t := wfJob.CompletedAt
+		if t.IsZero() {
+			t = wfJob.StartedAt
+		}
+		completedAt = t.UTC().Format("2006-01-02T15:04:05Z")
+	}
 	return map[string]any{
 		"id":                id,
 		"run_id":            int64(wf.RunID),
@@ -194,11 +236,11 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 		"html_url":          fmt.Sprintf("%s/actions/runs/%d/job/%d", htmlBase, wf.RunID, id),
 		"status":            status,
 		"conclusion":        jobConclusion(status, wfJob.Result),
-		"created_at":        wfJob.StartedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		"started_at":        wfJob.StartedAt.UTC().Format("2006-01-02T15:04:05Z"),
-		"completed_at":      nil,
+		"created_at":        startedAt,
+		"started_at":        startedAt,
+		"completed_at":      completedAt,
 		"name":              wfJob.DisplayName,
-		"steps":             []any{},
+		"steps":             jobStepsJSON(wfJob, status, startedAt, completedAt),
 		"check_run_url":     fmt.Sprintf("%s/check-runs/%d", apiBase, id),
 		"labels":            labelsForJob(wfJob),
 		"runner_id":         nil,
@@ -206,6 +248,61 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 		"runner_group_id":   nil,
 		"runner_group_name": nil,
 	}
+}
+
+// jobStepsJSON synthesizes the GitHub-shape `steps` array from the job's
+// step definitions. Each step object carries name/status/conclusion/
+// number/started_at/completed_at. Bleephub tracks job-level timing only,
+// so every step inherits the job's status, conclusion, and timestamps;
+// the per-step `number` is 1-based in definition order, matching how
+// GitHub numbers a job's steps.
+func jobStepsJSON(wfJob *WorkflowJob, jobStatus, startedAt string, completedAt any) []map[string]any {
+	var defs []StepDef
+	if wfJob.Def != nil {
+		defs = wfJob.Def.Steps
+	}
+	steps := make([]map[string]any, 0, len(defs))
+	for i, sd := range defs {
+		name := sd.Name
+		if name == "" {
+			if sd.Uses != "" {
+				name = sd.Uses
+			} else {
+				name = "Run " + truncateStepName(sd.Run)
+			}
+		}
+		var started any
+		var completed any
+		if jobStatus != "queued" {
+			started = startedAt
+		}
+		if jobStatus == "completed" {
+			completed = completedAt
+		}
+		steps = append(steps, map[string]any{
+			"name":         name,
+			"status":       jobStatus,
+			"conclusion":   jobConclusion(jobStatus, wfJob.Result),
+			"number":       i + 1,
+			"started_at":   started,
+			"completed_at": completed,
+		})
+	}
+	return steps
+}
+
+func truncateStepName(run string) string {
+	run = strings.TrimSpace(run)
+	if i := strings.IndexByte(run, '\n'); i >= 0 {
+		run = run[:i]
+	}
+	if len(run) > 40 {
+		run = run[:40]
+	}
+	if run == "" {
+		return "step"
+	}
+	return run
 }
 
 func labelsForJob(wfJob *WorkflowJob) []string {
@@ -253,13 +350,25 @@ func runnerJSON(a *Agent) map[string]any {
 		})
 	}
 	return map[string]any{
-		"id":     int64(a.ID),
-		"name":   a.Name,
-		"os":     osFromDescription(a.OSDescription),
-		"status": agentStatusForRunner(a.Status),
-		"busy":   false,
-		"labels": labels,
+		"id":              int64(a.ID),
+		"runner_group_id": 1,
+		"name":            a.Name,
+		"os":              osFromDescription(a.OSDescription),
+		"status":          agentStatusForRunner(a.Status),
+		"busy":            false,
+		"ephemeral":       false,
+		"version":         versionForRunner(a),
+		"labels":          labels,
 	}
+}
+
+// versionForRunner reports the agent's reported version, or nil when the
+// agent never advertised one (GitHub renders absent versions as null).
+func versionForRunner(a *Agent) any {
+	if a.Version == "" {
+		return nil
+	}
+	return a.Version
 }
 
 func osFromDescription(desc string) string {
@@ -342,6 +451,7 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 	}
 	s.store.mu.RUnlock()
 
+	sortRunsNewestFirst(matching)
 	page := paginateAndLink(w, r, matching)
 	base := s.baseURL(r)
 	runs := make([]map[string]any, 0, len(page))

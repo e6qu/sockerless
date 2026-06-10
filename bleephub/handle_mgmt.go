@@ -6,15 +6,15 @@ import (
 )
 
 func (s *Server) registerMgmtRoutes() {
-	s.mux.HandleFunc("GET /internal/workflows", s.handleListWorkflows)
-	s.mux.HandleFunc("GET /internal/workflows/{workflowId}", s.handleGetWorkflow)
-	s.mux.HandleFunc("GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs)
-	s.mux.HandleFunc("GET /internal/workflow_files", s.handleListWorkflowFilesInternal)
-	s.mux.HandleFunc("GET /internal/apps", s.handleListAppsInternal)
-	s.mux.HandleFunc("GET /internal/installations", s.handleListInstallationsInternal)
-	s.mux.HandleFunc("GET /internal/oauth/state", s.handleOAuthStateInternal)
-	s.mux.HandleFunc("GET /internal/sessions", s.handleListSessions)
-	s.mux.HandleFunc("GET /internal/repos", s.handleListRepos)
+	s.route("GET /internal/workflows", s.handleListWorkflows)
+	s.route("GET /internal/workflows/{workflowId}", s.handleGetWorkflow)
+	s.route("GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs)
+	s.route("GET /internal/workflow_files", s.handleListWorkflowFilesInternal)
+	s.route("GET /internal/apps", s.handleListAppsInternal)
+	s.route("GET /internal/installations", s.handleListInstallationsInternal)
+	s.route("GET /internal/oauth/state", s.handleOAuthStateInternal)
+	s.route("GET /internal/sessions", s.handleListSessions)
+	s.route("GET /internal/repos", s.handleListRepos)
 }
 
 // appView / installationView / oauthState — operator-facing admin
@@ -32,13 +32,14 @@ type appView struct {
 }
 
 type installationViewMgmt struct {
-	ID                  int    `json:"id"`
-	AppID               int    `json:"appId"`
-	AppSlug             string `json:"appSlug"`
-	TargetType          string `json:"targetType"`
-	TargetLogin         string `json:"targetLogin"`
-	RepositorySelection string `json:"repositorySelection"`
-	CreatedAt           string `json:"createdAt"`
+	ID                  int     `json:"id"`
+	AppID               int     `json:"appId"`
+	AppSlug             string  `json:"appSlug"`
+	TargetType          string  `json:"targetType"`
+	TargetLogin         string  `json:"targetLogin"`
+	RepositorySelection string  `json:"repositorySelection"`
+	CreatedAt           string  `json:"createdAt"`
+	SuspendedAt         *string `json:"suspendedAt"`
 }
 
 type oauthStateView struct {
@@ -87,6 +88,11 @@ func (s *Server) handleListInstallationsInternal(w http.ResponseWriter, r *http.
 	s.store.mu.RLock()
 	installs := make([]installationViewMgmt, 0, len(s.store.Installations))
 	for _, inst := range s.store.Installations {
+		var suspendedAt *string
+		if inst.SuspendedAt != nil {
+			s := inst.SuspendedAt.UTC().Format("2006-01-02T15:04:05Z")
+			suspendedAt = &s
+		}
 		installs = append(installs, installationViewMgmt{
 			ID:                  inst.ID,
 			AppID:               inst.AppID,
@@ -95,6 +101,7 @@ func (s *Server) handleListInstallationsInternal(w http.ResponseWriter, r *http.
 			TargetLogin:         inst.TargetLogin,
 			RepositorySelection: inst.RepositorySelection,
 			CreatedAt:           inst.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			SuspendedAt:         suspendedAt,
 		})
 	}
 	s.store.mu.RUnlock()

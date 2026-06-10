@@ -3,10 +3,13 @@ package bleephub
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +41,29 @@ func TestOAuthAppCreate_AndCheckTokenWithBasicAuth(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if got["token"] != tok.Token {
 		t.Errorf("inspection echoed wrong token: %v", got["token"])
+	}
+	// token_last_eight + hashed_token reflect the real token.
+	if got["token_last_eight"] != tok.Token[len(tok.Token)-8:] {
+		t.Errorf("token_last_eight = %v, want %s", got["token_last_eight"], tok.Token[len(tok.Token)-8:])
+	}
+	sum := sha256.Sum256([]byte(tok.Token))
+	if got["hashed_token"] != hex.EncodeToString(sum[:]) {
+		t.Errorf("hashed_token = %v, want %s", got["hashed_token"], hex.EncodeToString(sum[:]))
+	}
+	// OAuth-App token → installation is null.
+	if v, present := got["installation"]; !present || v != nil {
+		t.Errorf("installation = %v (present=%v), want null for OAuth-App token", v, present)
+	}
+	// app object carries the real OAuth App name + client_id.
+	appObj, _ := got["app"].(map[string]any)
+	if appObj == nil {
+		t.Fatalf("missing app object in inspection response")
+	}
+	if appObj["client_id"] != oapp.ClientID {
+		t.Errorf("app.client_id = %v, want %s", appObj["client_id"], oapp.ClientID)
+	}
+	if appObj["name"] != "Test OAuth App" {
+		t.Errorf("app.name = %v, want Test OAuth App", appObj["name"])
 	}
 }
 
@@ -152,6 +178,54 @@ func TestOAuthRevokeGrant_KillsAllUserToServerTokensForClient(t *testing.T) {
 	}
 }
 
+func TestOAuthScopeToken_MintsFreshNarrowedToken(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerGHAppsRoutes()
+	s.registerGHAppsOAuthMgmtRoutes()
+
+	user := s.store.UsersByLogin["admin"]
+	app := s.store.CreateApp(user.ID, "Scoped App", "", map[string]string{"contents": "read"}, nil)
+	inst := s.store.CreateInstallation(app.ID, "User", user.ID, "admin", map[string]string{"contents": "read"}, nil)
+	// GitHub-App user-to-server token (ghu_).
+	tok, _ := s.store.CreateUserToServerToken(user.ID, app.ID, "", "", 8*time.Hour, false)
+
+	body, _ := json.Marshal(map[string]any{
+		"access_token": tok.Token,
+		"target":       "admin",
+		"permissions":  map[string]string{"contents": "read"},
+	})
+	req := httptest.NewRequest("POST", "/api/v3/applications/"+app.ClientID+"/token/scoped", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Basic "+basicHeader(app.ClientID, app.ClientSecret))
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	newToken, _ := got["token"].(string)
+	if newToken == "" || newToken == tok.Token {
+		t.Errorf("scope returned same/empty token: old=%q new=%q", tok.Token, newToken)
+	}
+	if !strings.HasPrefix(newToken, "ghu_") {
+		t.Errorf("scoped token = %q, want ghu_ prefix", newToken)
+	}
+	// The fresh token resolves to a valid user-to-server token.
+	if fresh, u := s.store.LookupUserToServerToken(newToken); fresh == nil || u == nil {
+		t.Error("scoped token not valid in store")
+	}
+	// Original token is NOT revoked (GitHub leaves it intact).
+	if orig, _ := s.store.LookupUserToServerToken(tok.Token); orig == nil {
+		t.Error("original token was revoked; scope must leave it intact")
+	}
+	// GitHub-App token → installation object present.
+	if got["installation"] == nil {
+		t.Error("expected installation object for GitHub-App scoped token")
+	}
+	_ = inst
+}
+
 func TestOAuthAppManagement(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
@@ -164,7 +238,7 @@ func TestOAuthAppManagement(t *testing.T) {
 		"url":          "https://example.test",
 		"callback_url": "https://example.test/cb",
 	})
-	req := httptest.NewRequest("POST", "/api/v3/bleephub/oauth-apps", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/internal/oauth-apps", bytes.NewReader(body))
 	user := s.store.UsersByLogin["admin"]
 	req = req.WithContext(setUserCtx(req, user))
 	w := httptest.NewRecorder()
@@ -179,7 +253,7 @@ func TestOAuthAppManagement(t *testing.T) {
 	}
 
 	// List
-	req = httptest.NewRequest("GET", "/api/v3/bleephub/oauth-apps", nil)
+	req = httptest.NewRequest("GET", "/internal/oauth-apps", nil)
 	req = req.WithContext(setUserCtx(req, user))
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)

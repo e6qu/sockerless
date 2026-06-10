@@ -13,16 +13,16 @@ import (
 // scope (read for reads, write for create/update).
 
 func (s *Server) registerGHChecksRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/check-runs", s.requirePerm("checks", permWrite, s.handleCreateCheckRun))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/check-runs/{id}", s.requirePerm("checks", permRead, s.handleGetCheckRun))
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/check-runs/{id}", s.requirePerm("checks", permWrite, s.handleUpdateCheckRun))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/check-runs/{id}/annotations", s.requirePerm("checks", permRead, s.handleListCheckRunAnnotations))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/commits/{sha}/check-runs", s.requirePerm("checks", permRead, s.handleListCheckRunsForCommit))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/commits/{sha}/check-suites", s.requirePerm("checks", permRead, s.handleListCheckSuitesForCommit))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/check-suites", s.requirePerm("checks", permWrite, s.handleCreateCheckSuite))
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/check-suites/preferences", s.requirePerm("administration", permWrite, s.handleUpdateCheckSuitePrefs))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/check-suites/{id}", s.requirePerm("checks", permRead, s.handleGetCheckSuite))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/check-suites/{id}/check-runs", s.requirePerm("checks", permRead, s.handleListCheckRunsForSuite))
+	s.route("POST /api/v3/repos/{owner}/{repo}/check-runs", s.requirePerm(scopeChecks, permWrite, s.handleCreateCheckRun))
+	s.route("GET /api/v3/repos/{owner}/{repo}/check-runs/{id}", s.requirePerm(scopeChecks, permRead, s.handleGetCheckRun))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/check-runs/{id}", s.requirePerm(scopeChecks, permWrite, s.handleUpdateCheckRun))
+	s.route("GET /api/v3/repos/{owner}/{repo}/check-runs/{id}/annotations", s.requirePerm(scopeChecks, permRead, s.handleListCheckRunAnnotations))
+	s.route("GET /api/v3/repos/{owner}/{repo}/commits/{sha}/check-runs", s.requirePerm(scopeChecks, permRead, s.handleListCheckRunsForCommit))
+	s.route("GET /api/v3/repos/{owner}/{repo}/commits/{sha}/check-suites", s.requirePerm(scopeChecks, permRead, s.handleListCheckSuitesForCommit))
+	s.route("POST /api/v3/repos/{owner}/{repo}/check-suites", s.requirePerm(scopeChecks, permWrite, s.handleCreateCheckSuite))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/check-suites/preferences", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateCheckSuitePrefs))
+	s.route("GET /api/v3/repos/{owner}/{repo}/check-suites/{id}", s.requirePerm(scopeChecks, permRead, s.handleGetCheckSuite))
+	s.route("GET /api/v3/repos/{owner}/{repo}/check-suites/{id}/check-runs", s.requirePerm(scopeChecks, permRead, s.handleListCheckRunsForSuite))
 }
 
 func (s *Server) handleCreateCheckRun(w http.ResponseWriter, r *http.Request) {

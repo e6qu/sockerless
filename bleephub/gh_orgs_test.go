@@ -44,7 +44,7 @@ func decodeJSONArray(t *testing.T, resp *http.Response) []map[string]interface{}
 
 // TestCreateOrg verifies POST /api/v3/user/orgs → 201.
 func TestCreateOrg(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login":       "testorg-create",
 		"name":        "Test Organization",
 		"description": "A test org",
@@ -71,7 +71,7 @@ func TestCreateOrg(t *testing.T) {
 
 // TestCreateOrgNoAuth verifies POST /api/v3/user/orgs without token → 401.
 func TestCreateOrgNoAuth(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/orgs", "", map[string]interface{}{
+	resp := ghPost(t, "/internal/orgs", "", map[string]interface{}{
 		"login": "should-fail",
 	})
 	defer resp.Body.Close()
@@ -137,7 +137,7 @@ func TestAdminCreateOrgDefaultsProfileName(t *testing.T) {
 
 // TestGetOrg verifies GET /api/v3/orgs/{org} → 200.
 func TestGetOrg(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-get",
 		"name":  "Get Org",
 	})
@@ -168,7 +168,7 @@ func TestGetOrgNotFound(t *testing.T) {
 
 // TestUpdateOrg verifies PATCH → description changed.
 func TestUpdateOrg(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-update",
 	})
 
@@ -188,7 +188,7 @@ func TestUpdateOrg(t *testing.T) {
 
 // TestDeleteOrg verifies DELETE → 204, subsequent GET → 404.
 func TestDeleteOrg(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-delete",
 	})
 
@@ -207,7 +207,7 @@ func TestDeleteOrg(t *testing.T) {
 
 // TestListUserOrgs verifies GET /api/v3/user/orgs → array with created org.
 func TestListAuthUserOrgs(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-list",
 	})
 
@@ -232,7 +232,7 @@ func TestListAuthUserOrgs(t *testing.T) {
 
 // TestCreateTeam verifies POST /api/v3/orgs/{org}/teams → 201.
 func TestCreateTeam(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-team",
 	})
 
@@ -260,7 +260,7 @@ func TestCreateTeam(t *testing.T) {
 
 // TestListTeams verifies GET /api/v3/orgs/{org}/teams → array.
 func TestListTeams(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-listteams",
 	})
 	ghPost(t, "/api/v3/orgs/testorg-listteams/teams", defaultToken, map[string]interface{}{
@@ -281,7 +281,7 @@ func TestListTeams(t *testing.T) {
 
 // TestGetTeam verifies GET /api/v3/orgs/{org}/teams/{slug} → 200.
 func TestGetTeam(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-getteam",
 	})
 	ghPost(t, "/api/v3/orgs/testorg-getteam/teams", defaultToken, map[string]interface{}{
@@ -305,7 +305,7 @@ func TestGetTeam(t *testing.T) {
 
 // TestDeleteTeam verifies DELETE → 204.
 func TestDeleteTeam(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-delteam",
 	})
 	ghPost(t, "/api/v3/orgs/testorg-delteam/teams", defaultToken, map[string]interface{}{
@@ -327,7 +327,7 @@ func TestDeleteTeam(t *testing.T) {
 
 // TestOrgMembership verifies PUT/GET membership → role correct.
 func TestOrgMembership(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-membership",
 	})
 
@@ -349,7 +349,7 @@ func TestOrgMembership(t *testing.T) {
 
 // TestRemoveMembership verifies DELETE → 204.
 func TestRemoveMembership(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-rmmember",
 	})
 
@@ -367,7 +367,7 @@ func TestRemoveMembership(t *testing.T) {
 
 // TestTeamRepoPermission verifies team repo access.
 func TestTeamRepoPermission(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-teamrepo",
 	})
 	ghPost(t, "/api/v3/orgs/testorg-teamrepo/teams", defaultToken, map[string]interface{}{
@@ -401,7 +401,7 @@ func TestTeamRepoPermission(t *testing.T) {
 // require for team → role mapping.
 func TestListUserTeams(t *testing.T) {
 	// Create org and team under admin.
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-userteams",
 	})
 	ghPost(t, "/api/v3/orgs/testorg-userteams/teams", defaultToken, map[string]interface{}{
@@ -443,7 +443,7 @@ func TestListUserTeams(t *testing.T) {
 
 // TestGraphQLViewerOrgs verifies viewer { organizations } query.
 func TestGraphQLViewerOrgs(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-gql",
 		"name":  "GQL Org",
 	})
@@ -488,7 +488,7 @@ func TestGraphQLViewerOrgs(t *testing.T) {
 
 // TestGraphQLOrganization verifies the organization query.
 func TestGraphQLOrganization(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-gqlquery",
 		"name":  "Query Org",
 	})
@@ -534,7 +534,7 @@ func TestGraphQLOrgNotFound(t *testing.T) {
 
 // TestCreateOrgRepo verifies POST /api/v3/orgs/{org}/repos → 201.
 func TestCreateOrgRepo(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": "testorg-repo",
 	})
 

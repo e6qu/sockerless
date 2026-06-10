@@ -408,6 +408,7 @@ jobs:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
       - run: cd ui && bunx turbo run build
+      - run: cd ui && bunx turbo run typecheck
       - run: cd ui && bunx turbo run test
 
   bleephub-quality:
@@ -499,6 +500,34 @@ jobs:
           name: playwright-screenshots
           path: temp/screenshots/
           retention-days: 7
+
+  # bleephub against the official GitHub Go SDK (google/go-github): builds the
+  # binary, runs it, and drives every major surface through typed SDK calls so
+  # any wire-shape drift surfaces as a decode error.
+  sim-bleephub-sdk:
+    name: sim (bleephub sdk)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: actions/setup-go@v6.4.0
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
+      - name: go-github SDK tests
+        run: cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...
+
+  # bleephub against the real `gh` CLI inside Docker (self-signed TLS + CA
+  # trust + the official gh binary driving repo/issue/PR/release verbs).
+  sim-bleephub-gh-cli:
+    name: sim (bleephub gh CLI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: gh CLI parity harness (Docker)
+        run: make bleephub-gh-docker-test
 
   build-gates:
     runs-on: ubuntu-latest

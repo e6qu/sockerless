@@ -16,11 +16,11 @@ import (
 // deliveries (Store.AppHookDeliveries, keyed by app ID).
 
 func (s *Server) registerGHAppHookRoutes() {
-	s.mux.HandleFunc("GET /api/v3/app/hook/config", s.handleGetAppHookConfig)
-	s.mux.HandleFunc("PATCH /api/v3/app/hook/config", s.handleUpdateAppHookConfig)
-	s.mux.HandleFunc("GET /api/v3/app/hook/deliveries", s.handleListAppHookDeliveries)
-	s.mux.HandleFunc("GET /api/v3/app/hook/deliveries/{delivery_id}", s.handleGetAppHookDelivery)
-	s.mux.HandleFunc("POST /api/v3/app/hook/deliveries/{delivery_id}/attempts", s.handleRedeliverAppHookDelivery)
+	s.route("GET /api/v3/app/hook/config", s.handleGetAppHookConfig)
+	s.route("PATCH /api/v3/app/hook/config", s.handleUpdateAppHookConfig)
+	s.route("GET /api/v3/app/hook/deliveries", s.handleListAppHookDeliveries)
+	s.route("GET /api/v3/app/hook/deliveries/{delivery_id}", s.handleGetAppHookDelivery)
+	s.route("POST /api/v3/app/hook/deliveries/{delivery_id}/attempts", s.handleRedeliverAppHookDelivery)
 }
 
 func (s *Server) handleGetAppHookConfig(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +53,12 @@ func (s *Server) handleUpdateAppHookConfig(w http.ResponseWriter, r *http.Reques
 		}
 		if req.Secret != "" {
 			a.WebhookSecret = req.Secret
+		}
+		if req.ContentType != "" {
+			a.WebhookContentType = req.ContentType
+		}
+		if req.InsecureSSL != "" {
+			a.WebhookInsecureSSL = req.InsecureSSL
 		}
 	})
 	app = s.store.GetApp(app.ID)
@@ -115,22 +121,30 @@ func (s *Server) handleRedeliverAppHookDelivery(w http.ResponseWriter, r *http.R
 	}
 	go s.redeliverAppWebhook(app, d)
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "redelivery": true})
 }
 
 func appHookConfigJSON(app *App) map[string]interface{} {
-	active := app.WebhookActive
+	contentType := app.WebhookContentType
+	if contentType == "" {
+		contentType = "form" // GitHub's documented default for app webhooks
+	}
+	insecureSSL := app.WebhookInsecureSSL
+	if insecureSSL == "" {
+		insecureSSL = "0"
+	}
 	return map[string]interface{}{
 		"url":          app.WebhookURL,
-		"content_type": "json",
-		"insecure_ssl": "0",
+		"content_type": contentType,
+		"insecure_ssl": insecureSSL,
 		"secret":       "********", // real GH redacts; preserves contract
-		"active":       active,
+		"active":       app.WebhookActive,
 	}
 }
 
 func deliveryFullJSON(d *WebhookDelivery) map[string]interface{} {
 	out := deliveryToJSON(d)
+	// The full delivery object (unlike the list summary) carries the target url.
+	out["url"] = d.TargetURL
 	if d.Request != nil {
 		out["request"] = map[string]interface{}{
 			"headers": d.Request.Headers,

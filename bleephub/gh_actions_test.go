@@ -365,7 +365,7 @@ func TestActionsRuns_Cancel(t *testing.T) {
 	wf, _ := seedRun(t, s, "octo/repo", "running", "")
 	wf.Jobs["build"].Status = "queued"
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/cancel", wf.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/cancel", wf.RunID))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", w.Code)
 	}
@@ -379,7 +379,7 @@ func TestActionsRuns_Rerun_NotImplemented(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422 — rerun is unimplemented and must surface that, not silently succeed", w.Code)
 	}
@@ -390,7 +390,7 @@ func TestActionsRuns_Delete(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	w := runRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
+	w := runAuthedRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
 	}
@@ -463,7 +463,7 @@ func TestActionsRunners_Delete(t *testing.T) {
 	s.store.Agents[42] = &Agent{ID: 42, Name: "to-delete", Status: "online"}
 	s.store.mu.Unlock()
 
-	w := runRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/42")
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/42")
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
 	}
@@ -478,9 +478,141 @@ func TestActionsRunners_Delete(t *testing.T) {
 func TestActionsRunners_Delete_NotFound(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
-	w := runRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/9999")
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/9999")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestActionsRun_WorkflowFileReferences(t *testing.T) {
+	// workflow_id / workflow_url / path must reference the originating
+	// workflow FILE (stable across runs), never the per-run RunID.
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
+
+	wantFileID := stableWorkflowFileID("octo/repo", ".github/workflows/ci.yml")
+	if int64(wf.RunID) == wantFileID {
+		t.Skip("RunID coincidentally equals derived file id; cannot distinguish")
+	}
+
+	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var got struct {
+		ID          int64  `json:"id"`
+		WorkflowID  int64  `json:"workflow_id"`
+		Path        string `json:"path"`
+		WorkflowURL string `json:"workflow_url"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != int64(wf.RunID) {
+		t.Errorf("id = %d, want run id %d", got.ID, wf.RunID)
+	}
+	if got.WorkflowID != wantFileID {
+		t.Errorf("workflow_id = %d, want file id %d (not run id %d)", got.WorkflowID, wantFileID, wf.RunID)
+	}
+	if got.WorkflowID == int64(wf.RunID) {
+		t.Errorf("workflow_id must not equal run id %d", wf.RunID)
+	}
+	if got.Path != ".github/workflows/ci.yml" {
+		t.Errorf("path = %q, want .github/workflows/ci.yml", got.Path)
+	}
+	wantURL := fmt.Sprintf("http://example.com/api/v3/repos/octo/repo/actions/workflows/%d", wantFileID)
+	if got.WorkflowURL != wantURL {
+		t.Errorf("workflow_url = %q, want %q", got.WorkflowURL, wantURL)
+	}
+}
+
+func TestActionsJob_StepsAndCompletedAt(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
+	// Give the job real step definitions + a completion time so the
+	// synthesized step array and completed_at have something to reflect.
+	s.store.mu.Lock()
+	wfJob.Def = &JobDef{Steps: []StepDef{
+		{Name: "Checkout", Uses: "actions/checkout@v4"},
+		{Run: "go test ./..."},
+	}}
+	wfJob.CompletedAt = wfJob.StartedAt.Add(30 * time.Second)
+	s.store.mu.Unlock()
+
+	id := stableJobID(wfJob.JobID)
+	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d", id))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		CompletedAt *string `json:"completed_at"`
+		Steps       []struct {
+			Name        string  `json:"name"`
+			Status      string  `json:"status"`
+			Conclusion  string  `json:"conclusion"`
+			Number      int     `json:"number"`
+			StartedAt   *string `json:"started_at"`
+			CompletedAt *string `json:"completed_at"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.CompletedAt == nil || *got.CompletedAt == "" {
+		t.Fatal("completed_at must be set for a completed job")
+	}
+	if len(got.Steps) != 2 {
+		t.Fatalf("steps len = %d, want 2", len(got.Steps))
+	}
+	if got.Steps[0].Name != "Checkout" || got.Steps[0].Number != 1 {
+		t.Errorf("step 0 = %+v, want name=Checkout number=1", got.Steps[0])
+	}
+	if got.Steps[1].Name != "Run go test ./..." || got.Steps[1].Number != 2 {
+		t.Errorf("step 1 = %+v, want name='Run go test ./...' number=2", got.Steps[1])
+	}
+	for i, st := range got.Steps {
+		if st.Status != "completed" {
+			t.Errorf("step %d status = %q, want completed", i, st.Status)
+		}
+		if st.Conclusion != "success" {
+			t.Errorf("step %d conclusion = %q, want success", i, st.Conclusion)
+		}
+		if st.StartedAt == nil || st.CompletedAt == nil {
+			t.Errorf("step %d timestamps not set: %+v", i, st)
+		}
+	}
+}
+
+func TestActionsRunners_ExtraFields(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	s.store.mu.Lock()
+	s.store.Agents[7] = &Agent{ID: 7, Name: "r", OSDescription: "Linux", Status: "online", Version: "2.300.0"}
+	s.store.mu.Unlock()
+
+	w := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/runners")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp struct {
+		Runners []struct {
+			RunnerGroupID int64  `json:"runner_group_id"`
+			Ephemeral     bool   `json:"ephemeral"`
+			Version       string `json:"version"`
+		} `json:"runners"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Runners) != 1 {
+		t.Fatalf("runners len = %d, want 1", len(resp.Runners))
+	}
+	r := resp.Runners[0]
+	if r.RunnerGroupID != 1 {
+		t.Errorf("runner_group_id = %d, want 1", r.RunnerGroupID)
+	}
+	if r.Version != "2.300.0" {
+		t.Errorf("version = %q, want 2.300.0", r.Version)
 	}
 }
 

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   DataTable,
+  InlineError,
   MetricsCard,
   PageHeading,
   Spinner,
@@ -21,7 +22,7 @@ export function OverviewPage() {
     queryFn: fetchHealth,
     refetchInterval: 5000,
   });
-  const { data: metrics, isLoading } = useQuery({
+  const { data: metrics, isLoading, isError } = useQuery({
     queryKey: ["metrics"],
     queryFn: fetchMetrics,
     refetchInterval: 3000,
@@ -37,6 +38,7 @@ export function OverviewPage() {
     refetchInterval: 30000,
   });
 
+  if (isError) return <InlineError title="Failed to load overview" />;
   if (isLoading || !metrics) return <Spinner label="loading overview" />;
 
   const recent = (workflows ?? []).slice(0, 10);

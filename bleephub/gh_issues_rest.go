@@ -376,16 +376,14 @@ func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Labels []string `json:"labels"`
-	}
-	if !decodeJSONBody(w, r, &req) {
+	labelNames, ok := decodeIssueLabelsBody(w, r)
+	if !ok {
 		return
 	}
 
 	// Resolve label names to IDs before taking write lock
 	var newLabelIDs []int
-	for _, name := range req.Labels {
+	for _, name := range labelNames {
 		l := s.store.GetLabelByName(repo.ID, name)
 		if l != nil {
 			newLabelIDs = append(newLabelIDs, l.ID)

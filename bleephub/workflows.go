@@ -33,6 +33,16 @@ type Workflow struct {
 	Inputs           map[string]string       `json:"inputs,omitempty"`
 	ConcurrencyGroup string                  `json:"concurrencyGroup,omitempty"`
 	CancelInProgress bool                    `json:"-"`
+
+	// WorkflowFileID / WorkflowFilePath identify the originating workflow
+	// FILE (the YAML on disk), which is stable across every run produced
+	// from it. GitHub's WorkflowRun.workflow_id and .path reference the
+	// file, not the run, so these must be carried separately from RunID.
+	// Populated at submit/dispatch time by resolving the registered
+	// [WorkflowFile] for (repo, name); zero/"" when no backing file is
+	// known yet (resolved lazily in workflowRunJSON).
+	WorkflowFileID   int64  `json:"workflowFileId,omitempty"`
+	WorkflowFilePath string `json:"workflowFilePath,omitempty"`
 }
 
 // WorkflowJob represents a single job within a workflow.
@@ -47,6 +57,7 @@ type WorkflowJob struct {
 	MatrixValues    map[string]interface{} `json:"matrix,omitempty"`
 	ContinueOnError bool                   `json:"continueOnError,omitempty"`
 	StartedAt       time.Time              `json:"startedAt,omitempty"`
+	CompletedAt     time.Time              `json:"completedAt,omitempty"`
 	MatrixGroup     string                 `json:"matrixGroup,omitempty"`
 	Def             *JobDef                `json:"-"`
 }
@@ -70,10 +81,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
-	s.store.mu.Lock()
-	runID := s.store.NextRunID
-	s.store.NextRunID++
-	s.store.mu.Unlock()
+	runID := s.store.ReserveRunID()
 
 	workflow := &Workflow{
 		ID:        uuid.New().String(),
@@ -151,6 +159,11 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Inputs = m.Inputs
 	}
 
+	// Resolve the originating workflow FILE so the GitHub-shape run object
+	// can reference its stable id + real path (workflow_id / workflow_url /
+	// path), which are constant across every run produced from the file.
+	workflow.WorkflowFileID, workflow.WorkflowFilePath = s.resolveWorkflowFileForRun(workflow)
+
 	// Handle concurrency control
 	if workflow.ConcurrencyGroup != "" {
 		s.store.mu.RLock()
@@ -198,6 +211,28 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	s.dispatchReadyJobs(ctx, workflow, serverURL, defaultImage)
 
 	return workflow, nil
+}
+
+// resolveWorkflowFileForRun finds the registered [WorkflowFile] that
+// produced this run (matched by repo + workflow name) and returns its
+// stable id and real path. When no backing file is registered yet, it
+// derives a deterministic stable id from (repo, conventional-path) and a
+// best-known path so workflow_id / path stay constant across reruns of
+// the same workflow even before the file lands in git.
+func (s *Server) resolveWorkflowFileForRun(wf *Workflow) (int64, string) {
+	repo := wf.RepoFullName
+	if repo != "" {
+		s.store.DiscoverWorkflowFilesFromGit(repo)
+		for _, f := range s.store.ListWorkflowFiles(repo) {
+			if f.Name == wf.Name {
+				return f.ID, f.Path
+			}
+		}
+	}
+	// No registered file: derive a stable id from the conventional path so
+	// the run still reports a constant workflow_id across reruns.
+	path := ".github/workflows/" + wf.Name + ".yml"
+	return stableWorkflowFileID(repo, path), path
 }
 
 // dispatchReadyJobs finds pending jobs whose dependencies are all satisfied
@@ -403,6 +438,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 
 	foundJob.Status = "completed"
 	foundJob.Result = normalizeResult(result)
+	foundJob.CompletedAt = time.Now()
 
 	// Matrix fail-fast: if this job failed and it's in a matrix group, cancel siblings
 	if foundJob.Result == "failure" && foundJob.MatrixGroup != "" {
@@ -417,6 +453,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 				if sibling.Status == "pending" || sibling.Status == "queued" {
 					sibling.Status = "completed"
 					sibling.Result = "cancelled"
+					sibling.CompletedAt = time.Now()
 					s.logger.Info().
 						Str("job", sibling.Key).
 						Str("reason", "fail-fast").
@@ -501,6 +538,7 @@ func (s *Server) cancelWorkflow(wf *Workflow) {
 		if wfJob.Status == "pending" || wfJob.Status == "queued" {
 			wfJob.Status = "completed"
 			wfJob.Result = "cancelled"
+			wfJob.CompletedAt = time.Now()
 		}
 	}
 	wf.Status = "completed"
@@ -617,6 +655,7 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 				Msg("job timed out, marking cancelled")
 			wfJob.Status = "completed"
 			wfJob.Result = "cancelled"
+			wfJob.CompletedAt = now
 			timedOut = true
 		}
 	}

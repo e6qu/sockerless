@@ -102,6 +102,30 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: go-test-bleephub
+        name: Go test (bleephub)
+        entry: bash -c 'cd bleephub && go test -tags noui ./... -count=1 -timeout 120s'
+        language: system
+        pass_filenames: false
+        files: ^bleephub/.*\.go$
+        always_run: false
+
+      - id: ui-test-bleephub
+        name: UI test (bleephub vitest)
+        entry: bash -c 'cd ui/packages/bleephub && npx vitest run 2>&1'
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/bleephub/(src/|vitest|package\.json)
+        always_run: false
+
+      - id: ui-typecheck-bleephub
+        name: UI typecheck (bleephub tsc --noEmit)
+        entry: bash -c 'cd ui/packages/bleephub && npx tsc --noEmit'
+        language: system
+        pass_filenames: false
+        files: ^ui/packages/bleephub/(src/|tsconfig)
+        always_run: false
+
       # bleephub code-quality: dead code + copy-paste detection
       - id: bleephub-deadcode
         name: bleephub dead code (deadcode)

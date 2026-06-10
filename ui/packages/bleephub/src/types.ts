@@ -1,3 +1,19 @@
+// Enum unions mirror the exact strings the server emits (bleephub Go:
+// workflows.go / store_workflow_files.go). Empty result = still in flight.
+// Keeping these as unions makes a typo'd comparison (e.g. "failed" vs the
+// real "failure") a compile error rather than a silently-dead branch.
+export type WorkflowStatus =
+  | "running"
+  | "queued"
+  | "completed"
+  | "skipped"
+  | "pending_concurrency";
+export type JobStatus = "pending" | "queued" | "running" | "completed" | "skipped";
+export type JobResult = "success" | "failure" | "cancelled" | "skipped";
+export type WorkflowResult = "" | JobResult;
+export type WorkflowFileState = "active" | "deleted_file" | "disabled_fork";
+export type WorkflowFileSource = "submitted" | "discovered";
+
 /** Workflow represents a running multi-job workflow. */
 export interface BleephubWorkflow {
   id: string;
@@ -5,8 +21,8 @@ export interface BleephubWorkflow {
   runId: number;
   runNumber: number;
   jobs: Record<string, BleephubWorkflowJob>;
-  status: string; // "running" | "completed" | "pending_concurrency"
-  result: string; // "success" | "failure" | "cancelled"
+  status: WorkflowStatus;
+  result: WorkflowResult;
   createdAt: string;
   eventName?: string;
   ref?: string;
@@ -21,8 +37,8 @@ export interface BleephubWorkflowJob {
   jobId: string;
   displayName: string;
   needs?: string[];
-  status: string; // "pending" | "queued" | "running" | "completed" | "skipped"
-  result: string; // "success" | "failure" | "cancelled" | "skipped"
+  status: JobStatus;
+  result: WorkflowResult;
   matrix?: Record<string, unknown>;
   continueOnError?: boolean;
   startedAt?: string;
@@ -101,9 +117,9 @@ export interface BleephubWorkflowFile {
   id: number;
   name: string;
   path: string;
-  state: string; // "active" | "deleted_file" | "disabled_fork"
+  state: WorkflowFileState;
   repoFullName: string;
-  source: string; // "submitted" | "discovered"
+  source: WorkflowFileSource;
   createdAt: string;
   updatedAt: string;
 }
@@ -150,6 +166,28 @@ export interface BleephubOAuthApp {
   createdAt: string;
 }
 
+// Wire shapes: the snake_case JSON the `/api/v3/bleephub/*` endpoints emit
+// (server: oauthAppToJSON / appToJSON). Typing the raw response lets the
+// snake→camel normalizers in api.ts drop their `as` casts, so a renamed or
+// missing server field becomes a compile error at the mapping site.
+export interface WireOAuthApp {
+  client_id: string;
+  name: string;
+  description: string;
+  url: string;
+  callback_url: string;
+  owner_id: number;
+  created_at: string;
+}
+
+/** The secret-bearing fields the GitHub-App create endpoint returns once. */
+export interface WireAppCreated {
+  client_id: string;
+  pem: string;
+  client_secret: string;
+  webhook_secret: string;
+}
+
 /** Device-flow code from /internal/oauth/state. */
 export interface BleephubDeviceCode {
   code: string;
@@ -176,13 +214,16 @@ export interface BleephubOAuthState {
   authCodes: BleephubAuthCode[];
 }
 
+/** GitHub REST issue/PR state. */
+export type GithubState = "open" | "closed";
+
 /** GitHub Issue. */
 export interface GithubIssue {
   id: number;
   number: number;
   title: string;
   body: string;
-  state: string;
+  state: GithubState;
   user: { login: string; avatar_url: string };
   labels: { name: string; color: string }[];
   assignees: { login: string }[];
@@ -198,7 +239,7 @@ export interface GithubPR {
   number: number;
   title: string;
   body: string;
-  state: string;
+  state: GithubState;
   draft: boolean;
   user: { login: string; avatar_url: string };
   head: { ref: string; sha: string };

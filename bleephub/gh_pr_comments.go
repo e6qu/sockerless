@@ -79,7 +79,7 @@ func (s *PRReviewCommentStore) CreateRootComment(prID, authorID int, path, body,
 	defer s.mu.Unlock()
 	id := s.nextID
 	s.nextID++
-	now := time.Now()
+	now := time.Now().UTC()
 	c := &PRReviewComment{
 		ID:               id,
 		NodeID:           fmt.Sprintf("PRRC_kgDO%08d", id),
@@ -129,7 +129,7 @@ func (s *PRReviewCommentStore) Reply(prID, rootID, authorID int, body string) *P
 	}
 	id := s.nextID
 	s.nextID++
-	now := time.Now()
+	now := time.Now().UTC()
 	c := &PRReviewComment{
 		ID:                id,
 		NodeID:            fmt.Sprintf("PRRC_kgDO%08d", id),
@@ -182,7 +182,7 @@ func (s *PRReviewCommentStore) Update(id int, body string) bool {
 		return false
 	}
 	c.Body = body
-	c.UpdatedAt = time.Now()
+	c.UpdatedAt = time.Now().UTC()
 	if s.persist != nil {
 		s.persist.MustPut("pr_review_comments", strconv.Itoa(id), c)
 	}
@@ -220,7 +220,7 @@ func (s *PRReviewCommentStore) ResolveThread(threadID int, resolved bool) bool {
 		return false
 	}
 	root.Resolved = resolved
-	root.UpdatedAt = time.Now()
+	root.UpdatedAt = time.Now().UTC()
 	if s.persist != nil {
 		s.persist.MustPut("pr_review_comments", strconv.Itoa(threadID), root)
 	}
@@ -263,15 +263,17 @@ func (s *PRReviewCommentStore) ListThreads(prID int) []*ReviewThread {
 
 func (s *Server) registerGHPRCommentsRoutes() {
 	// `/pulls/{number}/comments` (3 segments, literal "comments" at pos 3)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
-		s.requirePerm("pull_requests", permWrite, s.handleCreatePRComment))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
+		s.requirePerm(scopePullRequests, permWrite, s.handleCreatePRComment))
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/comments",
 		s.handleListPRComments)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
-		s.requirePerm("pull_requests", permWrite, s.handleReplyPRComment))
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
+		s.requirePerm(scopePullRequests, permWrite, s.handleReplyPRComment))
 
-	// `/pulls/{number}/review-threads` (3 segments, literal at pos 3)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads",
+	// Listing review threads has no REST equivalent on real GitHub (GraphQL
+	// only), so it lives under /internal/ alongside the resolve/unresolve
+	// conveniences rather than faking a GitHub REST path.
+	s.route("GET /internal/repos/{owner}/{repo}/pulls/{number}/review-threads",
 		s.handleListReviewThreads)
 
 	// `/pulls/comments/{comment_id}` — single-review-comment surface.
@@ -281,11 +283,11 @@ func (s *Server) registerGHPRCommentsRoutes() {
 	// when comment subpath is intended). The existing /pulls/{number}/<literal>
 	// routes are strictly more specific (literal at pos 3) and continue to win
 	// for their URLs.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("GET"))
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("PATCH"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}",
 		s.handlePRCommentTwoSegDispatch("DELETE"))
 }
 
@@ -304,9 +306,9 @@ func (s *Server) handlePRCommentTwoSegDispatch(method string) http.HandlerFunc {
 		case "GET":
 			s.handleGetPRComment(w, r)
 		case "PATCH":
-			s.requirePerm("pull_requests", permWrite, s.handleUpdatePRComment)(w, r)
+			s.requirePerm(scopePullRequests, permWrite, s.handleUpdatePRComment)(w, r)
 		case "DELETE":
-			s.requirePerm("pull_requests", permWrite, s.handleDeletePRComment)(w, r)
+			s.requirePerm(scopePullRequests, permWrite, s.handleDeletePRComment)(w, r)
 		}
 	}
 }

@@ -10,19 +10,19 @@ import (
 
 func (s *Server) registerRunServiceRoutes() {
 	// Acquire / renew / complete job requests
-	s.mux.HandleFunc("GET /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleGetRequest)
-	s.mux.HandleFunc("PATCH /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleRenewRequest)
-	s.mux.HandleFunc("PUT /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleRenewRequest)
-	s.mux.HandleFunc("DELETE /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleCompleteRequest)
+	s.route("GET /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleGetRequest)
+	s.route("PATCH /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleRenewRequest)
+	s.route("PUT /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleRenewRequest)
+	s.route("DELETE /_apis/v1/AgentRequest/{poolId}/{requestId}", s.handleCompleteRequest)
 
 	// FinishJob (runner reports job completion)
-	s.mux.HandleFunc("POST /_apis/v1/FinishJob/{scopeId}/{hubName}/{planId}", s.handleFinishJob)
+	s.route("POST /_apis/v1/FinishJob/{scopeId}/{hubName}/{planId}", s.handleFinishJob)
 
 	// Job events (legacy)
-	s.mux.HandleFunc("PUT /_apis/v1/plans/{planId}/events", s.handleJobEvents)
+	s.route("PUT /_apis/v1/plans/{planId}/events", s.handleJobEvents)
 
 	// CustomerIntelligence (telemetry, accept and discard)
-	s.mux.HandleFunc("POST /_apis/v1/tasks", s.handleTelemetry)
+	s.route("POST /_apis/v1/tasks", s.handleTelemetry)
 }
 
 func (s *Server) handleGetRequest(w http.ResponseWriter, r *http.Request) {

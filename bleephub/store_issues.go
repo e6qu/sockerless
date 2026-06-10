@@ -89,7 +89,7 @@ func (st *Store) CreateLabel(repoID int, name, description, color string) *Issue
 		}
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	label := &IssueLabel{
 		ID:          st.NextLabel,
 		NodeID:      fmt.Sprintf("LA_kgDO%08d", st.NextLabel),
@@ -196,7 +196,7 @@ func (st *Store) CreateMilestone(repoID int, title, description, state string, d
 		state = "open"
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	ms := &Milestone{
 		ID:          st.NextMilestone,
 		NodeID:      fmt.Sprintf("MI_kgDO%08d", st.NextMilestone),
@@ -263,7 +263,7 @@ func (st *Store) UpdateMilestone(id int, fn func(*Milestone)) bool {
 		return false
 	}
 	fn(ms)
-	ms.UpdatedAt = time.Now()
+	ms.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("milestones", strconv.Itoa(ms.ID), ms)
 	}
@@ -312,7 +312,7 @@ func (st *Store) CreateIssue(repoID, authorID int, title, body string, labelIDs,
 		assigneeIDs = []int{}
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	issue := &Issue{
 		ID:          st.NextIssue,
 		NodeID:      fmt.Sprintf("I_kgDO%08d", st.NextIssue),
@@ -385,7 +385,7 @@ func (st *Store) UpdateIssue(id int, fn func(*Issue)) bool {
 		return false
 	}
 	fn(issue)
-	issue.UpdatedAt = time.Now()
+	issue.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
 	}
@@ -420,7 +420,7 @@ func (st *Store) CreateCommentFor(parentType string, parentID, authorID int, bod
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	c := &Comment{
 		ID:         st.NextComment,
 		NodeID:     fmt.Sprintf("IC_kgDO%08d", st.NextComment),
@@ -473,6 +473,9 @@ func (st *Store) SetIssueOrPRLock(repoID, number int, locked bool, reason string
 			} else {
 				i.ActiveLockReason = ""
 			}
+			if st.persist != nil {
+				st.persist.MustPut("issues", strconv.Itoa(i.ID), i)
+			}
 			return true
 		}
 	}
@@ -483,6 +486,9 @@ func (st *Store) SetIssueOrPRLock(repoID, number int, locked bool, reason string
 				pr.ActiveLockReason = reason
 			} else {
 				pr.ActiveLockReason = ""
+			}
+			if st.persist != nil {
+				st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
 			}
 			return true
 		}
@@ -500,7 +506,7 @@ func (st *Store) UpdateCommentBody(id, editorID int, body string) *Comment {
 	if !ok {
 		return nil
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	c.Body = body
 	c.UpdatedAt = now
 	c.LastEditedAt = &now
@@ -542,6 +548,9 @@ func (st *Store) SetCommentMinimization(id, minimizerID int, reason string) *Com
 	} else {
 		c.MinimizedReason = reason
 		c.MinimizedByID = minimizerID
+	}
+	if st.persist != nil {
+		st.persist.MustPut("comments", strconv.Itoa(c.ID), c)
 	}
 	return c
 }

@@ -12,11 +12,11 @@ import (
 )
 
 func (s *Server) registerGHRepoObjectRoutes() {
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/commits", s.handleListCommits)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/git/trees/{sha}", s.handleGetTree)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/git/blobs/{sha}", s.handleGetBlob)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/readme", s.handleGetReadme)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/contents/{path...}", s.handleGetContents)
+	s.route("GET /api/v3/repos/{owner}/{repo}/commits", s.handleListCommits)
+	s.route("GET /api/v3/repos/{owner}/{repo}/git/trees/{sha}", s.handleGetTree)
+	s.route("GET /api/v3/repos/{owner}/{repo}/git/blobs/{sha}", s.handleGetBlob)
+	s.route("GET /api/v3/repos/{owner}/{repo}/readme", s.handleGetReadme)
+	s.route("GET /api/v3/repos/{owner}/{repo}/contents/{path...}", s.handleGetContents)
 }
 
 func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {

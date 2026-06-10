@@ -1,9 +1,45 @@
 package bleephub
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strconv"
 )
+
+// decodeIssueLabelsBody decodes the body of the "add labels to an issue"
+// endpoint. Real GitHub (and go-github / gh) accept EITHER a bare JSON array
+// `["bug","help wanted"]` OR the object form `{"labels":[...]}`. Returns the
+// label names, or false (after writing a 400) on malformed JSON. An empty body
+// is treated as no labels.
+func decodeIssueLabelsBody(w http.ResponseWriter, r *http.Request) ([]string, bool) {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return nil, false
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, true
+	}
+	if trimmed[0] == '[' {
+		var labels []string
+		if err := json.Unmarshal(trimmed, &labels); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+			return nil, false
+		}
+		return labels, true
+	}
+	var obj struct {
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return nil, false
+	}
+	return obj.Labels, true
+}
 
 // request body decoding tolerant of string-coerced booleans + integers.
 // Real GitHub's REST API accepts both:

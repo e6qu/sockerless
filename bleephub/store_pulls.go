@@ -69,7 +69,7 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 		assigneeIDs = []int{}
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	pr := &PullRequest{
 		ID:          st.NextPR,
 		NodeID:      fmt.Sprintf("PR_kgDO%08d", st.NextPR),
@@ -151,7 +151,7 @@ func (st *Store) UpdatePullRequest(id int, fn func(*PullRequest)) bool {
 		return false
 	}
 	fn(pr)
-	pr.UpdatedAt = time.Now()
+	pr.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
 	}
@@ -167,7 +167,7 @@ func (st *Store) CreatePRReview(prID, authorID int, state, body string) *PullReq
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	review := &PullRequestReview{
 		ID:        st.NextPRReview,
 		NodeID:    fmt.Sprintf("PRR_kgDO%08d", st.NextPRReview),

@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -27,6 +28,18 @@ type Server struct {
 	metrics                *Metrics
 	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
+	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
+}
+
+// route registers a handler AND records its "METHOD /path" pattern so the
+// registered surface can be enumerated and validated directly (e.g. against
+// GitHub's API definition) rather than inferred by probing the catch-all
+// fallback. The catch-all is intentionally NOT registered through here, so a
+// route that should exist but doesn't is a visible gap in RegisteredRoutes(),
+// never silently swallowed by the fallback.
+func (s *Server) route(pattern string, handler http.HandlerFunc) {
+	s.routePatterns = append(s.routePatterns, pattern)
+	s.mux.HandleFunc(pattern, handler)
 }
 
 // NewServer creates a bleephub server with all routes registered.
@@ -87,7 +100,7 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 
 func (s *Server) registerRoutes() {
 	// Health check
-	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.route("GET /health", s.handleHealth)
 
 	// Auth + connection data (auth.go)
 	s.registerAuthRoutes()
@@ -166,15 +179,15 @@ func (s *Server) registerRoutes() {
 	s.registerGHWorkflowsRoutes()
 
 	// Management API (metrics, status, dashboard data)
-	s.mux.HandleFunc("GET /internal/metrics", s.handleInternalMetrics)
-	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
+	s.route("GET /internal/metrics", s.handleInternalMetrics)
+	s.route("GET /internal/status", s.handleInternalStatus)
 	s.registerMgmtRoutes()
 
-	s.mux.HandleFunc("GET /internal/storage", s.handleInternalStorage)
+	s.route("GET /internal/storage", s.handleInternalStorage)
 
 	// UI dashboard
 	s.registerUI()
-	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+	s.route("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
 	})
 
@@ -268,7 +281,7 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
-	inner := s.prefixStripMiddleware(s.mux)
+	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
 	handler := otelhttp.NewHandler(s.loggingMiddleware(ghWrapped), "bleephub")
 
@@ -301,6 +314,50 @@ func (s *Server) ListenAndServe() error {
 // prefixStripMiddleware removes any path segments before known API prefixes.
 // The runner prepends the tenant URL path to all API calls, e.g.
 // /owner/repo/_apis/... instead of /_apis/...
+// internalAuthMiddleware gates the operator-facing /internal/* surface — the
+// sim-control + dashboard endpoints that have no GitHub API equivalent
+// (job/workflow submission + status under /internal/exec, app/oauth-app
+// management, and the dashboard aggregations). These are NOT part of the
+// GitHub-compatible /api/ surface, so they live here rather than under
+// /api/v3/. They require a valid token (the UI sends the admin token as a
+// Bearer credential); the resolved user is injected into the request context
+// so management handlers can attribute ownership via ghUserFromContext.
+// /health stays open for liveness probes.
+func (s *Server) internalAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/internal/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		user := s.internalTokenUser(r)
+		if user == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxUser, user)))
+	})
+}
+
+// internalTokenUser resolves the user for a token recognized on the internal
+// surface: any PAT in the store (which includes the seeded admin token).
+// Returns nil when absent/unknown. ghs_/gho_/ghu_ installation/OAuth tokens
+// are intentionally not accepted here — the internal surface is operator-only.
+func (s *Server) internalTokenUser(r *http.Request) *User {
+	scheme, cred := authScheme(r.Header.Get("Authorization"))
+	var tok string
+	if scheme == "bearer" || scheme == "token" {
+		tok = cred
+	}
+	if tok == "" {
+		return nil
+	}
+	t, user := s.store.LookupToken(tok)
+	if t == nil {
+		return nil
+	}
+	return user
+}
+
 func (s *Server) prefixStripMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

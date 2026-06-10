@@ -123,7 +123,7 @@ wait_for_job() {
     local job_id="$1" label="$2" max="${3:-90}"
     log "Waiting for $label ($job_id) (max ${max}s)..."
     for i in $(seq 1 "$max"); do
-        STATUS_RESP=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/jobs/$job_id" 2>/dev/null || echo '{}')
+        STATUS_RESP=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/jobs/$job_id" 2>/dev/null || echo '{}')
         STATUS=$(echo "$STATUS_RESP" | jq -r '.status // "unknown"')
         RESULT=$(echo "$STATUS_RESP" | jq -r '.result // ""')
 
@@ -147,7 +147,7 @@ wait_for_job() {
 
 # ===== TEST 1: Single-job submission =====
 log "===== TEST 1: Single-job submission ====="
-SUBMIT_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/submit" \
+SUBMIT_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/submit" \
     -H "Content-Type: application/json" \
     -d '{"image":"alpine:latest","steps":[{"run":"echo Hello from bleephub via Sockerless"},{"run":"uname -a"}]}')
 
@@ -173,7 +173,7 @@ submit_and_wait_workflow() {
     log "===== TEST $test_num: $label ====="
 
     local wf_resp
-    wf_resp=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+    wf_resp=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
         -H "Content-Type: application/json" \
         -d "$(jq -n --arg wf "$yaml" '{workflow: $wf, image: "alpine:latest"}')")
 
@@ -188,7 +188,7 @@ submit_and_wait_workflow() {
     local status result
     for i in $(seq 1 "$max"); do
         local wf_status
-        wf_status=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$wf_id" 2>/dev/null || echo '{}')
+        wf_status=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$wf_id" 2>/dev/null || echo '{}')
         status=$(echo "$wf_status" | jq -r '.status // "unknown"')
         result=$(echo "$wf_status" | jq -r '.result // ""')
 
@@ -350,7 +350,7 @@ jobs:
       - run: echo "Version from input"
       - run: echo "Test passed"'
 
-WF8_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+WF8_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg wf "$WF8_YAML" '{workflow: $wf, image: "alpine:latest", event_name: "workflow_dispatch", inputs: {version: "1.2.3"}}')")
 
@@ -362,7 +362,7 @@ log "Workflow dispatch submitted: $WF8_ID"
 
 log "Waiting for workflow completion (max 120s)..."
 for i in $(seq 1 120); do
-    WF8_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF8_ID" 2>/dev/null || echo '{}')
+    WF8_STATUS=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF8_ID" 2>/dev/null || echo '{}')
     STATUS=$(echo "$WF8_STATUS" | jq -r '.status // "unknown"')
     RESULT=$(echo "$WF8_STATUS" | jq -r '.result // ""')
 
@@ -399,7 +399,7 @@ jobs:
     steps:
       - run: echo "Matrix job"'
 
-WF9_RESP=$(curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflow" \
+WF9_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg wf "$WF9_YAML" '{workflow: $wf, image: "alpine:latest"}')")
 
@@ -412,7 +412,7 @@ log "Matrix fail-fast submitted: $WF9_ID (4 jobs)"
 # Wait for all to complete (some may be cancelled by fail-fast)
 log "Waiting for matrix workflow completion (max 180s)..."
 for i in $(seq 1 180); do
-    WF9_STATUS=$(curl -sf "http://$BLEEPHUB_ADDR/api/v3/bleephub/workflows/$WF9_ID" 2>/dev/null || echo '{}')
+    WF9_STATUS=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF9_ID" 2>/dev/null || echo '{}')
     STATUS=$(echo "$WF9_STATUS" | jq -r '.status // "unknown"')
 
     if [ "$STATUS" = "completed" ]; then

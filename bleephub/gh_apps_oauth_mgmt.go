@@ -1,9 +1,13 @@
 package bleephub
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,15 +26,16 @@ import (
 //   DELETE /applications/{client_id}/grant         revoke user grant
 
 func (s *Server) registerGHAppsOAuthMgmtRoutes() {
-	s.mux.HandleFunc("POST /api/v3/applications/{client_id}/token", s.handleCheckOAuthToken)
-	s.mux.HandleFunc("PATCH /api/v3/applications/{client_id}/token", s.handleResetOAuthToken)
-	s.mux.HandleFunc("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
-	s.mux.HandleFunc("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
-	s.mux.HandleFunc("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
+	s.route("POST /api/v3/applications/{client_id}/token", s.handleCheckOAuthToken)
+	s.route("PATCH /api/v3/applications/{client_id}/token", s.handleResetOAuthToken)
+	s.route("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
+	s.route("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
+	s.route("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
 
-	// OAuth App management (sim-only convenience for the UI / tests).
-	s.mux.HandleFunc("POST /api/v3/bleephub/oauth-apps", s.handleCreateOAuthAppMgmt)
-	s.mux.HandleFunc("GET /api/v3/bleephub/oauth-apps", s.handleListOAuthAppsMgmt)
+	// OAuth App management. GitHub has NO REST API to create/list OAuth Apps
+	// (web UI only), so this is sim-control under /internal/, never /api/.
+	s.route("POST /internal/oauth-apps", s.handleCreateOAuthAppMgmt)
+	s.route("GET /internal/oauth-apps", s.handleListOAuthAppsMgmt)
 }
 
 // authenticateClientCreds reads + verifies HTTP Basic auth carrying
@@ -89,7 +94,7 @@ func (s *Server) handleCheckOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "token does not match client_id")
 		return
 	}
-	writeJSON(w, http.StatusOK, oauthTokenInspectionJSON(tok, user))
+	writeJSON(w, http.StatusOK, oauthTokenInspectionJSON(s.store, tok, user))
 }
 
 func (s *Server) handleResetOAuthToken(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +123,7 @@ func (s *Server) handleResetOAuthToken(w http.ResponseWriter, r *http.Request) {
 	fresh, refresh := s.store.CreateUserToServerToken(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, 8*time.Hour, tok.RefreshTokenValue != "")
 	user, _ := s.store.LookupUserToServerToken(fresh.Token)
 	_ = user
-	resp := oauthTokenInspectionJSON(fresh, s.userByID(fresh.UserID))
+	resp := oauthTokenInspectionJSON(s.store, fresh, s.userByID(fresh.UserID))
 	resp["token"] = fresh.Token
 	if refresh != nil {
 		resp["refresh_token"] = refresh.Token
@@ -178,10 +183,41 @@ func (s *Server) handleScopeOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "token does not match client_id")
 		return
 	}
-	// Bleephub's sim accepts target / target_id but doesn't enforce installation
-	// targeting at the token level. Returns the same token unmodified so
-	// SDK contract holds. Real GH would return a freshly-narrowed token.
-	writeJSON(w, http.StatusOK, oauthTokenInspectionJSON(tok, s.userByID(tok.UserID)))
+	// Real GitHub mints a fresh user-to-server token narrowed to the requested
+	// target / permissions / repositories and returns it (the original is not
+	// revoked). Reflect that by creating a new token carrying the same user +
+	// app, scoped to the requested installation when a target is supplied.
+	ttl := time.Until(tok.ExpiresAt)
+	if ttl <= 0 {
+		ttl = 8 * time.Hour
+	}
+	scoped, _ := s.store.CreateUserToServerToken(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, ttl, false)
+
+	// Bind the new token to the targeted installation so the inspection response
+	// reflects the narrowed scope.
+	if inst := s.resolveScopeTargetInstallation(tok, body.Target, body.TargetID); inst != nil {
+		s.store.SetUserToServerTokenInstallations(scoped.Token, []int{inst.ID})
+		scoped.InstallationIDs = []int{inst.ID}
+	}
+
+	writeJSON(w, http.StatusOK, oauthTokenInspectionJSON(s.store, scoped, s.userByID(scoped.UserID)))
+}
+
+// resolveScopeTargetInstallation finds the installation a scoped-token request
+// targets, by target login or target id, among the app's installations.
+func (s *Server) resolveScopeTargetInstallation(tok *UserToServerToken, targetLogin string, targetID int) *Installation {
+	if tok.AppID == 0 {
+		return nil
+	}
+	for _, inst := range s.store.ListAppInstallations(tok.AppID) {
+		if targetLogin != "" && inst.TargetLogin == targetLogin {
+			return inst
+		}
+		if targetID != 0 && inst.TargetID == targetID {
+			return inst
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleRevokeOAuthGrant(w http.ResponseWriter, r *http.Request) {
@@ -261,32 +297,105 @@ func (s *Server) userByID(id int) *User {
 	return s.store.Users[id]
 }
 
-func oauthTokenInspectionJSON(tok *UserToServerToken, user *User) map[string]interface{} {
+func oauthTokenInspectionJSON(st *Store, tok *UserToServerToken, user *User) map[string]interface{} {
+	// app: the OAuth App / GitHub App the token was issued for, with the real
+	// client_id, name and url.
 	app := map[string]interface{}{
-		"client_id": tok.OAuthAppClientID,
+		"client_id": "",
 		"name":      "",
 		"url":       "",
 	}
-	if tok.OAuthAppClientID == "" && tok.AppID > 0 {
-		app["client_id"] = "(app)"
+	if tok.OAuthAppClientID != "" {
+		app["client_id"] = tok.OAuthAppClientID
+		if oa := st.GetOAuthApp(tok.OAuthAppClientID); oa != nil {
+			app["name"] = oa.Name
+			app["url"] = oa.URL
+		}
+	} else if tok.AppID > 0 {
+		if ghApp := st.GetApp(tok.AppID); ghApp != nil {
+			app["client_id"] = ghApp.ClientID
+			app["name"] = ghApp.Name
+			app["url"] = "https://github.com/apps/" + ghApp.Slug
+		}
 	}
+
+	// installation: null for OAuth-App tokens; the scoped installation object
+	// for GitHub-App user-to-server tokens.
+	var installation interface{}
+	if tok.AppID > 0 {
+		if inst := firstInstallationForToken(st, tok); inst != nil {
+			installation = installationToJSON(inst)
+		}
+	}
+
+	// id/url identify the authorization. We derive a stable id from the token
+	// value (we don't carry a separate authorization id) and the matching URL.
+	authID := authorizationID(tok.Token)
 	out := map[string]interface{}{
-		"id":          0,
-		"url":         "",
-		"scopes":      splitScopes(tok.Scopes),
-		"token":       tok.Token,
-		"app":         app,
-		"note":        nil,
-		"note_url":    nil,
-		"updated_at":  tok.CreatedAt.UTC().Format(time.RFC3339),
-		"created_at":  tok.CreatedAt.UTC().Format(time.RFC3339),
-		"fingerprint": nil,
-		"expires_at":  tok.ExpiresAt.UTC().Format(time.RFC3339),
+		"id":               authID,
+		"url":              "/api/v3/authorizations/" + strconv.Itoa(authID),
+		"scopes":           splitScopes(tok.Scopes),
+		"token":            tok.Token,
+		"token_last_eight": lastEight(tok.Token),
+		"hashed_token":     hashedToken(tok.Token),
+		"app":              app,
+		"note":             nil,
+		"note_url":         nil,
+		"updated_at":       tok.CreatedAt.UTC().Format(time.RFC3339),
+		"created_at":       tok.CreatedAt.UTC().Format(time.RFC3339),
+		"fingerprint":      nil,
+		"expires_at":       tok.ExpiresAt.UTC().Format(time.RFC3339),
+		"installation":     installation,
 	}
 	if user != nil {
 		out["user"] = userToJSON(user)
 	}
 	return out
+}
+
+// firstInstallationForToken resolves the installation a GitHub-App
+// user-to-server token is scoped to. Prefers an explicit InstallationIDs
+// entry, falling back to the (user, app) installation.
+func firstInstallationForToken(st *Store, tok *UserToServerToken) *Installation {
+	for _, id := range tok.InstallationIDs {
+		if inst := st.GetInstallation(id); inst != nil {
+			return inst
+		}
+	}
+	for _, inst := range st.ListAppInstallations(tok.AppID) {
+		if inst.TargetID == tok.UserID {
+			return inst
+		}
+	}
+	return nil
+}
+
+// lastEight returns the last 8 characters of the token, matching real
+// GitHub's token_last_eight field.
+func lastEight(token string) string {
+	if len(token) <= 8 {
+		return token
+	}
+	return token[len(token)-8:]
+}
+
+// hashedToken returns the hex-encoded SHA-256 of the token, matching real
+// GitHub's hashed_token field.
+func hashedToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// authorizationID derives a stable positive integer id for an authorization
+// from its token value. GitHub exposes a separate int authorization id; the
+// sim doesn't store one, so we derive it deterministically from the token.
+func authorizationID(token string) int {
+	sum := sha256.Sum256([]byte(token))
+	id := int(binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff)
+	if id == 0 {
+		id = 1
+	}
+	return id
 }
 
 func splitScopes(s string) []string {

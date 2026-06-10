@@ -25,7 +25,9 @@ Two consequences:
 # :443 needs root to bind; :8443 (or any other) is fine for dev.
 export BLEEPHUB_HOST=localhost:8443     # or just `localhost` if you used :443
 
-# bleephub seeds a default admin user with a static PAT.
+# The admin user's token is whatever BLEEPHUB_ADMIN_TOKEN was set to when
+# bleephub started (required, no default — see bleephub/README.md § Usage).
+# The Docker harnesses use this value:
 TOKEN="bleephub-admin-token-00000000000000000000"
 
 # Register bleephub as a GHES host — --hostname is THE key flag here.
@@ -35,7 +37,7 @@ echo "$TOKEN" | gh auth login --hostname "$BLEEPHUB_HOST" --with-token
 export GH_HOST="$BLEEPHUB_HOST"
 ```
 
-Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or `POST /api/v3/bleephub/apps/{id}/installations/.../access_tokens` — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
+Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or the real GitHub endpoint `POST /api/v3/app/installations/{installation_id}/access_tokens` (JWT-authenticated) — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
 
 That's it. `gh` is now authenticated against bleephub.
 
@@ -66,7 +68,7 @@ These work natively (no `gh api` workaround needed):
 | `gh release download` | `assets_url` redirect (sim returns empty assets) |
 | `gh run list / view / cancel / rerun` | `GET/POST /repos/{o}/{r}/actions/runs*` |
 | `gh workflow run <wf> --ref <branch>` | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches` |
-| `gh workflow list / view / enable / disable` | `GET/PUT /actions/workflows/{id}` |
+| `gh workflow list / view` | `GET /actions/workflows[/{id}]` (`enable` / `disable` not implemented — see [bleephub/README.md](../bleephub/README.md#what-it-does-not-implement-deferred)) |
 | `gh api /repos/{o}/{r}/...` | direct REST passthrough |
 
 ## Endpoints with no native `gh` verb
@@ -89,7 +91,7 @@ gh api /.well-known/jwks                                       # JWKS for cloud-
 
 | Prefix | Issued by | Scope model | Use case |
 |---|---|---|---|
-| `bph_` | Seeded admin | All scopes | Sim default; bypasses `requirePerm` |
+| (admin) | `BLEEPHUB_ADMIN_TOKEN` env var at startup | All scopes | Operator/admin token; bypasses `requirePerm` |
 | `ghp_` | `POST /login/oauth/access_token` (legacy) | All scopes | Classic PAT |
 | `gho_` | OAuth web/device flow (OAuth App) | Classic OAuth scopes (`repo`, `read:org`, …) | OAuth App user tokens |
 | `ghu_` | OAuth flow against a GitHub App | App installation perms | GitHub App user-to-server |

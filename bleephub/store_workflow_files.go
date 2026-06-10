@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"hash/fnv"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,16 +25,20 @@ import (
 //
 // Either source can register the same (repo, path) pair; the latter
 // registration wins (so a fresh git push refreshes the cached YAML).
+// The json tags shape the persisted row only — REST responses go
+// through workflowFileJSON / workflowFileView, never this struct.
+// Every field must round-trip: a restored row with an empty
+// RepoFullName or YAML is unusable (dispatch 422s on it).
 type WorkflowFile struct {
 	ID           int64     `json:"id"`
 	Name         string    `json:"name"`
 	Path         string    `json:"path"`
 	State        string    `json:"state"`
-	RepoFullName string    `json:"-"`
+	RepoFullName string    `json:"repo_full_name"`
 	NodeID       string    `json:"node_id"`
-	BadgeURL     string    `json:"-"`
-	YAML         string    `json:"-"`
-	Source       string    `json:"-"`
+	BadgeURL     string    `json:"badge_url"`
+	YAML         string    `json:"yaml"`
+	Source       string    `json:"source"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -59,12 +64,15 @@ func (st *Store) RegisterWorkflowFile(repoFullName, path, name, yamlBody, source
 		st.WorkflowFiles = map[int64]*WorkflowFile{}
 	}
 	id := stableWorkflowFileID(repoFullName, path)
-	now := time.Now()
+	now := time.Now().UTC()
 	if existing, ok := st.WorkflowFiles[id]; ok {
 		existing.Name = name
 		existing.YAML = yamlBody
 		existing.Source = source
 		existing.UpdatedAt = now
+		if st.persist != nil {
+			st.persist.MustPut("workflow_files", strconv.FormatInt(id, 10), existing)
+		}
 		return existing
 	}
 	wf := &WorkflowFile{
@@ -104,7 +112,7 @@ func (st *Store) GetWorkflowFile(repoFullName string, id int64) *WorkflowFile {
 }
 
 // ListWorkflowFiles returns every WorkflowFile registered for the
-// given repo. Order is unspecified.
+// given repo, ordered by ID so paginated clients see a stable list.
 func (st *Store) ListWorkflowFiles(repoFullName string) []*WorkflowFile {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -114,6 +122,7 @@ func (st *Store) ListWorkflowFiles(repoFullName string) []*WorkflowFile {
 			out = append(out, wf)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 

@@ -19,10 +19,10 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) bool 
 }
 
 func (s *Server) registerGHRestRoutes() {
-	s.mux.HandleFunc("GET /api/v3/", s.handleGHApiRoot)
-	s.mux.HandleFunc("GET /api/v3/user", s.handleGHUser)
-	s.mux.HandleFunc("GET /api/v3/users/{username}", s.handleGHUserByLogin)
-	s.mux.HandleFunc("GET /api/v3/rate_limit", s.handleGHRateLimit)
+	s.route("GET /api/v3/", s.handleGHApiRoot)
+	s.route("GET /api/v3/user", s.handleGHUser)
+	s.route("GET /api/v3/users/{username}", s.handleGHUserByLogin)
+	s.route("GET /api/v3/rate_limit", s.handleGHRateLimit)
 }
 
 // handleGHApiRoot returns the API root meta information.

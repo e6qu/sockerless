@@ -6,12 +6,12 @@ import (
 )
 
 func (s *Server) registerGHTeamRoutes() {
-	s.mux.HandleFunc("GET /api/v3/user/teams", s.handleListAuthUserTeams)
-	s.mux.HandleFunc("POST /api/v3/orgs/{org}/teams", s.handleCreateTeam)
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/teams", s.handleListTeams)
-	s.mux.HandleFunc("GET /api/v3/orgs/{org}/teams/{team_slug}", s.handleGetTeam)
-	s.mux.HandleFunc("PATCH /api/v3/orgs/{org}/teams/{team_slug}", s.handleUpdateTeam)
-	s.mux.HandleFunc("DELETE /api/v3/orgs/{org}/teams/{team_slug}", s.handleDeleteTeam)
+	s.route("GET /api/v3/user/teams", s.handleListAuthUserTeams)
+	s.route("POST /api/v3/orgs/{org}/teams", s.handleCreateTeam)
+	s.route("GET /api/v3/orgs/{org}/teams", s.handleListTeams)
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}", s.handleGetTeam)
+	s.route("PATCH /api/v3/orgs/{org}/teams/{team_slug}", s.handleUpdateTeam)
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}", s.handleDeleteTeam)
 }
 
 func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {

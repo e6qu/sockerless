@@ -18,10 +18,15 @@ import (
 // gh CLI's `gh pr review --thread` calls the GraphQL mutations.
 
 func (s *Server) registerGHPRThreadsRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/resolve",
-		s.requirePerm("pull_requests", permWrite, s.handleResolveThreadREST(true)))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/unresolve",
-		s.requirePerm("pull_requests", permWrite, s.handleResolveThreadREST(false)))
+	// Review-thread resolve/unresolve are GraphQL-only on real GitHub (gh uses
+	// the resolveReviewThread / unresolveReviewThread mutations); there is no
+	// REST equivalent. bleephub keeps them as a sim-control convenience under
+	// /internal/ — token-gated by the internal-auth middleware — rather than
+	// faking a GitHub REST path.
+	s.route("POST /internal/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/resolve",
+		s.handleResolveThreadREST(true))
+	s.route("POST /internal/repos/{owner}/{repo}/pulls/{number}/review-threads/{thread_id}/unresolve",
+		s.handleResolveThreadREST(false))
 }
 
 func (s *Server) handleResolveThreadREST(resolved bool) http.HandlerFunc {

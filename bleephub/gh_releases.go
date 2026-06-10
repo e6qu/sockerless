@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -80,7 +81,7 @@ func newReleaseStore(p *Persistence) *ReleaseStore {
 func (rs *ReleaseStore) Create(repoID, authorID int, tagName, target, name, body string, draft, prerelease bool) *Release {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	now := time.Now()
+	now := time.Now().UTC()
 	id := rs.nextID
 	rs.nextID++
 	r := &Release{
@@ -145,6 +146,10 @@ func (rs *ReleaseStore) List(repoID int) []*Release {
 	defer rs.mu.RUnlock()
 	out := make([]*Release, len(rs.byRepo[repoID]))
 	copy(out, rs.byRepo[repoID])
+	// Real GitHub lists releases newest-first; IDs are monotonic at
+	// creation, so id-desc is stable across restarts even though the
+	// persistence loader rebuilds byRepo in map-iteration order.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	return out
 }
 
@@ -158,7 +163,7 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 	wasDraft := r.Draft
 	fn(r)
 	if wasDraft && !r.Draft && r.PublishedAt == nil {
-		now := time.Now()
+		now := time.Now().UTC()
 		r.PublishedAt = &now
 	}
 	if rs.persist != nil {
@@ -189,34 +194,34 @@ func (rs *ReleaseStore) Delete(id int) bool {
 }
 
 func (s *Server) registerGHReleasesRoutes() {
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases",
-		s.requirePerm("contents", permWrite, s.handleCreateRelease))
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases",
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases",
+		s.requirePerm(scopeContents, permWrite, s.handleCreateRelease))
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases",
 		s.handleListReleases)
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/latest",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/latest",
 		s.handleGetLatestRelease)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases/generate-notes",
-		s.requirePerm("contents", permWrite, s.handleGenerateReleaseNotes))
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases/generate-notes",
+		s.requirePerm(scopeContents, permWrite, s.handleGenerateReleaseNotes))
 
 	// Single-segment after /releases/ is GET-release-by-id. Use {release_id}
 	// directly here — these patterns don't conflict with the two-segment ones.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/{release_id}",
 		s.handleGetRelease)
-	s.mux.HandleFunc("PATCH /api/v3/repos/{owner}/{repo}/releases/{release_id}",
-		s.requirePerm("contents", permWrite, s.handleUpdateRelease))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}",
-		s.requirePerm("contents", permWrite, s.handleDeleteRelease))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+		s.requirePerm(scopeContents, permWrite, s.handleUpdateRelease))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}",
+		s.requirePerm(scopeContents, permWrite, s.handleDeleteRelease))
 
 	// `/releases/{p1}/{p2}` dispatches by segment value:
 	//   p1=="tags"      → GET release-by-tag (real GH path: releases/tags/{tag})
 	//   p1==numeric     → reactions on release {p1} when p2 == "reactions"
 	// Go 1.22's mux refuses to register the two distinct patterns directly,
 	// so a single dispatcher handles both real-GH paths.
-	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+	s.route("GET /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("GET"))
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+	s.route("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("POST"))
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}/{p3}",
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}/{p3}",
 		s.handleReleaseThreeSegDispatch("DELETE"))
 }
 
@@ -239,7 +244,7 @@ func (s *Server) handleReleaseTwoSegDispatch(method string) http.HandlerFunc {
 			case "GET":
 				s.handleListReactions("release", "release_id")(w, r)
 			case "POST":
-				s.requirePerm("contents", permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
+				s.requirePerm(scopeContents, permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
 			}
 		default:
 			writeGHError(w, http.StatusNotFound, "Not Found")
@@ -258,7 +263,7 @@ func (s *Server) handleReleaseThreeSegDispatch(method string) http.HandlerFunc {
 		if p2 == "reactions" && method == "DELETE" {
 			r.SetPathValue("release_id", p1)
 			r.SetPathValue("reaction_id", p3)
-			s.requirePerm("contents", permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
+			s.requirePerm(scopeContents, permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
 			return
 		}
 		writeGHError(w, http.StatusNotFound, "Not Found")

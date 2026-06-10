@@ -240,6 +240,22 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return c["authorAssociation"], nil
 				},
 			},
+			"url": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["url"], nil
+				},
+			},
+			"viewerDidAuthor": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					viewer := ghUserFromContext(p.Context)
+					authorID, _ := c["authorID"].(int)
+					return viewer != nil && authorID == viewer.ID, nil
+				},
+			},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -1296,6 +1312,8 @@ func prCommentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 	return map[string]interface{}{
 		"nodeID":              c.NodeID,
 		"body":                c.Body,
+		"url":                 "",
+		"authorID":            c.AuthorID,
 		"createdAt":           c.CreatedAt.Format(time.RFC3339),
 		"author":              author,
 		"authorAssociation":   "OWNER",

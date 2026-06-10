@@ -12,11 +12,17 @@ import type {
   BleephubInstallation,
   BleephubOAuthApp,
   BleephubOAuthState,
+  WireOAuthApp,
+  WireAppCreated,
   GithubIssue,
   GithubComment,
   GithubPR,
   GithubBranch,
   GithubCommit,
+  GithubWebhook,
+  GithubSecret,
+  GithubEnvironment,
+  GithubRelease,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -43,9 +49,22 @@ export function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+// A 401 means the stored token is no longer valid (e.g. the server
+// restarted with in-memory persistence) — clear it and send the user
+// back to the login form instead of spinning forever.
+function handleUnauthorized(res: Response): void {
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = "/ui/login";
+  }
+}
+
 async function fetchJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -92,13 +111,30 @@ export async function verifyToken(token: string): Promise<boolean> {
   return res.ok;
 }
 
+// The /internal/* create + oauth-apps management endpoints return GitHub's
+// snake_case wire shape (client_id, callback_url, created_at). The UI's
+// types are camelCase, so normalize at this boundary. Fields are mapped
+// 1:1 from the server contract — no defaults, so a contract break shows
+// as undefined rather than a plausible-looking blank.
+function normalizeOAuthApp(raw: WireOAuthApp): BleephubOAuthApp {
+  return {
+    clientId: raw.client_id,
+    name: raw.name,
+    description: raw.description,
+    url: raw.url,
+    callbackUrl: raw.callback_url,
+    ownerId: raw.owner_id,
+    createdAt: raw.created_at,
+  };
+}
+
 export async function createApp(payload: {
   name: string;
   description?: string;
   permissions?: Record<string, string>;
   events?: string[];
-}): Promise<BleephubApp & { pem: string; client_secret: string; webhook_secret: string }> {
-  const res = await fetch("/api/v3/bleephub/apps", {
+}): Promise<{ clientId: string; pem: string; client_secret: string; webhook_secret: string }> {
+  const res = await fetch("/internal/apps", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -110,15 +146,28 @@ export async function createApp(payload: {
     const text = await res.text();
     throw new Error(`createApp ${res.status}: ${text || res.statusText}`);
   }
-  return res.json();
+  // appToJSON returns the GitHub snake_case app shape plus the once-shown
+  // secrets; the create dialog only needs the client id + secrets, surfaced
+  // here as the camelCase clientId it reads.
+  const raw = (await res.json()) as WireAppCreated;
+  return {
+    clientId: raw.client_id,
+    pem: raw.pem,
+    client_secret: raw.client_secret,
+    webhook_secret: raw.webhook_secret,
+  };
 }
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
-  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+  const res = await fetch("/internal/oauth-apps", {
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+  const raw = (await res.json()) as WireOAuthApp[];
+  return raw.map(normalizeOAuthApp);
 }
 
 export async function createOAuthApp(payload: {
@@ -127,7 +176,7 @@ export async function createOAuthApp(payload: {
   url?: string;
   callback_url?: string;
 }): Promise<BleephubOAuthApp & { client_secret: string }> {
-  const res = await fetch("/api/v3/bleephub/oauth-apps", {
+  const res = await fetch("/internal/oauth-apps", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -139,12 +188,16 @@ export async function createOAuthApp(payload: {
     const text = await res.text();
     throw new Error(`createOAuthApp ${res.status}: ${text || res.statusText}`);
   }
-  return res.json();
+  const raw = (await res.json()) as WireOAuthApp & { client_secret: string };
+  return {
+    ...normalizeOAuthApp(raw),
+    client_secret: raw.client_secret,
+  };
 }
 
 export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
   const verb = suspend ? "suspend" : "unsuspend";
-  const res = await fetch(`/api/v3/bleephub/installations/${installationID}/${verb}`, {
+  const res = await fetch(`/internal/installations/${installationID}/${verb}`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -155,7 +208,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 }
 
 export async function deleteInstallation(installationID: number): Promise<void> {
-  const res = await fetch(`/api/v3/bleephub/installations/${installationID}`, {
+  const res = await fetch(`/internal/installations/${installationID}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -174,7 +227,7 @@ export async function dispatchWorkflow(
     `/api/v3/repos/${repoFullName}/actions/workflows/${workflowId}/dispatches`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
     },
   );
@@ -186,7 +239,10 @@ export async function dispatchWorkflow(
 
 async function ghFetch<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -242,17 +298,31 @@ export async function mergePR(
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ merge_method: mergeMethod }),
   });
-  if (!res.ok && res.status !== 405) throw new Error(`merge ${res.status}`);
+  if (!res.ok) {
+    handleUnauthorized(res);
+    // 405 = "not mergeable" (already merged/closed) — a real failure the
+    // caller must see, not a success path.
+    const text = await res.text();
+    throw new Error(`merge ${res.status}: ${text || res.statusText}`);
+  }
 }
 
 export const fetchWebhooks = (owner: string, repo: string) =>
   ghFetch<GithubWebhook[]>(`/api/v3/repos/${owner}/${repo}/hooks`);
 
+// Secrets + environments come back in GitHub's list envelope
+// ({secrets:[…], total_count}) — unwrap to the array the UI renders.
+// No `?? []`: if the server ever stops sending the array, the missing
+// field should surface as an error, not a silent "none configured".
 export const fetchSecrets = (owner: string, repo: string) =>
-  ghFetch<GithubSecret[]>(`/api/v3/repos/${owner}/${repo}/actions/secrets`);
+  ghFetch<{ secrets: GithubSecret[] }>(
+    `/api/v3/repos/${owner}/${repo}/actions/secrets`
+  ).then((r) => r.secrets);
 
 export const fetchEnvironments = (owner: string, repo: string) =>
-  ghFetch<GithubEnvironment[]>(`/api/v3/repos/${owner}/${repo}/environments`);
+  ghFetch<{ environments: GithubEnvironment[] }>(
+    `/api/v3/repos/${owner}/${repo}/environments`
+  ).then((r) => r.environments);
 
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);

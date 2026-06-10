@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,8 +122,15 @@ func TestAppHookDeliveries_ListGetRedeliver(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 delivery, got %d", len(list))
 	}
+	// Summary carries throttled_at but NOT url.
+	if _, ok := list[0]["throttled_at"]; !ok {
+		t.Error("delivery summary missing throttled_at")
+	}
+	if _, ok := list[0]["url"]; ok {
+		t.Error("delivery summary must NOT contain url")
+	}
 
-	// GET single delivery — full request/response payload visible.
+	// GET single delivery — full request/response payload + url visible.
 	w = doReq("GET", fmt.Sprintf("/api/v3/app/hook/deliveries/%d", original.ID))
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET status = %d body = %s", w.Code, w.Body.String())
@@ -132,11 +140,17 @@ func TestAppHookDeliveries_ListGetRedeliver(t *testing.T) {
 	if single["request"] == nil || single["response"] == nil {
 		t.Error("expected full request/response in single-delivery view")
 	}
+	if _, ok := single["url"]; !ok {
+		t.Error("full delivery object must include url")
+	}
 
-	// REDELIVER — 202 + sink receives the payload.
+	// REDELIVER — 202 with no synthetic JSON body (GitHub returns empty body).
 	w = doReq("POST", fmt.Sprintf("/api/v3/app/hook/deliveries/%d/attempts", original.ID))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("REDELIVER status = %d body = %s", w.Code, w.Body.String())
+	}
+	if strings.TrimSpace(w.Body.String()) != "" {
+		t.Errorf("REDELIVER body = %q, want empty", w.Body.String())
 	}
 	// Sink fires async — quick poll.
 	deadline := time.Now().Add(2 * time.Second)

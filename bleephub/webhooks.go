@@ -78,10 +78,28 @@ func (s *Server) deliverWebhook(hook *Webhook, event, action string, payloadByte
 
 		delivery := s.doDeliverAttempt(hook, event, action, guid, payloadBytes, attempt > 0)
 		s.store.AddDelivery(delivery)
+		if hook.RepoKey != "" {
+			s.store.SetHookLastResponse(hook.RepoKey, hook.ID, deliveryLastResponse(delivery))
+		}
 
 		if delivery.StatusCode >= 200 && delivery.StatusCode < 300 {
 			return
 		}
+	}
+}
+
+// deliveryLastResponse maps a delivery attempt to the hook.last_response shape.
+func deliveryLastResponse(d *WebhookDelivery) *HookLastResponse {
+	msg := http.StatusText(d.StatusCode)
+	if d.StatusCode >= 200 && d.StatusCode < 300 {
+		msg = "OK"
+	} else if d.StatusCode == 0 {
+		msg = "failed to connect"
+	}
+	return &HookLastResponse{
+		Code:    d.StatusCode,
+		Status:  deliveryStatus(d.StatusCode),
+		Message: msg,
 	}
 }
 
@@ -100,12 +118,20 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 		reqHeaders["X-Hub-Signature-256"] = computeHMACSignature(hook.Secret, payloadBytes)
 		reqHeaders["X-Hub-Signature"] = computeHMACSignatureSHA1(hook.Secret, payloadBytes)
 	}
-	// Installation-target headers when the hook is app-bound (HookID < 0 marks an app hook).
+	// Installation-target headers identify the resource that owns the hook.
+	// App-bound hooks (HookID < 0) target the GitHub App ("integration");
+	// repository hooks target the repository's id.
 	if hook.ID < 0 {
 		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "integration"
 		reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(-hook.ID)
 	} else {
 		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "repository"
+		parts := splitRepoKeyParts(hook.RepoKey)
+		if parts[1] != "" {
+			if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
+				reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(repo.ID)
+			}
+		}
 	}
 
 	httpReq, err := http.NewRequest("POST", hook.URL, bytes.NewReader(payloadBytes))

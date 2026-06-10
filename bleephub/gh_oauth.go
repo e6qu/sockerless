@@ -39,15 +39,15 @@ func writeOAuthTokenResponse(w http.ResponseWriter, r *http.Request, fields map[
 }
 
 func (s *Server) registerGHOAuthRoutes() {
-	s.mux.HandleFunc("POST /login/device/code", s.handleDeviceCode)
-	s.mux.HandleFunc("POST /login/oauth/access_token", s.handleOAuthAccessToken)
-	s.mux.HandleFunc("GET /login/device", s.handleDevicePage)
+	s.route("POST /login/device/code", s.handleDeviceCode)
+	s.route("POST /login/oauth/access_token", s.handleOAuthAccessToken)
+	s.route("GET /login/device", s.handleDevicePage)
 	// Session login (required before the web-flow authorize step).
-	s.mux.HandleFunc("GET /login", s.handleLoginPage)
-	s.mux.HandleFunc("POST /login", s.handleLoginPost)
+	s.route("GET /login", s.handleLoginPage)
+	s.route("POST /login", s.handleLoginPost)
 	// OAuth web flow.
-	s.mux.HandleFunc("GET /login/oauth/authorize", s.handleOAuthAuthorize)
-	s.mux.HandleFunc("POST /login/oauth/authorize", s.handleOAuthAuthorizeApprove)
+	s.route("GET /login/oauth/authorize", s.handleOAuthAuthorize)
+	s.route("POST /login/oauth/authorize", s.handleOAuthAuthorizeApprove)
 }
 
 // authCode is a one-time-use OAuth authorization code keyed off a
@@ -141,6 +141,19 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><p>Signed in successfully.</p></body></html>`))
 }
 
+// oauthClientKind resolves an OAuth client_id to the token-minting parameters
+// CreateUserToServerToken expects: (appID, oauthClientID). A GitHub App
+// client_id yields a non-zero appID (mints ghu_); anything else is treated as
+// an OAuth App client_id (mints gho_). A GitHub App also returns isGitHubApp=true.
+func (s *Server) oauthClientKind(clientID string) (appID int, oauthClientID string, isGitHubApp bool) {
+	if clientID != "" {
+		if app := s.store.GetAppByClientID(clientID); app != nil {
+			return app.ID, "", true
+		}
+	}
+	return 0, clientID, false
+}
+
 // handleDeviceCode initiates the device authorization flow.
 func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -148,16 +161,22 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := r.FormValue("scope")
+	clientID := r.FormValue("client_id")
+
+	// Mint the user-to-server token up front (gho_ for an OAuth App, ghu_ for a
+	// GitHub App), keyed on the requesting client_id, and stash it on the device
+	// code. The exchange leg returns it verbatim.
+	appID, oauthClientID, _ := s.oauthClientKind(clientID)
 
 	s.store.mu.Lock()
 	adminUser := s.store.Users[1]
-	token := s.store.createTokenLocked(adminUser.ID, "repo, read:org, gist")
+	utsTok, _ := s.store.createUserToServerTokenLocked(adminUser.ID, appID, oauthClientID, scope, 8*time.Hour, false)
 
 	dc := &DeviceCode{
 		Code:      uuid.New().String(),
 		UserCode:  "BLEE-PHUB",
 		Scopes:    scope,
-		Token:     token.Value,
+		Token:     utsTok.Token,
 		UserID:    adminUser.ID,
 		ExpiresAt: time.Now().Add(15 * time.Minute),
 	}
@@ -247,6 +266,15 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The resulting access token is a user-to-server token: gho_ for an OAuth
+	// App, ghu_ for a GitHub App. Resolve the kind from the auth code's bound
+	// client_id (RLock taken inside oauthClientKind — must precede the write lock).
+	effectiveClientID := ac.ClientID
+	if effectiveClientID == "" {
+		effectiveClientID = clientID
+	}
+	appID, oauthClientID, _ := s.oauthClientKind(effectiveClientID)
+
 	s.store.mu.Lock()
 	user := s.store.Users[ac.UserID]
 	if user == nil {
@@ -254,12 +282,12 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 		writeOAuthTokenResponse(w, r, map[string]string{"error": "server_error"})
 		return
 	}
-	tok := s.store.createTokenLocked(user.ID, ac.Scopes)
+	tok, _ := s.store.createUserToServerTokenLocked(user.ID, appID, oauthClientID, ac.Scopes, 8*time.Hour, false)
 	s.store.mu.Unlock()
 
 	s.logger.Info().Str("auth_code", code).Int("user_id", user.ID).Msg("web flow token granted")
 	writeOAuthTokenResponse(w, r, map[string]string{
-		"access_token": tok.Value,
+		"access_token": tok.Token,
 		"token_type":   "bearer",
 		"scope":        ac.Scopes,
 	})

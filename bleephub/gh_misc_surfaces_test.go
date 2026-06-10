@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -135,9 +136,22 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 	var triggered map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &triggered)
-	buildID := int64(triggered["id"].(float64))
 	if triggered["status"] != "queued" {
 		t.Fatalf("status = %v, want queued", triggered["status"])
+	}
+	// GitHub's request-a-build response is exactly {status, url} with NO `id`.
+	if _, hasID := triggered["id"]; hasID {
+		t.Fatalf("trigger response must not carry top-level id; got %v", triggered)
+	}
+	buildURL, _ := triggered["url"].(string)
+	if buildURL == "" {
+		t.Fatalf("trigger response missing url; body = %s", w.Body.String())
+	}
+	// Builds are addressed by the trailing segment of their url.
+	buildIDStr := buildURL[strings.LastIndex(buildURL, "/")+1:]
+	buildID, err := strconv.ParseInt(buildIDStr, 10, 64)
+	if err != nil {
+		t.Fatalf("build url trailing segment %q not numeric: %v", buildIDStr, err)
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds/latest", "")
@@ -146,8 +160,22 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 	var latest map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &latest)
-	if int64(latest["id"].(float64)) != buildID {
-		t.Fatalf("latest id = %v, want %d", latest["id"], buildID)
+	// Build object carries no top-level id; it is addressed via url.
+	if _, hasID := latest["id"]; hasID {
+		t.Fatalf("build object must not carry top-level id; got %v", latest)
+	}
+	if latest["url"] != buildURL {
+		t.Fatalf("latest url = %v, want %s", latest["url"], buildURL)
+	}
+	// GitHub always emits error:{"message":null} and a pusher/commit field.
+	if _, ok := latest["error"]; !ok {
+		t.Fatalf("build missing error object; got %v", latest)
+	}
+	if _, ok := latest["commit"]; !ok {
+		t.Fatalf("build missing commit field; got %v", latest)
+	}
+	if _, ok := latest["pusher"]; !ok {
+		t.Fatalf("build missing pusher field; got %v", latest)
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds/"+strconv.FormatInt(buildID, 10), "")
@@ -170,14 +198,73 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 	var second map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &second)
-	secondID := int64(second["id"].(float64))
-	if secondID == buildID {
-		t.Fatalf("second build id = %d, should differ from first %d", secondID, buildID)
+	secondURL, _ := second["url"].(string)
+	if secondURL == "" || secondURL == buildURL {
+		t.Fatalf("second build url = %q, should be set and differ from first %q", secondURL, buildURL)
 	}
 
 	w = doMiscReq(s, "GET", "/api/v3/repos/nonexist/pages/builds/latest", "")
 	if w.Code != 404 {
 		t.Fatalf("nonexist repo latest status = %d, want 404", w.Code)
+	}
+}
+
+func TestPagesCreateUpdateShape(t *testing.T) {
+	s := newTestServer()
+	s.registerGHMiscEndpoints()
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "pages-shape", "", false)
+
+	// Missing source.branch on a legacy build is a 422.
+	w := doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"path":"/"}}`)
+	if w.Code != 422 {
+		t.Fatalf("create without branch status = %d, want 422; body = %s", w.Code, w.Body.String())
+	}
+
+	// Valid create: status building, full field set, build_type persisted.
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages",
+		`{"source":{"branch":"gh-pages","path":"/docs"},"build_type":"legacy"}`)
+	if w.Code != 201 {
+		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var site map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &site)
+	if site["status"] != "building" {
+		t.Fatalf("fresh site status = %v, want building", site["status"])
+	}
+	for _, k := range []string{"custom_404", "protected_domain_state", "build_type", "https_enforced"} {
+		if _, ok := site[k]; !ok {
+			t.Errorf("site missing field %q; got %v", k, site)
+		}
+	}
+	if site["build_type"] != "legacy" {
+		t.Errorf("build_type = %v, want legacy", site["build_type"])
+	}
+
+	// PUT update returns 204 No Content with empty body and persists params.
+	w = doMiscReq(s, "PUT", "/api/v3/repos/"+repo.FullName+"/pages",
+		`{"https_enforced":true,"build_type":"workflow","cname":"example.com","public":true}`)
+	if w.Code != 204 {
+		t.Fatalf("update status = %d, want 204; body = %s", w.Code, w.Body.String())
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("update body not empty: %s", w.Body.String())
+	}
+
+	w = doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages", "")
+	if w.Code != 200 {
+		t.Fatalf("get after update status = %d", w.Code)
+	}
+	var updated map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &updated)
+	if updated["https_enforced"] != true {
+		t.Errorf("https_enforced = %v, want true", updated["https_enforced"])
+	}
+	if updated["build_type"] != "workflow" {
+		t.Errorf("build_type = %v, want workflow", updated["build_type"])
+	}
+	if updated["cname"] != "example.com" {
+		t.Errorf("cname = %v, want example.com", updated["cname"])
 	}
 }
 

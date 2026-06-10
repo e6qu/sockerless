@@ -23,9 +23,10 @@ The audit artifact mapping bleephub's coverage to GitHub-real shapes (per-route 
 `gh` is HTTPS-only against any non-`github.com` host, and it identifies the target by **hostname** (no base URL flag). The `--hostname` argument on `gh auth login` is what wires it up; once that and `GH_HOST` are set, every `gh` command builds `https://<host>/api/v3/...` automatically and bleephub serves it.
 
 ```bash
-# 1. Build (UI first so the Go binary embeds it; both steps optional if you only need the API)
+# 1. Build (UI first so the Go binary embeds it; skip the UI step if you only need the API —
+#    make build falls back to a no-UI binary when ui/packages/bleephub/dist/ is missing)
 cd ui/packages/bleephub && bun install && bun run build      # → ui/packages/bleephub/dist/
-cd ../../../bleephub && make build                           # → ./sockerless-bleephub (embeds dist/)
+cd ../../../bleephub && make build                           # → ./bleephub-server (embeds dist/)
 
 # 2. Generate + trust a localhost TLS cert (gh requires HTTPS)
 openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
@@ -38,10 +39,12 @@ sudo security add-trusted-cert -d -r trustRoot \
 # sudo cp /tmp/bph.crt /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates
 
 # 3. Start bleephub on :443 with TLS  (use :8443 + --hostname localhost:8443 below if you prefer no sudo)
-sudo BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
-  ./sockerless-bleephub --addr :443 &
+#    BLEEPHUB_ADMIN_TOKEN is required — there is no default; pick any non-PAT-shaped value.
+sudo BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
+  BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
+  ./bleephub-server --addr :443 &
 
-# 4. Point gh at bleephub — --hostname is the key flag
+# 4. Point gh at bleephub — --hostname is the key flag; the token is whatever you set above
 echo "bleephub-admin-token-00000000000000000000" \
   | gh auth login --hostname localhost --with-token
 export GH_HOST=localhost                                     # make it the default host
@@ -59,8 +62,8 @@ For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, 
 
 The Go binary embeds the React SPA at `/ui/` via `go embed` (build tag `!noui`, on by default). After step 3 above, open:
 
-- `https://localhost/ui/` — bleephub dashboard. Routes (left nav): **Overview**, **Workflows** (+ per-run detail), **Runners**, **Repos**, **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
-- Auth: the UI hard-codes the seeded admin PAT (`bph_0000…`) on its API calls. There's no login form — anyone who can reach `/ui/` has admin in the current implementation. If you front bleephub with auth, do it at the reverse proxy.
+- `https://localhost/ui/` — bleephub dashboard. Routes (left nav): **Overview**, **Workflows** (+ per-run detail), **Runners**, **Repos** (+ per-repo issues/PRs/branches detail), **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
+- Auth: the UI presents a login form on first visit — paste the `BLEEPHUB_ADMIN_TOKEN` value. The token is verified against `GET /api/v3/user`, kept in browser localStorage, and sent on every UI request. The `/internal/*` dashboard endpoints enforce it server-side (any valid PAT, including the admin token); `/health` stays open for liveness probes. It is a single-token operator surface — for multi-user access control, front bleephub with a reverse proxy.
 
 For UI hacking without rebuilding the Go binary on every change:
 
@@ -70,10 +73,9 @@ For UI hacking without rebuilding the Go binary on every change:
 cd ui/packages/bleephub
 bun install                         # one-time
 bun run dev                         # Vite dev server on :5173 with HMR
-# Then open http://localhost:5173/ui/ — Vite proxies /internal + /health
-# to localhost:5555. For other API paths during dev, add them to
-# `server.proxy` in vite.config.ts (or load the UI from bleephub's own
-# /ui/ once you've rebuilt with `bun run build` && `make build`).
+# Then open http://localhost:5173/ui/ — Vite proxies the API paths the UI
+# uses (see `server.proxy` in vite.config.ts) to localhost:5555; add new
+# paths there if you introduce them.
 ```
 
 To rebuild the embedded copy (production-style) re-run `bun run build` then `make build` in `bleephub/`.
@@ -90,7 +92,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 | Broker | `/_apis/v1/AgentSession/`, `/_apis/v1/Message/` | Session management, 30s message long-poll |
 | Run service | `/_apis/v1/AgentRequest/`, `/_apis/v1/FinishJob/` | Job acquire/renew/complete |
 | Timeline + logs | `/_apis/v1/Timeline/`, `/_apis/v1/Logfiles/` | Step status tracking, log upload |
-| Job submission | `/api/v3/bleephub/submit` | Simplified JSON job input (not part of runner protocol) |
+| Job submission | `/internal/exec/submit` | Simplified JSON job input — sim-control, NOT a GitHub API (lives under `/internal/`, not `/api/v3/`) |
 
 ### GitHub REST API (`/api/v3/`) — supported surface
 
@@ -98,7 +100,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, GraphQL counterparts.
 
-**PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. `GET /pulls/{n}/review-threads` returns threads with `isResolved`. REST helpers for resolve/unresolve (`/pulls/{n}/review-threads/{tid}/{resolve|unresolve}`). Reactions on review comments.
+**PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing + resolve/unresolve have no GitHub REST equivalent (GraphQL-only on real GitHub: `resolveReviewThread`/`unresolveReviewThread`), so bleephub exposes them as sim-control helpers under `/internal/repos/{o}/{r}/pulls/{n}/review-threads[/{tid}/{resolve|unresolve}]`, not the GitHub namespace.
 
 **Reactions.** Eight content values (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`). Idempotent POST. Surfaces: issues, issue comments, PR review comments, commit comments, releases. `reactions{url, total_count, +1, ...}` block embedded on parent JSON.
 
@@ -120,7 +122,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 - Installation events: `installation`, `installation_repositories` fire on store transitions.
 - JWT verification: RS256, 600s max lifetime, iat/exp validation.
 
-**OAuth Apps.** Distinct entity from GitHub Apps. `POST /api/v3/bleephub/oauth-apps` (sim management). OAuth web flow (`/login/oauth/authorize`) + device flow (`/login/device/code`). Token-management family on `/api/v3/applications/{client_id}/{token,grant}` (check / reset / revoke / scope).
+**OAuth Apps.** Distinct entity from GitHub Apps. Created/listed via the sim-control surface `POST/GET /internal/oauth-apps` (GitHub has no REST API to create OAuth Apps, so this is NOT under `/api/v3/`). OAuth web flow (`/login/oauth/authorize`) + device flow (`/login/device/code`). Token-management family on the real `/api/v3/applications/{client_id}/{token,grant}` (check / reset / revoke / scope).
 
 **Token prefixes.** Match real GH exactly: `ghp_` (PAT), `gho_` (OAuth App user-to-server), `ghu_` (GitHub App user-to-server), `ghs_` (server-to-server installation), `ghr_` (refresh). Middleware distinguishes all five.
 
@@ -142,7 +144,18 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 ### Persistence
 
-`BLEEPHUB_PERSIST=true` enables SQLite write-through for users / tokens / apps / oauth_apps / installations / installation_tokens / user_to_server_tokens / refresh_tokens / repos. `BLEEPHUB_DATA_DIR` selects the on-disk location (default `./bleephub.db`). Open failure → `log.Fatalf` (BUG-985/986 pattern; never silent in-memory fallback). Git storage (go-git) stays in-memory; switching to filesystem.Storage is a separate phase.
+Two write-through database options, both fail-loud on open failure (never a silent in-memory fallback):
+
+- **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
+- **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
+
+All REST/Apps state buckets are persisted (users, tokens, apps, oauth_apps, installations + their tokens, repos, issues, pulls + reviews/comments, labels, milestones, releases, reactions, hooks + deliveries, checks, deployments + environments, orgs, teams, memberships, secrets, …); ID numbering is re-derived on load so it resumes where it left off. Runner/workflow runtime state (workflows, sessions, agents) deliberately stays in-memory — a restart abandons in-flight runs.
+
+Git repository storage (go-git) is selected independently of the database:
+
+- default — in-memory (lost on restart);
+- `BLEEPHUB_GIT_DIR=<dir>` — bare repos on the local filesystem;
+- `BLEEPHUB_S3_BUCKET` (+ optional `BLEEPHUB_S3_ENDPOINT`, `BLEEPHUB_S3_PREFIX`) — repos in S3-compatible object storage (takes priority over `BLEEPHUB_GIT_DIR`).
 
 ### `gh` CLI compatibility
 
@@ -170,6 +183,7 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - Reusable workflows (`uses: ./.github/workflows/`).
 - Composite actions.
 - Full Projects v2 (only the empty `Issue.projectItems` compatibility connection needed by `gh issue view`).
+- Workflow enable/disable (`PUT/POST /actions/workflows/{id}/{enable,disable}`) — `gh workflow enable / disable` has no route to hit.
 - SAML SSO + SCIM provisioning.
 - Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.
@@ -190,7 +204,7 @@ For local end-to-end workflow runs:
 1. Runner calls `config.sh --url http://bleephub/owner/repo --token ...`
 2. bleephub returns registration data, agent pool, credentials.
 3. Runner starts `run.sh`, creates a session, long-polls `/_apis/v1/Message/`.
-4. A job is submitted via `POST /api/v3/bleephub/submit` (simplified JSON).
+4. A job is submitted via `POST /internal/exec/submit` (simplified JSON; sim-control, not a GitHub API path).
 5. bleephub converts to the internal job-message format and delivers it.
 6. Runner creates a Docker container through `DOCKER_HOST` (pointing at Sockerless).
 7. Runner execs each `run:` step inside the container via `docker exec`.
@@ -198,12 +212,14 @@ For local end-to-end workflow runs:
 
 For ad-hoc REST / GraphQL workflows (probot, octokit, `gh`):
 - Point `GH_HOST=localhost` (or set the host in `gh auth login`).
-- Use a token recognised by bleephub's middleware (seeded `bph_0000...` PAT works; mint your own via the OAuth flow for stricter testing).
+- Use a token recognised by bleephub's middleware (the `BLEEPHUB_ADMIN_TOKEN` value works everywhere; mint your own via the OAuth flow for stricter testing — see the token table in [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md#tokens-at-a-glance)).
 
 ## Usage
 
 ```bash
-bleephub --addr :80 --log-level info
+make build                                            # → ./bleephub-server
+BLEEPHUB_ADMIN_TOKEN=<token> ./bleephub-server --addr :80 --log-level info
+# or: make run   (builds + runs on :5555; still requires BLEEPHUB_ADMIN_TOKEN in the env)
 ```
 
 Flags:
@@ -212,8 +228,11 @@ Flags:
 
 Env vars:
 - `BLEEPHUB_ADMIN_TOKEN=<token>` — **required.** The seeded admin token. There is no default (a default would be a guessable credential, and the historical `ghp_…` value tripped secret scanners); the binary fails loudly at startup if unset. Set a non-PAT-shaped value.
-- `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default).
-- `BLEEPHUB_DATA_DIR=<dir>` — persistence + artifact directory.
+- `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default; see [Persistence](#persistence)).
+- `BLEEPHUB_DATABASE_URL=postgres://…` — use PostgreSQL instead of SQLite (takes priority over `BLEEPHUB_PERSIST`).
+- `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite DB (`bleephub.db`) + artifact store (default `.`).
+- `BLEEPHUB_GIT_DIR=<dir>` — store git repos on the local filesystem (default: in-memory).
+- `BLEEPHUB_S3_BUCKET` / `BLEEPHUB_S3_ENDPOINT` / `BLEEPHUB_S3_PREFIX` — store git repos in S3-compatible object storage (bucket set ⇒ S3 wins over `BLEEPHUB_GIT_DIR`).
 - `BPH_TLS_CERT` + `BPH_TLS_KEY` — serve over TLS.
 - `BLEEPHUB_MAX_WORKFLOWS=N` — concurrency cap (default 10).
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — when set, emits traces + metrics + logs via OTLP (off by default; preserves the components-decoupled invariant).
@@ -238,7 +257,7 @@ The Docker harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/
 
 Last green run: 50/50 PASS.
 
-## Source layout (~60 Go files)
+## Source layout (~80 Go files)
 
 | Group | Files | Purpose |
 |---|---|---|
@@ -252,8 +271,8 @@ Last green run: 50/50 PASS.
 | Misc long-tail | `gh_misc_endpoints.go` | Users keys/follow, Actions OIDC + JWKS, Pages, Branch protection, Marketplace |
 | GraphQL | `gh_graphql.go`, `gh_*_graphql.go`, `gh_request_decode.go` | Schema + flex decoders |
 | Webhooks | `webhooks.go`, `webhooks_store.go`, `webhooks_payloads.go`, `gh_hooks_rest.go` | HMAC-SHA256/SHA1 delivery with retry |
-| Git | `git_http.go` | Smart HTTP protocol (go-git) |
-| Persistence | `persistence.go` | SQLite write-through layer |
+| Git | `git_http.go`, `git_storage.go`, `s3fs.go` | Smart HTTP protocol (go-git); in-memory / on-disk / S3 repo storage |
+| Persistence | `persistence.go` | SQLite/PostgreSQL write-through layer |
 | Infrastructure | `store.go`, `store_*.go`, `rbac.go`, `metrics.go`, `otel.go`, `handle_mgmt.go`, `ui_embed.go` | State, RBAC, metrics, OTel, dashboard |
 
 ## See also

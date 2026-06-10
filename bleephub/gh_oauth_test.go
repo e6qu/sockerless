@@ -239,8 +239,12 @@ func TestOAuth_ConformantWebFlow_BindsCodeToSessionUser(t *testing.T) {
 		t.Errorf("access_token empty")
 	}
 
-	// Step 5: verify the token belongs to alice, not admin.
-	_, user := s.store.LookupToken(tokResp.AccessToken)
+	// Step 5: verify the web flow yields a user-to-server token (gho_ for an
+	// OAuth App client_id) belonging to alice, not admin.
+	if !strings.HasPrefix(tokResp.AccessToken, "gho_") {
+		t.Errorf("web flow token = %q, want gho_ prefix", tokResp.AccessToken)
+	}
+	_, user := s.store.LookupUserToServerToken(tokResp.AccessToken)
 	if user == nil {
 		t.Fatal("token not found in store")
 	}

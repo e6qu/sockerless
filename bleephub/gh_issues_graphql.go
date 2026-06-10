@@ -913,22 +913,31 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			subjectNodeID, _ := input["subjectId"].(string)
 			body, _ := input["body"].(string)
 
-			issue := findIssueByNodeID(s.store, subjectNodeID)
-			if issue == nil {
-				return nil, fmt.Errorf("could not resolve to a node with the global id of '%s'", subjectNodeID)
+			// On real GitHub a PR is an issue, so addComment's subjectId may be
+			// either; `gh pr comment` passes a PR node id. Resolve both.
+			if issue := findIssueByNodeID(s.store, subjectNodeID); issue != nil {
+				comment := s.store.CreateComment(issue.ID, user.ID, body)
+				if comment == nil {
+					return nil, fmt.Errorf("comment creation failed")
+				}
+				return map[string]interface{}{
+					"commentEdge": map[string]interface{}{"node": commentToGQL(comment, s.store)},
+					"subject":     issueToGQL(issue, s.store),
+				}, nil
 			}
-
-			comment := s.store.CreateComment(issue.ID, user.ID, body)
-			if comment == nil {
-				return nil, fmt.Errorf("comment creation failed")
+			if pr := findPullRequestByNodeID(s.store, subjectNodeID); pr != nil {
+				comment := s.store.CreateCommentFor("pull_request", pr.ID, user.ID, body)
+				if comment == nil {
+					return nil, fmt.Errorf("comment creation failed")
+				}
+				return map[string]interface{}{
+					"commentEdge": map[string]interface{}{"node": commentToGQL(comment, s.store)},
+					// subject is the Issue type; `gh pr comment` reads only
+					// commentEdge.node, so a PR subject is not queried here.
+					"subject": nil,
+				}, nil
 			}
-
-			return map[string]interface{}{
-				"commentEdge": map[string]interface{}{
-					"node": commentToGQL(comment, s.store),
-				},
-				"subject": issueToGQL(issue, s.store),
-			}, nil
+			return nil, fmt.Errorf("could not resolve to a node with the global id of '%s'", subjectNodeID)
 		},
 	})
 
