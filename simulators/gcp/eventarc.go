@@ -201,6 +201,10 @@ func handleEventarcCreateTrigger(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
 		return
 	}
+	if _, exists := eventarcTriggers.Get(eventarcTriggerKey(project, location, triggerID)); exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "trigger %q already exists", eventarcTriggerName(project, location, triggerID))
+		return
+	}
 	now := nowTimestamp()
 	req.Name = eventarcTriggerName(project, location, triggerID)
 	req.Uid = generateUUID()
@@ -301,6 +305,10 @@ func handleEventarcCreateChannel(w http.ResponseWriter, r *http.Request) {
 	var req EventarcChannel
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	if _, exists := eventarcChannels.Get(eventarcChannelKey(project, location, channelID)); exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "channel %q already exists", eventarcChannelName(project, location, channelID))
 		return
 	}
 	now := nowTimestamp()
@@ -445,6 +453,10 @@ func handleEventarcCreateChannelConnection(w http.ResponseWriter, r *http.Reques
 	var req EventarcChannelConnection
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad request body: %v", err)
+		return
+	}
+	if _, exists := eventarcChannelConnections.Get(eventarcChannelConnectionKey(project, location, connectionID)); exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "channel connection %q already exists", eventarcChannelConnectionName(project, location, connectionID))
 		return
 	}
 	now := nowTimestamp()

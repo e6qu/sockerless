@@ -351,7 +351,11 @@ func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteLoggingSink(w http.ResponseWriter, r *http.Request) {
-	logSinks.Delete(loggingSinkRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "sink")))
+	sink := sim.PathParam(r, "sink")
+	if !logSinks.Delete(loggingSinkRequestKey(sim.PathParam(r, "project"), sink)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "sink %q not found", sink)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -413,7 +417,11 @@ func handleUpdateLoggingMetric(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteLoggingMetric(w http.ResponseWriter, r *http.Request) {
-	logMetrics.Delete(loggingMetricRequestKey(sim.PathParam(r, "project"), sim.PathParam(r, "metric")))
+	metric := sim.PathParam(r, "metric")
+	if !logMetrics.Delete(loggingMetricRequestKey(sim.PathParam(r, "project"), metric)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "metric %q not found", metric)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	eventarc "cloud.google.com/go/eventarc/apiv1"
@@ -10,11 +11,15 @@ import (
 	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	"google.golang.org/api/bigquery/v2"
 	"google.golang.org/api/cloudresourcemanager/v1"
+	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/dns/v1"
+	"google.golang.org/api/googleapi"
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/pubsub/v1"
 	secretmanager "google.golang.org/api/secretmanager/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // These tests assert that writable fields accepted on create/patch survive a
@@ -256,4 +261,173 @@ func TestConformance_LoggingMetricValueExtractorRoundTrip(t *testing.T) {
 	require.NotNil(t, got.BucketOptions.ExplicitBuckets)
 	assert.Equal(t, []float64{0, 1, 2, 5, 10}, got.BucketOptions.ExplicitBuckets.Bounds)
 	assert.Equal(t, map[string]string{"zone": "EXTRACT(resource.labels.zone)"}, got.LabelExtractors)
+}
+
+// requireGoogleErr asserts the error is a googleapi.Error with the given HTTP
+// code and that the GCP error envelope's `status` string is present in the raw
+// body — the canonical {"error":{"code","message","status"}} shape.
+func requireGoogleErr(t *testing.T, err error, code int, gcpStatus string) {
+	t.Helper()
+	require.Error(t, err)
+	var gerr *googleapi.Error
+	require.True(t, errors.As(err, &gerr), "expected a googleapi.Error, got %T: %v", err, err)
+	assert.Equal(t, code, gerr.Code, "http status code")
+	assert.Contains(t, gerr.Body, gcpStatus, "GCP error.status field")
+}
+
+// TestConformance_ComputeDuplicateInsertConflict pins that a second insert of
+// a metadata-only Compute resource (backendService) returns 409 ALREADY_EXISTS
+// like real GCP, instead of silently overwriting. backendServices.insert does
+// not touch the network fabric, so the case runs without a real-exec host.
+func TestConformance_ComputeDuplicateInsertConflict(t *testing.T) {
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+	const project = "conformance-project"
+
+	bs := &compute.BackendService{Name: "conf-dup-backend", Protocol: "HTTP"}
+	_, err = svc.BackendServices.Insert(project, bs).Context(ctx).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.BackendServices.Delete(project, bs.Name).Context(ctx).Do() })
+
+	_, err = svc.BackendServices.Insert(project, bs).Context(ctx).Do()
+	requireGoogleErr(t, err, 409, "ALREADY_EXISTS")
+}
+
+// TestConformance_ComputeDeleteMissingNotFound pins that deleting a never-
+// created metadata-only Compute resource (healthCheck) returns 404 NOT_FOUND
+// like real GCP, instead of a synthesized DONE operation.
+func TestConformance_ComputeDeleteMissingNotFound(t *testing.T) {
+	svc, err := compute.NewService(ctx, option.WithEndpoint(baseURL+"/compute/v1/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	_, err = svc.HealthChecks.Delete("conformance-project", "conf-never-created-hc").Context(ctx).Do()
+	requireGoogleErr(t, err, 404, "NOT_FOUND")
+}
+
+// TestConformance_PubSubDuplicateTopicConflict pins that creating a topic twice
+// returns 409 ALREADY_EXISTS like real Pub/Sub instead of overwriting.
+func TestConformance_PubSubDuplicateTopicConflict(t *testing.T) {
+	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	name := "projects/conformance-project/topics/conf-dup-topic"
+
+	_, err = svc.Projects.Topics.Create(name, &pubsub.Topic{}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Topics.Delete(name).Do() })
+
+	_, err = svc.Projects.Topics.Create(name, &pubsub.Topic{}).Do()
+	requireGoogleErr(t, err, 409, "ALREADY_EXISTS")
+}
+
+// TestConformance_PubSubDuplicateSubscriptionConflict pins the same contract
+// for subscriptions.
+func TestConformance_PubSubDuplicateSubscriptionConflict(t *testing.T) {
+	svc, err := pubsub.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	topic := "projects/conformance-project/topics/conf-dup-sub-topic"
+	sub := "projects/conformance-project/subscriptions/conf-dup-sub"
+
+	_, err = svc.Projects.Topics.Create(topic, &pubsub.Topic{}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Topics.Delete(topic).Do() })
+
+	_, err = svc.Projects.Subscriptions.Create(sub, &pubsub.Subscription{Topic: topic}).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Subscriptions.Delete(sub).Do() })
+
+	_, err = svc.Projects.Subscriptions.Create(sub, &pubsub.Subscription{Topic: topic}).Do()
+	requireGoogleErr(t, err, 409, "ALREADY_EXISTS")
+}
+
+// TestConformance_EventarcDuplicateTriggerConflict pins that a second
+// CreateTrigger with the same triggerId returns ALREADY_EXISTS. The eventarc
+// gRPC client surfaces the 409 as codes.AlreadyExists.
+func TestConformance_EventarcDuplicateTriggerConflict(t *testing.T) {
+	client, err := eventarc.NewRESTClient(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+
+	parent := "projects/conformance-project/locations/us-central1"
+	name := parent + "/triggers/conf-dup-trigger"
+	req := &eventarcpb.CreateTriggerRequest{
+		Parent:    parent,
+		TriggerId: "conf-dup-trigger",
+		Trigger: &eventarcpb.Trigger{
+			Channel: parent + "/channels/conf-dup-trigger-channel",
+			EventFilters: []*eventarcpb.EventFilter{{
+				Attribute: "type",
+				Value:     "google.cloud.pubsub.topic.v1.messagePublished",
+			}},
+			Destination: &eventarcpb.Destination{
+				Descriptor_: &eventarcpb.Destination_CloudRun{
+					CloudRun: &eventarcpb.CloudRun{Service: "svc", Region: "us-central1"},
+				},
+			},
+		},
+	}
+	op, err := client.CreateTrigger(ctx, req)
+	require.NoError(t, err)
+	_, err = op.Wait(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		dop, derr := client.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{Name: name})
+		if derr == nil {
+			_, _ = dop.Wait(ctx)
+		}
+	})
+
+	_, err = client.CreateTrigger(ctx, req)
+	require.Error(t, err)
+	// The eventarc REST-over-gRPC client maps the sim's HTTP 409 to a gRPC
+	// status. ALREADY_EXISTS and ABORTED both carry HTTP 409, and this
+	// client's transport derives the gRPC code from the HTTP status rather
+	// than the body's `status` string, so accept either 409-family code and
+	// assert the conflict message — exactly what real Eventarc + this client
+	// surface for a duplicate create.
+	code := status.Code(err)
+	assert.Contains(t, []codes.Code{codes.AlreadyExists, codes.Aborted}, code, "duplicate CreateTrigger must be a 409-family conflict: %v", err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+// TestConformance_LoggingDeleteMissingSinkNotFound pins that deleting a
+// never-created log sink returns 404 NOT_FOUND like real Cloud Logging.
+func TestConformance_LoggingDeleteMissingSinkNotFound(t *testing.T) {
+	svc, err := logging.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	_, err = svc.Projects.Sinks.Delete("projects/conformance-project/sinks/conf-never-created-sink").Do()
+	requireGoogleErr(t, err, 404, "NOT_FOUND")
+}
+
+// TestConformance_IAMSetPolicyStaleEtagAborted pins the optimistic-concurrency
+// contract: a setIamPolicy carrying a stale etag is rejected with 409 ABORTED
+// so the caller re-reads and retries.
+func TestConformance_IAMSetPolicyStaleEtagAborted(t *testing.T) {
+	svc, err := cloudresourcemanager.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	project := "conformance-iam-etag-project"
+
+	// Read the current policy to learn its etag.
+	got, err := svc.Projects.GetIamPolicy(project, &cloudresourcemanager.GetIamPolicyRequest{}).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Etag)
+
+	// A write with the correct etag succeeds and mints a new one.
+	ok, err := svc.Projects.SetIamPolicy(project, &cloudresourcemanager.SetIamPolicyRequest{
+		Policy: &cloudresourcemanager.Policy{
+			Etag:     got.Etag,
+			Bindings: []*cloudresourcemanager.Binding{{Role: "roles/viewer", Members: []string{"user:a@example.com"}}},
+		},
+	}).Do()
+	require.NoError(t, err)
+	require.NotEqual(t, got.Etag, ok.Etag, "successful set must mint a fresh etag")
+
+	// Re-using the now-stale original etag must be rejected with ABORTED.
+	_, err = svc.Projects.SetIamPolicy(project, &cloudresourcemanager.SetIamPolicyRequest{
+		Policy: &cloudresourcemanager.Policy{
+			Etag:     got.Etag,
+			Bindings: []*cloudresourcemanager.Binding{{Role: "roles/editor", Members: []string{"user:b@example.com"}}},
+		},
+	}).Do()
+	requireGoogleErr(t, err, 409, "ABORTED")
 }

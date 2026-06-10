@@ -129,6 +129,29 @@ func newComputeOpWithType(project, scope string, targetLink string, operationTyp
 	return op
 }
 
+// computeConflict writes the 409 ALREADY_EXISTS response real GCP returns
+// when an insert names a resource that already exists. exists reports
+// whether the store already holds the key; when true the handler must
+// return immediately.
+func computeConflict(w http.ResponseWriter, exists bool, resource, name string) bool {
+	if exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "The resource '%s' named '%s' already exists", resource, name)
+		return true
+	}
+	return false
+}
+
+// computeNotFound writes the 404 NOT_FOUND response real GCP returns when a
+// delete targets a resource that is absent. deleted is the bool the store's
+// Delete reported; when false the handler must return immediately.
+func computeNotFound(w http.ResponseWriter, deleted bool, resource, name string) bool {
+	if !deleted {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The resource '%s' named '%s' was not found", resource, name)
+		return true
+	}
+	return false
+}
+
 // ComputeFirewall mirrors `compute#firewall`. Field set covers what
 // terraform-provider-google's `google_compute_firewall` and the Go
 // SDK's `compute.NewFirewallsRESTClient` round-trip; runner setup
@@ -584,6 +607,9 @@ func registerCompute(srv *sim.Server) {
 			net.RoutingConfig.RoutingMode = "REGIONAL"
 		}
 		net.NetworkFirewallPolicyEnforcementOrder = "AFTER_CLASSIC_FIREWALL"
+		if _, exists := networks.Get(selfLink); computeConflict(w, exists, "network", req.Name) {
+			return
+		}
 		if !gcpRequireNetworkHost(w) {
 			return
 		}
@@ -636,7 +662,9 @@ func registerCompute(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/global/networks/%s", project, name)
 
-		networks.Delete(selfLink)
+		if computeNotFound(w, networks.Delete(selfLink), "network", name) {
+			return
+		}
 		if err := gcpDeleteRealNetwork(r.Context(), selfLink); err != nil {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real VPC network fabric: %v", err)
 			return
@@ -785,6 +813,9 @@ func registerCompute(srv *sim.Server) {
 			PrivateIpGoogleAccess: req.PrivateIpGoogleAccess,
 			CreationTimestamp:     time.Now().UTC().Format(time.RFC3339),
 		}
+		if _, exists := subnetworks.Get(selfLink); computeConflict(w, exists, "subnetwork", req.Name) {
+			return
+		}
 		if !gcpRequireNetworkHost(w) {
 			return
 		}
@@ -820,7 +851,9 @@ func registerCompute(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s", project, region, name)
 
-		subnetworks.Delete(selfLink)
+		if computeNotFound(w, subnetworks.Delete(selfLink), "subnetwork", name) {
+			return
+		}
 		if err := gcpDeleteRealSubnetwork(r.Context(), selfLink); err != nil {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to delete real subnet network fabric: %v", err)
 			return
@@ -858,6 +891,9 @@ func registerCompute(srv *sim.Server) {
 		}
 		if fw.Priority == 0 {
 			fw.Priority = 1000
+		}
+		if _, exists := firewalls.Get(fw.SelfLink); computeConflict(w, exists, "firewall", fw.Name) {
+			return
 		}
 		firewalls.Put(fw.SelfLink, fw)
 		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
@@ -902,7 +938,9 @@ func registerCompute(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/global/firewalls/%s", project, name)
-		firewalls.Delete(selfLink)
+		if computeNotFound(w, firewalls.Delete(selfLink), "firewall", name) {
+			return
+		}
 		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
 			return
@@ -984,6 +1022,9 @@ func registerCompute(srv *sim.Server) {
 		addr.Kind = "compute#address"
 		addr.Id = computeNumericID()
 		addr.SelfLink = computeRegionalAddressLink(project, region, addr.Name)
+		if _, exists := addresses.Get(addr.SelfLink); computeConflict(w, exists, "address", addr.Name) {
+			return
+		}
 		addr.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
 		addr.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
 		if addr.AddressType == "" {
@@ -1074,9 +1115,11 @@ func registerCompute(srv *sim.Server) {
 		region := sim.PathParam(r, "region")
 		name := sim.PathParam(r, "name")
 		selfLink := computeRegionalAddressLink(project, region, name)
-		if addr, ok := addresses.Get(selfLink); ok {
-			realexec.ReleasePublicIPv4(net.ParseIP(addr.Address))
+		addr, ok := addresses.Get(selfLink)
+		if computeNotFound(w, ok, "address", name) {
+			return
 		}
+		realexec.ReleasePublicIPv4(net.ParseIP(addr.Address))
 		addresses.Delete(selfLink)
 		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, "regions/"+region, selfLink, "delete"))
 	})
@@ -1102,6 +1145,9 @@ func registerCompute(srv *sim.Server) {
 		rt.SelfLink = fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, rt.Name)
 		rt.Region = fmt.Sprintf("projects/%s/regions/%s", project, region)
 		rt.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
+		if _, exists := routers.Get(rt.SelfLink); computeConflict(w, exists, "router", rt.Name) {
+			return
+		}
 		defaultRouterNATTypes(rt.Nats)
 		if len(rt.Nats) > 0 {
 			if !gcpRequireNetworkHost(w) {
@@ -1154,7 +1200,9 @@ func registerCompute(srv *sim.Server) {
 		region := sim.PathParam(r, "region")
 		name := sim.PathParam(r, "name")
 		selfLink := fmt.Sprintf("projects/%s/regions/%s/routers/%s", project, region, name)
-		routers.Delete(selfLink)
+		if computeNotFound(w, routers.Delete(selfLink), "router", name) {
+			return
+		}
 		op := newComputeOpWithType(project, "regions/"+region, selfLink, "delete")
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
@@ -2033,6 +2081,9 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		}
 		if inst.Name == "" {
 			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		if _, exists := instances.Get(instanceSelfLink(project, zone, inst.Name)); computeConflict(w, exists, "instance", inst.Name) {
 			return
 		}
 		if !gcpRequireNetworkHost(w) {

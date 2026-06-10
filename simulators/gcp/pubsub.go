@@ -268,6 +268,10 @@ func handlePSCreateTopic(w http.ResponseWriter, r *http.Request) {
 		MessageStoragePolicy:     req.MessageStoragePolicy,
 		SchemaSettings:           req.SchemaSettings,
 	}
+	if _, exists := psTopics.Get(t.Name); exists {
+		gcpError(w, http.StatusConflict, "ALREADY_EXISTS", "Topic already exists: "+t.Name)
+		return
+	}
 	psTopics.Put(t.Name, t)
 	sim.WriteJSON(w, http.StatusOK, t)
 }
@@ -390,6 +394,10 @@ func handlePSCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := psTopics.Get(req.Topic); !ok {
 		gcpError(w, http.StatusNotFound, "NOT_FOUND", "Topic not found: "+req.Topic)
+		return
+	}
+	if _, exists := psSubscriptions.Get(psSubName(project, sub)); exists {
+		gcpError(w, http.StatusConflict, "ALREADY_EXISTS", "Subscription already exists: "+psSubName(project, sub))
 		return
 	}
 	if req.AckDeadlineSeconds == 0 {
