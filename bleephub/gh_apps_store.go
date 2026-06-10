@@ -95,7 +95,7 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 
 	id := st.NextAppID
 	st.NextAppID++
-	now := time.Now()
+	now := time.Now().UTC()
 	slug := slugify(name)
 
 	secretBytes := make([]byte, 20)
@@ -142,7 +142,7 @@ func (st *Store) UpdateAppHookConfig(appID int, fn func(a *App)) bool {
 		return false
 	}
 	fn(app)
-	app.UpdatedAt = time.Now()
+	app.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("apps", strconv.Itoa(appID), app)
 	}
@@ -175,7 +175,7 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 
 	id := st.NextInstallationID
 	st.NextInstallationID++
-	now := time.Now()
+	now := time.Now().UTC()
 
 	inst := &Installation{
 		ID:                  id,
@@ -266,7 +266,7 @@ func (st *Store) SuspendInstallation(id int, by *User) bool {
 	if inst.SuspendedAt != nil {
 		return false
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	inst.SuspendedAt = &now
 	inst.SuspendedBy = by
 	inst.UpdatedAt = now
@@ -288,7 +288,7 @@ func (st *Store) UnsuspendInstallation(id int) bool {
 	}
 	inst.SuspendedAt = nil
 	inst.SuspendedBy = nil
-	inst.UpdatedAt = time.Now()
+	inst.UpdatedAt = time.Now().UTC()
 	st.persistInstallation(inst)
 	return true
 }
@@ -307,7 +307,7 @@ func (st *Store) SetInstallationRepositorySelection(id int, mode string, repoIDs
 	} else {
 		inst.SelectedRepoIDs = nil
 	}
-	inst.UpdatedAt = time.Now()
+	inst.UpdatedAt = time.Now().UTC()
 	st.persistInstallation(inst)
 	return true
 }
@@ -331,7 +331,7 @@ func (st *Store) AddInstallationRepo(id, repoID int) (bool, bool) {
 	if inst.RepositorySelection != "selected" {
 		inst.RepositorySelection = "selected"
 	}
-	inst.UpdatedAt = time.Now()
+	inst.UpdatedAt = time.Now().UTC()
 	return true, true
 }
 
@@ -347,7 +347,7 @@ func (st *Store) RemoveInstallationRepo(id, repoID int) (bool, bool) {
 	for i, r := range inst.SelectedRepoIDs {
 		if r == repoID {
 			inst.SelectedRepoIDs = append(inst.SelectedRepoIDs[:i], inst.SelectedRepoIDs[i+1:]...)
-			inst.UpdatedAt = time.Now()
+			inst.UpdatedAt = time.Now().UTC()
 			return true, true
 		}
 	}
@@ -376,7 +376,7 @@ func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL
 	secretBytes := make([]byte, 20)
 	_, _ = rand.Read(secretBytes)
 	clientID := hex.EncodeToString(cidBytes)
-	now := time.Now()
+	now := time.Now().UTC()
 	app := &OAuthApp{
 		ClientID:     clientID,
 		ClientSecret: hex.EncodeToString(secretBytes),
@@ -448,7 +448,7 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 
 	token := &InstallationToken{
 		Token:          tokenStr,
-		ExpiresAt:      time.Now().Add(1 * time.Hour),
+		ExpiresAt:      time.Now().UTC().Add(1 * time.Hour),
 		Permissions:    perms,
 		RepositoryIDs:  append([]int(nil), repoIDs...),
 		InstallationID: installationID,
@@ -486,7 +486,7 @@ func (st *Store) LookupInstallationToken(tokenStr string) (*InstallationToken, *
 	if !ok {
 		return nil, nil
 	}
-	if time.Now().After(tok.ExpiresAt) {
+	if time.Now().UTC().After(tok.ExpiresAt) {
 		return nil, nil
 	}
 	inst := st.Installations[tok.InstallationID]

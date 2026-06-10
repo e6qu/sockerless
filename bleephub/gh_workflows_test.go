@@ -210,8 +210,9 @@ func TestWorkflows_Dispatch(t *testing.T) {
 	req := httptest.NewRequest("POST",
 		fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID),
 		bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
 	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -237,7 +238,7 @@ func TestWorkflows_Dispatch_NoYAMLCached(t *testing.T) {
 	// edge case where the file was indexed without contents).
 	wf := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", "", "discovered")
 
-	w := runRequest(s, "POST",
+	w := runAuthedRequest(s, "POST",
 		fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID))
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422 when YAML body is empty", w.Code)
@@ -256,7 +257,7 @@ func TestWorkflows_Rerun_ViaCachedYAML(t *testing.T) {
 	run, _ := seedRun(t, s, "octo/repo", "completed", "success")
 	run.Name = "ci"
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", run.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", run.RunID))
 	if w.Code != http.StatusCreated {
 		t.Errorf("rerun status = %d, want 201 (cached YAML present); body=%s", w.Code, w.Body.String())
 	}

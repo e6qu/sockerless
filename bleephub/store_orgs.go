@@ -71,7 +71,7 @@ func (st *Store) CreateOrg(creator *User, login, name, description string) *Org 
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	org := &Org{
 		ID:          st.NextOrg,
 		NodeID:      fmt.Sprintf("O_kgDO%08d", st.NextOrg),
@@ -146,7 +146,7 @@ func (st *Store) UpdateOrg(login string, fn func(*Org)) bool {
 		return false
 	}
 	fn(org)
-	org.UpdatedAt = time.Now()
+	org.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("orgs", strconv.Itoa(org.ID), org)
 	}
@@ -308,7 +308,7 @@ func (st *Store) CreateTeam(orgLogin, name, description, privacy, permission str
 		permission = "pull"
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	team := &Team{
 		ID:          st.NextTeam,
 		NodeID:      fmt.Sprintf("T_kgDO%08d", st.NextTeam),
@@ -351,7 +351,7 @@ func (st *Store) UpdateTeam(orgLogin, slug string, fn func(*Team)) bool {
 		return false
 	}
 	fn(team)
-	team.UpdatedAt = time.Now()
+	team.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
 	}
@@ -413,7 +413,7 @@ func (st *Store) AddTeamMember(orgLogin, slug string, userID int) bool {
 	}
 
 	team.MemberIDs = append(team.MemberIDs, userID)
-	team.UpdatedAt = time.Now()
+	team.UpdatedAt = time.Now().UTC()
 	return true
 }
 
@@ -430,7 +430,7 @@ func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
 	for i, mid := range team.MemberIDs {
 		if mid == userID {
 			team.MemberIDs = append(team.MemberIDs[:i], team.MemberIDs[i+1:]...)
-			team.UpdatedAt = time.Now()
+			team.UpdatedAt = time.Now().UTC()
 			return true
 		}
 	}
@@ -454,7 +454,7 @@ func (st *Store) AddTeamRepo(orgLogin, slug, repoFullName string) bool {
 	}
 
 	team.RepoNames = append(team.RepoNames, repoFullName)
-	team.UpdatedAt = time.Now()
+	team.UpdatedAt = time.Now().UTC()
 	return true
 }
 
@@ -471,7 +471,7 @@ func (st *Store) RemoveTeamRepo(orgLogin, slug, repoFullName string) bool {
 	for i, rn := range team.RepoNames {
 		if rn == repoFullName {
 			team.RepoNames = append(team.RepoNames[:i], team.RepoNames[i+1:]...)
-			team.UpdatedAt = time.Now()
+			team.UpdatedAt = time.Now().UTC()
 			return true
 		}
 	}
@@ -488,7 +488,7 @@ func (st *Store) CreateOrgRepo(org *Org, creator *User, name, description string
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	visibility := "public"
 	if private {
 		visibility = "private"
@@ -503,6 +503,7 @@ func (st *Store) CreateOrgRepo(org *Org, creator *User, name, description string
 		DefaultBranch:       "main",
 		Visibility:          visibility,
 		Owner:               creator, // will also set OwnerType
+		OwnerID:             creator.ID,
 		Private:             private,
 		Topics:              []string{},
 		NextIssueNumber:     1,
@@ -515,6 +516,9 @@ func (st *Store) CreateOrgRepo(org *Org, creator *User, name, description string
 
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
 
 	return repo
 }

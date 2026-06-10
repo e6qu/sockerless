@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -80,7 +81,7 @@ func newReleaseStore(p *Persistence) *ReleaseStore {
 func (rs *ReleaseStore) Create(repoID, authorID int, tagName, target, name, body string, draft, prerelease bool) *Release {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	now := time.Now()
+	now := time.Now().UTC()
 	id := rs.nextID
 	rs.nextID++
 	r := &Release{
@@ -145,6 +146,10 @@ func (rs *ReleaseStore) List(repoID int) []*Release {
 	defer rs.mu.RUnlock()
 	out := make([]*Release, len(rs.byRepo[repoID]))
 	copy(out, rs.byRepo[repoID])
+	// Real GitHub lists releases newest-first; IDs are monotonic at
+	// creation, so id-desc is stable across restarts even though the
+	// persistence loader rebuilds byRepo in map-iteration order.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	return out
 }
 
@@ -158,7 +163,7 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 	wasDraft := r.Draft
 	fn(r)
 	if wasDraft && !r.Draft && r.PublishedAt == nil {
-		now := time.Now()
+		now := time.Now().UTC()
 		r.PublishedAt = &now
 	}
 	if rs.persist != nil {

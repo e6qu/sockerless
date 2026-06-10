@@ -539,6 +539,8 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, state management, CLI usage, bash tests |
+| [`bleephub/README.md`](bleephub/README.md) | bleephub local GitHub server: quick start, runner protocol, REST/GraphQL surface, persistence, UI |
+| [`docs/BLEEPHUB_GH_CLI.md`](docs/BLEEPHUB_GH_CLI.md) | Using the `gh` CLI against bleephub: hostname wiring, tokens, supported commands, troubleshooting |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |

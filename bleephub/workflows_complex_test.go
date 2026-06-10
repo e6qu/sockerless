@@ -325,10 +325,7 @@ func TestConcurrentWorkflowLimit(t *testing.T) {
 // --- P57-003: Metrics and observability tests ---
 
 func TestMetricsEndpoint(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/metrics")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -345,10 +342,7 @@ func TestMetricsEndpoint(t *testing.T) {
 }
 
 func TestStatusEndpoint(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/status")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/status")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)

@@ -3,6 +3,7 @@ package bleephub
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,7 @@ type Repo struct {
 	Visibility          string    `json:"visibility"`
 	Language            string    `json:"language"`
 	Owner               *User     `json:"-"`
+	OwnerID             int       `json:"owner_id"` // serialized so Owner can be relinked on reload
 	Private             bool      `json:"private"`
 	Fork                bool      `json:"fork"`
 	Archived            bool      `json:"archived"`
@@ -43,7 +45,7 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	visibility := "public"
 	if private {
 		visibility = "private"
@@ -58,6 +60,7 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 		DefaultBranch:       "main",
 		Visibility:          visibility,
 		Owner:               owner,
+		OwnerID:             owner.ID,
 		Private:             private,
 		Topics:              []string{},
 		NextIssueNumber:     1,
@@ -99,7 +102,7 @@ func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 		return false
 	}
 	fn(repo)
-	repo.UpdatedAt = time.Now()
+	repo.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
@@ -130,8 +133,12 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	}
 	if IsS3GitStorage() {
 		s3fs, err := getS3FS(context.Background())
-		if err == nil && s3fs != nil {
-			s3fs.deleteRepoPrefix(fullName)
+		if err != nil {
+			log.Printf("bleephub: delete repo %s: resolve S3 git storage: %v (object prefix left orphaned)", fullName, err)
+		} else if s3fs != nil {
+			if err := s3fs.deleteRepoPrefix(fullName); err != nil {
+				log.Printf("bleephub: delete repo %s: purge S3 object prefix: %v (objects left orphaned)", fullName, err)
+			}
 		}
 	}
 	return true

@@ -79,7 +79,7 @@ func (s *PRReviewCommentStore) CreateRootComment(prID, authorID int, path, body,
 	defer s.mu.Unlock()
 	id := s.nextID
 	s.nextID++
-	now := time.Now()
+	now := time.Now().UTC()
 	c := &PRReviewComment{
 		ID:               id,
 		NodeID:           fmt.Sprintf("PRRC_kgDO%08d", id),
@@ -129,7 +129,7 @@ func (s *PRReviewCommentStore) Reply(prID, rootID, authorID int, body string) *P
 	}
 	id := s.nextID
 	s.nextID++
-	now := time.Now()
+	now := time.Now().UTC()
 	c := &PRReviewComment{
 		ID:                id,
 		NodeID:            fmt.Sprintf("PRRC_kgDO%08d", id),
@@ -182,7 +182,7 @@ func (s *PRReviewCommentStore) Update(id int, body string) bool {
 		return false
 	}
 	c.Body = body
-	c.UpdatedAt = time.Now()
+	c.UpdatedAt = time.Now().UTC()
 	if s.persist != nil {
 		s.persist.MustPut("pr_review_comments", strconv.Itoa(id), c)
 	}
@@ -220,7 +220,7 @@ func (s *PRReviewCommentStore) ResolveThread(threadID int, resolved bool) bool {
 		return false
 	}
 	root.Resolved = resolved
-	root.UpdatedAt = time.Now()
+	root.UpdatedAt = time.Now().UTC()
 	if s.persist != nil {
 		s.persist.MustPut("pr_review_comments", strconv.Itoa(threadID), root)
 	}

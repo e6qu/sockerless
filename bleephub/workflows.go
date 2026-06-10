@@ -70,10 +70,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
-	s.store.mu.Lock()
-	runID := s.store.NextRunID
-	s.store.NextRunID++
-	s.store.mu.Unlock()
+	runID := s.store.ReserveRunID()
 
 	workflow := &Workflow{
 		ID:        uuid.New().String(),

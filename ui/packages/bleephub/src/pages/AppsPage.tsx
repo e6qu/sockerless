@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   DataTable,
+  InlineError,
   PageHeading,
   Spinner,
 } from "@sockerless/ui-core/components";
@@ -107,11 +108,12 @@ function TabButton({
 const appsCol = createColumnHelper<BleephubApp>();
 
 function AppsTab() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["apps"],
     queryFn: fetchApps,
     refetchInterval: 5000,
   });
+  if (isError) return <InlineError title="Failed to load apps" />;
   if (isLoading || !data) return <Spinner label="loading apps" />;
 
   const columns = [
@@ -163,7 +165,7 @@ const installsCol = createColumnHelper<BleephubInstallation>();
 
 function InstallationsTab() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["installations"],
     queryFn: fetchInstallations,
     refetchInterval: 5000,
@@ -179,6 +181,7 @@ function InstallationsTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["installations"] }),
   });
 
+  if (isError) return <InlineError title="Failed to load installations" />;
   if (isLoading || !data) return <Spinner label="loading installations" />;
 
   const columns = [
@@ -291,11 +294,12 @@ function InstallationsTab() {
 const oauthCol = createColumnHelper<BleephubOAuthApp>();
 
 function OAuthAppsTab() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["oauth-apps"],
     queryFn: fetchOAuthApps,
     refetchInterval: 5000,
   });
+  if (isError) return <InlineError title="Failed to load oauth apps" />;
   if (isLoading || !data) return <Spinner label="loading oauth apps" />;
 
   const columns = [

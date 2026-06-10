@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   DataTable,
+  InlineError,
   MetricsCard,
   PageHeading,
   Spinner,
@@ -95,12 +96,13 @@ const columns = [
 ];
 
 export function RunnersPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["sessions"],
     queryFn: fetchSessions,
     refetchInterval: 5000,
   });
 
+  if (isError) return <InlineError title="Failed to load runners" />;
   if (isLoading || !data) return <Spinner label="loading runners" />;
 
   const totalPending = data.reduce((sum, s) => sum + s.pendingMessages, 0);

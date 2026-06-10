@@ -408,6 +408,7 @@ jobs:
           bun-version: '1.3'
       - run: cd ui && bun install --frozen-lockfile
       - run: cd ui && bunx turbo run build
+      - run: cd ui && bunx turbo run typecheck
       - run: cd ui && bunx turbo run test
 
   bleephub-quality:

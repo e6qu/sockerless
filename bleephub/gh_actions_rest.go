@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -24,19 +25,30 @@ func (s *Server) registerGHActionsRoutes() {
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs", s.handleListWorkflowRuns)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleGetWorkflowRun)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/jobs", s.handleListWorkflowRunJobs)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}", s.handleDeleteWorkflowRun)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel", s.handleCancelWorkflowRun)
-	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun", s.handleRerunWorkflowRun)
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}",
+		s.requirePerm("actions", permWrite, s.handleDeleteWorkflowRun))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/cancel",
+		s.requirePerm("actions", permWrite, s.handleCancelWorkflowRun))
+	s.mux.HandleFunc("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
+		s.requirePerm("actions", permWrite, s.handleRerunWorkflowRun))
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
 	s.mux.HandleFunc("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
-	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}", s.handleDeleteRunner)
+	s.mux.HandleFunc("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
+		s.requirePerm("administration", permWrite, s.handleDeleteRunner))
 }
 
 // repoFullName returns "owner/repo" for the request's path params,
 // matching the format Workflow.RepoFullName uses (set at submit time).
 func repoFullName(r *http.Request) string {
 	return r.PathValue("owner") + "/" + r.PathValue("repo")
+}
+
+// sortRunsNewestFirst orders runs the way real GitHub lists them
+// (most recent run first). Run lists are collected from a map, so
+// without an explicit sort the page boundaries shift between requests.
+func sortRunsNewestFirst(runs []*Workflow) {
+	sort.Slice(runs, func(i, j int) bool { return runs[i].RunID > runs[j].RunID })
 }
 
 // stableJobID maps a WorkflowJob's UUID to a stable int64 GitHub-shape
@@ -342,6 +354,7 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 	}
 	s.store.mu.RUnlock()
 
+	sortRunsNewestFirst(matching)
 	page := paginateAndLink(w, r, matching)
 	base := s.baseURL(r)
 	runs := make([]map[string]any, 0, len(page))

@@ -32,13 +32,14 @@ type appView struct {
 }
 
 type installationViewMgmt struct {
-	ID                  int    `json:"id"`
-	AppID               int    `json:"appId"`
-	AppSlug             string `json:"appSlug"`
-	TargetType          string `json:"targetType"`
-	TargetLogin         string `json:"targetLogin"`
-	RepositorySelection string `json:"repositorySelection"`
-	CreatedAt           string `json:"createdAt"`
+	ID                  int     `json:"id"`
+	AppID               int     `json:"appId"`
+	AppSlug             string  `json:"appSlug"`
+	TargetType          string  `json:"targetType"`
+	TargetLogin         string  `json:"targetLogin"`
+	RepositorySelection string  `json:"repositorySelection"`
+	CreatedAt           string  `json:"createdAt"`
+	SuspendedAt         *string `json:"suspendedAt"`
 }
 
 type oauthStateView struct {
@@ -87,6 +88,11 @@ func (s *Server) handleListInstallationsInternal(w http.ResponseWriter, r *http.
 	s.store.mu.RLock()
 	installs := make([]installationViewMgmt, 0, len(s.store.Installations))
 	for _, inst := range s.store.Installations {
+		var suspendedAt *string
+		if inst.SuspendedAt != nil {
+			s := inst.SuspendedAt.UTC().Format("2006-01-02T15:04:05Z")
+			suspendedAt = &s
+		}
 		installs = append(installs, installationViewMgmt{
 			ID:                  inst.ID,
 			AppID:               inst.AppID,
@@ -95,6 +101,7 @@ func (s *Server) handleListInstallationsInternal(w http.ResponseWriter, r *http.
 			TargetLogin:         inst.TargetLogin,
 			RepositorySelection: inst.RepositorySelection,
 			CreatedAt:           inst.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			SuspendedAt:         suspendedAt,
 		})
 	}
 	s.store.mu.RUnlock()

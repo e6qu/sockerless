@@ -365,7 +365,7 @@ func TestActionsRuns_Cancel(t *testing.T) {
 	wf, _ := seedRun(t, s, "octo/repo", "running", "")
 	wf.Jobs["build"].Status = "queued"
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/cancel", wf.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/cancel", wf.RunID))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", w.Code)
 	}
@@ -379,7 +379,7 @@ func TestActionsRuns_Rerun_NotImplemented(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	w := runRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want 422 — rerun is unimplemented and must surface that, not silently succeed", w.Code)
 	}
@@ -390,7 +390,7 @@ func TestActionsRuns_Delete(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	w := runRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
+	w := runAuthedRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
 	}
@@ -463,7 +463,7 @@ func TestActionsRunners_Delete(t *testing.T) {
 	s.store.Agents[42] = &Agent{ID: 42, Name: "to-delete", Status: "online"}
 	s.store.mu.Unlock()
 
-	w := runRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/42")
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/42")
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
 	}
@@ -478,7 +478,7 @@ func TestActionsRunners_Delete(t *testing.T) {
 func TestActionsRunners_Delete_NotFound(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
-	w := runRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/9999")
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/runners/9999")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
 	}

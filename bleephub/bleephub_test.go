@@ -27,6 +27,22 @@ var (
 	testServer  *Server
 )
 
+// authedGet issues a GET against the live test server with the admin
+// token, the way the bleephub UI authenticates against /internal/*.
+func authedGet(t *testing.T, path string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest("GET", testBaseURL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 func TestMain(m *testing.M) {
 	// The admin token has no default — every consumer (incl. the test harness)
 	// must set it explicitly. defaultToken is the non-PAT value the tests use.

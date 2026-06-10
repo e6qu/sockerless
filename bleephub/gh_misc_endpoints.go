@@ -87,12 +87,14 @@ func (s *Server) registerGHMiscEndpoints() {
 
 // --- Store ---
 
+// Responses go through userKeyToJSON; the json tags here shape the
+// persisted row, which must round-trip UserID to rebuild keysByUser.
 type UserKey struct {
 	ID        int       `json:"id"`
 	Key       string    `json:"key"`
 	Title     string    `json:"title"`
 	Verified  bool      `json:"verified"`
-	UserID    int       `json:"-"`
+	UserID    int       `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -244,9 +246,12 @@ func (s *Server) handleCreateUserKey(w http.ResponseWriter, r *http.Request) {
 	s.store.Misc.mu.Lock()
 	id := s.store.Misc.nextKeyID
 	s.store.Misc.nextKeyID++
-	k := &UserKey{ID: id, Title: req.Title, Key: req.Key, Verified: true, UserID: user.ID, CreatedAt: time.Now()}
+	k := &UserKey{ID: id, Title: req.Title, Key: req.Key, Verified: true, UserID: user.ID, CreatedAt: time.Now().UTC()}
 	s.store.Misc.userKeys[id] = k
 	s.store.Misc.keysByUser[user.ID] = append(s.store.Misc.keysByUser[user.ID], k)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("user_keys", strconv.Itoa(id), k)
+	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("ssh_key.create", user.Login, "", map[string]interface{}{"key_id": k.ID})
 	writeJSON(w, http.StatusCreated, userKeyToJSON(k))
@@ -281,6 +286,9 @@ func (s *Server) handleDeleteUserKey(w http.ResponseWriter, r *http.Request) {
 			s.store.Misc.keysByUser[k.UserID] = append(src[:i], src[i+1:]...)
 			break
 		}
+	}
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustDelete("user_keys", strconv.Itoa(id))
 	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("ssh_key.delete", user.Login, "", map[string]interface{}{"key_id": id})
@@ -508,6 +516,9 @@ func (s *Server) handleFollowUser(w http.ResponseWriter, r *http.Request) {
 		s.store.Misc.follows[user.Login] = map[string]bool{}
 	}
 	s.store.Misc.follows[user.Login][target] = true
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("misc", "follows", s.store.Misc.follows)
+	}
 	s.store.Misc.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -522,6 +533,9 @@ func (s *Server) handleUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	s.store.Misc.mu.Lock()
 	if s.store.Misc.follows[user.Login] != nil {
 		delete(s.store.Misc.follows[user.Login], target)
+	}
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("misc", "follows", s.store.Misc.follows)
 	}
 	s.store.Misc.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
@@ -731,6 +745,9 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Misc.mu.Lock()
 	s.store.Misc.pagesByRepo[repo.ID] = pages
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("pages_sites", strconv.Itoa(repo.ID), pages)
+	}
 	s.store.Misc.mu.Unlock()
 	writeJSON(w, http.StatusCreated, pages)
 }
@@ -745,6 +762,9 @@ func (s *Server) handlePagesDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Misc.mu.Lock()
 	delete(s.store.Misc.pagesByRepo, repo.ID)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustDelete("pages_sites", strconv.Itoa(repo.ID))
+	}
 	s.store.Misc.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -857,6 +877,9 @@ func (s *Server) handleBranchProtectionPut(w http.ResponseWriter, r *http.Reques
 	branch := r.PathValue("branch")
 	s.store.Misc.mu.Lock()
 	s.store.Misc.branchProtection[bpKey(repo.ID, branch)] = BranchProtection(raw)
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("branch_protection", bpKey(repo.ID, branch), raw)
+	}
 	s.store.Misc.mu.Unlock()
 	writeJSON(w, http.StatusOK, raw)
 }
@@ -869,6 +892,9 @@ func (s *Server) handleBranchProtectionDelete(w http.ResponseWriter, r *http.Req
 	}
 	s.store.Misc.mu.Lock()
 	delete(s.store.Misc.branchProtection, bpKey(repo.ID, r.PathValue("branch")))
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustDelete("branch_protection", bpKey(repo.ID, r.PathValue("branch")))
+	}
 	s.store.Misc.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

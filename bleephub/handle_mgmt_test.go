@@ -2,16 +2,12 @@ package bleephub
 
 import (
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 )
 
 func TestListWorkflowsEmpty(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/workflows")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/workflows")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -49,10 +45,7 @@ func TestListWorkflowsWithData(t *testing.T) {
 		testServer.store.mu.Unlock()
 	}()
 
-	resp, err := http.Get(testBaseURL + "/internal/workflows")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/workflows")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -88,10 +81,7 @@ func TestListWorkflowsWithData(t *testing.T) {
 }
 
 func TestListSessions(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/sessions")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/sessions")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -106,10 +96,7 @@ func TestListSessions(t *testing.T) {
 }
 
 func TestListRepos(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/repos")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/repos")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -124,10 +111,7 @@ func TestListRepos(t *testing.T) {
 }
 
 func TestGetWorkflowNotFound(t *testing.T) {
-	resp, err := http.Get(testBaseURL + "/internal/workflows/nonexistent")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/workflows/nonexistent")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 404 {
@@ -159,10 +143,7 @@ func TestGetWorkflowLogs(t *testing.T) {
 		testServer.store.mu.Unlock()
 	}()
 
-	resp, err := http.Get(testBaseURL + "/internal/workflows/test-wf-logs/logs")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := authedGet(t, "/internal/workflows/test-wf-logs/logs")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {

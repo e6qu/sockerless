@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -126,46 +128,129 @@ func TestArtifactDownloadNotFound(t *testing.T) {
 	}
 }
 
-func TestCacheRoundTrip(t *testing.T) {
-	s := newTestServer()
-
-	reserveReq := httptest.NewRequest("POST", "/_apis/artifactcache/cache", bytes.NewBufferString(`{"key":"linux-go-main","version":"abc"}`))
-	reserveW := httptest.NewRecorder()
-	s.handleCacheReserve(reserveW, reserveReq)
-
-	if reserveW.Code != http.StatusOK {
-		t.Fatalf("reserve status = %d, want 200; body=%s", reserveW.Code, reserveW.Body.String())
+// seedCacheRunJob registers a dispatched job for repo and returns the runtime
+// token the @actions/cache toolkit would send on cache requests: the
+// SystemVssConnection AccessToken, whose sub claim is the plan
+// scopeIdentifier recorded in the job message.
+func seedCacheRunJob(t *testing.T, s *Server, repo string) string {
+	t.Helper()
+	scopeID := fmt.Sprintf("scope-%s-%d", repo, time.Now().UnixNano())
+	msg := map[string]interface{}{
+		"plan": map[string]interface{}{
+			"scopeIdentifier": scopeID,
+		},
+		"contextData": map[string]interface{}{
+			"github": dictContextData("repository", repo),
+		},
 	}
-	var reserveResp struct {
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal job message: %v", err)
+	}
+	s.store.mu.Lock()
+	s.store.Jobs[scopeID] = &Job{ID: scopeID, Status: "running", Message: string(msgJSON)}
+	s.store.mu.Unlock()
+	return makeJWT(scopeID, "actions")
+}
+
+func cacheReserve(t *testing.T, s *Server, token, key, version string) int64 {
+	t.Helper()
+	body := fmt.Sprintf(`{"key":%q,"version":%q}`, key, version)
+	req := httptest.NewRequest("POST", "/_apis/artifactcache/caches", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.handleCacheReserve(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reserve status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
 		CacheID int64 `json:"cacheId"`
 	}
-	if err := json.Unmarshal(reserveW.Body.Bytes(), &reserveResp); err != nil {
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode reserve: %v", err)
 	}
-	if reserveResp.CacheID == 0 {
+	if resp.CacheID == 0 {
 		t.Fatal("reserve returned cacheId=0")
 	}
+	return resp.CacheID
+}
 
-	uploadReq := httptest.NewRequest("PATCH", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), bytes.NewBufferString("cache-data"))
-	uploadReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
-	uploadW := httptest.NewRecorder()
-	s.handleCacheUpload(uploadW, uploadReq)
-	if uploadW.Code != http.StatusOK {
-		t.Fatalf("upload status = %d, want 200; body=%s", uploadW.Code, uploadW.Body.String())
+func cacheUploadChunk(t *testing.T, s *Server, token string, cacheID, start int64, chunk []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/_apis/artifactcache/caches/%d", cacheID), bytes.NewReader(chunk))
+	req.SetPathValue("cacheId", strconv.FormatInt(cacheID, 10))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", start, start+int64(len(chunk))-1))
+	w := httptest.NewRecorder()
+	s.handleCacheUpload(w, req)
+	return w
+}
+
+func cacheFinalize(t *testing.T, s *Server, token string, cacheID, size int64) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", fmt.Sprintf("/_apis/artifactcache/caches/%d", cacheID), bytes.NewBufferString(fmt.Sprintf(`{"size":%d}`, size)))
+	req.SetPathValue("cacheId", strconv.FormatInt(cacheID, 10))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.handleCacheFinalize(w, req)
+	return w
+}
+
+// cacheDownload fetches an archiveLocation URL the way the cache toolkit
+// does: a plain GET with no Authorization header.
+func cacheDownload(t *testing.T, s *Server, archiveLocation string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", archiveLocation, nil)
+	segments := strings.Split(req.URL.Path, "/")
+	req.SetPathValue("cacheId", segments[len(segments)-1])
+	w := httptest.NewRecorder()
+	s.handleCacheDownload(w, req)
+	return w
+}
+
+// cacheArchiveLocation looks up a finalized cache and returns its
+// archiveLocation, fatal on miss.
+func cacheArchiveLocation(t *testing.T, s *Server, token, keys, version string) string {
+	t.Helper()
+	w := cacheLookup(t, s, token, keys, version)
+	if w.Code != http.StatusOK {
+		t.Fatalf("lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-
-	finalizeReq := httptest.NewRequest("POST", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), bytes.NewBufferString(`{"size":10}`))
-	finalizeReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
-	finalizeW := httptest.NewRecorder()
-	s.handleCacheFinalize(finalizeW, finalizeReq)
-	if finalizeW.Code != http.StatusOK {
-		t.Fatalf("finalize status = %d, want 200; body=%s", finalizeW.Code, finalizeW.Body.String())
+	var resp struct {
+		ArchiveLocation string `json:"archiveLocation"`
 	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode lookup: %v", err)
+	}
+	if resp.ArchiveLocation == "" {
+		t.Fatal("lookup archiveLocation is empty")
+	}
+	return resp.ArchiveLocation
+}
 
-	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=linux-go-main&version=abc", nil)
+func cacheLookup(t *testing.T, s *Server, token, keys, version string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", fmt.Sprintf("/_apis/artifactcache/cache?keys=%s&version=%s", keys, version), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	s.handleCacheLookup(w, req)
+	return w
+}
 
+func TestCacheRoundTrip(t *testing.T) {
+	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/round-trip")
+
+	cacheID := cacheReserve(t, s, token, "linux-go-main", "abc")
+
+	if w := cacheUploadChunk(t, s, token, cacheID, 0, []byte("cache-data")); w.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if w := cacheFinalize(t, s, token, cacheID, 10); w.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	w := cacheLookup(t, s, token, "linux-go-main", "abc")
 	if w.Code != http.StatusOK {
 		t.Fatalf("lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -183,46 +268,67 @@ func TestCacheRoundTrip(t *testing.T) {
 		t.Fatal("lookup archiveLocation is empty")
 	}
 
-	downloadReq := httptest.NewRequest("GET", fmt.Sprintf("/_apis/artifactcache/caches/%d", reserveResp.CacheID), nil)
-	downloadReq.SetPathValue("cacheId", strconv.FormatInt(reserveResp.CacheID, 10))
-	downloadW := httptest.NewRecorder()
-	s.handleCacheDownload(downloadW, downloadReq)
+	downloadW := cacheDownload(t, s, lookupResp.ArchiveLocation)
 	if downloadW.Code != http.StatusOK {
 		t.Fatalf("download status = %d, want 200; body=%s", downloadW.Code, downloadW.Body.String())
 	}
 	if downloadW.Body.String() != "cache-data" {
 		t.Fatalf("download body = %q, want cache-data", downloadW.Body.String())
 	}
+
+	// Without the sig the lookup handed out, the archive URL must not serve.
+	bare := strings.SplitN(lookupResp.ArchiveLocation, "?", 2)[0]
+	if w := cacheDownload(t, s, bare); w.Code != http.StatusNotFound {
+		t.Fatalf("download without sig status = %d, want 404", w.Code)
+	}
+	if w := cacheDownload(t, s, bare+"?sig=forged"); w.Code != http.StatusNotFound {
+		t.Fatalf("download with forged sig status = %d, want 404", w.Code)
+	}
 }
 
 func TestCacheLookupMissReturns204(t *testing.T) {
 	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/miss")
 
-	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=test-key&version=abc", nil)
-	w := httptest.NewRecorder()
-	s.handleCacheLookup(w, req)
-
+	w := cacheLookup(t, s, token, "test-key", "abc")
 	if w.Code != http.StatusNoContent {
 		t.Errorf("cache lookup status = %d, want 204", w.Code)
 	}
 }
 
-func TestCacheRestoreKeyUsesNewestPrefixMatch(t *testing.T) {
+func TestCacheRequiresRuntimeToken(t *testing.T) {
 	s := newTestServer()
 
-	old := &CacheEntry{ID: 1, Key: "linux-go-old", Version: "abc", Data: []byte("old"), Finalized: true, CreatedAt: time.Now().Add(-time.Hour)}
-	newer := &CacheEntry{ID: 2, Key: "linux-go-main", Version: "abc", Data: []byte("new"), Finalized: true, CreatedAt: time.Now()}
+	req := httptest.NewRequest("POST", "/_apis/artifactcache/caches", bytes.NewBufferString(`{"key":"k","version":"v"}`))
+	w := httptest.NewRecorder()
+	s.handleCacheReserve(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("reserve without token status = %d, want 401", w.Code)
+	}
+
+	lookupReq := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=k&version=v", nil)
+	lookupReq.Header.Set("Authorization", "Bearer not-a-jwt")
+	lookupW := httptest.NewRecorder()
+	s.handleCacheLookup(lookupW, lookupReq)
+	if lookupW.Code != http.StatusUnauthorized {
+		t.Errorf("lookup with bogus token status = %d, want 401", lookupW.Code)
+	}
+}
+
+func TestCacheRestoreKeyUsesNewestPrefixMatch(t *testing.T) {
+	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/prefix")
+
+	old := &CacheEntry{ID: 1, Repo: "octo/prefix", Key: "linux-go-old", Version: "abc", Data: []byte("old"), Finalized: true, CreatedAt: time.Now().Add(-time.Hour)}
+	newer := &CacheEntry{ID: 2, Repo: "octo/prefix", Key: "linux-go-main", Version: "abc", Data: []byte("new"), Finalized: true, CreatedAt: time.Now()}
 	s.artifactStore.mu.Lock()
 	s.artifactStore.caches[old.ID] = old
 	s.artifactStore.caches[newer.ID] = newer
-	s.artifactStore.cacheIndex[cacheLookupKey(old.Key, old.Version)] = old.ID
-	s.artifactStore.cacheIndex[cacheLookupKey(newer.Key, newer.Version)] = newer.ID
+	s.artifactStore.cacheIndex[cacheLookupKey(old.Repo, old.Key, old.Version)] = old.ID
+	s.artifactStore.cacheIndex[cacheLookupKey(newer.Repo, newer.Key, newer.Version)] = newer.ID
 	s.artifactStore.mu.Unlock()
 
-	req := httptest.NewRequest("GET", "/_apis/artifactcache/cache?keys=linux-go-missing,linux-go-&version=abc", nil)
-	w := httptest.NewRecorder()
-	s.handleCacheLookup(w, req)
-
+	w := cacheLookup(t, s, token, "linux-go-missing,linux-go-", "abc")
 	if w.Code != http.StatusOK {
 		t.Fatalf("lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -234,6 +340,150 @@ func TestCacheRestoreKeyUsesNewestPrefixMatch(t *testing.T) {
 	}
 	if resp.CacheKey != "linux-go-main" {
 		t.Fatalf("cacheKey = %q, want newest prefix match linux-go-main", resp.CacheKey)
+	}
+}
+
+func TestCacheUploadOutOfOrderChunks(t *testing.T) {
+	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/out-of-order")
+
+	cacheID := cacheReserve(t, s, token, "linux-go-ooo", "v1")
+
+	// Reverse order with an overlapping boundary: the second chunk rewrites
+	// byte 5 with the same value the first chunk put there.
+	want := []byte("HELLOWORLD")
+	if w := cacheUploadChunk(t, s, token, cacheID, 5, []byte("WORLD")); w.Code != http.StatusOK {
+		t.Fatalf("chunk 5-9 status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if w := cacheUploadChunk(t, s, token, cacheID, 0, []byte("HELLOW")); w.Code != http.StatusOK {
+		t.Fatalf("chunk 0-5 status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	if w := cacheFinalize(t, s, token, cacheID, int64(len(want))); w.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	downloadW := cacheDownload(t, s, cacheArchiveLocation(t, s, token, "linux-go-ooo", "v1"))
+	if downloadW.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200; body=%s", downloadW.Code, downloadW.Body.String())
+	}
+	if !bytes.Equal(downloadW.Body.Bytes(), want) {
+		t.Fatalf("download body = %q, want %q", downloadW.Body.String(), want)
+	}
+}
+
+func TestCacheUploadConcurrentChunks(t *testing.T) {
+	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/concurrent")
+
+	cacheID := cacheReserve(t, s, token, "linux-go-concurrent", "v1")
+
+	// Deterministic 64 KiB archive split into 4 chunks uploaded concurrently,
+	// matching the toolkit's concurrent ranged PATCHes.
+	const chunkSize = 16 * 1024
+	const chunks = 4
+	want := make([]byte, chunks*chunkSize)
+	for i := range want {
+		want[i] = byte(i % 251)
+	}
+
+	var wg sync.WaitGroup
+	codes := make([]int, chunks)
+	for i := 0; i < chunks; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			start := int64(i * chunkSize)
+			w := cacheUploadChunk(t, s, token, cacheID, start, want[start:start+chunkSize])
+			codes[i] = w.Code
+		}(i)
+	}
+	wg.Wait()
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("chunk %d status = %d, want 200", i, code)
+		}
+	}
+
+	if w := cacheFinalize(t, s, token, cacheID, int64(len(want))); w.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	downloadW := cacheDownload(t, s, cacheArchiveLocation(t, s, token, "linux-go-concurrent", "v1"))
+	if downloadW.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200; body=%s", downloadW.Code, downloadW.Body.String())
+	}
+	if !bytes.Equal(downloadW.Body.Bytes(), want) {
+		t.Fatalf("downloaded %d bytes do not match uploaded archive", downloadW.Body.Len())
+	}
+}
+
+func TestCacheFinalizeSizeMismatchRejected(t *testing.T) {
+	s := newTestServer()
+	token := seedCacheRunJob(t, s, "octo/size-mismatch")
+
+	cacheID := cacheReserve(t, s, token, "linux-go-mismatch", "v1")
+	if w := cacheUploadChunk(t, s, token, cacheID, 0, []byte("cache-data")); w.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	if w := cacheFinalize(t, s, token, cacheID, 99); w.Code != http.StatusBadRequest {
+		t.Fatalf("finalize with wrong size status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+
+	// The entry must not have been finalized by the rejected request.
+	if w := cacheLookup(t, s, token, "linux-go-mismatch", "v1"); w.Code != http.StatusNoContent {
+		t.Fatalf("lookup after rejected finalize status = %d, want 204", w.Code)
+	}
+}
+
+func TestCacheRepoIsolation(t *testing.T) {
+	s := newTestServer()
+	tokenA := seedCacheRunJob(t, s, "octo/repo-a")
+	tokenB := seedCacheRunJob(t, s, "octo/repo-b")
+
+	cacheID := cacheReserve(t, s, tokenA, "linux-go-shared", "v1")
+	if w := cacheUploadChunk(t, s, tokenA, cacheID, 0, []byte("repo-a-data")); w.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if w := cacheFinalize(t, s, tokenA, cacheID, 11); w.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	// Repo A sees its own entry.
+	if w := cacheLookup(t, s, tokenA, "linux-go-shared", "v1"); w.Code != http.StatusOK {
+		t.Fatalf("repo A lookup status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	// Repo B must not see repo A's entry for the same key+version.
+	if w := cacheLookup(t, s, tokenB, "linux-go-shared", "v1"); w.Code != http.StatusNoContent {
+		t.Fatalf("repo B lookup status = %d, want 204 miss; body=%s", w.Code, w.Body.String())
+	}
+
+	// Repo B must not be able to write into repo A's reserved entry.
+	if w := cacheUploadChunk(t, s, tokenB, cacheID, 0, []byte("poisoned!!!")); w.Code != http.StatusNotFound {
+		t.Fatalf("repo B upload to repo A cache status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+
+	// Repo B reserving the same key+version gets its own entry, not a conflict
+	// with repo A's.
+	cacheIDB := cacheReserve(t, s, tokenB, "linux-go-shared", "v1")
+	if cacheIDB == cacheID {
+		t.Fatalf("repo B reservation reused repo A's cacheId %d", cacheID)
+	}
+	if w := cacheUploadChunk(t, s, tokenB, cacheIDB, 0, []byte("repo-b-data")); w.Code != http.StatusOK {
+		t.Fatalf("repo B upload status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if w := cacheFinalize(t, s, tokenB, cacheIDB, 11); w.Code != http.StatusOK {
+		t.Fatalf("repo B finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	// Each repo's lookup hands back its own archive.
+	if w := cacheDownload(t, s, cacheArchiveLocation(t, s, tokenA, "linux-go-shared", "v1")); w.Body.String() != "repo-a-data" {
+		t.Fatalf("repo A download = %q, want repo-a-data", w.Body.String())
+	}
+	if w := cacheDownload(t, s, cacheArchiveLocation(t, s, tokenB, "linux-go-shared", "v1")); w.Body.String() != "repo-b-data" {
+		t.Fatalf("repo B download = %q, want repo-b-data", w.Body.String())
 	}
 }
 

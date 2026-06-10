@@ -268,7 +268,7 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
-	inner := s.prefixStripMiddleware(s.mux)
+	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
 	handler := otelhttp.NewHandler(s.loggingMiddleware(ghWrapped), "bleephub")
 
@@ -301,6 +301,46 @@ func (s *Server) ListenAndServe() error {
 // prefixStripMiddleware removes any path segments before known API prefixes.
 // The runner prepends the tenant URL path to all API calls, e.g.
 // /owner/repo/_apis/... instead of /_apis/...
+// internalAuthMiddleware gates the operator-facing /internal/* surface
+// (dashboard aggregations: workflows, sessions, repos, apps, installations,
+// oauth state, storage, metrics, status). These expose sim-internal state
+// not part of the public GitHub API, so they require a valid token —
+// the bleephub UI sends the admin token as a Bearer credential. /health
+// stays open for liveness probes.
+func (s *Server) internalAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/internal/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !s.validInternalToken(r) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// validInternalToken reports whether the request carries a token recognized
+// for the internal surface: any PAT in the store (which includes the seeded
+// admin token). ghs_/gho_/ghu_ installation/OAuth tokens are intentionally
+// not accepted here — the dashboard is an operator tool.
+func (s *Server) validInternalToken(r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	var tok string
+	switch {
+	case strings.HasPrefix(auth, "Bearer "):
+		tok = strings.TrimPrefix(auth, "Bearer ")
+	case strings.HasPrefix(auth, "token "):
+		tok = strings.TrimPrefix(auth, "token ")
+	}
+	if tok == "" {
+		return false
+	}
+	t, _ := s.store.LookupToken(tok)
+	return t != nil
+}
+
 func (s *Server) prefixStripMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

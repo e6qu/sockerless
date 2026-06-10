@@ -59,11 +59,12 @@ func (f *s3FS) key(p string) string {
 }
 
 func (f *s3FS) Create(filename string) (billy.File, error) {
+	// A created (or truncated) file exists even if nothing is written,
+	// so it must be flushed on Close.
 	return &s3File{
-		fs:     f,
-		name:   filename,
-		buf:    &bytes.Buffer{},
-		closed: false,
+		fs:    f,
+		name:  filename,
+		dirty: true,
 	}, nil
 }
 
@@ -91,31 +92,41 @@ func (f *s3FS) Open(filename string) (billy.File, error) {
 	}
 
 	return &s3File{
-		fs:     f,
-		name:   filename,
-		buf:    bytes.NewBuffer(data),
-		closed: false,
+		fs:   f,
+		name: filename,
+		data: data,
 	}, nil
 }
 
 func (f *s3FS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+	if flag&(os.O_CREATE|os.O_TRUNC) == os.O_CREATE|os.O_TRUNC && flag&os.O_EXCL == 0 {
+		return f.Create(filename)
+	}
+
+	file, err := f.Open(filename)
 	switch {
-	case flag&(os.O_CREATE|os.O_WRONLY) != 0 && flag&os.O_RDONLY == 0:
-		return f.Create(filename)
-	case flag&os.O_TRUNC != 0:
-		return f.Create(filename)
-	case flag&(os.O_RDWR|os.O_WRONLY|os.O_RDONLY) != 0:
-		ff, err := f.Open(filename)
+	case err == nil:
+		if flag&(os.O_CREATE|os.O_EXCL) == os.O_CREATE|os.O_EXCL {
+			return nil, &os.PathError{Op: "open", Path: filename, Err: os.ErrExist}
+		}
+	case errors.Is(err, os.ErrNotExist) && flag&os.O_CREATE != 0:
+		file, err = f.Create(filename)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) && flag&os.O_CREATE != 0 {
-				return f.Create(filename)
-			}
 			return nil, err
 		}
-		return ff, nil
 	default:
-		return f.Open(filename)
+		return nil, err
 	}
+
+	sf := file.(*s3File)
+	if flag&os.O_TRUNC != 0 {
+		sf.data = nil
+		sf.dirty = true
+	}
+	if flag&os.O_APPEND != 0 {
+		sf.pos = len(sf.data)
+	}
+	return sf, nil
 }
 
 func (f *s3FS) Stat(filename string) (os.FileInfo, error) {
@@ -207,13 +218,25 @@ func (f *s3FS) ReadDir(dirname string) ([]os.FileInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	resp, err := f.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket:    aws.String(f.bucket),
-		Prefix:    aws.String(prefix),
-		Delimiter: aws.String("/"),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("s3 list %s: %w", prefix, err)
+	var contents []s3types.Object
+	var commonPrefixes []s3types.CommonPrefix
+	var continuation *string
+	for {
+		resp, err := f.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(f.bucket),
+			Prefix:            aws.String(prefix),
+			Delimiter:         aws.String("/"),
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("s3 list %s: %w", prefix, err)
+		}
+		contents = append(contents, resp.Contents...)
+		commonPrefixes = append(commonPrefixes, resp.CommonPrefixes...)
+		if !aws.ToBool(resp.IsTruncated) {
+			break
+		}
+		continuation = resp.NextContinuationToken
 	}
 
 	var entries []os.FileInfo
@@ -222,7 +245,7 @@ func (f *s3FS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		baseLen++
 	}
 
-	for _, obj := range resp.Contents {
+	for _, obj := range contents {
 		key := aws.ToString(obj.Key)
 		if len(key) <= baseLen {
 			continue
@@ -237,7 +260,7 @@ func (f *s3FS) ReadDir(dirname string) ([]os.FileInfo, error) {
 		})
 	}
 
-	for _, cp := range resp.CommonPrefixes {
+	for _, cp := range commonPrefixes {
 		p := aws.ToString(cp.Prefix)
 		if len(p) <= baseLen {
 			continue
@@ -293,7 +316,7 @@ func (f *s3FS) Root() string {
 	return f.prefix
 }
 
-func (f *s3FS) deleteRepoPrefix(fullName string) {
+func (f *s3FS) deleteRepoPrefix(fullName string) error {
 	prefix := f.key(fullName) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -306,25 +329,28 @@ func (f *s3FS) deleteRepoPrefix(fullName string) {
 			ContinuationToken: continuation,
 		})
 		if err != nil {
-			return
+			return fmt.Errorf("s3 list %s: %w", prefix, err)
 		}
 		for _, obj := range resp.Contents {
-			_, _ = f.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			if _, err := f.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(f.bucket),
 				Key:    obj.Key,
-			})
+			}); err != nil {
+				return fmt.Errorf("s3 delete %s: %w", aws.ToString(obj.Key), err)
+			}
 		}
 		if !aws.ToBool(resp.IsTruncated) {
 			break
 		}
 		continuation = resp.NextContinuationToken
 	}
+	return nil
 }
 
 type s3File struct {
 	fs     *s3FS
 	name   string
-	buf    *bytes.Buffer
+	data   []byte
 	pos    int
 	closed bool
 	dirty  bool
@@ -339,30 +365,36 @@ func (sf *s3File) Write(p []byte) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	sf.dirty = true
-	return sf.buf.Write(p)
+	// Writing past the end zero-fills the gap, matching os.File semantics.
+	if sf.pos > len(sf.data) {
+		sf.data = append(sf.data, make([]byte, sf.pos-len(sf.data))...)
+	}
+	n = copy(sf.data[sf.pos:], p)
+	if n < len(p) {
+		sf.data = append(sf.data, p[n:]...)
+	}
+	sf.pos += len(p)
+	return len(p), nil
 }
 
 func (sf *s3File) Read(p []byte) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.pos >= sf.buf.Len() {
+	if sf.pos >= len(sf.data) {
 		return 0, io.EOF
 	}
-	n, err = sf.buf.Read(p[sf.pos:])
-	if n > 0 {
-		sf.pos += n
-	}
-	return n, err
+	n = copy(p, sf.data[sf.pos:])
+	sf.pos += n
+	return n, nil
 }
 
 func (sf *s3File) ReadAt(p []byte, off int64) (n int, err error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	data := sf.buf.Bytes()
-	if off >= int64(len(data)) {
+	if off >= int64(len(sf.data)) {
 		return 0, io.EOF
 	}
-	n = copy(p, data[off:])
+	n = copy(p, sf.data[off:])
 	if n < len(p) {
 		err = io.EOF
 	}
@@ -372,16 +404,21 @@ func (sf *s3File) ReadAt(p []byte, off int64) (n int, err error) {
 func (sf *s3File) Seek(offset int64, whence int) (int64, error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
+	var pos int
 	switch whence {
 	case io.SeekStart:
-		sf.pos = int(offset)
+		pos = int(offset)
 	case io.SeekCurrent:
-		sf.pos += int(offset)
+		pos = sf.pos + int(offset)
 	case io.SeekEnd:
-		sf.pos = sf.buf.Len() + int(offset)
+		pos = len(sf.data) + int(offset)
 	default:
 		return 0, errors.New("invalid whence")
 	}
+	if pos < 0 {
+		return 0, errors.New("negative seek position")
+	}
+	sf.pos = pos
 	return int64(sf.pos), nil
 }
 
@@ -406,7 +443,7 @@ func (sf *s3File) flush() error {
 	_, err := sf.fs.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(sf.fs.bucket),
 		Key:    aws.String(key),
-		Body:   bytes.NewReader(sf.buf.Bytes()),
+		Body:   bytes.NewReader(sf.data),
 	})
 	if err != nil {
 		return fmt.Errorf("s3 put %s: %w", key, err)
@@ -426,10 +463,12 @@ func (sf *s3File) Truncate(size int64) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	sf.dirty = true
-	if size >= int64(sf.buf.Len()) {
-		return nil
+	switch {
+	case size < int64(len(sf.data)):
+		sf.data = sf.data[:size]
+	case size > int64(len(sf.data)):
+		sf.data = append(sf.data, make([]byte, size-int64(len(sf.data)))...)
 	}
-	sf.buf.Truncate(int(size))
 	return nil
 }
 

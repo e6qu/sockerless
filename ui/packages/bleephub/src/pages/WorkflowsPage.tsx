@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   DataTable,
+  InlineError,
   PageHeading,
   Spinner,
   StatusBadge,
@@ -88,13 +89,14 @@ function TabButton({
 const filesCol = createColumnHelper<BleephubWorkflowFile>();
 
 function WorkflowsTab() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["workflow_files"],
     queryFn: fetchWorkflowFiles,
     refetchInterval: 5000,
   });
   const [dispatchTarget, setDispatchTarget] = useState<BleephubWorkflowFile | null>(null);
 
+  if (isError) return <InlineError title="Failed to load workflows" />;
   if (isLoading || !data) return <Spinner label="loading workflows" />;
 
   const columns = [
@@ -179,12 +181,13 @@ const runsCol = createColumnHelper<BleephubWorkflow>();
 
 function RunsTab() {
   const navigate = useNavigate();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["workflows"],
     queryFn: fetchWorkflows,
     refetchInterval: 3000,
   });
 
+  if (isError) return <InlineError title="Failed to load runs" />;
   if (isLoading || !data) return <Spinner label="loading runs" />;
 
   const columns = [

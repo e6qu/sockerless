@@ -86,7 +86,7 @@ func (st *Store) CreateCheckSuite(repoKey, headBranch, headSHA string, appID int
 	}
 	id := st.NextCheckSuiteID
 	st.NextCheckSuiteID++
-	now := time.Now()
+	now := time.Now().UTC()
 	s := &CheckSuite{
 		ID:         id,
 		NodeID:     "CS_" + headSHA[:min(8, len(headSHA))],
@@ -146,7 +146,7 @@ func (st *Store) CreateCheckRun(repoKey, headSHA, name string, appID int, suiteI
 		if suiteID == 0 {
 			suiteID = st.NextCheckSuiteID
 			st.NextCheckSuiteID++
-			now := time.Now()
+			now := time.Now().UTC()
 			st.CheckSuites[suiteID] = &CheckSuite{
 				ID:        suiteID,
 				NodeID:    "CS_" + headSHA[:min(8, len(headSHA))],
@@ -165,7 +165,7 @@ func (st *Store) CreateCheckRun(repoKey, headSHA, name string, appID int, suiteI
 
 	id := st.NextCheckRunID
 	st.NextCheckRunID++
-	now := time.Now()
+	now := time.Now().UTC()
 	cr := &CheckRun{
 		ID:        id,
 		NodeID:    "CR_" + headSHA[:min(8, len(headSHA))],

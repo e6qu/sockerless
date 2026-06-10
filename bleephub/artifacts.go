@@ -1,6 +1,8 @@
 package bleephub
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,14 +42,20 @@ type Artifact struct {
 }
 
 // CacheEntry represents one immutable Actions dependency cache archive.
+// Entries are scoped to the repository whose run created them, mirroring
+// GitHub's per-repository cache isolation. DownloadToken plays the role of
+// GitHub's pre-signed archive URL: the cache toolkit fetches archiveLocation
+// with an unauthenticated client, so the URL itself must be unguessable.
 type CacheEntry struct {
-	ID        int64     `json:"id"`
-	Key       string    `json:"key"`
-	Version   string    `json:"version"`
-	Size      int64     `json:"size"`
-	Data      []byte    `json:"-"`
-	Finalized bool      `json:"finalized"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID            int64     `json:"id"`
+	Repo          string    `json:"repo"`
+	Key           string    `json:"key"`
+	Version       string    `json:"version"`
+	Size          int64     `json:"size"`
+	Data          []byte    `json:"-"`
+	Finalized     bool      `json:"finalized"`
+	DownloadToken string    `json:"downloadToken"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // NewArtifactStore creates an artifact store. If dataDir is non-empty,
@@ -138,7 +146,7 @@ func (as *ArtifactStore) recoverCachesFromDisk() {
 		data, _ := os.ReadFile(dataPath)
 		cacheEntry.Data = data
 		as.caches[id] = &cacheEntry
-		as.cacheIndex[cacheLookupKey(cacheEntry.Key, cacheEntry.Version)] = id
+		as.cacheIndex[cacheLookupKey(cacheEntry.Repo, cacheEntry.Key, cacheEntry.Version)] = id
 		if id >= as.nextCacheID {
 			as.nextCacheID = id + 1
 		}
@@ -230,18 +238,28 @@ func (as *ArtifactStore) persistCacheMeta(entry *CacheEntry) {
 	os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o644)
 }
 
-func (as *ArtifactStore) appendCacheData(entry *CacheEntry, chunk []byte) {
+// writeCacheDataAt writes a ranged chunk to the cache's data file at the
+// offset its Content-Range declared, so out-of-order chunks land in place.
+// The in-memory entry.Data is authoritative for this process; this is the
+// on-disk copy used for restart recovery, so the error is returned for the
+// caller to surface rather than silently dropped.
+func (as *ArtifactStore) writeCacheDataAt(entry *CacheEntry, chunk []byte, offset int64) error {
 	if as.dataDir == "" {
-		return
+		return nil
 	}
 	dir := filepath.Join(as.dataDir, "caches", strconv.FormatInt(entry.ID, 10))
-	os.MkdirAll(dir, 0o755)
-	f, err := os.OpenFile(filepath.Join(dir, "data"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	f.Write(chunk)
-	f.Close()
+	f, err := os.OpenFile(filepath.Join(dir, "data"), os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteAt(chunk, offset); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) registerArtifactRoutes() {
@@ -255,8 +273,10 @@ func (s *Server) registerArtifactRoutes() {
 	s.mux.HandleFunc("PUT /_apis/v1/artifacts/{artifactId}/upload", s.handleUploadArtifact)
 	s.mux.HandleFunc("GET /_apis/v1/artifacts/{artifactId}/download", s.handleDownloadArtifact)
 
-	// Actions cache API used by actions/cache.
-	s.mux.HandleFunc("POST /_apis/artifactcache/cache", s.handleCacheReserve)
+	// Actions cache API used by actions/cache. The @actions/cache toolkit
+	// reserves at the plural `caches` path (getCacheApiUrl('caches')) and
+	// looks up at the singular `cache?keys=`.
+	s.mux.HandleFunc("POST /_apis/artifactcache/caches", s.handleCacheReserve)
 	s.mux.HandleFunc("GET /_apis/artifactcache/cache", s.handleCacheLookup)
 	s.mux.HandleFunc("PATCH /_apis/artifactcache/caches/{cacheId}", s.handleCacheUpload)
 	s.mux.HandleFunc("POST /_apis/artifactcache/caches/{cacheId}", s.handleCacheFinalize)
@@ -463,6 +483,10 @@ func (s *Server) handleDownloadArtifact(w http.ResponseWriter, r *http.Request) 
 // --- Actions cache ---
 
 func (s *Server) handleCacheReserve(w http.ResponseWriter, r *http.Request) {
+	repo, ok := s.cacheScopeRepo(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Key     string `json:"key"`
 		Version string `json:"version"`
@@ -476,7 +500,7 @@ func (s *Server) handleCacheReserve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.artifactStore.mu.Lock()
-	if id, ok := s.artifactStore.cacheIndex[cacheLookupKey(req.Key, req.Version)]; ok {
+	if id, ok := s.artifactStore.cacheIndex[cacheLookupKey(repo, req.Key, req.Version)]; ok {
 		entry := s.artifactStore.caches[id]
 		s.artifactStore.mu.Unlock()
 		if entry != nil && entry.Finalized {
@@ -489,21 +513,27 @@ func (s *Server) handleCacheReserve(w http.ResponseWriter, r *http.Request) {
 	id := s.artifactStore.nextCacheID
 	s.artifactStore.nextCacheID++
 	entry := &CacheEntry{
-		ID:        id,
-		Key:       req.Key,
-		Version:   req.Version,
-		CreatedAt: time.Now(),
+		ID:            id,
+		Repo:          repo,
+		Key:           req.Key,
+		Version:       req.Version,
+		DownloadToken: newCacheDownloadToken(),
+		CreatedAt:     time.Now(),
 	}
 	s.artifactStore.caches[id] = entry
-	s.artifactStore.cacheIndex[cacheLookupKey(req.Key, req.Version)] = id
+	s.artifactStore.cacheIndex[cacheLookupKey(repo, req.Key, req.Version)] = id
 	s.artifactStore.persistCacheMeta(entry)
 	s.artifactStore.mu.Unlock()
 
-	s.logger.Debug().Int64("id", id).Str("key", req.Key).Msg("cache reserved")
+	s.logger.Debug().Int64("id", id).Str("repo", repo).Str("key", req.Key).Msg("cache reserved")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"cacheId": id})
 }
 
 func (s *Server) handleCacheLookup(w http.ResponseWriter, r *http.Request) {
+	repo, ok := s.cacheScopeRepo(w, r)
+	if !ok {
+		return
+	}
 	version := r.URL.Query().Get("version")
 	keys := splitCacheKeys(r.URL.Query().Get("keys"))
 	if version == "" || len(keys) == 0 {
@@ -512,10 +542,10 @@ func (s *Server) handleCacheLookup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.artifactStore.mu.RLock()
-	entry := s.lookupFinalizedCacheLocked(keys, version)
+	entry := s.lookupFinalizedCacheLocked(repo, keys, version)
 	s.artifactStore.mu.RUnlock()
 	if entry == nil {
-		s.logger.Debug().Strs("keys", keys).Str("version", version).Msg("cache lookup miss")
+		s.logger.Debug().Str("repo", repo).Strs("keys", keys).Str("version", version).Msg("cache lookup miss")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -524,7 +554,7 @@ func (s *Server) handleCacheLookup(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	archiveURL := fmt.Sprintf("%s://%s/_apis/artifactcache/caches/%d", scheme, r.Host, entry.ID)
+	archiveURL := fmt.Sprintf("%s://%s/_apis/artifactcache/caches/%d?sig=%s", scheme, r.Host, entry.ID, entry.DownloadToken)
 	s.logger.Debug().Int64("id", entry.ID).Str("key", entry.Key).Msg("cache lookup hit")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"archiveLocation": archiveURL,
@@ -532,9 +562,9 @@ func (s *Server) handleCacheLookup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) lookupFinalizedCacheLocked(keys []string, version string) *CacheEntry {
+func (s *Server) lookupFinalizedCacheLocked(repo string, keys []string, version string) *CacheEntry {
 	for _, key := range keys {
-		if id, ok := s.artifactStore.cacheIndex[cacheLookupKey(key, version)]; ok {
+		if id, ok := s.artifactStore.cacheIndex[cacheLookupKey(repo, key, version)]; ok {
 			entry := s.artifactStore.caches[id]
 			if entry != nil && entry.Finalized {
 				return entry
@@ -544,7 +574,7 @@ func (s *Server) lookupFinalizedCacheLocked(keys []string, version string) *Cach
 	for _, key := range keys {
 		var newest *CacheEntry
 		for _, entry := range s.artifactStore.caches {
-			if entry.Version != version || !entry.Finalized || !strings.HasPrefix(entry.Key, key) {
+			if entry.Repo != repo || entry.Version != version || !entry.Finalized || !strings.HasPrefix(entry.Key, key) {
 				continue
 			}
 			if newest == nil || entry.CreatedAt.After(newest.CreatedAt) {
@@ -563,36 +593,58 @@ func (s *Server) handleCacheUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	repo, ok := s.cacheScopeRepo(w, r)
+	if !ok {
+		return
+	}
+	start, end, err := parseContentRange(r.Header.Get("Content-Range"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	chunk, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusInternalServerError)
+		writeGHError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	if int64(len(chunk)) != end-start+1 {
+		writeGHError(w, http.StatusBadRequest, fmt.Sprintf("Content-Range bytes %d-%d does not match body length %d", start, end, len(chunk)))
 		return
 	}
 
 	s.artifactStore.mu.Lock()
 	entry := s.artifactStore.caches[id]
-	if entry != nil && !entry.Finalized {
-		entry.Data = append(entry.Data, chunk...)
-		entry.Size = int64(len(entry.Data))
-		s.artifactStore.appendCacheData(entry, chunk)
-		s.artifactStore.persistCacheMeta(entry)
-	}
-	s.artifactStore.mu.Unlock()
-
-	if entry == nil {
+	if entry == nil || entry.Repo != repo {
+		s.artifactStore.mu.Unlock()
 		writeGHError(w, http.StatusNotFound, "Cache not found")
 		return
 	}
 	if entry.Finalized {
+		s.artifactStore.mu.Unlock()
 		writeGHError(w, http.StatusConflict, "Cache already finalized")
 		return
 	}
-	s.logger.Debug().Int64("id", id).Int("bytes", len(chunk)).Msg("cache chunk uploaded")
+	if needed := end + 1; int64(len(entry.Data)) < needed {
+		entry.Data = append(entry.Data, make([]byte, needed-int64(len(entry.Data)))...)
+	}
+	copy(entry.Data[start:end+1], chunk)
+	entry.Size = int64(len(entry.Data))
+	if err := s.artifactStore.writeCacheDataAt(entry, chunk, start); err != nil {
+		s.logger.Error().Err(err).Int64("id", id).Msg("cache chunk on-disk persistence failed (in-memory copy intact)")
+	}
+	s.artifactStore.persistCacheMeta(entry)
+	s.artifactStore.mu.Unlock()
+
+	s.logger.Debug().Int64("id", id).Int64("start", start).Int64("end", end).Msg("cache chunk uploaded")
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleCacheFinalize(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseCacheID(w, r)
+	if !ok {
+		return
+	}
+	repo, ok := s.cacheScopeRepo(w, r)
 	if !ok {
 		return
 	}
@@ -608,25 +660,31 @@ func (s *Server) handleCacheFinalize(w http.ResponseWriter, r *http.Request) {
 
 	s.artifactStore.mu.Lock()
 	entry := s.artifactStore.caches[id]
-	if entry != nil && !entry.Finalized {
-		if req.Size > 0 {
-			entry.Size = req.Size
-		} else {
-			entry.Size = int64(len(entry.Data))
+	if entry == nil || entry.Repo != repo {
+		s.artifactStore.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Cache not found")
+		return
+	}
+	if !entry.Finalized {
+		if req.Size != int64(len(entry.Data)) {
+			assembled := int64(len(entry.Data))
+			s.artifactStore.mu.Unlock()
+			writeGHError(w, http.StatusBadRequest, fmt.Sprintf("Cache size %d does not match %d bytes uploaded", req.Size, assembled))
+			return
 		}
 		entry.Finalized = true
 		s.artifactStore.persistCacheMeta(entry)
 	}
 	s.artifactStore.mu.Unlock()
 
-	if entry == nil {
-		writeGHError(w, http.StatusNotFound, "Cache not found")
-		return
-	}
 	s.logger.Debug().Int64("id", id).Int64("size", entry.Size).Msg("cache finalized")
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleCacheDownload serves the archiveLocation URL handed out by lookup.
+// The cache toolkit fetches it without the runtime token (on real GitHub it
+// is a pre-signed blob URL), so access is gated by the unguessable sig query
+// parameter instead of bearer auth.
 func (s *Server) handleCacheDownload(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseCacheID(w, r)
 	if !ok {
@@ -640,6 +698,10 @@ func (s *Server) handleCacheDownload(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Cache not found")
 		return
 	}
+	if sig := r.URL.Query().Get("sig"); entry.DownloadToken == "" || sig != entry.DownloadToken {
+		writeGHError(w, http.StatusNotFound, "Cache not found")
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(entry.Data)))
@@ -647,8 +709,137 @@ func (s *Server) handleCacheDownload(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(entry.Data)
 }
 
-func cacheLookupKey(key, version string) string {
-	return key + "\x00" + version
+func cacheLookupKey(repo, key, version string) string {
+	return repo + "\x00" + key + "\x00" + version
+}
+
+func newCacheDownloadToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// cacheScopeRepo resolves the repository an Actions cache request acts for
+// and writes a 401 when it can't. The @actions/cache toolkit authenticates
+// every cache call with the job's runtime token (Authorization: Bearer);
+// that token's sub claim is the plan scopeIdentifier of the dispatched job,
+// and the job message records the repository the run executes as.
+func (s *Server) cacheScopeRepo(w http.ResponseWriter, r *http.Request) (string, bool) {
+	repo, err := s.repoForRuntimeToken(r)
+	if err != nil {
+		s.logger.Debug().Err(err).Str("path", r.URL.Path).Msg("cache request rejected")
+		writeGHError(w, http.StatusUnauthorized, "Must authenticate to access cache")
+		return "", false
+	}
+	return repo, true
+}
+
+func (s *Server) repoForRuntimeToken(r *http.Request) (string, error) {
+	auth := r.Header.Get("Authorization")
+	token, ok := strings.CutPrefix(auth, "Bearer ")
+	if !ok {
+		return "", fmt.Errorf("missing bearer token")
+	}
+	scopeID, err := jwtSubject(token)
+	if err != nil {
+		return "", err
+	}
+
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for _, job := range s.store.Jobs {
+		if repo, ok := jobMessageRepo(job.Message, scopeID); ok {
+			return repo, nil
+		}
+	}
+	return "", fmt.Errorf("no job with plan scope %q", scopeID)
+}
+
+// jwtSubject extracts the sub claim from a JWT without verifying the
+// signature; bleephub issues runtime tokens with alg:none (see makeJWT).
+func jwtSubject(token string) (string, error) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return "", fmt.Errorf("malformed JWT: expected 3 parts")
+	}
+	payloadBytes, err := base64urlDecode(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("decode JWT payload: %w", err)
+	}
+	var payload struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return "", fmt.Errorf("parse JWT payload: %w", err)
+	}
+	if payload.Sub == "" {
+		return "", fmt.Errorf("missing sub claim")
+	}
+	return payload.Sub, nil
+}
+
+// jobMessageRepo reports the github.repository context value of a dispatched
+// job message when its plan scopeIdentifier matches scopeID.
+func jobMessageRepo(message, scopeID string) (string, bool) {
+	var msg struct {
+		Plan struct {
+			ScopeIdentifier string `json:"scopeIdentifier"`
+		} `json:"plan"`
+		ContextData struct {
+			GitHub struct {
+				D []struct {
+					K string          `json:"k"`
+					V json.RawMessage `json:"v"`
+				} `json:"d"`
+			} `json:"github"`
+		} `json:"contextData"`
+	}
+	if err := json.Unmarshal([]byte(message), &msg); err != nil {
+		return "", false
+	}
+	if msg.Plan.ScopeIdentifier == "" || msg.Plan.ScopeIdentifier != scopeID {
+		return "", false
+	}
+	for _, kv := range msg.ContextData.GitHub.D {
+		if kv.K != "repository" {
+			continue
+		}
+		var repo string
+		if err := json.Unmarshal(kv.V, &repo); err != nil || repo == "" {
+			return "", false
+		}
+		return repo, true
+	}
+	return "", false
+}
+
+// parseContentRange parses the "bytes <start>-<end>/<total>" header the
+// @actions/cache toolkit sends on every ranged chunk PATCH (total is "*").
+func parseContentRange(header string) (start, end int64, err error) {
+	if header == "" {
+		return 0, 0, fmt.Errorf("Content-Range header is required")
+	}
+	spec, ok := strings.CutPrefix(header, "bytes ")
+	if !ok {
+		return 0, 0, fmt.Errorf("invalid Content-Range %q: expected bytes <start>-<end>/<total>", header)
+	}
+	spec, _, _ = strings.Cut(spec, "/")
+	startStr, endStr, ok := strings.Cut(spec, "-")
+	if !ok {
+		return 0, 0, fmt.Errorf("invalid Content-Range %q: expected bytes <start>-<end>/<total>", header)
+	}
+	start, err = strconv.ParseInt(startStr, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid Content-Range start %q", startStr)
+	}
+	end, err = strconv.ParseInt(endStr, 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid Content-Range end %q", endStr)
+	}
+	if start < 0 || end < start {
+		return 0, 0, fmt.Errorf("invalid Content-Range %d-%d", start, end)
+	}
+	return start, end, nil
 }
 
 func splitCacheKeys(raw string) []string {

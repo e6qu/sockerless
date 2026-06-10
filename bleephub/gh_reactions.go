@@ -87,7 +87,7 @@ func (rs *ReactionStore) AddReaction(parentType string, parentID int, userID int
 		ParentID:   parentID,
 		Content:    content,
 		UserID:     userID,
-		CreatedAt:  time.Now(),
+		CreatedAt:  time.Now().UTC(),
 	}
 	rs.nextID++
 	rs.byParent[key] = append(rs.byParent[key], r)

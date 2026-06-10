@@ -118,7 +118,7 @@ func (ds *DeploymentStore) CreateDeployment(repoID, creatorID int, ref, sha, tas
 	defer ds.mu.Unlock()
 	id := ds.nextDepID
 	ds.nextDepID++
-	now := time.Now()
+	now := time.Now().UTC()
 	d := &Deployment{
 		ID:            id,
 		NodeID:        fmt.Sprintf("DE_kgDO%08d", id),
@@ -188,7 +188,7 @@ func (ds *DeploymentStore) AddStatus(deploymentID, creatorID int, state, descrip
 	}
 	id := ds.nextStatusID
 	ds.nextStatusID++
-	now := time.Now()
+	now := time.Now().UTC()
 	status := &DeploymentStatus{
 		ID:             id,
 		NodeID:         fmt.Sprintf("DS_kgDO%08d", id),
@@ -237,12 +237,12 @@ func (ds *DeploymentStore) UpsertEnvironment(repoID int, name string) *Environme
 	defer ds.mu.Unlock()
 	key := fmt.Sprintf("%d:%s", repoID, name)
 	if existing := ds.environments[key]; existing != nil {
-		existing.UpdatedAt = time.Now()
+		existing.UpdatedAt = time.Now().UTC()
 		return existing
 	}
 	id := ds.nextEnvID
 	ds.nextEnvID++
-	now := time.Now()
+	now := time.Now().UTC()
 	env := &Environment{
 		ID:        id,
 		NodeID:    fmt.Sprintf("EN_kgDO%08d", id),

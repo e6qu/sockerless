@@ -38,13 +38,6 @@ function renderNavLink(item: NavItem) {
   );
 }
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  if (!isLoggedIn()) {
-    return <Navigate to="/ui/login" replace />;
-  }
-  return <>{children}</>;
-}
-
 function AppNav() {
   return (
     <div
@@ -103,6 +96,10 @@ export function App() {
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
+              {/* A logged-in user hitting /ui/login (bookmark) or any
+                  unknown /ui/* path lands back on the dashboard. */}
+              <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />
+              <Route path="/ui/*" element={<Navigate to="/ui/" replace />} />
             </Routes>
           </AppShell>
         </BrowserRouter>
