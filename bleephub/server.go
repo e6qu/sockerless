@@ -343,13 +343,10 @@ func (s *Server) internalAuthMiddleware(next http.Handler) http.Handler {
 // Returns nil when absent/unknown. ghs_/gho_/ghu_ installation/OAuth tokens
 // are intentionally not accepted here — the internal surface is operator-only.
 func (s *Server) internalTokenUser(r *http.Request) *User {
-	auth := r.Header.Get("Authorization")
+	scheme, cred := authScheme(r.Header.Get("Authorization"))
 	var tok string
-	switch {
-	case strings.HasPrefix(auth, "Bearer "):
-		tok = strings.TrimPrefix(auth, "Bearer ")
-	case strings.HasPrefix(auth, "token "):
-		tok = strings.TrimPrefix(auth, "token ")
+	if scheme == "bearer" || scheme == "token" {
+		tok = cred
 	}
 	if tok == "" {
 		return nil

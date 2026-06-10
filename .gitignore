@@ -105,6 +105,7 @@ cmd/sockerless-admin/admin
 /admin
 bleephub/dist/
 bleephub/bleephub-server
+bleephub/sdk-tests/bleephub-server
 
 # Playwright
 ui/packages/admin/test-results/

@@ -2,7 +2,10 @@ FROM golang:1.25 AS builder
 
 WORKDIR /src
 COPY bleephub/ bleephub/
-RUN cd bleephub && GOWORK=off go build -o /out/bleephub ./cmd
+# -tags noui: the gh CLI harness does not need the embedded UI, and dist/ is a
+# gitignored build artifact absent from a clean checkout (//go:embed all:dist
+# would otherwise fail to compile).
+RUN cd bleephub && GOWORK=off go build -tags noui -o /out/bleephub ./cmd
 
 # --- Runtime stage ---
 FROM ubuntu:22.04

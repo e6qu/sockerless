@@ -359,8 +359,11 @@ assert_eq "rate limit core.limit" "5000" "$RATE_LIMIT"
 # ============================================================
 # Test: Org lifecycle (via API)
 # ============================================================
+# Org creation has no GitHub REST equivalent (admin API / web UI only), so
+# bleephub exposes it as sim-control at /internal/orgs. Listing the authed
+# user's orgs (GET /user/orgs) is real GitHub and stays below.
 log "Test: Create org"
-ORG=$(api "$BASE/api/v3/user/orgs" -f login=gh-test-org -f name="Test Org")
+ORG=$(api "$BASE/internal/orgs" -f login=gh-test-org -f name="Test Org")
 ORG_LOGIN=$(echo "$ORG" | jq -r '.login')
 assert_eq "org login" "gh-test-org" "$ORG_LOGIN"
 

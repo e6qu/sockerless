@@ -73,16 +73,15 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 		// Parse token for rate-limit header info
 		var token *Token
 		if auth := r.Header.Get("Authorization"); auth != "" {
+			scheme, cred := authScheme(auth)
 			var tokenStr string
-			if strings.HasPrefix(auth, "token ") {
-				tokenStr = strings.TrimPrefix(auth, "token ")
-			} else if strings.HasPrefix(auth, "Bearer ") {
-				tokenStr = strings.TrimPrefix(auth, "Bearer ")
+			if scheme == "token" || scheme == "bearer" {
+				tokenStr = cred
 			}
 			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, "ghs_") && !strings.HasPrefix(tokenStr, "gho_") && !strings.HasPrefix(tokenStr, "ghu_") && !strings.HasPrefix(tokenStr, "ghr_") {
 				token, _ = s.store.LookupToken(tokenStr)
-			} else if strings.HasPrefix(auth, "Basic ") {
-				decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+			} else if scheme == "basic" {
+				decoded, err := base64.StdEncoding.DecodeString(cred)
 				if err == nil {
 					parts := strings.SplitN(string(decoded), ":", 2)
 					if len(parts) == 2 && parts[1] != "" {
@@ -102,6 +101,18 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// authScheme splits an Authorization header into its lower-cased scheme and
+// the credential. HTTP auth schemes are case-insensitive (RFC 7235), and
+// GitHub accepts "token"/"Bearer"/"Basic" in any case (octokit sends "bearer"),
+// so match case-insensitively rather than on an exact-case prefix.
+func authScheme(auth string) (scheme, credential string) {
+	s, cred, found := strings.Cut(auth, " ")
+	if !found {
+		return "", ""
+	}
+	return strings.ToLower(s), cred
+}
+
 // authenticateRequest parses the Authorization header and returns a context
 // with the authenticated user/app/installation set. Used by both /api/
 // middleware and git HTTP handlers.
@@ -109,11 +120,10 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 	ctx := r.Context()
 	var user *User
 	if auth := r.Header.Get("Authorization"); auth != "" {
+		scheme, cred := authScheme(auth)
 		var tokenStr string
-		if strings.HasPrefix(auth, "token ") {
-			tokenStr = strings.TrimPrefix(auth, "token ")
-		} else if strings.HasPrefix(auth, "Bearer ") {
-			tokenStr = strings.TrimPrefix(auth, "Bearer ")
+		if scheme == "token" || scheme == "bearer" {
+			tokenStr = cred
 		}
 		if tokenStr != "" {
 			switch {
@@ -143,8 +153,8 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 			default:
 				_, user = s.store.LookupToken(tokenStr)
 			}
-		} else if strings.HasPrefix(auth, "Basic ") {
-			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+		} else if scheme == "basic" {
+			decoded, err := base64.StdEncoding.DecodeString(cred)
 			if err == nil {
 				parts := strings.SplitN(string(decoded), ":", 2)
 				if len(parts) == 2 && parts[1] != "" {
