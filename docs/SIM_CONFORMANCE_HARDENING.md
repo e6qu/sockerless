@@ -29,7 +29,7 @@ When in doubt about a wire shape, verify with `--debug` / serializer source (`go
 
 | Stage | Scope | Status |
 |---|---|---|
-| 1 | AWS conformance sweep + fixes + regression tests | **in progress** |
+| 1 | AWS conformance sweep + fixes + regression tests | **in progress** — Batch 1 landed, PR #537 CI green (34/34) |
 | 2 | GCP conformance sweep + fixes + regression tests | pending |
 | 3 | Azure conformance sweep + fixes + regression tests | pending |
 | 4 | Go type hardening across all sims (`docs/GOLANG_STRONG_TYPING.md`) | pending |
