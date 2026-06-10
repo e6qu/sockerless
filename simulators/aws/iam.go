@@ -142,6 +142,10 @@ func iamRoleXML(role IAMRole) string {
 
 func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("RoleName")
+	if _, ok := iamRoles.Get(name); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("Role with name %s already exists.", name), http.StatusConflict)
+		return
+	}
 	path := r.FormValue("Path")
 	if path == "" {
 		path = "/"
@@ -500,10 +504,15 @@ func handleIAMCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	if decoded, err := url.QueryUnescape(doc); err == nil {
 		doc = decoded
 	}
+	arn := fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name)
+	if _, ok := iamPolicies.Get(arn); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("A policy called %s already exists. Duplicate names are not allowed.", name), http.StatusConflict)
+		return
+	}
 	policy := IAMPolicy{
 		PolicyName:       name,
 		PolicyId:         "ANPA" + strings.ToUpper(generateUUID()[:16]),
-		Arn:              fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name),
+		Arn:              arn,
 		Path:             path,
 		Description:      r.FormValue("Description"),
 		PolicyDocument:   doc,
@@ -579,6 +588,10 @@ func handleIAMCreateInstanceProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("InstanceProfileName")
 	if name == "" {
 		iamErrorXML(w, "ValidationError", "InstanceProfileName is required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := iamInstanceProfiles.Get(name); ok {
+		iamErrorXML(w, "EntityAlreadyExists", fmt.Sprintf("Instance Profile %s already exists.", name), http.StatusConflict)
 		return
 	}
 	path := r.FormValue("Path")

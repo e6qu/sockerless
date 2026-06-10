@@ -127,9 +127,17 @@ func batchWriteJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func batchWriteError(w http.ResponseWriter, status int, msg string) {
+	code := "ClientException"
+	if status >= 500 {
+		code = "ServerException"
+	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Amzn-Errortype", code)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"__type":  code,
+		"message": msg,
+	})
 }
 
 // ---------- Compute Environments ----------

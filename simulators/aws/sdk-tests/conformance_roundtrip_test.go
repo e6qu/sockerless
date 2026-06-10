@@ -1,10 +1,13 @@
 package aws_sdk_test
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/acm"
 	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
@@ -16,12 +19,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	ktypes "github.com/aws/aws-sdk-go-v2/service/kinesis/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
+	sdtypes "github.com/aws/aws-sdk-go-v2/service/servicediscovery/types"
+	"github.com/aws/aws-sdk-go-v2/service/wafv2"
+	wafv2types "github.com/aws/aws-sdk-go-v2/service/wafv2/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -429,4 +442,173 @@ func TestConformanceEventBridgeTargetParameters(t *testing.T) {
 		aws.ToString(tgt.EcsParameters.TaskDefinitionArn))
 	require.NotNil(t, tgt.RetryPolicy, "ListTargetsByRule must round-trip RetryPolicy")
 	assert.Equal(t, int32(2), aws.ToInt32(tgt.RetryPolicy.MaximumRetryAttempts))
+}
+
+// DescribeLoadBalancers/TargetGroups/Listeners with an explicit identifier
+// that does not exist must raise the typed NotFound exception, not return an
+// empty 200. A no-filter Describe (list all) must still succeed with whatever
+// is present.
+func TestConformanceELBv2DescribeMissingExplicitIdentifier(t *testing.T) {
+	c := elbv2Client()
+
+	_, err := c.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{
+		LoadBalancerArns: []string{
+			"arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/nope/0",
+		},
+	})
+	var lbNotFound *elbtypes.LoadBalancerNotFoundException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &lbNotFound),
+		"DescribeLoadBalancers with a missing ARN must raise LoadBalancerNotFoundException, got %v", err)
+
+	_, err = c.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{
+		TargetGroupArns: []string{
+			"arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/nope/0",
+		},
+	})
+	var tgNotFound *elbtypes.TargetGroupNotFoundException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &tgNotFound),
+		"DescribeTargetGroups with a missing ARN must raise TargetGroupNotFoundException, got %v", err)
+
+	_, err = c.DescribeListeners(ctx, &elbv2.DescribeListenersInput{
+		ListenerArns: []string{
+			"arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/nope/0/0",
+		},
+	})
+	var lsnNotFound *elbtypes.ListenerNotFoundException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &lsnNotFound),
+		"DescribeListeners with a missing ARN must raise ListenerNotFoundException, got %v", err)
+
+	// A no-filter Describe (list all) must NOT error even when nothing matches.
+	_, err = c.DescribeLoadBalancers(ctx, &elbv2.DescribeLoadBalancersInput{})
+	require.NoError(t, err, "DescribeLoadBalancers with no filter must not error")
+	_, err = c.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{})
+	require.NoError(t, err, "DescribeTargetGroups with no filter must not error")
+	_, err = c.DescribeListeners(ctx, &elbv2.DescribeListenersInput{
+		LoadBalancerArn: aws.String("arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/listall/0"),
+	})
+	require.NoError(t, err, "DescribeListeners filtered by LoadBalancerArn must not error")
+}
+
+// DescribeServices against a cluster that does not exist must short-circuit
+// with ClusterNotFoundException, not return per-service MISSING failures.
+func TestConformanceECSDescribeServicesGhostCluster(t *testing.T) {
+	c := ecsClient()
+
+	_, err := c.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster:  aws.String("ghost-cluster"),
+		Services: []string{"x"},
+	})
+	var clusterNotFound *ecstypes.ClusterNotFoundException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &clusterNotFound),
+		"DescribeServices against a missing cluster must raise ClusterNotFoundException, got %v", err)
+}
+
+// CreateRole with a name that already exists must raise
+// EntityAlreadyExistsException on the second call.
+func TestConformanceIAMCreateRoleDuplicate(t *testing.T) {
+	c := iamClient()
+	name := "conf-dup-role"
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}`
+
+	_, err := c.CreateRole(ctx, &iam.CreateRoleInput{
+		RoleName:                 aws.String(name),
+		AssumeRolePolicyDocument: aws.String(policy),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: aws.String(name)})
+	})
+
+	_, err = c.CreateRole(ctx, &iam.CreateRoleInput{
+		RoleName:                 aws.String(name),
+		AssumeRolePolicyDocument: aws.String(policy),
+	})
+	var dup *iamtypes.EntityAlreadyExistsException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &dup),
+		"CreateRole with a duplicate name must raise EntityAlreadyExistsException, got %v", err)
+}
+
+// Batch client errors must be typed as ClientException so the restJson1 SDK
+// classifies them rather than falling back to a generic error.
+func TestConformanceBatchTypedClientException(t *testing.T) {
+	c := batchClient()
+	name := "conf-dup-ce"
+
+	_, err := c.CreateComputeEnvironment(ctx, &batch.CreateComputeEnvironmentInput{
+		ComputeEnvironmentName: aws.String(name),
+		Type:                   batchtypes.CETypeUnmanaged,
+		State:                  batchtypes.CEStateEnabled,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteComputeEnvironment(ctx, &batch.DeleteComputeEnvironmentInput{
+			ComputeEnvironment: aws.String(name),
+		})
+	})
+
+	_, err = c.CreateComputeEnvironment(ctx, &batch.CreateComputeEnvironmentInput{
+		ComputeEnvironmentName: aws.String(name),
+		Type:                   batchtypes.CETypeUnmanaged,
+		State:                  batchtypes.CEStateEnabled,
+	})
+	var clientErr *batchtypes.ClientException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &clientErr),
+		"Batch client error must be typed as ClientException, got %v", err)
+}
+
+// servicediscovery GetService for a missing id must return HTTP 400 (modeled
+// awsJson1.1 exception) and deserialize to the typed ServiceNotFound.
+func TestConformanceCloudMapServiceNotFoundStatus(t *testing.T) {
+	c := cmClient()
+
+	_, err := c.GetService(ctx, &servicediscovery.GetServiceInput{
+		Id: aws.String("srv-missing000000000"),
+	})
+	require.Error(t, err)
+
+	var svcNotFound *sdtypes.ServiceNotFound
+	require.True(t, errors.As(err, &svcNotFound),
+		"GetService for a missing id must raise ServiceNotFound, got %v", err)
+
+	var respErr *awshttp.ResponseError
+	require.True(t, errors.As(err, &respErr), "expected an HTTP ResponseError, got %v", err)
+	assert.Equal(t, http.StatusBadRequest, respErr.HTTPStatusCode(),
+		"servicediscovery modeled errors must be HTTP 400, not 404")
+}
+
+// CreateWebACL with a name+scope that already exists must raise
+// WAFDuplicateItemException on the second call.
+func TestConformanceWAFv2CreateWebACLDuplicate(t *testing.T) {
+	c := wafClient()
+	name := "conf-dup-acl"
+	visibility := &wafv2types.VisibilityConfig{
+		CloudWatchMetricsEnabled: true,
+		MetricName:               aws.String(name),
+		SampledRequestsEnabled:   true,
+	}
+
+	_, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:             aws.String(name),
+		Scope:            wafv2types.ScopeRegional,
+		DefaultAction:    &wafv2types.DefaultAction{Allow: &wafv2types.AllowAction{}},
+		VisibilityConfig: visibility,
+	})
+	require.NoError(t, err)
+
+	_, err = c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:             aws.String(name),
+		Scope:            wafv2types.ScopeRegional,
+		DefaultAction:    &wafv2types.DefaultAction{Allow: &wafv2types.AllowAction{}},
+		VisibilityConfig: visibility,
+	})
+	var dup *wafv2types.WAFDuplicateItemException
+	require.Error(t, err)
+	require.True(t, errors.As(err, &dup),
+		"CreateWebACL with a duplicate name+scope must raise WAFDuplicateItemException, got %v", err)
 }
