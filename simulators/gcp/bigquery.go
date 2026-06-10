@@ -50,8 +50,17 @@ type BQTable struct {
 	Location         string            `json:"location,omitempty"`
 	CreationTime     string            `json:"creationTime,omitempty"`
 	LastModifiedTime string            `json:"lastModifiedTime,omitempty"`
+	ExpirationTime   string            `json:"expirationTime,omitempty"`
 	NumRows          string            `json:"numRows"`
 	NumBytes         string            `json:"numBytes"`
+	// Nested writable definitions the sim persists verbatim so the
+	// terraform-provider-google read path round-trips without drift.
+	TimePartitioning       json.RawMessage `json:"timePartitioning,omitempty"`
+	RangePartitioning      json.RawMessage `json:"rangePartitioning,omitempty"`
+	Clustering             json.RawMessage `json:"clustering,omitempty"`
+	View                   json.RawMessage `json:"view,omitempty"`
+	MaterializedView       json.RawMessage `json:"materializedView,omitempty"`
+	RequirePartitionFilter *bool           `json:"requirePartitionFilter,omitempty"`
 }
 
 type BQTableRef struct {

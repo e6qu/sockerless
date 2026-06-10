@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -69,9 +70,14 @@ type LoggingMetric struct {
 	Description      string            `json:"description,omitempty"`
 	Filter           string            `json:"filter"`
 	Disabled         bool              `json:"disabled,omitempty"`
+	ValueExtractor   string            `json:"valueExtractor,omitempty"`
+	Version          string            `json:"version,omitempty"`
 	LabelExtractors  map[string]string `json:"labelExtractors,omitempty"`
 	MetricDescriptor map[string]any    `json:"metricDescriptor,omitempty"`
-	BucketName       string            `json:"bucketName,omitempty"`
+	// BucketOptions is a nested writable object the sim persists verbatim
+	// so create→get round-trips byte-exact for distribution metrics.
+	BucketOptions json.RawMessage `json:"bucketOptions,omitempty"`
+	BucketName    string          `json:"bucketName,omitempty"`
 }
 
 // listLogEntries is the shared implementation for listing log entries,

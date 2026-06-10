@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -41,6 +42,9 @@ type PSTopic struct {
 	KmsKeyName               string                  `json:"kmsKeyName,omitempty"`
 	MessageRetentionDuration string                  `json:"messageRetentionDuration,omitempty"`
 	MessageStoragePolicy     *PSMessageStoragePolicy `json:"messageStoragePolicy,omitempty"`
+	// SchemaSettings is a nested writable object the sim persists
+	// verbatim so create→get round-trips byte-exact.
+	SchemaSettings json.RawMessage `json:"schemaSettings,omitempty"`
 }
 
 type PSMessageStoragePolicy struct {
@@ -262,6 +266,7 @@ func handlePSCreateTopic(w http.ResponseWriter, r *http.Request) {
 		KmsKeyName:               req.KmsKeyName,
 		MessageRetentionDuration: req.MessageRetentionDuration,
 		MessageStoragePolicy:     req.MessageStoragePolicy,
+		SchemaSettings:           req.SchemaSettings,
 	}
 	psTopics.Put(t.Name, t)
 	sim.WriteJSON(w, http.StatusOK, t)

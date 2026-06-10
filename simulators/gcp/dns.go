@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -17,12 +18,20 @@ import (
 
 // ManagedZone represents a Cloud DNS managed zone.
 type ManagedZone struct {
-	Name                    string         `json:"name"`
-	DNSName                 string         `json:"dnsName"`
-	Description             string         `json:"description,omitempty"`
-	ID                      string         `json:"id,omitempty"`
-	Visibility              string         `json:"visibility,omitempty"`
-	PrivateVisibilityConfig map[string]any `json:"privateVisibilityConfig,omitempty"`
+	Name                    string            `json:"name"`
+	DNSName                 string            `json:"dnsName"`
+	Description             string            `json:"description,omitempty"`
+	ID                      string            `json:"id,omitempty"`
+	Visibility              string            `json:"visibility,omitempty"`
+	PrivateVisibilityConfig map[string]any    `json:"privateVisibilityConfig,omitempty"`
+	Labels                  map[string]string `json:"labels,omitempty"`
+	// Nested writable configs the sim doesn't otherwise interpret are
+	// stored verbatim so create→get round-trips byte-exact and the
+	// terraform-provider-google read path doesn't perpetually drift.
+	DnssecConfig       json.RawMessage `json:"dnssecConfig,omitempty"`
+	ForwardingConfig   json.RawMessage `json:"forwardingConfig,omitempty"`
+	PeeringConfig      json.RawMessage `json:"peeringConfig,omitempty"`
+	CloudLoggingConfig json.RawMessage `json:"cloudLoggingConfig,omitempty"`
 	// DockerNetworkName is the real Docker user-defined network backing
 	// this private zone. Containers referenced by A records inside the
 	// zone are connected to this network with the record's short name

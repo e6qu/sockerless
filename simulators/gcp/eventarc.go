@@ -22,6 +22,7 @@ type EventarcTrigger struct {
 	Transport            map[string]any         `json:"transport,omitempty"`
 	ServiceAccount       string                 `json:"serviceAccount,omitempty"`
 	EventDataContentType string                 `json:"eventDataContentType,omitempty"`
+	Channel              string                 `json:"channel,omitempty"`
 	Conditions           map[string]any         `json:"conditions,omitempty"`
 	Extra                map[string]interface{} `json:"-"`
 }

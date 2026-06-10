@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1636 filed - 1590 fixed - 7 open - 5 false positives.**
+**1637 filed - 1591 fixed - 7 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1637~~ | P2 | gcp sim — narrow resource structs drop writable fields on get/list round-trip | round-trip drift (same class as BUG-1517) | DNS managedZone (labels/dnssecConfig/forwarding/peering/cloudLogging), BigQuery table (timePartitioning/clustering/rangePartitioning/view/expirationTime/requirePartitionFilter), Pub/Sub topic (schemaSettings), Eventarc trigger (channel), Artifact Registry repository (labels/cleanupPolicies/dockerConfig/kmsKeyName), Secret Manager Secret (ttl/expireTime/rotation/topics/annotations/versionAliases + UpdateSecret 400'd those masks), IAM Binding (condition), Logging metric (valueExtractor/bucketOptions/version) — all accepted on create but dropped on read-back → terraform-provider-google perpetual drift. Fixed: added the fields (json.RawMessage for nested) + UpdateSecret mask support; 8 SDK regression tests in `simulators/gcp/sdk-tests/conformance_roundtrip_test.go`. |
 | ~~1636~~ | P3 | aws sim — list ops ignore the client's explicit page-size/continuation params | pagination fidelity | iam (ListPolicies/ListInstanceProfiles/ListAttachedRolePolicies, hardcoded `IsTruncated=false`), eventbridge (ListRules/ListEventBuses/ListTargetsByRule/ListArchives/ListReplays), batch (ListJobs/DescribeJobDefinitions/DescribeComputeEnvironments/DescribeJobQueues), autoscaling (DescribeAutoScalingGroups/DescribeScalingActivities), application-autoscaling (DescribeScalableTargets/DescribeScalingPolicies), efs (DescribeFileSystems/DescribeAccessPoints/DescribeMountTargets), cloudtrail (LookupEvents) all dumped the full list and ignored MaxResults/MaxItems/MaxRecords + Marker/NextToken → SDK paginators that assert page sizes misbehave on large fleets. Fixed: shared `awsPageExplicit` helper (paginates only when an explicit positive page size is supplied; unset → full list + no token, preserving prior behavior) wired through all 7 surfaces with protocol-correct Marker/IsTruncated (awsQuery) or NextToken/NextMarker; 9 regression tests. |
 | ~~1635~~ | P3 | aws sim wafv2 — CreateWebACL/IPSet/RuleGroup/RegexSet accept duplicate name+scope | error fidelity | No collision check; real WAFv2 returns `WAFDuplicateItemException`. Fixed: `wafWriteDuplicate` + Name+Scope scan on the four create handlers; regression test. |
 | ~~1634~~ | P3 | aws sim cloudmap — NamespaceNotFound/ServiceNotFound/InstanceNotFound return HTTP 404 | error fidelity / wrong status | servicediscovery is awsJson1.1 — modeled errors are HTTP 400 (9 sites used 404). Fixed: 404→400, `__type` codes unchanged (still deserialize to `*types.ServiceNotFound`); regression test. |

@@ -36,6 +36,10 @@ type IAMPolicy struct {
 type IAMBinding struct {
 	Role    string   `json:"role"`
 	Members []string `json:"members"`
+	// Condition is a nested writable object (CEL expression + title)
+	// the sim persists verbatim so setIamPolicy→getIamPolicy round-trips
+	// byte-exact for conditional bindings.
+	Condition json.RawMessage `json:"condition,omitempty"`
 }
 
 // gcpResourcePolicies is the shared IAM policy store for GCP resources
