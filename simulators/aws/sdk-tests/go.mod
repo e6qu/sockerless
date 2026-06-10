@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.42.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.23
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.29
 	github.com/aws/aws-sdk-go-v2/service/acm v1.39.6
 	github.com/aws/aws-sdk-go-v2/service/amplify v1.39.4
@@ -19,9 +19,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.75.2
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.306.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.4
-	github.com/aws/aws-sdk-go-v2/service/ecs v1.82.4
+	github.com/aws/aws-sdk-go-v2/service/ecs v1.83.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.54.3
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.4
