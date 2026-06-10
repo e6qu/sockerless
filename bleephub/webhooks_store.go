@@ -7,14 +7,26 @@ import (
 
 // Webhook represents a GitHub repository webhook.
 type Webhook struct {
-	ID        int       `json:"id"`
-	URL       string    `json:"config_url"`
-	Secret    string    `json:"-"`
-	Events    []string  `json:"events"`
-	Active    bool      `json:"active"`
-	RepoKey   string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          int      `json:"id"`
+	URL         string   `json:"config_url"`
+	Secret      string   `json:"-"`
+	ContentType string   `json:"content_type"`
+	InsecureSSL string   `json:"insecure_ssl"`
+	Events      []string `json:"events"`
+	Active      bool     `json:"active"`
+	RepoKey     string   `json:"-"`
+	// LastResponse mirrors GitHub's hook.last_response: the outcome of the most
+	// recent delivery. Nil until a delivery has occurred (rendered "unused").
+	LastResponse *HookLastResponse `json:"last_response,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+}
+
+// HookLastResponse is the outcome of a webhook's most recent delivery.
+type HookLastResponse struct {
+	Code    int    `json:"code"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 // DeliveryRequest holds the request details of a webhook delivery.
@@ -47,10 +59,11 @@ type WebhookDelivery struct {
 	Response       *DeliveryResponse `json:"response"`
 	Redelivery     bool              `json:"redelivery"`
 	DeliveredAt    time.Time         `json:"delivered_at"`
+	ThrottledAt    *time.Time        `json:"throttled_at"`
 }
 
 // CreateHook creates a new webhook for a repository.
-func (st *Store) CreateHook(repoKey, url, secret string, events []string, active bool) *Webhook {
+func (st *Store) CreateHook(repoKey, url, secret, contentType, insecureSSL string, events []string, active bool) *Webhook {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -58,16 +71,25 @@ func (st *Store) CreateHook(repoKey, url, secret string, events []string, active
 		st.Hooks = make(map[string][]*Webhook)
 	}
 
+	if contentType == "" {
+		contentType = "form"
+	}
+	if insecureSSL == "" {
+		insecureSSL = "0"
+	}
+
 	now := time.Now()
 	hook := &Webhook{
-		ID:        st.NextHookID,
-		URL:       url,
-		Secret:    secret,
-		Events:    events,
-		Active:    active,
-		RepoKey:   repoKey,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          st.NextHookID,
+		URL:         url,
+		Secret:      secret,
+		ContentType: contentType,
+		InsecureSSL: insecureSSL,
+		Events:      events,
+		Active:      active,
+		RepoKey:     repoKey,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	st.NextHookID++
 	st.Hooks[repoKey] = append(st.Hooks[repoKey], hook)
@@ -155,6 +177,22 @@ func (st *Store) AddDelivery(delivery *WebhookDelivery) {
 	st.HookDeliveries[delivery.HookID] = append(st.HookDeliveries[delivery.HookID], delivery)
 	if st.persist != nil {
 		st.persist.MustPut("hook_deliveries", strconv.Itoa(delivery.HookID), st.HookDeliveries[delivery.HookID])
+	}
+}
+
+// SetHookLastResponse records the outcome of a hook's most recent delivery so
+// the hook object's last_response field reflects real delivery results.
+func (st *Store) SetHookLastResponse(repoKey string, hookID int, lr *HookLastResponse) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, h := range st.Hooks[repoKey] {
+		if h.ID == hookID {
+			h.LastResponse = lr
+			if st.persist != nil {
+				st.persist.MustPut("hooks", repoKey, st.Hooks[repoKey])
+			}
+			return
+		}
 	}
 }
 

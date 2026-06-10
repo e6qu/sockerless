@@ -407,6 +407,33 @@ func TestGetAuthenticatedApp(t *testing.T) {
 	if data["pem"] != nil {
 		t.Fatal("PEM should not be in GET /app response")
 	}
+	// GitHub's GET /app has none of these fields.
+	for _, f := range []string{"events_url", "hooks_url", "installations_url"} {
+		if _, present := data[f]; present {
+			t.Errorf("GET /app must not include %q", f)
+		}
+	}
+	// installations_count is a real integer (no installations here → 0).
+	if c, ok := data["installations_count"].(float64); !ok || c != 0 {
+		t.Errorf("installations_count = %v, want 0", data["installations_count"])
+	}
+	// owner is the real owning user (admin), not a hardcoded placeholder.
+	owner, _ := data["owner"].(map[string]interface{})
+	if owner == nil {
+		t.Fatal("missing owner object")
+	}
+	if owner["login"] != "admin" {
+		t.Errorf("owner.login = %v, want admin", owner["login"])
+	}
+	if owner["html_url"] != "https://github.com/admin" {
+		t.Errorf("owner.html_url = %v, want https://github.com/admin", owner["html_url"])
+	}
+	if _, present := owner["node_id"]; !present {
+		t.Error("owner missing node_id")
+	}
+	if _, present := owner["site_admin"]; !present {
+		t.Error("owner missing site_admin")
+	}
 }
 
 func TestGetAuthenticatedAppNoJWT401(t *testing.T) {
@@ -517,6 +544,14 @@ func TestCreateInstallationTokenHTTP(t *testing.T) {
 	}
 	if tokData["expires_at"] == nil {
 		t.Fatal("expected expires_at in response")
+	}
+	// repository_selection reflects the installation (all) when no subset given.
+	if tokData["repository_selection"] != "all" {
+		t.Errorf("repository_selection = %v, want all", tokData["repository_selection"])
+	}
+	// No repository subset requested → no repositories array.
+	if _, present := tokData["repositories"]; present {
+		t.Error("repositories should be absent when no subset requested")
 	}
 }
 

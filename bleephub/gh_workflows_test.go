@@ -263,6 +263,21 @@ func TestWorkflows_Rerun_ViaCachedYAML(t *testing.T) {
 	}
 }
 
+func TestRepositoryDispatchPayload_IncludesBranch(t *testing.T) {
+	repo := &Repo{FullName: "octo/repo", DefaultBranch: "trunk"}
+	user := &User{Login: "octocat"}
+	payload := repositoryDispatchPayload(repo, user, "deploy", map[string]interface{}{"v": "1"})
+	if payload["branch"] != "trunk" {
+		t.Errorf("branch = %v, want trunk (repo default branch)", payload["branch"])
+	}
+	if payload["action"] != "deploy" || payload["event_type"] != "deploy" {
+		t.Errorf("action/event_type mismatch: %v", payload)
+	}
+	if payload["client_payload"] == nil || payload["repository"] == nil || payload["sender"] == nil {
+		t.Errorf("missing standard fields: %v", payload)
+	}
+}
+
 func TestStableWorkflowFileID_Deterministic(t *testing.T) {
 	a := stableWorkflowFileID("octo/repo", ".github/workflows/ci.yml")
 	b := stableWorkflowFileID("octo/repo", ".github/workflows/ci.yml")

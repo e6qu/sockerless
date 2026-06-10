@@ -68,18 +68,26 @@ func (s *Server) handleRepositoryDispatch(w http.ResponseWriter, r *http.Request
 		writeGHValidationError(w, "RepositoryDispatch", "event_type", "missing_field")
 		return
 	}
-	payload := map[string]interface{}{
-		"action":         req.EventType,
-		"event_type":     req.EventType,
-		"client_payload": req.ClientPayload,
-		"repository":     repoPayload(repo),
-		"sender":         senderPayload(user),
-	}
+	payload := repositoryDispatchPayload(repo, user, req.EventType, req.ClientPayload)
 	s.emitWebhookEvent(repo.FullName, "repository_dispatch", req.EventType, attachInstallationBlock(payload, nil))
 	// Trigger any workflow_dispatch-style triggers; for now, real GH also
 	// invokes `repository_dispatch` workflows — wire by event name.
 	go s.triggerWorkflowsForEvent(repo.FullName, "repository_dispatch", "refs/heads/"+repo.DefaultBranch)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// repositoryDispatchPayload builds the repository_dispatch webhook event
+// body. GitHub includes a top-level `branch` (the repo's default branch)
+// alongside action / client_payload / repository / sender.
+func repositoryDispatchPayload(repo *Repo, user *User, eventType string, clientPayload map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"action":         eventType,
+		"event_type":     eventType,
+		"branch":         repo.DefaultBranch,
+		"client_payload": clientPayload,
+		"repository":     repoPayload(repo),
+		"sender":         senderPayload(user),
+	}
 }
 
 // handleRunLogs — returns a zip with one txt file per job. Real GH redirects
@@ -140,11 +148,30 @@ func (s *Server) handleRunTiming(w http.ResponseWriter, r *http.Request) {
 	if !wf.CreatedAt.IsZero() {
 		durationMs = time.Since(wf.CreatedAt).Milliseconds()
 	}
+	// GitHub reports a per-job breakdown under billable.{OS}.job_runs (an
+	// array of {job_id, duration_ms}), not just a count. job_id is the
+	// stable GitHub-shape int64 ID workflowJobJSON exposes.
+	jobRuns := make([]map[string]interface{}, 0, len(wf.Jobs))
+	for _, j := range wf.Jobs {
+		jobMs := int64(0)
+		if !j.StartedAt.IsZero() {
+			end := j.CompletedAt
+			if end.IsZero() {
+				end = time.Now()
+			}
+			jobMs = end.Sub(j.StartedAt).Milliseconds()
+		}
+		jobRuns = append(jobRuns, map[string]interface{}{
+			"job_id":      stableJobID(j.JobID),
+			"duration_ms": jobMs,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"billable": map[string]interface{}{
 			"UBUNTU": map[string]interface{}{
 				"total_ms": durationMs,
 				"jobs":     len(wf.Jobs),
+				"job_runs": jobRuns,
 			},
 		},
 		"run_duration_ms": durationMs,

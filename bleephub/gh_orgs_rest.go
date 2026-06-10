@@ -7,7 +7,10 @@ import (
 
 func (s *Server) registerGHOrgRoutes() {
 	s.route("POST /api/v3/admin/organizations", s.handleAdminCreateOrg)
-	s.route("POST /api/v3/user/orgs", s.handleCreateOrg)
+	// GitHub has no REST endpoint to self-create an org (real creation is the
+	// GHES admin API above or the web UI), so this provisioning convenience is
+	// sim-control under /internal/, not the GitHub namespace.
+	s.route("POST /internal/orgs", s.handleCreateOrg)
 	s.route("GET /api/v3/user/orgs", s.handleListAuthUserOrgs)
 	s.route("GET /api/v3/orgs/{org}", s.handleGetOrg)
 	s.route("PATCH /api/v3/orgs/{org}", s.handleUpdateOrg)

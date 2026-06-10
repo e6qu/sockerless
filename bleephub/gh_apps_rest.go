@@ -136,7 +136,7 @@ func (s *Server) handleManifestConversion(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "App not found")
 		return
 	}
-	writeJSON(w, http.StatusCreated, appToJSON(app, true))
+	writeJSON(w, http.StatusCreated, appToJSON(s.store, app, true))
 }
 
 func (s *Server) handleGetAuthenticatedApp(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func (s *Server) handleGetAuthenticatedApp(w http.ResponseWriter, r *http.Reques
 		writeGHError(w, http.StatusUnauthorized, "A JSON web token could not be decoded")
 		return
 	}
-	writeJSON(w, http.StatusOK, appToJSON(app, false))
+	writeJSON(w, http.StatusOK, appToJSON(s.store, app, false))
 }
 
 func (s *Server) handleListAppInstallations(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +236,25 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 	}
 
 	token := s.store.CreateInstallationToken(inst.ID, app.ID, perms, repoIDs)
-	writeJSON(w, http.StatusCreated, installationTokenToJSON(token))
+
+	// When the token is minted with a specific repository subset, real GitHub
+	// returns repository_selection="selected" and a `repositories` array of the
+	// scoped repos. Resolve the token's repo IDs against the installation's
+	// owned repos.
+	var scopedRepos []*Repo
+	if len(token.RepositoryIDs) > 0 {
+		owned := s.store.ListReposByOwner(inst.TargetLogin)
+		byID := make(map[int]*Repo, len(owned))
+		for _, repo := range owned {
+			byID[repo.ID] = repo
+		}
+		for _, rid := range token.RepositoryIDs {
+			if repo := byID[rid]; repo != nil {
+				scopedRepos = append(scopedRepos, repo)
+			}
+		}
+	}
+	writeJSON(w, http.StatusCreated, installationTokenToJSON(token, inst, scopedRepos, s.baseURL(r)))
 }
 
 func (s *Server) handleDeleteAppInstallation(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +321,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app := s.store.CreateApp(user.ID, req.Name, req.Description, req.Permissions, req.Events)
-	writeJSON(w, http.StatusCreated, appToJSON(app, true))
+	writeJSON(w, http.StatusCreated, appToJSON(s.store, app, true))
 }
 
 func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +364,7 @@ func (s *Server) handleCreateInstallationMgmt(w http.ResponseWriter, r *http.Req
 
 // JSON serializers
 
-func appToJSON(app *App, includePEM bool) map[string]interface{} {
+func appToJSON(st *Store, app *App, includePEM bool) map[string]interface{} {
 	result := map[string]interface{}{
 		"id":                  app.ID,
 		"node_id":             app.NodeID,
@@ -356,21 +374,12 @@ func appToJSON(app *App, includePEM bool) map[string]interface{} {
 		"description":         app.Description,
 		"external_url":        app.ExternalURL,
 		"html_url":            "https://github.com/apps/" + app.Slug,
-		"events_url":          "/api/v3/apps/" + app.Slug + "/events",
-		"hooks_url":           "/api/v3/app/hook/deliveries",
-		"installations_url":   "/api/v3/app/installations",
 		"permissions":         app.Permissions,
 		"events":              app.Events,
-		"installations_count": 0,
+		"installations_count": st.CountAppInstallations(app.ID),
 		"created_at":          app.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":          app.UpdatedAt.UTC().Format(time.RFC3339),
-		"owner": map[string]interface{}{
-			"login":      "admin",
-			"id":         app.OwnerID,
-			"type":       "User",
-			"html_url":   "/admin",
-			"avatar_url": "",
-		},
+		"owner":               appOwnerJSON(st, app),
 	}
 	if includePEM {
 		result["pem"] = app.PEMPrivateKey
@@ -378,6 +387,37 @@ func appToJSON(app *App, includePEM bool) map[string]interface{} {
 		result["webhook_secret"] = app.WebhookSecret
 	}
 	return result
+}
+
+// appOwnerJSON serializes the GitHub App's owning account as a Simple User,
+// matching the `owner` object real GitHub returns on GET /app and
+// GET /apps/{slug}. Resolves the real user by app.OwnerID.
+func appOwnerJSON(st *Store, app *App) map[string]interface{} {
+	st.mu.RLock()
+	owner := st.Users[app.OwnerID]
+	st.mu.RUnlock()
+	if owner == nil {
+		// Owner record missing: still return a well-formed object keyed on
+		// the recorded OwnerID so the shape is never empty.
+		return map[string]interface{}{
+			"login":      "",
+			"id":         app.OwnerID,
+			"node_id":    "",
+			"avatar_url": "",
+			"html_url":   "https://github.com/",
+			"type":       "User",
+			"site_admin": false,
+		}
+	}
+	return map[string]interface{}{
+		"login":      owner.Login,
+		"id":         owner.ID,
+		"node_id":    owner.NodeID,
+		"avatar_url": owner.AvatarURL,
+		"html_url":   "https://github.com/" + owner.Login,
+		"type":       "User",
+		"site_admin": owner.SiteAdmin,
+	}
 }
 
 func installationToJSON(inst *Installation) map[string]interface{} {
@@ -425,12 +465,30 @@ func installationToJSON(inst *Installation) map[string]interface{} {
 	return out
 }
 
-func installationTokenToJSON(token *InstallationToken) map[string]interface{} {
-	return map[string]interface{}{
-		"token":       token.Token,
-		"expires_at":  token.ExpiresAt.UTC().Format(time.RFC3339),
-		"permissions": token.Permissions,
+func installationTokenToJSON(token *InstallationToken, inst *Installation, scopedRepos []*Repo, baseURL string) map[string]interface{} {
+	// repository_selection reflects the token's effective scope: "selected"
+	// when minted with a repository subset, otherwise the installation's.
+	selection := ""
+	if inst != nil {
+		selection = inst.RepositorySelection
 	}
+	if len(token.RepositoryIDs) > 0 {
+		selection = "selected"
+	}
+	out := map[string]interface{}{
+		"token":                token.Token,
+		"expires_at":           token.ExpiresAt.UTC().Format(time.RFC3339),
+		"permissions":          token.Permissions,
+		"repository_selection": selection,
+	}
+	if len(token.RepositoryIDs) > 0 {
+		repoJSON := make([]map[string]interface{}, 0, len(scopedRepos))
+		for _, repo := range scopedRepos {
+			repoJSON = append(repoJSON, repoToJSON(repo, baseURL))
+		}
+		out["repositories"] = repoJSON
+	}
+	return out
 }
 
 // handleListUserInstallations — GET /api/v3/user/installations.
@@ -508,7 +566,7 @@ func (s *Server) handleGetAppBySlug(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, appToJSON(app, false))
+	writeJSON(w, http.StatusOK, appToJSON(s.store, app, false))
 }
 
 // handleSuspendInstallation — PUT /api/v3/app/installations/{id}/suspended.

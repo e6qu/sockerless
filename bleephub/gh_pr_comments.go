@@ -270,8 +270,10 @@ func (s *Server) registerGHPRCommentsRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
 		s.requirePerm(scopePullRequests, permWrite, s.handleReplyPRComment))
 
-	// `/pulls/{number}/review-threads` (3 segments, literal at pos 3)
-	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/review-threads",
+	// Listing review threads has no REST equivalent on real GitHub (GraphQL
+	// only), so it lives under /internal/ alongside the resolve/unresolve
+	// conveniences rather than faking a GitHub REST path.
+	s.route("GET /internal/repos/{owner}/{repo}/pulls/{number}/review-threads",
 		s.handleListReviewThreads)
 
 	// `/pulls/comments/{comment_id}` — single-review-comment surface.

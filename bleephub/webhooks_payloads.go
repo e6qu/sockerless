@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"encoding/base64"
 	"fmt"
 	"time"
 )
@@ -14,21 +15,29 @@ func attachInstallationBlock(payload map[string]interface{}, inst *Installation)
 	}
 	payload["installation"] = map[string]interface{}{
 		"id":      inst.ID,
-		"node_id": fmt.Sprintf("MDIzOkluc3RhbGxhdGlvbiVk%d", inst.ID),
+		"node_id": installationNodeID(inst.ID),
 	}
 	return payload
 }
 
-// buildInstallationEventPayload builds the top-level `installation` event payload
+// installationNodeID returns the GraphQL global node id for an installation,
+// matching GitHub's scheme: base64 of the literal "012:Installation{id}".
+func installationNodeID(id int) string {
+	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("012:Installation%d", id)))
+}
+
+// buildInstallationEventPayload builds the `installation` event payload
 // (action: created | deleted | suspend | unsuspend | new_permissions_accepted).
-func buildInstallationEventPayload(app *App, action string, inst *Installation, sender *User) map[string]interface{} {
+// The app argument is retained for call-site symmetry with the other event
+// builders; the app's identity is carried inside the installation object
+// (app_id/app_slug), not as a top-level key, matching GitHub's wire shape.
+func buildInstallationEventPayload(_ *App, action string, inst *Installation, sender *User) map[string]interface{} {
 	repos := []map[string]interface{}{}
 	return map[string]interface{}{
 		"action":       action,
 		"installation": installationToJSON(inst),
 		"repositories": repos,
 		"sender":       senderPayload(sender),
-		"app_id":       app.ID,
 	}
 }
 
@@ -191,12 +200,30 @@ func repoPayload(repo *Repo) map[string]interface{} {
 
 func senderPayload(user *User) map[string]interface{} {
 	if user == nil {
-		return nil
+		// GitHub guarantees `sender` is always a populated user object. Events
+		// with no originating user (e.g. system-driven pushes) fall back to the
+		// deterministic "ghost" actor GitHub uses for absent accounts.
+		return ghostSenderPayload()
+	}
+	t := user.Type
+	if t == "" {
+		t = "User"
 	}
 	return map[string]interface{}{
 		"login":      user.Login,
 		"id":         user.ID,
-		"type":       user.Type,
+		"type":       t,
 		"avatar_url": user.AvatarURL,
+	}
+}
+
+// ghostSenderPayload returns GitHub's "ghost" deleted-user actor, used as the
+// sender for events that have no originating user account.
+func ghostSenderPayload() map[string]interface{} {
+	return map[string]interface{}{
+		"login":      "ghost",
+		"id":         10137,
+		"type":       "User",
+		"avatar_url": "",
 	}
 }

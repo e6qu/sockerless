@@ -237,6 +237,134 @@ func cacheLookup(t *testing.T, s *Server, token, keys, version string) *httptest
 	return w
 }
 
+func seedFinalizedCache(s *Server, id int64, repo, key, version string, size int64) {
+	s.artifactStore.mu.Lock()
+	entry := &CacheEntry{
+		ID: id, Repo: repo, Key: key, Version: version,
+		Size: size, Data: make([]byte, size), Finalized: true, CreatedAt: time.Now(),
+	}
+	s.artifactStore.caches[id] = entry
+	s.artifactStore.cacheIndex[cacheLookupKey(repo, key, version)] = id
+	if id >= s.artifactStore.nextCacheID {
+		s.artifactStore.nextCacheID = id + 1
+	}
+	s.artifactStore.mu.Unlock()
+}
+
+func TestRepoCaches_ListAndUsage(t *testing.T) {
+	s := newTestServer()
+	s.registerArtifactRoutes()
+	seedFinalizedCache(s, 1, "octo/repo", "linux-go-main", "abc", 100)
+	seedFinalizedCache(s, 2, "octo/repo", "linux-node", "def", 50)
+	seedFinalizedCache(s, 3, "other/repo", "x", "y", 999)
+
+	w := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/caches")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var list struct {
+		TotalCount    int `json:"total_count"`
+		ActionsCaches []struct {
+			ID          int64  `json:"id"`
+			Key         string `json:"key"`
+			Version     string `json:"version"`
+			Ref         string `json:"ref"`
+			SizeInBytes int64  `json:"size_in_bytes"`
+			CreatedAt   string `json:"created_at"`
+			LastAccess  string `json:"last_accessed_at"`
+		} `json:"actions_caches"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if list.TotalCount != 2 || len(list.ActionsCaches) != 2 {
+		t.Fatalf("list count = %d/%d, want 2 (other/repo filtered out)", list.TotalCount, len(list.ActionsCaches))
+	}
+	if list.ActionsCaches[0].Key != "linux-go-main" || list.ActionsCaches[0].SizeInBytes != 100 {
+		t.Errorf("cache[0] = %+v", list.ActionsCaches[0])
+	}
+	if list.ActionsCaches[0].Ref == "" || list.ActionsCaches[0].LastAccess == "" {
+		t.Errorf("cache[0] missing ref/last_accessed_at: %+v", list.ActionsCaches[0])
+	}
+
+	// key filter
+	wf := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/caches?key=linux-node")
+	var filtered struct {
+		TotalCount int `json:"total_count"`
+	}
+	json.Unmarshal(wf.Body.Bytes(), &filtered)
+	if filtered.TotalCount != 1 {
+		t.Errorf("key filter total_count = %d, want 1", filtered.TotalCount)
+	}
+
+	usage := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/cache/usage")
+	if usage.Code != http.StatusOK {
+		t.Fatalf("usage status = %d", usage.Code)
+	}
+	var u struct {
+		FullName string `json:"full_name"`
+		Size     int64  `json:"active_caches_size_in_bytes"`
+		Count    int    `json:"active_caches_count"`
+	}
+	json.Unmarshal(usage.Body.Bytes(), &u)
+	if u.FullName != "octo/repo" || u.Size != 150 || u.Count != 2 {
+		t.Errorf("usage = %+v, want full_name=octo/repo size=150 count=2", u)
+	}
+}
+
+func TestRepoCaches_DeleteByID(t *testing.T) {
+	s := newTestServer()
+	s.registerArtifactRoutes()
+	seedFinalizedCache(s, 1, "octo/repo", "k", "v", 10)
+
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/caches/1")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+	s.artifactStore.mu.RLock()
+	_, exists := s.artifactStore.caches[1]
+	s.artifactStore.mu.RUnlock()
+	if exists {
+		t.Error("cache 1 should be deleted")
+	}
+
+	missing := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/caches/999")
+	if missing.Code != http.StatusNotFound {
+		t.Errorf("delete missing status = %d, want 404", missing.Code)
+	}
+}
+
+func TestRepoCaches_DeleteByKey(t *testing.T) {
+	s := newTestServer()
+	s.registerArtifactRoutes()
+	seedFinalizedCache(s, 1, "octo/repo", "shared", "v1", 10)
+	seedFinalizedCache(s, 2, "octo/repo", "shared", "v2", 20)
+	seedFinalizedCache(s, 3, "octo/repo", "other", "v1", 5)
+
+	w := runAuthedRequest(s, "DELETE", "/api/v3/repos/octo/repo/actions/caches?key=shared")
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete-by-key status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		TotalCount    int `json:"total_count"`
+		ActionsCaches []struct {
+			Key string `json:"key"`
+		} `json:"actions_caches"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.TotalCount != 2 || len(resp.ActionsCaches) != 2 {
+		t.Fatalf("deleted = %d, want 2", resp.TotalCount)
+	}
+	s.artifactStore.mu.RLock()
+	remaining := len(s.artifactStore.caches)
+	s.artifactStore.mu.RUnlock()
+	if remaining != 1 {
+		t.Errorf("remaining caches = %d, want 1 (the 'other' key)", remaining)
+	}
+}
+
 func TestCacheRoundTrip(t *testing.T) {
 	s := newTestServer()
 	token := seedCacheRunJob(t, s, "octo/round-trip")

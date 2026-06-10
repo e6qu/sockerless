@@ -29,14 +29,23 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
 
 	var req struct {
+		Name   string `json:"name"`
 		Config struct {
-			URL    string `json:"url"`
-			Secret string `json:"secret"`
+			URL         string      `json:"url"`
+			Secret      string      `json:"secret"`
+			ContentType string      `json:"content_type"`
+			InsecureSSL interface{} `json:"insecure_ssl"`
 		} `json:"config"`
 		Events []string  `json:"events"`
 		Active *flexBool `json:"active"`
 	}
 	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	// GitHub only supports the "web" hook type via the REST API.
+	if req.Name != "" && req.Name != "web" {
+		writeGHValidationError(w, "Hook", "name", "invalid")
 		return
 	}
 
@@ -54,7 +63,8 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 		active = bool(*req.Active)
 	}
 
-	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret, events, active)
+	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret,
+		req.Config.ContentType, normalizeInsecureSSL(req.Config.InsecureSSL), events, active)
 	s.recordAuditEvent("hook.create", user.Login, "", map[string]interface{}{"repo": repoKey, "hook_id": hook.ID})
 	writeJSON(w, http.StatusCreated, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
@@ -115,14 +125,22 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		Name   string `json:"name"`
 		Config *struct {
-			URL    string `json:"url"`
-			Secret string `json:"secret"`
+			URL         string      `json:"url"`
+			Secret      string      `json:"secret"`
+			ContentType string      `json:"content_type"`
+			InsecureSSL interface{} `json:"insecure_ssl"`
 		} `json:"config"`
 		Events []string  `json:"events"`
 		Active *flexBool `json:"active"`
 	}
 	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Name != "" && req.Name != "web" {
+		writeGHValidationError(w, "Hook", "name", "invalid")
 		return
 	}
 
@@ -133,6 +151,12 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 			}
 			if req.Config.Secret != "" {
 				h.Secret = req.Config.Secret
+			}
+			if req.Config.ContentType != "" {
+				h.ContentType = req.Config.ContentType
+			}
+			if ssl := normalizeInsecureSSL(req.Config.InsecureSSL); ssl != "" {
+				h.InsecureSSL = ssl
 			}
 		}
 		if req.Events != nil {
@@ -312,9 +336,11 @@ func (s *Server) handleRedeliverHookDelivery(w http.ResponseWriter, r *http.Requ
 	go func() {
 		delivery := s.doDeliverAttempt(hook, original.Event, original.Action, original.GUID, payloadBytes, true)
 		s.store.AddDelivery(delivery)
+		if hook.RepoKey != "" {
+			s.store.SetHookLastResponse(hook.RepoKey, hook.ID, deliveryLastResponse(delivery))
+		}
 	}()
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": deliveryID, "redelivery": true})
 }
 
 // hookToJSON serialises a Webhook to GitHub's published hook object shape.
@@ -322,6 +348,16 @@ func (s *Server) handleRedeliverHookDelivery(w http.ResponseWriter, r *http.Requ
 func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]interface{} {
 	base := "http://" + r.Host
 	hookBase := base + "/api/v3/repos/" + owner + "/" + repo + "/hooks/" + strconv.Itoa(h.ID)
+
+	contentType := h.ContentType
+	if contentType == "" {
+		contentType = "form"
+	}
+	insecureSSL := h.InsecureSSL
+	if insecureSSL == "" {
+		insecureSSL = "0"
+	}
+
 	return map[string]interface{}{
 		"type":   "Repository",
 		"id":     h.ID,
@@ -330,8 +366,8 @@ func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]inte
 		"events": h.Events,
 		"config": map[string]interface{}{
 			"url":          h.URL,
-			"content_type": "json",
-			"insecure_ssl": "0",
+			"content_type": contentType,
+			"insecure_ssl": insecureSSL,
 		},
 		"updated_at":     h.UpdatedAt.UTC().Format(time.RFC3339),
 		"created_at":     h.CreatedAt.UTC().Format(time.RFC3339),
@@ -339,11 +375,46 @@ func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]inte
 		"test_url":       hookBase + "/test",
 		"ping_url":       hookBase + "/pings",
 		"deliveries_url": hookBase + "/deliveries",
-		"last_response": map[string]interface{}{
+		"last_response":  hookLastResponseJSON(h.LastResponse),
+	}
+}
+
+// hookLastResponseJSON renders the hook's last_response field. Before any
+// delivery has occurred GitHub returns {code:null,status:"unused",message:null}.
+func hookLastResponseJSON(lr *HookLastResponse) map[string]interface{} {
+	if lr == nil {
+		return map[string]interface{}{
 			"code":    nil,
 			"status":  "unused",
 			"message": nil,
-		},
+		}
+	}
+	return map[string]interface{}{
+		"code":    lr.Code,
+		"status":  lr.Status,
+		"message": lr.Message,
+	}
+}
+
+// normalizeInsecureSSL coerces GitHub's insecure_ssl config value (which clients
+// send as either a string "0"/"1" or a JSON number 0/1) to the canonical
+// string form. Returns "" when unset so callers can preserve the stored value.
+func normalizeInsecureSSL(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		if t == 1 {
+			return "1"
+		}
+		return "0"
+	case bool:
+		if t {
+			return "1"
+		}
+		return "0"
+	default:
+		return ""
 	}
 }
 
@@ -359,7 +430,7 @@ func deliveryStatus(statusCode int) string {
 }
 
 func deliveryToJSON(d *WebhookDelivery) map[string]interface{} {
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"id":              d.ID,
 		"guid":            d.GUID,
 		"delivered_at":    d.DeliveredAt.UTC().Format(time.RFC3339),
@@ -368,9 +439,29 @@ func deliveryToJSON(d *WebhookDelivery) map[string]interface{} {
 		"status":          deliveryStatus(d.StatusCode),
 		"status_code":     d.StatusCode,
 		"event":           d.Event,
-		"action":          d.Action,
-		"installation_id": d.InstallationID,
-		"repository_id":   d.RepositoryID,
-		"url":             d.TargetURL,
+		"action":          nullableString(d.Action),
+		"installation_id": nullableInt(d.InstallationID),
+		"repository_id":   nullableInt(d.RepositoryID),
+		"throttled_at":    nil,
 	}
+	if d.ThrottledAt != nil {
+		out["throttled_at"] = d.ThrottledAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// nullableInt renders 0 as JSON null (GitHub emits unset nullable ids as null).
+func nullableInt(v int) interface{} {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// nullableString renders "" as JSON null.
+func nullableString(v string) interface{} {
+	if v == "" {
+		return nil
+	}
+	return v
 }

@@ -33,7 +33,12 @@ func TestInstallationCreatedFiresAppWebhook(t *testing.T) {
 		raw, _ := bytesReadAll(r)
 		_ = json.Unmarshal(raw, &body)
 		hasInst := body["installation"] != nil
-		appID, _ := body["app_id"].(float64)
+		// app_id is a field of the installation object (real GitHub), not a
+		// top-level key on the installation event payload.
+		var appID float64
+		if inst, ok := body["installation"].(map[string]any); ok {
+			appID, _ = inst["app_id"].(float64)
+		}
 		got <- capture{
 			event:       r.Header.Get("X-GitHub-Event"),
 			hookID:      r.Header.Get("X-GitHub-Hook-ID"),
@@ -100,7 +105,7 @@ func TestInstallationCreatedFiresAppWebhook(t *testing.T) {
 			t.Error("payload missing installation block")
 		}
 		if c.appID != float64(app.ID) {
-			t.Errorf("payload.app_id = %v, want %d", c.appID, app.ID)
+			t.Errorf("installation.app_id = %v, want %d", c.appID, app.ID)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for webhook delivery")

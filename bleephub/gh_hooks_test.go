@@ -106,6 +106,13 @@ func assertHookShape(t *testing.T, h hookResp, targetURL string) {
 	if !ok || cfg != targetURL {
 		t.Errorf("config.url = %v, want %q", cfg, targetURL)
 	}
+	// content_type and insecure_ssl must always round-trip (Terraform reads them).
+	if _, ok := h.Config["content_type"]; !ok {
+		t.Error("config.content_type must be present")
+	}
+	if _, ok := h.Config["insecure_ssl"]; !ok {
+		t.Error("config.insecure_ssl must be present")
+	}
 	if h.CreatedAt == "" {
 		t.Error("created_at must be present")
 	}
@@ -290,20 +297,24 @@ func TestHooks_Ping(t *testing.T) {
 	}
 
 	d := deliveries[0]
-	// Required fields per GitHub's schema.
-	for _, field := range []string{"id", "guid", "delivered_at", "redelivery", "duration", "status", "status_code", "event", "action", "url"} {
+	// Required fields per GitHub's delivery-summary schema. The summary carries
+	// throttled_at but NOT url (only the full GET delivery object has url).
+	for _, field := range []string{"id", "guid", "delivered_at", "redelivery", "duration", "status", "status_code", "event", "action", "throttled_at"} {
 		if _, ok := d[field]; !ok {
 			t.Errorf("delivery missing required field %q", field)
 		}
+	}
+	if _, ok := d["url"]; ok {
+		t.Error("delivery summary must NOT contain 'url' (only the full delivery object does)")
+	}
+	if d["throttled_at"] != nil {
+		t.Errorf("throttled_at = %v, want null for an un-throttled delivery", d["throttled_at"])
 	}
 	if d["event"] != "ping" {
 		t.Errorf("event = %v, want ping", d["event"])
 	}
 	if d["status"] != "OK" {
 		t.Errorf("status = %v, want OK", d["status"])
-	}
-	if d["url"] != target.URL+"/hook" {
-		t.Errorf("url = %v, want %s/hook", d["url"], target.URL)
 	}
 
 	// GetDelivery — verify full delivery includes request + response.
@@ -324,6 +335,10 @@ func TestHooks_Ping(t *testing.T) {
 	}
 	if _, ok := full["response"]; !ok {
 		t.Error("full delivery must include 'response'")
+	}
+	// Unlike the summary, the full delivery object DOES carry url.
+	if full["url"] != target.URL+"/hook" {
+		t.Errorf("full delivery url = %v, want %s/hook", full["url"], target.URL)
 	}
 }
 
@@ -434,5 +449,197 @@ func TestHooks_ValidationError(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("missing url: got %d, want 422", resp.StatusCode)
+	}
+}
+
+// TestHooks_ConfigContentTypeRoundTrip verifies config.content_type and
+// config.insecure_ssl default correctly and round-trip through create + update,
+// the contract Terraform's github_repository_webhook relies on for idempotency.
+func TestHooks_ConfigContentTypeRoundTrip(t *testing.T) {
+	repo := "admin/hooks-config-roundtrip"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "hooks-config-roundtrip",
+	}).Body.Close()
+
+	// Create with no content_type/insecure_ssl → GitHub defaults (form / "0").
+	resp := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": "http://example.com/hook"},
+		"events": []string{"push"},
+		"active": true,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		resp.Body.Close()
+		t.Fatalf("create: got %d", resp.StatusCode)
+	}
+	h := decodeHook(t, resp)
+	if h.Config["content_type"] != "form" {
+		t.Errorf("default content_type = %v, want form", h.Config["content_type"])
+	}
+	if h.Config["insecure_ssl"] != "0" {
+		t.Errorf("default insecure_ssl = %v, want \"0\"", h.Config["insecure_ssl"])
+	}
+
+	// Create with explicit values → echoed back verbatim.
+	resp2 := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{
+			"url":          "http://example.com/hook2",
+			"content_type": "json",
+			"insecure_ssl": "1",
+		},
+		"events": []string{"push"},
+	})
+	if resp2.StatusCode != http.StatusCreated {
+		resp2.Body.Close()
+		t.Fatalf("create2: got %d", resp2.StatusCode)
+	}
+	h2 := decodeHook(t, resp2)
+	if h2.Config["content_type"] != "json" {
+		t.Errorf("content_type = %v, want json", h2.Config["content_type"])
+	}
+	if h2.Config["insecure_ssl"] != "1" {
+		t.Errorf("insecure_ssl = %v, want \"1\"", h2.Config["insecure_ssl"])
+	}
+
+	// GET round-trips the stored values.
+	getResp := ghGet(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(h2.ID), defaultToken)
+	got := decodeHook(t, getResp)
+	if got.Config["content_type"] != "json" || got.Config["insecure_ssl"] != "1" {
+		t.Errorf("GET config = %v, want json/1", got.Config)
+	}
+
+	// PATCH back to form/0 and confirm.
+	patchResp := ghPatch(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(h2.ID), defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{
+			"url":          "http://example.com/hook2",
+			"content_type": "form",
+			"insecure_ssl": "0",
+		},
+	})
+	patched := decodeHook(t, patchResp)
+	if patched.Config["content_type"] != "form" || patched.Config["insecure_ssl"] != "0" {
+		t.Errorf("patched config = %v, want form/0", patched.Config)
+	}
+}
+
+// TestHooks_NameValidation verifies the optional `name` field must equal "web".
+func TestHooks_NameValidation(t *testing.T) {
+	repo := "admin/hooks-name-validation"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "hooks-name-validation",
+	}).Body.Close()
+
+	// name=web is accepted.
+	ok := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"name":   "web",
+		"config": map[string]interface{}{"url": "http://example.com/hook"},
+		"events": []string{"push"},
+	})
+	if ok.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(ok.Body)
+		ok.Body.Close()
+		t.Fatalf("name=web: got %d: %s", ok.StatusCode, body)
+	}
+	ok.Body.Close()
+
+	// A non-"web" name is rejected with 422.
+	bad := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"name":   "slack",
+		"config": map[string]interface{}{"url": "http://example.com/hook"},
+		"events": []string{"push"},
+	})
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("name=slack: got %d, want 422", bad.StatusCode)
+	}
+}
+
+// TestHooks_LastResponseAfterDelivery verifies hook.last_response is "unused"
+// before any delivery and reflects the delivery outcome afterwards.
+func TestHooks_LastResponseAfterDelivery(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	repo := "admin/hooks-last-response"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "hooks-last-response",
+	}).Body.Close()
+
+	resp := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": target.URL + "/hook"},
+		"events": []string{"push"},
+		"active": true,
+	})
+	created := decodeHook(t, resp)
+	hookID := created.ID
+
+	// Before any delivery → unused.
+	if created.LastResponse["status"] != "unused" {
+		t.Errorf("pre-delivery last_response.status = %v, want unused", created.LastResponse["status"])
+	}
+
+	// Ping triggers a successful delivery.
+	ghPost(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/pings", defaultToken, nil).Body.Close()
+	pollDeliveries(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/deliveries", 1)
+
+	// Poll the hook until last_response reflects the OK delivery.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got := decodeHook(t, ghGet(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID), defaultToken))
+		if got.LastResponse["status"] == "OK" {
+			if code, _ := got.LastResponse["code"].(float64); int(code) != 200 {
+				t.Errorf("last_response.code = %v, want 200", got.LastResponse["code"])
+			}
+			if got.LastResponse["message"] != "OK" {
+				t.Errorf("last_response.message = %v, want OK", got.LastResponse["message"])
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("last_response never reflected the OK delivery within 3s")
+}
+
+// TestHooks_RedeliverEmptyBody verifies the redeliver endpoint returns 202 with
+// no synthetic {id,redelivery} JSON body (GitHub returns a minimal/empty body).
+func TestHooks_RedeliverEmptyBody(t *testing.T) {
+	delivered := make(chan struct{}, 4)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		delivered <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	repo := "admin/hooks-redeliver-body"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "hooks-redeliver-body",
+	}).Body.Close()
+
+	resp := ghPost(t, "/api/v3/repos/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": target.URL + "/hook"},
+		"events": []string{"push"},
+		"active": true,
+	})
+	hookID := decodeHook(t, resp).ID
+
+	ghPost(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/pings", defaultToken, nil).Body.Close()
+	<-delivered
+	deliveries := pollDeliveries(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/deliveries", 1)
+	dlID := int(deliveries[0]["id"].(float64))
+
+	redeliver := ghPost(t,
+		"/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/deliveries/"+strconv.Itoa(dlID)+"/attempts",
+		defaultToken, nil)
+	if redeliver.StatusCode != http.StatusAccepted {
+		redeliver.Body.Close()
+		t.Fatalf("redeliver: got %d, want 202", redeliver.StatusCode)
+	}
+	body, _ := io.ReadAll(redeliver.Body)
+	redeliver.Body.Close()
+	if strings.TrimSpace(string(body)) != "" {
+		t.Errorf("redeliver body = %q, want empty", body)
 	}
 }

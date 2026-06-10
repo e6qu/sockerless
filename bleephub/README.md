@@ -100,7 +100,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, GraphQL counterparts.
 
-**PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. `GET /pulls/{n}/review-threads` returns threads with `isResolved`. REST helpers for resolve/unresolve (`/pulls/{n}/review-threads/{tid}/{resolve|unresolve}`). Reactions on review comments.
+**PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing + resolve/unresolve have no GitHub REST equivalent (GraphQL-only on real GitHub: `resolveReviewThread`/`unresolveReviewThread`), so bleephub exposes them as sim-control helpers under `/internal/repos/{o}/{r}/pulls/{n}/review-threads[/{tid}/{resolve|unresolve}]`, not the GitHub namespace.
 
 **Reactions.** Eight content values (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`). Idempotent POST. Surfaces: issues, issue comments, PR review comments, commit comments, releases. `reactions{url, total_count, +1, ...}` block embedded on parent JSON.
 

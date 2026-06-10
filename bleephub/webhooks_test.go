@@ -3,6 +3,7 @@ package bleephub
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -209,6 +210,13 @@ func TestWebhookDeliverySuccess(t *testing.T) {
 	}
 	if lastHeaders.Get("User-Agent") != "GitHub-Hookshot/bleephub" {
 		t.Fatalf("expected User-Agent=GitHub-Hookshot/bleephub, got %s", lastHeaders.Get("User-Agent"))
+	}
+	// Repository hooks carry the installation-target headers identifying the repo.
+	if tt := lastHeaders.Get("X-GitHub-Hook-Installation-Target-Type"); tt != "repository" {
+		t.Errorf("Target-Type = %q, want repository", tt)
+	}
+	if lastHeaders.Get("X-GitHub-Hook-Installation-Target-ID") == "" {
+		t.Error("repository hook must set X-GitHub-Hook-Installation-Target-ID to the repo id")
 	}
 
 	// Verify HMAC
@@ -627,6 +635,73 @@ func TestWebhookInactiveSkipped(t *testing.T) {
 
 	if received.Load() != 0 {
 		t.Fatalf("expected 0 deliveries for inactive webhook, got %d", received.Load())
+	}
+}
+
+// TestInstallationNodeID verifies the installation node_id is a valid base64
+// GraphQL global id that round-trips to "012:Installation{id}".
+func TestInstallationNodeID(t *testing.T) {
+	for _, id := range []int{1, 42, 9999} {
+		got := installationNodeID(id)
+		raw, err := base64.StdEncoding.DecodeString(got)
+		if err != nil {
+			t.Fatalf("id=%d node_id %q is not valid base64: %v", id, got, err)
+		}
+		want := fmt.Sprintf("012:Installation%d", id)
+		if string(raw) != want {
+			t.Errorf("id=%d decoded = %q, want %q", id, raw, want)
+		}
+	}
+}
+
+// TestAttachInstallationBlockNodeID confirms the installation block carries the
+// valid base64 node_id (not the old malformed concatenated form).
+func TestAttachInstallationBlockNodeID(t *testing.T) {
+	out := attachInstallationBlock(map[string]interface{}{}, &Installation{ID: 7})
+	inst, ok := out["installation"].(map[string]interface{})
+	if !ok {
+		t.Fatal("installation block missing")
+	}
+	nodeID, _ := inst["node_id"].(string)
+	if _, err := base64.StdEncoding.DecodeString(nodeID); err != nil {
+		t.Errorf("installation.node_id %q is not valid base64: %v", nodeID, err)
+	}
+}
+
+// TestInstallationEventHasNoTopLevelAppID verifies GitHub's installation event
+// shape: action/installation/repositories/sender, with NO top-level app_id.
+func TestInstallationEventHasNoTopLevelAppID(t *testing.T) {
+	app := &App{ID: 99}
+	inst := &Installation{ID: 7, AppID: 99}
+	payload := buildInstallationEventPayload(app, "created", inst, &User{Login: "octocat", ID: 5, Type: "User"})
+	if _, ok := payload["app_id"]; ok {
+		t.Error("installation event must NOT have a top-level app_id")
+	}
+	for _, k := range []string{"action", "installation", "repositories", "sender"} {
+		if _, ok := payload[k]; !ok {
+			t.Errorf("installation event missing %q", k)
+		}
+	}
+}
+
+// TestSenderPayloadNeverNil verifies a nil originating user yields a populated
+// ghost sender object, never JSON null.
+func TestSenderPayloadNeverNil(t *testing.T) {
+	got := senderPayload(nil)
+	if got == nil {
+		t.Fatal("senderPayload(nil) returned nil; GitHub guarantees a populated sender")
+	}
+	if got["login"] != "ghost" {
+		t.Errorf("nil sender login = %v, want ghost", got["login"])
+	}
+	if got["type"] != "User" {
+		t.Errorf("nil sender type = %v, want User", got["type"])
+	}
+
+	// A real user is rendered faithfully.
+	u := senderPayload(&User{Login: "octocat", ID: 5, Type: "User", AvatarURL: "http://a"})
+	if u["login"] != "octocat" || u["id"] != 5 {
+		t.Errorf("user sender = %v", u)
 	}
 }
 

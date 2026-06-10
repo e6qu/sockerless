@@ -205,7 +205,7 @@ func TestOpenAPIUser(t *testing.T) {
 }
 
 func TestOpenAPIOrg(t *testing.T) {
-	ghPost(t, "/api/v3/user/orgs", defaultToken, map[string]interface{}{
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login": fmt.Sprintf("oa-org-%d", time.Now().UnixNano()),
 		"name":  "OpenAPI Org",
 	}).Body.Close()

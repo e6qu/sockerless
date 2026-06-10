@@ -15,24 +15,26 @@ import (
 
 // App represents a registered GitHub App.
 type App struct {
-	ID            int               `json:"id"`
-	NodeID        string            `json:"node_id"`
-	Slug          string            `json:"slug"`
-	Name          string            `json:"name"`
-	ClientID      string            `json:"client_id"`
-	ClientSecret  string            `json:"-"`
-	Description   string            `json:"description"`
-	ExternalURL   string            `json:"external_url"`
-	WebhookURL    string            `json:"-"`
-	WebhookSecret string            `json:"-"`
-	WebhookActive bool              `json:"-"`
-	WebhookEvents []string          `json:"-"`
-	PEMPrivateKey string            `json:"-"`
-	Permissions   map[string]string `json:"permissions"`
-	Events        []string          `json:"events"`
-	OwnerID       int               `json:"owner_id"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID                 int               `json:"id"`
+	NodeID             string            `json:"node_id"`
+	Slug               string            `json:"slug"`
+	Name               string            `json:"name"`
+	ClientID           string            `json:"client_id"`
+	ClientSecret       string            `json:"-"`
+	Description        string            `json:"description"`
+	ExternalURL        string            `json:"external_url"`
+	WebhookURL         string            `json:"-"`
+	WebhookSecret      string            `json:"-"`
+	WebhookActive      bool              `json:"-"`
+	WebhookEvents      []string          `json:"-"`
+	WebhookContentType string            `json:"-"` // "json" | "form" (default "form")
+	WebhookInsecureSSL string            `json:"-"` // "0" | "1" (default "0")
+	PEMPrivateKey      string            `json:"-"`
+	Permissions        map[string]string `json:"permissions"`
+	Events             []string          `json:"events"`
+	OwnerID            int               `json:"owner_id"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 // Installation represents an app installation on a user or org.
@@ -104,22 +106,24 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 	_, _ = rand.Read(wsBytes)
 
 	app := &App{
-		ID:            id,
-		NodeID:        fmt.Sprintf("A_kgDO%08d", id),
-		Slug:          slug,
-		Name:          name,
-		ClientID:      fmt.Sprintf("Iv1.%016x", id),
-		ClientSecret:  hex.EncodeToString(secretBytes),
-		Description:   description,
-		ExternalURL:   fmt.Sprintf("https://github.com/apps/%s", slug),
-		WebhookSecret: hex.EncodeToString(wsBytes),
-		WebhookActive: true,
-		PEMPrivateKey: string(privPEM),
-		Permissions:   perms,
-		Events:        events,
-		OwnerID:       ownerID,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:                 id,
+		NodeID:             fmt.Sprintf("A_kgDO%08d", id),
+		Slug:               slug,
+		Name:               name,
+		ClientID:           fmt.Sprintf("Iv1.%016x", id),
+		ClientSecret:       hex.EncodeToString(secretBytes),
+		Description:        description,
+		ExternalURL:        fmt.Sprintf("https://github.com/apps/%s", slug),
+		WebhookSecret:      hex.EncodeToString(wsBytes),
+		WebhookActive:      true,
+		WebhookContentType: "form",
+		WebhookInsecureSSL: "0",
+		PEMPrivateKey:      string(privPEM),
+		Permissions:        perms,
+		Events:             events,
+		OwnerID:            ownerID,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	st.Apps[id] = app
 	st.AppsBySlug[slug] = app
@@ -216,6 +220,19 @@ func (st *Store) ListAppInstallations(appID int) []*Installation {
 		}
 	}
 	return result
+}
+
+// CountAppInstallations returns the number of installations for a given app.
+func (st *Store) CountAppInstallations(appID int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	n := 0
+	for _, inst := range st.Installations {
+		if inst.AppID == appID {
+			n++
+		}
+	}
+	return n
 }
 
 // GetRepoInstallation finds an installation by target login.

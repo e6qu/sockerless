@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,8 +52,12 @@ func (s *Server) registerGHMiscEndpoints() {
 	s.route("GET /token", s.handleActionsOIDCToken)
 	s.route("GET /.well-known/openid-configuration", s.handleOIDCDiscovery)
 	s.route("GET /.well-known/jwks", s.handleJWKS)
-	s.route("GET /api/v3/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
-	s.route("PUT /api/v3/actions/oidc/customization/sub",
+	// OIDC subject customization is scoped to a repo or an org on real GitHub.
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
+	s.route("PUT /api/v3/repos/{owner}/{repo}/actions/oidc/customization/sub",
+		s.requirePerm(scopeAdministration, permWrite, s.handleOIDCCustomSubPut))
+	s.route("GET /api/v3/orgs/{org}/actions/oidc/customization/sub", s.handleOIDCCustomSubGet)
+	s.route("PUT /api/v3/orgs/{org}/actions/oidc/customization/sub",
 		s.requirePerm(scopeAdministration, permWrite, s.handleOIDCCustomSubPut))
 
 	// Pages
@@ -99,12 +104,24 @@ type UserKey struct {
 }
 
 type PagesSite struct {
-	CNAME   string                 `json:"cname"`
-	URL     string                 `json:"url"`
-	HTMLURL string                 `json:"html_url"`
-	Status  string                 `json:"status"`
-	Source  map[string]interface{} `json:"source"`
-	Public  bool                   `json:"public"`
+	CNAME                string                 `json:"cname"`
+	URL                  string                 `json:"url"`
+	HTMLURL              string                 `json:"html_url"`
+	Status               string                 `json:"status"`
+	Source               map[string]interface{} `json:"source"`
+	Public               bool                   `json:"public"`
+	Custom404            bool                   `json:"custom_404"`
+	ProtectedDomainState *string                `json:"protected_domain_state"`
+	BuildType            *string                `json:"build_type"`
+	HTTPSCertificate     *PagesHTTPSCertificate `json:"https_certificate,omitempty"`
+	HTTPSEnforced        bool                   `json:"https_enforced"`
+}
+
+type PagesHTTPSCertificate struct {
+	State       string   `json:"state"`
+	Description string   `json:"description"`
+	Domains     []string `json:"domains"`
+	ExpiresAt   *string  `json:"expires_at"`
 }
 
 type GPGKey struct {
@@ -128,17 +145,29 @@ type GPGKeyEmail struct {
 }
 
 type PagesBuild struct {
-	ID        int64          `json:"id"`
+	// ID is the numeric build identifier used for path-based routing
+	// (GET .../pages/builds/{build_id}). GitHub's build object carries no
+	// top-level `id`; it is addressed via the trailing segment of `url`, so
+	// the field is not serialized.
+	ID        int64          `json:"-"`
 	URL       string         `json:"url"`
 	Status    string         `json:"status"`
+	Pusher    *PagesPusher   `json:"pusher"`
+	Commit    string         `json:"commit"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	Duration  int            `json:"duration"`
-	Error     *PagesBuildErr `json:"error,omitempty"`
+	Error     *PagesBuildErr `json:"error"`
+}
+
+type PagesPusher struct {
+	Login string `json:"login"`
+	ID    int    `json:"id"`
+	Type  string `json:"type"`
 }
 
 type PagesBuildErr struct {
-	Message string `json:"message,omitempty"`
+	Message *string `json:"message"`
 }
 
 type AuditEntry struct {
@@ -550,7 +579,8 @@ func (s *Server) handleActionsOIDCToken(w http.ResponseWriter, r *http.Request) 
 	}
 	token, err := s.mintOIDCToken(r, audience)
 	if err != nil {
-		writeGHError(w, http.StatusInternalServerError, err.Error())
+		// Missing/unresolvable run context is a client-side error, not a panic.
+		writeGHError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"value": token, "count": 1})
@@ -639,42 +669,147 @@ func (s *Server) oidcKey() *rsa.PrivateKey {
 func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error) {
 	now := time.Now()
 	q := r.URL.Query()
+	// An OIDC token is minted FOR a specific workflow run; GitHub derives every
+	// claim from that run and never invents one. bleephub conveys the run
+	// context on the token request — a missing field means there is no real run
+	// to mint for, so we fail loudly rather than fabricate a placeholder claim
+	// (a fabricated repository/ref/run_id would silently defeat OIDC trust
+	// policies, which is worse than an error).
 	repoFull := q.Get("repo")
 	if repoFull == "" {
-		repoFull = "admin/unknown"
+		return "", fmt.Errorf("oidc: 'repo' (owner/name) is required")
+	}
+	owner, repoName := splitRepoFull(repoFull)
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		return "", fmt.Errorf("oidc: repository %q not found", repoFull)
 	}
 	ref := q.Get("ref")
 	if ref == "" {
-		ref = "refs/heads/main"
+		return "", fmt.Errorf("oidc: 'ref' is required")
 	}
 	sha := q.Get("sha")
 	if sha == "" {
-		sha = "0000000000000000000000000000000000000000"
+		return "", fmt.Errorf("oidc: 'sha' is required")
 	}
-	actor := "bleephub-bot"
-	if user := ghUserFromContext(r.Context()); user != nil {
-		actor = user.Login
+	runID := q.Get("run_id")
+	if runID == "" {
+		return "", fmt.Errorf("oidc: 'run_id' is required")
 	}
+	runNumber := q.Get("run_number")
+	if runNumber == "" {
+		return "", fmt.Errorf("oidc: 'run_number' is required")
+	}
+	workflowName := q.Get("workflow")
+	if workflowName == "" {
+		return "", fmt.Errorf("oidc: 'workflow' is required")
+	}
+	workflowFile := q.Get("workflow_file")
+	if workflowFile == "" {
+		return "", fmt.Errorf("oidc: 'workflow_file' is required")
+	}
+	eventName := q.Get("event_name")
+	if eventName == "" {
+		return "", fmt.Errorf("oidc: 'event_name' is required")
+	}
+	// The actor is the authenticated user who triggered the run. /token sits
+	// outside the /api middleware, so resolve the caller's token directly.
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		return "", fmt.Errorf("oidc: unauthenticated — no actor for the token")
+	}
+	actor := user.Login
+	actorID := user.ID
+
+	repoID := repo.ID
+	ownerID := repo.OwnerID
+	visibility := repo.Visibility
+	if visibility == "" {
+		if repo.Private {
+			visibility = "private"
+		} else {
+			visibility = "public"
+		}
+	}
+
+	// run_attempt: "1" is the real value for a first (non-rerun) attempt, not a
+	// placeholder — GitHub omits it from no run.
+	runAttempt := q.Get("run_attempt")
+	if runAttempt == "" {
+		runAttempt = "1"
+	}
+	headRef := q.Get("head_ref")
+	baseRef := q.Get("base_ref")
+
+	// ref_type derives from the ref form (refs/heads → branch, refs/tags → tag).
+	refType := "branch"
+	switch {
+	case strings.HasPrefix(ref, "refs/tags/"):
+		refType = "tag"
+	case strings.HasPrefix(ref, "refs/heads/"):
+		refType = "branch"
+	}
+
+	env := q.Get("environment")
+
+	// sub reflects the environment when one is supplied, else the ref form —
+	// matching real GitHub's OIDC subject construction.
+	var sub string
+	if env != "" {
+		sub = "repo:" + repoFull + ":environment:" + env
+	} else if eventName == "pull_request" {
+		sub = "repo:" + repoFull + ":pull_request"
+	} else {
+		sub = "repo:" + repoFull + ":ref:" + ref
+	}
+
+	workflowRef := repoFull + "/.github/workflows/" + workflowFile + "@" + ref
+	jobWorkflowRef := workflowRef
+
 	jti := make([]byte, 12)
 	_, _ = rand.Read(jti)
 	payload := map[string]interface{}{
-		"iss":              s.baseURL(r),
-		"aud":              audience,
-		"sub":              "repo:" + repoFull + ":ref:" + ref,
-		"iat":              now.Unix(),
-		"nbf":              now.Unix(),
-		"exp":              now.Add(5 * time.Minute).Unix(),
-		"jti":              base64.RawURLEncoding.EncodeToString(jti),
-		"ref":              ref,
-		"repository":       repoFull,
-		"repository_owner": "admin",
-		"run_id":           "1",
-		"run_number":       "1",
-		"sha":              sha,
-		"actor":            actor,
-		"environment":      q.Get("environment"),
+		"iss":                   s.baseURL(r),
+		"aud":                   audience,
+		"sub":                   sub,
+		"iat":                   now.Unix(),
+		"nbf":                   now.Unix(),
+		"exp":                   now.Add(5 * time.Minute).Unix(),
+		"jti":                   base64.RawURLEncoding.EncodeToString(jti),
+		"ref":                   ref,
+		"ref_type":              refType,
+		"repository":            repoFull,
+		"repository_id":         strconv.Itoa(repoID),
+		"repository_owner":      owner,
+		"repository_owner_id":   strconv.Itoa(ownerID),
+		"repository_visibility": visibility,
+		"run_id":                runID,
+		"run_number":            runNumber,
+		"run_attempt":           runAttempt,
+		"sha":                   sha,
+		"actor":                 actor,
+		"actor_id":              strconv.Itoa(actorID),
+		"workflow":              workflowName,
+		"workflow_ref":          workflowRef,
+		"workflow_sha":          sha,
+		"job_workflow_ref":      jobWorkflowRef,
+		"job_workflow_sha":      sha,
+		"head_ref":              headRef,
+		"base_ref":              baseRef,
+		"event_name":            eventName,
+		"runner_environment":    "github-hosted",
+		"environment":           env,
 	}
 	return signRS256JWT(payload, s.oidcKey(), "bleephub-oidc")
+}
+
+// splitRepoFull splits an "owner/repo" full name into its owner and repo
+// segments. A bare value (no slash) is treated as the repo with no owner.
+func splitRepoFull(full string) (owner, repo string) {
+	if i := strings.IndexByte(full, '/'); i >= 0 {
+		return full[:i], full[i+1:]
+	}
+	return "", full
 }
 
 func signRS256JWT(payload map[string]interface{}, key *rsa.PrivateKey, kid string) (string, error) {
@@ -722,26 +857,37 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 			Branch string `json:"branch"`
 			Path   string `json:"path"`
 		} `json:"source"`
-		CNAME string `json:"cname"`
+		CNAME     string `json:"cname"`
+		BuildType string `json:"build_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
 		return
 	}
-	ownerLogin := "admin"
-	if repo.Owner != nil {
-		ownerLogin = repo.Owner.Login
+	// GitHub requires source.branch on create (only `workflow` build_type can
+	// omit it); a legacy/branch build with no branch is a 422.
+	if req.Source.Branch == "" && req.BuildType != "workflow" {
+		writeGHValidationError(w, "Pages", "source", "missing_field")
+		return
 	}
+	// repo.Owner is an invariant (set at create, relinked on load); use it
+	// directly rather than guessing an owner.
+	ownerLogin := repo.Owner.Login
+	buildType := coalesceStr(req.BuildType, "legacy")
 	pages := &PagesSite{
 		CNAME:   req.CNAME,
 		URL:     s.baseURL(r) + "/" + repo.FullName + "/pages",
 		HTMLURL: "https://" + ownerLogin + ".github.io/" + repo.Name,
-		Status:  "built",
+		Status:  "building",
 		Source: map[string]interface{}{
-			"branch": coalesceStr(req.Source.Branch, "main"),
+			// branch is required+validated for legacy/branch builds above; for
+			// a workflow build it is legitimately empty (not a fabricated "main").
+			"branch": req.Source.Branch,
 			"path":   coalesceStr(req.Source.Path, "/"),
 		},
-		Public: !repo.Private,
+		Public:    !repo.Private,
+		Custom404: false,
+		BuildType: &buildType,
 	}
 	s.store.Misc.mu.Lock()
 	s.store.Misc.pagesByRepo[repo.ID] = pages
@@ -752,7 +898,65 @@ func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, pages)
 }
 
-func (s *Server) handlePagesUpdate(w http.ResponseWriter, r *http.Request) { s.handlePagesCreate(w, r) }
+// handlePagesUpdate persists the documented update params and returns 204 No
+// Content (GitHub's PUT /pages response), unlike create which returns 201+body.
+func (s *Server) handlePagesUpdate(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		CNAME         *string `json:"cname"`
+		HTTPSEnforced *bool   `json:"https_enforced"`
+		BuildType     *string `json:"build_type"`
+		Public        *bool   `json:"public"`
+		Source        *struct {
+			Branch string `json:"branch"`
+			Path   string `json:"path"`
+		} `json:"source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
+	s.store.Misc.mu.Lock()
+	pages := s.store.Misc.pagesByRepo[repo.ID]
+	if pages == nil {
+		s.store.Misc.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if req.CNAME != nil {
+		pages.CNAME = *req.CNAME
+	}
+	if req.HTTPSEnforced != nil {
+		pages.HTTPSEnforced = *req.HTTPSEnforced
+	}
+	if req.BuildType != nil {
+		bt := *req.BuildType
+		pages.BuildType = &bt
+	}
+	if req.Public != nil {
+		pages.Public = *req.Public
+	}
+	if req.Source != nil {
+		if pages.Source == nil {
+			pages.Source = map[string]interface{}{}
+		}
+		if req.Source.Branch != "" {
+			pages.Source["branch"] = req.Source.Branch
+		}
+		if req.Source.Path != "" {
+			pages.Source["path"] = req.Source.Path
+		}
+	}
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("pages_sites", strconv.Itoa(repo.ID), pages)
+	}
+	s.store.Misc.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (s *Server) handlePagesDelete(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
@@ -790,15 +994,25 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actor := "bleephub-system"
+	var pusher *PagesPusher
 	if user := ghUserFromContext(r.Context()); user != nil {
 		actor = user.Login
+		pusher = &PagesPusher{Login: user.Login, ID: user.ID, Type: coalesceStr(user.Type, "User")}
 	}
 	now := time.Now()
 	s.store.Misc.mu.Lock()
 	s.store.Misc.nextAuditID++
 	buildID := s.store.Misc.nextAuditID
+	buildURL := s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/" + strconv.FormatInt(buildID, 10)
 	build := &PagesBuild{
-		ID: buildID, Status: "queued", CreatedAt: now, UpdatedAt: now,
+		ID:        buildID,
+		URL:       buildURL,
+		Status:    "queued",
+		Pusher:    pusher,
+		Commit:    "0000000000000000000000000000000000000000",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Error:     &PagesBuildErr{},
 	}
 	s.store.Misc.pagesBuilds[repo.FullName] = append([]*PagesBuild{build}, s.store.Misc.pagesBuilds[repo.FullName]...)
 	if s.store.Misc.persist != nil {
@@ -806,7 +1020,8 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	}
 	s.store.Misc.mu.Unlock()
 	s.recordAuditEvent("pages.build", actor, "", map[string]interface{}{"repo": repo.FullName, "build_id": buildID})
-	writeJSON(w, http.StatusCreated, build)
+	// GitHub's request-a-build response is exactly {status, url}.
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": buildURL})
 }
 func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)

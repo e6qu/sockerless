@@ -103,6 +103,22 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 	return tok, rt
 }
 
+// SetUserToServerTokenInstallations binds the token to a set of installation
+// IDs (used when a token is scoped down to a specific installation target).
+func (st *Store) SetUserToServerTokenInstallations(tokenStr string, installationIDs []int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	tok := st.UserToServerTokens[tokenStr]
+	if tok == nil {
+		return false
+	}
+	tok.InstallationIDs = append([]int(nil), installationIDs...)
+	if st.persist != nil {
+		st.persist.MustPut("user_to_server_tokens", tokenStr, tok)
+	}
+	return true
+}
+
 // LookupUserToServerToken returns the token + bearing user, or nil if not found/expired.
 func (st *Store) LookupUserToServerToken(tokenStr string) (*UserToServerToken, *User) {
 	st.mu.RLock()
