@@ -1,11 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  DataTable,
-  InlineError,
-  PageHeading,
-  Spinner,
-} from "@sockerless/ui-core/components";
+import { DataTable, InlineError, Spinner } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useState } from "react";
 import {
@@ -17,11 +11,17 @@ import {
   fetchOAuthApps,
   suspendInstallation,
 } from "../api.js";
-import type {
-  BleephubApp,
-  BleephubInstallation,
-  BleephubOAuthApp,
-} from "../types.js";
+import type { BleephubApp, BleephubInstallation, BleephubOAuthApp } from "../types.js";
+import {
+  PageTitle,
+  Tabs,
+  Button,
+  Modal,
+  FormLabel,
+  ErrorBanner,
+  DialogActions,
+  CodeBlock,
+} from "../components/ui.js";
 
 type Tab = "apps" | "installations" | "oauth-apps";
 
@@ -31,77 +31,39 @@ export function AppsPage() {
 
   return (
     <div>
-      <PageHeading
-        kicker="github · apps + oauth-apps"
-        title={<>Apps &amp; installations</>}
+      <PageTitle
+        title="Apps & installations"
         meta="GitHub Apps (JWT + ghs_), OAuth Apps (client_id/secret + gho_), and the active installations between them."
         actions={
           tab === "oauth-apps" ? (
             <Button variant="primary" size="sm" onClick={() => setShowCreate("oauth-app")}>
-              + new oauth app
+              New OAuth app
             </Button>
           ) : (
             <Button variant="primary" size="sm" onClick={() => setShowCreate("app")}>
-              + new github app
+              New GitHub app
             </Button>
           )
         }
       />
 
-      <div
-        className="mb-5 flex gap-1 -mx-1"
-        style={{ borderBottom: "1px solid var(--color-border)" }}
-      >
-        <TabButton active={tab === "apps"} onClick={() => setTab("apps")}>
-          GitHub Apps
-        </TabButton>
-        <TabButton
-          active={tab === "installations"}
-          onClick={() => setTab("installations")}
-        >
-          Installations
-        </TabButton>
-        <TabButton active={tab === "oauth-apps"} onClick={() => setTab("oauth-apps")}>
-          OAuth Apps
-        </TabButton>
-      </div>
+      <Tabs
+        items={[
+          { key: "apps", label: "GitHub Apps" },
+          { key: "installations", label: "Installations" },
+          { key: "oauth-apps", label: "OAuth Apps" },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
 
       {tab === "apps" && <AppsTab />}
       {tab === "installations" && <InstallationsTab />}
       {tab === "oauth-apps" && <OAuthAppsTab />}
 
       {showCreate === "app" && <CreateAppDialog onClose={() => setShowCreate(null)} />}
-      {showCreate === "oauth-app" && (
-        <CreateOAuthAppDialog onClose={() => setShowCreate(null)} />
-      )}
+      {showCreate === "oauth-app" && <CreateOAuthAppDialog onClose={() => setShowCreate(null)} />}
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-4 py-2 font-mono uppercase tracking-[0.12em]"
-      style={{
-        fontSize: "0.7rem",
-        color: active ? "var(--color-fg)" : "var(--color-fg-muted)",
-        borderBottom: `2px solid ${active ? "var(--color-accent)" : "transparent"}`,
-        marginBottom: "-1px",
-        transition: "all 0.12s var(--ease-out-quint)",
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -127,23 +89,15 @@ function AppsTab() {
     }),
     appsCol.accessor("slug", {
       header: "Slug",
-      cell: (info) => (
-        <span style={{ color: "var(--color-accent)" }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-accent)" }}>{info.getValue()}</span>,
     }),
     appsCol.accessor("name", {
       header: "Name",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>,
     }),
     appsCol.accessor("description", {
       header: "Description",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     appsCol.accessor("createdAt", {
       header: "Created",
@@ -156,7 +110,7 @@ function AppsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter apps…"
-      emptyMessage="No apps yet. Click + new github app or POST /api/v3/bleephub/apps."
+      emptyMessage="No apps yet. Click New GitHub app or POST /internal/apps."
     />
   );
 }
@@ -172,8 +126,7 @@ function InstallationsTab() {
   });
 
   const suspendMut = useMutation({
-    mutationFn: ({ id, suspend }: { id: number; suspend: boolean }) =>
-      suspendInstallation(id, suspend),
+    mutationFn: ({ id, suspend }: { id: number; suspend: boolean }) => suspendInstallation(id, suspend),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["installations"] }),
   });
   const deleteMut = useMutation({
@@ -195,36 +148,19 @@ function InstallationsTab() {
     }),
     installsCol.accessor("appSlug", {
       header: "App",
-      cell: (info) => (
-        <span style={{ color: "var(--color-accent)" }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-accent)" }}>{info.getValue()}</span>,
     }),
     installsCol.accessor("targetLogin", {
       header: "Target",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>,
     }),
     installsCol.accessor("targetType", {
       header: "Type",
-      cell: (info) => (
-        <span
-          className="font-mono uppercase tracking-[0.1em]"
-          style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
-        >
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     installsCol.accessor("repositorySelection", {
       header: "Repo selection",
-      cell: (info) => (
-        <span className="font-mono" style={{ color: "var(--color-fg-muted)" }}>
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     installsCol.accessor("suspendedAt", {
       header: "Status",
@@ -232,10 +168,10 @@ function InstallationsTab() {
         const suspended = !!info.getValue();
         return (
           <span
-            className="font-mono uppercase tracking-[0.1em]"
             style={{
-              fontSize: "0.65rem",
-              color: suspended ? "var(--color-status-warning)" : "var(--color-status-ok)",
+              fontSize: "0.78rem",
+              fontWeight: 500,
+              color: suspended ? "var(--color-status-warn)" : "var(--color-status-ok)",
             }}
           >
             {suspended ? "suspended" : "active"}
@@ -261,7 +197,7 @@ function InstallationsTab() {
             </Button>
             <Button
               size="sm"
-              variant="ghost"
+              variant="danger"
               onClick={() => {
                 if (confirm(`Delete installation #${inst.id}?`)) {
                   deleteMut.mutate(inst.id);
@@ -286,7 +222,7 @@ function InstallationsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter installations…"
-      emptyMessage="No installations. POST /api/v3/bleephub/apps/{app_id}/installations."
+      emptyMessage="No installations. POST /internal/apps/{app_id}/installations."
     />
   );
 }
@@ -313,15 +249,11 @@ function OAuthAppsTab() {
     }),
     oauthCol.accessor("name", {
       header: "Name",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>,
     }),
     oauthCol.accessor("description", {
       header: "Description",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     oauthCol.accessor("callbackUrl", {
       header: "Callback",
@@ -342,7 +274,7 @@ function OAuthAppsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter OAuth apps…"
-      emptyMessage="No OAuth apps yet. Click + new oauth app or POST /api/v3/bleephub/oauth-apps."
+      emptyMessage="No OAuth apps yet. Click New OAuth app or POST /internal/oauth-apps."
     />
   );
 }
@@ -409,10 +341,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal onClose={onClose}>
-      <Kicker>new github app</Kicker>
-      <DialogTitle>Create app</DialogTitle>
-
+    <Modal title="Create GitHub app" onClose={onClose}>
       <FormLabel id="app-name">Name</FormLabel>
       <input
         id="app-name"
@@ -433,7 +362,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
       />
 
       <FormLabel>Permissions</FormLabel>
-      <div className="mb-4 grid grid-cols-3 gap-2">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {allPermScopes.map((scope) => (
           <select
             key={scope}
@@ -447,8 +376,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
                 return next;
               });
             }}
-            className="font-mono"
-            style={{ fontSize: "0.7rem", padding: "4px" }}
+            style={{ fontSize: "0.78rem", padding: "0.3rem 0.4rem" }}
           >
             <option value="">{scope}: —</option>
             <option value="read">{scope}: read</option>
@@ -466,17 +394,14 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
             <button
               type="button"
               key={ev}
-              onClick={() =>
-                setEvents((cur) => (on ? cur.filter((e) => e !== ev) : [...cur, ev]))
-              }
-              className="font-mono"
+              onClick={() => setEvents((cur) => (on ? cur.filter((e) => e !== ev) : [...cur, ev]))}
               style={{
-                fontSize: "0.7rem",
-                padding: "4px 8px",
+                fontSize: "0.76rem",
+                padding: "0.2rem 0.55rem",
                 background: on ? "var(--color-accent)" : "var(--color-bg-subtle)",
-                color: on ? "var(--color-bg)" : "var(--color-fg-muted)",
+                color: on ? "var(--color-accent-fg)" : "var(--color-fg-muted)",
                 border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-sm)",
+                borderRadius: "2rem",
                 cursor: "pointer",
               }}
             >
@@ -486,7 +411,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
         })}
       </div>
 
-      {error && <ErrorBlock>{error}</ErrorBlock>}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <DialogActions>
         <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
@@ -500,7 +425,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
           disabled={mutation.isPending || !name.trim()}
           variant="primary"
         >
-          {mutation.isPending ? "Creating…" : "Create →"}
+          {mutation.isPending ? "Creating…" : "Create app"}
         </Button>
       </DialogActions>
     </Modal>
@@ -515,31 +440,34 @@ function CreatedAppDialog({
   onClose: () => void;
 }) {
   return (
-    <Modal onClose={onClose}>
-      <Kicker>app created — secrets shown once</Kicker>
-      <DialogTitle>Save these now</DialogTitle>
-      <p
-        className="mb-4 text-xs"
-        style={{ color: "var(--color-status-warning)" }}
-      >
+    <Modal title="Save these now" onClose={onClose}>
+      <p className="mb-4" style={{ fontSize: "0.82rem", color: "var(--color-status-warn)" }}>
         These values will not be shown again. Copy them before closing this dialog.
       </p>
 
       {created.client_id && (
         <>
           <FormLabel>Client ID</FormLabel>
-          <CodeBlock>{created.client_id}</CodeBlock>
+          <div className="mb-4">
+            <CodeBlock>{created.client_id}</CodeBlock>
+          </div>
         </>
       )}
 
       <FormLabel>Client Secret</FormLabel>
-      <CodeBlock>{created.client_secret}</CodeBlock>
+      <div className="mb-4">
+        <CodeBlock>{created.client_secret}</CodeBlock>
+      </div>
 
       <FormLabel>Webhook Secret</FormLabel>
-      <CodeBlock>{created.webhook_secret}</CodeBlock>
+      <div className="mb-4">
+        <CodeBlock>{created.webhook_secret}</CodeBlock>
+      </div>
 
       <FormLabel>PEM Private Key</FormLabel>
-      <CodeBlock>{created.pem}</CodeBlock>
+      <div className="mb-4">
+        <CodeBlock>{created.pem}</CodeBlock>
+      </div>
 
       <DialogActions>
         <Button onClick={onClose} variant="primary">
@@ -557,19 +485,10 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
   const [url, setURL] = useState("");
   const [callbackURL, setCallbackURL] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{
-    client_id: string;
-    client_secret: string;
-  } | null>(null);
+  const [created, setCreated] = useState<{ client_id: string; client_secret: string } | null>(null);
 
   const mutation = useMutation({
-    mutationFn: () =>
-      createOAuthApp({
-        name,
-        description,
-        url,
-        callback_url: callbackURL,
-      }),
+    mutationFn: () => createOAuthApp({ name, description, url, callback_url: callbackURL }),
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: ["oauth-apps"] });
       setCreated({ client_id: resp.clientId, client_secret: resp.client_secret });
@@ -579,16 +498,18 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
 
   if (created) {
     return (
-      <Modal onClose={onClose}>
-        <Kicker>oauth app created</Kicker>
-        <DialogTitle>Save your credentials</DialogTitle>
-        <p className="mb-4 text-xs" style={{ color: "var(--color-status-warning)" }}>
+      <Modal title="Save your credentials" onClose={onClose}>
+        <p className="mb-4" style={{ fontSize: "0.82rem", color: "var(--color-status-warn)" }}>
           The client secret is shown once. Copy it now.
         </p>
         <FormLabel>Client ID</FormLabel>
-        <CodeBlock>{created.client_id}</CodeBlock>
+        <div className="mb-4">
+          <CodeBlock>{created.client_id}</CodeBlock>
+        </div>
         <FormLabel>Client Secret</FormLabel>
-        <CodeBlock>{created.client_secret}</CodeBlock>
+        <div className="mb-4">
+          <CodeBlock>{created.client_secret}</CodeBlock>
+        </div>
         <DialogActions>
           <Button onClick={onClose} variant="primary">
             I copied it
@@ -599,18 +520,9 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal onClose={onClose}>
-      <Kicker>new oauth app</Kicker>
-      <DialogTitle>Create OAuth app</DialogTitle>
-
+    <Modal title="Create OAuth app" onClose={onClose}>
       <FormLabel id="oa-name">Name</FormLabel>
-      <input
-        id="oa-name"
-        type="text"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="mb-4 w-full"
-      />
+      <input id="oa-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className="mb-4 w-full" />
 
       <FormLabel id="oa-desc">Description</FormLabel>
       <input
@@ -641,7 +553,7 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
         placeholder="https://example.test/auth/callback"
       />
 
-      {error && <ErrorBlock>{error}</ErrorBlock>}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <DialogActions>
         <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
@@ -655,122 +567,9 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
           disabled={mutation.isPending || !name.trim()}
           variant="primary"
         >
-          {mutation.isPending ? "Creating…" : "Create →"}
+          {mutation.isPending ? "Creating…" : "Create app"}
         </Button>
       </DialogActions>
     </Modal>
-  );
-}
-
-// --- Shared dialog primitives ---
-
-function Modal({
-  onClose,
-  children,
-}: {
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-auto p-6"
-      style={{ background: "color-mix(in oklch, var(--color-fg) 60%, transparent)" }}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md p-6 my-auto"
-        style={{
-          background: "var(--color-surface-raised)",
-          border: "1px solid var(--color-border-strong)",
-          borderRadius: "var(--radius-sm)",
-          boxShadow: "8px 8px 0 var(--color-accent)",
-          maxHeight: "90vh",
-          overflowY: "auto",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Kicker({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mb-1 text-[10px] uppercase tracking-[0.22em]"
-      style={{ color: "var(--color-fg-subtle)" }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function DialogTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h3
-      className="mb-5 font-display"
-      style={{
-        fontStyle: "italic",
-        fontWeight: 600,
-        fontSize: "1.6rem",
-        letterSpacing: "-0.025em",
-        lineHeight: 1.05,
-      }}
-    >
-      {children}
-    </h3>
-  );
-}
-
-function FormLabel({ id, children }: { id?: string; children: React.ReactNode }) {
-  return (
-    <label
-      htmlFor={id}
-      className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
-      style={{ color: "var(--color-fg-subtle)" }}
-    >
-      {children}
-    </label>
-  );
-}
-
-function ErrorBlock({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mb-4 px-3 py-2 font-mono text-xs"
-      style={{
-        background: "var(--color-status-error-soft)",
-        color: "var(--color-status-error)",
-        border: "1px solid var(--color-status-error)",
-        borderRadius: "var(--radius-sm)",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function DialogActions({ children }: { children: React.ReactNode }) {
-  return <div className="flex justify-end gap-2">{children}</div>;
-}
-
-function CodeBlock({ children }: { children: React.ReactNode }) {
-  return (
-    <pre
-      className="mb-4 px-3 py-2 font-mono"
-      style={{
-        background: "var(--color-bg-subtle)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
-        fontSize: "0.65rem",
-        color: "var(--color-fg)",
-        overflow: "auto",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-all",
-      }}
-    >
-      {children}
-    </pre>
   );
 }

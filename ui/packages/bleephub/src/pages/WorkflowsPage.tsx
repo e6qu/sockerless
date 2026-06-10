@@ -1,24 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  DataTable,
-  InlineError,
-  PageHeading,
-  Spinner,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { DataTable, InlineError, Spinner, StatusBadge } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { useState } from "react";
+import { dispatchWorkflow, fetchWorkflowFiles, fetchWorkflows } from "../api.js";
+import type { BleephubWorkflow, BleephubWorkflowFile } from "../types.js";
 import {
-  dispatchWorkflow,
-  fetchWorkflowFiles,
-  fetchWorkflows,
-} from "../api.js";
-import type {
-  BleephubWorkflow,
-  BleephubWorkflowFile,
-} from "../types.js";
+  PageTitle,
+  Tabs,
+  Button,
+  Modal,
+  FormLabel,
+  ErrorBanner,
+  DialogActions,
+} from "../components/ui.js";
 
 type Tab = "workflows" | "runs";
 
@@ -26,63 +21,24 @@ export function WorkflowsPage() {
   const [tab, setTab] = useState<Tab>("workflows");
   return (
     <div>
-      <PageHeading
-        kicker="actions · workflows"
-        title={<>Workflows &amp; runs</>}
+      <PageTitle
+        title="Workflows & runs"
         meta={
           tab === "workflows"
             ? "YAML files discovered from git + bleephub-submitted definitions."
             : "Run-level history. Click a row for the per-job timeline."
         }
       />
-      <TabRow>
-        <TabButton active={tab === "workflows"} onClick={() => setTab("workflows")}>
-          Workflows (files)
-        </TabButton>
-        <TabButton active={tab === "runs"} onClick={() => setTab("runs")}>
-          Runs
-        </TabButton>
-      </TabRow>
+      <Tabs
+        items={[
+          { key: "workflows", label: "Workflows" },
+          { key: "runs", label: "Runs" },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
       {tab === "workflows" ? <WorkflowsTab /> : <RunsTab />}
     </div>
-  );
-}
-
-function TabRow({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="mb-5 flex gap-1 -mx-1"
-      style={{ borderBottom: "1px solid var(--color-border)" }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-4 py-2 font-mono uppercase tracking-[0.12em]"
-      style={{
-        fontSize: "0.7rem",
-        color: active ? "var(--color-fg)" : "var(--color-fg-muted)",
-        borderBottom: `2px solid ${active ? "var(--color-accent)" : "transparent"}`,
-        marginBottom: "-1px",
-        transition: "all 0.12s var(--ease-out-quint)",
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -103,16 +59,12 @@ function WorkflowsTab() {
     filesCol.accessor("name", {
       header: "Name",
       cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
+        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>
       ),
     }),
     filesCol.accessor("path", {
       header: "Path",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     filesCol.accessor("repoFullName", { header: "Repo" }),
     filesCol.accessor("state", {
@@ -121,24 +73,12 @@ function WorkflowsTab() {
     }),
     filesCol.accessor("source", {
       header: "Source",
-      cell: (info) => (
-        <span
-          className="font-mono uppercase tracking-[0.1em]"
-          style={{
-            color: "var(--color-fg-subtle)",
-            fontSize: "0.65rem",
-          }}
-        >
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     filesCol.accessor("updatedAt", {
       header: "Updated",
       cell: (info) => (
-        <span style={{ color: "var(--color-fg-muted)" }}>
-          {new Date(info.getValue()).toLocaleString()}
-        </span>
+        <span style={{ color: "var(--color-fg-muted)" }}>{new Date(info.getValue()).toLocaleString()}</span>
       ),
     }),
     filesCol.display({
@@ -153,7 +93,7 @@ function WorkflowsTab() {
             setDispatchTarget(info.row.original);
           }}
         >
-          Run →
+          Run
         </Button>
       ),
     }),
@@ -165,13 +105,10 @@ function WorkflowsTab() {
         data={data}
         columns={columns}
         filterPlaceholder="Filter workflow files…"
-        emptyMessage="No workflow files yet. Push a .github/workflows/*.yml or POST /api/v3/bleephub/workflow."
+        emptyMessage="No workflow files yet. Push a .github/workflows/*.yml or POST /internal/exec/workflow."
       />
       {dispatchTarget && (
-        <DispatchDialog
-          target={dispatchTarget}
-          onClose={() => setDispatchTarget(null)}
-        />
+        <DispatchDialog target={dispatchTarget} onClose={() => setDispatchTarget(null)} />
       )}
     </>
   );
@@ -194,16 +131,12 @@ function RunsTab() {
     runsCol.accessor("name", {
       header: "Name",
       cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
+        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>
       ),
     }),
     runsCol.accessor("runId", {
       header: "Run #",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg-muted)" }}>#{info.getValue()}</span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>#{info.getValue()}</span>,
     }),
     runsCol.accessor("status", {
       header: "Status",
@@ -218,14 +151,7 @@ function RunsTab() {
     }),
     runsCol.accessor("eventName", {
       header: "Event",
-      cell: (info) => (
-        <span
-          className="font-mono uppercase tracking-[0.1em]"
-          style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
-        >
-          {info.getValue()}
-        </span>
-      ),
+      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
     }),
     runsCol.accessor("repoFullName", { header: "Repo" }),
     runsCol.accessor("createdAt", {
@@ -236,10 +162,7 @@ function RunsTab() {
       id: "jobCount",
       header: "Jobs",
       cell: (info) => (
-        <span
-          className="tabular-nums"
-          style={{ color: "var(--color-fg-muted)" }}
-        >
+        <span className="tabular-nums" style={{ color: "var(--color-fg-muted)" }}>
           {Object.keys(info.row.original.jobs).length}
         </span>
       ),
@@ -251,7 +174,7 @@ function RunsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter runs…"
-      emptyMessage="No runs yet. Submit a workflow via /api/v3/bleephub/workflow or dispatch one from the Workflows tab."
+      emptyMessage="No runs yet. Submit a workflow via /internal/exec/workflow or dispatch one from the Workflows tab."
       onRowClick={(row) => navigate(`/ui/workflows/${row.id}`)}
     />
   );
@@ -287,107 +210,47 @@ function DispatchDialog({
   });
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "color-mix(in oklch, var(--color-fg) 60%, transparent)" }}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md p-6"
-        style={{
-          background: "var(--color-surface-raised)",
-          border: "1px solid var(--color-border-strong)",
-          borderRadius: "var(--radius-sm)",
-          boxShadow: "8px 8px 0 var(--color-accent)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="mb-1 text-[10px] uppercase tracking-[0.22em]"
-          style={{ color: "var(--color-fg-subtle)" }}
-        >
-          dispatch workflow
-        </div>
-        <h3
-          className="font-display"
-          style={{
-            fontStyle: "italic",
-            fontWeight: 600,
-            fontSize: "1.6rem",
-            letterSpacing: "-0.025em",
-            lineHeight: 1.05,
-          }}
-        >
-          {target.name}
-        </h3>
-        <div
-          className="mt-1 mb-5 font-mono text-xs"
-          style={{ color: "var(--color-fg-muted)" }}
-        >
-          {target.path} · {target.repoFullName}
-        </div>
-
-        <label
-          htmlFor="dispatch-ref"
-          className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
-          style={{ color: "var(--color-fg-subtle)" }}
-        >
-          Ref
-        </label>
-        <input
-          id="dispatch-ref"
-          type="text"
-          value={ref}
-          onChange={(e) => setRef(e.target.value)}
-          className="mb-4 w-full"
-        />
-
-        <label
-          htmlFor="dispatch-inputs"
-          className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
-          style={{ color: "var(--color-fg-subtle)" }}
-        >
-          Inputs (JSON)
-        </label>
-        <textarea
-          id="dispatch-inputs"
-          value={inputsJSON}
-          onChange={(e) => setInputsJSON(e.target.value)}
-          rows={5}
-          className="mb-4 w-full"
-          style={{ resize: "vertical" }}
-        />
-
-        {error && (
-          <div
-            className="mb-4 px-3 py-2 font-mono text-xs"
-            style={{
-              background: "var(--color-status-error-soft)",
-              color: "var(--color-status-error)",
-              border: "1px solid var(--color-status-error)",
-              borderRadius: "var(--radius-sm)",
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              setError(null);
-              mutation.mutate();
-            }}
-            disabled={mutation.isPending}
-            variant="primary"
-          >
-            {mutation.isPending ? "Dispatching…" : "Dispatch ⚡"}
-          </Button>
-        </div>
+    <Modal title={`Run ${target.name}`} onClose={onClose}>
+      <div className="mb-4" style={{ fontSize: "0.82rem", color: "var(--color-fg-muted)" }}>
+        {target.path} · {target.repoFullName}
       </div>
-    </div>
+
+      <FormLabel id="dispatch-ref">Ref</FormLabel>
+      <input
+        id="dispatch-ref"
+        type="text"
+        value={ref}
+        onChange={(e) => setRef(e.target.value)}
+        className="mb-4 w-full"
+      />
+
+      <FormLabel id="dispatch-inputs">Inputs (JSON)</FormLabel>
+      <textarea
+        id="dispatch-inputs"
+        value={inputsJSON}
+        onChange={(e) => setInputsJSON(e.target.value)}
+        rows={5}
+        className="mb-4 w-full"
+        style={{ resize: "vertical", fontFamily: "var(--font-mono)" }}
+      />
+
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+
+      <DialogActions>
+        <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
+          Cancel
+        </Button>
+        <Button
+          onClick={() => {
+            setError(null);
+            mutation.mutate();
+          }}
+          disabled={mutation.isPending}
+          variant="primary"
+        >
+          {mutation.isPending ? "Dispatching…" : "Run workflow"}
+        </Button>
+      </DialogActions>
+    </Modal>
   );
 }

@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-10 - Bleephub UI GitHub-style restyle + type hardening
+
+- Forked a bleephub-only GitHub-familiar shell (`components/Shell.tsx`):
+  top header bar (brand mark + primary nav + theme toggle + sign-out) and a
+  per-repo tab row (Code / Issues / Pull requests with counts). The other
+  simulator UIs keep the shared editorial-brutalist `AppShell` untouched.
+- New GitHub-adjacent token palette in `ui/packages/bleephub/src/index.css`
+  (neutral canvas, system sans body / mono for code, distinct teal brand
+  accent — not GitHub blue, semantic open=green / merged=purple / closed=red
+  state colours). Light is the default (as on github.com); the in-app toggle
+  adds `.dark` (Primer-dark-adjacent). `useTheme` gained an additive
+  `defaultTheme` arg so bleephub defaults light without affecting other UIs.
+- Bleephub-local primitives (`components/ui.tsx`, `components/octicons.tsx`):
+  Button / PageTitle / Box / Blankslate / StateLabel / Counter / StatCard /
+  Tabs / Modal + original (non-verbatim) SVG glyphs. Every page restyled to
+  GitHub conventions; the shared `DataTable` is kept for dense operator tables.
+- Type hardening: workflow/job state is now compile-checked Go enums
+  (`WorkflowStatus` / `JobStatus` / shared `Result` with named consts in
+  `workflows.go`) — wire bytes byte-identical, ~44 literal sites → consts,
+  boundary `string()` conversions only where required. UI primitives use
+  typed unions (IssuePRState, RepoTab, generic Tabs key).
+- Fixed BUG-1619 (three latent CSS custom-property typos that rendered no
+  value) and BUG-1620 (AppsPage empty-state strings citing removed
+  `/api/v3/bleephub/*` paths). Light + dark screenshots captured via the
+  Playwright e2e (now 20 specs incl. a dark-theme pass).
+
 ## 2026-06-10 - Bleephub shape-only endpoints filled in
 
 - GPG keys: full CRUD — `POST/GET/DELETE /user/gpg_keys` and `GET

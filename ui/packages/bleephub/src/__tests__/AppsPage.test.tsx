@@ -94,11 +94,11 @@ describe("AppsPage", () => {
   it("opens the Create App dialog", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
-    // Header CTA on the default GitHub Apps tab is "+ new github app".
+    // Header CTA on the default GitHub Apps tab is "New GitHub app".
     const cta = await screen.findByRole("button", { name: /new github app/i });
     fireEvent.click(cta);
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /create app/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /create github app/i })).toBeInTheDocument();
       expect(screen.getByLabelText(/^name$/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
     });

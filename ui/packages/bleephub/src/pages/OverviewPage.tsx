@@ -1,17 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  DataTable,
-  InlineError,
-  MetricsCard,
-  PageHeading,
-  Spinner,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { DataTable, InlineError, Spinner, StatusBadge } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useNavigate } from "react-router";
 import { fetchHealth, fetchMetrics, fetchWorkflows, fetchStorageInfo } from "../api.js";
 import type { BleephubWorkflow } from "../types.js";
 import { formatUptime } from "../utils/format.js";
+import { PageTitle, StatCard, SectionLabel, Box } from "../components/ui.js";
 
 const col = createColumnHelper<BleephubWorkflow>();
 
@@ -47,9 +41,7 @@ export function OverviewPage() {
     col.accessor("name", {
       header: "Name",
       cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
+        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{info.getValue()}</span>
       ),
     }),
     col.accessor("status", {
@@ -66,12 +58,7 @@ export function OverviewPage() {
     col.accessor("eventName", {
       header: "Event",
       cell: (info) => (
-        <span
-          className="font-mono uppercase tracking-[0.1em]"
-          style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
-        >
-          {info.getValue() ?? "—"}
-        </span>
+        <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue() ?? "—"}</span>
       ),
     }),
     col.display({
@@ -87,9 +74,8 @@ export function OverviewPage() {
 
   return (
     <div>
-      <PageHeading
-        kicker="bleephub · overview"
-        title={<>System status</>}
+      <PageTitle
+        title="System status"
         meta={
           <span className="inline-flex items-center gap-2">
             {health ? (
@@ -103,42 +89,30 @@ export function OverviewPage() {
         }
       />
 
-      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <MetricsCard
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatCard
           title="Active workflows"
           value={metrics.active_workflows}
           emphasized={metrics.active_workflows > 0}
         />
-        <MetricsCard title="Connected runners" value={metrics.active_sessions} />
-        <MetricsCard title="Submissions" value={metrics.workflow_submissions} />
-        <MetricsCard title="Job dispatches" value={metrics.job_dispatches} />
-        <MetricsCard title="Uptime" value={formatUptime(metrics.uptime_seconds)} />
+        <StatCard title="Connected runners" value={metrics.active_sessions} />
+        <StatCard title="Submissions" value={metrics.workflow_submissions} />
+        <StatCard title="Job dispatches" value={metrics.job_dispatches} />
+        <StatCard title="Uptime" value={formatUptime(metrics.uptime_seconds)} />
       </div>
 
       {storageInfo && (
-        <div
-          className="mb-8 rounded border p-3"
-          style={{
-            borderColor: "var(--color-border)",
-            background: "var(--color-bg-elevated)",
-          }}
-        >
-          <h3
-            className="mb-2 text-[10px] uppercase tracking-[0.22em]"
-            style={{ color: "var(--color-fg-subtle)" }}
-          >
-            Storage backends
-          </h3>
-          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <Box className="mb-6" header="Storage backends">
+          <div className="grid grid-cols-1 gap-3 p-4 text-sm sm:grid-cols-2">
             <div>
-              <span style={{ color: "var(--color-fg-subtle)" }}>Persistence</span>
-              <span className="ml-2 font-mono" style={{ color: "var(--color-fg)" }}>
+              <span style={{ color: "var(--color-fg-muted)" }}>Persistence</span>{" "}
+              <span className="font-mono" style={{ color: "var(--color-fg)" }}>
                 {storageInfo.persistence === "none" ? "none (in-memory)" : storageInfo.dialect}
               </span>
             </div>
             <div>
-              <span style={{ color: "var(--color-fg-subtle)" }}>Git storage</span>
-              <span className="ml-2 font-mono" style={{ color: "var(--color-fg)" }}>
+              <span style={{ color: "var(--color-fg-muted)" }}>Git storage</span>{" "}
+              <span className="font-mono" style={{ color: "var(--color-fg)" }}>
                 {storageInfo.git === "memory" ? "memory (ephemeral)" : storageInfo.git}
                 {storageInfo.git === "filesystem" && storageInfo.git_details.dir
                   ? ` (${storageInfo.git_details.dir})`
@@ -149,15 +123,10 @@ export function OverviewPage() {
               </span>
             </div>
           </div>
-        </div>
+        </Box>
       )}
 
-      <h3
-        className="mb-3 text-[10px] uppercase tracking-[0.22em]"
-        style={{ color: "var(--color-fg-subtle)" }}
-      >
-        Recent workflows
-      </h3>
+      <SectionLabel>Recent workflows</SectionLabel>
       <DataTable
         data={recent}
         columns={columns}

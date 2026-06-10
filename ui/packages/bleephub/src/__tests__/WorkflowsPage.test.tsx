@@ -76,7 +76,7 @@ describe("WorkflowsPage", () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText("Workflows (files)")).toBeInTheDocument();
+      expect(screen.getByText("Workflows")).toBeInTheDocument();
       expect(screen.getByText("Runs")).toBeInTheDocument();
     });
   });
@@ -121,9 +121,9 @@ describe("WorkflowsPage", () => {
     const runBtn = buttons.find((b) => /^run\b/i.test(b.textContent ?? ""));
     expect(runBtn, `Found ${buttons.length} buttons: ${buttons.map((b) => b.textContent).join(" | ")}`).toBeDefined();
     fireEvent.click(runBtn!);
-    // Dialog now in the DOM — assert on its Dispatch CTA.
+    // Dialog now in the DOM — assert on its inputs field (unique to it).
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /dispatch/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/inputs \(json\)/i)).toBeInTheDocument();
     });
   });
 });

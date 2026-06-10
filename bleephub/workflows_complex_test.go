@@ -625,9 +625,9 @@ func TestFailFastCancelsSiblings(t *testing.T) {
 
 	for i := 0; i < 4; i++ {
 		key := fmt.Sprintf("test_%d", i)
-		status := "pending"
+		status := JobStatusPending
 		if i == 0 {
-			status = "queued"
+			status = JobStatusQueued
 		}
 		workflow.Jobs[key] = &WorkflowJob{
 			Key:         key,
@@ -673,9 +673,9 @@ func TestFailFastFalseNoCancel(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		key := fmt.Sprintf("test_%d", i)
-		status := "pending"
+		status := JobStatusPending
 		if i == 0 {
-			status = "queued"
+			status = JobStatusQueued
 		}
 		workflow.Jobs[key] = &WorkflowJob{
 			Key:         key,
@@ -721,9 +721,9 @@ func TestFailFastDefaultTrue(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		key := fmt.Sprintf("test_%d", i)
-		status := "pending"
+		status := JobStatusPending
 		if i == 0 {
-			status = "queued"
+			status = JobStatusQueued
 		}
 		workflow.Jobs[key] = &WorkflowJob{
 			Key:         key,

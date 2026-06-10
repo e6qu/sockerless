@@ -1,15 +1,30 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageHeading, Spinner, Button, InlineError } from "@sockerless/ui-core/components";
-import { fetchRepoIssues, fetchIssueDetail, fetchIssueComments, createIssue } from "../api.js";
+import { Spinner, InlineError } from "@sockerless/ui-core/components";
+import {
+  fetchRepoIssues,
+  fetchRepoPRs,
+  fetchIssueDetail,
+  fetchIssueComments,
+  createIssue,
+} from "../api.js";
 import { useRepoItemList } from "../hooks/useRepoItemList.js";
 import type { GithubIssue } from "../types.js";
 import { CommentCard, CommentList } from "../components/CommentCard.js";
-import { rowHoverProps } from "../components/RowHover.js";
-import { EmptyListPlaceholder } from "../components/StateToggle.js";
 import { LabelPills } from "../components/LabelPills.js";
-import { ListPageHeader } from "../components/ListPageHeader.js";
+import { StateToggle } from "../components/StateToggle.js";
+import { RepoHeader } from "../components/Shell.js";
+import {
+  Button,
+  Box,
+  Blankslate,
+  StateLabel,
+  Modal,
+  FormLabel,
+  DialogActions,
+} from "../components/ui.js";
+import { IssueOpenedIcon, IssueClosedIcon, CommentIcon } from "../components/octicons.js";
 
 export function IssuesPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -24,10 +39,28 @@ export function IssuesPage() {
   return <IssueList owner={owner} repo={repo} />;
 }
 
+function useOpenCounts(owner: string, repo: string) {
+  const { data: openIssues = [] } = useQuery({
+    queryKey: ["issues", owner, repo, "open"],
+    queryFn: () => fetchRepoIssues(owner, repo, "open"),
+    enabled: !!owner && !!repo,
+  });
+  const { data: openPRs = [] } = useQuery({
+    queryKey: ["prs", owner, repo, "open"],
+    queryFn: () => fetchRepoPRs(owner, repo, "open"),
+    enabled: !!owner && !!repo,
+  });
+  return { issueCount: openIssues.length, prCount: openPRs.length };
+}
+
 function IssueList({ owner, repo }: { owner: string; repo: string }) {
   const { state, setState, items: issues, isLoading, isError, error } = useRepoItemList(
-    "issues", owner, repo, fetchRepoIssues,
+    "issues",
+    owner,
+    repo,
+    fetchRepoIssues,
   );
+  const counts = useOpenCounts(owner, repo);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
@@ -50,156 +83,99 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
 
   return (
     <div>
-      <ListPageHeader
-        owner={owner}
-        repo={repo}
-        backTo={`/ui/repos/${owner}/${repo}`}
-        title={<>Issues</>}
-        meta={`${issues.length} ${state} issue${issues.length !== 1 ? "s" : ""}`}
-        actions={<Button variant="primary" size="sm" onClick={() => setCreating(true)}>New issue</Button>}
-        state={state}
-        stateLabels={{ open: "○ Open", closed: "✓ Closed" }}
-        onStateChange={setState}
-      />
+      <RepoHeader owner={owner} repo={repo} active="issues" {...counts} />
 
-      {/* Create issue modal */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <StateToggle
+          value={state}
+          options={["open", "closed"] as const}
+          labels={{ open: "Open", closed: "Closed" }}
+          icons={{ open: <IssueOpenedIcon size={14} />, closed: <IssueClosedIcon size={14} /> }}
+          onChange={setState}
+        />
+        <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+          New issue
+        </Button>
+      </div>
+
       {creating && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-          }}
-          onClick={(e) => e.target === e.currentTarget && setCreating(false)}
-        >
-          <div
-            style={{
-              background: "var(--color-surface-raised)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "var(--radius-md)",
-              padding: "1.5rem",
-              width: "min(560px, 90vw)",
-            }}
-          >
-            <h2 style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", marginBottom: "1rem" }}>
-              New issue
-            </h2>
-            <div style={{ marginBottom: "0.75rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", fontFamily: "var(--font-mono)", color: "var(--color-fg-muted)", marginBottom: "0.3rem" }}>
-                Title
-              </label>
-              <input
-                autoFocus
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Issue title"
-                style={{
-                  width: "100%",
-                  padding: "0.5rem 0.75rem",
-                  background: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-sm)",
-                  color: "var(--color-fg)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "0.85rem",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div style={{ marginBottom: "1rem" }}>
-              <label style={{ display: "block", fontSize: "0.8rem", fontFamily: "var(--font-mono)", color: "var(--color-fg-muted)", marginBottom: "0.3rem" }}>
-                Description (optional)
-              </label>
-              <textarea
-                value={newBody}
-                onChange={(e) => setNewBody(e.target.value)}
-                rows={4}
-                placeholder="Describe the issue…"
-                style={{
-                  width: "100%",
-                  padding: "0.5rem 0.75rem",
-                  background: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-sm)",
-                  color: "var(--color-fg)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "0.85rem",
-                  resize: "vertical",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
-              <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>Cancel</Button>
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={!newTitle.trim() || mutation.isPending}
-                onClick={() => mutation.mutate()}
-              >
-                {mutation.isPending ? "Creating…" : "Create issue"}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <Modal title="New issue" onClose={() => setCreating(false)}>
+          <FormLabel id="issue-title">Title</FormLabel>
+          <input
+            id="issue-title"
+            autoFocus
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="Issue title"
+            className="mb-3 w-full"
+          />
+          <FormLabel id="issue-body">Description (optional)</FormLabel>
+          <textarea
+            id="issue-body"
+            value={newBody}
+            onChange={(e) => setNewBody(e.target.value)}
+            rows={5}
+            placeholder="Describe the issue…"
+            className="mb-4 w-full"
+            style={{ resize: "vertical" }}
+          />
+          <DialogActions>
+            <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!newTitle.trim() || mutation.isPending}
+              onClick={() => mutation.mutate()}
+            >
+              {mutation.isPending ? "Creating…" : "Create issue"}
+            </Button>
+          </DialogActions>
+        </Modal>
       )}
 
-      {/* Issue list */}
       {issues.length === 0 ? (
-        <EmptyListPlaceholder message={`No ${state} issues.`} />
+        <Blankslate icon={<CommentIcon size={26} />} title={`No ${state} issues`} />
       ) : (
-        <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+        <Box>
           {issues.map((issue, i) => (
             <Link
               key={issue.id}
               to={`/ui/repos/${owner}/${repo}/issues/${issue.number}`}
+              className="flex items-start gap-2.5"
               style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "0.75rem",
-                padding: "0.9rem 1rem",
+                padding: "0.7rem 1rem",
                 borderBottom: i < issues.length - 1 ? "1px solid var(--color-border)" : "none",
                 textDecoration: "none",
-                background: "var(--color-surface-raised)",
-                transition: "background 0.1s",
               }}
-              {...rowHoverProps}
             >
-              <span
-                style={{
-                  marginTop: "0.15rem",
-                  color: issue.state === "open" ? "var(--color-status-ok)" : "var(--color-fg-muted)",
-                  fontSize: "1rem",
-                }}
-              >
-                {issue.state === "open" ? "○" : "✓"}
+              <span style={{ marginTop: "0.1rem", color: issue.state === "open" ? "var(--gh-open)" : "var(--gh-merged)" }}>
+                {issue.state === "open" ? <IssueOpenedIcon /> : <IssueClosedIcon />}
               </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
-                  {issue.title}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span style={{ fontSize: "0.92rem", fontWeight: 600, color: "var(--color-fg)" }}>
+                    {issue.title}
+                  </span>
+                  <LabelPills labels={issue.labels} />
                 </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", marginTop: "0.25rem" }}>
+                <div className="mt-1" style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
                   #{issue.number} opened by {issue.user?.login} ·{" "}
                   {new Date(issue.created_at).toLocaleDateString()}
                   {issue.comments > 0 && ` · ${issue.comments} comments`}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap" }}>
-                <LabelPills labels={issue.labels} />
-              </div>
             </Link>
           ))}
-        </div>
+        </Box>
       )}
     </div>
   );
 }
 
 function IssueDetail({ owner, repo, number }: { owner: string; repo: string; number: number }) {
+  const counts = useOpenCounts(owner, repo);
   const { data: issue, isLoading } = useQuery({
     queryKey: ["issue", owner, repo, number],
     queryFn: () => fetchIssueDetail(owner, repo, number),
@@ -211,36 +187,34 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
 
   if (isLoading || !issue) return <Spinner label={`loading issue #${number}`} />;
 
+  const open = issue.state === "open";
   return (
     <div>
-      <div style={{ marginBottom: "0.5rem" }}>
-        <Link
-          to={`/ui/repos/${owner}/${repo}/issues`}
-          style={{ color: "var(--color-fg-muted)", fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}
-        >
-          ← Issues
-        </Link>
+      <RepoHeader owner={owner} repo={repo} active="issues" {...counts} />
+
+      <div className="mb-1 flex flex-wrap items-baseline gap-2">
+        <h1 style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
+          {issue.title}{" "}
+          <span style={{ color: "var(--color-fg-muted)", fontWeight: 400 }}>#{issue.number}</span>
+        </h1>
       </div>
-      <PageHeading
-        kicker={`${owner}/${repo} · issue #${issue.number}`}
-        title={<>{issue.title}</>}
-        meta={
-          `${issue.state === "open" ? "Open" : "Closed"} · opened by ${issue.user?.login} · ${new Date(issue.created_at).toLocaleDateString()}`
-        }
-      />
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <StateLabel
+          state={open ? "open" : "closed"}
+          icon={open ? <IssueOpenedIcon size={15} /> : <IssueClosedIcon size={15} />}
+        >
+          {open ? "Open" : "Closed"}
+        </StateLabel>
+        <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
+          {issue.user?.login} opened this on {new Date(issue.created_at).toLocaleDateString()} ·{" "}
+          {comments.length} comment{comments.length === 1 ? "" : "s"}
+        </span>
+      </div>
 
-      {/* Original post */}
-      <CommentCard
-        login={issue.user?.login}
-        body={issue.body}
-        date={issue.created_at}
-        isOp
-      />
-
-      {/* Comments */}
+      <CommentCard login={issue.user?.login} body={issue.body} date={issue.created_at} isOp />
       <CommentList comments={comments} />
       {comments.length === 0 && (
-        <div style={{ padding: "1rem 0", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", fontSize: "0.82rem" }}>
+        <div style={{ padding: "0.5rem 0", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
           No comments yet.
         </div>
       )}

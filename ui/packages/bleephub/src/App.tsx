@@ -1,12 +1,7 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router";
-import {
-  AppShell,
-  ErrorBoundary,
-  NavLinkButton,
-  ToastProvider,
-  type NavItem,
-} from "@sockerless/ui-core/components";
-import { isLoggedIn, clearToken } from "./api.js";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
+import { ErrorBoundary, ToastProvider } from "@sockerless/ui-core/components";
+import { isLoggedIn } from "./api.js";
+import { BleephubShell } from "./components/Shell.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { OverviewPage } from "./pages/OverviewPage.js";
 import { WorkflowsPage } from "./pages/WorkflowsPage.js";
@@ -19,43 +14,6 @@ import { PullsPage } from "./pages/PullsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
 import { OAuthPage } from "./pages/OAuthPage.js";
-
-const navItems: NavItem[] = [
-  { label: "Overview", to: "/ui/" },
-  { label: "Workflows", to: "/ui/workflows" },
-  { label: "Runners", to: "/ui/runners" },
-  { label: "Repos", to: "/ui/repos" },
-  { label: "Apps", to: "/ui/apps" },
-  { label: "OAuth", to: "/ui/oauth" },
-  { label: "Metrics", to: "/ui/metrics" },
-];
-
-function renderNavLink(item: NavItem) {
-  return (
-    <NavLink to={item.to} end={item.to === "/ui/"}>
-      {({ isActive }) => <NavLinkButton active={isActive}>{item.label}</NavLinkButton>}
-    </NavLink>
-  );
-}
-
-function AppNav() {
-  return (
-    <div
-      className="flex items-center justify-end px-3 py-1"
-      style={{ color: "var(--color-fg-subtle)", fontSize: "0.65rem" }}
-    >
-      <button
-        onClick={() => {
-          clearToken();
-          window.location.href = "/ui/login";
-        }}
-        className="hover:underline"
-      >
-        Sign out
-      </button>
-    </div>
-  );
-}
 
 export function App() {
   if (!isLoggedIn()) {
@@ -75,13 +33,7 @@ export function App() {
     <ErrorBoundary>
       <ToastProvider>
         <BrowserRouter>
-          <AppShell
-            kicker="github · simulator"
-            title="bleephub"
-            navItems={navItems}
-            renderLink={renderNavLink}
-          >
-            <AppNav />
+          <BleephubShell>
             <Routes>
               <Route path="/ui/" element={<OverviewPage />} />
               <Route path="/ui/workflows" element={<WorkflowsPage />} />
@@ -101,7 +53,7 @@ export function App() {
               <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />
               <Route path="/ui/*" element={<Navigate to="/ui/" replace />} />
             </Routes>
-          </AppShell>
+          </BleephubShell>
         </BrowserRouter>
       </ToastProvider>
     </ErrorBoundary>

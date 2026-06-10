@@ -1,15 +1,10 @@
 import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import {
-  DataTable,
-  LogViewer,
-  PageHeading,
-  Spinner,
-  StatusBadge,
-} from "@sockerless/ui-core/components";
+import { DataTable, LogViewer, Spinner, StatusBadge } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { fetchWorkflowDetail, fetchWorkflowLogs } from "../api.js";
 import type { BleephubWorkflowJob } from "../types.js";
+import { PageTitle, SectionLabel } from "../components/ui.js";
 
 const col = createColumnHelper<BleephubWorkflowJob>();
 
@@ -121,9 +116,12 @@ export function WorkflowDetailPage() {
 
   return (
     <div>
-      <PageHeading
-        kicker={`workflow · run #${wf.runId}`}
-        title={wf.name}
+      <PageTitle
+        title={
+          <>
+            {wf.name} <span style={{ color: "var(--color-fg-muted)", fontWeight: 400 }}>#{wf.runId}</span>
+          </>
+        }
         meta={
           <span className="inline-flex flex-wrap items-center gap-3">
             <StatusBadge status={wf.status} />
@@ -135,12 +133,7 @@ export function WorkflowDetailPage() {
         }
       />
 
-      <h3
-        className="mb-3 text-[10px] uppercase tracking-[0.22em]"
-        style={{ color: "var(--color-fg-subtle)" }}
-      >
-        Jobs ({jobs.length})
-      </h3>
+      <SectionLabel>Jobs ({jobs.length})</SectionLabel>
       <DataTable
         data={jobs}
         columns={columns}
@@ -150,12 +143,7 @@ export function WorkflowDetailPage() {
 
       {logs && Object.keys(logs).length > 0 && (
         <section className="mt-8">
-          <h3
-            className="mb-3 text-[10px] uppercase tracking-[0.22em]"
-            style={{ color: "var(--color-fg-subtle)" }}
-          >
-            Logs
-          </h3>
+          <SectionLabel>Logs</SectionLabel>
           <div className="space-y-4">
             {jobs.map((job) => {
               const jobLogs = logs[job.jobId];
