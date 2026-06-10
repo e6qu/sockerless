@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1626 filed - 1580 fixed - 7 open - 5 false positives.**
+**1629 filed - 1583 fixed - 7 open - 5 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1629~~ | P2 | aws sim eventbridge — PutTargets/ListTargetsByRule drop all structured target params | round-trip drift | `eventbridge.go` `EBTarget` carried only Id/Arn/RoleArn/Input/InputPath + a dead `Extra map[string]any json:"-"`, so PutTargets silently dropped EcsParameters/InputTransformer/RetryPolicy/DeadLetterConfig/Sqs/Http/Batch/RunCommand/Kinesis params and ListTargetsByRule never re-emitted them → `aws_cloudwatch_event_target` perpetual drift. Fixed: replaced `Extra` with explicit `json.RawMessage` fields (byte-exact round-trip); regression test. |
+| ~~1628~~ | P2 | aws sim dynamodb — UpdateItem ignores `ReturnValues` (always returns full new item) | round-trip drift / wrong semantics | `dynamodb.go` `handleDDBUpdateItem` always returned `{"Attributes": item}`; real AWS gates on `ReturnValues` (default NONE → no Attributes; ALL_OLD/UPDATED_OLD/ALL_NEW/UPDATED_NEW differ). PutItem/DeleteItem already gated correctly; UpdateItem was the outlier. Fixed: snapshot oldItem, honor all five ReturnValues modes (+ ConditionExpression); regression test. |
+| ~~1627~~ | P2 | aws sim lambda — GetFunction/CreateFunction emit `ImageConfig`, SDK reads `ImageConfigResponse` | round-trip drift | `lambda.go` `lambdaFunctionConfiguration` emitted image config under `ImageConfig`, but AWS `FunctionConfiguration` returns it under the `ImageConfigResponse` wrapper (`{ImageConfig,Error}`) — `ImageConfig` is only the create *input* key. So an Image-package function's EntryPoint/Command/WorkingDirectory round-tripped as nil → `aws_lambda_function.image_config` drift. Fixed: added `LambdaImageConfigResponse` wrapper, emit under `ImageConfigResponse`; regression test. |
 | ~~1626~~ | P3 | aws sim kinesis — DescribeStream/Summary emit `EncryptionType:""` for unencrypted streams | round-trip drift / invalid enum | `kinesis.go` `kinesisStreamDescription`/`kinesisStreamSummary` echoed the raw stored EncryptionType (empty for never-encrypted streams); real Kinesis returns the `NONE` enum and omits `KeyId`. Empty-string is an invalid `types.EncryptionType`. Fixed: emit `NONE` + omit `KeyId` when unset; regression test in `conformance_roundtrip_test.go`. |
 | ~~1625~~ | P3 | aws sim acm — RequestCertificate leaves `Options` nil (CT-logging default missing) | round-trip drift | `acm.go` `handleACMRequestCertificate` stored `req.Options` verbatim (nil when omitted); real ACM defaults `Options.CertificateTransparencyLoggingPreference=ENABLED` and returns it from DescribeCertificate → `aws_acm_certificate.options` drift. Fixed: default Options to CT-logging ENABLED when unset; regression test. |
 | ~~1624~~ | P2 | aws sim apigatewayv2 — CreateApi/GetApi omit `apiEndpoint` | round-trip drift | `apigatewayv2.go` `APIGWv2Api` lacked `apiEndpoint`; real CreateApi returns the computed invoke URL and `aws_apigatewayv2_api.api_endpoint` is consumed downstream. Fixed: emit `https://<apiId>.execute-api.<region>.amazonaws.com`; regression test. |

@@ -40,12 +40,24 @@ type EBEventBus struct {
 }
 
 type EBTarget struct {
-	ID        string         `json:"Id"`
-	Arn       string         `json:"Arn"`
-	RoleArn   string         `json:"RoleArn,omitempty"`
-	Input     string         `json:"Input,omitempty"`
-	InputPath string         `json:"InputPath,omitempty"`
-	Extra     map[string]any `json:"-"`
+	ID        string `json:"Id"`
+	Arn       string `json:"Arn"`
+	RoleArn   string `json:"RoleArn,omitempty"`
+	Input     string `json:"Input,omitempty"`
+	InputPath string `json:"InputPath,omitempty"`
+	// Structured target parameters round-trip byte-exact: storing and
+	// re-emitting the raw JSON preserves every sub-shape so ListTargetsByRule
+	// returns what PutTargets received (terraform aws_cloudwatch_event_target
+	// reads these back).
+	EcsParameters        json.RawMessage `json:"EcsParameters,omitempty"`
+	InputTransformer     json.RawMessage `json:"InputTransformer,omitempty"`
+	RetryPolicy          json.RawMessage `json:"RetryPolicy,omitempty"`
+	DeadLetterConfig     json.RawMessage `json:"DeadLetterConfig,omitempty"`
+	SqsParameters        json.RawMessage `json:"SqsParameters,omitempty"`
+	HttpParameters       json.RawMessage `json:"HttpParameters,omitempty"`
+	BatchParameters      json.RawMessage `json:"BatchParameters,omitempty"`
+	RunCommandParameters json.RawMessage `json:"RunCommandParameters,omitempty"`
+	KinesisParameters    json.RawMessage `json:"KinesisParameters,omitempty"`
 }
 
 type EBEventRecord struct {

@@ -101,31 +101,39 @@ type LambdaImageConfig struct {
 	WorkingDirectory string   `json:"WorkingDirectory,omitempty"`
 }
 
+// LambdaImageConfigResponse wraps the image config in FunctionConfiguration
+// responses. AWS accepts ImageConfig as CreateFunction input but returns it
+// under ImageConfigResponse on GetFunction/CreateFunction, which is the field
+// the SDK FunctionConfiguration shape reads.
+type LambdaImageConfigResponse struct {
+	ImageConfig *LambdaImageConfig `json:"ImageConfig,omitempty"`
+}
+
 type lambdaFunctionConfiguration struct {
-	FunctionName     string                        `json:"FunctionName"`
-	FunctionArn      string                        `json:"FunctionArn"`
-	Runtime          string                        `json:"Runtime,omitempty"`
-	Role             string                        `json:"Role"`
-	Handler          string                        `json:"Handler,omitempty"`
-	CodeSha256       string                        `json:"CodeSha256,omitempty"`
-	CodeSize         int64                         `json:"CodeSize"`
-	Description      string                        `json:"Description,omitempty"`
-	MemorySize       int                           `json:"MemorySize"`
-	Timeout          int                           `json:"Timeout"`
-	Environment      *LambdaEnvironment            `json:"Environment,omitempty"`
-	State            string                        `json:"State"`
-	LastUpdateStatus string                        `json:"LastUpdateStatus,omitempty"`
-	LastModified     string                        `json:"LastModified"`
-	RevisionId       string                        `json:"RevisionId"`
-	Version          string                        `json:"Version"`
-	PackageType      string                        `json:"PackageType,omitempty"`
-	Architectures    []string                      `json:"Architectures,omitempty"`
-	ImageConfig      *LambdaImageConfig            `json:"ImageConfig,omitempty"`
-	VpcConfig        *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
+	FunctionName        string                        `json:"FunctionName"`
+	FunctionArn         string                        `json:"FunctionArn"`
+	Runtime             string                        `json:"Runtime,omitempty"`
+	Role                string                        `json:"Role"`
+	Handler             string                        `json:"Handler,omitempty"`
+	CodeSha256          string                        `json:"CodeSha256,omitempty"`
+	CodeSize            int64                         `json:"CodeSize"`
+	Description         string                        `json:"Description,omitempty"`
+	MemorySize          int                           `json:"MemorySize"`
+	Timeout             int                           `json:"Timeout"`
+	Environment         *LambdaEnvironment            `json:"Environment,omitempty"`
+	State               string                        `json:"State"`
+	LastUpdateStatus    string                        `json:"LastUpdateStatus,omitempty"`
+	LastModified        string                        `json:"LastModified"`
+	RevisionId          string                        `json:"RevisionId"`
+	Version             string                        `json:"Version"`
+	PackageType         string                        `json:"PackageType,omitempty"`
+	Architectures       []string                      `json:"Architectures,omitempty"`
+	ImageConfigResponse *LambdaImageConfigResponse    `json:"ImageConfigResponse,omitempty"`
+	VpcConfig           *lambdaVpcConfigConfiguration `json:"VpcConfig,omitempty"`
 }
 
 func lambdaConfiguration(fn LambdaFunction) lambdaFunctionConfiguration {
-	return lambdaFunctionConfiguration{
+	cfg := lambdaFunctionConfiguration{
 		FunctionName:     fn.FunctionName,
 		FunctionArn:      fn.FunctionArn,
 		Runtime:          fn.Runtime,
@@ -144,9 +152,12 @@ func lambdaConfiguration(fn LambdaFunction) lambdaFunctionConfiguration {
 		Version:          fn.Version,
 		PackageType:      fn.PackageType,
 		Architectures:    fn.Architectures,
-		ImageConfig:      fn.ImageConfig,
 		VpcConfig:        lambdaVpcConfiguration(fn.VpcConfig),
 	}
+	if fn.ImageConfig != nil {
+		cfg.ImageConfigResponse = &LambdaImageConfigResponse{ImageConfig: fn.ImageConfig}
+	}
+	return cfg
 }
 
 // State store

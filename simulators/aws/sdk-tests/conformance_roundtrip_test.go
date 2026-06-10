@@ -13,9 +13,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/batch"
 	batchtypes "github.com/aws/aws-sdk-go-v2/service/batch/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	ebtypes "github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	ktypes "github.com/aws/aws-sdk-go-v2/service/kinesis/types"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -232,4 +238,195 @@ func TestConformanceKinesisEncryptionTypeNone(t *testing.T) {
 	require.NotNil(t, summary.StreamDescriptionSummary)
 	assert.Equal(t, ktypes.EncryptionTypeNone, summary.StreamDescriptionSummary.EncryptionType)
 	assert.Empty(t, strings.TrimSpace(aws.ToString(summary.StreamDescriptionSummary.KeyId)))
+}
+
+// CreateFunction (Image package) with ImageConfig then GetFunction must
+// surface the image config under ImageConfigResponse, the field the SDK
+// FunctionConfiguration shape reads.
+func TestConformanceLambdaImageConfigResponse(t *testing.T) {
+	c := lambdaClient()
+	fnName := "conf-lambda-imageconfig"
+	_, err := c.CreateFunction(ctx, &lambda.CreateFunctionInput{
+		FunctionName: aws.String(fnName),
+		Role:         aws.String("arn:aws:iam::123456789012:role/test-role"),
+		PackageType:  lambdatypes.PackageTypeImage,
+		Code: &lambdatypes.FunctionCode{
+			ImageUri: aws.String("123456789012.dkr.ecr.us-east-1.amazonaws.com/x:latest"),
+		},
+		ImageConfig: &lambdatypes.ImageConfig{
+			Command:    []string{"/bin/sh"},
+			EntryPoint: []string{"x"},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(fnName)})
+	})
+
+	out, err := c.GetFunction(ctx, &lambda.GetFunctionInput{FunctionName: aws.String(fnName)})
+	require.NoError(t, err)
+	require.NotNil(t, out.Configuration)
+	require.NotNil(t, out.Configuration.ImageConfigResponse,
+		"GetFunction must return ImageConfigResponse")
+	require.NotNil(t, out.Configuration.ImageConfigResponse.ImageConfig,
+		"ImageConfigResponse must carry ImageConfig")
+	assert.Equal(t, []string{"/bin/sh"}, out.Configuration.ImageConfigResponse.ImageConfig.Command)
+	assert.Equal(t, []string{"x"}, out.Configuration.ImageConfigResponse.ImageConfig.EntryPoint)
+}
+
+// UpdateItem must honor ReturnValues: default NONE returns no Attributes,
+// ALL_NEW the full new item, UPDATED_NEW only the changed attrs, ALL_OLD
+// the pre-update item.
+func TestConformanceDynamoDBUpdateItemReturnValues(t *testing.T) {
+	c := ddbClient()
+	tableName := "conf-ddb-returnvalues"
+	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(tableName),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(tableName)})
+	})
+
+	_, err = c.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "k1"},
+			"val":  &ddbtypes.AttributeValueMemberS{Value: "before"},
+			"keep": &ddbtypes.AttributeValueMemberS{Value: "same"},
+		},
+	})
+	require.NoError(t, err)
+
+	key := map[string]ddbtypes.AttributeValue{
+		"id": &ddbtypes.AttributeValueMemberS{Value: "k1"},
+	}
+
+	// Default ReturnValues (NONE) -> no Attributes.
+	noneOut, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": "val"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "n1"}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, noneOut.Attributes, "default ReturnValues NONE must return no Attributes")
+
+	// ALL_NEW -> full new item.
+	allNewOut, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": "val"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "n2"}},
+		ReturnValues:              ddbtypes.ReturnValueAllNew,
+	})
+	require.NoError(t, err)
+	require.Contains(t, allNewOut.Attributes, "id")
+	require.Contains(t, allNewOut.Attributes, "keep")
+	valNew, ok := allNewOut.Attributes["val"].(*ddbtypes.AttributeValueMemberS)
+	require.True(t, ok)
+	assert.Equal(t, "n2", valNew.Value)
+
+	// UPDATED_NEW -> only the changed attr (val), with the new value.
+	updNewOut, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": "val"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "n3"}},
+		ReturnValues:              ddbtypes.ReturnValueUpdatedNew,
+	})
+	require.NoError(t, err)
+	require.Contains(t, updNewOut.Attributes, "val")
+	assert.NotContains(t, updNewOut.Attributes, "keep", "UPDATED_NEW must omit unchanged attrs")
+	assert.NotContains(t, updNewOut.Attributes, "id", "UPDATED_NEW must omit unchanged key attrs")
+	valUpd, ok := updNewOut.Attributes["val"].(*ddbtypes.AttributeValueMemberS)
+	require.True(t, ok)
+	assert.Equal(t, "n3", valUpd.Value)
+
+	// ALL_OLD -> pre-update item (val == n3 before this update).
+	allOldOut, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String("SET #a = :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": "val"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "n4"}},
+		ReturnValues:              ddbtypes.ReturnValueAllOld,
+	})
+	require.NoError(t, err)
+	valOld, ok := allOldOut.Attributes["val"].(*ddbtypes.AttributeValueMemberS)
+	require.True(t, ok)
+	assert.Equal(t, "n3", valOld.Value, "ALL_OLD must return the pre-update value")
+}
+
+// PutTargets with structured target parameters then ListTargetsByRule must
+// round-trip EcsParameters and RetryPolicy, which terraform reads back.
+func TestConformanceEventBridgeTargetParameters(t *testing.T) {
+	eb := eventbridgeClient()
+	busName := "conf-eb-target-bus"
+	ruleName := "conf-eb-target-rule"
+
+	_, err := eb.CreateEventBus(ctx, &eventbridge.CreateEventBusInput{Name: aws.String(busName)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = eb.DeleteEventBus(ctx, &eventbridge.DeleteEventBusInput{Name: aws.String(busName)})
+	})
+
+	_, err = eb.PutRule(ctx, &eventbridge.PutRuleInput{
+		Name:         aws.String(ruleName),
+		EventBusName: aws.String(busName),
+		EventPattern: aws.String(`{"source":["conf.test"]}`),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
+			Rule: aws.String(ruleName), EventBusName: aws.String(busName), Ids: []string{"t1"},
+		})
+		_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{
+			Name: aws.String(ruleName), EventBusName: aws.String(busName),
+		})
+	})
+
+	_, err = eb.PutTargets(ctx, &eventbridge.PutTargetsInput{
+		Rule:         aws.String(ruleName),
+		EventBusName: aws.String(busName),
+		Targets: []ebtypes.Target{
+			{
+				Id:      aws.String("t1"),
+				Arn:     aws.String("arn:aws:ecs:us-east-1:123456789012:cluster/conf"),
+				RoleArn: aws.String("arn:aws:iam::123456789012:role/eb-role"),
+				EcsParameters: &ebtypes.EcsParameters{
+					TaskDefinitionArn: aws.String("arn:aws:ecs:us-east-1:123456789012:task-definition/x:1"),
+					TaskCount:         aws.Int32(1),
+					LaunchType:        ebtypes.LaunchTypeFargate,
+				},
+				RetryPolicy: &ebtypes.RetryPolicy{
+					MaximumRetryAttempts: aws.Int32(2),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	out, err := eb.ListTargetsByRule(ctx, &eventbridge.ListTargetsByRuleInput{
+		Rule:         aws.String(ruleName),
+		EventBusName: aws.String(busName),
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Targets, 1)
+	tgt := out.Targets[0]
+	require.NotNil(t, tgt.EcsParameters, "ListTargetsByRule must round-trip EcsParameters")
+	assert.Equal(t, "arn:aws:ecs:us-east-1:123456789012:task-definition/x:1",
+		aws.ToString(tgt.EcsParameters.TaskDefinitionArn))
+	require.NotNil(t, tgt.RetryPolicy, "ListTargetsByRule must round-trip RetryPolicy")
+	assert.Equal(t, int32(2), aws.ToInt32(tgt.RetryPolicy.MaximumRetryAttempts))
 }

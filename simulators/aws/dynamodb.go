@@ -882,6 +882,8 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 			Action string         `json:"Action"`
 			Value  map[string]any `json:"Value"`
 		} `json:"AttributeUpdates"`
+		ConditionExpression string `json:"ConditionExpression"`
+		ReturnValues        string `json:"ReturnValues"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -896,7 +898,14 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Key)
-	item, _ := ddbItems.Get(itemKey)
+	item, existed := ddbItems.Get(itemKey)
+	if req.ConditionExpression != "" &&
+		!ddbEvalCondition(item, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		sim.AWSError(w, "ConditionalCheckFailedException",
+			"The conditional request failed", http.StatusBadRequest)
+		return
+	}
+	oldItem := ddbCloneItem(item)
 	if item == nil {
 		item = map[string]any{}
 		// Copy primary-key attrs from Key into the new item.
@@ -920,7 +929,72 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Put(itemKey, item)
 	ddbItemNames.Put(itemKey, itemKey)
-	writeDDBJSON(w, http.StatusOK, map[string]any{"Attributes": item})
+
+	resp := map[string]any{}
+	switch strings.ToUpper(req.ReturnValues) {
+	case "ALL_NEW":
+		resp["Attributes"] = item
+	case "ALL_OLD":
+		if len(oldItem) > 0 {
+			resp["Attributes"] = oldItem
+		}
+	case "UPDATED_NEW":
+		changed := map[string]any{}
+		for attr, newVal := range item {
+			if oldVal, ok := oldItem[attr]; !ok || !ddbAttrEqual(oldVal, newVal) {
+				changed[attr] = newVal
+			}
+		}
+		if len(changed) > 0 {
+			resp["Attributes"] = changed
+		}
+	case "UPDATED_OLD":
+		changed := map[string]any{}
+		for attr, newVal := range item {
+			oldVal, ok := oldItem[attr]
+			if !ok {
+				// Newly-added attr has no old value to emit.
+				continue
+			}
+			if !ddbAttrEqual(oldVal, newVal) {
+				changed[attr] = oldVal
+			}
+		}
+		if len(changed) > 0 {
+			resp["Attributes"] = changed
+		}
+	default: // NONE (default) and "" emit no Attributes field.
+	}
+	writeDDBJSON(w, http.StatusOK, resp)
+}
+
+// ddbCloneItem deep-copies a stored item via JSON round-trip so the
+// pre-update snapshot is independent of in-place mutations. Returns nil
+// when the source item is nil/empty.
+func ddbCloneItem(item map[string]any) map[string]any {
+	if len(item) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return nil
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		return nil
+	}
+	return clone
+}
+
+// ddbAttrEqual compares two attribute values structurally via JSON
+// canonicalization so attrs present-and-different are detected.
+func ddbAttrEqual(a, b any) bool {
+	ab, err1 := json.Marshal(a)
+	bb, err2 := json.Marshal(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return string(ab) == string(bb)
 }
 
 func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
