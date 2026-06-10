@@ -127,7 +127,7 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
 	}
 	apiBase := fmt.Sprintf("%s/api/v3/repos/%s", baseURL, repoPath)
 	htmlBase := fmt.Sprintf("%s/%s", baseURL, repoPath)
-	status := runStatus(wf.Status)
+	status := runStatus(string(wf.Status))
 	// workflow_id / workflow_url / path reference the originating workflow
 	// FILE, which is stable across every run produced from it — never the
 	// per-run RunID. Use the values resolved at submit/dispatch time; fall
@@ -153,7 +153,7 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
 		"run_number":           wf.RunNumber,
 		"event":                eventOf(wf),
 		"status":               status,
-		"conclusion":           runConclusion(status, wf.Result),
+		"conclusion":           runConclusion(status, string(wf.Result)),
 		"workflow_id":          fileID,
 		"check_suite_id":       int64(wf.RunID),
 		"check_suite_node_id":  "CS_" + wf.ID,
@@ -209,7 +209,7 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 	}
 	apiBase := fmt.Sprintf("%s/api/v3/repos/%s", baseURL, repoPath)
 	htmlBase := fmt.Sprintf("%s/%s", baseURL, repoPath)
-	status := jobStatus(wfJob.Status)
+	status := jobStatus(string(wfJob.Status))
 	id := stableJobID(wfJob.JobID)
 	startedAt := wfJob.StartedAt.UTC().Format("2006-01-02T15:04:05Z")
 	// created_at is the queue time; bleephub records StartedAt at queue
@@ -235,7 +235,7 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 		"url":               fmt.Sprintf("%s/actions/jobs/%d", apiBase, id),
 		"html_url":          fmt.Sprintf("%s/actions/runs/%d/job/%d", htmlBase, wf.RunID, id),
 		"status":            status,
-		"conclusion":        jobConclusion(status, wfJob.Result),
+		"conclusion":        jobConclusion(status, string(wfJob.Result)),
 		"created_at":        startedAt,
 		"started_at":        startedAt,
 		"completed_at":      completedAt,
@@ -282,7 +282,7 @@ func jobStepsJSON(wfJob *WorkflowJob, jobStatus, startedAt string, completedAt a
 		steps = append(steps, map[string]any{
 			"name":         name,
 			"status":       jobStatus,
-			"conclusion":   jobConclusion(jobStatus, wfJob.Result),
+			"conclusion":   jobConclusion(jobStatus, string(wfJob.Result)),
 			"number":       i + 1,
 			"started_at":   started,
 			"completed_at": completed,
@@ -438,7 +438,7 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 		if wf.RepoFullName != "" && wf.RepoFullName != repo {
 			continue
 		}
-		if statusFilter != "" && runStatus(wf.Status) != statusFilter {
+		if statusFilter != "" && runStatus(string(wf.Status)) != statusFilter {
 			continue
 		}
 		if branchFilter != "" && headBranchOf(wf) != branchFilter {

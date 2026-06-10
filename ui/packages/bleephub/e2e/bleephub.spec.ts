@@ -66,9 +66,9 @@ test.describe("Root redirect", () => {
 test.describe("Overview page", () => {
   test("renders title and heading", async ({ page }) => {
     await page.goto("/ui/");
-    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "bleephub" })).toBeVisible();
-    // OverviewPage uses "System status" as its PageHeading title
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "System status" })).toBeVisible();
+    // Brand is a link in the header; the page title is the h1.
+    await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "System status" })).toBeVisible();
     await shot(page, "01-overview");
   });
 
@@ -83,7 +83,7 @@ test.describe("Overview page", () => {
 
 // ─── Sidebar navigation ─────────────────────────────────────────────────────
 
-test.describe("Sidebar navigation", () => {
+test.describe("Header navigation", () => {
   test("shows all 7 nav links", async ({ page }) => {
     await page.goto("/ui/");
     await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
@@ -101,22 +101,22 @@ test.describe("Sidebar navigation", () => {
 
     await page.getByRole("link", { name: "Workflows" }).click();
     await expect(page.url()).toContain("/ui/workflows");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Workflows" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Workflows" })).toBeVisible();
     await shot(page, "04-workflows");
 
     await page.getByRole("link", { name: "Runners" }).click();
     await expect(page.url()).toContain("/ui/runners");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Runners" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Runners" })).toBeVisible();
     await shot(page, "05-runners");
 
     await page.getByRole("link", { name: "Repos" }).click();
     await expect(page.url()).toContain("/ui/repos");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Repositories" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Repositories" })).toBeVisible();
     await shot(page, "06-repos");
 
     await page.getByRole("link", { name: "Apps" }).click();
     await expect(page.url()).toContain("/ui/apps");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Apps" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Apps" })).toBeVisible();
     await shot(page, "07-apps");
 
     await page.getByRole("link", { name: "OAuth" }).click();
@@ -125,7 +125,7 @@ test.describe("Sidebar navigation", () => {
 
     await page.getByRole("link", { name: "Metrics" }).click();
     await expect(page.url()).toContain("/ui/metrics");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: /runtime/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
     await shot(page, "09-metrics");
 
     await page.getByRole("link", { name: "Overview" }).click();
@@ -204,7 +204,10 @@ test.describe("Repo detail page", () => {
     await page.goto(`/ui/repos/${owner}/detail-test`);
     await page.waitForLoadState("networkidle");
 
-    await expect(page.getByText(`${owner} / detail-test`)).toBeVisible();
+    // Repo header renders owner / repo as separate links; the empty Code
+    // view shows the clone blankslate.
+    await expect(page.getByRole("link", { name: "detail-test" })).toBeVisible();
+    await expect(page.getByText(/this repository is empty/i)).toBeVisible();
     await shot(page, "15-repo-detail-empty");
   });
 
@@ -225,7 +228,8 @@ test.describe("Repo detail page", () => {
 
     await page.goto(`/ui/repos/${owner}/issues-test`);
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: /Issues/ }).click();
+    // Issues is a repo tab (link) in the repo header.
+    await page.getByRole("link", { name: /Issues/ }).click();
     await page.waitForLoadState("networkidle");
     await expect(page.getByText("First Playwright issue")).toBeVisible();
     await shot(page, "16-repo-issues-tab");
@@ -285,7 +289,7 @@ test.describe("Pull Requests page", () => {
 
     await page.goto(`/ui/repos/${owner}/pulls-direct/pulls`);
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Pull Requests" })).toBeVisible();
+    await expect(page.getByText(/no open pull requests/i)).toBeVisible();
     await shot(page, "20-pulls-empty");
   });
 });
@@ -295,7 +299,7 @@ test.describe("Pull Requests page", () => {
 test.describe("Apps page", () => {
   test("renders app tabs", async ({ page }) => {
     await page.goto("/ui/apps");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: "Apps" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Apps" })).toBeVisible();
     // Tabs: GitHub Apps, Installations, OAuth Apps
     await expect(page.getByRole("button", { name: "GitHub Apps" })).toBeVisible();
     await shot(page, "21-apps-page");
@@ -329,14 +333,85 @@ test.describe("OAuth page", () => {
   });
 });
 
+// ─── Actions (workflows + runs + detail) ─────────────────────────────────────
+
+test.describe("Actions UI", () => {
+  test("submits a workflow and renders the run detail (jobs + logs section)", async ({ page }) => {
+    await page.goto("/ui/");
+    // Submit a real 2-job workflow via the internal exec API; this creates a
+    // run with a job graph (no runner attached, so logs stay empty — the
+    // detail page must still render the job table and the logs blankslate).
+    const yaml = [
+      "name: CI Pipeline",
+      "on: [push]",
+      "jobs:",
+      "  build:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo building",
+      "  test:",
+      "    runs-on: ubuntu-latest",
+      "    needs: build",
+      "    steps:",
+      "      - run: echo testing",
+    ].join("\n");
+    await apiPost(page, "/internal/exec/workflow", { workflow: yaml, repo: "admin/ci-demo" });
+
+    // Runs tab lists the run (the tab is a button; the page title also
+    // contains the word "runs", so target the button role explicitly).
+    await page.goto("/ui/workflows");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Runs" }).click();
+    await expect(page.getByText("CI Pipeline").first()).toBeVisible();
+    await shot(page, "29-actions-runs");
+
+    // Click the run row → detail page with the job table + logs section.
+    await page.getByText("CI Pipeline").first().click();
+    await page.waitForURL(/\/ui\/workflows\/.+/);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: /Jobs/i })).toBeVisible();
+    await shot(page, "30-actions-run-detail");
+  });
+});
+
 // ─── Metrics page ────────────────────────────────────────────────────────────
 
 test.describe("Metrics page", () => {
   test("shows counters section", async ({ page }) => {
     await page.goto("/ui/metrics");
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("heading", { level: 2 }).filter({ hasText: /runtime/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
     await shot(page, "25-metrics-page");
+  });
+});
+
+// ─── Dark theme capture ──────────────────────────────────────────────────────
+
+test.describe("Dark theme", () => {
+  // Seed the persisted theme to "dark" before any script runs so the app
+  // boots in dark mode, then capture the key surfaces. Runs after the repo
+  // /issue tests above, so their data is still in the in-memory store.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("sockerless:theme", "dark");
+    });
+  });
+
+  test("captures key pages in dark mode", async ({ page }) => {
+    await page.goto("/ui/");
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "System status" })).toBeVisible();
+    await shot(page, "26-dark-overview");
+
+    await page.goto("/ui/repos");
+    await page.waitForLoadState("networkidle");
+    await shot(page, "27-dark-repos");
+
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+    await page.goto(`/ui/repos/${owner}/issues-direct/issues`);
+    await page.waitForLoadState("networkidle");
+    await shot(page, "28-dark-issues");
   });
 });
 

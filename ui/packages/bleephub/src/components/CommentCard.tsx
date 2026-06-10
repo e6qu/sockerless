@@ -11,22 +11,19 @@ export function CommentCard({ login, body, date, isOp = false }: CommentCardProp
   return (
     <div
       style={{
-        border: `1px solid ${isOp ? "var(--color-accent)" : "var(--color-border)"}`,
+        border: "1px solid var(--color-border)",
         borderRadius: "var(--radius-md)",
         marginBottom: "1rem",
         overflow: "hidden",
       }}
     >
       <div
+        className="flex items-center gap-2"
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5rem",
-          padding: "0.6rem 0.85rem",
+          padding: "0.5rem 0.85rem",
           background: "var(--color-bg-subtle)",
           borderBottom: "1px solid var(--color-border)",
-          fontSize: "0.78rem",
-          fontFamily: "var(--font-mono)",
+          fontSize: "0.82rem",
           color: "var(--color-fg-muted)",
         }}
       >
@@ -36,11 +33,11 @@ export function CommentCard({ login, body, date, isOp = false }: CommentCardProp
           <span
             style={{
               marginLeft: "auto",
-              padding: "0.1rem 0.4rem",
-              border: "1px solid var(--color-accent)",
-              borderRadius: "var(--radius-sm)",
-              fontSize: "0.68rem",
-              color: "var(--color-accent)",
+              padding: "0.05rem 0.45rem",
+              border: "1px solid var(--color-border)",
+              borderRadius: "2rem",
+              fontSize: "0.7rem",
+              color: "var(--color-fg-muted)",
             }}
           >
             Author
@@ -50,14 +47,14 @@ export function CommentCard({ login, body, date, isOp = false }: CommentCardProp
       <div
         style={{
           padding: "0.85rem 1rem",
-          fontSize: "0.875rem",
+          fontSize: "0.9rem",
           lineHeight: 1.6,
           color: "var(--color-fg)",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
         }}
       >
-        {body || <span style={{ color: "var(--color-fg-muted)" }}>No description.</span>}
+        {body || <span style={{ color: "var(--color-fg-muted)" }}>No description provided.</span>}
       </div>
     </div>
   );
@@ -68,12 +65,7 @@ export function CommentList({ comments }: { comments: GithubComment[] }) {
   return (
     <>
       {comments.map((c) => (
-        <CommentCard
-          key={c.id}
-          login={c.user?.login}
-          body={c.body}
-          date={c.created_at}
-        />
+        <CommentCard key={c.id} login={c.user?.login} body={c.body} date={c.created_at} />
       ))}
     </>
   );

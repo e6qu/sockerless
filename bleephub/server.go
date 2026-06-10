@@ -230,7 +230,7 @@ func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {
 			activeWfs++
 		}
 		for _, j := range wf.Jobs {
-			jobsByStatus[j.Status]++
+			jobsByStatus[string(j.Status)]++
 		}
 	}
 	sessions := len(s.store.Sessions)

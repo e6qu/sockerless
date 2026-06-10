@@ -1,13 +1,14 @@
 import { useParams, Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageHeading, Spinner, Button, InlineError } from "@sockerless/ui-core/components";
-import { fetchRepoPRs, fetchIssueComments, mergePR } from "../api.js";
+import { Spinner, InlineError } from "@sockerless/ui-core/components";
+import { fetchRepoIssues, fetchRepoPRs, fetchIssueComments, mergePR } from "../api.js";
 import { useRepoItemList } from "../hooks/useRepoItemList.js";
 import type { GithubPR } from "../types.js";
-import { CommentList } from "../components/CommentCard.js";
-import { rowHoverProps } from "../components/RowHover.js";
-import { EmptyListPlaceholder } from "../components/StateToggle.js";
-import { ListPageHeader } from "../components/ListPageHeader.js";
+import { CommentCard, CommentList } from "../components/CommentCard.js";
+import { StateToggle } from "../components/StateToggle.js";
+import { RepoHeader } from "../components/Shell.js";
+import { Button, Box, Blankslate, StateLabel } from "../components/ui.js";
+import { PullRequestIcon, MergedIcon, PullClosedIcon, BranchIcon } from "../components/octicons.js";
 
 export function PullsPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -22,81 +23,108 @@ export function PullsPage() {
   return <PRList owner={owner} repo={repo} />;
 }
 
+function useOpenCounts(owner: string, repo: string) {
+  const { data: openIssues = [] } = useQuery({
+    queryKey: ["issues", owner, repo, "open"],
+    queryFn: () => fetchRepoIssues(owner, repo, "open"),
+    enabled: !!owner && !!repo,
+  });
+  const { data: openPRs = [] } = useQuery({
+    queryKey: ["prs", owner, repo, "open"],
+    queryFn: () => fetchRepoPRs(owner, repo, "open"),
+    enabled: !!owner && !!repo,
+  });
+  return { issueCount: openIssues.length, prCount: openPRs.length };
+}
+
+function prState(pr: GithubPR): "open" | "merged" | "closed" | "draft" {
+  if (pr.merged) return "merged";
+  if (pr.state === "open") return pr.draft ? "draft" : "open";
+  return "closed";
+}
+
+function PRStateIcon({ pr, size }: { pr: GithubPR; size?: number }) {
+  const s = prState(pr);
+  if (s === "merged") return <MergedIcon size={size} style={{ color: "var(--gh-merged)" }} />;
+  if (s === "closed") return <PullClosedIcon size={size} style={{ color: "var(--gh-closed)" }} />;
+  if (s === "draft") return <PullRequestIcon size={size} style={{ color: "var(--gh-draft)" }} />;
+  return <PullRequestIcon size={size} style={{ color: "var(--gh-open)" }} />;
+}
+
 function PRList({ owner, repo }: { owner: string; repo: string }) {
   const { state, setState, items: prs, isLoading, isError, error } = useRepoItemList(
-    "prs", owner, repo, fetchRepoPRs,
+    "prs",
+    owner,
+    repo,
+    fetchRepoPRs,
   );
+  const counts = useOpenCounts(owner, repo);
 
   if (isLoading) return <Spinner label="loading pull requests" />;
   if (isError) return <InlineError title="Failed to load pull requests" detail={String(error)} />;
 
   return (
     <div>
-      <ListPageHeader
-        owner={owner}
-        repo={repo}
-        backTo={`/ui/repos/${owner}/${repo}`}
-        title={<>Pull Requests</>}
-        meta={`${prs.length} ${state} PR${prs.length !== 1 ? "s" : ""}`}
-        state={state}
-        stateLabels={{ open: "↯ Open", closed: "✓ Merged / Closed" }}
-        onStateChange={setState}
-      />
+      <RepoHeader owner={owner} repo={repo} active="pulls" {...counts} />
+
+      <div className="mb-4">
+        <StateToggle
+          value={state}
+          options={["open", "closed"] as const}
+          labels={{ open: "Open", closed: "Closed / Merged" }}
+          icons={{ open: <PullRequestIcon size={14} />, closed: <MergedIcon size={14} /> }}
+          onChange={setState}
+        />
+      </div>
 
       {prs.length === 0 ? (
-        <EmptyListPlaceholder message={`No ${state} pull requests.`} />
+        <Blankslate icon={<PullRequestIcon size={26} />} title={`No ${state} pull requests`} />
       ) : (
-        <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+        <Box>
           {prs.map((pr, i) => (
             <Link
               key={pr.id}
               to={`/ui/repos/${owner}/${repo}/pulls/${pr.number}`}
+              className="flex items-start gap-2.5"
               style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "0.75rem",
-                padding: "0.9rem 1rem",
+                padding: "0.7rem 1rem",
                 borderBottom: i < prs.length - 1 ? "1px solid var(--color-border)" : "none",
                 textDecoration: "none",
-                background: "var(--color-surface-raised)",
-                transition: "background 0.1s",
               }}
-              {...rowHoverProps}
             >
-              <span
-                style={{
-                  marginTop: "0.15rem",
-                  color: pr.state === "open" ? "var(--color-status-ok)" : pr.merged ? "var(--color-status-info)" : "var(--color-status-error)",
-                  fontSize: "1rem",
-                }}
-              >
-                {pr.merged ? "⊕" : pr.state === "open" ? "↯" : "✗"}
+              <span style={{ marginTop: "0.1rem" }}>
+                <PRStateIcon pr={pr} />
               </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500, color: "var(--color-fg)", fontSize: "0.9rem" }}>
+              <div className="min-w-0 flex-1">
+                <div style={{ fontSize: "0.92rem", fontWeight: 600, color: "var(--color-fg)" }}>
                   {pr.title}
                   {pr.draft && (
-                    <span style={{ marginLeft: "0.5rem", fontSize: "0.72rem", color: "var(--color-fg-subtle)", fontFamily: "var(--font-mono)" }}>
-                      [draft]
+                    <span style={{ marginLeft: "0.5rem", fontSize: "0.74rem", color: "var(--color-fg-subtle)", fontWeight: 400 }}>
+                      Draft
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", marginTop: "0.25rem" }}>
-                  #{pr.number} · <span style={{ color: "var(--color-accent)" }}>{pr.head.ref}</span>
-                  {" → "}<span style={{ color: "var(--color-fg-muted)" }}>{pr.base.ref}</span>
-                  {" · opened by "}{pr.user?.login}
-                  {" · "}{new Date(pr.created_at).toLocaleDateString()}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2" style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+                  <span>#{pr.number}</span>
+                  <span className="inline-flex items-center gap-1">
+                    <BranchIcon size={12} />
+                    <span className="font-mono" style={{ color: "var(--color-accent)" }}>{pr.head.ref}</span>
+                    {" → "}
+                    <span className="font-mono">{pr.base.ref}</span>
+                  </span>
+                  <span>· opened by {pr.user?.login} · {new Date(pr.created_at).toLocaleDateString()}</span>
                 </div>
               </div>
             </Link>
           ))}
-        </div>
+        </Box>
       )}
     </div>
   );
 }
 
 function PRDetail({ owner, repo, number }: { owner: string; repo: string; number: number }) {
+  const counts = useOpenCounts(owner, repo);
   const { data: prs = [] } = useQuery({
     queryKey: ["prs", owner, repo, "all"],
     queryFn: () => fetchRepoPRs(owner, repo, "all"),
@@ -120,82 +148,41 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
 
   if (!pr) return <Spinner label={`loading PR #${number}`} />;
 
+  const s = prState(pr);
+  const stateLabel = s === "merged" ? "Merged" : s === "closed" ? "Closed" : s === "draft" ? "Draft" : "Open";
   const isMergeable = pr.state === "open" && !pr.draft && pr.merged_at === null;
 
   return (
     <div>
-      <div style={{ marginBottom: "0.5rem" }}>
-        <Link
-          to={`/ui/repos/${owner}/${repo}/pulls`}
-          style={{ color: "var(--color-fg-muted)", fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}
-        >
-          ← Pull Requests
-        </Link>
-      </div>
-      <PageHeading
-        kicker={`${owner}/${repo} · PR #${pr.number}`}
-        title={<>{pr.title}</>}
-        meta={
-          `${pr.state} · ${pr.head.ref} → ${pr.base.ref} · opened by ${pr.user?.login} · ${new Date(pr.created_at).toLocaleDateString()}`
-        }
-        actions={
-          isMergeable ? (
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={mergeMutation.isPending}
-              onClick={() => mergeMutation.mutate()}
-            >
-              {mergeMutation.isPending ? "Merging…" : "Merge pull request"}
-            </Button>
-          ) : pr.merged ? (
-            <span style={{ fontSize: "0.8rem", color: "var(--color-status-info)", fontFamily: "var(--font-mono)" }}>
-              ⊕ Merged
-            </span>
-          ) : null
-        }
-      />
+      <RepoHeader owner={owner} repo={repo} active="pulls" {...counts} />
 
-      {/* PR body */}
-      <div
-        style={{
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md)",
-          marginBottom: "1rem",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            padding: "0.6rem 0.85rem",
-            background: "var(--color-bg-subtle)",
-            borderBottom: "1px solid var(--color-border)",
-            fontSize: "0.78rem",
-            fontFamily: "var(--font-mono)",
-            color: "var(--color-fg-muted)",
-          }}
-        >
-          <span style={{ color: "var(--color-fg)", fontWeight: 600 }}>{pr.user?.login}</span>
-          <span>opened {new Date(pr.created_at).toLocaleString()}</span>
+      <h1 className="mb-2" style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
+        {pr.title} <span style={{ color: "var(--color-fg-muted)", fontWeight: 400 }}>#{pr.number}</span>
+      </h1>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <StateLabel state={s} icon={<PRStateIcon pr={pr} size={15} />}>
+            {stateLabel}
+          </StateLabel>
+          <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
+            <span className="font-mono" style={{ color: "var(--color-accent)" }}>{pr.head.ref}</span>
+            {" → "}
+            <span className="font-mono">{pr.base.ref}</span> · opened by {pr.user?.login}
+          </span>
         </div>
-        <div
-          style={{
-            padding: "0.85rem 1rem",
-            fontSize: "0.875rem",
-            lineHeight: 1.6,
-            color: "var(--color-fg)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {pr.body || <span style={{ color: "var(--color-fg-muted)" }}>No description.</span>}
-        </div>
+        {isMergeable && (
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={mergeMutation.isPending}
+            onClick={() => mergeMutation.mutate()}
+          >
+            {mergeMutation.isPending ? "Merging…" : "Merge pull request"}
+          </Button>
+        )}
       </div>
 
-      {/* Comments */}
+      <CommentCard login={pr.user?.login} body={pr.body} date={pr.created_at} isOp />
       <CommentList comments={comments} />
     </div>
   );

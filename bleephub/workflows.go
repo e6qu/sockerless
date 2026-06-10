@@ -13,6 +13,40 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// WorkflowStatus is the lifecycle state of a [Workflow].
+type WorkflowStatus string
+
+const (
+	WorkflowStatusRunning            WorkflowStatus = "running"
+	WorkflowStatusQueued             WorkflowStatus = "queued"
+	WorkflowStatusCompleted          WorkflowStatus = "completed"
+	WorkflowStatusSkipped            WorkflowStatus = "skipped"
+	WorkflowStatusPendingConcurrency WorkflowStatus = "pending_concurrency"
+)
+
+// JobStatus is the lifecycle state of a [WorkflowJob].
+type JobStatus string
+
+const (
+	JobStatusPending   JobStatus = "pending"
+	JobStatusQueued    JobStatus = "queued"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusCompleted JobStatus = "completed"
+	JobStatusSkipped   JobStatus = "skipped"
+)
+
+// Result is the terminal outcome of a workflow or job. The empty value
+// means in-flight (no outcome yet).
+type Result string
+
+const (
+	ResultNone      Result = ""
+	ResultSuccess   Result = "success"
+	ResultFailure   Result = "failure"
+	ResultCancelled Result = "cancelled"
+	ResultSkipped   Result = "skipped"
+)
+
 // Workflow represents a running multi-job workflow.
 type Workflow struct {
 	ID               string                  `json:"id"`
@@ -21,8 +55,8 @@ type Workflow struct {
 	RunNumber        int                     `json:"runNumber"`
 	Jobs             map[string]*WorkflowJob `json:"jobs"`
 	Env              map[string]string       `json:"env,omitempty"`
-	Status           string                  `json:"status"` // "running", "completed", "pending_concurrency"
-	Result           string                  `json:"result"` // "success", "failure", "cancelled"
+	Status           WorkflowStatus          `json:"status"` // "running", "completed", "pending_concurrency"
+	Result           Result                  `json:"result"` // "success", "failure", "cancelled"
 	CreatedAt        time.Time               `json:"createdAt"`
 	MaxParallel      int                     `json:"-"` // per-matrix-group limit
 	cancelTimeout    func()                  // stops the timeout watcher goroutine
@@ -51,8 +85,8 @@ type WorkflowJob struct {
 	JobID           string                 `json:"jobId"` // UUID, used as Job.ID
 	DisplayName     string                 `json:"displayName"`
 	Needs           []string               `json:"needs,omitempty"`
-	Status          string                 `json:"status"` // "pending", "queued", "running", "completed", "skipped"
-	Result          string                 `json:"result"` // "success", "failure", "cancelled", "skipped"
+	Status          JobStatus              `json:"status"` // "pending", "queued", "running", "completed", "skipped"
+	Result          Result                 `json:"result"` // "success", "failure", "cancelled", "skipped"
 	Outputs         map[string]string      `json:"outputs,omitempty"`
 	MatrixValues    map[string]interface{} `json:"matrix,omitempty"`
 	ContinueOnError bool                   `json:"continueOnError,omitempty"`
@@ -90,7 +124,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		RunNumber: runID,
 		Jobs:      make(map[string]*WorkflowJob),
 		Env:       wf.Env,
-		Status:    "running",
+		Status:    WorkflowStatusRunning,
 		CreatedAt: time.Now(),
 	}
 
@@ -111,7 +145,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 			JobID:           uuid.New().String(),
 			DisplayName:     key,
 			Needs:           jd.Needs,
-			Status:          "pending",
+			Status:          JobStatusPending,
 			Outputs:         make(map[string]string),
 			ContinueOnError: jd.ContinueOnError,
 			Def:             jd,
@@ -173,7 +207,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 				continue
 			}
 			if existing.ConcurrencyGroup == workflow.ConcurrencyGroup &&
-				existing.Status == "running" {
+				existing.Status == WorkflowStatusRunning {
 				activeWf = existing
 				break
 			}
@@ -186,7 +220,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 				s.cancelWorkflow(activeWf)
 			} else {
 				// Queue this workflow behind the active one
-				workflow.Status = "pending_concurrency"
+				workflow.Status = WorkflowStatusPendingConcurrency
 				s.store.mu.Lock()
 				s.store.Workflows[workflow.ID] = workflow
 				s.store.mu.Unlock()
@@ -247,7 +281,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 		changed := false
 		var toDispatch []*WorkflowJob
 		for _, wfJob := range wf.Jobs {
-			if wfJob.Status != "pending" {
+			if wfJob.Status != JobStatusPending {
 				continue
 			}
 
@@ -260,8 +294,8 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 					allDepsOk = false
 					break
 				}
-				if depJob.Status == "completed" || depJob.Status == "skipped" {
-					if depJob.Result != "success" && !depJob.ContinueOnError {
+				if depJob.Status == JobStatusCompleted || depJob.Status == JobStatusSkipped {
+					if depJob.Result != ResultSuccess && !depJob.ContinueOnError {
 						anyDepFailed = true
 					}
 					continue
@@ -283,7 +317,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				}
 				for _, dep := range wfJob.Needs {
 					if depJob, ok := wf.Jobs[dep]; ok {
-						exprCtx.DepResults[dep] = depJob.Result
+						exprCtx.DepResults[dep] = string(depJob.Result)
 					}
 				}
 				if wf.EventName != "" {
@@ -294,8 +328,8 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				}
 
 				if !EvalExpr(wfJob.Def.If, exprCtx) {
-					wfJob.Status = "skipped"
-					wfJob.Result = "skipped"
+					wfJob.Status = JobStatusSkipped
+					wfJob.Result = ResultSkipped
 					s.logger.Info().Str("job", wfJob.Key).Str("if", wfJob.Def.If).Msg("skipping job (if: false)")
 					changed = true
 					continue
@@ -309,8 +343,8 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 
 			// If any dependency failed (and not continue-on-error), skip this job
 			if anyDepFailed {
-				wfJob.Status = "skipped"
-				wfJob.Result = "skipped"
+				wfJob.Status = JobStatusSkipped
+				wfJob.Result = ResultSkipped
 				s.logger.Info().Str("job", wfJob.Key).Msg("skipping job (dependency failed)")
 				changed = true
 				continue
@@ -323,7 +357,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 					if j.Key == wfJob.Key {
 						continue
 					}
-					if (j.Status == "queued" || j.Status == "running") && j.MatrixGroup == wfJob.MatrixGroup && wfJob.MatrixGroup != "" {
+					if (j.Status == JobStatusQueued || j.Status == JobStatusRunning) && j.MatrixGroup == wfJob.MatrixGroup && wfJob.MatrixGroup != "" {
 						active++
 					}
 				}
@@ -333,7 +367,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			}
 
 			// Mark as queued now so max-parallel checks in this iteration see it
-			wfJob.Status = "queued"
+			wfJob.Status = JobStatusQueued
 			wfJob.StartedAt = time.Now()
 			toDispatch = append(toDispatch, wfJob)
 			changed = true
@@ -436,12 +470,12 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		return // Not a workflow job
 	}
 
-	foundJob.Status = "completed"
-	foundJob.Result = normalizeResult(result)
+	foundJob.Status = JobStatusCompleted
+	foundJob.Result = Result(normalizeResult(result))
 	foundJob.CompletedAt = time.Now()
 
 	// Matrix fail-fast: if this job failed and it's in a matrix group, cancel siblings
-	if foundJob.Result == "failure" && foundJob.MatrixGroup != "" {
+	if foundJob.Result == ResultFailure && foundJob.MatrixGroup != "" {
 		if foundJob.Def.FailFast() {
 			for _, sibling := range foundWf.Jobs {
 				if sibling.Key == foundJob.Key {
@@ -450,9 +484,9 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 				if sibling.MatrixGroup != foundJob.MatrixGroup {
 					continue
 				}
-				if sibling.Status == "pending" || sibling.Status == "queued" {
-					sibling.Status = "completed"
-					sibling.Result = "cancelled"
+				if sibling.Status == JobStatusPending || sibling.Status == JobStatusQueued {
+					sibling.Status = JobStatusCompleted
+					sibling.Result = ResultCancelled
 					sibling.CompletedAt = time.Now()
 					s.logger.Info().
 						Str("job", sibling.Key).
@@ -466,7 +500,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 
 	if s.metrics != nil {
 		duration := time.Since(foundWf.CreatedAt)
-		s.metrics.RecordJobCompletion(foundJob.Result, duration)
+		s.metrics.RecordJobCompletion(string(foundJob.Result), duration)
 	}
 
 	s.logger.Info().
@@ -474,7 +508,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		Str("workflow_name", foundWf.Name).
 		Str("job_key", foundJob.Key).
 		Str("job_id", foundJob.JobID).
-		Str("result", foundJob.Result).
+		Str("result", string(foundJob.Result)).
 		Msg("workflow job completed")
 
 	// Dispatch any newly-ready jobs (this may also mark some as skipped)
@@ -490,20 +524,20 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 	allDone := true
 	anyFailed := false
 	for _, wfJob := range foundWf.Jobs {
-		if wfJob.Status != "completed" && wfJob.Status != "skipped" {
+		if wfJob.Status != JobStatusCompleted && wfJob.Status != JobStatusSkipped {
 			allDone = false
 		}
-		if wfJob.Result == "failure" || wfJob.Result == "cancelled" {
+		if wfJob.Result == ResultFailure || wfJob.Result == ResultCancelled {
 			anyFailed = true
 		}
 	}
 
 	if allDone {
-		foundWf.Status = "completed"
+		foundWf.Status = WorkflowStatusCompleted
 		if anyFailed {
-			foundWf.Result = "failure"
+			foundWf.Result = ResultFailure
 		} else {
-			foundWf.Result = "success"
+			foundWf.Result = ResultSuccess
 		}
 	}
 	concurrencyGroup := foundWf.ConcurrencyGroup
@@ -520,7 +554,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		s.logger.Info().
 			Str("workflow_id", foundWf.ID).
 			Str("workflow_name", foundWf.Name).
-			Str("result", foundWf.Result).
+			Str("result", string(foundWf.Result)).
 			Int64("duration_ms", duration.Milliseconds()).
 			Msg("workflow completed")
 
@@ -535,14 +569,14 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 func (s *Server) cancelWorkflow(wf *Workflow) {
 	s.store.mu.Lock()
 	for _, wfJob := range wf.Jobs {
-		if wfJob.Status == "pending" || wfJob.Status == "queued" {
-			wfJob.Status = "completed"
-			wfJob.Result = "cancelled"
+		if wfJob.Status == JobStatusPending || wfJob.Status == JobStatusQueued {
+			wfJob.Status = JobStatusCompleted
+			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = time.Now()
 		}
 	}
-	wf.Status = "completed"
-	wf.Result = "cancelled"
+	wf.Status = WorkflowStatusCompleted
+	wf.Result = ResultCancelled
 	s.store.mu.Unlock()
 
 	if wf.cancelTimeout != nil {
@@ -563,7 +597,7 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 	s.store.mu.Lock()
 	var pendingWf *Workflow
 	for _, wf := range s.store.Workflows {
-		if wf.ConcurrencyGroup == group && wf.Status == "pending_concurrency" {
+		if wf.ConcurrencyGroup == group && wf.Status == WorkflowStatusPendingConcurrency {
 			if pendingWf == nil || wf.CreatedAt.Before(pendingWf.CreatedAt) {
 				pendingWf = wf
 			}
@@ -575,7 +609,7 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 		return
 	}
 
-	pendingWf.Status = "running"
+	pendingWf.Status = WorkflowStatusRunning
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -630,14 +664,14 @@ func (s *Server) startTimeoutWatcher(wf *Workflow) {
 // checkJobTimeouts cancels jobs that have exceeded their timeout.
 func (s *Server) checkJobTimeouts(wf *Workflow) {
 	s.store.mu.Lock()
-	if wf.Status == "completed" {
+	if wf.Status == WorkflowStatusCompleted {
 		s.store.mu.Unlock()
 		return
 	}
 	now := time.Now()
 	var timedOut bool
 	for _, wfJob := range wf.Jobs {
-		if wfJob.Status != "queued" && wfJob.Status != "running" {
+		if wfJob.Status != JobStatusQueued && wfJob.Status != JobStatusRunning {
 			continue
 		}
 		if wfJob.StartedAt.IsZero() {
@@ -653,8 +687,8 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 				Str("job_key", wfJob.Key).
 				Int("timeout_minutes", timeout).
 				Msg("job timed out, marking cancelled")
-			wfJob.Status = "completed"
-			wfJob.Result = "cancelled"
+			wfJob.Status = JobStatusCompleted
+			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = now
 			timedOut = true
 		}

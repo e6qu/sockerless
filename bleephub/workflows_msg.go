@@ -348,7 +348,7 @@ func buildNeedsContext(wf *Workflow, wfJob *WorkflowJob) interface{} {
 
 		// Each dep is a dict with "result" and "outputs"
 		depEntries := []map[string]interface{}{
-			{"k": "result", "v": depJob.Result},
+			{"k": "result", "v": string(depJob.Result)},
 			{"k": "outputs", "v": map[string]interface{}{"t": 2, "d": outputEntries}},
 		}
 

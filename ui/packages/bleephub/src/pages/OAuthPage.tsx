@@ -1,12 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  Button,
-  PageHeading,
-  Spinner,
-} from "@sockerless/ui-core/components";
+import { Spinner } from "@sockerless/ui-core/components";
 import { useState, type ReactNode } from "react";
 import { fetchOAuthState } from "../api.js";
 import type { BleephubAuthCode, BleephubDeviceCode } from "../types.js";
+import { PageTitle, Button, Box, CodeBlock, ErrorBanner } from "../components/ui.js";
+import { RefreshIcon } from "../components/octicons.js";
 
 /** Shared table shell used by DeviceCodesCard and AuthCodesCard. */
 function OAuthCodesTable<T>({
@@ -25,42 +23,44 @@ function OAuthCodesTable<T>({
   renderRow: (item: T) => ReactNode;
 }) {
   return (
-    <CardShell title={cardTitle} count={count}>
+    <Box
+      header={
+        <div className="flex w-full items-center justify-between">
+          <span style={{ fontWeight: 600, color: "var(--color-fg)" }}>{cardTitle}</span>
+          <span
+            className="tabular-nums"
+            style={{ color: count > 0 ? "var(--color-accent)" : "var(--color-fg-muted)", fontWeight: 600 }}
+          >
+            {count}
+          </span>
+        </div>
+      }
+    >
       {items.length === 0 ? (
-        <div
-          className="py-6 text-center font-mono uppercase tracking-[0.2em]"
-          style={{ fontSize: "0.7rem", color: "var(--color-fg-subtle)" }}
-        >
-          — none —
+        <div style={{ padding: "1.25rem", textAlign: "center", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+          None active.
         </div>
       ) : (
-        <table className="w-full font-mono" style={{ fontSize: "0.72rem" }}>
+        <table className="w-full" style={{ fontSize: "0.8rem" }}>
           <thead>
-            <tr
-              className="text-left uppercase tracking-[0.15em]"
-              style={{ fontSize: "0.6rem", color: "var(--color-fg-subtle)" }}
-            >
+            <tr style={{ color: "var(--color-fg-muted)", textAlign: "left" }}>
               {headers.map((h) => (
-                <th key={h} className="py-1.5 font-medium">{h}</th>
+                <th key={h} className="font-mono" style={{ padding: "0.4rem 1rem", fontWeight: 500 }}>
+                  {h}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr
-                key={rowKey(item)}
-                style={{
-                  borderTop:
-                    "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
-                }}
-              >
+              <tr key={rowKey(item)} style={{ borderTop: "1px solid var(--color-border)" }}>
                 {renderRow(item)}
               </tr>
             ))}
           </tbody>
         </table>
       )}
-    </CardShell>
+    </Box>
   );
 }
 
@@ -73,13 +73,12 @@ export function OAuthPage() {
 
   return (
     <div>
-      <PageHeading
-        kicker="oauth · debug"
-        title={<>OAuth flows</>}
+      <PageTitle
+        title="OAuth flows"
         meta="Device flow + web flow simulator. Mint codes, exchange tokens, watch the live state below."
         actions={
-          <Button size="sm" onClick={() => refetch()} variant="ghost">
-            ↻ refresh
+          <Button size="sm" variant="secondary" onClick={() => refetch()}>
+            <RefreshIcon size={14} /> Refresh
           </Button>
         }
       />
@@ -89,7 +88,7 @@ export function OAuthPage() {
       {isLoading || !data ? (
         <Spinner label="loading oauth state" />
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2">
           <DeviceCodesCard codes={data.deviceCodes} />
           <AuthCodesCard codes={data.authCodes} />
         </div>
@@ -152,67 +151,33 @@ function FlowSimulator() {
   }
 
   return (
-    <section
-      className="mb-6 p-5"
-      style={{
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-border)",
-        borderLeft: "3px solid var(--color-accent)",
-        borderRadius: "var(--radius-sm)",
-      }}
-    >
-      <div
-        className="mb-3 text-[10px] uppercase tracking-[0.22em]"
-        style={{ color: "var(--color-fg-subtle)" }}
-      >
-        flow simulator
-      </div>
-      <div className="grid gap-3 md:grid-cols-2 mb-4">
-        <Field label="Client ID" value={clientID} onChange={setClientID} />
-        <Field label="State" value={state} onChange={setState} />
-        <Field label="Redirect URI" value={redirectURI} onChange={setRedirectURI} />
-        <Field label="Scope" value={scope} onChange={setScope} />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" size="sm" onClick={() => startWebFlow(true)}>
-          Web flow ⚡ auto
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => startWebFlow(false)}>
-          Web flow → form
-        </Button>
-        <Button variant="secondary" size="sm" onClick={startDeviceFlow}>
-          Device flow
-        </Button>
-      </div>
-      {result && (
-        <pre
-          className="mt-4 px-3 py-2 font-mono"
-          style={{
-            background: "var(--color-bg-subtle)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-sm)",
-            fontSize: "0.7rem",
-            color: "var(--color-fg)",
-            overflow: "auto",
-          }}
-        >
-          {result}
-        </pre>
-      )}
-      {error && (
-        <div
-          className="mt-4 px-3 py-2 font-mono text-xs"
-          style={{
-            background: "var(--color-status-error-soft)",
-            color: "var(--color-status-error)",
-            border: "1px solid var(--color-status-error)",
-            borderRadius: "var(--radius-sm)",
-          }}
-        >
-          {error}
+    <Box className="mb-6" header={<span style={{ fontWeight: 600, color: "var(--color-fg)" }}>Flow simulator</span>}>
+      <div style={{ padding: "1rem" }}>
+        <div className="mb-4 grid gap-3 md:grid-cols-2">
+          <Field label="Client ID" value={clientID} onChange={setClientID} />
+          <Field label="State" value={state} onChange={setState} />
+          <Field label="Redirect URI" value={redirectURI} onChange={setRedirectURI} />
+          <Field label="Scope" value={scope} onChange={setScope} />
         </div>
-      )}
-    </section>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" size="sm" onClick={() => startWebFlow(true)}>
+            Web flow (auto)
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => startWebFlow(false)}>
+            Web flow → form
+          </Button>
+          <Button variant="secondary" size="sm" onClick={startDeviceFlow}>
+            Device flow
+          </Button>
+        </div>
+        {result && (
+          <div className="mt-4">
+            <CodeBlock>{result}</CodeBlock>
+          </div>
+        )}
+        {error && <div className="mt-4"><ErrorBanner>{error}</ErrorBanner></div>}
+      </div>
+    </Box>
   );
 }
 
@@ -227,63 +192,11 @@ function Field({
 }) {
   return (
     <div>
-      <label
-        className="mb-1 block text-[10px] uppercase tracking-[0.18em]"
-        style={{ color: "var(--color-fg-subtle)" }}
-      >
+      <label className="mb-1 block" style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--color-fg)" }}>
         {label}
       </label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full"
-      />
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className="w-full" />
     </div>
-  );
-}
-
-function CardShell({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      className="p-5"
-      style={{
-        background: "var(--color-surface)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
-      }}
-    >
-      <div className="mb-3 flex items-baseline justify-between">
-        <div
-          className="text-[10px] uppercase tracking-[0.22em]"
-          style={{ color: "var(--color-fg-subtle)" }}
-        >
-          {title}
-        </div>
-        <div
-          className="font-display tabular-nums"
-          style={{
-            fontSize: "1.6rem",
-            fontStyle: "italic",
-            fontWeight: 600,
-            letterSpacing: "-0.02em",
-            color: count > 0 ? "var(--color-accent)" : "var(--color-fg-subtle)",
-            lineHeight: 1,
-          }}
-        >
-          {count}
-        </div>
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -297,10 +210,10 @@ function DeviceCodesCard({ codes }: { codes: BleephubDeviceCode[] }) {
       rowKey={(c) => c.code}
       renderRow={(c) => (
         <>
-          <td className="py-1.5" style={{ color: "var(--color-accent)" }}>{c.userCode}</td>
-          <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>{c.code.slice(0, 8)}…</td>
-          <td className="py-1.5" style={{ color: "var(--color-fg)" }}>{c.scopes}</td>
-          <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
+          <td className="font-mono" style={{ padding: "0.4rem 1rem", color: "var(--color-accent)" }}>{c.userCode}</td>
+          <td className="font-mono" style={{ padding: "0.4rem 1rem", color: "var(--color-fg-muted)" }}>{c.code.slice(0, 8)}…</td>
+          <td style={{ padding: "0.4rem 1rem", color: "var(--color-fg)" }}>{c.scopes}</td>
+          <td style={{ padding: "0.4rem 1rem", color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
         </>
       )}
     />
@@ -317,10 +230,10 @@ function AuthCodesCard({ codes }: { codes: BleephubAuthCode[] }) {
       rowKey={(c) => c.code}
       renderRow={(c) => (
         <>
-          <td className="py-1.5" style={{ color: "var(--color-accent)" }}>{c.clientId}</td>
-          <td className="py-1.5" style={{ color: "var(--color-fg-muted)" }}>{c.redirectUri}</td>
-          <td className="py-1.5" style={{ color: "var(--color-fg)" }}>{c.state || "—"}</td>
-          <td className="py-1.5 text-right" style={{ color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
+          <td className="font-mono" style={{ padding: "0.4rem 1rem", color: "var(--color-accent)" }}>{c.clientId}</td>
+          <td className="font-mono" style={{ padding: "0.4rem 1rem", color: "var(--color-fg-muted)" }}>{c.redirectUri}</td>
+          <td style={{ padding: "0.4rem 1rem", color: "var(--color-fg)" }}>{c.state || "—"}</td>
+          <td style={{ padding: "0.4rem 1rem", color: "var(--color-fg-muted)" }}>{new Date(c.expiresAt).toLocaleTimeString()}</td>
         </>
       )}
     />

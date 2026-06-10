@@ -1,6 +1,7 @@
-import { MetricsCard, PageHeading, Spinner } from "@sockerless/ui-core/components";
+import { Spinner } from "@sockerless/ui-core/components";
 import { useMetricsData } from "../hooks/useMetricsData.js";
 import { formatUptime } from "../utils/format.js";
+import { PageTitle, StatCard, SectionLabel } from "../components/ui.js";
 
 export function MetricsPage() {
   const { metrics, status, isLoading } = useMetricsData();
@@ -9,99 +10,83 @@ export function MetricsPage() {
 
   return (
     <div>
-      <PageHeading
-        kicker="bleephub · metrics"
-        title={<>Runtime &amp; throughput</>}
-        meta={metrics ? `uptime ${formatUptime(metrics.uptime_seconds)} · ${metrics.goroutines} goroutines · ${metrics.heap_alloc_mb.toFixed(1)} MB heap` : undefined}
+      <PageTitle
+        title="Runtime & throughput"
+        meta={
+          metrics
+            ? `uptime ${formatUptime(metrics.uptime_seconds)} · ${metrics.goroutines} goroutines · ${metrics.heap_alloc_mb.toFixed(1)} MB heap`
+            : undefined
+        }
       />
 
       {metrics && (
-        <>
-          <SectionHeading>Counters</SectionHeading>
-          <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <MetricsCard title="Workflow submissions" value={metrics.workflow_submissions} />
-            <MetricsCard title="Job dispatches" value={metrics.job_dispatches} />
-            <MetricsCard
+        <section className="mb-8">
+          <SectionLabel>Counters</SectionLabel>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatCard title="Workflow submissions" value={metrics.workflow_submissions} />
+            <StatCard title="Job dispatches" value={metrics.job_dispatches} />
+            <StatCard
               title="Active workflows"
               value={metrics.active_workflows}
               emphasized={metrics.active_workflows > 0}
             />
-            <MetricsCard
+            <StatCard
               title="Active sessions"
               value={metrics.active_sessions}
               emphasized={metrics.active_sessions > 0}
             />
           </div>
-        </>
+        </section>
       )}
 
       {status && (
-        <>
-          <SectionHeading>Jobs by status</SectionHeading>
-          <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <section className="mb-8">
+          <SectionLabel>Jobs by status</SectionLabel>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Object.keys(status.jobs_by_status).length === 0 ? (
               <EmptyCell>no jobs in flight</EmptyCell>
             ) : (
               Object.entries(status.jobs_by_status).map(([s, count]) => (
-                <MetricsCard
-                  key={s}
-                  title={s}
-                  value={count}
-                  emphasized={s === "running" || s === "queued"}
-                />
+                <StatCard key={s} title={s} value={count} emphasized={s === "running" || s === "queued"} />
               ))
             )}
           </div>
-        </>
+        </section>
       )}
 
       {metrics && (
-        <>
-          <SectionHeading>Job completions</SectionHeading>
+        <section>
+          <SectionLabel>Job completions</SectionLabel>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Object.keys(metrics.job_completions).length === 0 ? (
               <EmptyCell>no completed jobs yet</EmptyCell>
             ) : (
               Object.entries(metrics.job_completions).map(([result, count]) => (
-                <MetricsCard
-                  key={result}
-                  title={result}
-                  value={count}
-                  emphasized={result === "failure"}
-                />
+                <StatCard key={result} title={result} value={count} emphasized={result === "failure"} />
               ))
             )}
           </div>
-        </>
+        </section>
       )}
     </div>
-  );
-}
-
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <h3
-      className="mb-3 text-[10px] uppercase tracking-[0.22em]"
-      style={{ color: "var(--color-fg-subtle)" }}
-    >
-      {children}
-    </h3>
   );
 }
 
 function EmptyCell({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="col-span-full px-4 py-6 text-center font-mono uppercase tracking-[0.18em]"
+      className="col-span-full"
       style={{
-        background: "var(--color-bg-subtle)",
+        padding: "1.25rem",
+        textAlign: "center",
+        background: "var(--color-surface)",
         border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-sm)",
-        color: "var(--color-fg-subtle)",
-        fontSize: "0.7rem",
+        borderRadius: "var(--radius-md)",
+        color: "var(--color-fg-muted)",
+        fontSize: "0.85rem",
       }}
     >
-      — {children} —
+      {children}
     </div>
   );
 }

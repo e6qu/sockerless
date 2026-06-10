@@ -62,7 +62,7 @@ For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, 
 
 The Go binary embeds the React SPA at `/ui/` via `go embed` (build tag `!noui`, on by default). After step 3 above, open:
 
-- `https://localhost/ui/` — bleephub dashboard. Routes (left nav): **Overview**, **Workflows** (+ per-run detail), **Runners**, **Repos** (+ per-repo issues/PRs/branches detail), **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
+- `https://localhost/ui/` — the bleephub dashboard, styled to feel like GitHub without copying it verbatim: a top header bar carries the primary nav and a light/dark toggle (light by default, as on github.com). Pages: **Overview**, **Repos** (GitHub-style repo list → per-repo **Code** / **Issues** / **Pull requests** tabs, plus Commits / Releases / Webhooks / Secrets / Environments), **Workflows** (files + runs, with a per-run detail page showing the job table and the per-job log viewer), **Runners**, **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
 - Auth: the UI presents a login form on first visit — paste the `BLEEPHUB_ADMIN_TOKEN` value. The token is verified against `GET /api/v3/user`, kept in browser localStorage, and sent on every UI request. The `/internal/*` dashboard endpoints enforce it server-side (any valid PAT, including the admin token); `/health` stays open for liveness probes. It is a single-token operator surface — for multi-user access control, front bleephub with a reverse proxy.
 
 For UI hacking without rebuilding the Go binary on every change:
@@ -253,9 +253,9 @@ make bleephub-gh-docker-test
 The Docker harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/run-gh-test.sh`. It exercises:
 - `gh auth login` against bleephub as a GHES host
 - Native `gh repo create / view / list`, `gh issue create / view / list` (REST + GraphQL paths)
-- The Phase 153 parity probes for endpoints with no native `gh` verb (apps/{slug}, /applications/{cid}/token, suspend, OAuth Apps mgmt)
+- The parity probes for endpoints with no native `gh` verb (apps/{slug}, /applications/{cid}/token, suspend, OAuth Apps mgmt)
 
-Last green run: 50/50 PASS.
+Runs in CI as the `sim (bleephub gh CLI)` job (must be green to merge).
 
 ## Source layout (~80 Go files)
 
