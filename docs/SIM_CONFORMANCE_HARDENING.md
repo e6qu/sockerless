@@ -57,7 +57,16 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
 - **Next:** Stage 2 — GCP conformance sweep (same methodology). Run the 4-agent read-only audit over GCP's 23 surfaces, then verify+fix+regress in batches.
 
 ### Stage 2 — GCP conformance
-- Not started.
+- **Started:** 2026-06-10 (on the umbrella PR #538). Same deep-fidelity methodology as Stage 1.
+- **Approach:** 4 read-only audit agents over GCP's 23 surfaces (compute/network, data/storage, messaging/eventarc, identity/run/functions) → ranked concrete gaps → verify each with a fail-before probe → fix → pass-after → regression test. GCP terraform compute/network apply is Linux-CI-only; verify via SDK/CLI + `terraform validate` locally, trust CI `tf (gcp)` for apply.
+- **Findings (4 read-only audit agents; verify each by probe before fix):**
+  Round-trip drift: DNS managedZone drops labels/dnssecConfig/forwarding/peering; BigQuery table drops timePartitioning/clustering/rangePartitioning/view/expirationTime/requirePartitionFilter; Pub/Sub topic drops schemaSettings; Eventarc trigger drops channel; Artifact Registry repo drops labels/cleanupPolicies/dockerConfig/kmsKeyName; Secret Manager Secret drops ttl/expireTime/rotation/topics/annotations/versionAliases (+ UpdateSecret 400s on those masks); Logging metric drops valueExtractor/bucketOptions, sink drops bigqueryOptions; IAM Binding drops `condition`; APIGW IAM etag constant "ACAB".
+  Error fidelity: compute insert dup → no 409 ALREADY_EXISTS, delete-missing → no 404, operation GET of bogus name → DONE not 404; pubsub/eventarc/cloudbuild/dataflow duplicate create → no 409; logging sink/metric DELETE-missing → 200 not 404; IAM setIamPolicy ignores etag (no 409 ABORTED).
+  Pagination: compute lists read only `pageSize` not `maxResults` (the canonical compute param — existing test green-but-blind); compute-LB lists + DNS rrsets + eventarc + dataflow + logging entries:list + apigateway lists emit no nextPageToken; firestore list/runQuery ignore pageSize/limit/orderBy and only do EQ filters; bigquery/spanner/bigtable/memorystore lists no nextPageToken.
+  Missing ops: GCS bucket PATCH + object PATCH; Spanner Instances.Patch 404s; KMS CreateCryptoKeyVersion (+:enable/:disable/:restore); CloudFunctions v2 UpdateFunction(PATCH) + :generateUploadUrl; CloudBuild ListBuilds; Bigtable :modifyColumnFamilies + instance/cluster update; memorystore/SQL patch ignores updateMask / wholesale settings replace.
+- **GCP harness:** `simulators/gcp/sdk-tests` (build sim + start; some tests use Docker). Non-compute surfaces run via SDK without real-exec; compute *insert* (networks/instances) needs the Linux real-exec host — use metadata-only compute resources (healthCheck/backendService) or `tf (gcp)` CI for those.
+- **Batch G1 (round-trip drift):** DNS managedZone, BQ table, Pub/Sub schemaSettings, Eventarc channel, AR repo, Secret Manager fields, IAM Binding condition, Logging metric fields. Then G2 (error fidelity), G3 (pagination, incl. compute maxResults), G4 (missing ops).
+- **Next:** implement G1 + regression tests; commit; G2; G3; G4. Update this doc after the stage.
 
 ### Stage 3 — Azure conformance
 - Not started.
