@@ -74,4 +74,23 @@ describe("WorkflowDetailPage", () => {
       expect(screen.getByText("Test")).toBeInTheDocument();
     });
   });
+
+  it("renders per-job log output when logs are present", async () => {
+    // Logs are keyed by jobId (j1/j2), matching the runner timeline feed.
+    const logs = {
+      j1: ["Run actions/checkout@v4", "Build succeeded in 4s"],
+      j2: ["Run go test ./...", "ok\tall packages"],
+    };
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/logs")) return Promise.resolve(jsonResponse(logs));
+      return Promise.resolve(jsonResponse(workflowData));
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("Logs")).toBeInTheDocument();
+      // LogViewer renders each line; assert one unique line per job.
+      expect(screen.getByText("Build succeeded in 4s")).toBeInTheDocument();
+      expect(screen.getByText("Run go test ./...")).toBeInTheDocument();
+    });
+  });
 });

@@ -117,7 +117,7 @@ gh issue close 1 --repo admin/bleephub-test
 gh issue list --repo admin/bleephub-test --state closed
 ```
 
-For a comprehensive smoke test, run [`make bleephub-gh-docker-test`](../bleephub/test/run-gh-test.sh) which spins up bleephub + the official `gh` binary in Docker with TLS and exercises 50 distinct assertions.
+For a comprehensive smoke test, run [`make bleephub-gh-docker-test`](../bleephub/test/run-gh-test.sh) which spins up bleephub + the official `gh` binary in Docker with TLS and exercises the full gh-CLI assertion suite (repos, issues, PRs, reactions, releases, runs, apps, OAuth). It runs in CI as the `sim (bleephub gh CLI)` job.
 
 ## When things go wrong
 

@@ -333,6 +333,47 @@ test.describe("OAuth page", () => {
   });
 });
 
+// ─── Actions (workflows + runs + detail) ─────────────────────────────────────
+
+test.describe("Actions UI", () => {
+  test("submits a workflow and renders the run detail (jobs + logs section)", async ({ page }) => {
+    await page.goto("/ui/");
+    // Submit a real 2-job workflow via the internal exec API; this creates a
+    // run with a job graph (no runner attached, so logs stay empty — the
+    // detail page must still render the job table and the logs blankslate).
+    const yaml = [
+      "name: CI Pipeline",
+      "on: [push]",
+      "jobs:",
+      "  build:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo building",
+      "  test:",
+      "    runs-on: ubuntu-latest",
+      "    needs: build",
+      "    steps:",
+      "      - run: echo testing",
+    ].join("\n");
+    await apiPost(page, "/internal/exec/workflow", { workflow: yaml, repo: "admin/ci-demo" });
+
+    // Runs tab lists the run (the tab is a button; the page title also
+    // contains the word "runs", so target the button role explicitly).
+    await page.goto("/ui/workflows");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Runs" }).click();
+    await expect(page.getByText("CI Pipeline").first()).toBeVisible();
+    await shot(page, "29-actions-runs");
+
+    // Click the run row → detail page with the job table + logs section.
+    await page.getByText("CI Pipeline").first().click();
+    await page.waitForURL(/\/ui\/workflows\/.+/);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: /Jobs/i })).toBeVisible();
+    await shot(page, "30-actions-run-detail");
+  });
+});
+
 // ─── Metrics page ────────────────────────────────────────────────────────────
 
 test.describe("Metrics page", () => {
