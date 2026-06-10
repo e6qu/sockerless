@@ -204,14 +204,17 @@ func handleAppASDescribeScalableTargets(w http.ResponseWriter, r *http.Request) 
 		return true
 	})
 	matched = sortBy(matched, func(t AppScalableTarget) string { return t.ResourceId })
+	page, next := awsPageExplicit(matched, req.NextToken, awsMaxResults(req.MaxResults))
 
-	out := make([]map[string]any, 0, len(matched))
-	for _, t := range matched {
+	out := make([]map[string]any, 0, len(page))
+	for _, t := range page {
 		out = append(out, scalableTargetToJSON(t))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"ScalableTargets": out,
-	})
+	resp := map[string]any{"ScalableTargets": out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func scalableTargetToJSON(t AppScalableTarget) map[string]any {
@@ -345,14 +348,17 @@ func handleAppASDescribeScalingPolicies(w http.ResponseWriter, r *http.Request) 
 		return true
 	})
 	matched = sortBy(matched, func(p AppScalingPolicy) string { return p.PolicyName })
+	page, next := awsPageExplicit(matched, req.NextToken, awsMaxResults(req.MaxResults))
 
-	out := make([]map[string]any, 0, len(matched))
-	for _, p := range matched {
+	out := make([]map[string]any, 0, len(page))
+	for _, p := range page {
 		out = append(out, scalingPolicyToJSON(p))
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"ScalingPolicies": out,
-	})
+	resp := map[string]any{"ScalingPolicies": out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func scalingPolicyToJSON(p AppScalingPolicy) map[string]any {

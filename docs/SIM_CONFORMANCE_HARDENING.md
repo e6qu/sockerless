@@ -29,7 +29,7 @@ When in doubt about a wire shape, verify with `--debug` / serializer source (`go
 
 | Stage | Scope | Status |
 |---|---|---|
-| 1 | AWS conformance sweep + fixes + regression tests | **in progress** — Batch 1 landed, PR #537 CI green (34/34) |
+| 1 | AWS conformance sweep + fixes + regression tests | **DONE** — Batch 1 (PR #537, merged); Batches 2-4 (this branch) |
 | 2 | GCP conformance sweep + fixes + regression tests | pending |
 | 3 | Azure conformance sweep + fixes + regression tests | pending |
 | 4 | Go type hardening across all sims (`docs/GOLANG_STRONG_TYPING.md`) | pending |
@@ -50,7 +50,11 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
   SFN: no GetExecutionHistory op.
 - **Batch 1 — DONE (commit, regression tests green):** BUG-1621 autoscaling ARN+HealthCheckType, BUG-1622 batch jobArn, BUG-1623 apigateway rootResourceId, BUG-1624 apigatewayv2 apiEndpoint, BUG-1625 acm Options CT-logging default, BUG-1626 Kinesis EncryptionType NONE. All 6 reproduced (fail-before/pass-after); regression tests in `simulators/aws/sdk-tests/conformance_roundtrip_test.go`. Build + gofmt clean.
 - **Next (Batch 2, round-trip — higher complexity):** lambda GetFunction `ImageConfigResponse` wrapper (response field differs from CreateFunction input `ImageConfig`; nested `{ImageConfig, Error}`); DynamoDB UpdateItem honor `ReturnValues` (currently always returns full Attributes; default NONE → empty); EventBridge PutTargets/ListTargetsByRule carry structured params (EcsParameters/InputTransformer/RetryPolicy/DeadLetterConfig — `EBTarget.Extra` is `json:"-"`, decode+store+emit). Then Batch 3 error fidelity (elbv2/ecs/iam/batch/cloudmap), Batch 4 pagination (autoscaling/batch/eventbridge/iam/efs/cloudtrail/app-autoscaling lists).
-- **Resume note for next session:** the audit findings list above is the worklist; verify each remaining item with a fail-before probe, fix, pass-after, file BUG, commit. AWS sdk-tests harness builds 3 Docker images in TestMain (cached after first run) — needs Docker; run a subset with `-run`.
+- **Batch 2 — DONE:** BUG-1627 lambda ImageConfigResponse, BUG-1628 dynamodb UpdateItem ReturnValues, BUG-1629 eventbridge structured target params.
+- **Batch 3 — DONE (error fidelity):** BUG-1630 elbv2 explicit-id NotFound, BUG-1631 ecs ClusterNotFoundException, BUG-1632 iam EntityAlreadyExists, BUG-1633 batch typed ClientException, BUG-1634 cloudmap 404→400, BUG-1635 wafv2 WAFDuplicateItemException.
+- **Batch 4 — DONE (pagination):** BUG-1636 — `awsPageExplicit` guardrail helper across iam/eventbridge/batch/autoscaling/app-autoscaling/efs/cloudtrail list ops (paginate only on explicit page size).
+- **Stage 1 status: COMPLETE for the audited findings.** All regression tests live in `simulators/aws/sdk-tests/conformance_roundtrip_test.go`. Deferred (lower-value, shared-codepath, documented — pick up if consumer-visible): RDS describe missing fields + restore port, ElastiCache CacheNodes endpoint, apigateway CreateStage variables, SQS DelaySeconds/MessageAttributes, CodeBuild currentPhase/buildNumber, Glue command casing, SNS default Policy, SFN GetExecutionHistory; plus dedicated tests for EFS DescribeMountTargets / autoscaling DescribeScalingActivities / app-AS DescribeScalingPolicies / batch ListJobs+DescribeJobDefinitions+DescribeJobQueues (fixed, covered structurally via shared codepath).
+- **Next:** Stage 2 — GCP conformance sweep (same methodology). Run the 4-agent read-only audit over GCP's 23 surfaces, then verify+fix+regress in batches.
 
 ### Stage 2 — GCP conformance
 - Not started.

@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,14 +14,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/apigateway"
 	"github.com/aws/aws-sdk-go-v2/service/apigatewayv2"
 	apigwv2types "github.com/aws/aws-sdk-go-v2/service/apigatewayv2/types"
+	"github.com/aws/aws-sdk-go-v2/service/applicationautoscaling"
+	aastypes "github.com/aws/aws-sdk-go-v2/service/applicationautoscaling/types"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/batch"
 	batchtypes "github.com/aws/aws-sdk-go-v2/service/batch/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudtrail"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	elbtypes "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
@@ -611,4 +617,390 @@ func TestConformanceWAFv2CreateWebACLDuplicate(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.As(err, &dup),
 		"CreateWebACL with a duplicate name+scope must raise WAFDuplicateItemException, got %v", err)
+}
+
+// ---- Pagination fidelity ----------------------------------------------------
+//
+// Each list op below honors an explicit page-size param (MaxItems / MaxResults
+// / MaxRecords / Limit): page-size=1 returns exactly one item plus a non-empty
+// continuation token, following that token returns the rest and clears it, and
+// omitting the page-size returns the full list with no token. Where the op's
+// result set is process-global, the token-clear assertion is replaced by a
+// "more on the next page" assertion to stay deterministic under parallel tests.
+
+// IAM ListAttachedRolePolicies is role-scoped, so the two attachments are the
+// whole result set and pagination round-trips exactly.
+func TestConformanceIAMListAttachedRolePoliciesPagination(t *testing.T) {
+	c := iamClient()
+	role := "conf-page-role"
+	_, err := c.CreateRole(ctx, &iam.CreateRoleInput{
+		RoleName:                 aws.String(role),
+		AssumeRolePolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[]}`),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteRole(ctx, &iam.DeleteRoleInput{RoleName: aws.String(role)}) })
+
+	arns := []string{
+		"arn:aws:iam::aws:policy/conf-page-A",
+		"arn:aws:iam::aws:policy/conf-page-B",
+	}
+	for _, arn := range arns {
+		_, err = c.AttachRolePolicy(ctx, &iam.AttachRolePolicyInput{
+			RoleName: aws.String(role), PolicyArn: aws.String(arn),
+		})
+		require.NoError(t, err)
+		a := arn
+		t.Cleanup(func() {
+			_, _ = c.DetachRolePolicy(ctx, &iam.DetachRolePolicyInput{RoleName: aws.String(role), PolicyArn: aws.String(a)})
+		})
+	}
+
+	// Guardrail: no MaxItems => full list, no marker.
+	full, err := c.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{RoleName: aws.String(role)})
+	require.NoError(t, err)
+	require.Len(t, full.AttachedPolicies, 2)
+	assert.False(t, full.IsTruncated)
+	assert.Empty(t, aws.ToString(full.Marker))
+
+	page1, err := c.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{
+		RoleName: aws.String(role), MaxItems: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.AttachedPolicies, 1)
+	assert.True(t, page1.IsTruncated)
+	require.NotEmpty(t, aws.ToString(page1.Marker))
+
+	page2, err := c.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{
+		RoleName: aws.String(role), MaxItems: aws.Int32(1), Marker: page1.Marker,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.AttachedPolicies, 1)
+	assert.False(t, page2.IsTruncated)
+	assert.Empty(t, aws.ToString(page2.Marker))
+	assert.NotEqual(t,
+		aws.ToString(page1.AttachedPolicies[0].PolicyArn),
+		aws.ToString(page2.AttachedPolicies[0].PolicyArn),
+		"the second page must surface the other attachment")
+}
+
+// IAM ListPolicies is account-global; assert the structural page-size contract.
+func TestConformanceIAMListPoliciesPagination(t *testing.T) {
+	c := iamClient()
+	for _, name := range []string{"conf-lp-page-1", "conf-lp-page-2"} {
+		n := name
+		_, err := c.CreatePolicy(ctx, &iam.CreatePolicyInput{
+			PolicyName:     aws.String(n),
+			PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeletePolicy(ctx, &iam.DeletePolicyInput{
+				PolicyArn: aws.String("arn:aws:iam::123456789012:policy/" + n),
+			})
+		})
+	}
+
+	page1, err := c.ListPolicies(ctx, &iam.ListPoliciesInput{MaxItems: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.Policies, 1)
+	assert.True(t, page1.IsTruncated)
+	require.NotEmpty(t, aws.ToString(page1.Marker))
+
+	page2, err := c.ListPolicies(ctx, &iam.ListPoliciesInput{MaxItems: aws.Int32(1), Marker: page1.Marker})
+	require.NoError(t, err)
+	require.Len(t, page2.Policies, 1)
+	assert.NotEqual(t, aws.ToString(page1.Policies[0].Arn), aws.ToString(page2.Policies[0].Arn))
+}
+
+// IAM ListInstanceProfiles is account-global; assert the structural contract.
+func TestConformanceIAMListInstanceProfilesPagination(t *testing.T) {
+	c := iamClient()
+	for _, name := range []string{"conf-ip-page-1", "conf-ip-page-2"} {
+		n := name
+		_, err := c.CreateInstanceProfile(ctx, &iam.CreateInstanceProfileInput{InstanceProfileName: aws.String(n)})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeleteInstanceProfile(ctx, &iam.DeleteInstanceProfileInput{InstanceProfileName: aws.String(n)})
+		})
+	}
+
+	page1, err := c.ListInstanceProfiles(ctx, &iam.ListInstanceProfilesInput{MaxItems: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.InstanceProfiles, 1)
+	assert.True(t, page1.IsTruncated)
+	require.NotEmpty(t, aws.ToString(page1.Marker))
+
+	page2, err := c.ListInstanceProfiles(ctx, &iam.ListInstanceProfilesInput{MaxItems: aws.Int32(1), Marker: page1.Marker})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(page2.InstanceProfiles), 1)
+	assert.NotEqual(t,
+		aws.ToString(page1.InstanceProfiles[0].InstanceProfileName),
+		aws.ToString(page2.InstanceProfiles[0].InstanceProfileName))
+}
+
+// EventBridge ListRules is event-bus-scoped, so a fresh bus with two rules is
+// the whole result set and pagination round-trips exactly.
+func TestConformanceEventBridgeListRulesPagination(t *testing.T) {
+	eb := eventbridgeClient()
+	bus := "conf-page-rules-bus"
+	_, err := eb.CreateEventBus(ctx, &eventbridge.CreateEventBusInput{Name: aws.String(bus)})
+	require.NoError(t, err)
+
+	for _, rule := range []string{"conf-page-rule-a", "conf-page-rule-b"} {
+		rn := rule
+		_, err = eb.PutRule(ctx, &eventbridge.PutRuleInput{
+			Name: aws.String(rn), EventBusName: aws.String(bus),
+			EventPattern: aws.String(`{"source":["conf.page"]}`),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: aws.String(rn), EventBusName: aws.String(bus)})
+		})
+	}
+	t.Cleanup(func() { _, _ = eb.DeleteEventBus(ctx, &eventbridge.DeleteEventBusInput{Name: aws.String(bus)}) })
+
+	// Guardrail: no Limit => full list, no token.
+	full, err := eb.ListRules(ctx, &eventbridge.ListRulesInput{EventBusName: aws.String(bus)})
+	require.NoError(t, err)
+	require.Len(t, full.Rules, 2)
+	assert.Empty(t, aws.ToString(full.NextToken))
+
+	page1, err := eb.ListRules(ctx, &eventbridge.ListRulesInput{EventBusName: aws.String(bus), Limit: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.Rules, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := eb.ListRules(ctx, &eventbridge.ListRulesInput{
+		EventBusName: aws.String(bus), Limit: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.Rules, 1)
+	assert.Empty(t, aws.ToString(page2.NextToken))
+	assert.NotEqual(t, aws.ToString(page1.Rules[0].Name), aws.ToString(page2.Rules[0].Name))
+}
+
+// Batch DescribeComputeEnvironments list-all path is process-global; assert the
+// structural page-size contract.
+func TestConformanceBatchDescribeComputeEnvironmentsPagination(t *testing.T) {
+	c := batchClient()
+	for _, name := range []string{"conf-page-ce-1", "conf-page-ce-2"} {
+		n := name
+		_, err := c.CreateComputeEnvironment(ctx, &batch.CreateComputeEnvironmentInput{
+			ComputeEnvironmentName: aws.String(n),
+			Type:                   batchtypes.CETypeManaged,
+			State:                  batchtypes.CEStateEnabled,
+			ComputeResources: &batchtypes.ComputeResource{
+				Type: batchtypes.CRTypeEc2, MinvCpus: aws.Int32(0), MaxvCpus: aws.Int32(16),
+				Subnets: []string{"subnet-00000001"},
+			},
+			ServiceRole: aws.String("arn:aws:iam::123456789012:role/aws-batch-service-role"),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeleteComputeEnvironment(ctx, &batch.DeleteComputeEnvironmentInput{ComputeEnvironment: aws.String(n)})
+		})
+	}
+
+	page1, err := c.DescribeComputeEnvironments(ctx, &batch.DescribeComputeEnvironmentsInput{MaxResults: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.ComputeEnvironments, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := c.DescribeComputeEnvironments(ctx, &batch.DescribeComputeEnvironmentsInput{
+		MaxResults: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(page2.ComputeEnvironments), 1)
+	assert.NotEqual(t,
+		aws.ToString(page1.ComputeEnvironments[0].ComputeEnvironmentName),
+		aws.ToString(page2.ComputeEnvironments[0].ComputeEnvironmentName))
+}
+
+// EC2 Auto Scaling DescribeAutoScalingGroups list-all path is process-global;
+// assert the structural MaxRecords/NextToken contract.
+func TestConformanceAutoScalingDescribeGroupsPagination(t *testing.T) {
+	c := autoScalingClient()
+	lc := "conf-page-asg-lc"
+	_, err := c.CreateLaunchConfiguration(ctx, &autoscaling.CreateLaunchConfigurationInput{
+		LaunchConfigurationName: aws.String(lc),
+		ImageId:                 aws.String("ami-00000001"),
+		InstanceType:            aws.String("t3.micro"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteLaunchConfiguration(ctx, &autoscaling.DeleteLaunchConfigurationInput{LaunchConfigurationName: aws.String(lc)})
+	})
+	for _, name := range []string{"conf-page-asg-1", "conf-page-asg-2"} {
+		n := name
+		_, err = c.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+			AutoScalingGroupName:    aws.String(n),
+			LaunchConfigurationName: aws.String(lc),
+			MinSize:                 aws.Int32(0), MaxSize: aws.Int32(1),
+			AvailabilityZones: []string{"us-east-1a"},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeleteAutoScalingGroup(ctx, &autoscaling.DeleteAutoScalingGroupInput{
+				AutoScalingGroupName: aws.String(n), ForceDelete: aws.Bool(true),
+			})
+		})
+	}
+
+	page1, err := c.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{MaxRecords: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.AutoScalingGroups, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := c.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		MaxRecords: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(page2.AutoScalingGroups), 1)
+	assert.NotEqual(t,
+		aws.ToString(page1.AutoScalingGroups[0].AutoScalingGroupName),
+		aws.ToString(page2.AutoScalingGroups[0].AutoScalingGroupName))
+}
+
+// Application Auto Scaling DescribeScalableTargets is namespace+resource
+// scoped, so the two targets are the whole result set and round-trip exactly.
+func TestConformanceAppAutoScalingDescribeTargetsPagination(t *testing.T) {
+	c := appAutoScalingClient()
+	const ns = aastypes.ServiceNamespaceEcs
+	ids := []string{"service/conf-page/svc-a", "service/conf-page/svc-b"}
+	for _, id := range ids {
+		rid := id
+		_, err := c.RegisterScalableTarget(ctx, &applicationautoscaling.RegisterScalableTargetInput{
+			ServiceNamespace:  ns,
+			ResourceId:        aws.String(rid),
+			ScalableDimension: aastypes.ScalableDimensionECSServiceDesiredCount,
+			MinCapacity:       aws.Int32(1), MaxCapacity: aws.Int32(4),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeregisterScalableTarget(ctx, &applicationautoscaling.DeregisterScalableTargetInput{
+				ServiceNamespace: ns, ResourceId: aws.String(rid),
+				ScalableDimension: aastypes.ScalableDimensionECSServiceDesiredCount,
+			})
+		})
+	}
+
+	full, err := c.DescribeScalableTargets(ctx, &applicationautoscaling.DescribeScalableTargetsInput{
+		ServiceNamespace: ns, ResourceIds: ids,
+	})
+	require.NoError(t, err)
+	require.Len(t, full.ScalableTargets, 2)
+	assert.Empty(t, aws.ToString(full.NextToken))
+
+	page1, err := c.DescribeScalableTargets(ctx, &applicationautoscaling.DescribeScalableTargetsInput{
+		ServiceNamespace: ns, ResourceIds: ids, MaxResults: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.ScalableTargets, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := c.DescribeScalableTargets(ctx, &applicationautoscaling.DescribeScalableTargetsInput{
+		ServiceNamespace: ns, ResourceIds: ids, MaxResults: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.ScalableTargets, 1)
+	assert.Empty(t, aws.ToString(page2.NextToken))
+	assert.NotEqual(t,
+		aws.ToString(page1.ScalableTargets[0].ResourceId),
+		aws.ToString(page2.ScalableTargets[0].ResourceId))
+}
+
+// EFS DescribeAccessPoints is file-system-scoped, so the two access points are
+// the whole result set and pagination round-trips exactly (NextToken scheme).
+func TestConformanceEFSDescribeAccessPointsPagination(t *testing.T) {
+	c := efsClient()
+	fs, err := c.CreateFileSystem(ctx, &efs.CreateFileSystemInput{
+		CreationToken:   aws.String("conf-page-ap-fs"),
+		PerformanceMode: efstypes.PerformanceModeGeneralPurpose,
+	})
+	require.NoError(t, err)
+	fsID := aws.ToString(fs.FileSystemId)
+	t.Cleanup(func() { _, _ = c.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)}) })
+
+	for i := 0; i < 2; i++ {
+		ap, err := c.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{FileSystemId: aws.String(fsID)})
+		require.NoError(t, err)
+		apID := aws.ToString(ap.AccessPointId)
+		t.Cleanup(func() { _, _ = c.DeleteAccessPoint(ctx, &efs.DeleteAccessPointInput{AccessPointId: aws.String(apID)}) })
+	}
+
+	full, err := c.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{FileSystemId: aws.String(fsID)})
+	require.NoError(t, err)
+	require.Len(t, full.AccessPoints, 2)
+	assert.Empty(t, aws.ToString(full.NextToken))
+
+	page1, err := c.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(fsID), MaxResults: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.AccessPoints, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := c.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(fsID), MaxResults: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.AccessPoints, 1)
+	assert.Empty(t, aws.ToString(page2.NextToken))
+	assert.NotEqual(t,
+		aws.ToString(page1.AccessPoints[0].AccessPointId),
+		aws.ToString(page2.AccessPoints[0].AccessPointId))
+}
+
+// EFS DescribeFileSystems list-all path is process-global; assert the
+// structural Marker/MaxItems/NextMarker contract.
+func TestConformanceEFSDescribeFileSystemsPagination(t *testing.T) {
+	c := efsClient()
+	for i := 0; i < 2; i++ {
+		fs, err := c.CreateFileSystem(ctx, &efs.CreateFileSystemInput{
+			CreationToken:   aws.String(fmt.Sprintf("conf-page-fs-%d", i)),
+			PerformanceMode: efstypes.PerformanceModeGeneralPurpose,
+		})
+		require.NoError(t, err)
+		fsID := aws.ToString(fs.FileSystemId)
+		t.Cleanup(func() { _, _ = c.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)}) })
+	}
+
+	page1, err := c.DescribeFileSystems(ctx, &efs.DescribeFileSystemsInput{MaxItems: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.FileSystems, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextMarker))
+
+	page2, err := c.DescribeFileSystems(ctx, &efs.DescribeFileSystemsInput{
+		MaxItems: aws.Int32(1), Marker: page1.NextMarker,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(page2.FileSystems), 1)
+	assert.NotEqual(t,
+		aws.ToString(page1.FileSystems[0].FileSystemId),
+		aws.ToString(page2.FileSystems[0].FileSystemId))
+}
+
+// CloudTrail LookupEvents draws on a process-global, time-ordered event log;
+// assert the structural MaxResults/NextToken contract.
+func TestConformanceCloudTrailLookupEventsPagination(t *testing.T) {
+	ct := cloudTrailClient()
+	ecsc := ecsClient()
+	for _, name := range []string{"conf-page-ct-1", "conf-page-ct-2"} {
+		n := name
+		_, err := ecsc.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(n)})
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = ecsc.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(n)}) })
+	}
+
+	page1, err := ct.LookupEvents(ctx, &cloudtrail.LookupEventsInput{MaxResults: aws.Int32(1)})
+	require.NoError(t, err)
+	require.Len(t, page1.Events, 1)
+	require.NotEmpty(t, aws.ToString(page1.NextToken))
+
+	page2, err := ct.LookupEvents(ctx, &cloudtrail.LookupEventsInput{
+		MaxResults: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.Events, 1)
+	assert.NotEqual(t, aws.ToString(page1.Events[0].EventId), aws.ToString(page2.Events[0].EventId))
 }

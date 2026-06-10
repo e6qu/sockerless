@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -165,12 +166,18 @@ func handleASDescribeAutoScalingGroups(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		groups = autoScalingGroups.List()
+		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 	}
+	page, next := awsPageExplicit(groups, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
 	var items strings.Builder
-	for _, asg := range groups {
+	for _, asg := range page {
 		items.WriteString(autoScalingGroupXML(asg))
 	}
-	asResponse(w, "DescribeAutoScalingGroups", fmt.Sprintf("<AutoScalingGroups>%s</AutoScalingGroups>", items.String()))
+	body := fmt.Sprintf("<AutoScalingGroups>%s</AutoScalingGroups>", items.String())
+	if next != "" {
+		body += "<NextToken>" + xmlEscape(next) + "</NextToken>"
+	}
+	asResponse(w, "DescribeAutoScalingGroups", body)
 }
 
 func handleASUpdateAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
@@ -224,15 +231,25 @@ func handleASSetDesiredCapacity(w http.ResponseWriter, r *http.Request) {
 
 func handleASDescribeScalingActivities(w http.ResponseWriter, r *http.Request) {
 	groupName := r.FormValue("AutoScalingGroupName")
-	var items strings.Builder
+	activities := make([]ScalingActivity, 0)
 	for _, activity := range scalingActivities.List() {
 		if groupName != "" && activity.AutoScalingGroupName != groupName {
 			continue
 		}
+		activities = append(activities, activity)
+	}
+	sort.Slice(activities, func(i, j int) bool { return activities[i].ActivityId < activities[j].ActivityId })
+	page, next := awsPageExplicit(activities, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
+	var items strings.Builder
+	for _, activity := range page {
 		fmt.Fprintf(&items, `<member><ActivityId>%s</ActivityId><AutoScalingGroupName>%s</AutoScalingGroupName><Description>%s</Description><Cause>%s</Cause><StartTime>%s</StartTime><EndTime>%s</EndTime><StatusCode>%s</StatusCode></member>`,
 			activity.ActivityId, xmlEscape(activity.AutoScalingGroupName), xmlEscape(activity.Description), xmlEscape(activity.Cause), activity.StartTime, activity.EndTime, activity.StatusCode)
 	}
-	asResponse(w, "DescribeScalingActivities", fmt.Sprintf("<Activities>%s</Activities>", items.String()))
+	body := fmt.Sprintf("<Activities>%s</Activities>", items.String())
+	if next != "" {
+		body += "<NextToken>" + xmlEscape(next) + "</NextToken>"
+	}
+	asResponse(w, "DescribeScalingActivities", body)
 }
 
 func handleASDeleteAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
