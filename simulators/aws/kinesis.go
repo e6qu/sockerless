@@ -129,7 +129,7 @@ func kinesisMakeShards(count int64) []KinesisShard {
 }
 
 func kinesisStreamDescription(s KinesisStream) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"StreamName":              s.StreamName,
 		"StreamARN":               s.StreamARN,
 		"StreamStatus":            s.StreamStatus,
@@ -139,9 +139,9 @@ func kinesisStreamDescription(s KinesisStream) map[string]any {
 		"RetentionPeriodHours":    s.RetentionPeriodHours,
 		"StreamCreationTimestamp": s.CreationTimestamp,
 		"EnhancedMonitoring":      s.EnhancedMonitoring,
-		"EncryptionType":          s.EncryptionType,
-		"KeyId":                   s.KeyId,
 	}
+	kinesisSetEncryption(out, s)
+	return out
 }
 
 func kinesisStreamSummary(s KinesisStream) map[string]any {
@@ -149,17 +149,31 @@ func kinesisStreamSummary(s KinesisStream) map[string]any {
 	if open == 0 {
 		open = int64(len(s.Shards))
 	}
-	return map[string]any{
+	out := map[string]any{
 		"StreamName":              s.StreamName,
 		"StreamARN":               s.StreamARN,
 		"StreamStatus":            s.StreamStatus,
 		"RetentionPeriodHours":    s.RetentionPeriodHours,
 		"StreamCreationTimestamp": s.CreationTimestamp,
 		"EnhancedMonitoring":      s.EnhancedMonitoring,
-		"EncryptionType":          s.EncryptionType,
-		"KeyId":                   s.KeyId,
 		"OpenShardCount":          open,
 		"StreamModeDetails":       s.StreamModeDetails,
+	}
+	kinesisSetEncryption(out, s)
+	return out
+}
+
+// kinesisSetEncryption mirrors real Kinesis: an unencrypted stream reports
+// EncryptionType=NONE and omits KeyId; a KMS-encrypted one reports its type
+// and key id.
+func kinesisSetEncryption(out map[string]any, s KinesisStream) {
+	if s.EncryptionType == "" {
+		out["EncryptionType"] = "NONE"
+		return
+	}
+	out["EncryptionType"] = s.EncryptionType
+	if s.KeyId != "" {
+		out["KeyId"] = s.KeyId
 	}
 }
 
