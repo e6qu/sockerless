@@ -101,6 +101,8 @@ func handleSpannerInstanceChild(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 1 && r.Method == http.MethodGet:
 		handleSpannerGetInstance(w, r)
+	case len(parts) == 1 && r.Method == http.MethodPatch:
+		handleSpannerUpdateInstance(w, r)
 	case len(parts) == 1 && r.Method == http.MethodDelete:
 		handleSpannerDeleteInstance(w, r)
 	case len(parts) == 3 && parts[1] == "operations" && r.Method == http.MethodGet:
@@ -246,6 +248,37 @@ func handleSpannerDeleteInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSpannerUpdateInstance(w http.ResponseWriter, r *http.Request) {
+	project, instanceID := sim.PathParam(r, "project"), spannerPathPart(r, "instance", 0)
+	name := spannerInstanceName(project, instanceID)
+	inst, ok := spannerInstances.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found", name)
+		return
+	}
+	var req struct {
+		Instance  spannerInstance `json:"instance"`
+		FieldMask string          `json:"fieldMask"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	for _, field := range strings.Split(req.FieldMask, ",") {
+		switch strings.TrimSpace(field) {
+		case "nodeCount":
+			inst.NodeCount = req.Instance.NodeCount
+		case "displayName":
+			inst.DisplayName = req.Instance.DisplayName
+		case "labels":
+			inst.Labels = req.Instance.Labels
+		}
+	}
+	spannerInstances.Put(name, inst)
+	op := newSpannerInstanceLRO(project, instanceID, inst, "type.googleapis.com/google.spanner.admin.instance.v1.Instance")
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func handleSpannerCreateDatabase(w http.ResponseWriter, r *http.Request) {

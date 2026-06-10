@@ -30,7 +30,7 @@ When in doubt about a wire shape, verify with `--debug` / serializer source (`go
 | Stage | Scope | Status |
 |---|---|---|
 | 1 | AWS conformance sweep + fixes + regression tests | **DONE** — Batch 1 (PR #537, merged); Batches 2-4 (this branch) |
-| 2 | GCP conformance sweep + fixes + regression tests | pending |
+| 2 | GCP conformance sweep + fixes + regression tests | **DONE** — G1-G4 (BUG-1637/1638/1639/1640); on PR #538 (merged) + this branch (G4) |
 | 3 | Azure conformance sweep + fixes + regression tests | pending |
 | 4 | Go type hardening across all sims (`docs/GOLANG_STRONG_TYPING.md`) | pending |
 | 5 | Simulator UI hardening (aws/azure/gcp UIs) | pending |
@@ -69,7 +69,8 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
 - **Batch G2 — DONE (BUG-1638):** error fidelity — compute insert→409 + delete-missing→404 (network/subnet/firewall/address/router/instance + 5 LB inserts), pubsub/eventarc duplicate→409, logging sink/metric delete-missing→404, IAM setIamPolicy stale-etag→409 ABORTED. Shared computeConflict/computeNotFound/gcpIAMETagConflict helpers. Deferred (documented, not faked): compute synthetic/stateless operation store (can't 404 a bogus op name without fabricating a store); cloudbuild/dataflow create use server-assigned ids (name-collision 409 is a different contract).
 - **Batch G3 — DONE (BUG-1639):** pagination — compute lists now read `maxResults` (`paginateListCompute`), compute-LB + DNS rrsets + eventarc + dataflow + logging entries:list + bigquery lists emit nextPageToken; firestore list paginates and runQuery was rewritten to honor limit/offset/orderBy + the full operator set (was EQ-only). Guardrail: paginate only on explicit positive page size. 7 SDK regression tests. Deferred (small fixed collections): spanner/bigtable/memorystore/apigateway list tokens.
 - **Next — Batch G4 (missing ops, higher complexity):** GCS bucket PATCH + object metadata PATCH; Spanner Instances.Patch (currently 404s); KMS CreateCryptoKeyVersion (+:enable/:disable/:restore, primary-version update); CloudFunctions v2 UpdateFunction (PATCH) + :generateUploadUrl; CloudBuild ListBuilds; Bigtable :modifyColumnFamilies + instance/cluster partialUpdate; memorystore/Cloud SQL patch updateMask merge (currently wholesale replace). These add new routes/ops — verify each adds the real Google method, fail-before/pass-after. Then update this doc AFTER the stage and move to Stage 3 (Azure).
-- **Checkpoint:** PR #538 CI green through Stage 1 + Stage 2 G1+G2 (sim aws sdk, sim gcp, tf aws, tf gcp, lint, dead-code all pass). G3 pushed next.
+- **Batch G4 — DONE (BUG-1640):** missing ops — GCS bucket+object PATCH, Spanner Instances.Patch, KMS CreateCryptoKeyVersion+UpdateCryptoKeyVersion+:restore, CloudFunctions v2 UpdateFunction+:generateUploadUrl, CloudBuild ListBuilds, Bigtable :modifyColumnFamilies+instance/cluster update, memorystore/Cloud SQL updateMask merge. 11 SDK regression tests. **Stage 2 COMPLETE.**
+- **Checkpoint:** Stage 1 + Stage 2 G1-G3 merged in PR #538 (CI green). Stage 2 G4 + Stages 3-6 on branch `feat/sim-conformance-stage2-6` (new umbrella PR).
 - **Resume note:** GCP sdk-tests run via `cd simulators/gcp/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -tags noui -run '<pat>' -timeout 15m .` (TestMain builds+starts the sim). compute network/instance INSERT needs the Linux real-exec host (skips on mac via requireNetworkHost) → use metadata-only compute resources (healthCheck/backendService/firewall) for probes. Watch the `simulators-dupl` 200-token gate — factor shared helpers.
 
 ### Stage 3 — Azure conformance

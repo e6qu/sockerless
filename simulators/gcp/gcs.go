@@ -191,6 +191,40 @@ func gcsLocationType(location string) string {
 	return "region"
 }
 
+// applyBucketPatch merges a PATCH/PUT body into the stored bucket JSON.
+// Top-level fields replace; `labels` follows GCS null-value-deletes
+// semantics (a null value removes the label, others merge in). Immutable
+// server-set fields (id/name/kind/selfLink/timeCreated/projectNumber) are
+// not overwritten from the patch body.
+func applyBucketPatch(data, patch map[string]any) {
+	for k, v := range patch {
+		switch k {
+		case "id", "name", "kind", "selfLink", "timeCreated", "projectNumber", "metageneration", "etag":
+			continue
+		case "labels":
+			incoming, ok := v.(map[string]any)
+			if !ok {
+				data["labels"] = v
+				continue
+			}
+			labels, _ := data["labels"].(map[string]any)
+			if labels == nil {
+				labels = map[string]any{}
+			}
+			for lk, lv := range incoming {
+				if lv == nil {
+					delete(labels, lk)
+				} else {
+					labels[lk] = lv
+				}
+			}
+			data["labels"] = labels
+		default:
+			data[k] = v
+		}
+	}
+}
+
 func gcsTimestamp() string {
 	return time.Now().UTC().Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z")
 }
@@ -512,6 +546,35 @@ func registerGCS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, bucket.Data)
 	})
 
+	// Patch / Update bucket. The Go storage client's BucketHandle.Update
+	// and terraform-provider-google send PATCH (PUT for full Update) to
+	// mutate versioning/lifecycle/labels/iamConfiguration/retentionPolicy.
+	// The bucket stores its JSON verbatim, so apply the patch body as a
+	// top-level field merge into that map. `labels` honours GCS null-value-
+	// deletes semantics (a null label value removes the key).
+	patchBucket := func(w http.ResponseWriter, r *http.Request) {
+		bucketName := sim.PathParam(r, "bucket")
+		if strings.Contains(r.URL.Path, "/o/") || strings.HasSuffix(r.URL.Path, "/o") {
+			return
+		}
+		bucket, ok := buckets.Get(bucketName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucketName)
+			return
+		}
+		var patch map[string]any
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		applyBucketPatch(bucket.Data, patch)
+		bucket.Data["updated"] = gcsTimestamp()
+		buckets.Put(bucketName, bucket)
+		sim.WriteJSON(w, http.StatusOK, bucket.Data)
+	}
+	srv.HandleFunc("PATCH /storage/v1/b/{bucket}", patchBucket)
+	srv.HandleFunc("PUT /storage/v1/b/{bucket}", patchBucket)
+
 	// Get bucket storage layout
 	srv.HandleFunc("GET /storage/v1/b/{bucket}/storageLayout", func(w http.ResponseWriter, r *http.Request) {
 		bucketName := sim.PathParam(r, "bucket")
@@ -668,6 +731,39 @@ func registerGCS(srv *sim.Server) {
 		}
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
 	})
+
+	// Patch / Update object metadata. ObjectHandle.Update (and the JSON
+	// API's objects.patch / objects.update) mutate contentType /
+	// cacheControl / metadata etc. in place without re-uploading the
+	// payload. Merge the resource fields onto the stored object.
+	patchObject := func(w http.ResponseWriter, r *http.Request) {
+		bucketName := sim.PathParam(r, "bucket")
+		objectName := sim.PathParam(r, "object")
+		key := bucketName + "/" + objectName
+		obj, ok := objects.Get(key)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "object %q not found in bucket %q", objectName, bucketName)
+			return
+		}
+		var res gcsObjectResource
+		if err := sim.ReadJSON(r, &res); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		obj = res.applyTo(obj)
+		if err := validateGCSObjectAttrs(obj); err != nil {
+			writeGCSPersistError(w, "patch object", err)
+			return
+		}
+		obj.Updated = gcsTimestamp()
+		if mg, err := strconv.ParseInt(obj.Metageneration, 10, 64); err == nil {
+			obj.Metageneration = strconv.FormatInt(mg+1, 10)
+		}
+		objects.Put(key, obj)
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
+	}
+	srv.HandleFunc("PATCH /storage/v1/b/{bucket}/o/{object...}", patchObject)
+	srv.HandleFunc("PUT /storage/v1/b/{bucket}/o/{object...}", patchObject)
 
 	// Delete object
 	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/o/{object...}", func(w http.ResponseWriter, r *http.Request) {

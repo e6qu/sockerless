@@ -213,17 +213,28 @@ func handleMSRedisPatch(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
 		return
 	}
+	// Honour updateMask: only the named paths are written, so a
+	// displayName-only patch leaves memorySizeGb/labels/etc. untouched.
+	// An empty mask means "update everything supplied" (legacy behaviour).
+	mask := r.URL.Query().Get("updateMask")
+	fields := map[string]bool{}
+	for _, f := range strings.Split(mask, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			fields[f] = true
+		}
+	}
+	wants := func(name string) bool { return len(fields) == 0 || fields[name] }
 	msRedisInstances.Update(name, func(i *MSRedisInstance) {
-		if req.DisplayName != "" {
+		if wants("displayName") {
 			i.DisplayName = req.DisplayName
 		}
-		if req.MemorySizeGb != 0 {
+		if wants("memorySizeGb") {
 			i.MemorySizeGb = req.MemorySizeGb
 		}
-		if req.Labels != nil {
+		if wants("labels") {
 			i.Labels = req.Labels
 		}
-		if req.RedisConfigs != nil {
+		if wants("redisConfigs") {
 			i.RedisConfigs = req.RedisConfigs
 		}
 	})

@@ -346,10 +346,62 @@ func registerCloudKMS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, v)
 	})
 
-	// DestroyCryptoKeyVersion: POST .../cryptoKeyVersions/{cryptoKeyVersionAction}
+	// CreateCryptoKeyVersion: POST .../cryptoKeys/{cryptoKey}/cryptoKeyVersions
+	// Mints a fresh ENABLED version with its own AES-256 key material. The
+	// numeric ID is one past the current highest version. terraform's
+	// google_kms_crypto_key_version provisions versions this way.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions", func(w http.ResponseWriter, r *http.Request) {
+		keyName := kmsCryptoKeyName(r)
+		key, ok := kmsCryptoKeys.Get(keyName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKey %s not found", keyName)
+			return
+		}
+		next := kmsNextVersionID(keyName)
+		versionID, err := kmsCreateVersion(keyName, next, key.ProtectionLevel, key.Algorithm)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not generate key version: %v", err)
+			return
+		}
+		v, _ := kmsCryptoKeyVersions.Get(keyName + "/cryptoKeyVersions/" + versionID)
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
+
+	// UpdateCryptoKeyVersion: PATCH .../cryptoKeyVersions/{cryptoKeyVersion}?updateMask=state
+	// The canonical enable/disable toggle — terraform flips a version
+	// between ENABLED and DISABLED through this PATCH, not a dedicated verb.
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions/{cryptoKeyVersion}", func(w http.ResponseWriter, r *http.Request) {
+		name := kmsCryptoKeyName(r) + "/cryptoKeyVersions/" + sim.PathParam(r, "cryptoKeyVersion")
+		v, ok := kmsCryptoKeyVersions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKeyVersion %s not found", name)
+			return
+		}
+		var req kmsCryptoKeyVersion
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		for _, field := range strings.Split(r.URL.Query().Get("updateMask"), ",") {
+			if strings.TrimSpace(field) != "state" {
+				continue
+			}
+			if req.State != "ENABLED" && req.State != "DISABLED" {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+					"state may only be set to ENABLED or DISABLED, got %q", req.State)
+				return
+			}
+			v.State = req.State
+		}
+		kmsCryptoKeyVersions.Put(name, v)
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
+
+	// DestroyCryptoKeyVersion / RestoreCryptoKeyVersion:
+	// POST .../cryptoKeyVersions/{cryptoKeyVersionAction}
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{cryptoKey}/cryptoKeyVersions/{cryptoKeyVersionAction}", func(w http.ResponseWriter, r *http.Request) {
 		versionID, action, found := strings.Cut(sim.PathParam(r, "cryptoKeyVersionAction"), ":")
-		if !found || action != "destroy" {
+		if !found || (action != "destroy" && action != "restore") {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown cryptoKeyVersion action %q", sim.PathParam(r, "cryptoKeyVersionAction"))
 			return
 		}
@@ -359,15 +411,41 @@ func registerCloudKMS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKeyVersion %s not found", name)
 			return
 		}
-		if v.State == "DESTROY_SCHEDULED" || v.State == "DESTROYED" {
-			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "CryptoKeyVersion %s is already %s", name, v.State)
-			return
+		switch action {
+		case "destroy":
+			if v.State == "DESTROY_SCHEDULED" || v.State == "DESTROYED" {
+				sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "CryptoKeyVersion %s is already %s", name, v.State)
+				return
+			}
+			v.State = "DESTROY_SCHEDULED"
+			v.DestroyTime = time.Now().UTC().Add(kmsDestroyScheduledDelay).Format(time.RFC3339)
+		case "restore":
+			if v.State != "DESTROY_SCHEDULED" {
+				sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "CryptoKeyVersion %s is not DESTROY_SCHEDULED (state %s)", name, v.State)
+				return
+			}
+			v.State = "DISABLED"
+			v.DestroyTime = ""
 		}
-		v.State = "DESTROY_SCHEDULED"
-		v.DestroyTime = time.Now().UTC().Add(kmsDestroyScheduledDelay).Format(time.RFC3339)
 		kmsCryptoKeyVersions.Put(name, v)
 		sim.WriteJSON(w, http.StatusOK, v)
 	})
+}
+
+// kmsNextVersionID returns the next numeric version ID for a key (one past
+// the current highest existing version, or "1" when none exist).
+func kmsNextVersionID(keyName string) string {
+	prefix := keyName + "/cryptoKeyVersions/"
+	highest := 0
+	for _, v := range kmsCryptoKeyVersions.List() {
+		if !strings.HasPrefix(v.Name, prefix) {
+			continue
+		}
+		if n, ok := kmsVersionNumber(v.Name); ok && n > highest {
+			highest = n
+		}
+	}
+	return fmt.Sprintf("%d", highest+1)
 }
 
 // ----- crypto handlers -----

@@ -72,10 +72,15 @@ func TestGCP_Operations_List(t *testing.T) {
 	require.GreaterOrEqual(t, len(afterList.Operations), initial+2,
 		"List must include the 2 new LROs from Memorystore + Cloud Run Jobs")
 
-	// Every entry has a `name` shaped `projects/.../operations/...`.
+	// Every entry has a `name` carrying an operations collection. Most
+	// services use the project-scoped `projects/.../operations/{id}` form;
+	// Bigtable admin legitimately uses the flat `operations/{id}` collection
+	// (AIP-151 allows both), so accept either.
 	for _, op := range afterList.Operations {
 		name, _ := op["name"].(string)
-		assert.Contains(t, name, "/operations/", "op name must follow projects/.../operations/{id}")
+		assert.True(t,
+			strings.Contains(name, "/operations/") || strings.HasPrefix(name, "operations/"),
+			"op name must carry an operations collection, got %q", name)
 	}
 
 	// `filter=done:true` returns the same set (newLRO records done=true

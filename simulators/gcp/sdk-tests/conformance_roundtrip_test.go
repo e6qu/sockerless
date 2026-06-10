@@ -10,10 +10,16 @@ import (
 
 	eventarc "cloud.google.com/go/eventarc/apiv1"
 	"cloud.google.com/go/eventarc/apiv1/eventarcpb"
+	functions "cloud.google.com/go/functions/apiv2"
+	"cloud.google.com/go/functions/apiv2/functionspb"
+	"cloud.google.com/go/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	"google.golang.org/api/bigquery/v2"
+	bigtableadmin "google.golang.org/api/bigtableadmin/v2"
+	cloudbuild "google.golang.org/api/cloudbuild/v1"
+	cloudkms "google.golang.org/api/cloudkms/v1"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/dataflow/v1b3"
@@ -23,9 +29,13 @@ import (
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
 	"google.golang.org/api/pubsub/v1"
+	redis "google.golang.org/api/redis/v1"
 	secretmanager "google.golang.org/api/secretmanager/v1"
+	spanner "google.golang.org/api/spanner/v1"
+	sqladmin "google.golang.org/api/sqladmin/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 // These tests assert that writable fields accepted on create/patch survive a
@@ -736,4 +746,368 @@ func runFirestoreQuery(t *testing.T, url, body string) []*firestore.RunQueryResp
 		}
 	}
 	return docs
+}
+
+func TestConformance_GCSBucketUpdateVersioning(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	bkt := client.Bucket("conf-bucket-update")
+	require.NoError(t, bkt.Create(ctx, "conformance-project", nil))
+
+	updated, err := bkt.Update(ctx, storage.BucketAttrsToUpdate{
+		VersioningEnabled: true,
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.VersioningEnabled, "Update must turn versioning on")
+
+	got, err := bkt.Attrs(ctx)
+	require.NoError(t, err)
+	assert.True(t, got.VersioningEnabled, "read-back must show versioning enabled")
+}
+
+func TestConformance_GCSBucketUpdateLabels(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	bkt := client.Bucket("conf-bucket-labels")
+	require.NoError(t, bkt.Create(ctx, "conformance-project", &storage.BucketAttrs{
+		Labels: map[string]string{"keep": "yes", "drop": "soon"},
+	}))
+
+	var uattrs storage.BucketAttrsToUpdate
+	uattrs.SetLabel("added", "now")
+	uattrs.DeleteLabel("drop")
+	updated, err := bkt.Update(ctx, uattrs)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"keep": "yes", "added": "now"}, updated.Labels)
+
+	got, err := bkt.Attrs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"keep": "yes", "added": "now"}, got.Labels)
+}
+
+func TestConformance_GCSObjectUpdateMetadata(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	bkt := client.Bucket("conf-object-update")
+	require.NoError(t, bkt.Create(ctx, "conformance-project", nil))
+
+	obj := bkt.Object("meta.txt")
+	w := obj.NewWriter(ctx)
+	_, err := w.Write([]byte("payload"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	updated, err := obj.Update(ctx, storage.ObjectAttrsToUpdate{
+		ContentType:  "text/plain",
+		CacheControl: "max-age=60",
+		Metadata:     map[string]string{"x": "y"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "text/plain", updated.ContentType)
+	assert.Equal(t, "max-age=60", updated.CacheControl)
+	assert.Equal(t, map[string]string{"x": "y"}, updated.Metadata)
+
+	got, err := obj.Attrs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "text/plain", got.ContentType)
+	assert.Equal(t, "max-age=60", got.CacheControl)
+	assert.Equal(t, map[string]string{"x": "y"}, got.Metadata)
+}
+
+func TestConformance_SpannerInstanceUpdateNodeCount(t *testing.T) {
+	svc, err := spanner.NewService(ctx, option.WithEndpoint(baseURL+"/spanner/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-spanner-project"
+	parent := "projects/" + project
+	created, err := svc.Projects.Instances.Create(parent, &spanner.CreateInstanceRequest{
+		InstanceId: "conf-resize",
+		Instance: &spanner.Instance{
+			Config:      "projects/" + project + "/instanceConfigs/regional-us-central1",
+			DisplayName: "conf resize",
+			NodeCount:   1,
+		},
+	}).Do()
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	name := parent + "/instances/conf-resize"
+	op, err := svc.Projects.Instances.Patch(name, &spanner.UpdateInstanceRequest{
+		Instance: &spanner.Instance{
+			Name:        name,
+			NodeCount:   3,
+			DisplayName: "conf resize v2",
+		},
+		FieldMask: "nodeCount,displayName",
+	}).Do()
+	require.NoError(t, err, "Instances.Patch must not 404")
+	require.NotNil(t, op)
+
+	got, err := svc.Projects.Instances.Get(name).Do()
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, got.NodeCount, "nodeCount must reflect the patch")
+	assert.Equal(t, "conf resize v2", got.DisplayName)
+}
+
+func TestConformance_KMSCreateAndToggleCryptoKeyVersion(t *testing.T) {
+	svc, err := cloudkms.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-kms-project"
+	location := "projects/" + project + "/locations/global"
+	ring, err := svc.Projects.Locations.KeyRings.Create(location, &cloudkms.KeyRing{}).
+		KeyRingId("conf-ckv-ring").Do()
+	require.NoError(t, err)
+
+	key, err := svc.Projects.Locations.KeyRings.CryptoKeys.Create(ring.Name, &cloudkms.CryptoKey{
+		Purpose: "ENCRYPT_DECRYPT",
+	}).CryptoKeyId("conf-ckv-key").Do()
+	require.NoError(t, err)
+
+	// Create a second version explicitly.
+	v2, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		Create(key.Name, &cloudkms.CryptoKeyVersion{}).Do()
+	require.NoError(t, err, "CreateCryptoKeyVersion must not 404")
+	require.NotEmpty(t, v2.Name)
+	assert.Equal(t, "ENABLED", v2.State)
+
+	list, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.List(key.Name).Do()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(list.CryptoKeyVersions), 2, "both versions must be listed")
+
+	// Disable v2 via UpdateCryptoKeyVersion (PATCH state) — the canonical
+	// state toggle terraform's google_kms_crypto_key_version uses.
+	disabled, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		Patch(v2.Name, &cloudkms.CryptoKeyVersion{State: "DISABLED"}).
+		UpdateMask("state").Do()
+	require.NoError(t, err, "UpdateCryptoKeyVersion must not 404")
+	assert.Equal(t, "DISABLED", disabled.State)
+
+	// Re-enable.
+	enabled, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		Patch(v2.Name, &cloudkms.CryptoKeyVersion{State: "ENABLED"}).
+		UpdateMask("state").Do()
+	require.NoError(t, err, "UpdateCryptoKeyVersion must not 404")
+	assert.Equal(t, "ENABLED", enabled.State)
+
+	// Schedule destroy then restore.
+	destroyed, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		Destroy(v2.Name, &cloudkms.DestroyCryptoKeyVersionRequest{}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DESTROY_SCHEDULED", destroyed.State)
+
+	restored, err := svc.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.
+		Restore(v2.Name, &cloudkms.RestoreCryptoKeyVersionRequest{}).Do()
+	require.NoError(t, err, "RestoreCryptoKeyVersion must not 404")
+	assert.Equal(t, "DISABLED", restored.State, "restore returns the version to DISABLED")
+}
+
+func TestConformance_CloudBuildListBuilds(t *testing.T) {
+	svc, err := cloudbuild.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-cb-list-project"
+	// CreateBuild persists the build even when execution fails (no source),
+	// which is all ListBuilds needs to surface it.
+	op, err := svc.Projects.Builds.Create(project, &cloudbuild.Build{
+		Steps: []*cloudbuild.BuildStep{{Name: "gcr.io/cloud-builders/docker", Args: []string{"version"}}},
+	}).Do()
+	require.NoError(t, err)
+	require.NotNil(t, op)
+
+	list, err := svc.Projects.Builds.List(project).Do()
+	require.NoError(t, err, "ListBuilds must not 404")
+	require.NotEmpty(t, list.Builds, "created build must appear in ListBuilds")
+	for _, b := range list.Builds {
+		assert.Equal(t, project, b.ProjectId)
+	}
+}
+
+func TestConformance_BigtableModifyColumnFamilies(t *testing.T) {
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-bt-project"
+	parent := "projects/" + project
+	_, err = svc.Projects.Instances.Create(parent, &bigtableadmin.CreateInstanceRequest{
+		InstanceId: "conf-bt-inst",
+		Instance:   &bigtableadmin.Instance{DisplayName: "conf bt", Type: "PRODUCTION"},
+		Clusters: map[string]bigtableadmin.Cluster{
+			"conf-bt-clu": {Location: "projects/" + project + "/locations/us-central1-a", ServeNodes: 1},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	instName := "projects/" + project + "/instances/conf-bt-inst"
+	_, err = svc.Projects.Instances.Tables.Create(instName, &bigtableadmin.CreateTableRequest{
+		TableId: "conf-bt-table",
+		Table: &bigtableadmin.Table{
+			ColumnFamilies: map[string]bigtableadmin.ColumnFamily{"cf1": {}},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	tableName := instName + "/tables/conf-bt-table"
+	modified, err := svc.Projects.Instances.Tables.ModifyColumnFamilies(tableName,
+		&bigtableadmin.ModifyColumnFamiliesRequest{
+			Modifications: []*bigtableadmin.Modification{
+				{Id: "cf2", Create: &bigtableadmin.ColumnFamily{}},
+				{Id: "cf1", Drop: true},
+			},
+		}).Do()
+	require.NoError(t, err, "ModifyColumnFamilies must not 404")
+	require.NotNil(t, modified)
+	assert.Contains(t, modified.ColumnFamilies, "cf2")
+	assert.NotContains(t, modified.ColumnFamilies, "cf1", "dropped family must be gone")
+
+	got, err := svc.Projects.Instances.Tables.Get(tableName).Do()
+	require.NoError(t, err)
+	assert.Contains(t, got.ColumnFamilies, "cf2", "GET must reflect added family")
+	assert.NotContains(t, got.ColumnFamilies, "cf1")
+}
+
+func TestConformance_BigtableInstanceAndClusterUpdate(t *testing.T) {
+	svc, err := bigtableadmin.NewService(ctx, option.WithEndpoint(baseURL+"/"), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-bt-upd-project"
+	parent := "projects/" + project
+	_, err = svc.Projects.Instances.Create(parent, &bigtableadmin.CreateInstanceRequest{
+		InstanceId: "conf-bt-upd",
+		Instance:   &bigtableadmin.Instance{DisplayName: "before", Type: "PRODUCTION"},
+		Clusters: map[string]bigtableadmin.Cluster{
+			"conf-bt-upd-clu": {Location: "projects/" + project + "/locations/us-central1-a", ServeNodes: 1},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	instName := "projects/" + project + "/instances/conf-bt-upd"
+	_, err = svc.Projects.Instances.PartialUpdateInstance(instName, &bigtableadmin.Instance{
+		DisplayName: "after",
+	}).UpdateMask("displayName").Do()
+	require.NoError(t, err, "PartialUpdateInstance must not 404")
+
+	gotInst, err := svc.Projects.Instances.Get(instName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "after", gotInst.DisplayName)
+
+	cluName := instName + "/clusters/conf-bt-upd-clu"
+	_, err = svc.Projects.Instances.Clusters.Update(cluName, &bigtableadmin.Cluster{
+		ServeNodes: 4,
+	}).Do()
+	require.NoError(t, err, "Clusters.Update must not 404")
+
+	gotClu, err := svc.Projects.Instances.Clusters.Get(cluName).Do()
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, gotClu.ServeNodes, "num_nodes must reflect the update")
+}
+
+func TestConformance_MemorystoreRedisPatchUpdateMask(t *testing.T) {
+	svc, err := redis.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-redis-project"
+	parent := "projects/" + project + "/locations/us-central1"
+	_, err = svc.Projects.Locations.Instances.Create(parent, &redis.Instance{
+		DisplayName:  "before",
+		Tier:         "BASIC",
+		MemorySizeGb: 2,
+	}).InstanceId("conf-redis").Do()
+	require.NoError(t, err)
+
+	name := parent + "/instances/conf-redis"
+	// Patch only displayName via updateMask — memorySizeGb must be preserved.
+	_, err = svc.Projects.Locations.Instances.Patch(name, &redis.Instance{
+		DisplayName:  "after",
+		MemorySizeGb: 99,
+	}).UpdateMask("displayName").Do()
+	require.NoError(t, err)
+
+	got, err := svc.Projects.Locations.Instances.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "after", got.DisplayName)
+	assert.EqualValues(t, 2, got.MemorySizeGb, "updateMask=displayName must NOT change memorySizeGb")
+}
+
+func TestConformance_CloudSQLPatchMergesSettings(t *testing.T) {
+	svc, err := sqladmin.NewService(ctx, option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+
+	const project = "conf-sql-project"
+	_, err = svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:            "conf-sql",
+		DatabaseVersion: "POSTGRES_15",
+		Settings: &sqladmin.Settings{
+			Tier: "db-custom-1-3840",
+			BackupConfiguration: &sqladmin.BackupConfiguration{
+				Enabled: true,
+			},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	// Patch only databaseFlags — tier + backupConfiguration must survive.
+	_, err = svc.Instances.Patch(project, "conf-sql", &sqladmin.DatabaseInstance{
+		Settings: &sqladmin.Settings{
+			DatabaseFlags: []*sqladmin.DatabaseFlags{{Name: "max_connections", Value: "100"}},
+		},
+	}).Do()
+	require.NoError(t, err)
+
+	got, err := svc.Instances.Get(project, "conf-sql").Do()
+	require.NoError(t, err)
+	require.NotNil(t, got.Settings)
+	assert.Equal(t, "db-custom-1-3840", got.Settings.Tier, "tier must be preserved across a databaseFlags-only patch")
+	require.NotNil(t, got.Settings.BackupConfiguration, "backupConfiguration must be preserved")
+	assert.True(t, got.Settings.BackupConfiguration.Enabled)
+	require.Len(t, got.Settings.DatabaseFlags, 1, "patched databaseFlags must apply")
+	assert.Equal(t, "max_connections", got.Settings.DatabaseFlags[0].Name)
+}
+
+func TestConformance_CloudFunctionsUpdateAndGenerateUploadUrl(t *testing.T) {
+	client, err := functions.NewFunctionRESTClient(ctx,
+		option.WithEndpoint(baseURL), option.WithoutAuthentication())
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+
+	const parent = "projects/conf-gcf-project/locations/us-central1"
+
+	// generateUploadUrl is called before create.
+	upload, err := client.GenerateUploadUrl(ctx, &functionspb.GenerateUploadUrlRequest{
+		Parent: parent,
+	})
+	require.NoError(t, err, "GenerateUploadUrl must not 404")
+	require.NotEmpty(t, upload.GetUploadUrl(), "uploadUrl must be returned")
+	require.NotNil(t, upload.GetStorageSource(), "storageSource must be returned")
+
+	op, err := client.CreateFunction(ctx, &functionspb.CreateFunctionRequest{
+		Parent:     parent,
+		FunctionId: "conf-gcf-update",
+		Function: &functionspb.Function{
+			BuildConfig: &functionspb.BuildConfig{Runtime: "go121", EntryPoint: "Handler"},
+		},
+	})
+	require.NoError(t, err)
+	_, err = op.Wait(ctx)
+	require.NoError(t, err)
+
+	name := parent + "/functions/conf-gcf-update"
+	updateOp, err := client.UpdateFunction(ctx, &functionspb.UpdateFunctionRequest{
+		Function: &functionspb.Function{
+			Name:        name,
+			Description: "updated in place",
+		},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"description"}},
+	})
+	require.NoError(t, err, "UpdateFunction PATCH must not 404")
+	updated, err := updateOp.Wait(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "updated in place", updated.GetDescription())
+
+	got, err := client.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: name})
+	require.NoError(t, err)
+	assert.Equal(t, "updated in place", got.GetDescription(), "read-back must reflect the patch")
 }
