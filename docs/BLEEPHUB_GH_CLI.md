@@ -44,6 +44,11 @@ Other tokens (OAuth user, installation server-to-server) can be minted via the O
 
 That's it. `gh` is now authenticated against bleephub.
 
+Setup and full teardown (server, cert material, keychain trust, gh wiring) are
+idempotent shell blocks in the quick start — see
+[`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)
+and its **Teardown** section.
+
 ## Supported commands
 
 These work natively (no `gh api` workaround needed):
