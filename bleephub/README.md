@@ -28,26 +28,29 @@ The audit artifact mapping bleephub's coverage to GitHub-real shapes (per-route 
 cd ui/packages/bleephub && bun install && bun run build      # → ui/packages/bleephub/dist/
 cd ../../../bleephub && make build                           # → ./bleephub-server (embeds dist/)
 
-# 2. Generate + trust a localhost TLS cert (gh requires HTTPS)
+# 2. Generate + trust a localhost TLS cert (gh requires HTTPS).
 openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
   -keyout /tmp/bph.key -out /tmp/bph.crt \
   -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-# macOS — trust the cert system-wide:
+# macOS — trust the cert in the system keychain. REQUIRED on macOS: gh is a
+# Go binary and Go on darwin reads trust ONLY from the keychain — the
+# SSL_CERT_FILE / SSL_CERT_DIR env vars are ignored there.
 sudo security add-trusted-cert -d -r trustRoot \
   -k /Library/Keychains/System.keychain /tmp/bph.crt
 # Linux (Debian/Ubuntu):
 # sudo cp /tmp/bph.crt /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates
 
-# 3. Start bleephub on :443 with TLS  (use :8443 + --hostname localhost:8443 below if you prefer no sudo)
+# 3. Start bleephub on :8443 with TLS (no sudo needed — :8443 doesn't require root).
 #    BLEEPHUB_ADMIN_TOKEN is required — there is no default; pick any non-PAT-shaped value.
-sudo BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
+BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
   BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
-  ./bleephub-server --addr :443 &
+  ./bleephub-server --addr :8443 &
 
-# 4. Point gh at bleephub — --hostname is the key flag; the token is whatever you set above
-echo "bleephub-admin-token-00000000000000000000" \
-  | gh auth login --hostname localhost --with-token
-export GH_HOST=localhost                                     # make it the default host
+# 4. Point gh at bleephub via environment. Current gh rejects host:port in
+#    `gh auth login --hostname` ("error parsing hostname"), but GH_HOST +
+#    GH_TOKEN accept a port and skip the login step entirely.
+export GH_HOST=localhost:8443
+export GH_TOKEN="bleephub-admin-token-00000000000000000000"
 
 # 5. Use real gh verbs against bleephub
 gh repo create demo --public
@@ -55,6 +58,13 @@ gh issue create --repo admin/demo --title "first" --body "hi"
 gh issue list --repo admin/demo
 gh release create v1.0.0 --repo admin/demo --title "v1"
 ```
+
+To bind the real `:443` instead (lets you use `gh auth login --hostname localhost`
+and a persistent `~/.config/gh/hosts.yml` entry, since the no-port hostname is
+the only shape `gh auth login` accepts): run step 3 with `--addr :443` under
+`sudo`, in its own foreground terminal — `sudo … &` backgrounds the process
+before the password prompt, so the server never actually starts and the next
+`gh` call fails with `connection refused` on 443.
 
 For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, gh CLI, harness) run [`make bleephub-gh-docker-test`](#integration-tests). For the full walkthrough — supported `gh` commands, endpoints without native verbs, token prefixes, body coercion, troubleshooting — see [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md).
 

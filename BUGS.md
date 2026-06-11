@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1686 filed - 1612 fixed - 35 open - 6 false positives.**
+**1687 filed - 1613 fixed - 35 open - 6 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1687~~ | P3 | bleephub gh-CLI docs — quick start broken on macOS (gh rejects host:port; sudo-& trap; SSL_CERT_FILE ignored) | reference-adaptor drift (gh CLI) + doc bug | Reproduced the recipe on macOS with gh 2.92.0: (a) `gh auth login --hostname localhost:8443` now fails `error parsing hostname: invalid hostname` — the doc's "host:port works in --hostname" claim is stale; `GH_HOST=localhost:8443` + `GH_TOKEN` still works at runtime (the Docker harness already relies on env auth — its login line is `\|\| true`); (b) the quick start's `sudo … ./bleephub-server --addr :443 &` backgrounds before the password prompt, so nothing listens and the next step fails `connection refused` on 443 — the user-reported symptom; (c) gh on darwin ignores `SSL_CERT_FILE`/`SSL_CERT_DIR` (Go reads trust from the keychain only), so the keychain step is mandatory on macOS, not an alternative. Fixed: quick start defaults to a no-sudo `:8443` + `GH_HOST`/`GH_TOKEN` flow (verified through the TLS handshake on macOS), `:443`/`gh auth login` documented as the alternative with the sudo-backgrounding warning, keychain marked REQUIRED on macOS in both docs. |
 | ~~1686~~ | P2 | aca backend — non-TLS Log Analytics shim built the query URL without the `/v1` endpoint prefix | wrong client path, masked by a sim quirk | `backends/aca/azure.go` `httpLogsClient` (the direct-HTTP path used when azquery rejects non-TLS endpoints, i.e. sim runs) built `{endpoint}/workspaces/{id}/query`; the real Log Analytics endpoint — and what the azquery SDK builds — is `{endpoint}/v1/workspaces/{id}/query`. The sim's un-prefixed quirk route had masked it; when BUG-1655 removed that route, the CI `smoke (aca)` `docker logs` step failed (the mux's `404 page not found` body parses as the JSON number 404 → `cannot unmarshal number into map[string]json.RawMessage` → empty logs). Fixed the shim to build the real `/v1` path; ACA smoke 14/14 locally. The AZF backend was already correct (real azquery client appends `v1` itself). |
 | 1685 | P3 | azure sim redis — resource emits `sku` at top level; `RedisResource` nests it under `properties` | response-shape drift | Runtime spec-shape validator; allowlisted in `simulators/azure/spec-violation-allowlist.txt`, burn-down. |
 | 1684 | P3 | azure sim eventgrid — PartnerTopic responses carry `readinessState`, not a `PartnerTopicProperties` (2022-06-15) member | response-shape drift | Runtime validator; allowlisted, burn-down. |
