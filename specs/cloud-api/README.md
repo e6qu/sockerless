@@ -5,14 +5,16 @@ for every cloud service the simulators implement. They are the ground
 truth the simulators are validated against, so simulator fidelity cannot
 silently diverge from what real SDKs/CLIs/providers are generated from.
 
-| Cloud | Format | Upstream | Pin |
-|---|---|---|---|
-| [`aws/`](aws/SOURCES.md) | Smithy 2.0 JSON (the models the AWS SDKs are generated from) | `aws/aws-sdk-go-v2` `codegen/sdk-codegen/aws-models/` | commit SHA |
-| [`gcp/`](gcp/SOURCES.md) | Google API Discovery documents (the source of `google.golang.org/api` clients) | per-service `$discovery/rest` endpoint / central discovery index | document `revision` |
-| [`azure/`](azure/SOURCES.md) | Swagger 2.0 (the source of the Azure track-2 SDKs and `go-azure-sdk`) | `Azure/azure-rest-api-specs` | commit SHA |
+| Cloud | Format | Upstream | License | Pin |
+|---|---|---|---|---|
+| [`aws/`](aws/SOURCES.md) | Smithy 2.0 JSON (the models the AWS SDKs are generated from) | `aws/aws-sdk-go-v2` `codegen/sdk-codegen/aws-models/` | [Apache-2.0](https://github.com/aws/aws-sdk-go-v2/blob/main/LICENSE.txt) | commit SHA |
+| [`gcp/`](gcp/SOURCES.md) | Google API Discovery documents (the source of `google.golang.org/api` clients) | per-service `$discovery/rest` endpoint / central discovery index | [Apache-2.0](https://github.com/googleapis/google-api-go-client/blob/main/LICENSE) (Discovery docs, as consumed by the Apache-licensed clients) | document `revision` (no git reference exists for live Discovery) |
+| [`azure/`](azure/SOURCES.md) | Swagger 2.0 (the source of the Azure track-2 SDKs and `go-azure-sdk`) | `Azure/azure-rest-api-specs` | [MIT](https://github.com/Azure/azure-rest-api-specs/blob/main/LICENSE) | commit SHA |
 
-Every file is gzipped, never edited, and recorded in its directory's
-`SOURCES.md` (upstream repo/host, path, license, pin, fetch time). Azure
+Every file is gzipped, never edited, **committed to this repo** (CI and
+builds never download a spec — the gates read these committed files), and
+recorded per-file in its directory's `SOURCES.md` (upstream repo/host,
+exact path, license, pin, fetch time). Azure
 api-versions follow what the pinned canonical clients actually send (the
 SDK modules in `simulators/azure/sdk-tests/go.mod` and
 terraform-provider-azurerm's go-azure-sdk imports).

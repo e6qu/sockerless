@@ -682,7 +682,6 @@ func registerAzureFunctions(srv *sim.Server) {
 			"name": "publishingcredentials",
 			"type": "Microsoft.Web/sites/config",
 			"properties": map[string]any{
-				"name":               name,
 				"publishingUserName": user,
 				"publishingPassword": password,
 				"scmUri":             scmURI,

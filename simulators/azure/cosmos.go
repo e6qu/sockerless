@@ -92,7 +92,7 @@ func registerCosmosDB(srv *sim.Server) {
 	srv.HandleFunc("GET "+armBase, handleCosmosListAccounts)
 	srv.HandleFunc("POST "+armBase+"/{account}/listKeys", handleCosmosListKeys)
 	srv.HandleFunc("POST "+armBase+"/{account}/listConnectionStrings", handleCosmosListConnectionStrings)
-	srv.HandleFunc("POST "+armBase+"/{account}/readonlykeys", handleCosmosListKeys)
+	srv.HandleFunc("POST "+armBase+"/{account}/readonlykeys", handleCosmosListReadOnlyKeys)
 
 	srv.HandleFunc("PUT "+armBase+"/{account}/tables/{table}", handleCosmosCreateTable)
 	srv.HandleFunc("GET "+armBase+"/{account}/tables/{table}", handleCosmosGetTable)
@@ -375,6 +375,21 @@ func handleCosmosListKeys(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"primaryMasterKey":           simListKey32(id, "primary"),
 		"secondaryMasterKey":         simListKey32(id, "secondary"),
+		"primaryReadonlyMasterKey":   simListKey32(id, "primary-readonly"),
+		"secondaryReadonlyMasterKey": simListKey32(id, "secondary-readonly"),
+	})
+}
+
+// handleCosmosListReadOnlyKeys serves POST .../readonlykeys. The
+// DatabaseAccountListReadOnlyKeysResult shape carries ONLY the two
+// readonly keys — the writable master keys never appear here.
+func handleCosmosListReadOnlyKeys(w http.ResponseWriter, r *http.Request) {
+	id := cosmosAccountID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"))
+	if _, ok := cosmosAccounts.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"primaryReadonlyMasterKey":   simListKey32(id, "primary-readonly"),
 		"secondaryReadonlyMasterKey": simListKey32(id, "secondary-readonly"),
 	})
