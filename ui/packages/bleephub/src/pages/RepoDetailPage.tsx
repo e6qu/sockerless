@@ -162,7 +162,7 @@ function CodeView({
       <Blankslate title="This repository is empty">
         <p className="mb-3">Push an existing repository from the command line:</p>
         <CodeBlock>
-          {`git remote add origin http://localhost:5555/${owner}/${repo}.git\ngit push -u origin ${branch}`}
+          {`git remote add origin ${window.location.origin}/${owner}/${repo}.git\ngit push -u origin ${branch}`}
         </CodeBlock>
       </Blankslate>
     );
