@@ -34,15 +34,33 @@ func TestUserInstallations_RequiresAuth(t *testing.T) {
 	}
 }
 
+// TestUserInstallations_List asserts the user-scoping contract: the list
+// covers installations on the user's own account and on orgs where the user
+// is an ACTIVE member — never installations on unrelated accounts.
 func TestUserInstallations_List(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
 	s.registerGHAppsRoutes()
-	app := s.store.CreateApp(1, "test-app", "", nil, nil)
-	s.store.CreateInstallation(app.ID, "Organization", 100, "octo-org", nil, nil)
-	s.store.CreateInstallation(app.ID, "Organization", 200, "other-org", nil, nil)
-
 	user := s.store.UsersByLogin["admin"]
+
+	s.store.mu.Lock()
+	other := &User{ID: s.store.NextUser, Login: "outsider", Type: "User"}
+	s.store.NextUser++
+	s.store.Users[other.ID] = other
+	s.store.UsersByLogin[other.Login] = other
+	s.store.mu.Unlock()
+
+	memberOrg := s.store.CreateOrg(user, "octo-org", "Octo", "")
+	otherOrg := s.store.CreateOrg(other, "other-org", "Other", "")
+	if memberOrg == nil || otherOrg == nil {
+		t.Fatal("CreateOrg failed")
+	}
+
+	app := s.store.CreateApp(user.ID, "test-app", "", nil, nil)
+	s.store.CreateInstallation(app.ID, "Organization", memberOrg.ID, "octo-org", nil, nil)
+	s.store.CreateInstallation(app.ID, "Organization", otherOrg.ID, "other-org", nil, nil)
+	s.store.CreateInstallation(app.ID, "User", user.ID, user.Login, nil, nil)
+
 	w := runWithUser(s, "GET", "/api/v3/user/installations", user)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -55,7 +73,12 @@ func TestUserInstallations_List(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.TotalCount != 2 {
-		t.Errorf("total_count = %d, want 2", resp.TotalCount)
+		t.Errorf("total_count = %d, want 2 (own account + member org; never the unrelated org)", resp.TotalCount)
+	}
+	for _, inst := range resp.Installations {
+		if acct, _ := inst["account"].(map[string]any); acct != nil && acct["login"] == "other-org" {
+			t.Error("installation on an org the user is not a member of leaked into /user/installations")
+		}
 	}
 }
 

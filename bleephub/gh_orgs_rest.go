@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -12,6 +13,7 @@ func (s *Server) registerGHOrgRoutes() {
 	// sim-control under /internal/, not the GitHub namespace.
 	s.route("POST /internal/orgs", s.handleCreateOrg)
 	s.route("GET /api/v3/user/orgs", s.handleListAuthUserOrgs)
+	s.route("GET /api/v3/organizations", s.handleListAllOrgs)
 	s.route("GET /api/v3/orgs/{org}", s.handleGetOrg)
 	s.route("PATCH /api/v3/orgs/{org}", s.handleUpdateOrg)
 	s.route("DELETE /api/v3/orgs/{org}", s.handleDeleteOrg)
@@ -20,6 +22,7 @@ func (s *Server) registerGHOrgRoutes() {
 
 	s.registerGHTeamRoutes()
 	s.registerGHMemberRoutes()
+	s.registerGHOrgHookRoutes()
 }
 
 // handleAdminCreateOrg implements the GHES admin org-creation endpoint:
@@ -135,20 +138,62 @@ func (s *Server) handleUpdateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if v, ok := req["default_repository_permission"].(string); ok {
+		switch v {
+		case "read", "write", "admin", "none":
+		default:
+			writeGHValidationError(w, "Organization", "default_repository_permission", "invalid")
+			return
+		}
+	}
+
 	s.store.UpdateOrg(login, func(o *Org) {
-		if v, ok := req["name"].(string); ok {
-			o.Name = v
+		setStr := func(key string, dst *string) {
+			if v, ok := req[key].(string); ok {
+				*dst = v
+			}
 		}
-		if v, ok := req["description"].(string); ok {
-			o.Description = v
+		setStr("name", &o.Name)
+		setStr("description", &o.Description)
+		setStr("email", &o.Email)
+		setStr("company", &o.Company)
+		setStr("blog", &o.Blog)
+		setStr("location", &o.Location)
+		setStr("twitter_username", &o.TwitterUsername)
+		setStr("billing_email", &o.BillingEmail)
+		setStr("default_repository_permission", &o.DefaultRepositoryPermission)
+		if v, ok := req["members_can_create_repositories"].(bool); ok {
+			o.MembersCanCreateRepositories = &v
 		}
-		if v, ok := req["email"].(string); ok {
-			o.Email = v
+		if v, ok := req["web_commit_signoff_required"].(bool); ok {
+			o.WebCommitSignoffRequired = v
 		}
 	})
 
 	updated := s.store.GetOrg(login)
 	writeJSON(w, http.StatusOK, orgToJSON(updated, s.store, s.baseURL(r)))
+}
+
+// handleListAllOrgs — GET /api/v3/organizations: the global org list,
+// ordered by id, starting after the `since` cursor.
+func (s *Server) handleListAllOrgs(w http.ResponseWriter, r *http.Request) {
+	if ghUserFromContext(r.Context()) == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	since := 0
+	if v := r.URL.Query().Get("since"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			since = n
+		}
+	}
+	orgs := s.store.ListOrgsAll(since)
+	base := s.baseURL(r)
+	result := make([]map[string]interface{}, 0, len(orgs))
+	for _, org := range orgs {
+		result = append(result, orgSimpleJSON(org, base))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
 func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
@@ -293,5 +338,24 @@ func orgToJSON(org *Org, st *Store, baseURL string) map[string]interface{} {
 	out["following"] = 0
 	out["has_organization_projects"] = false
 	out["has_repository_projects"] = false
+	out["company"] = org.Company
+	out["blog"] = org.Blog
+	out["location"] = org.Location
+	out["twitter_username"] = org.TwitterUsername
+	out["billing_email"] = org.BillingEmail
+	out["is_verified"] = false
+	out["web_commit_signoff_required"] = org.WebCommitSignoffRequired
+	// two_factor_requirement_enabled: bleephub has no 2FA model, so the
+	// requirement is honestly never enabled.
+	out["two_factor_requirement_enabled"] = false
+	out["default_repository_permission"] = org.DefaultRepositoryPermission
+	if org.DefaultRepositoryPermission == "" {
+		out["default_repository_permission"] = "read" // GitHub's default
+	}
+	membersCanCreate := true // GitHub's default
+	if org.MembersCanCreateRepositories != nil {
+		membersCanCreate = *org.MembersCanCreateRepositories
+	}
+	out["members_can_create_repositories"] = membersCanCreate
 	return out
 }

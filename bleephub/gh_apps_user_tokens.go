@@ -59,9 +59,9 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 	if ttl <= 0 {
 		ttl = 8 * time.Hour
 	}
-	prefix := "gho_"
+	prefix := tokenPrefixOAuthUser
 	if appID > 0 {
-		prefix = "ghu_"
+		prefix = tokenPrefixAppUser
 	}
 	b := make([]byte, 20)
 	_, _ = rand.Read(b)
@@ -82,7 +82,7 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 		rb := make([]byte, 20)
 		_, _ = rand.Read(rb)
 		rt = &RefreshToken{
-			Token:            "ghr_" + hex.EncodeToString(rb),
+			Token:            tokenPrefixRefresh + hex.EncodeToString(rb),
 			UserID:           userID,
 			AppID:            appID,
 			OAuthAppClientID: oauthClientID,

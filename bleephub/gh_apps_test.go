@@ -207,33 +207,48 @@ func TestJWTExpiredRejected(t *testing.T) {
 	}
 }
 
-func TestJWTTooLongLifetime(t *testing.T) {
+// TestJWTExpWindow pins GitHub's exp-claim window: exp may sit at most 10
+// minutes (plus clock-drift tolerance) ahead of the SERVER clock. The
+// distance between iat and exp is NOT constrained — a client that backdates
+// iat for clock skew (ghinstallation sets iat=now-60) must stay valid.
+func TestJWTExpWindow(t *testing.T) {
 	st := NewStore()
 	app := st.CreateApp(1, "Long JWT App", "", nil, nil)
 
-	// Manually craft a JWT with exp - iat > 600
-	now := time.Now()
 	block, _ := pemDecode(app.PEMPrivateKey)
 	if block == nil {
 		t.Fatal("failed to decode PEM")
 	}
-
-	header := testBase64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
-	payload := fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, app.ID, now.Unix(), now.Unix()+601)
-	payloadEnc := testBase64urlEncode([]byte(payload))
-	signInput := header + "." + payloadEnc
-
 	privKey, _ := parseRSAKey(block)
-	hash := sha256Sum([]byte(signInput))
-	sig := rsaSign(privKey, hash)
 
-	jwt := signInput + "." + testBase64urlEncode(sig)
-	_, err := st.parseAndVerifyAppJWT(jwt)
-	if err == nil {
-		t.Fatal("expected error for too-long JWT lifetime")
+	mintJWT := func(iat, exp int64) string {
+		header := testBase64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
+		payload := fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, app.ID, iat, exp)
+		payloadEnc := testBase64urlEncode([]byte(payload))
+		signInput := header + "." + payloadEnc
+		hash := sha256Sum([]byte(signInput))
+		sig := rsaSign(privKey, hash)
+		return signInput + "." + testBase64urlEncode(sig)
 	}
-	if !strings.Contains(err.Error(), "lifetime too long") {
-		t.Fatalf("expected 'lifetime too long' in error, got: %v", err)
+
+	now := time.Now().Unix()
+
+	// exp beyond now+600+drift → rejected.
+	if _, err := st.parseAndVerifyAppJWT(mintJWT(now, now+700)); err == nil {
+		t.Fatal("expected error for exp too far in the future")
+	} else if !strings.Contains(err.Error(), "too far in the future") {
+		t.Fatalf("expected 'too far in the future' in error, got: %v", err)
+	}
+
+	// Backdated iat with exp inside the window → valid even though
+	// exp-iat exceeds 600 (matches real GitHub).
+	if _, err := st.parseAndVerifyAppJWT(mintJWT(now-300, now+500)); err != nil {
+		t.Fatalf("backdated-iat JWT inside the exp window must verify, got: %v", err)
+	}
+
+	// iat in the future beyond drift → rejected.
+	if _, err := st.parseAndVerifyAppJWT(mintJWT(now+120, now+500)); err == nil {
+		t.Fatal("expected error for future iat")
 	}
 }
 
@@ -635,7 +650,15 @@ func TestInstallationTokenWrongApp(t *testing.T) {
 }
 
 func TestGetRepoInstallationHTTP(t *testing.T) {
-	// Create app + installation with target_login matching a repo owner
+	// The endpoint resolves a REAL repo — provision an org-owned repo and
+	// install the app on the org.
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
+		"login": "repo-inst-owner",
+	}).Body.Close()
+	ghPost(t, "/api/v3/orgs/repo-inst-owner/repos", defaultToken, map[string]interface{}{
+		"name": "somerepo",
+	}).Body.Close()
+
 	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
 		"name": "Repo Inst App",
 	})
@@ -644,6 +667,7 @@ func TestGetRepoInstallationHTTP(t *testing.T) {
 
 	ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
 		"target_login": "repo-inst-owner",
+		"target_type":  "Organization",
 	}).Body.Close()
 
 	// GET /repos/{owner}/{repo}/installation
@@ -656,6 +680,14 @@ func TestGetRepoInstallationHTTP(t *testing.T) {
 	if data["app_id"].(float64) != float64(appID) {
 		t.Fatalf("expected app_id=%d, got %v", appID, data["app_id"])
 	}
+
+	// Repo that doesn't exist under a covered owner → 404.
+	respNoRepo := ghGet(t, "/api/v3/repos/repo-inst-owner/no-such-repo/installation", defaultToken)
+	if respNoRepo.StatusCode != 404 {
+		respNoRepo.Body.Close()
+		t.Fatalf("expected 404 for nonexistent repo, got %d", respNoRepo.StatusCode)
+	}
+	respNoRepo.Body.Close()
 
 	// Not found
 	resp3 := ghGet(t, "/api/v3/repos/nonexistent-owner/somerepo/installation", defaultToken)
@@ -745,4 +777,31 @@ func sha256Sum(data []byte) []byte {
 func rsaSign(key *rsa.PrivateKey, hash []byte) []byte {
 	sig, _ := rsa.SignPKCS1v15(nil, key, crypto.SHA256, hash)
 	return sig
+}
+
+// TestJWTAlgorithmRejection: only RS256 authenticates /app endpoints. An
+// unsigned (alg=none) or HMAC-flavoured token must never resolve to an app,
+// no matter how well-formed the claims are.
+func TestJWTAlgorithmRejection(t *testing.T) {
+	st := NewStore()
+	app := st.CreateApp(1, "Alg App", "", nil, nil)
+	now := time.Now().Unix()
+	claims := testBase64urlEncode([]byte(fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, app.ID, now, now+540)))
+
+	for _, alg := range []string{"none", "HS256", "RS512"} {
+		header := testBase64urlEncode([]byte(`{"alg":"` + alg + `","typ":"JWT"}`))
+		jwt := header + "." + claims + "." + testBase64urlEncode([]byte("sig"))
+		if _, err := st.parseAndVerifyAppJWT(jwt); err == nil {
+			t.Errorf("alg=%s: expected rejection", alg)
+		} else if !strings.Contains(err.Error(), "unsupported algorithm") {
+			t.Errorf("alg=%s: expected 'unsupported algorithm', got: %v", alg, err)
+		}
+	}
+
+	// Non-numeric iss never resolves.
+	header := testBase64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	badIss := testBase64urlEncode([]byte(fmt.Sprintf(`{"iss":"not-a-number","iat":%d,"exp":%d}`, now, now+540)))
+	if _, err := st.parseAndVerifyAppJWT(header + "." + badIss + "." + testBase64urlEncode([]byte("sig"))); err == nil {
+		t.Error("non-numeric iss: expected rejection")
+	}
 }

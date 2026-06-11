@@ -80,6 +80,22 @@ func (s *Server) initGraphQLSchema() {
 					return userToGraphQL(user), nil
 				},
 			},
+			// user(login:) — `gh org list` resolves the target user's
+			// organizations through this root field rather than viewer.
+			"user": &graphql.Field{
+				Type: userType,
+				Args: graphql.FieldConfigArgument{
+					"login": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					login, _ := p.Args["login"].(string)
+					u := s.store.LookupUserByLogin(login)
+					if u == nil {
+						return nil, nil
+					}
+					return userToGraphQL(u), nil
+				},
+			},
 		},
 	})
 

@@ -168,15 +168,16 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Checks API.** `check-runs` create/get/update/list-by-commit/list-by-suite/annotations. `check-suites` get/list-by-commit/preferences. App-owned: writes require `checks:write` on an installation token.
 
-**Webhooks.** Per-repo + app-level. `installation:{id, node_id}` block on every payload when the event flows through an app installation. Full header set: `X-GitHub-Event`, `X-GitHub-Delivery`, `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-Type/-Target-ID`, `X-Hub-Signature` (SHA1) + `X-Hub-Signature-256`. Redelivery: `POST /hooks/{id}/deliveries/{delivery_id}/attempts` and `/app/hook/deliveries/{id}/attempts`.
+**Webhooks.** Per-repo + org-level (`/orgs/{org}/hooks` CRUD / pings / deliveries / redelivery; repo events on org-owned repos fan out to matching org hooks, and membership changes fire the `organization` event) + app-level. `installation:{id, node_id}` block on every payload when the event flows through an app installation. Full header set: `X-GitHub-Event`, `X-GitHub-Delivery`, `X-GitHub-Hook-ID`, `X-GitHub-Hook-Installation-Target-Type/-Target-ID`, `X-Hub-Signature` (SHA1) + `X-Hub-Signature-256`. Redelivery: `POST /hooks/{id}/deliveries/{delivery_id}/attempts` and `/app/hook/deliveries/{id}/attempts`.
 
 **GitHub Apps.**
-- Manifest flow: `POST /app-manifests/{code}/conversions`.
+- Manifest flow end-to-end: `POST /settings/apps/new` (the browser form-post; 302 with one-time `code`, `state` echoed) → `POST /app-manifests/{code}/conversions` (one-time redemption returning `pem` / `client_secret` / `webhook_secret`).
 - App lookup: `GET /apps/{slug}` (anon), `GET /app` (JWT).
-- Installations: `GET/DELETE /app/installations/{id}`, suspend / unsuspend, installation tokens with `repository_ids` subset, repo-selection management (`PUT/DELETE /user/installations/{id}/repositories/{repo_id}`).
+- Installations: `GET /app/installations[/{id}]`, `GET/DELETE /app/installations/{id}`, suspend / unsuspend (suspension kills every API request made with the installation's tokens, 403), `GET /repos/{o}/{r}/installation` (repo-aware: 404 for unknown repos or repos outside a `selected` installation), `GET /orgs/{org}/installation[s]`, `GET /users/{username}/installation`, `GET /user/installations` (scoped to the caller's account + active org memberships), `GET /installation/repositories`, `DELETE /installation/token`, repo-selection management (`PUT/DELETE /user/installations/{id}/repositories/{repo_id}`).
+- Installation tokens: 1h TTL, permission downscoping validated against the installation grant (escalation, ungranted scopes, and invalid level strings are 422), `repository_ids`/`repositories` scoping validated against the installation's accessible repos (422 on unknown/inaccessible), `repository_selection` reflects the token's effective scope.
 - App webhook: `GET/PATCH /app/hook/config`, `GET /app/hook/deliveries[/{id}][/attempts]`.
 - Installation events: `installation`, `installation_repositories` fire on store transitions.
-- JWT verification: RS256, 600s max lifetime, iat/exp validation.
+- JWT verification: RS256 only (alg `none`/HMAC rejected), exp at most 10 minutes ahead of the server clock (+60s drift), future-iat rejection — backdated iat (ghinstallation-style) stays valid.
 
 **OAuth Apps.** Distinct entity from GitHub Apps. Created/listed via the sim-control surface `POST/GET /internal/oauth-apps` (GitHub has no REST API to create OAuth Apps, so this is NOT under `/api/v3/`). OAuth web flow (`/login/oauth/authorize`) + device flow (`/login/device/code`). Token-management family on the real `/api/v3/applications/{client_id}/{token,grant}` (check / reset / revoke / scope).
 
@@ -194,7 +195,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
 
-**Orgs.** Create, list memberships, members, audit log shape-only endpoint, teams, IdP-group sync compatibility surface.
+**Orgs.** GHES admin create + sim-control create; `GET /organizations` (global list with `since` cursor); organization-full profile (company / blog / location / twitter / billing email / `default_repository_permission` / `members_can_create_repositories` / `web_commit_signoff_required`) readable + PATCHable. Memberships with real invitation semantics: `PUT /orgs/{org}/memberships/{username}` invites (state `pending`), the invitee accepts via `PATCH /user/memberships/orgs/{org}` (`GET /user/memberships/orgs[/{org}]` lists/inspects); member checks (`GET/DELETE /orgs/{org}/members/{username}`), public members (list / check / publicize / conceal — self-only, like real GitHub). Teams: CRUD + hierarchy (`parent_team_id`, child-team listing, cycle rejection, delete re-parents children), `notification_setting`, member roles (`member`/`maintainer`) with team-membership state mirroring the org membership, team repos (list with `permissions` + `role_name`, check incl. the `vnd.github.v3.repository+json` media type, add/remove), rename re-keys the slug. Audit log shape-only endpoint, IdP-group sync compatibility surface.
 
 **Marketplace.** Listing plans + accounts compatibility surface.
 
@@ -207,7 +208,7 @@ Two write-through database options, both fail-loud on open failure (never a sile
 - **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
 - **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
 
-The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
+The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + org hooks + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
 
 Intentionally NOT persisted: runner/workflow runtime state (workflows, sessions, agents — a restart abandons in-flight runs) and the Actions OIDC signing key, which rotates on restart; consumers must re-fetch the JWKS, exactly as against real GitHub key rotation.
 
@@ -249,6 +250,12 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
 - Workflow enable/disable (`PUT/POST /actions/workflows/{id}/{enable,disable}`) — `gh workflow enable / disable` has no route to hit.
 - SAML SSO + SCIM provisioning.
+- Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
+- Org people-management extras: `outside_collaborators`, `blocks`, `security-managers`, member codespaces/copilot endpoints.
+- Legacy numeric-id team routes (`/teams/{team_id}/…`) — deprecated upstream; the `/orgs/{org}/teams/{team_slug}/…` family is the supported path.
+- Webhook `config` subresources (`/repos/{o}/{r}/hooks/{id}/config`, `/orgs/{org}/hooks/{id}/config`) — config rides the hook CRUD bodies, which is what gh / terraform / go-github use.
+- `GET /app/installation-requests` and the marketplace `stubbed` endpoints.
+- Org `plan` member / billing endpoints (bleephub has no billing model).
 - Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.
 - gh CLI commands that require deep workflow-run state bleephub doesn't synthesise (`gh run watch` long-poll, log tail).

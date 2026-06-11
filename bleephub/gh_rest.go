@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,18 @@ import (
 // Usage: if !decodeJSONBody(w, r, &req) { return }
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return false
+	}
+	return true
+}
+
+// decodeJSONBodyOptional decodes like decodeJSONBody but tolerates an
+// entirely absent body — for endpoints whose request body is optional on
+// real GitHub (PUT membership endpoints: go-github sends no body at all
+// when called without options).
+func decodeJSONBodyOptional(w http.ResponseWriter, r *http.Request, v interface{}) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil && err != io.EOF {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
 		return false
 	}

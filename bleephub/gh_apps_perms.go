@@ -131,9 +131,20 @@ func hasPerm(perms map[string]string, scope permScope, level permLevel) bool {
 // installation permissions map (ghu_) or the classic OAuth scopes (gho_).
 func userToServerHasPerm(tok *UserToServerToken, scope permScope, level permLevel, st *Store) bool {
 	if tok.AppID > 0 {
-		// ghu_: find any installation of this App on the user, use its perms.
+		// ghu_: use the installation's permissions. A token scoped to
+		// specific installations (POST /applications/{cid}/token/scoped)
+		// must be checked against exactly those; an unscoped token checks
+		// any installation of the app.
 		st.mu.RLock()
 		defer st.mu.RUnlock()
+		if len(tok.InstallationIDs) > 0 {
+			for _, id := range tok.InstallationIDs {
+				if inst := st.Installations[id]; inst != nil && inst.AppID == tok.AppID {
+					return hasPerm(inst.Permissions, scope, level)
+				}
+			}
+			return false
+		}
 		for _, inst := range st.Installations {
 			if inst.AppID == tok.AppID {
 				return hasPerm(inst.Permissions, scope, level)
@@ -143,6 +154,40 @@ func userToServerHasPerm(tok *UserToServerToken, scope permScope, level permLeve
 	}
 	// gho_: classic OAuth scopes → perm mapping.
 	return classicScopeCovers(tok.Scopes, scope, level)
+}
+
+// validPermLevelString reports whether s is one of the permission levels the
+// App API accepts in request bodies.
+func validPermLevelString(s string) bool {
+	switch strings.ToLower(s) {
+	case "read", "write", "admin":
+		return true
+	}
+	return false
+}
+
+// validateRequestedPermissions checks a token-mint request's permissions map
+// against the installation's granted permissions: every requested scope must
+// be granted at >= the requested level (metadata:read is implicitly granted
+// on every installation). Returns the first offending scope and false on
+// escalation or an unknown level value.
+func validateRequestedPermissions(requested, granted map[string]string) (string, bool) {
+	for scope, level := range requested {
+		if !validPermLevelString(level) {
+			return scope, false
+		}
+		grantedLevel, ok := granted[scope]
+		if !ok {
+			if permScope(scope) == scopeMetadata && parsePermLevel(level) == permRead {
+				continue
+			}
+			return scope, false
+		}
+		if parsePermLevel(level) > parsePermLevel(grantedLevel) {
+			return scope, false
+		}
+	}
+	return "", true
 }
 
 // classicScopeCovers approximates real GH's mapping of classic OAuth scopes

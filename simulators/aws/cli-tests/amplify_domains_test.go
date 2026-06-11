@@ -37,6 +37,9 @@ func TestAmplify_DomainAndBackend_Lifecycle(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(domOut), &domResult))
 	require.Equal(t, "cli.example.com", domResult.DomainAssociation.DomainName)
+	// No verification records exist in the sim's Route 53, so the
+	// association honestly reports PENDING_VERIFICATION.
+	require.Equal(t, "PENDING_VERIFICATION", domResult.DomainAssociation.DomainStatus)
 
 	runCLI(t, awsCLI("amplify", "get-domain-association",
 		"--app-id", appID, "--domain-name", "cli.example.com", "--output", "json"))

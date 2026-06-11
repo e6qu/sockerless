@@ -132,12 +132,13 @@ func appHookConfigJSON(app *App) map[string]interface{} {
 	if insecureSSL == "" {
 		insecureSSL = "0"
 	}
+	// webhook-config carries exactly these four members — the hook's
+	// active flag lives on the hook object, not its config.
 	return map[string]interface{}{
 		"url":          app.WebhookURL,
 		"content_type": contentType,
 		"insecure_ssl": insecureSSL,
 		"secret":       "********", // real GH redacts; preserves contract
-		"active":       app.WebhookActive,
 	}
 }
 

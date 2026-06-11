@@ -14,6 +14,13 @@ import (
 	"time"
 )
 
+const (
+	// jwtMaxLifetimeSeconds mirrors GitHub's 10-minute cap on app JWT expiry.
+	jwtMaxLifetimeSeconds = 600
+	// jwtClockDriftSeconds is the tolerance GitHub allows for client clock skew.
+	jwtClockDriftSeconds = 60
+)
+
 // parseAndVerifyAppJWT validates an RS256 JWT against stored app keys.
 func (st *Store) parseAndVerifyAppJWT(tokenStr string) (*App, error) {
 	parts := strings.SplitN(tokenStr, ".", 3)
@@ -50,15 +57,19 @@ func (st *Store) parseAndVerifyAppJWT(tokenStr string) (*App, error) {
 
 	iat := int64(payload.Iat)
 	exp := int64(payload.Exp)
-	if exp-iat > 600 {
-		return nil, fmt.Errorf("JWT lifetime too long: %ds (max 600)", exp-iat)
-	}
 
+	// Real GitHub bounds the claims relative to ITS clock: exp at most 10
+	// minutes ahead and iat in the past, each with ~60s drift tolerance.
+	// It does not constrain exp-iat directly, so a client that backdates
+	// iat for clock skew (ghinstallation sets iat=now-60) stays valid.
 	now := time.Now().Unix()
 	if exp <= now {
 		return nil, fmt.Errorf("JWT expired")
 	}
-	if iat > now+60 {
+	if exp > now+jwtMaxLifetimeSeconds+jwtClockDriftSeconds {
+		return nil, fmt.Errorf("JWT 'exp' claim is too far in the future (max %ds ahead)", jwtMaxLifetimeSeconds)
+	}
+	if iat > now+jwtClockDriftSeconds {
 		return nil, fmt.Errorf("JWT iat is in the future")
 	}
 

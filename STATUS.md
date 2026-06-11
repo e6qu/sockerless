@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/launch-hygiene` |
-| In-flight | **Launch hygiene** (one fat PR): terraform CI jobs run with `SOCKERLESS_SPEC_VALIDATE` armed + ratchet steps (immediately caught BUG-1702); AWS runtime validator extended to the XML protocols — awsQuery/ec2Query/restXml (caught BUG-1700/1701); azurestack provider retired from the azure tf suite (BUG-1584 closed the real way); BUG-1104 closed (audit cadence is structural now); BUG-1467 reclassified false-positive; `build-azf-bootstrap` added (BUG-1703); StatusBadge `waiting` token; full docs accuracy sweep (README/FEATURE_MATRIX/docs/specs/bleephub README brought to today's reality). |
+| Active branch | `feat/amplify-ghapps-orgs` |
+| In-flight | **Amplify full support + bleephub apps/orgs** (one fat PR): Amplify control-plane gaps fixed (BUG-1717..1723) AND the full execution layer — real container builds (buildSpec phases, go-git clone, step logs at resolvable logUrls), Host-routed hosting data plane (static + CustomRules + basic auth + cloudfront-shaped hosts + verified custom domains), SSR/WEB_COMPUTE per the deploy-manifest spec (lazy long-lived containers, reverse proxy), REAL Route 53 domain verification; plus a pre-existing P1 (UI-embed startup panic, BUG-1715). bleephub GitHub Apps/installation-tokens/orgs gap pass (BUG-1706..1714): 2 P1 security fixes (token downscoping unenforced; suspension bypass), JWT window fidelity, 7 new endpoint families, typed enums, full pyramid (gh harness 99/0). |
 | Last merged | #540 docs: per-component READMEs + docs/specs indexes; broken smoke-test targets + stale UI dev proxies fixed (BUG-1647/1648). #539 simulators: conformance hardening Stages 2 G4-6. |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1703 filed - 1661 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1723 filed - 1681 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
 | Live infra | None up. |
 

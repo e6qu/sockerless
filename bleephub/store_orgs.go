@@ -2,47 +2,116 @@ package bleephub
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// OrgRole is a user's role in an organization. The values are GitHub's
+// wire enum for org-membership role.
+type OrgRole string
+
+const (
+	OrgRoleAdmin  OrgRole = "admin"
+	OrgRoleMember OrgRole = "member"
+)
+
+// MembershipState is the lifecycle state of an org membership: "pending"
+// while an invitation awaits acceptance, "active" once accepted.
+type MembershipState string
+
+const (
+	MembershipStateActive  MembershipState = "active"
+	MembershipStatePending MembershipState = "pending"
+)
+
+// TeamPrivacy is GitHub's team visibility enum.
+type TeamPrivacy string
+
+const (
+	TeamPrivacyClosed TeamPrivacy = "closed"
+	TeamPrivacySecret TeamPrivacy = "secret"
+)
+
+// TeamPermission is the default repository permission a team confers.
+type TeamPermission string
+
+const (
+	TeamPermissionPull  TeamPermission = "pull"
+	TeamPermissionPush  TeamPermission = "push"
+	TeamPermissionAdmin TeamPermission = "admin"
+)
+
+// TeamRole is a user's role within a team.
+type TeamRole string
+
+const (
+	TeamRoleMember     TeamRole = "member"
+	TeamRoleMaintainer TeamRole = "maintainer"
+)
+
+// TeamNotificationSetting is GitHub's team notification enum.
+type TeamNotificationSetting string
+
+const (
+	TeamNotificationsEnabled  TeamNotificationSetting = "notifications_enabled"
+	TeamNotificationsDisabled TeamNotificationSetting = "notifications_disabled"
+)
+
 // Org represents a GitHub organization account.
+//
+// MembersCanCreateRepositories is a pointer because GitHub's default is
+// true: a nil value (including rows persisted before the field existed)
+// means "default", not false.
 type Org struct {
-	ID          int       `json:"id"`
-	NodeID      string    `json:"node_id"`
-	Login       string    `json:"login"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Email       string    `json:"email"`
-	AvatarURL   string    `json:"avatar_url"`
-	Type        string    `json:"type"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                           int       `json:"id"`
+	NodeID                       string    `json:"node_id"`
+	Login                        string    `json:"login"`
+	Name                         string    `json:"name"`
+	Description                  string    `json:"description"`
+	Email                        string    `json:"email"`
+	AvatarURL                    string    `json:"avatar_url"`
+	Type                         string    `json:"type"`
+	Company                      string    `json:"company"`
+	Blog                         string    `json:"blog"`
+	Location                     string    `json:"location"`
+	TwitterUsername              string    `json:"twitter_username"`
+	BillingEmail                 string    `json:"billing_email"`
+	DefaultRepositoryPermission  string    `json:"default_repository_permission"` // "" = GitHub default "read"
+	MembersCanCreateRepositories *bool     `json:"members_can_create_repositories"`
+	WebCommitSignoffRequired     bool      `json:"web_commit_signoff_required"`
+	CreatedAt                    time.Time `json:"created_at"`
+	UpdatedAt                    time.Time `json:"updated_at"`
 }
 
 // Membership represents a user's membership in an organization.
 type Membership struct {
-	OrgID  int    `json:"org_id"`
-	UserID int    `json:"user_id"`
-	Role   string `json:"role"`  // "admin", "member"
-	State  string `json:"state"` // "active", "pending"
+	OrgID  int             `json:"org_id"`
+	UserID int             `json:"user_id"`
+	Role   OrgRole         `json:"role"`
+	State  MembershipState `json:"state"`
+	Public bool            `json:"public"` // publicized via PUT /orgs/{org}/public_members/{username}
 }
 
 // Team represents a team within an organization.
 type Team struct {
-	ID          int       `json:"id"`
-	NodeID      string    `json:"node_id"`
-	OrgID       int       `json:"org_id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description"`
-	Privacy     string    `json:"privacy"`    // "closed", "secret"
-	Permission  string    `json:"permission"` // "pull", "push", "admin"
-	MemberIDs   []int     `json:"member_ids"`
-	RepoNames   []string  `json:"repo_names"` // "owner/name" entries
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                  int                     `json:"id"`
+	NodeID              string                  `json:"node_id"`
+	OrgID               int                     `json:"org_id"`
+	Name                string                  `json:"name"`
+	Slug                string                  `json:"slug"`
+	Description         string                  `json:"description"`
+	Privacy             TeamPrivacy             `json:"privacy"`
+	Permission          TeamPermission          `json:"permission"`
+	NotificationSetting TeamNotificationSetting `json:"notification_setting"`
+	ParentID            int                     `json:"parent_id"` // 0 = no parent team
+	MemberIDs           []int                   `json:"member_ids"`
+	MaintainerIDs       []int                   `json:"maintainer_ids"` // subset of MemberIDs with the maintainer role
+	RepoNames           []string                `json:"repo_names"`     // "owner/name" entries
+	CreatedAt           time.Time               `json:"created_at"`
+	UpdatedAt           time.Time               `json:"updated_at"`
 }
 
 // membershipKey returns the map key for org/user membership lookups.
@@ -92,8 +161,8 @@ func (st *Store) CreateOrg(creator *User, login, name, description string) *Org 
 	m := &Membership{
 		OrgID:  org.ID,
 		UserID: creator.ID,
-		Role:   "admin",
-		State:  "active",
+		Role:   OrgRoleAdmin,
+		State:  MembershipStateActive,
 	}
 	st.Memberships[key] = m
 
@@ -208,28 +277,103 @@ func (st *Store) ListOrgsByUser(userID int) []*Org {
 	return orgs
 }
 
-// SetMembership upserts a user's membership in an organization.
-func (st *Store) SetMembership(orgLogin string, userID int, role string) bool {
+// SetMembership upserts a user's membership in an organization with the
+// given role and state. An existing membership keeps its Public flag.
+// Returns the stored membership, or nil if the org doesn't exist.
+func (st *Store) SetMembership(orgLogin string, userID int, role OrgRole, state MembershipState) *Membership {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	org, ok := st.OrgsByLogin[orgLogin]
 	if !ok {
-		return false
+		return nil
 	}
 
 	key := membershipKey(orgLogin, userID)
-	m := &Membership{
-		OrgID:  org.ID,
-		UserID: userID,
-		Role:   role,
-		State:  "active",
+	m := st.Memberships[key]
+	if m == nil {
+		m = &Membership{OrgID: org.ID, UserID: userID}
+		st.Memberships[key] = m
 	}
-	st.Memberships[key] = m
+	m.Role = role
+	m.State = state
+	if st.persist != nil {
+		st.persist.MustPut("memberships", key, m)
+	}
+	return m
+}
+
+// SetMembershipPublic flips the membership's public-member flag. Returns
+// false when no active membership exists.
+func (st *Store) SetMembershipPublic(orgLogin string, userID int, public bool) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	key := membershipKey(orgLogin, userID)
+	m := st.Memberships[key]
+	if m == nil || m.State != MembershipStateActive {
+		return false
+	}
+	m.Public = public
 	if st.persist != nil {
 		st.persist.MustPut("memberships", key, m)
 	}
 	return true
+}
+
+// ListPublicOrgMembers returns active members who publicized their membership.
+func (st *Store) ListPublicOrgMembers(orgLogin string) []*User {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	org := st.OrgsByLogin[orgLogin]
+	if org == nil {
+		return nil
+	}
+	var users []*User
+	for _, m := range st.Memberships {
+		if m.OrgID == org.ID && m.State == MembershipStateActive && m.Public {
+			if u, ok := st.Users[m.UserID]; ok {
+				users = append(users, u)
+			}
+		}
+	}
+	return users
+}
+
+// ListMembershipsByUser returns the user's memberships across all orgs,
+// optionally filtered by state ("" = all).
+func (st *Store) ListMembershipsByUser(userID int, state MembershipState) []*Membership {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var out []*Membership
+	for _, m := range st.Memberships {
+		if m.UserID != userID {
+			continue
+		}
+		if state != "" && m.State != state {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// ListOrgsAll returns every organization with ID greater than `since`,
+// ordered by ID ascending — the GET /organizations contract.
+func (st *Store) ListOrgsAll(since int) []*Org {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var orgs []*Org
+	for _, o := range st.Orgs {
+		if o.ID > since {
+			orgs = append(orgs, o)
+		}
+	}
+	sort.Slice(orgs, func(i, j int) bool { return orgs[i].ID < orgs[j].ID })
+	return orgs
 }
 
 // GetMembership returns a user's membership in an organization, or nil.
@@ -296,8 +440,18 @@ func (st *Store) ListOrgMembers(orgLogin string) []*User {
 	return users
 }
 
-// CreateTeam creates a team within an organization.
-func (st *Store) CreateTeam(orgLogin, name, description, privacy, permission string) *Team {
+// TeamOptions carries the optional attributes of team creation.
+type TeamOptions struct {
+	Description         string
+	Privacy             TeamPrivacy
+	Permission          TeamPermission
+	NotificationSetting TeamNotificationSetting
+	ParentID            int
+}
+
+// CreateTeam creates a team within an organization. A non-zero ParentID
+// must reference an existing team in the same org.
+func (st *Store) CreateTeam(orgLogin, name string, opts TeamOptions) *Team {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -312,27 +466,39 @@ func (st *Store) CreateTeam(orgLogin, name, description, privacy, permission str
 		return nil
 	}
 
-	if privacy == "" {
-		privacy = "closed"
+	if opts.Privacy == "" {
+		opts.Privacy = TeamPrivacyClosed
 	}
-	if permission == "" {
-		permission = "pull"
+	if opts.Permission == "" {
+		opts.Permission = TeamPermissionPull
+	}
+	if opts.NotificationSetting == "" {
+		opts.NotificationSetting = TeamNotificationsEnabled
+	}
+	if opts.ParentID != 0 {
+		parent := st.Teams[opts.ParentID]
+		if parent == nil || parent.OrgID != org.ID {
+			return nil
+		}
 	}
 
 	now := time.Now().UTC()
 	team := &Team{
-		ID:          st.NextTeam,
-		NodeID:      fmt.Sprintf("T_kgDO%08d", st.NextTeam),
-		OrgID:       org.ID,
-		Name:        name,
-		Slug:        slug,
-		Description: description,
-		Privacy:     privacy,
-		Permission:  permission,
-		MemberIDs:   []int{},
-		RepoNames:   []string{},
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                  st.NextTeam,
+		NodeID:              fmt.Sprintf("T_kgDO%08d", st.NextTeam),
+		OrgID:               org.ID,
+		Name:                name,
+		Slug:                slug,
+		Description:         opts.Description,
+		Privacy:             opts.Privacy,
+		Permission:          opts.Permission,
+		NotificationSetting: opts.NotificationSetting,
+		ParentID:            opts.ParentID,
+		MemberIDs:           []int{},
+		MaintainerIDs:       []int{},
+		RepoNames:           []string{},
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	st.NextTeam++
 
@@ -351,7 +517,16 @@ func (st *Store) GetTeam(orgLogin, slug string) *Team {
 	return st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
 }
 
-// UpdateTeam applies a mutation function to a team.
+// GetTeamByID returns a team by its numeric ID, or nil.
+func (st *Store) GetTeamByID(id int) *Team {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Teams[id]
+}
+
+// UpdateTeam applies a mutation function to a team. When the mutation
+// changes the slug (team rename), the slug index is re-keyed so the old
+// slug stops resolving and the new one does.
 func (st *Store) UpdateTeam(orgLogin, slug string, fn func(*Team)) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -362,11 +537,53 @@ func (st *Store) UpdateTeam(orgLogin, slug string, fn func(*Team)) bool {
 		return false
 	}
 	fn(team)
+	if team.Slug != slug {
+		delete(st.TeamsBySlug, key)
+		st.TeamsBySlug[teamSlugKey(orgLogin, team.Slug)] = team
+	}
 	team.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
 	}
 	return true
+}
+
+// TeamParentWouldCycle reports whether re-parenting team `teamID` under
+// `parentID` would create a cycle in the team hierarchy.
+func (st *Store) TeamParentWouldCycle(teamID, parentID int) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	for id := parentID; id != 0; {
+		if id == teamID {
+			return true
+		}
+		parent := st.Teams[id]
+		if parent == nil {
+			return false
+		}
+		id = parent.ParentID
+	}
+	return false
+}
+
+// ListChildTeams returns the teams whose parent is the given team.
+func (st *Store) ListChildTeams(orgLogin string, parentID int) []*Team {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	org := st.OrgsByLogin[orgLogin]
+	if org == nil {
+		return nil
+	}
+	var out []*Team
+	for _, t := range st.TeamsBySlug {
+		if t.OrgID == org.ID && t.ParentID == parentID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // DeleteTeam removes a team from an organization.
@@ -384,6 +601,17 @@ func (st *Store) DeleteTeam(orgLogin, slug string) bool {
 	delete(st.TeamsBySlug, key)
 	if st.persist != nil {
 		st.persist.MustDelete("teams", strconv.Itoa(team.ID))
+	}
+
+	// Children of a deleted team move up to the deleted team's parent
+	// (real GitHub re-parents rather than orphaning).
+	for _, t := range st.Teams {
+		if t.ParentID == team.ID {
+			t.ParentID = team.ParentID
+			if st.persist != nil {
+				st.persist.MustPut("teams", strconv.Itoa(t.ID), t)
+			}
+		}
 	}
 	return true
 }
@@ -407,8 +635,10 @@ func (st *Store) ListTeams(orgLogin string) []*Team {
 	return teams
 }
 
-// AddTeamMember adds a user to a team.
-func (st *Store) AddTeamMember(orgLogin, slug string, userID int) bool {
+// AddTeamMember upserts a user's team membership with the given role.
+// A maintainer downgraded to member is removed from the maintainer list;
+// a member upgraded joins it.
+func (st *Store) AddTeamMember(orgLogin, slug string, userID int, role TeamRole) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -417,13 +647,17 @@ func (st *Store) AddTeamMember(orgLogin, slug string, userID int) bool {
 		return false
 	}
 
-	for _, mid := range team.MemberIDs {
-		if mid == userID {
-			return true // already a member
-		}
+	if !slices.Contains(team.MemberIDs, userID) {
+		team.MemberIDs = append(team.MemberIDs, userID)
 	}
-
-	team.MemberIDs = append(team.MemberIDs, userID)
+	switch role {
+	case TeamRoleMaintainer:
+		if !slices.Contains(team.MaintainerIDs, userID) {
+			team.MaintainerIDs = append(team.MaintainerIDs, userID)
+		}
+	default:
+		team.MaintainerIDs = intSliceRemove(team.MaintainerIDs, userID)
+	}
 	team.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
@@ -431,7 +665,7 @@ func (st *Store) AddTeamMember(orgLogin, slug string, userID int) bool {
 	return true
 }
 
-// RemoveTeamMember removes a user from a team.
+// RemoveTeamMember removes a user from a team (both role lists).
 func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -441,17 +675,34 @@ func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
 		return false
 	}
 
-	for i, mid := range team.MemberIDs {
-		if mid == userID {
-			team.MemberIDs = append(team.MemberIDs[:i], team.MemberIDs[i+1:]...)
-			team.UpdatedAt = time.Now().UTC()
-			if st.persist != nil {
-				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
-			}
-			return true
-		}
+	if !slices.Contains(team.MemberIDs, userID) {
+		return false
 	}
-	return false
+	team.MemberIDs = intSliceRemove(team.MemberIDs, userID)
+	team.MaintainerIDs = intSliceRemove(team.MaintainerIDs, userID)
+	team.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+	}
+	return true
+}
+
+// roleOf returns the user's role in the team, and whether they're a member.
+func (t *Team) roleOf(userID int) (TeamRole, bool) {
+	if !slices.Contains(t.MemberIDs, userID) {
+		return "", false
+	}
+	if slices.Contains(t.MaintainerIDs, userID) {
+		return TeamRoleMaintainer, true
+	}
+	return TeamRoleMember, true
+}
+
+func intSliceRemove(s []int, v int) []int {
+	if i := slices.Index(s, v); i >= 0 {
+		return slices.Delete(s, i, i+1)
+	}
+	return s
 }
 
 // AddTeamRepo adds a repository to a team's access list.

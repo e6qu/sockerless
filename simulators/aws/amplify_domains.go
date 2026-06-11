@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -13,24 +16,54 @@ import (
 
 // ---------- Domain types ----------
 
+// AmplifyDomainStatus / AmplifyDomainUpdateStatus are the DomainStatus and
+// UpdateStatus enum subsets the sim assigns. Domain verification is REAL
+// against the sim's own Route 53: an AMPLIFY_MANAGED association starts
+// PENDING_VERIFICATION and becomes AVAILABLE only once the
+// certificate-verification CNAME exists in a hosted zone covering the
+// domain. Verification is evaluated at READ time (Get/List/Update and the
+// hosting data plane) — terraform's wait_for_verification polls
+// GetDomainAssociation, so read-triggered evaluation converges, and a
+// domain with no hosted zone honestly stays PENDING_VERIFICATION forever.
+type AmplifyDomainStatus string
+
+const (
+	AmplifyDomainStatusAvailable           AmplifyDomainStatus = "AVAILABLE"
+	AmplifyDomainStatusPendingVerification AmplifyDomainStatus = "PENDING_VERIFICATION"
+)
+
+type AmplifyDomainUpdateStatus string
+
+const (
+	AmplifyDomainUpdateComplete            AmplifyDomainUpdateStatus = "UPDATE_COMPLETE"
+	AmplifyDomainUpdatePendingVerification AmplifyDomainUpdateStatus = "PENDING_VERIFICATION"
+)
+
 type AmplifyDomainAssociation struct {
-	DomainAssociationArn             string              `json:"domainAssociationArn"`
-	DomainName                       string              `json:"domainName"`
-	EnableAutoSubDomain              bool                `json:"enableAutoSubDomain"`
-	AutoSubDomainCreationPatterns    []string            `json:"autoSubDomainCreationPatterns,omitempty"`
-	AutoSubDomainIamRole             string              `json:"autoSubDomainIAMRole,omitempty"`
-	DomainStatus                     string              `json:"domainStatus"`
-	UpdateStatus                     string              `json:"updateStatus"`
-	StatusReason                     string              `json:"statusReason,omitempty"`
-	Certificate                      *AmplifyCertificate `json:"certificate,omitempty"`
-	CertificateVerificationDNSRecord string              `json:"certificateVerificationDNSRecord,omitempty"`
-	SubDomains                       []AmplifySubDomain  `json:"subDomains"`
+	DomainAssociationArn             string                    `json:"domainAssociationArn"`
+	DomainName                       string                    `json:"domainName"`
+	EnableAutoSubDomain              bool                      `json:"enableAutoSubDomain"`
+	AutoSubDomainCreationPatterns    []string                  `json:"autoSubDomainCreationPatterns,omitempty"`
+	AutoSubDomainIamRole             string                    `json:"autoSubDomainIAMRole,omitempty"`
+	DomainStatus                     AmplifyDomainStatus       `json:"domainStatus"`
+	UpdateStatus                     AmplifyDomainUpdateStatus `json:"updateStatus"`
+	StatusReason                     string                    `json:"statusReason,omitempty"`
+	Certificate                      *AmplifyCertificate       `json:"certificate,omitempty"`
+	CertificateVerificationDNSRecord string                    `json:"certificateVerificationDNSRecord,omitempty"`
+	SubDomains                       []AmplifySubDomain        `json:"subDomains"`
 }
 
 type AmplifyCertificate struct {
 	Type                             string `json:"type"`
 	CustomCertificateArn             string `json:"customCertificateArn,omitempty"`
 	CertificateVerificationDNSRecord string `json:"certificateVerificationDNSRecord,omitempty"`
+}
+
+// AmplifyCertificateSettings is the CertificateSettings request shape
+// (create/update input for the read-only Certificate member).
+type AmplifyCertificateSettings struct {
+	Type                 string `json:"type"`
+	CustomCertificateArn string `json:"customCertificateArn,omitempty"`
 }
 
 type AmplifySubDomain struct {
@@ -104,12 +137,110 @@ func registerAmplifyDomains(srv *sim.Server) {
 // ---------- Domain handlers ----------
 
 type amplifyCreateDomainReq struct {
-	DomainName                    string                    `json:"domainName"`
-	EnableAutoSubDomain           *bool                     `json:"enableAutoSubDomain,omitempty"`
-	SubDomainSettings             []AmplifySubDomainSetting `json:"subDomainSettings,omitempty"`
-	AutoSubDomainCreationPatterns []string                  `json:"autoSubDomainCreationPatterns,omitempty"`
-	AutoSubDomainIamRole          string                    `json:"autoSubDomainIAMRole,omitempty"`
-	Certificate                   *AmplifyCertificate       `json:"certificateSettings,omitempty"`
+	DomainName                    string                      `json:"domainName"`
+	EnableAutoSubDomain           *bool                       `json:"enableAutoSubDomain,omitempty"`
+	SubDomainSettings             []AmplifySubDomainSetting   `json:"subDomainSettings,omitempty"`
+	AutoSubDomainCreationPatterns []string                    `json:"autoSubDomainCreationPatterns,omitempty"`
+	AutoSubDomainIamRole          string                      `json:"autoSubDomainIAMRole,omitempty"`
+	CertificateSettings           *AmplifyCertificateSettings `json:"certificateSettings,omitempty"`
+}
+
+// amplifyCertificateFromSettings materializes the read-only Certificate
+// member from the client's CertificateSettings: nil settings mean an
+// Amplify-managed certificate, and managed certificates carry the
+// verification DNS record that custom certificates don't need.
+func amplifyCertificateFromSettings(settings *AmplifyCertificateSettings, appID, domainName string) *AmplifyCertificate {
+	cert := &AmplifyCertificate{Type: "AMPLIFY_MANAGED"}
+	if settings != nil && settings.Type != "" {
+		cert.Type = settings.Type
+		cert.CustomCertificateArn = settings.CustomCertificateArn
+	}
+	if cert.Type == "AMPLIFY_MANAGED" {
+		cert.CertificateVerificationDNSRecord = amplifyCertVerificationRecord(appID, domainName)
+	}
+	return cert
+}
+
+// amplifyCertVerificationRecord is the ACM-style verification CNAME the
+// association advertises: "_<hash>.<domain>. CNAME _<hash>.acm-validations.aws."
+// The hash is deterministic per app + domain so read-time verification can
+// recompute exactly what was advertised.
+func amplifyCertVerificationRecord(appID, domainName string) string {
+	name, value := amplifyCertVerificationParts(appID, domainName)
+	return name + " CNAME " + value
+}
+
+func amplifyCertVerificationParts(appID, domainName string) (name, value string) {
+	hash := md5.Sum([]byte("amplify-cert-verification/" + appID + "/" + strings.ToLower(domainName)))
+	token := hex.EncodeToString(hash[:])
+	return "_" + token + "." + domainName + ".", "_" + token + ".acm-validations.aws."
+}
+
+func amplifySubDomainsFromSettings(appID, domainName string, settings []AmplifySubDomainSetting, verified bool) []AmplifySubDomain {
+	subs := make([]AmplifySubDomain, 0, len(settings))
+	for _, s := range settings {
+		subs = append(subs, AmplifySubDomain{
+			SubDomainSetting: s,
+			Verified:         verified,
+			DnsRecord:        s.Prefix + " CNAME " + amplifyCloudFrontDomain(appID) + ".",
+		})
+	}
+	return subs
+}
+
+// amplifyEvaluateDomainVerification settles a pending association against
+// the sim's own Route 53: AMPLIFY_MANAGED certificates verify when the
+// advertised certificate-verification CNAME exists in a hosted zone for the
+// domain; CUSTOM certificates have no DNS challenge to wait on and settle
+// immediately. The settled state is persisted so the flip is observed once.
+func amplifyEvaluateDomainVerification(stored amplifyStoredDomain) amplifyStoredDomain {
+	if stored.Domain.DomainStatus == AmplifyDomainStatusAvailable {
+		return stored
+	}
+	var verified bool
+	if stored.Domain.Certificate != nil && stored.Domain.Certificate.Type == "CUSTOM" {
+		verified = true
+	} else {
+		name, value := amplifyCertVerificationParts(stored.AppId, stored.Domain.DomainName)
+		verified = amplifyRoute53HasCNAME(stored.Domain.DomainName, name, value)
+	}
+	if !verified {
+		return stored
+	}
+	stored.Domain.DomainStatus = AmplifyDomainStatusAvailable
+	stored.Domain.UpdateStatus = AmplifyDomainUpdateComplete
+	for i := range stored.Domain.SubDomains {
+		stored.Domain.SubDomains[i].Verified = true
+	}
+	amplifyDomains.Put(amplifyDomainKey(stored.AppId, stored.Domain.DomainName), stored)
+	return stored
+}
+
+// amplifyRoute53HasCNAME reports whether any sim hosted zone covering
+// domainName carries the CNAME recordName → recordValue.
+func amplifyRoute53HasCNAME(domainName, recordName, recordValue string) bool {
+	normalize := func(s string) string {
+		return strings.TrimSuffix(strings.ToLower(s), ".")
+	}
+	wantName, wantValue := normalize(recordName), normalize(recordValue)
+	domain := normalize(domainName)
+	for _, zone := range r53Zones.List() {
+		zoneName := normalize(zone.Zone.Name)
+		if zoneName == "" || (domain != zoneName && !strings.HasSuffix(domain, "."+zoneName)) {
+			continue
+		}
+		for _, rr := range zone.Records {
+			if !strings.EqualFold(rr.Type, "CNAME") || normalize(rr.Name) != wantName || rr.ResourceRecords == nil {
+				continue
+			}
+			for _, value := range rr.ResourceRecords.Items {
+				if normalize(value.Value) == wantValue {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func handleAmplifyCreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -127,35 +258,25 @@ func handleAmplifyCreateDomain(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "domainName is required")
 		return
 	}
-	subs := make([]AmplifySubDomain, 0, len(req.SubDomainSettings))
-	for _, s := range req.SubDomainSettings {
-		subs = append(subs, AmplifySubDomain{
-			SubDomainSetting: s,
-			Verified:         true, // sim: eager verification
-			DnsRecord:        s.Prefix + "." + req.DomainName + " CNAME " + amplifyAppID(appID) + ".cloudfront.net.",
-		})
-	}
-	cert := req.Certificate
-	if cert == nil {
-		cert = &AmplifyCertificate{Type: "AMPLIFY_MANAGED"}
-	}
 	domain := AmplifyDomainAssociation{
 		DomainAssociationArn:             amplifyDomainARN(appID, req.DomainName),
 		DomainName:                       req.DomainName,
 		EnableAutoSubDomain:              boolOr(req.EnableAutoSubDomain, false),
 		AutoSubDomainCreationPatterns:    req.AutoSubDomainCreationPatterns,
 		AutoSubDomainIamRole:             req.AutoSubDomainIamRole,
-		DomainStatus:                     "AVAILABLE", // sim: eager — real AWS goes through PENDING_VERIFICATION → AVAILABLE
-		UpdateStatus:                     "UPDATE_COMPLETE",
-		Certificate:                      cert,
-		CertificateVerificationDNSRecord: "_acm-challenge." + req.DomainName + ". CNAME _validation.acm-validations.aws.",
-		SubDomains:                       subs,
+		DomainStatus:                     AmplifyDomainStatusPendingVerification,
+		UpdateStatus:                     AmplifyDomainUpdatePendingVerification,
+		Certificate:                      amplifyCertificateFromSettings(req.CertificateSettings, appID, req.DomainName),
+		CertificateVerificationDNSRecord: amplifyCertVerificationRecord(appID, req.DomainName),
+		SubDomains:                       amplifySubDomainsFromSettings(appID, req.DomainName, req.SubDomainSettings, false),
 	}
-	amplifyDomains.Put(amplifyDomainKey(appID, req.DomainName), amplifyStoredDomain{Domain: domain, AppId: appID})
-	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyDomainAssociation{"domainAssociation": domain})
+	stored := amplifyStoredDomain{Domain: domain, AppId: appID}
+	amplifyDomains.Put(amplifyDomainKey(appID, req.DomainName), stored)
+	// The verification CNAME may already exist (re-association of a domain
+	// whose records were kept); settle immediately in that case.
+	stored = amplifyEvaluateDomainVerification(stored)
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyDomainAssociation{"domainAssociation": stored.Domain})
 }
-
-func amplifyAppID(appID string) string { return appID }
 
 func handleAmplifyGetDomain(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("appId")
@@ -165,6 +286,7 @@ func handleAmplifyGetDomain(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "domain not found")
 		return
 	}
+	stored = amplifyEvaluateDomainVerification(stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyDomainAssociation{"domainAssociation": stored.Domain})
 }
 
@@ -192,18 +314,17 @@ func handleAmplifyUpdateDomain(w http.ResponseWriter, r *http.Request) {
 		stored.Domain.AutoSubDomainIamRole = req.AutoSubDomainIamRole
 	}
 	if req.SubDomainSettings != nil {
-		subs := make([]AmplifySubDomain, 0, len(req.SubDomainSettings))
-		for _, s := range req.SubDomainSettings {
-			subs = append(subs, AmplifySubDomain{
-				SubDomainSetting: s,
-				Verified:         true,
-				DnsRecord:        s.Prefix + "." + stored.Domain.DomainName + " CNAME " + appID + ".cloudfront.net.",
-			})
-		}
-		stored.Domain.SubDomains = subs
+		stored.Domain.SubDomains = amplifySubDomainsFromSettings(appID, stored.Domain.DomainName, req.SubDomainSettings,
+			stored.Domain.DomainStatus == AmplifyDomainStatusAvailable)
 	}
-	stored.Domain.UpdateStatus = "UPDATE_COMPLETE"
+	if req.CertificateSettings != nil {
+		stored.Domain.Certificate = amplifyCertificateFromSettings(req.CertificateSettings, appID, stored.Domain.DomainName)
+	}
+	if stored.Domain.DomainStatus == AmplifyDomainStatusAvailable {
+		stored.Domain.UpdateStatus = AmplifyDomainUpdateComplete
+	}
 	amplifyDomains.Put(key, stored)
+	stored = amplifyEvaluateDomainVerification(stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyDomainAssociation{"domainAssociation": stored.Domain})
 }
 
@@ -226,13 +347,18 @@ func handleAmplifyListDomains(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	items := []AmplifyDomainAssociation{}
 	for _, s := range amplifyDomains.List() {
 		if s.AppId == appID {
-			items = append(items, s.Domain)
+			items = append(items, amplifyEvaluateDomainVerification(s).Domain)
 		}
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"domainAssociations": items})
+	sortBy(items, func(d AmplifyDomainAssociation) string { return d.DomainName })
+	amplifyWriteListPage(w, "domainAssociations", items, token, maxResults)
 }
 
 // ---------- BackendEnvironment handlers ----------
@@ -301,11 +427,18 @@ func handleAmplifyListBackends(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
+	// ListBackendEnvironments additionally filters by ?environmentName=.
+	nameFilter := r.URL.Query().Get("environmentName")
 	items := []AmplifyBackendEnvironment{}
 	for _, s := range amplifyBackends.List() {
-		if s.AppId == appID {
+		if s.AppId == appID && (nameFilter == "" || s.Env.EnvironmentName == nameFilter) {
 			items = append(items, s.Env)
 		}
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"backendEnvironments": items})
+	sortBy(items, func(e AmplifyBackendEnvironment) string { return e.EnvironmentName })
+	amplifyWriteListPage(w, "backendEnvironments", items, token, maxResults)
 }

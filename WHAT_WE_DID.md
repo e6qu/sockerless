@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-12 - Amplify full support + bleephub GitHub Apps/orgs hardening
+
+**Amplify is now a complete service slice**: beyond the control-plane gap
+pass (real deployment upload flow with byte-verified PUTs into sim S3,
+pagination, cascades, presence-based updates, typed shapes, observable job
+states — BUG-1717..1723), the sim gained the full execution layer per the
+sim host model: REAL builds (buildSpec phases in node containers off the
+ECR Public mirror, go-git clones, per-step logs served from resolvable
+logUrls, honest SUCCEED/FAILED from container exit, StopJob cancels the
+container), a Host-routed hosting data plane ({branch}.{appId}.amplifyapp
+.com + deterministic cloudfront.net hosts + verified custom domains;
+CustomRules rewrite/redirect/SPA semantics; basic auth), SSR/WEB_COMPUTE
+via the published deploy-manifest spec (lazy long-lived compute containers
+reverse-proxied per manifest routes; PublishPorts/WorkingDir added to the
+shared container layer), and a REAL Route 53 verification state machine
+for domain associations (read-evaluated against sim hosted zones; the
+terraform fixture creates the verification records like real configs).
+Also: a pre-existing P1 — every UI-embedded AWS sim binary panicked at
+startup on a mux conflict CI never saw (noui fallback) — BUG-1715.
+
+**bleephub apps/orgs** (BUG-1706..1714): installation-token downscoping
+was entirely unenforced (P1) and suspension didn't block existing tokens
+(P1) — both fixed with real 422/403 semantics; JWT exp-window fidelity
+(backdated-iat clients were wrongly rejected); 7 new endpoint families
+(manifest form flow, org installations/global list, public members,
+user-side membership accept, team memberships/repos/children, full org
+webhooks with repo-event fan-out); typed role/state/privacy enums; test
+pyramid from JWT unit tables through go-github flows to native gh e2e
+(harness 99 PASS / 0 FAIL).
+
 ## 2026-06-11 - Launch hygiene: validation armed everywhere + azurestack retired + docs truth pass
 
 Closing the validation arc's last gaps in one PR. The terraform CI jobs now

@@ -21,6 +21,11 @@ type Webhook struct {
 	Events      []string `json:"events"`
 	Active      bool     `json:"active"`
 	RepoKey     string   `json:"-"`
+	// OrgLogin marks an organization-level hook; like RepoKey it equals
+	// the persistence bucket key, so it stays json:"-" and the loader
+	// backfills it on reload. Exactly one of RepoKey/OrgLogin is set
+	// (both empty = app-level pseudo-hook).
+	OrgLogin string `json:"-"`
 	// LastResponse mirrors GitHub's hook.last_response: the outcome of the most
 	// recent delivery. Nil until a delivery has occurred (rendered "unused").
 	LastResponse *HookLastResponse `json:"last_response,omitempty"`
