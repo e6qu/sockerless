@@ -167,6 +167,7 @@ func TestBQCoverage_TabledataAndJobs(t *testing.T) {
 	require.Equal(t, int64(1), int64(qr.TotalRows))
 	require.Len(t, qr.Rows, 1)
 	assert.Equal(t, "b", qr.Rows[0].F[0].V)
+	assert.Equal(t, "0", qr.TotalBytesProcessed, "GetQueryResultsResponse carries totalBytesProcessed")
 }
 
 // TestFSCoverage_CreateUpdateDeleteBatchWrite covers the untested firestore

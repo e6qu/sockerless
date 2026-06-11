@@ -138,6 +138,13 @@ func TestCloudMap_CreateServiceAndListWithFilter(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listFiltered.Services, 1)
 	assert.Equal(t, "my-service", *listFiltered.Services[0].Name)
+	// List entries are the ServiceSummary shape (no NamespaceId member —
+	// namespace association rides GetService); the namespace filter still
+	// works off the stored association.
+	assert.Equal(t, svcID, aws.ToString(listFiltered.Services[0].Id))
+	assert.NotEmpty(t, aws.ToString(listFiltered.Services[0].Arn))
+	require.NotNil(t, listFiltered.Services[0].DnsConfig)
+	require.Len(t, listFiltered.Services[0].DnsConfig.DnsRecords, 1)
 
 	// Cleanup
 	_, _ = client.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(svcID)})

@@ -40,6 +40,9 @@ func TestSSMParameter_PutGetDelete(t *testing.T) {
 	assert.Equal(t, "hello", *got.Parameter.Value)
 	assert.Equal(t, ssmtypes.ParameterTypeString, got.Parameter.Type)
 	assert.Contains(t, *got.Parameter.ARN, "arn:aws:ssm:")
+	assert.Equal(t, int64(1), got.Parameter.Version)
+	assert.Equal(t, "text", aws.ToString(got.Parameter.DataType))
+	assert.NotNil(t, got.Parameter.LastModifiedDate)
 
 	// PUT again without Overwrite=true must fail.
 	_, err = c.PutParameter(ctx, &ssm.PutParameterInput{
@@ -127,6 +130,9 @@ func TestSSMParameter_Describe(t *testing.T) {
 	for _, p := range out.Parameters {
 		if p.Name != nil && *p.Name == "/desc/p1" {
 			found = true
+			// Tier is a ParameterMetadata member — it rides
+			// DescribeParameters, not the Get* Parameter shape.
+			assert.Equal(t, ssmtypes.ParameterTierStandard, p.Tier)
 		}
 	}
 	assert.True(t, found, "DescribeParameters must include the seeded parameter")

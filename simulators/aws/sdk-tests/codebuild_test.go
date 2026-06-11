@@ -120,6 +120,9 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	require.NotNil(t, startResp.Build)
 	buildID := aws.ToString(startResp.Build.Id)
 	assert.NotEmpty(t, buildID)
+	require.NotNil(t, startResp.Build.Logs)
+	require.NotNil(t, startResp.Build.Logs.CloudWatchLogs)
+	assert.Equal(t, cbtypes.LogsConfigStatusTypeDisabled, startResp.Build.Logs.CloudWatchLogs.Status)
 
 	var build cbtypes.Build
 	require.Eventually(t, func() bool {
@@ -133,6 +136,11 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, buildID, aws.ToString(build.Id))
 	assert.NotEmpty(t, build.Phases)
+	// Log enablement is the real LogsLocation member cloudWatchLogs.status
+	// (the sim runs builds without a CloudWatch sink, so DISABLED).
+	require.NotNil(t, build.Logs)
+	require.NotNil(t, build.Logs.CloudWatchLogs)
+	assert.Equal(t, cbtypes.LogsConfigStatusTypeDisabled, build.Logs.CloudWatchLogs.Status)
 
 	buildList, err := c.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
 		ProjectName: aws.String("cb-sdk-build-project"),
@@ -143,4 +151,60 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	allBuilds, err := c.ListBuilds(ctx, &codebuild.ListBuildsInput{})
 	require.NoError(t, err)
 	require.Contains(t, allBuilds.Ids, buildID)
+}
+
+// TestCodeBuild_FailedBuildPhaseContext_SDK pins where failure detail
+// lives on the Build shape: the BUILD phase's contexts (PhaseContext),
+// not the LogsLocation.
+func TestCodeBuild_FailedBuildPhaseContext_SDK(t *testing.T) {
+	c := codebuildClient()
+
+	_, err := c.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name: aws.String("cb-sdk-fail-project"),
+		Source: &cbtypes.ProjectSource{
+			Type:      cbtypes.SourceTypeNoSource,
+			Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - exit 7\n"),
+		},
+		Artifacts: &cbtypes.ProjectArtifacts{
+			Type: cbtypes.ArtifactsTypeNoArtifacts,
+		},
+		Environment: &cbtypes.ProjectEnvironment{
+			Type:        cbtypes.EnvironmentTypeLinuxContainer,
+			Image:       aws.String("aws/codebuild/standard:7.0"),
+			ComputeType: cbtypes.ComputeTypeBuildGeneral1Small,
+		},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String("cb-sdk-fail-project")})
+	})
+
+	startResp, err := c.StartBuild(ctx, &codebuild.StartBuildInput{
+		ProjectName: aws.String("cb-sdk-fail-project"),
+	})
+	require.NoError(t, err)
+	buildID := aws.ToString(startResp.Build.Id)
+
+	var build cbtypes.Build
+	require.Eventually(t, func() bool {
+		builds, err := c.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{
+			Ids: []string{buildID},
+		})
+		require.NoError(t, err)
+		require.Len(t, builds.Builds, 1)
+		build = builds.Builds[0]
+		return build.BuildStatus == cbtypes.StatusTypeFailed
+	}, 10*time.Second, 100*time.Millisecond)
+
+	var buildPhase *cbtypes.BuildPhase
+	for i := range build.Phases {
+		if build.Phases[i].PhaseType == cbtypes.BuildPhaseTypeBuild {
+			buildPhase = &build.Phases[i]
+		}
+	}
+	require.NotNil(t, buildPhase, "build must report a BUILD phase")
+	require.NotEmpty(t, buildPhase.Contexts, "failed BUILD phase must carry a context")
+	assert.Equal(t, "COMMAND_EXECUTION_ERROR", aws.ToString(buildPhase.Contexts[0].StatusCode))
+	assert.Contains(t, aws.ToString(buildPhase.Contexts[0].Message), "status 7")
 }

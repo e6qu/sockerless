@@ -2,6 +2,7 @@ package azure_sdk_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -210,8 +211,14 @@ func TestKeyVault_KeysAndCertificates(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	assert.Contains(t, string(body), `"kid"`, "key response should carry a kid")
-	assert.Contains(t, string(body), "/keys/mykey/", "kid should embed key path")
+	var keyResp map[string]any
+	require.NoError(t, json.Unmarshal(body, &keyResp))
+	_, hasTopKid := keyResp["kid"]
+	assert.False(t, hasTopKid, "KeyBundle must not hoist kid to the top level")
+	jwk, _ := keyResp["key"].(map[string]any)
+	require.NotNil(t, jwk, "KeyBundle must carry the JSON Web Key under key")
+	kid, _ := jwk["kid"].(string)
+	assert.Contains(t, kid, "/keys/mykey/", "key.kid should embed the key path")
 
 	// Get the key back.
 	resp = kvReq(t, "GET", vault, "/keys/mykey", nil)

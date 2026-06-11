@@ -465,8 +465,15 @@ func handleAPIMCreateApi(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.Properties["isCurrent"]; !ok {
 		a.Properties["isCurrent"] = true
 	}
-	if v, ok := a.Properties["apiType"]; !ok || v == nil || v == "" {
-		a.Properties["apiType"] = "http"
+	// The create request carries the API kind as apiType
+	// (ApiCreateOrUpdateProperties); read shapes expose it as type
+	// (ApiEntityBaseContract). Translate and never echo apiType back.
+	if v, ok := a.Properties["apiType"]; ok && v != nil && v != "" {
+		a.Properties["type"] = v
+	}
+	delete(a.Properties, "apiType")
+	if v, ok := a.Properties["type"]; !ok || v == nil || v == "" {
+		a.Properties["type"] = "http"
 	}
 	apimApis.Put(id, a)
 	sim.WriteJSON(w, http.StatusOK, a)

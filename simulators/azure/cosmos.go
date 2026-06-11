@@ -546,8 +546,10 @@ func handleCosmosCreateSQLContainer(w http.ResponseWriter, r *http.Request) {
 		Type:       "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
 		Properties: ensureResourceProperty(req.Properties, container),
 	}
-	if c.Properties["partitionKey"] == nil {
-		c.Properties["partitionKey"] = map[string]any{"paths": []string{"/id"}, "kind": "Hash"}
+	// SqlContainerGetProperties nests partitionKey under
+	// properties.resource, never directly under properties.
+	if res, ok := c.Properties["resource"].(map[string]any); ok && res["partitionKey"] == nil {
+		res["partitionKey"] = map[string]any{"paths": []string{"/id"}, "kind": "Hash"}
 	}
 	cosmosContainers.Put(id, c)
 	sim.WriteJSON(w, http.StatusOK, c)

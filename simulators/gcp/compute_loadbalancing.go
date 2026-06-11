@@ -568,7 +568,7 @@ func gcpBackendTargets(bs ComputeBackendService) []gcpLBTarget {
 	return targets
 }
 
-func gcpInstanceGroupNamedPort(group ComputeInstanceGroup, name string) int64 {
+func gcpInstanceGroupNamedPort(group storedComputeInstanceGroup, name string) int64 {
 	for _, port := range group.NamedPorts {
 		if port.Name == name {
 			return port.Port

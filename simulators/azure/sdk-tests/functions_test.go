@@ -68,8 +68,12 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string
 	siteReq.Header.Set("Authorization", "Bearer fake-token")
 	siteResp, err := http.DefaultClient.Do(siteReq)
 	require.NoError(t, err)
+	echo, _ := io.ReadAll(siteResp.Body)
 	siteResp.Body.Close()
 	require.Equal(t, http.StatusOK, siteResp.StatusCode)
+	// simCommand is sim-internal wiring accepted on the request; the
+	// Site read shape must never echo it.
+	require.NotContains(t, string(echo), "simCommand")
 }
 
 // azureInvokeFunction connects to the sim's TCP port but sets the Host header

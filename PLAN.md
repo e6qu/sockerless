@@ -32,11 +32,14 @@ Discovery documents, Azure Swagger; pinned + provenance-tracked):
    against the spec output shapes; `scripts/check-spec-violations.sh` fails CI
    on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt`.
    First armed runs filed BUG-1658..1685 as the open burn-down list.
-3. **Burn-down (next)**: fix the 28 allowlisted shape-drift bugs in batches,
-   shrinking the allowlists to the two permanent justified exemptions
-   (firestore REST server-streaming). Largest items: gcp knative path-shape
-   divergence (BUG-1672, needs coordinated cloudrun-backend change) and
-   azure postgres-flexible LRO choreography (BUG-1679).
+3. **Burn-down (done — `feat/sim-shape-burndown`)**: all 28 allowlisted
+   shape-drift bugs fixed (BUG-1658..1685); aws/azure allowlists deleted,
+   gcp holds only the two permanent firestore server-streaming exemptions.
+   The knative surface now lives at the real
+   `/apis/serving.knative.dev/v1/...` paths and postgres-flexible speaks
+   the real 202+Azure-AsyncOperation LRO.
+4. **Next**: arm `SOCKERLESS_SPEC_VALIDATE` on the terraform-test CI jobs
+   (needs one armed dry-run per cloud first).
 
 Branch `feat/sim-spec-conformance`; see [STATUS.md](STATUS.md) for the
 snapshot and [BUGS.md](BUGS.md) for per-bug detail.

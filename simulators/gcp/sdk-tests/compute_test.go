@@ -437,6 +437,12 @@ func TestCompute_InstanceGroups_Lifecycle(t *testing.T) {
 	require.Len(t, members.Items, 1)
 	assert.Equal(t, member, members.Items[0].Instance)
 
+	// Membership rides listInstances; the InstanceGroup resource itself
+	// summarizes it via the output-only size member.
+	got, err = svc.InstanceGroups.Get(project, zone, group.Name).Context(ctx).Do()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, got.Size)
+
 	list, err := svc.InstanceGroups.List(project, zone).Context(ctx).Do()
 	require.NoError(t, err)
 	require.NotEmpty(t, list.Items)

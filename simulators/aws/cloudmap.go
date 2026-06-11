@@ -656,13 +656,34 @@ func handleCMListServices(w http.ResponseWriter, r *http.Request) {
 		services = filtered
 	}
 
-	if services == nil {
-		services = []CMService{}
+	summaries := make([]map[string]any, 0, len(services))
+	for _, svc := range services {
+		summaries = append(summaries, cmServiceSummary(svc))
 	}
-
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Services": services,
+		"Services": summaries,
 	})
+}
+
+// cmServiceSummary projects a stored service onto the ServiceSummary
+// shape. NamespaceId is a Service (GetService/CreateService) member kept
+// in the store for namespace filtering and DNS wiring; ServiceSummary
+// has no such member.
+func cmServiceSummary(svc CMService) map[string]any {
+	out := map[string]any{
+		"Id":            svc.Id,
+		"Arn":           svc.Arn,
+		"Name":          svc.Name,
+		"CreateDate":    svc.CreateDate,
+		"InstanceCount": svc.InstanceCount,
+	}
+	if svc.Description != "" {
+		out["Description"] = svc.Description
+	}
+	if svc.DnsConfig != nil {
+		out["DnsConfig"] = svc.DnsConfig
+	}
+	return out
 }
 
 func handleCMDeleteService(w http.ResponseWriter, r *http.Request) {

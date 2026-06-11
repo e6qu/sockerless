@@ -164,6 +164,8 @@ func TestECR_PullThroughCacheDelete(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "delete-prefix", aws.ToString(out.EcrRepositoryPrefix))
+	assert.Equal(t, "registry-1.docker.io", aws.ToString(out.UpstreamRegistryUrl))
+	assert.NotNil(t, out.CreatedAt)
 
 	// Second delete should fail with not-found.
 	_, err = client.DeletePullThroughCacheRule(ctx, &ecr.DeletePullThroughCacheRuleInput{

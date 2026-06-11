@@ -15,12 +15,13 @@ import (
 // (the actual Redis protocol) is out of scope — terraform's
 // `azurerm_redis_cache` resource only needs the ARM lifecycle.
 
+// RedisCache mirrors RedisResource: sku lives under properties
+// (RedisProperties allOf RedisCreateProperties), never at the top level.
 type RedisCache struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
 	Type       string            `json:"type"`
 	Location   string            `json:"location,omitempty"`
-	SKU        map[string]any    `json:"sku,omitempty"`
 	Properties map[string]any    `json:"properties,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 }
@@ -178,7 +179,6 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		Name:     name,
 		Type:     "Microsoft.Cache/Redis",
 		Location: req.Location,
-		SKU:      req.SKU,
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState": "Creating",
@@ -227,9 +227,6 @@ func handleRedisCachePatch(w http.ResponseWriter, r *http.Request) {
 	redisCaches.Update(id, func(cache *RedisCache) {
 		if req.Location != "" {
 			cache.Location = req.Location
-		}
-		if req.SKU != nil {
-			cache.SKU = req.SKU
 		}
 		if req.Tags != nil {
 			cache.Tags = req.Tags

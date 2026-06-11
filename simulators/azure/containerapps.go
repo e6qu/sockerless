@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -169,95 +168,23 @@ type JobVolume struct {
 	StorageName string `json:"storageName,omitempty"`
 }
 
-// JobExecution represents a running or completed execution of a Container Apps Job.
-// The Azure ARM SDK v2 expects flat fields (status, startTime, endTime) while v3
-// expects them nested under "properties". We include both via a custom MarshalJSON
-// so the simulator works with either SDK version.
+// JobExecution represents a running or completed execution of a Container
+// Apps Job. The wire shape nests status/startTime/endTime/template under
+// properties, matching the Microsoft.App jobs spec and the armappcontainers
+// v3 deserializer.
 type JobExecution struct {
-	ID        string       `json:"-"`
-	Name      string       `json:"-"`
-	Type      string       `json:"-"`
-	Status    string       `json:"-"`
-	StartTime string       `json:"-"`
-	EndTime   string       `json:"-"`
-	Template  *JobTemplate `json:"-"`
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type,omitempty"`
+	Properties JobExecutionProperties `json:"properties"`
 }
 
-// MarshalJSON produces JSON with status/startTime/endTime at both the top level
-// (for SDK v2) and nested under "properties" (for SDK v3).
-func (e JobExecution) MarshalJSON() ([]byte, error) {
-	type props struct {
-		Status    string       `json:"status"`
-		StartTime string       `json:"startTime"`
-		EndTime   string       `json:"endTime,omitempty"`
-		Template  *JobTemplate `json:"template,omitempty"`
-	}
-	type alias struct {
-		ID         string       `json:"id"`
-		Name       string       `json:"name"`
-		Type       string       `json:"type,omitempty"`
-		Status     string       `json:"status"`
-		StartTime  string       `json:"startTime"`
-		EndTime    string       `json:"endTime,omitempty"`
-		Template   *JobTemplate `json:"template,omitempty"`
-		Properties *props       `json:"properties,omitempty"`
-	}
-	return json.Marshal(alias{
-		ID:        e.ID,
-		Name:      e.Name,
-		Type:      e.Type,
-		Status:    e.Status,
-		StartTime: e.StartTime,
-		EndTime:   e.EndTime,
-		Template:  e.Template,
-		Properties: &props{
-			Status:    e.Status,
-			StartTime: e.StartTime,
-			EndTime:   e.EndTime,
-			Template:  e.Template,
-		},
-	})
-}
-
-// UnmarshalJSON reads from flat or nested format.
-func (e *JobExecution) UnmarshalJSON(data []byte) error {
-	type props struct {
-		Status    string       `json:"status"`
-		StartTime string       `json:"startTime"`
-		EndTime   string       `json:"endTime,omitempty"`
-		Template  *JobTemplate `json:"template,omitempty"`
-	}
-	type alias struct {
-		ID         string       `json:"id"`
-		Name       string       `json:"name"`
-		Type       string       `json:"type,omitempty"`
-		Status     string       `json:"status"`
-		StartTime  string       `json:"startTime"`
-		EndTime    string       `json:"endTime,omitempty"`
-		Template   *JobTemplate `json:"template,omitempty"`
-		Properties *props       `json:"properties,omitempty"`
-	}
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	e.ID = a.ID
-	e.Name = a.Name
-	e.Type = a.Type
-	e.Status = a.Status
-	e.StartTime = a.StartTime
-	e.EndTime = a.EndTime
-	e.Template = a.Template
-	// If flat fields are empty, try properties
-	if e.Status == "" && a.Properties != nil {
-		e.Status = a.Properties.Status
-		e.StartTime = a.Properties.StartTime
-		e.EndTime = a.Properties.EndTime
-		if e.Template == nil {
-			e.Template = a.Properties.Template
-		}
-	}
-	return nil
+// JobExecutionProperties holds the execution state of a JobExecution.
+type JobExecutionProperties struct {
+	Status    string       `json:"status"`
+	StartTime string       `json:"startTime"`
+	EndTime   string       `json:"endTime,omitempty"`
+	Template  *JobTemplate `json:"template,omitempty"`
 }
 
 // Package-level stores for dashboard access.
@@ -458,12 +385,14 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		exec := JobExecution{
-			ID:        execID,
-			Name:      execName,
-			Type:      "Microsoft.App/jobs/executions",
-			Status:    "Running",
-			StartTime: time.Now().UTC().Format(time.RFC3339),
-			Template:  template,
+			ID:   execID,
+			Name: execName,
+			Type: "Microsoft.App/jobs/executions",
+			Properties: JobExecutionProperties{
+				Status:    "Running",
+				StartTime: time.Now().UTC().Format(time.RFC3339),
+				Template:  template,
+			},
 		}
 
 		executions.Put(execID, exec)
@@ -523,16 +452,16 @@ func registerContainerApps(srv *sim.Server) {
 
 			completed := false
 			executions.Update(id, func(e *JobExecution) {
-				if e.Status != "Running" {
+				if e.Properties.Status != "Running" {
 					return
 				}
 				completed = true
 				if succeeded {
-					e.Status = "Succeeded"
+					e.Properties.Status = "Succeeded"
 				} else {
-					e.Status = "Failed"
+					e.Properties.Status = "Failed"
 				}
-				e.EndTime = time.Now().UTC().Format(time.RFC3339)
+				e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
 			})
 			if completed {
 				// Match the actual outcome (the previous behaviour
@@ -625,8 +554,8 @@ func registerContainerApps(srv *sim.Server) {
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
-			e.Status = "Stopped"
-			e.EndTime = time.Now().UTC().Format(time.RFC3339)
+			e.Properties.Status = "Stopped"
+			e.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
 		})
 		if ok {
 			injectContainerAppLog(jobName, "Execution stopped")

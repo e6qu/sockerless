@@ -95,7 +95,7 @@ func TestKVStoragePersistenceRoundTrip(t *testing.T) {
 			KeyVaultCertificate: KeyVaultCertificate{
 				ID:             "https://myvault.vault.azure.net/certificates/mycert/v1",
 				X509Thumbprint: "ABCDEF12",
-				Policy:         map[string]any{"issuer": map[string]any{"name": "Self"}},
+				Policy:         &kvCertPolicy{Issuer: &kvCertIssuer{Name: "Self"}},
 				Tags:           map[string]string{"team": "infra"},
 			},
 		}

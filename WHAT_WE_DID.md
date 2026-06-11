@@ -4,6 +4,27 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-11 - Simulator shape-drift burn-down (28 bugs, allowlists emptied)
+
+All 28 runtime spec-shape bugs from the validation arc fixed in one PR
+(BUG-1658..1685): aws + azure `spec-violation-allowlist.txt` deleted, gcp
+reduced to its two permanent firestore server-streaming exemptions. The
+recurring shapes: invented members removed, list-vs-describe context splits
+(bespoke summary projections), sockerless wiring (`dockerNetworkName`,
+`simImage`/`simCommand`) taken OFF the wire while staying persisted and
+load-bearing (persisted-DTO embeds with unchanged row JSON / MarshalJSON
+wire views — the bleephub `json:"-"` persistence trap explicitly avoided
+and regression-tested), and wire-name fidelity (KV cert policy typed to the
+swagger member set; public-vs-private DNS genuinely differ on `minimumTTL`
+casing). Structural items: the gcp Cloud Run knative surface moved to the
+real `/apis/serving.knative.dev/v1/...` paths with a canonical run/v1
+client round-trip test (backends were already on run/v2), and azure
+postgres-flexible now speaks the spec's 202-only LRO with
+Azure-AsyncOperation polling. Several latent leaks beyond the filed bugs
+died on the way, and two sim-quirk CLI test bodies (raw non-wire shapes no
+real client sends) were corrected. All armed SDK+CLI suites green at zero
+across the three clouds; cloudrun/gcf/aca FaaS smokes green.
+
 ## 2026-06-11 - bleephub deep sweep (shape ratchet, approvals, persistence, gh-CLI parity)
 
 One fat PR sweeping bleephub's API, implementation, storage, and UI, anchored

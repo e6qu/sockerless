@@ -32,6 +32,19 @@ type Site struct {
 	Properties SiteProperties    `json:"properties"`
 }
 
+// wire returns the ARM response shape for a site: the stored record
+// with sockerless-internal wiring (siteConfig.simCommand) stripped.
+// SimCommand persists via the store's JSON marshal of Site and drives
+// the invoke-time process launch; it never appears on the wire.
+func (s Site) wire() Site {
+	if s.Properties.SiteConfig != nil {
+		cfg := *s.Properties.SiteConfig
+		cfg.SimCommand = nil
+		s.Properties.SiteConfig = &cfg
+	}
+	return s
+}
+
 // SiteProperties holds the properties of a function app.
 type SiteProperties struct {
 	State                string                            `json:"state,omitempty"`
@@ -252,7 +265,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		// Always return 200 OK so the ARM SDK's BeginCreateOrUpdate poller
 		// treats this as an immediately completed operation.
-		sim.WriteJSON(w, http.StatusOK, site)
+		sim.WriteJSON(w, http.StatusOK, site.wire())
 	})
 
 	// GET - Get function app
@@ -270,7 +283,7 @@ func registerAzureFunctions(srv *sim.Server) {
 			return
 		}
 
-		sim.WriteJSON(w, http.StatusOK, site)
+		sim.WriteJSON(w, http.StatusOK, site.wire())
 	})
 
 	// GET - List function apps by resource group
@@ -282,9 +295,13 @@ func registerAzureFunctions(srv *sim.Server) {
 		filtered := sites.Filter(func(s Site) bool {
 			return strings.HasPrefix(s.ID, prefix)
 		})
+		out := make([]Site, 0, len(filtered))
+		for _, s := range filtered {
+			out = append(out, s.wire())
+		}
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"value": filtered,
+			"value": out,
 		})
 	})
 

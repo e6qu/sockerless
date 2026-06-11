@@ -93,8 +93,18 @@ type BQJob struct {
 	Status        map[string]any `json:"status"`
 	Statistics    map[string]any `json:"statistics,omitempty"`
 	UserEmail     string         `json:"user_email,omitempty"`
-	Query         string         `json:"query,omitempty"`
-	Result        BQQueryResult  `json:"result,omitempty"`
+}
+
+// storedBQJob is the persisted row backing a query job: the wire-shape
+// Job (which has no result member — query results ride GetQueryResults)
+// plus the materialized result rows the GetQueryResults handler serves.
+// The embedding flattens on json.Marshal, so sim.Store persistence keeps
+// the same row shape the result has always been recovered from.
+type storedBQJob struct {
+	BQJob
+	// Result is the evaluated query result served by GetQueryResults.
+	// Store-only: never emitted as a Job member.
+	Result BQQueryResult `json:"result,omitempty"`
 }
 
 type BQJobRef struct {
@@ -103,14 +113,20 @@ type BQJobRef struct {
 	Location  string `json:"location,omitempty"`
 }
 
+// BQQueryResult is the shared result shape behind jobs.query
+// (QueryResponse) and jobs.getQueryResults (GetQueryResultsResponse).
+// totalBytesBilled is a QueryResponse-only member — the GetQueryResults
+// handler clears it because GetQueryResultsResponse declares only
+// totalBytesProcessed.
 type BQQueryResult struct {
-	Kind             string       `json:"kind,omitempty"`
-	Schema           *BQSchema    `json:"schema,omitempty"`
-	Rows             []BQTableRow `json:"rows,omitempty"`
-	TotalRows        string       `json:"totalRows"`
-	JobComplete      bool         `json:"jobComplete"`
-	CacheHit         bool         `json:"cacheHit"`
-	TotalBytesBilled string       `json:"totalBytesBilled,omitempty"`
+	Kind                string       `json:"kind,omitempty"`
+	Schema              *BQSchema    `json:"schema,omitempty"`
+	Rows                []BQTableRow `json:"rows,omitempty"`
+	TotalRows           string       `json:"totalRows"`
+	JobComplete         bool         `json:"jobComplete"`
+	CacheHit            bool         `json:"cacheHit"`
+	TotalBytesBilled    string       `json:"totalBytesBilled,omitempty"`
+	TotalBytesProcessed string       `json:"totalBytesProcessed,omitempty"`
 }
 
 type BQTableRow struct {
@@ -121,7 +137,7 @@ var (
 	bqDatasets sim.Store[BQDataset]
 	bqTables   sim.Store[BQTable]
 	bqRows     sim.Store[BQRowSet]
-	bqJobs     sim.Store[BQJob]
+	bqJobs     sim.Store[storedBQJob]
 
 	bqFromRE  = regexp.MustCompile("(?i)\\bfrom\\s+`?([^`\\s]+)`?")
 	bqWhereRE = regexp.MustCompile(`(?i)\bwhere\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('([^']*)'|"([^"]*)"|[^\s;]+)`)
@@ -131,7 +147,7 @@ func registerBigQuery(srv *sim.Server) {
 	bqDatasets = sim.MakeStore[BQDataset](srv.DB(), "bigquery_datasets")
 	bqTables = sim.MakeStore[BQTable](srv.DB(), "bigquery_tables")
 	bqRows = sim.MakeStore[BQRowSet](srv.DB(), "bigquery_rows")
-	bqJobs = sim.MakeStore[BQJob](srv.DB(), "bigquery_jobs")
+	bqJobs = sim.MakeStore[storedBQJob](srv.DB(), "bigquery_jobs")
 
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets", handleBQInsertDataset)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets", handleBQListDatasets)
@@ -548,7 +564,7 @@ func handleBQInsertJob(w http.ResponseWriter, r *http.Request) {
 	if q, ok := req.Configuration["query"].(map[string]any); ok {
 		query, _ = q["query"].(string)
 	}
-	result := BQQueryResult{JobComplete: true, TotalRows: "0", CacheHit: false}
+	result := BQQueryResult{JobComplete: true, TotalRows: "0", CacheHit: false, TotalBytesProcessed: "0"}
 	if query != "" {
 		var err error
 		result, err = bqEvaluateQuery(project, query)
@@ -560,7 +576,7 @@ func handleBQInsertJob(w http.ResponseWriter, r *http.Request) {
 	job := bqDoneQueryJob(r, project, jobID, location, query, result)
 	job.Configuration = req.Configuration
 	bqJobs.Put(bqJobKey(project, jobID), job)
-	sim.WriteJSON(w, http.StatusOK, job)
+	sim.WriteJSON(w, http.StatusOK, job.BQJob)
 }
 
 func handleBQGetJob(w http.ResponseWriter, r *http.Request) {
@@ -570,12 +586,12 @@ func handleBQGetJob(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Job %s:%s", project, jobID)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, job)
+	sim.WriteJSON(w, http.StatusOK, job.BQJob)
 }
 
 func handleBQListJobs(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
-	all := bqJobs.Filter(func(j BQJob) bool { return j.JobReference.ProjectID == project })
+	all := bqJobs.Filter(func(j storedBQJob) bool { return j.JobReference.ProjectID == project })
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
 	// jobs.list items follow the lighter JobListJobs shape: the running state
 	// is a top-level `state` field (mirrored from status.state), not nested.
@@ -613,32 +629,36 @@ func handleBQGetQueryResults(w http.ResponseWriter, r *http.Request) {
 	}
 	result := job.Result
 	result.Kind = "bigquery#getQueryResultsResponse"
+	// GetQueryResultsResponse declares totalBytesProcessed but not
+	// totalBytesBilled (a QueryResponse-only member).
+	result.TotalBytesBilled = ""
 	sim.WriteJSON(w, http.StatusOK, result)
 }
 
-func bqDoneQueryJob(r *http.Request, project, jobID, location, query string, result BQQueryResult) BQJob {
+func bqDoneQueryJob(r *http.Request, project, jobID, location, query string, result BQQueryResult) storedBQJob {
 	if location == "" {
 		location = "US"
 	}
-	return BQJob{
-		Kind:     "bigquery#job",
-		Etag:     bqEtag(jobID),
-		ID:       project + ":" + jobID,
-		SelfLink: gcpSelfLink(r, "/bigquery/v2/projects/"+project+"/jobs/"+jobID),
-		JobReference: BQJobRef{
-			ProjectID: project,
-			JobID:     jobID,
-			Location:  location,
+	return storedBQJob{
+		BQJob: BQJob{
+			Kind:     "bigquery#job",
+			Etag:     bqEtag(jobID),
+			ID:       project + ":" + jobID,
+			SelfLink: gcpSelfLink(r, "/bigquery/v2/projects/"+project+"/jobs/"+jobID),
+			JobReference: BQJobRef{
+				ProjectID: project,
+				JobID:     jobID,
+				Location:  location,
+			},
+			Configuration: map[string]any{"query": map[string]any{"query": query}},
+			Status:        map[string]any{"state": "DONE"},
+			Statistics: map[string]any{
+				"creationTime": bqMillisNow(),
+				"startTime":    bqMillisNow(),
+				"endTime":      bqMillisNow(),
+				"query":        map[string]any{"totalBytesProcessed": "0", "cacheHit": false},
+			},
 		},
-		Configuration: map[string]any{"query": map[string]any{"query": query}},
-		Status:        map[string]any{"state": "DONE"},
-		Statistics: map[string]any{
-			"creationTime": bqMillisNow(),
-			"startTime":    bqMillisNow(),
-			"endTime":      bqMillisNow(),
-			"query":        map[string]any{"totalBytesProcessed": "0", "cacheHit": false},
-		},
-		Query:  query,
 		Result: result,
 	}
 }
@@ -671,12 +691,13 @@ func bqEvaluateQuery(defaultProject, query string) (BQQueryResult, error) {
 		rows = filtered
 	}
 	return BQQueryResult{
-		Schema:           t.Schema,
-		Rows:             bqEncodeRows(t.Schema, rows),
-		TotalRows:        strconv.Itoa(len(rows)),
-		JobComplete:      true,
-		CacheHit:         false,
-		TotalBytesBilled: "0",
+		Schema:              t.Schema,
+		Rows:                bqEncodeRows(t.Schema, rows),
+		TotalRows:           strconv.Itoa(len(rows)),
+		JobComplete:         true,
+		CacheHit:            false,
+		TotalBytesBilled:    "0",
+		TotalBytesProcessed: "0",
 	}, nil
 }
 

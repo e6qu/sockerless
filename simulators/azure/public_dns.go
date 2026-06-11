@@ -47,11 +47,25 @@ type PublicRecordSetProperties struct {
 	MXRecords         []MXRecord        `json:"MXRecords,omitempty"`
 	NSRecords         []NSRecord        `json:"NSRecords,omitempty"`
 	PTRRecords        []PTRRecord       `json:"PTRRecords,omitempty"`
-	SOARecord         *SOARecord        `json:"SOARecord,omitempty"`
+	SOARecord         *PublicSOARecord  `json:"SOARecord,omitempty"`
 	SRVRecords        []SRVRecord       `json:"SRVRecords,omitempty"`
 	TXTRecords        []TXTRecord       `json:"TXTRecords,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
 	TargetResource    *SubResource      `json:"targetResource,omitempty"`
+}
+
+// PublicSOARecord is the public-DNS (2018-05-01) SoaRecord wire shape.
+// It is distinct from the private-DNS SOARecord because the two APIs
+// spell the minimum-TTL member differently: public DNS uses minimumTTL,
+// private DNS uses minimumTtl.
+type PublicSOARecord struct {
+	Host         string `json:"host,omitempty"`
+	Email        string `json:"email,omitempty"`
+	SerialNumber int64  `json:"serialNumber,omitempty"`
+	RefreshTime  int32  `json:"refreshTime,omitempty"`
+	RetryTime    int32  `json:"retryTime,omitempty"`
+	ExpireTime   int32  `json:"expireTime,omitempty"`
+	MinimumTTL   int32  `json:"minimumTTL,omitempty"`
 }
 
 type CAARecord struct {
@@ -312,7 +326,7 @@ func createPublicDNSDefaultRecords(recordSets sim.Store[PublicRecordSet], zoneID
 		Properties: PublicRecordSetProperties{
 			TTL:  3600,
 			Fqdn: zoneName + ".",
-			SOARecord: &SOARecord{
+			SOARecord: &PublicSOARecord{
 				Host:         nsRecords[0].NSDName,
 				Email:        "azuredns-hostmaster.microsoft.com",
 				SerialNumber: 1,

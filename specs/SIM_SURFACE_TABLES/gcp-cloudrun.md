@@ -13,11 +13,11 @@ Surface registered in `simulators/gcp/cloudrun.go` (and related files grouped un
 
 | Op (verb + path) | sim handler | sdk-test | tf-test | paged-shape verified | notes |
 |---|---|---|---|---|---|
-| `POST /v1/namespaces/{namespace}/services` | ✓ `simulators/gcp/cloudrun.go:130::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:182::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `GET /v1/namespaces/{namespace}/services` | ✓ `simulators/gcp/cloudrun.go:195::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `PUT /v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:213::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
-| `DELETE /v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:262::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services` | ✓ `simulators/gcp/cloudrun.go:132::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:184::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services` | ✓ `simulators/gcp/cloudrun.go:197::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `PUT /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:215::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
+| `DELETE /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}` | ✓ `simulators/gcp/cloudrun.go:264::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `POST /v2/projects/{project}/locations/{location}/jobs` | ✓ `simulators/gcp/cloudrunjobs.go:295::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /v2/projects/{project}/locations/{location}/jobs/{job}` | ✓ `simulators/gcp/cloudrunjobs.go:360::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |
 | `GET /v2/projects/{project}/locations/{location}/jobs` | ✓ `simulators/gcp/cloudrunjobs.go:380::func` | ✓ (direct; see coverage matrix) | ✓ (direct; see coverage matrix) | n/a | |

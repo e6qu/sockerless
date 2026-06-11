@@ -288,6 +288,37 @@ type ECSTaskVpcConfig struct {
 	AssignPublicIp string   `json:"assignPublicIp"`
 }
 
+// ecsTaskWire wraps ECSTask for response emission. The real Task shape
+// conveys networking via attachments only; networkConfiguration is a
+// store-side field (subnet-egress wiring reads it back from persisted
+// tasks) that must never reach the wire. The struct keeps its canonical
+// JSON tag so the field survives Store persistence; the wrapper strips
+// it from API responses.
+type ecsTaskWire struct {
+	ECSTask
+}
+
+func (t ecsTaskWire) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(t.ECSTask)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "networkConfiguration")
+	return json.Marshal(m)
+}
+
+func ecsTasksWire(tasks []ECSTask) []ecsTaskWire {
+	out := make([]ecsTaskWire, 0, len(tasks))
+	for _, task := range tasks {
+		out = append(out, ecsTaskWire{task})
+	}
+	return out
+}
+
 // State stores
 var (
 	ecsClusters        sim.Store[ECSCluster]
@@ -1330,7 +1361,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tasks":    tasks,
+		"tasks":    ecsTasksWire(tasks),
 		"failures": []any{},
 	})
 }
@@ -1790,7 +1821,7 @@ func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tasks":    tasks,
+		"tasks":    ecsTasksWire(tasks),
 		"failures": failures,
 	})
 }
@@ -1852,7 +1883,7 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 
 	task, _ := ecsTasks.Get(taskID)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"task": task,
+		"task": ecsTaskWire{task},
 	})
 }
 

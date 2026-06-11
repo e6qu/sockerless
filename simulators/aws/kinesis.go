@@ -144,7 +144,10 @@ func kinesisStreamDescription(s KinesisStream) map[string]any {
 	return out
 }
 
-func kinesisStreamSummary(s KinesisStream) map[string]any {
+// kinesisStreamDescriptionSummary backs DescribeStreamSummary, whose
+// StreamDescriptionSummary shape carries the shard/retention/monitoring
+// and encryption members.
+func kinesisStreamDescriptionSummary(s KinesisStream) map[string]any {
 	open := s.OpenShardCount
 	if open == 0 {
 		open = int64(len(s.Shards))
@@ -161,6 +164,19 @@ func kinesisStreamSummary(s KinesisStream) map[string]any {
 	}
 	kinesisSetEncryption(out, s)
 	return out
+}
+
+// kinesisListStreamSummary backs ListStreams' StreamSummaries[], whose
+// StreamSummary shape is the identity slice only — retention, shard
+// counts, monitoring, and encryption are describe-only members.
+func kinesisListStreamSummary(s KinesisStream) map[string]any {
+	return map[string]any{
+		"StreamName":              s.StreamName,
+		"StreamARN":               s.StreamARN,
+		"StreamStatus":            s.StreamStatus,
+		"StreamModeDetails":       s.StreamModeDetails,
+		"StreamCreationTimestamp": s.CreationTimestamp,
+	}
 }
 
 // kinesisSetEncryption mirrors real Kinesis: an unencrypted stream reports
@@ -282,7 +298,7 @@ func handleKinesisDescribeStreamSummary(w http.ResponseWriter, r *http.Request) 
 		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
 		return
 	}
-	writeKinesisJSON(w, http.StatusOK, map[string]any{"StreamDescriptionSummary": kinesisStreamSummary(stream)})
+	writeKinesisJSON(w, http.StatusOK, map[string]any{"StreamDescriptionSummary": kinesisStreamDescriptionSummary(stream)})
 }
 
 func handleKinesisListStreams(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +318,7 @@ func kinesisStreamSummaries(names []string) []map[string]any {
 	out := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		if stream, ok := kinesisStreams.Get(name); ok {
-			out = append(out, kinesisStreamSummary(stream))
+			out = append(out, kinesisListStreamSummary(stream))
 		}
 	}
 	return out
