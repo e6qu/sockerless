@@ -18,12 +18,28 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Work
 
-The active arc is **simulator conformance + hardening** — deep behavioural
-fidelity of the AWS/GCP/Azure simulators against the real official clients
-(SDK / vendor CLI / Terraform provider) for the implemented slices, plus Go
-type hardening and simulator-UI hardening. Branch `feat/sim-conformance-stage2-6`
-(PR #539); see [STATUS.md](STATUS.md) for the snapshot and [BUGS.md](BUGS.md)
-(1621-1646) for per-fix detail.
+The active arc is **spec-based simulator validation** — the simulators are
+now validated against the official machine-readable cloud API specs vendored
+under [`specs/cloud-api/`](specs/cloud-api/README.md) (AWS Smithy models, GCP
+Discovery documents, Azure Swagger; pinned + provenance-tracked):
+
+1. **Static surface conformance** (merged with this arc's PR): every
+   registered sim operation/route must exist in the vendored spec —
+   `simulators/<cloud>/spec_conformance_test.go`, hard CI gate via
+   `make unit-test`. Found + fixed BUG-1649..1657.
+2. **Runtime wire-shape validation (ratcheted)**: SDK/CLI suites run with
+   `SOCKERLESS_SPEC_VALIDATE` armed; responses are validated member-by-member
+   against the spec output shapes; `scripts/check-spec-violations.sh` fails CI
+   on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt`.
+   First armed runs filed BUG-1658..1685 as the open burn-down list.
+3. **Burn-down (next)**: fix the 28 allowlisted shape-drift bugs in batches,
+   shrinking the allowlists to the two permanent justified exemptions
+   (firestore REST server-streaming). Largest items: gcp knative path-shape
+   divergence (BUG-1672, needs coordinated cloudrun-backend change) and
+   azure postgres-flexible LRO choreography (BUG-1679).
+
+Branch `feat/sim-spec-conformance`; see [STATUS.md](STATUS.md) for the
+snapshot and [BUGS.md](BUGS.md) for per-bug detail.
 
 Bleephub parity, durable storage, the GitHub-style UI restyle, and the
 GitHub-API fidelity sweep are merged (#534-#536); see [WHAT_WE_DID.md](WHAT_WE_DID.md).

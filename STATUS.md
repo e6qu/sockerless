@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/sim-conformance-stage2-6` (PR #539) |
-| In-flight | Simulator conformance + hardening continuation: Stage 2 G4 (GCP missing ops), Stage 3 (Azure conformance), Stage 4 (Go type hardening), Stage 5 (simulator UI hardening), Stage 6 (CI now runs sim module unit tests), plus a bleephub gh-CLI GraphQL drift fix and an azure tf-test timeout flake fix. See [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative and [BUGS.md](BUGS.md) (1640-1646) for per-bug detail. |
-| Last merged | #538 simulators: conformance hardening — Stages 1(cont)-6 (AWS/GCP/Azure fidelity, types, UIs). |
+| Active branch | `feat/sim-spec-conformance` |
+| In-flight | **Spec-based simulator validation**: official cloud API specs vendored under `specs/cloud-api/` (37 AWS Smithy models, 27 GCP Discovery docs, 112 Azure swaggers — pinned + provenance-tracked); static spec-surface conformance gates (`spec_conformance_test.go` per cloud, runs in `make unit-test`); runtime wire-shape validation (env-gated middleware + per-cloud validators) ratcheted via `scripts/check-spec-violations.sh` against per-cloud allowlists. 9 fidelity bugs found+fixed by the static gate (BUG-1649..1657); 28 shape-drift bugs filed as the runtime burn-down (BUG-1658..1685, open, allowlisted). See [BUGS.md](BUGS.md). |
+| Last merged | #540 docs: per-component READMEs + docs/specs indexes; broken smoke-test targets + stale UI dev proxies fixed (BUG-1647/1648). #539 simulators: conformance hardening Stages 2 G4-6. |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1646 filed - 1600 fixed - 7 open - 6 false positives (see [BUGS.md](BUGS.md)). |
+| Bugs | 1685 filed - 1611 fixed - 35 open - 6 false positives (see [BUGS.md](BUGS.md)). 28 of the open bugs are the runtime spec-shape burn-down list (BUG-1658..1685). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
 | Live infra | None up. |
 
