@@ -1,6 +1,10 @@
 package aws_sdk_test
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -210,4 +214,41 @@ func TestSFN_FailState_SDK(t *testing.T) {
 		return describe.Status == sfntypes.ExecutionStatusFailed
 	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, sfntypes.ExecutionStatusFailed, describe.Status)
+}
+
+// DescribeStateMachineOutput has no tags member — tags ride
+// ListTagsForResource. The SDK silently drops unknown members, so the
+// describe response is probed raw.
+func TestSFNDescribeStateMachineOmitsTags(t *testing.T) {
+	c := sfnClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	create, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name:       aws.String("sfn-tags-shape"),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+		Definition: aws.String(`{"StartAt":"Done","States":{"Done":{"Type":"Succeed"}}}`),
+		Tags:       []sfntypes.Tag{{Key: aws.String("env"), Value: aws.String("test")}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: create.StateMachineArn})
+	})
+
+	tags, err := c.ListTagsForResource(ctx, &sfn.ListTagsForResourceInput{ResourceArn: create.StateMachineArn})
+	require.NoError(t, err)
+	require.Len(t, tags.Tags, 1)
+
+	body, _ := json.Marshal(map[string]string{"stateMachineArn": aws.ToString(create.StateMachineArn)})
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AWSStepFunctions.DescribeStateMachine")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&raw))
+	assert.Contains(t, raw, "stateMachineArn")
+	assert.NotContains(t, raw, "tags", "DescribeStateMachineOutput has no tags member")
 }

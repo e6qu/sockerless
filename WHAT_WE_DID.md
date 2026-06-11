@@ -4,6 +4,25 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-11 - Launch hygiene: validation armed everywhere + azurestack retired + docs truth pass
+
+Closing the validation arc's last gaps in one PR. The terraform CI jobs now
+run with `SOCKERLESS_SPEC_VALIDATE` armed + per-cloud ratchet steps — and
+the very first armed terraform traffic caught BUG-1702 (SFN
+DescribeStateMachine emitting `tags`, a path sdk/cli never drove). The AWS
+runtime validator gained the XML protocols (awsQuery/ec2Query envelopes,
+flattened/ec2QueryName lists, restXml roots with payload/header binding
+exclusions), instantly catching BUG-1700 (EC2 `vCpuInfo` casing) and
+BUG-1701 (four wrong S3 list-configuration XML root names) that lenient SDK
+decoders had masked. BUG-1584 got its real fix: the azure terraform suite
+migrated entirely off the AzureStack compatibility provider (its 7 resources
+to azurerm equivalents, warning proven gone, coverage equal-or-better).
+BUG-1104 (P0 audit-cadence meta) closed — the cadence is structural now.
+Plus: `build-azf-bootstrap` (BUG-1703), the StatusBadge `waiting` token, and
+a full documentation accuracy sweep (root README, FEATURE_MATRIX, bleephub
+README's persistence/ratchet/approvals story, MAKEFILE_STANDARD, surface-
+table index regenerated, stale claims across ~10 files corrected).
+
 ## 2026-06-11 - Simulator shape-drift burn-down (28 bugs, allowlists emptied)
 
 All 28 runtime spec-shape bugs from the validation arc fixed in one PR

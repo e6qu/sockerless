@@ -118,7 +118,7 @@ For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, 
 
 The Go binary embeds the React SPA at `/ui/` via `go embed` (build tag `!noui`, on by default). After step 3 above, open:
 
-- `https://localhost/ui/` — the bleephub dashboard, styled to feel like GitHub without copying it verbatim: a top header bar carries the primary nav and a light/dark toggle (light by default, as on github.com). Pages: **Overview**, **Repos** (GitHub-style repo list → per-repo **Code** / **Issues** / **Pull requests** tabs, plus Commits / Releases / Webhooks / Secrets / Environments), **Workflows** (files + runs, with a per-run detail page showing the job table and the per-job log viewer), **Runners**, **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
+- `https://localhost:8443/ui/` (or `https://localhost/ui/` on the `:443` variant) — the bleephub dashboard, styled to feel like GitHub without copying it verbatim: a top header bar carries the primary nav and a light/dark toggle (light by default, as on github.com). Pages: **Overview**, **Repos** (GitHub-style repo list → per-repo **Code** / **Issues** / **Pull requests** tabs, plus Commits / Releases / Webhooks / Secrets / Environments), **Workflows** (files + runs, with a per-run detail page showing the job table and the per-job log viewer), **Runners**, **Apps** (GitHub Apps registry + installations + permissions form + PEM viewer), **OAuth** (OAuth Apps registry + tokens), **Metrics**.
 - Auth: the UI presents a login form on first visit — paste the `BLEEPHUB_ADMIN_TOKEN` value. The token is verified against `GET /api/v3/user`, kept in browser localStorage, and sent on every UI request. The `/internal/*` dashboard endpoints enforce it server-side (any valid PAT, including the admin token); `/health` stays open for liveness probes. It is a single-token operator surface — for multi-user access control, front bleephub with a reverse proxy.
 
 For UI hacking without rebuilding the Go binary on every change:
@@ -162,7 +162,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Releases.** Create / list / get-by-id / get-by-tag / latest / update / delete + `generate-notes` + release reactions. Full HATEOAS URLs (`html_url`, `tarball_url`, `zipball_url`, `assets_url`, `upload_url`). Webhook event fires on create.
 
-**Deployments + Environments.** Full deployment + status + environment surface. `deployment` and `deployment_status` webhook events with `attachInstallationBlock`. Environments lazy-created on first deployment to that env.
+**Deployments + Environments.** Full deployment + status + environment surface, including environment protection rules with required reviewers and wait timers. Workflow runs targeting a protected environment park as `waiting` — `GET`/`POST /actions/runs/{run_id}/pending_deployments` lists and approves/rejects them (approval releases the waiting jobs), and `GET /actions/runs/{run_id}/approvals` returns the review history. `deployment` and `deployment_status` webhook events with `attachInstallationBlock`. Environments lazy-created on first deployment to that env.
 
 **Actions API (workflow runs / jobs / steps).** `GET /actions/runs`, `runs/{id}`, `runs/{id}/jobs`, `runs/{id}/logs` (zip), `runs/{id}/timing`, `runs/{id}/rerun`, `runs/{id}/rerun-failed-jobs`, `runs/{id}/cancel`. `POST /repos/{o}/{r}/dispatches` for `repository_dispatch`. `workflow_dispatch` via `POST /actions/workflows/{id}/dispatches`.
 
@@ -188,6 +188,8 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Users API.** Public users, my-user, keys CRUD, gpg_keys compatibility surface, emails, followers / following compatibility surface, follow / unfollow.
 
+**Meta.** `GET /meta` in GHES shape — bleephub presents as GHES (`installed_version: "3.21.0"`). `gh`'s feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
+
 **Pages.** Site CRUD + builds shape.
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
@@ -196,7 +198,7 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Marketplace.** Listing plans + accounts compatibility surface.
 
-**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + check-run/check-suite types + Issue.projectItems empty ProjectV2 compatibility connection for `gh issue view` + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState).
+**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue) with Issue.projectItems backed by the store.
 
 ### Persistence
 
@@ -205,13 +207,17 @@ Two write-through database options, both fail-loud on open failure (never a sile
 - **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
 - **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
 
-All REST/Apps state buckets are persisted (users, tokens, apps, oauth_apps, installations + their tokens, repos, issues, pulls + reviews/comments, labels, milestones, releases, reactions, hooks + deliveries, checks, deployments + environments, orgs, teams, memberships, secrets, …); ID numbering is re-derived on load so it resumes where it left off. Runner/workflow runtime state (workflows, sessions, agents) deliberately stays in-memory — a restart abandons in-flight runs.
+The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
 
-Git repository storage (go-git) is selected independently of the database:
+Intentionally NOT persisted: runner/workflow runtime state (workflows, sessions, agents — a restart abandons in-flight runs) and the Actions OIDC signing key, which rotates on restart; consumers must re-fetch the JWKS, exactly as against real GitHub key rotation.
+
+Git repository storage (go-git) is selected by its own env vars:
 
 - default — in-memory (lost on restart);
 - `BLEEPHUB_GIT_DIR=<dir>` — bare repos on the local filesystem;
 - `BLEEPHUB_S3_BUCKET` (+ optional `BLEEPHUB_S3_ENDPOINT`, `BLEEPHUB_S3_PREFIX`) — repos in S3-compatible object storage (takes priority over `BLEEPHUB_GIT_DIR`).
+
+Database persistence **requires** durable git storage (`BLEEPHUB_GIT_DIR` or `BLEEPHUB_S3_BUCKET`): reloading repo metadata against in-memory git storage would resurrect every repo empty, so that combination is a startup error — never a silent degraded mode.
 
 ### `gh` CLI compatibility
 
@@ -221,14 +227,16 @@ bleephub accepts what real GitHub accepts — including the string-coerced boole
 echo "$TOKEN" | gh auth login --hostname localhost --with-token
 gh repo create my-repo --public
 gh issue create --repo admin/my-repo --title "test"
-gh issue view 1 --repo admin/my-repo
-gh issue list --repo admin/my-repo
+gh issue view / list / comment / close / reopen
 gh repo view admin/my-repo
 gh repo list admin
 gh release create v1.0.0 --repo admin/my-repo
-gh pr create / view / list (in a git working dir)
-gh run list / view (when workflow runs exist)
+gh pr create / view / list / merge / review / comment (in a git working dir)
+gh run list / view / cancel / rerun (when workflow runs exist)
+gh workflow run / list / view
 ```
+
+The full command ↔ endpoint table lives in [`docs/BLEEPHUB_GH_CLI.md` § Supported commands](../docs/BLEEPHUB_GH_CLI.md#supported-commands).
 
 Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), which builds a Docker image bundling bleephub + the official `gh` CLI + a self-signed TLS cert and runs the harness against the live bleephub binary inside the container.
 
@@ -238,7 +246,7 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - V2 broker flow (uses legacy V1 pipelines paths).
 - Reusable workflows (`uses: ./.github/workflows/`).
 - Composite actions.
-- Full Projects v2 (only the empty `Issue.projectItems` compatibility connection needed by `gh issue view`).
+- Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
 - Workflow enable/disable (`PUT/POST /actions/workflows/{id}/{enable,disable}`) — `gh workflow enable / disable` has no route to hit.
 - SAML SSO + SCIM provisioning.
 - Per-installation audit log content (shape-only empty endpoint).
@@ -313,6 +321,13 @@ The Docker harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/
 
 Runs in CI as the `sim (bleephub gh CLI)` job (must be green to merge).
 
+### OpenAPI fidelity gates (hermetic)
+
+Two unit-test gates validate bleephub against the vendored GitHub OpenAPI description (`testdata/github-openapi.json.gz`, refreshed via `scripts/update-github-openapi.sh`):
+
+- **Route definitions** (`gh_api_definition_test.go`) — every registered `/api/v3` route must exist in the description; paths can't be invented under GitHub's namespace.
+- **Response-shape ratchet** (`openapi_shape_validator_test.go`) — an observer on the shared test server validates every 2xx `/api/v3` JSON response member-by-member against the documented response schema. Violations are gated against [`openapi-violation-allowlist.txt`](openapi-violation-allowlist.txt): each entry is either a real-but-undescribed member (GHES-only surface, with a citation — currently only `/meta`'s `installed_version`) or a filed BUG on its way to being fixed. The list only shrinks; new violations fail the suite.
+
 ## Source layout (~80 Go files)
 
 | Group | Files | Purpose |
@@ -321,7 +336,7 @@ Runs in CI as the `sim (bleephub gh CLI)` job (must be green to merge).
 | Jobs & workflows | `jobs.go`, `workflow.go`, `workflows.go`, `workflows_msg.go`, `matrix.go`, `outputs.go`, `secrets.go`, `expressions.go`, `actions.go`, `artifacts.go` | Multi-job, matrix, secrets, expressions, artifacts |
 | GitHub REST core | `gh_rest.go`, `gh_repos_*.go`, `gh_orgs_*.go`, `gh_issues_*.go`, `gh_pulls_*.go`, `gh_teams_rest.go`, `gh_labels_rest.go`, `gh_members_rest.go` | Repos, orgs, issues, PRs, teams, labels, milestones |
 | GitHub Apps + OAuth | `gh_apps_*.go`, `gh_oauth.go`, `gh_app_hooks_rest.go`, `gh_apps_user_tokens.go`, `gh_apps_oauth_mgmt.go`, `gh_apps_perms.go` | JWT, installations, OAuth Apps, ghs_/ghu_/gho_/ghr_, permission enforcement |
-| Reactions + Releases + Deployments | `gh_reactions.go`, `gh_releases.go`, `gh_deployments.go`, `gh_pr_comments.go`, `gh_pr_threads.go` | Phase 154 |
+| Reactions + Releases + Deployments | `gh_reactions.go`, `gh_releases.go`, `gh_deployments.go`, `gh_pr_comments.go`, `gh_pr_threads.go` | Reactions, releases, deployments + environments + approvals, PR review comments/threads |
 | Actions extras | `gh_actions_rest.go`, `gh_actions_extras.go`, `gh_workflows_rest.go` | Runs/jobs/steps, repository_dispatch, logs zip, timing |
 | Checks API | `gh_checks_rest.go`, `gh_checks_store.go` | check-runs + check-suites |
 | Misc long-tail | `gh_misc_endpoints.go` | Users keys/follow, Actions OIDC + JWKS, Pages, Branch protection, Marketplace |
@@ -334,7 +349,7 @@ Runs in CI as the `sim (bleephub gh CLI)` job (must be green to merge).
 ## See also
 
 - [docs/BLEEPHUB_GH_CLI.md](../docs/BLEEPHUB_GH_CLI.md) — operator-facing `gh` setup walkthrough.
-- [specs/BLEEPHUB_GITHUB_API_PARITY.md](../specs/BLEEPHUB_GITHUB_API_PARITY.md) — audit + acceptance criteria from Phase 153.
+- [specs/BLEEPHUB_GITHUB_API_PARITY.md](../specs/BLEEPHUB_GITHUB_API_PARITY.md) — per-endpoint parity audit + acceptance criteria.
 - [ARCHITECTURE.md](../ARCHITECTURE.md), [docs/GITHUB_RUNNER.md](../docs/GITHUB_RUNNER.md).
 
 ## Prior art

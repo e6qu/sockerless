@@ -8,15 +8,15 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-214.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-215.6k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-20.7k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-120.7k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-121.2k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
 > ## ⚠ Caveat emptor — read before you run this
 >
-> Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (130 k+ lines of Go, 64 k lines of tests, three cloud simulators, eight runner-integration cells green) — and yet:
+> Sockerless is **highly experimental** and **fully vibe-coded**. Effort has gone into producing real, tool-validated results (210 k+ lines of Go, 120 k+ lines of tests, three cloud simulators, eight runner-integration cells green) — and yet:
 >
 > - **Security is unaudited and questionable.** Tokens, auth flows, cert handling, and credential plumbing have not been reviewed by anyone qualified to sign off. Assume any production-style use is unsafe until proven otherwise.
 > - **The implementation is immature.** Edge cases routinely surface; the repo policy is no stubs, no fakes, and no silent fallbacks, but the cloud-API surface area is large enough that every unvalidated path should be treated cautiously until it has tool-backed evidence.
@@ -25,8 +25,6 @@
 > **However** — opening issues, contributing fixes, or running it for your own testing/learning is all welcome. The repo is built in the open and reviews / pull requests / bug reports help it mature.
 
 A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
-
-> **2026-05-18 — simulator-backed runner smoke coverage expanded.** PR #170 added FaaS runner lifecycle smokes for Lambda, Cloud Run Services, GCF, ACA Apps, and Azure Functions, wired through `make faas-smoke-test-all` and CI. Remaining live-cloud validation is tracked as BUG-1075 and must be closed only with authenticated cloud runs. See [STATUS.md](STATUS.md), [docs/E2E_SMOKE_TESTS.md](docs/E2E_SMOKE_TESTS.md), and [manual-tests/05-live-validation-preflight.md](manual-tests/05-live-validation-preflight.md).
 
 ## Why
 
@@ -100,7 +98,7 @@ terraform/
   modules/                    Terraform modules (one per backend)
   environments/               Terragrunt environments (live + simulator per backend)
 tests/                        Integration tests (Docker SDK, 59 test functions)
-smoke-tests/                  Real CI runner validation (act + gitlab-runner)
+smoke-tests/                  Docker-in-Docker smoke harnesses (Docker CLI round-trip + gitlab-runner)
 specs/                        Specification documents
 ```
 
@@ -114,7 +112,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![core](https://img.shields.io/badge/core-19.2k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-31.4k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-48k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-49k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-30.1k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-22k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
@@ -132,7 +130,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **TypeScript**
 
 ![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.4k-3178C6)
-![ui/core](https://img.shields.io/badge/ui%2Fcore-3.6k-3178C6)
+![ui/core](https://img.shields.io/badge/ui%2Fcore-3.7k-3178C6)
 ![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-6.5k-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-228-6295D2)
@@ -335,7 +333,7 @@ simulators/{aws,gcp,azure}           # Per-cloud REST simulators (ports :4566/:4
 
 ```
 cmd/sockerless                       # The CLI (no UI to embed)
-agent                                # Sockerless-agent + 3 cloud bootstrap binaries
+agent                                # Sockerless-agent + 4 cloud bootstrap binaries (lambda, cloudrun, gcf, azf)
 github-runner-dispatcher-{aws,gcp,azure}  # Per-cloud runner dispatcher daemons
 ```
 
@@ -352,7 +350,7 @@ ui/packages/frontend-docker          # Docker frontend proxy UI
 ui/packages/core                     # Shared library (no own dist)
 ```
 
-**Test categories (10)** — each has `make test`, `make lint`, `make clean`:
+**Test categories (15)** — each has `make test`, `make lint`, `make clean`:
 
 ```
 tests                                # Cross-backend e2e suite
@@ -367,11 +365,12 @@ Each `simulators/<cloud>/Makefile` keeps the historical test breakdown CI relies
 
 ```bash
 cd simulators/aws
+make unit-test          # go test on the sim module itself (incl. spec-conformance gates)
 make sdk-test           # go test in sdk-tests/ (own go.mod)
 make cli-test           # go test in cli-tests/ (own go.mod)
 make terraform-test     # go test in terraform-tests/ (own go.mod)
 make shared-test        # go test in shared/ (own go.mod)
-make test-all           # all four
+make test-all           # all five
 make docker-build       # build the docker image
 make docker-run         # docker run with port + env wired
 make docker-test        # run all tests inside docker
@@ -385,7 +384,7 @@ are top-level Docker-driven suites that don't belong to any single
 app, plus the api.Backend coverage gate:
 
 ```bash
-make smoke-test-{act,act-ecs,act-cloudrun,act-aca,act-all}
+make smoke-test-{ecs,cloudrun,aca,all}
 make smoke-test-{gitlab,gitlab-ecs,gitlab-cloudrun,gitlab-aca,gitlab-all}
 make faas-smoke-test-{lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
 make tf-int-test-{ecs,lambda,cloudrun,gcf,aca,azf,aws,gcp,azure,all}
@@ -467,7 +466,7 @@ cd simulators/aws
 make sdk-test                     # SDK-driven tests against the sim
 make cli-test                     # CLI-driven tests against the sim
 make terraform-test               # terraform-driven tests against the sim
-make test-all                     # all four (sdk + cli + terraform + shared)
+make test-all                     # all five (unit + shared + sdk + cli + terraform)
 
 # Cross-backend e2e:
 make tests/test                   # delegates to tests/Makefile
@@ -534,12 +533,12 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 
 | Document | Description |
 |----------|-------------|
-| [`specs/README.md`](specs/README.md) | **Specification index** — [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md), [sim surface tables](specs/SIM_SURFACE_TABLES/) |
+| [`specs/README.md`](specs/README.md) | **Specification index** — [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md), [sim surface tables](specs/SIM_SURFACE_TABLES/), [vendored cloud API specs](specs/cloud-api/README.md) |
 | [`docs/README.md`](docs/README.md) | **Topic-guide index** — CI runners, build infrastructure, design notes, research references |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
-| [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, state management, CLI usage, bash tests |
+| [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, validation suites + spec-based conformance gates, CLI usage |
 | [`bleephub/README.md`](bleephub/README.md) | bleephub local GitHub server: quick start, runner protocol, REST/GraphQL surface, persistence, UI |
 | [`docs/BLEEPHUB_GH_CLI.md`](docs/BLEEPHUB_GH_CLI.md) | Using the `gh` CLI against bleephub: hostname wiring, tokens, supported commands, troubleshooting |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
@@ -555,4 +554,4 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`scripts/README.md`](scripts/README.md) | Index of repo scripts: CI guards, code-quality scans, maintenance helpers |
 | [`tools/README.md`](tools/README.md) | Standalone Go tools (backend coverage checker, HTTP trace) |
 | [`make/README.md`](make/README.md) | Shared make infrastructure map (see [`docs/MAKEFILE_STANDARD.md`](docs/MAKEFILE_STANDARD.md) for the spec) |
-| [`smoke-tests/README.md`](smoke-tests/README.md) | Docker-in-Docker smoke harness for act + gitlab-runner |
+| [`smoke-tests/README.md`](smoke-tests/README.md) | Docker-in-Docker smoke harnesses: Docker CLI round-trip + GitLab Runner (+ live-AWS) |

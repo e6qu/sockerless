@@ -360,7 +360,9 @@ See [STATUS.md](STATUS.md) for overall test counts.
 
 ### Simulator Integration Tests
 
-All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`. Run the top-level fan-out or invoke a single backend via path delegation:
+All cloud backends can be tested locally against simulators using `SOCKERLESS_ENDPOINT_URL`. The simulators themselves are validated against the vendored official cloud API specs in [`specs/cloud-api/`](specs/cloud-api/README.md): static surface-conformance gates (every registered operation must exist in the spec) run with each sim's `make unit-test`, and the SDK/CLI suites run with runtime wire-shape validation armed, gated by `scripts/check-spec-violations.sh` — see [`simulators/README.md` § Spec-based validation](simulators/README.md#spec-based-validation).
+
+Run the top-level fan-out or invoke a single backend via path delegation:
 
 ```bash
 make test-integration                       # every backend + sim/cli/sdk test category

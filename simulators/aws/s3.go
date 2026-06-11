@@ -494,28 +494,28 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 			emitStoredIDOr404(w, r, bucket, "intelligent-tiering", id)
 			return
 		}
-		emitBucketConfigurationList(w, bucket, "intelligent-tiering", "ListBucketIntelligentTieringConfigurationsResult")
+		emitBucketConfigurationList(w, bucket, "intelligent-tiering", "ListBucketIntelligentTieringConfigurationsOutput")
 		return
 	case q.Has("inventory"):
 		if id := q.Get("id"); id != "" {
 			emitStoredIDOr404(w, r, bucket, "inventory", id)
 			return
 		}
-		emitBucketConfigurationList(w, bucket, "inventory", "ListBucketInventoryConfigurationsResult")
+		emitBucketConfigurationList(w, bucket, "inventory", "ListInventoryConfigurationsResult")
 		return
 	case q.Has("analytics"):
 		if id := q.Get("id"); id != "" {
 			emitStoredIDOr404(w, r, bucket, "analytics", id)
 			return
 		}
-		emitBucketConfigurationList(w, bucket, "analytics", "ListBucketAnalyticsConfigurationsResult")
+		emitBucketConfigurationList(w, bucket, "analytics", "ListBucketAnalyticsConfigurationResult")
 		return
 	case q.Has("metrics"):
 		if id := q.Get("id"); id != "" {
 			emitStoredIDOr404(w, r, bucket, "metrics", id)
 			return
 		}
-		emitBucketConfigurationList(w, bucket, "metrics", "ListBucketMetricsConfigurationsResult")
+		emitBucketConfigurationList(w, bucket, "metrics", "ListMetricsConfigurationsResult")
 		return
 	case q.Has("requestPayment"):
 		if body, ct, _, ok := getStoredBucketSubresource(bucket, "requestPayment"); ok {

@@ -32,12 +32,13 @@ The top-level app lists currently cover three kinds of independently buildable p
 | `simulators/gcp` | `simulator-gcp` | `ui/packages/simulator-gcp` | `:4567` |
 | `simulators/azure` | `simulator-azure` | `ui/packages/simulator-azure` | `:4568` |
 
-### Go binaries / libraries (no UI) (6)
+### Go binaries / libraries (no UI) (7)
 
 | App | Binary |
 |---|---|
 | `cmd/sockerless` | `sockerless` (CLI) |
-| `agent` | `sockerless-agent`, `sockerless-lambda-bootstrap`, `sockerless-cloudrun-bootstrap`, `sockerless-gcf-bootstrap` |
+| `agent` | `sockerless-agent`, `sockerless-lambda-bootstrap`, `sockerless-cloudrun-bootstrap`, `sockerless-gcf-bootstrap`, `sockerless-azf-bootstrap` |
+| `backends/aws-common` | Go library shared by the ECS + Lambda backends |
 | `simulators/realexec` | Go library for the shared real-execution substrate |
 | `github-runner-dispatcher-aws` | dispatcher binary |
 | `github-runner-dispatcher-gcp` | dispatcher binary |
@@ -79,6 +80,8 @@ Optional targets, when meaningful:
 | `dev` | Go-with-UI apps | Run Go server (`-tags noui`) + Vite dev server in parallel. |
 | `preview` | UI packages | `vite preview` — serve the built bundle locally. |
 | `start` / `stop` | Go binaries | Background daemonization with PID file. (Optional — see "stack" below.) |
+
+Simulator Makefiles additionally expose the per-suite test categories CI's sim jobs call directly: `unit-test` (the sim module's own package tests, including the spec-conformance gates against [`specs/cloud-api/`](../specs/cloud-api/README.md)), `shared-test`, `sdk-test`, `cli-test`, `terraform-test`, and `test-all` (all five), plus `docker-build` / `docker-run` / `docker-test`.
 
 ## Per-app Makefile shape
 
@@ -124,13 +127,18 @@ Convention: leaf Makefiles only carry **data** (the table above). All recipe cod
 
 ```
 make/
-├── colors.mk         # Pretty output: $(CYAN), $(GREEN), $(RESET) helpers
-├── components.mk     # Per-component start/stop/rebuild/log/status targets
-├── go-app.mk         # Recipes for Go-binary-with-optional-UI apps
-├── go-lib.mk         # Recipes for Go libraries (test/lint/clean only)
-├── ui-app.mk         # Recipes for UI packages
-└── stack.mk          # Pre-canned dev-stack recipes used by top-level
+├── colors.mk             # Pretty output: $(CYAN), $(GREEN), $(RESET) helpers
+├── components.mk         # Per-component start/stop/rebuild/log/status targets
+├── go-app.mk             # Recipes for Go-binary-with-optional-UI apps
+├── go-lib.mk             # Recipes for Go libraries (test/lint/clean only)
+├── help.mk               # Auto-generated `make help`; sets `help` as default goal
+├── ui-app.mk             # Recipes for UI packages
+├── stack.mk              # Pre-canned dev-stack recipes used by top-level
+├── https-gateway/        # Caddyfile for the optional local HTTPS gateway
+└── observability-config/ # Default configs for the stack-observability-* targets
 ```
+
+Per-file detail in [`make/README.md`](../make/README.md).
 
 `go-app.mk` outline:
 

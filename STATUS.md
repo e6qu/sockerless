@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/sim-shape-burndown` |
-| In-flight | **Simulator shape-drift burn-down** (one fat PR): all 28 allowlisted runtime spec-shape bugs fixed (BUG-1658..1685) — aws/azure allowlists DELETED, gcp holds only the two permanent firestore server-streaming exemptions. Includes the two structural items: gcp knative surface moved to the real `/apis/serving.knative.dev/v1/...` paths (BUG-1672, canonical run/v1 client test) and azure postgres-flexible real 202+Azure-AsyncOperation LRO (BUG-1679). Wire/store splits preserve sim persistence + workload wiring (persisted-DTO embeds / MarshalJSON wire views). |
+| Active branch | `feat/launch-hygiene` |
+| In-flight | **Launch hygiene** (one fat PR): terraform CI jobs run with `SOCKERLESS_SPEC_VALIDATE` armed + ratchet steps (immediately caught BUG-1702); AWS runtime validator extended to the XML protocols — awsQuery/ec2Query/restXml (caught BUG-1700/1701); azurestack provider retired from the azure tf suite (BUG-1584 closed the real way); BUG-1104 closed (audit cadence is structural now); BUG-1467 reclassified false-positive; `build-azf-bootstrap` added (BUG-1703); StatusBadge `waiting` token; full docs accuracy sweep (README/FEATURE_MATRIX/docs/specs/bleephub README brought to today's reality). |
 | Last merged | #540 docs: per-component READMEs + docs/specs indexes; broken smoke-test targets + stale UI dev proxies fixed (BUG-1647/1648). #539 simulators: conformance hardening Stages 2 G4-6. |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1699 filed - 1655 fixed - 5 open - 6 false positives (see [BUGS.md](BUGS.md)). |
+| Bugs | 1703 filed - 1661 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
 | Live infra | None up. |
 

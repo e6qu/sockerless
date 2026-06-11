@@ -54,7 +54,7 @@ GO_UI_APPS := \
   simulators/gcp \
   simulators/azure
 
-# Go binaries / libraries without UI (6).
+# Go binaries / libraries without UI (7).
 GO_APPS := \
   cmd/sockerless \
   agent \

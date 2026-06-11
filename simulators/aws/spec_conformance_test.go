@@ -214,30 +214,9 @@ func TestQueryActionsExistInSmithyModels(t *testing.T) {
 	reportOffenders(t, "query (Version, Action)", offenders)
 }
 
-var awsParamSegment = regexp.MustCompile(`\{[^}]+\}`)
-
-// normalizeAWSPath collapses path parameters so simulator mux patterns
-// ({functionName}, {key...}) compare equal to Smithy URI templates
-// ({FunctionName}, {Key+}) regardless of label naming. Greedy labels
-// normalize to {+}, plain labels to {}; any ?query suffix on a Smithy
-// URI (e.g. S3's "?x-id=PutObject") is dropped; a single trailing slash
-// is dropped (mux subtree-registration nicety).
-func normalizeAWSPath(p string) string {
-	if i := strings.Index(p, "?"); i >= 0 {
-		p = p[:i]
-	}
-	p = awsParamSegment.ReplaceAllStringFunc(p, func(s string) string {
-		inner := s[1 : len(s)-1]
-		if strings.HasSuffix(inner, "+") || strings.HasSuffix(inner, "...") {
-			return "{+}"
-		}
-		return "{}"
-	})
-	if len(p) > 1 && strings.HasSuffix(p, "/") {
-		p = strings.TrimSuffix(p, "/")
-	}
-	return p
-}
+// normalizeAWSPath (spec_validator_xml.go) collapses path parameters so
+// simulator mux patterns compare equal to Smithy URI templates; the
+// runtime restXml validator shares it.
 
 // allowedNonSpecRoutes lists registered route patterns that are real,
 // documented AWS wire surfaces NOT described by any Smithy service model,

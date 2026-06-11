@@ -12,14 +12,13 @@ import (
 )
 
 // TestTerraformApplyDestroy provisions a foundation set of Azure
-// resources against the Azure simulator using both the `azurestack`
-// provider (for network primitives + storage + key vault control plane)
-// and the `azurerm` provider (for ACR, Container Apps, Function App,
-// Application Insights, managed identity, NAT Gateway, Load Balancer,
-// private DNS — surfaces the azurestack provider catalogue doesn't expose).
-// Then asserts canonical resource-id paths round-trip and terraform destroy cleans up.
+// resources against the Azure simulator using the `azurerm` provider
+// (the sim ships /metadata/endpoints + OAuth2 token endpoint + JWKS so
+// azurerm can bootstrap its cloud config + auth without ever reaching
+// real Azure). Then asserts canonical resource-id paths round-trip and
+// terraform destroy cleans up.
 //
-// Slices exercised against the simulator (azurestack):
+// Slices exercised against the simulator:
 //   - Microsoft.Resources/resourceGroups
 //   - Microsoft.Network/virtualNetworks
 //   - Microsoft.Network/virtualNetworks/subnets
@@ -27,10 +26,6 @@ import (
 //   - Microsoft.Network/networkSecurityGroups/securityRules
 //   - Microsoft.Storage/storageAccounts
 //   - Microsoft.KeyVault/vaults
-//
-// Slices exercised via azurerm (sim ships /metadata/endpoints + OAuth2
-// token endpoint + JWKS so azurerm can bootstrap its cloud config + auth
-// without ever reaching real Azure):
 //   - Microsoft.ContainerRegistry/registries
 //   - Microsoft.Cache/Redis + firewallRules
 //   - Microsoft.ManagedIdentity/userAssignedIdentities
@@ -45,7 +40,6 @@ import (
 //   - Microsoft.Insights/components
 //   - Microsoft.App/managedEnvironments + containerApps + jobs
 //   - Microsoft.Web/serverfarms + sites (Function App)
-//   - Microsoft.Storage/storageAccounts (azurerm-managed)
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
@@ -99,10 +93,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	require.True(t, strings.Contains(kvURI, "tf-test-kv.vault."),
 		"vault uri must include vault subdomain (azurerm/keyvault SDK parses URLs this way); got %s", kvURI)
 
-	// azurerm-driven resources — provider routes via custom cloud
-	// metadata + OAuth2 token endpoint exposed by the sim. Each
-	// canonical ARM path is asserted so a future provider/SDK upgrade
-	// that mangles the URL surfaces in CI.
+	// Each canonical ARM path is asserted so a future provider/SDK
+	// upgrade that mangles the URL surfaces in CI.
 	azrmRG := outputs.must(t, "azrm_resource_group_id")
 	require.True(t, strings.HasSuffix(azrmRG, "/resourceGroups/tf-azrm-rg"),
 		"azurerm RG id must end with /resourceGroups/{name}; got %s", azrmRG)

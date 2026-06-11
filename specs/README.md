@@ -1,6 +1,6 @@
 # Specs
 
-Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.md) is the core spec; the rest are companion specs, contracts, and maintained matrices. Two are authoritative references cited by implementation work:
+Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.md) is the core spec; the rest are companion specs, contracts, and maintained matrices. Three are authoritative references cited by implementation work:
 
 - [`CLOUD_RESOURCE_MAPPING.md`](CLOUD_RESOURCE_MAPPING.md) — the authoritative "how does sockerless model X on cloud Y" mapping and the source of truth for the stateless-backend invariant.
 - [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) + [`SIM_SURFACE_TABLES/`](SIM_SURFACE_TABLES/README.md) — the maintained simulator coverage index, enforced in CI.
@@ -46,6 +46,7 @@ Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.m
 | [`SIM_PARITY_MATRIX.md`](SIM_PARITY_MATRIX.md) | Cross-simulator parity matrix: every cloud-API call the backends make, with per-sim implemented / reduced-fidelity / missing status. |
 | [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) | Maintained client-surface index for the simulator testing contract — SDK / CLI / Terraform evidence per surface; `scripts/check-simulator-coverage-matrix.sh` fails CI on drift. |
 | [`SIM_SURFACE_TABLES/`](SIM_SURFACE_TABLES/README.md) | Per-service canonical-operation enumerations (✓ implemented / ✗ missing rows) for every sim surface, seeded by `scripts/seed-surface-tables.sh`. |
+| [`cloud-api/`](cloud-api/README.md) | Vendored official cloud API specs (AWS Smithy models, GCP Discovery documents, Azure Swagger) — ground truth for the sims' static surface-conformance gates and the runtime wire-shape ratchet. |
 
 ## Comparisons / parity
 

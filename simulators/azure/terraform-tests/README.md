@@ -2,27 +2,29 @@
 
 Integration tests that run `terraform apply` and `terraform destroy` against the Azure simulator. Verifies that the simulator implements enough of the Azure ARM API surface for real Terraform providers to provision and tear down resources.
 
-Resources covered (azurestack):
-- `azurestack_resource_group`
-- `azurestack_virtual_network` / `azurestack_subnet`
-- `azurestack_network_security_group` / `azurestack_network_security_rule`
-- `azurestack_storage_account` (Azure Files / runner shared volumes)
-- `azurestack_key_vault` (runner credential storage)
-
 Resources covered (azurerm — sim ships custom cloud metadata + OAuth2 token endpoint + JWKS so azurerm bootstraps against the sim instead of real Azure):
 - `azurerm_resource_group`
+- `azurerm_virtual_network` / `azurerm_subnet`
+- `azurerm_network_security_group` / `azurerm_network_security_rule`
+- `azurerm_storage_account` (Azure Files / runner shared volumes; a second account backs the Function App)
+- `azurerm_storage_container` / `azurerm_storage_table` (storage data plane)
+- `azurerm_key_vault` + access policy + secret / key / certificate (runner credential storage, control + data plane)
 - `azurerm_container_registry` (Standard)
 - `azurerm_user_assigned_identity`
-- `azurerm_private_dns_zone`
-- `azurerm_eventgrid_topic`
+- `azurerm_public_ip` / `azurerm_public_ip_prefix` / `azurerm_nat_gateway` + associations / `azurerm_lb` + backend pool + probe + rule
+- `azurerm_network_interface` + `azurerm_linux_virtual_machine`
+- `azurerm_private_dns_zone` / `azurerm_dns_zone` + A record
+- `azurerm_eventgrid_topic` / domain / domain topic / system topic
+- `azurerm_eventhub_namespace` + eventhub + consumer group + authorization rule
+- `azurerm_servicebus_namespace` + queue
+- `azurerm_cosmosdb_account` + SQL database + container + table
 - `azurerm_redis_cache` + `azurerm_redis_firewall_rule`
 - `azurerm_log_analytics_workspace`
 - `azurerm_application_insights`
 - `azurerm_container_app_environment` + `azurerm_container_app` + `azurerm_container_app_job` (the ACA runner backend host + workload + job primitives)
+- `azurerm_logic_app_workflow` / `azurerm_container_group`
 - `azurerm_service_plan` + `azurerm_linux_function_app` (the AZF runner backend host + workload)
-- `azurerm_storage_account` (azurerm-managed, used by Function App)
-
-Not yet covered: Key Vault data-plane (keys/secrets). Data-plane requires per-vault subdomain routing and should be filed in BUGS.md before implementation work starts.
+- `azurerm_api_management` + API + product + subscription
 
 ## Running
 
@@ -50,7 +52,7 @@ The test harness (`helpers_test.go`) handles simulator binary build, port alloca
 
 ## TLS requirement
 
-The AzureRM Terraform provider and `azurestack` provider hardcode `https://` for metadata endpoint calls. The test harness starts the simulator on HTTP loopback, starts the repo's Caddy HTTPS gateway in front of it, and points Terraform at `https://azure.sockerless.localhost:<port>`. Terraform trusts Caddy's local CA via `SSL_CERT_FILE`.
+The AzureRM Terraform provider hardcodes `https://` for metadata endpoint calls. The test harness starts the simulator on HTTP loopback, starts the repo's Caddy HTTPS gateway in front of it, and points Terraform at `https://azure.sockerless.localhost:<port>`. Terraform trusts Caddy's local CA via `SSL_CERT_FILE`.
 
 ## How it works
 

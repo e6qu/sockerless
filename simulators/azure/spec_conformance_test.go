@@ -180,6 +180,7 @@ var allowedNonSpecAzureRoutes = map[string]string{
 // services the simulator does not implement.
 var vendoredForRefClosure = map[string]bool{
 	"cosmos-db-arm-privateendpointconnection-2021-10-15.swagger.json.gz": true,
+	"cosmos-db-arm-privateendpointconnection-2024-08-15.swagger.json.gz": true,
 	"network-arm-applicationgateway-2025-03-01.swagger.json.gz":          true,
 	"network-arm-applicationsecuritygroup-2025-03-01.swagger.json.gz":    true,
 	"network-arm-networkmanager-2025-03-01.swagger.json.gz":              true,

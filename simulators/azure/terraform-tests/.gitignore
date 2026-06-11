@@ -1,5 +1,4 @@
 provider-src/
-terraform-provider-azurestack
 simulator-azure
 .terraform/
 .terraform.lock.hcl

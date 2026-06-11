@@ -131,12 +131,12 @@ For a comprehensive smoke test, run [`make bleephub-gh-docker-test`](../bleephub
 
 ## When things go wrong
 
-- **`gh auth login` keeps asking for credentials.** Make sure you used `--with-token` and the token is non-empty. `GH_TOKEN` env also works as a fallback.
+- **`gh auth login` keeps asking for credentials.** Make sure you used `--with-token` and the token is non-empty. `GH_ENTERPRISE_TOKEN` also works as an env fallback (not `GH_TOKEN` — that's read for `github.com` only).
 - **`gh` is hitting `github.com` instead of bleephub.** You forgot `--hostname <bleephub-host>` on `gh auth login`, or `GH_HOST` isn't exported. `gh` only routes to bleephub if the hostname is in `~/.config/gh/hosts.yml` AND either `GH_HOST` matches it or every command passes `--hostname` explicitly.
-- **`gh auth login` fails with `dial tcp [::1]:443: connection refused` / `x509: cannot validate ...`.** bleephub is on a plain-HTTP port, or its cert isn't trusted. `gh` is HTTPS-only — run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` and trust the CA system-wide. If you can't bind to `:443`, use `:8443` and `gh auth login --hostname localhost:8443`.
-- **`gh repo list` returns empty / 404.** GraphQL queries depend on the `repositoryOwner` resolver — confirm bleephub is current (Phase 154+).
-- **`gh issue view` returns "fragment cannot be spread"-style errors.** Should be impossible on Phase 153+ (the `IssueOrPullRequest` union is wired). File a BUG.md entry if seen.
-- **`gh api -f` returns 400.** Should not happen on Phase 153+ (`flexBool`/`flexInt` decoders handle string-coerced inputs). File a bug.
+- **`gh auth login` fails with `dial tcp [::1]:443: connection refused` / `x509: cannot validate ...`.** bleephub is on a plain-HTTP port, or its cert isn't trusted. `gh` is HTTPS-only — run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` and trust the CA system-wide. If you can't bind to `:443`, skip `gh auth login` (it rejects `host:port`) and use `GH_HOST=localhost:8443` + `GH_ENTERPRISE_TOKEN` instead.
+- **`gh repo list` returns empty / 404.** GraphQL queries depend on the `repositoryOwner` resolver — confirm your bleephub binary is current.
+- **`gh issue view` returns "fragment cannot be spread"-style errors.** Should be impossible (the `IssueOrPullRequest` union is wired). File a BUGS.md entry if seen.
+- **`gh api -f` returns 400.** Should not happen (`flexBool`/`flexInt` decoders handle string-coerced inputs). File a bug.
 - **TLS errors.** When using `BPH_TLS_CERT` with a self-signed cert, either trust the CA system-wide (the Docker harness does this) or pass `--insecure` to `gh api`.
 
 See also: [specs/BLEEPHUB_GITHUB_API_PARITY.md](../specs/BLEEPHUB_GITHUB_API_PARITY.md) for the per-endpoint inventory.

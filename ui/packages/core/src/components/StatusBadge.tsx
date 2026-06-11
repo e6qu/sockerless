@@ -13,6 +13,7 @@ const statusToken: Record<string, { fg: string; soft: string; dot: string }> = {
   queued:              { fg: "var(--color-status-warn)",  soft: "var(--color-status-warn-soft)",    dot: "var(--color-status-warn)" },
   pending:             { fg: "var(--color-status-warn)",  soft: "var(--color-status-warn-soft)",    dot: "var(--color-status-warn)" },
   pending_concurrency: { fg: "var(--color-status-warn)",  soft: "var(--color-status-warn-soft)",    dot: "var(--color-status-warn)" },
+  waiting:             { fg: "var(--color-status-warn)",  soft: "var(--color-status-warn-soft)",    dot: "var(--color-status-warn)" },
   // Outcomes
   completed:           { fg: "var(--color-status-ok)",    soft: "var(--color-status-ok-soft)",      dot: "var(--color-status-ok)" },
   success:             { fg: "var(--color-status-ok)",    soft: "var(--color-status-ok-soft)",      dot: "var(--color-status-ok)" },

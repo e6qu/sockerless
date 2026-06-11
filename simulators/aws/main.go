@@ -73,6 +73,16 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 		return nil, nil, nil, err
 	}
 
+	// Runtime wire-shape validation (armed only when
+	// SOCKERLESS_SPEC_VALIDATE is set; see spec_validator.go). Wraps the
+	// handler chain before any host-addressed data plane does: traffic a
+	// data plane intercepts (ELBv2 listeners) is not a Smithy-modeled
+	// surface, and validating it against whatever mux pattern its path
+	// happens to resemble would misattribute it.
+	if err := armSpecValidator(srv); err != nil {
+		return nil, nil, nil, err
+	}
+
 	// Register AWS JSON services (X-Amz-Target header routing)
 	awsRouter := sim.NewAWSRouter()
 	registerECS(awsRouter, srv)
@@ -160,12 +170,6 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
-
-	// Runtime wire-shape validation (armed only when
-	// SOCKERLESS_SPEC_VALIDATE is set; see spec_validator.go).
-	if err := armSpecValidator(srv); err != nil {
-		return nil, nil, nil, err
-	}
 
 	return srv, awsRouter, queryRouter, nil
 }
