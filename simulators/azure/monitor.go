@@ -148,11 +148,11 @@ func registerAzureMonitor(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
 	}
 	srv.HandleFunc(
-		"GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/locations/{location}/deletedWorkspaces",
+		"GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/deletedWorkspaces",
 		deletedWorkspacesHandler,
 	)
 	srv.HandleFunc(
-		"GET /subscriptions/{subscriptionId}/providers/Microsoft.OperationalInsights/deletedWorkspaces",
+		"GET /subscriptions/{subscriptionId}/resourcegroups/{resourceGroupName}/providers/Microsoft.OperationalInsights/deletedWorkspaces",
 		deletedWorkspacesHandler,
 	)
 
@@ -405,7 +405,6 @@ func registerAzureMonitor(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, resp)
 	}
 	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", queryHandler)
-	srv.HandleFunc("POST /workspaces/{workspaceId}/query", queryHandler)
 
 	// POST - Log ingestion endpoint (simplified)
 	srv.HandleFunc("POST /dataCollectionRules/{dcrId}/streams/{streamName}", func(w http.ResponseWriter, r *http.Request) {

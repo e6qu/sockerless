@@ -155,7 +155,7 @@ func acaAsyncOpHeader(r *http.Request, sub, loc, opID string) string {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/subscriptions/%s/providers/Microsoft.App/locations/%s/operationStatuses/%s?api-version=2024-03-01",
+	return fmt.Sprintf("%s://%s/subscriptions/%s/providers/Microsoft.App/locations/%s/operationStatuses/%s?api-version=2025-01-01",
 		scheme, r.Host, sub, loc, opID)
 }
 

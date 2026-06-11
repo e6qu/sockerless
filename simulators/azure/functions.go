@@ -523,7 +523,6 @@ func registerAzureFunctions(srv *sim.Server) {
 			"No backup configuration found for site %q.", name)
 	}
 	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/backup/list", backupNotFound)
-	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/backup", backupNotFound)
 
 	// GET /sites/{name}/basicPublishingCredentialsPolicies/{ftp|scm} —
 	// the per-protocol allow flag for FTP / SCM basic auth on the
@@ -605,10 +604,10 @@ func registerAzureFunctions(srv *sim.Server) {
 		})
 	})
 
-	// POST /config/authsettingsV2/list — Auth V2 (the newer Easy Auth
+	// GET /config/authsettingsV2/list — Auth V2 (the newer Easy Auth
 	// shape introduced in API 2020-12-01). Same truthful default:
 	// authentication is not enabled on this sim site.
-	srv.HandleFunc("POST "+armBase+"/sites/{siteName}/config/authsettingsv2/list", func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleFunc("GET "+armBase+"/sites/{siteName}/config/authsettingsv2/list", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		name := sim.PathParam(r, "siteName")
