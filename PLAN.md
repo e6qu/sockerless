@@ -18,101 +18,45 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Work
 
-The current branch is `bleephub-parity-storage`. It is the single working branch
-for a multi-session Bleephub parity and durability PR. Keep one PR open for this
-branch, make granular commits, and update the continuity files before and after
-each subtask so the next session can resume without relying on chat history.
+The active arc is **simulator conformance + hardening** — deep behavioural
+fidelity of the AWS/GCP/Azure simulators against the real official clients
+(SDK / vendor CLI / Terraform provider) for the implemented slices, plus Go
+type hardening and simulator-UI hardening. Branch `feat/sim-conformance-stage2-6`
+(PR #539); see [STATUS.md](STATUS.md) for the snapshot and [BUGS.md](BUGS.md)
+(1621-1646) for per-fix detail.
 
-### Bleephub parity and durability target
+Bleephub parity, durable storage, the GitHub-style UI restyle, and the
+GitHub-API fidelity sweep are merged (#534-#536); see [WHAT_WE_DID.md](WHAT_WE_DID.md).
 
-Bleephub should behave like a real GitHub Enterprise-style server for the
-surfaces it exposes. The current audit found several gaps that must be treated as
-implementation defects, not accepted compatibility shortcuts:
+### Conformance methodology (per surface)
 
-- Actions cache routes currently reserve nothing, discard uploads, and always
-  miss. They must implement real cache records, immutable saved entries, restore
-  key lookup, chunk upload storage, and successful restore/download behavior.
-- Unhandled API paths currently return `200 OK`; they must return GitHub-shaped
-  errors or Git smart-HTTP statuses.
-- Persistence is SQLite-only and covers only a subset of state. Bleephub must
-  support SQLite and PostgreSQL, with explicit configuration and no silent
-  in-memory fallback when persistence is requested.
-- Git smart HTTP exists and uses real go-git plumbing, but repo creation ignores
-  git storage errors and git content only supports memory/filesystem storage.
-  Bleephub must fail loudly on git-storage errors and support an S3/MinIO-shaped
-  object-store backend for git content.
-- Git clone/fetch/push must enforce repo visibility and token permissions.
-- The UI hard-codes an admin token while the server requires
-  `BLEEPHUB_ADMIN_TOKEN`; the UI needs a real operator/auth configuration path.
-- Externally observable names must match GitHub/GHES. Bleephub may use its own
-  internal package names and operator-only settings, but public API endpoints,
-  runner variables, workflow environment variables, request/response fields,
-  UI identity, and `GITHUB_*` variables must use the GitHub names clients
-  expect. Do not invent `bleephub` names where real GitHub exposes a
-  `github`/`GITHUB_*` name.
-- Advertised long-tail GitHub surfaces such as Pages builds, audit log content,
-  environment approvals, and GraphQL status rollups still include shape-only or
-  empty responses.
-- Bleephub docs are stale around admin tokens, git storage, persistence, TLS, UI
-  auth, and operator setup.
+Op-presence is already CI-enforced ([specs/SIM_TEST_COVERAGE_MATRIX.md](specs/SIM_TEST_COVERAGE_MATRIX.md)
+plus [specs/SIM_SURFACE_TABLES](specs/SIM_SURFACE_TABLES), with SDK + vendor CLI +
+Terraform coverage per surface). The conformance work goes deeper, targeting the
+recurring bug class (dropped writable fields, wrong list envelopes, missing ops):
 
-### Subtask queue for the single PR
+1. Round-trip drift — set every writable field via the real client, read it back, assert identical.
+2. Error fidelity — NotFound/Conflict/Validation return the exact wire code + exception/envelope the client classifies on.
+3. Pagination/list — envelope keys, continuation tokens (nextToken/pageToken/Marker/nextLink), ordering.
+4. Missing ops — implement the real client/Terraform operations the sim lacked.
 
-Aim for one commit per item below. Do not split implementation and tests into
-separate commits unless a CI-only fix is needed after review. Each commit should
-leave the branch buildable or have the continuity docs explicitly call out the
-temporary failing check and the next command to run.
+Every gap is filed in [BUGS.md](BUGS.md) before the fix, fixed for real, and
+covered by a regression test driving the real client
+(`simulators/<cloud>/sdk-tests/conformance_roundtrip_test.go`). False positives
+are reverted; hard cases are deferred with a documented reason, never faked.
 
-1. **Baseline audit tests and error handling** — DONE
-2. **Actions cache and artifact indexing** — DONE
-3. **Persistence abstraction** — DONE (SQLite + PostgreSQL via pgx)
-4. **Persist the Bleephub state that users expect to survive restarts** — extend
-   write-through/load coverage beyond users/tokens/apps/repos to issues, PRs,
-   workflows, runners, hooks, checks, deployments, releases, and other exposed
-   API state where the public API promises durability.
-5. **Git storage hardening** — stop ignoring git init/storage errors, make repo
-   deletion clean up durable git data where applicable, and enforce clone/fetch
-   and push permissions.
-6. **S3/MinIO git object storage** — add a real S3-compatible git content
-   backend using an actual object-store client, with MinIO-based integration
-   coverage and clear key layout docs.
-7. **UI auth and operator status** — remove hard-coded admin credentials, add a
-   real configured auth/session path, expose storage/database/git backend status
-   in the UI, and make the externally visible UI identity match GitHub/GHES for
-   client-facing screens while keeping Bleephub-specific operator controls
-   clearly separated.
-8. **UI/API parity gaps** — add or deepen UI/API coverage for caches, artifacts,
-   webhooks/deliveries, orgs/teams, branch protection, audit events, and repo git
-   refs where Bleephub already exposes the backing API. Audit all externally
-   visible `bleephub` endpoint/field/env names and replace them with precise
-   GitHub/GHES names unless they are explicitly operator-only management
-   surfaces.
-9. **Long-tail fake removal and docs** — replace or explicitly delist shape-only
-   endpoints for Pages builds, audit log events, run approvals, and GraphQL
-   status rollups; update README, gh CLI docs, parity specs, build/run docs,
-   Caddy/TLS notes, SQLite/PostgreSQL notes, and S3/MinIO git storage docs.
-10. **Final verification and PR hygiene** — run Bleephub Go/UI tests, targeted
-    real-client smoke tests, lint/guard checks, rebase on `origin/main`, push one
-    PR, then sync local `main` after the user merges.
+### Stages
 
-### Continuity protocol for this branch
+| Stage | Scope | Where |
+|---|---|---|
+| 1 | AWS conformance (round-trip, error, pagination) | merged #537/#538 |
+| 2 | GCP conformance (round-trip, error, pagination, missing ops) | #538 + PR #539 (G4) |
+| 3 | Azure conformance (round-trip, error, missing ops, pagination) | PR #539 |
+| 4 | Go type hardening (unconvert + wastedassign linters; typed status enums) | PR #539 |
+| 5 | Simulator UI hardening (wire-shape drift + accurate enum unions) | PR #539 |
+| 6 | CI runs the simulator module unit tests; coverage matrix reconciled | PR #539 |
 
-Before starting any subtask:
-
-1. Read `STATUS.md` and `DO_NEXT.md`.
-2. Confirm the active branch and current subtask.
-3. Check `git status --short --branch`.
-4. Update `DO_NEXT.md` if the next command list is stale.
-
-After finishing each subtask:
-
-1. Run the narrowest meaningful tests for the touched area.
-2. Update `STATUS.md` with completed work, current risks, and test state.
-3. Update `DO_NEXT.md` with the next subtask, exact files likely involved, and
-   the first verification command to run.
-4. Add a short `WHAT_WE_DID.md` entry only when a meaningful chunk completed.
-5. Commit the code, tests, and continuity docs together with a natural commit
-   message that describes the user-facing change.
+Open follow-ups are tracked in [BUGS.md](BUGS.md) and [DO_NEXT.md](DO_NEXT.md).
 
 ## Previous Completed Work
 

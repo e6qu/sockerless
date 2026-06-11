@@ -42,8 +42,15 @@ sdk-test-local: build ## go test the SDK-driven sim tests on a Linux host with r
 cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout 120s ./...
 
-terraform-test: build ## go test the terraform-driven sim tests
-	cd terraform-tests && $(GO_ENV) go test -v -count=1 -timeout 300s ./...
+# The azure terraform stack is Docker-only: this outer `go test` wraps a
+# `docker run go test` (terraform-tests/helpers_test.go) that does the real
+# apply+destroy bounded by TERRAFORM_TEST_TIMEOUT. The outer timeout just has
+# to outlast the inner run + docker startup, so it's deliberately generous;
+# the apply/destroy deadline the tests honour is TERRAFORM_TEST_TIMEOUT.
+TERRAFORM_TEST_TIMEOUT ?= 600s
+
+terraform-test: build ## go test the terraform-driven sim tests (apply+destroy deadline = TERRAFORM_TEST_TIMEOUT)
+	cd terraform-tests && TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) $(GO_ENV) go test -v -count=1 -timeout 20m ./...
 
 # Aggregate that runs all four legacy test categories.
 .PHONY: test-all

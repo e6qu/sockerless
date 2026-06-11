@@ -6,85 +6,47 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `bleephub-parity-storage` |
-| In-flight | Subtasks 1-8 completed on `bleephub-parity-storage`. Next work is long-tail shape-only endpoint cleanup and docs refresh. |
-| Last merged | The Bigtable Terraform coverage + AWS real-execution semantics branch was merged before this branch started. |
-| Open GitHub issues | #394 remained upstream-blocked from the previous issue sweep. Re-check GitHub before doing any non-Bleephub issue work. |
-| Bugs | 1590 filed - 1544 fixed - 7 open - 5 false positives. |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 Bleephub run approvals empty-success gap. |
+| Active branch | `feat/sim-conformance-stage2-6` (PR #539) |
+| In-flight | Simulator conformance + hardening continuation: Stage 2 G4 (GCP missing ops), Stage 3 (Azure conformance), Stage 4 (Go type hardening), Stage 5 (simulator UI hardening), Stage 6 (CI now runs sim module unit tests), plus a bleephub gh-CLI GraphQL drift fix and an azure tf-test timeout flake fix. See [WHAT_WE_DID.md](WHAT_WE_DID.md) for the narrative and [BUGS.md](BUGS.md) (1640-1646) for per-bug detail. |
+| Last merged | #538 simulators: conformance hardening — Stages 1(cont)-6 (AWS/GCP/Azure fidelity, types, UIs). |
+| Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
+| Bugs | 1646 filed - 1600 fixed - 7 open - 6 false positives (see [BUGS.md](BUGS.md)). |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
 | Live infra | None up. |
 
-## Current Bleephub Findings
+## Simulator conformance + hardening
 
-- [bleephub/artifacts.go](bleephub/artifacts.go) now keeps real Actions cache
-  records and downloadable saved entries for reserve/upload/finalize/lookup.
-  Next cache work should index caches by run/repo/scope where the runner/API
-  surfaces require it and wire the model into the later durable storage work.
-- [bleephub/artifacts.go](bleephub/artifacts.go) and
-  [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go) now join
-  runner-created artifacts to repositories and GitHub run IDs, then expose real
-  finalized artifacts through GitHub REST list/get/delete/download paths with
-  pagination, name filtering, digest fields, and repo/run isolation.
-- [bleephub/server.go](bleephub/server.go) and
-  [bleephub/gh_rest.go](bleephub/gh_rest.go) no longer return success/plain
-  responses for unknown GitHub API paths. Unknown REST paths return
-  GitHub-shaped 404s; non-API unmatched paths return normal HTTP 404s.
-- [bleephub/persistence.go](bleephub/persistence.go) supports SQLite
-  (`BLEEPHUB_PERSIST=true`) and PostgreSQL (`BLEEPHUB_DATABASE_URL`) via
-  a `dbDialect` struct that holds dialect-specific SQL. Both backends share
-  the same `Persistence` methods. Operator-requested persistence that fails to
-  open will `log.Fatalf`. The next persistence work should extend write-through
-  coverage to remaining public API state (workflows, hooks, releases,
-  deployments, reactions, check runs, secrets, artifacts/cache).
-- [bleephub/git_storage.go](bleephub/git_storage.go) now fails loudly when git storage
-  init fails. `CreateRepo` returns `nil` if `openOrInitGitStorage` errors.
-  `loadFromPersistence` returns an error if git storage can't be reopened for a
-  persisted repo.
-- [bleephub/store_repos.go](bleephub/store_repos.go) `DeleteRepo` now removes the
-  filesystem git data directory when `BLEEPHUB_GIT_DIR` is set.
-- [bleephub/git_http.go](bleephub/git_http.go) enforces authentication and
-  permissions on all git HTTP operations. `info/refs` with `git-upload-pack`
-  requires read access; `info/refs` with `git-receive-pack` and `git-receive-pack`
-  itself require push access. Supports `token`, `Bearer`, and `Basic` auth headers.
-- [bleephub/rbac.go](bleephub/rbac.go) has a new `canPushRepo` function that checks
-  ownership or org team-level "push" permission.
-- [bleephub/gh_middleware.go](bleephub/gh_middleware.go) extracted
-  `authenticateRequest` as a shared function used by both `/api/` middleware and git
-  HTTP handlers. Basic auth (`username:password` where password is the token) is now
-  recognized alongside `token` and `Bearer` prefixes.
-- [bleephub/git_storage.go](bleephub/git_storage.go) supports memory/filesystem
-  git storage only; [bleephub/store_repos.go](bleephub/store_repos.go) no longer
-  ignores git-storage initialization errors. The next storage work should add
-  S3/MinIO-compatible git content storage.
-- [bleephub/git_http.go](bleephub/git_http.go) now serves clone/fetch/push with
-  proper permission gates.
-- [ui/packages/bleephub/src/api.ts](ui/packages/bleephub/src/api.ts) hard-codes
-  an admin token while [bleephub/store.go](bleephub/store.go) requires
-  `BLEEPHUB_ADMIN_TOKEN`. The UI needs real configured auth/session handling.
-- Bleephub must preserve GitHub/GHES external identity. Public API paths,
-  runner/workflow variables, request parameters, response fields, and
-  client-facing UI text must use the GitHub names real clients expect, including
-  `GITHUB_*` variables. Bleephub-specific names are acceptable only for internal
-  code or clearly operator-only management surfaces.
-- [bleephub/gh_misc_endpoints.go](bleephub/gh_misc_endpoints.go),
-  [bleephub/gh_actions_extras.go](bleephub/gh_actions_extras.go), and
-  [bleephub/gh_pulls_graphql.go](bleephub/gh_pulls_graphql.go) still contain
-  shape-only or empty responses for Pages builds, audit log, approvals, and
-  status rollups. BUG-1590 tracks the approvals gap explicitly.
+The active arc is deep behavioural conformance of the AWS/GCP/Azure simulators
+against the real official clients (SDK/CLI/Terraform) for the implemented
+slices, plus Go type and simulator-UI hardening. Methodology and per-stage
+status live in [PLAN.md](PLAN.md) § Current Work; the narrative is in
+[WHAT_WE_DID.md](WHAT_WE_DID.md); per-bug detail is in [BUGS.md](BUGS.md).
 
-## Bleephub Branch Rules
+- Stages 1-6 are complete. Stage 1 (AWS) + Stage 2 batches G1-G3 (GCP) merged in
+  #537/#538; Stage 2 G4 (GCP missing ops), Stage 3 (Azure), Stage 4 (Go type
+  hardening), Stage 5 (simulator UI hardening), and Stage 6 (CI sim-module unit
+  tests) are on the current branch (PR #539), with BUG-1646 (bleephub gh-CLI
+  sub-issue GraphQL drift) and an azure tf-test timeout flake fix.
+- Documented deferrals (not faked, tracked in BUGS.md / PLAN.md): GCP
+  cloudbuild/dataflow server-assigned-id name-collision 409; the GCP synthetic
+  compute operation store (cannot 404 a bogus op name without fabricating one);
+  Azure long-tail list `nextLink` for small fixed collections
+  (EventHub/EventGrid/LogicApps/storage-ARM/RG); surface-table regeneration
+  (the seed script over-generates — left as-is, gate green).
 
-- Keep one PR open for `bleephub-parity-storage`.
-- Use one natural commit per subtask from [PLAN.md](PLAN.md); target 8-10
-  commits total for the implementation work.
-- Update `STATUS.md` and [DO_NEXT.md](DO_NEXT.md) before and after each subtask.
-- Do not add fake compatibility responses. Implement the real behavior or remove
-  the claim from docs/API coverage until real behavior exists.
-- Do not rename GitHub's observable external API. Endpoints, request fields,
-  response fields, runner parameters, workflow variables, and UI identity should
-  match GitHub/GHES rather than using Bleephub-branded substitutes.
-- Use official GitHub REST/OpenAPI, GraphQL, Actions runner/cache/artifact, and
-  Git smart-HTTP behavior as the reference surface.
+## Bleephub state
+
+Bleephub parity, durable storage (SQLite/PostgreSQL persistence, filesystem and
+S3/MinIO git content storage, git HTTP auth/permissions), the GitHub-style UI
+restyle, and the GitHub-API fidelity sweep are merged (#534-#536). Remaining
+open bleephub fidelity gaps are tracked in [BUGS.md](BUGS.md): BUG-1590
+(run/environment pending approvals returns an empty success rather than modeling
+deployment protection) and BUG-1618 (the top-level `organization` block is not
+emitted on issue/PR/push webhook payloads for org-owned repos). External
+identity must stay GitHub/GHES-shaped: public API paths, request/response
+fields, runner and `GITHUB_*` variables, and client-facing UI text use the
+GitHub names real clients expect; bleephub-specific names are acceptable only
+for internal code or operator-only management surfaces.
 
 ## Invariants
 

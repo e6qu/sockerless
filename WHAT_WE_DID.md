@@ -4,6 +4,47 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-11 - Simulator conformance + hardening (AWS/GCP/Azure)
+
+A multi-stage effort raising the AWS/GCP/Azure simulators to deep behavioural
+fidelity with the real official clients for the implemented slices, then
+hardening Go types, the simulator UIs, and CI. Method (see [PLAN.md](PLAN.md)
+§ Current Work): read-only audit agents per cloud surface the gaps; each is
+verified to reproduce, fixed for real, and covered by a regression test driving
+the real SDK/CLI/Terraform client (`simulators/<cloud>/sdk-tests/conformance_roundtrip_test.go`).
+Per-fix detail is in [BUGS.md](BUGS.md) (1621-1646) rather than restated here.
+
+- **AWS (Stage 1, merged #537/#538):** round-trip drift (BUG-1621-1629), error
+  fidelity (BUG-1630-1635), and pagination via a shared `awsPageExplicit`
+  guardrail (BUG-1636).
+- **GCP (Stage 2):** round-trip drift (BUG-1637), 409/404/ABORTED error fidelity
+  (BUG-1638), pagination + a firestore runQuery operator rewrite (BUG-1639), and
+  missing ops — GCS/object PATCH, Spanner Instances.Patch, KMS
+  CreateCryptoKeyVersion, CloudFunctions Update/generateUploadUrl, CloudBuild
+  ListBuilds, Bigtable modifyColumnFamilies, memorystore/Cloud SQL updateMask
+  (BUG-1640).
+- **Azure (Stage 3):** round-trip drift incl. ServiceBus ARM server-defaults
+  reused from the data-plane (BUG-1641); Tables OData error envelope, EventGrid
+  pure-GET, ACR list/listCredentials, blobServices PUT, ListBlobs hierarchy
+  (BUG-1642).
+- **Go type hardening (Stage 4):** enabled `unconvert` + `wastedassign`
+  repo-wide; typed status enums (`ECSTaskStatus`/`ComputeInstanceStatus`/
+  `ACIContainerState`); caught + fixed a GCS persistence-helper regression
+  (BUG-1643).
+- **Simulator UI hardening (Stage 5):** wire-shape drift vs the Go dashboard +
+  accurate enum unions across the three sim UIs (BUG-1645).
+- **CI (Stage 6):** the simulator **module** unit tests (the AST/guard tests like
+  `gcs_internal_test.go`) now run in CI via a `unit-test` Makefile target — the
+  gap that let BUG-1643 ship green (BUG-1644). Also fixed an azure terraform
+  test that ignored the configured `TERRAFORM_TEST_TIMEOUT` (destroy killed near
+  a hardcoded 300s deadline) and a bleephub gh-CLI GraphQL drift (newer
+  `gh issue view` sub-issue fields, BUG-1646).
+
+No fakes: false positives were reverted (e.g. a DNS record-set `provisioningState`
+the SDK model has no field for) and intractable cases deferred with a documented
+reason (GCP cloudbuild/dataflow server-assigned-id 409; the synthetic compute
+operation store).
+
 ## 2026-06-10 - Bleephub UI GitHub-style restyle + type hardening
 
 - Forked a bleephub-only GitHub-familiar shell (`components/Shell.tsx`):
