@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,14 +196,15 @@ func TestTablesDataPlane(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
 
-	// Final get should 404.
+	// Final get should 404 with the OData TableNotFound envelope real Azure
+	// Tables returns (odata.error.code + x-ms-error-code header).
 	resp = storageDataplaneReq(t, "GET", account, "table", "/Tables('"+table+"')", nil, nil)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, "TableNotFound", resp.Header.Get("x-ms-error-code"))
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	assert.True(t,
-		strings.Contains(string(body), "ResourceNotFound") || strings.Contains(string(body), "does not exist"),
-		"expected ResourceNotFound; got %s", string(body))
+	assert.Contains(t, string(body), `"odata.error"`, "table errors must use the OData envelope: %s", string(body))
+	assert.Contains(t, string(body), "TableNotFound", "expected TableNotFound; got %s", string(body))
 }
 
 // pathStyleStorageReq issues a request via the Azurite-compatible

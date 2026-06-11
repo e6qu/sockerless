@@ -2,12 +2,15 @@ package azure_sdk_test
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerinstance/armcontainerinstance"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
@@ -16,6 +19,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -421,4 +426,309 @@ func TestConformance_EventGridTopicDefaultsAndValidation(t *testing.T) {
 	bad := armReq(t, "PUT", base+"conf-topic-bad", `{"location":"eastus","properties":{"inputSchema":"Bogus"}}`)
 	require.Equal(t, http.StatusBadRequest, bad.StatusCode, "invalid inputSchema must be rejected")
 	bad.Body.Close()
+}
+
+// TestConformance_ACRRegistryList verifies the registry list-by-resource-group
+// pager (armcontainerregistry.RegistriesClient.NewListByResourceGroupPager) and
+// the subscription-level pager surface a registry that was just created. Both
+// 404 without the list routes.
+func TestConformance_ACRRegistryList(t *testing.T) {
+	rg := "conf-acr-list-rg"
+	registry := "confacrlistreg"
+	ensureRG(t, rg)
+
+	client, err := armcontainerregistry.NewRegistriesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poller, err := client.BeginCreate(ctx, rg, registry, armcontainerregistry.Registry{
+		Location: to.Ptr("eastus"),
+		SKU:      &armcontainerregistry.SKU{Name: to.Ptr(armcontainerregistry.SKUNameStandard)},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	rgPager := client.NewListByResourceGroupPager(rg, nil)
+	var rgNames []string
+	for rgPager.More() {
+		page, err := rgPager.NextPage(ctx)
+		require.NoError(t, err)
+		rgNames = append(rgNames, acrRegistryNames(page.Value)...)
+	}
+	assert.Contains(t, rgNames, registry, "list-by-RG must contain the created registry")
+
+	subPager := client.NewListPager(nil)
+	var subNames []string
+	for subPager.More() {
+		page, err := subPager.NextPage(ctx)
+		require.NoError(t, err)
+		subNames = append(subNames, acrRegistryNames(page.Value)...)
+	}
+	assert.Contains(t, subNames, registry, "list-by-subscription must contain the created registry")
+}
+
+// acrRegistryNames extracts the names from a slice of ACR registries.
+func acrRegistryNames(regs []*armcontainerregistry.Registry) []string {
+	var names []string
+	for _, reg := range regs {
+		if reg != nil && reg.Name != nil {
+			names = append(names, *reg.Name)
+		}
+	}
+	return names
+}
+
+// TestConformance_ACRListCredentials verifies the admin-credential endpoint
+// (RegistriesClient.ListCredentials, az acr credential show) returns the
+// username and two passwords terraform reads into admin_username/admin_password.
+func TestConformance_ACRListCredentials(t *testing.T) {
+	rg := "conf-acr-cred-rg"
+	registry := "confacrcredreg"
+	ensureRG(t, rg)
+
+	client, err := armcontainerregistry.NewRegistriesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poller, err := client.BeginCreate(ctx, rg, registry, armcontainerregistry.Registry{
+		Location: to.Ptr("eastus"),
+		SKU:      &armcontainerregistry.SKU{Name: to.Ptr(armcontainerregistry.SKUNameStandard)},
+		Properties: &armcontainerregistry.RegistryProperties{
+			AdminUserEnabled: to.Ptr(true),
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = poller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	creds, err := client.ListCredentials(ctx, rg, registry, nil)
+	require.NoError(t, err)
+	require.NotNil(t, creds.Username)
+	assert.Equal(t, registry, *creds.Username)
+	require.Len(t, creds.Passwords, 2, "ACR admin creds must carry two passwords")
+	for _, pw := range creds.Passwords {
+		require.NotNil(t, pw.Value)
+		assert.NotEmpty(t, *pw.Value)
+	}
+}
+
+// TestConformance_StorageBlobServicesPut verifies a PUT of blobServices/default
+// with isVersioningEnabled reads back through GET (azurerm blob_properties
+// otherwise drifts). Raw armReq to mirror the existing storage conformance test.
+func TestConformance_StorageBlobServicesPut(t *testing.T) {
+	rg := "conf-blobsvc-rg"
+	account := "confblobsvcacct"
+	ensureRG(t, rg)
+
+	acctBase := baseURL + "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.Storage/storageAccounts/" + account + "?api-version=2023-05-01"
+	putAcct, _ := http.NewRequestWithContext(ctx, "PUT", acctBase,
+		strings.NewReader(`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"properties":{}}`))
+	putAcct.Header.Set("Content-Type", "application/json")
+	putAcctResp, err := http.DefaultClient.Do(putAcct)
+	require.NoError(t, err)
+	putAcctResp.Body.Close()
+	require.Equal(t, http.StatusOK, putAcctResp.StatusCode)
+
+	svcBase := baseURL + "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.Storage/storageAccounts/" + account + "/blobServices/default?api-version=2023-05-01"
+	putSvc, _ := http.NewRequestWithContext(ctx, "PUT", svcBase,
+		strings.NewReader(`{"properties":{"isVersioningEnabled":true,"deleteRetentionPolicy":{"enabled":true,"days":5}}}`))
+	putSvc.Header.Set("Content-Type", "application/json")
+	putSvcResp, err := http.DefaultClient.Do(putSvc)
+	require.NoError(t, err)
+	putSvcResp.Body.Close()
+	require.Equal(t, http.StatusOK, putSvcResp.StatusCode)
+
+	getSvc, _ := http.NewRequestWithContext(ctx, "GET", svcBase, nil)
+	getResp, err := http.DefaultClient.Do(getSvc)
+	require.NoError(t, err)
+	body := armBody(t, getResp)
+	props, _ := body["properties"].(map[string]any)
+	require.NotNil(t, props, "blobServices GET must carry properties")
+	assert.Equal(t, true, props["isVersioningEnabled"], "isVersioningEnabled must round-trip")
+	drp, _ := props["deleteRetentionPolicy"].(map[string]any)
+	require.NotNil(t, drp, "deleteRetentionPolicy must round-trip")
+	assert.Equal(t, true, drp["enabled"])
+}
+
+// TestConformance_TableEntityNotFoundODataError verifies a GetEntity on a
+// missing row surfaces an *azcore.ResponseError carrying the OData error code
+// EntityNotFound (real Azure Tables uses the {"odata.error":{...}} envelope; the
+// ARM {"error":{...}} envelope yields the wrong code).
+func TestConformance_TableEntityNotFoundODataError(t *testing.T) {
+	account := "conftableerracct"
+	tableName := "ConfErrTable"
+
+	serviceClient, err := aztables.NewServiceClientWithNoCredential(storageSDKURL(t, account, "table"),
+		&aztables.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+	_, err = serviceClient.CreateTable(ctx, tableName, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteTable(ctx, tableName, nil) })
+
+	tableClient := serviceClient.NewClient(tableName)
+	_, err = tableClient.GetEntity(ctx, "missing-pk", "missing-rk", nil)
+	require.Error(t, err)
+	var respErr *azcore.ResponseError
+	require.True(t, errors.As(err, &respErr), "error must be *azcore.ResponseError, got %T: %v", err, err)
+	assert.Equal(t, string(aztables.EntityNotFound), respErr.ErrorCode)
+
+	missingClient := serviceClient.NewClient("NoSuchTableConf")
+	_, err = missingClient.GetEntity(ctx, "p", "r", nil)
+	require.Error(t, err)
+	require.True(t, errors.As(err, &respErr), "error must be *azcore.ResponseError, got %T: %v", err, err)
+	assert.Equal(t, string(aztables.TableNotFound), respErr.ErrorCode)
+}
+
+// TestConformance_EventGridGetTopicPure verifies GET topic does not mutate
+// persisted state when called with different Host headers — the stored
+// properties must not accumulate or flip across reads.
+func TestConformance_EventGridGetTopicPure(t *testing.T) {
+	rg := "conf-eg-pure-rg"
+	topic := "conf-eg-pure-topic"
+	ensureRG(t, rg)
+
+	base := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.EventGrid/topics/" + topic
+
+	create := armReq(t, "PUT", base, `{"location":"eastus","properties":{}}`)
+	require.Equal(t, http.StatusCreated, create.StatusCode)
+	createBody := armBody(t, create)
+	createProps, _ := createBody["properties"].(map[string]any)
+	require.NotNil(t, createProps)
+	createdEndpoint, _ := createProps["endpoint"].(string)
+	require.NotEmpty(t, createdEndpoint, "create must stamp an endpoint")
+
+	getEndpoint := func(hostHeader string) string {
+		req, err := http.NewRequestWithContext(ctx, "GET", baseURL+base+"?api-version=2025-01-01", nil)
+		require.NoError(t, err)
+		if hostHeader != "" {
+			req.Host = hostHeader
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body := armBody(t, resp)
+		props, _ := body["properties"].(map[string]any)
+		require.NotNil(t, props)
+		ep, _ := props["endpoint"].(string)
+		return ep
+	}
+
+	// The endpoint is a stable create-time property: a GET with an arbitrary
+	// Host header must return the create-time value, not one derived from the
+	// request Host, and must not corrupt stored state for later reads.
+	assert.Equal(t, createdEndpoint, getEndpoint("first.example.localhost"),
+		"GET must return the create-time endpoint regardless of request Host")
+	assert.Equal(t, createdEndpoint, getEndpoint("second.example.localhost"),
+		"GET must return the create-time endpoint regardless of request Host")
+	assert.Equal(t, createdEndpoint, getEndpoint(""),
+		"GET must not persist a request-Host-derived endpoint into stored state")
+}
+
+// TestConformance_ServiceBusTopicListPagination verifies the ARM topic list
+// honors $top and emits a nextLink that walks the remaining topics.
+func TestConformance_ServiceBusTopicListPagination(t *testing.T) {
+	rg := "conf-sb-page-rg"
+	ns := "conf-sb-page-ns"
+
+	factory, err := armservicebus.NewClientFactory(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	namespaces := factory.NewNamespacesClient()
+	topics := factory.NewTopicsClient()
+
+	nsPoller, err := namespaces.BeginCreateOrUpdate(ctx, rg, ns, armservicebus.SBNamespace{
+		Location: to.Ptr("eastus"),
+		SKU: &armservicebus.SBSKU{
+			Name: to.Ptr(armservicebus.SKUNameStandard),
+			Tier: to.Ptr(armservicebus.SKUTierStandard),
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = nsPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	for _, name := range []string{"page-topic-a", "page-topic-b"} {
+		_, err = topics.CreateOrUpdate(ctx, rg, ns, name, armservicebus.SBTopic{
+			Properties: &armservicebus.SBTopicProperties{},
+		}, nil)
+		require.NoError(t, err)
+	}
+
+	// $top=1 → exactly one topic per page; the pager must walk the nextLink to
+	// reach the second.
+	pager := topics.NewListByNamespacePager(rg, ns, &armservicebus.TopicsClientListByNamespaceOptions{
+		Top: to.Ptr(int32(1)),
+	})
+	var got []string
+	pages := 0
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		pages++
+		require.LessOrEqual(t, len(page.Value), 1, "each $top=1 page holds at most one topic")
+		for _, tp := range page.Value {
+			require.NotNil(t, tp.Name)
+			got = append(got, *tp.Name)
+		}
+	}
+	assert.GreaterOrEqual(t, pages, 2, "$top=1 over two topics must span at least two pages")
+	assert.Contains(t, got, "page-topic-a")
+	assert.Contains(t, got, "page-topic-b")
+}
+
+// TestConformance_ListBlobsHierarchyPrefixDelimiter verifies the blob data-plane
+// honors prefix filtering and delimiter virtual-directory rollup
+// (NewListBlobsHierarchyPager): with a/1, a/2, b in a container, delimiter="/"
+// yields one BlobPrefix "a/" plus the blob "b".
+func TestConformance_ListBlobsHierarchyPrefixDelimiter(t *testing.T) {
+	account := "confhieracct"
+	containerName := "conf-hier-container"
+
+	svc, err := azblob.NewClientWithNoCredential(storageSDKURL(t, account, "blob"),
+		&azblob.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+	_, err = svc.CreateContainer(ctx, containerName, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.DeleteContainer(ctx, containerName, nil) })
+
+	for _, name := range []string{"a/1", "a/2", "b"} {
+		_, err = svc.UploadBuffer(ctx, containerName, name, []byte("x"), nil)
+		require.NoError(t, err)
+	}
+
+	containerClient, err := container.NewClientWithNoCredential(
+		storageSDKURL(t, account, "blob")+containerName,
+		&container.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	pager := containerClient.NewListBlobsHierarchyPager("/", nil)
+	var blobNames, prefixes []string
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, page.Segment)
+		for _, b := range page.Segment.BlobItems {
+			require.NotNil(t, b.Name)
+			blobNames = append(blobNames, *b.Name)
+		}
+		for _, p := range page.Segment.BlobPrefixes {
+			require.NotNil(t, p.Name)
+			prefixes = append(prefixes, *p.Name)
+		}
+	}
+	assert.Equal(t, []string{"b"}, blobNames, "top-level blob list must be just b")
+	assert.Equal(t, []string{"a/"}, prefixes, "a/1 and a/2 must roll up under the a/ BlobPrefix")
+
+	// prefix="a/" with the same delimiter lists the two blobs under a/ directly.
+	prefixPager := containerClient.NewListBlobsHierarchyPager("/", &container.ListBlobsHierarchyOptions{
+		Prefix: to.Ptr("a/"),
+	})
+	var underA []string
+	for prefixPager.More() {
+		page, err := prefixPager.NextPage(ctx)
+		require.NoError(t, err)
+		for _, b := range page.Segment.BlobItems {
+			require.NotNil(t, b.Name)
+			underA = append(underA, *b.Name)
+		}
+	}
+	assert.ElementsMatch(t, []string{"a/1", "a/2"}, underA, "prefix=a/ must list both blobs under a/")
 }

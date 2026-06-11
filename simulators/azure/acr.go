@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -190,6 +191,54 @@ func registerACR(srv *sim.Server) {
 		}
 
 		sim.WriteJSON(w, http.StatusOK, reg)
+	})
+
+	// GET - List registries by resource group
+	// (armcontainerregistry.RegistriesClient.NewListByResourceGroupPager, az acr list).
+	srv.HandleFunc("GET "+armBase+"/registries", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/",
+			sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
+		writeACRRegistryList(w, r, registries, func(reg Registry) bool {
+			return strings.HasPrefix(reg.ID, prefix)
+		})
+	})
+
+	// GET - List registries by subscription
+	// (armcontainerregistry.RegistriesClient.NewListPager, az acr list).
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerRegistry/registries", func(w http.ResponseWriter, r *http.Request) {
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/", sim.PathParam(r, "subscriptionId"))
+		writeACRRegistryList(w, r, registries, func(reg Registry) bool {
+			return strings.HasPrefix(reg.ID, prefix)
+		})
+	})
+
+	// POST - List admin credentials (RegistriesClient.ListCredentials,
+	// az acr credential show; terraform reads admin_username/admin_password).
+	// Lowercase registration; the middleware canonicalizes the action verb.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/listcredentials", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "registryName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s", sub, rg, name)
+		reg, ok := registries.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.ContainerRegistry/registries/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		if !reg.Properties.AdminUserEnabled {
+			sim.AzureError(w, "BadRequest",
+				"The admin user is not enabled for the registry. Enable it before requesting credentials.",
+				http.StatusBadRequest)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"username": name,
+			"passwords": []map[string]string{
+				{"name": "password", "value": simListKey32(resourceID, "password")},
+				{"name": "password2", "value": simListKey32(resourceID, "password2")},
+			},
+		})
 	})
 
 	// GET - List replications (azurerm provider reads this after creating a registry)
@@ -446,6 +495,23 @@ func registerACROAuth2(srv *sim.Server) {
 			"access_token": acrMintToken("access", r.PostFormValue("service"), r.PostFormValue("scope")),
 		})
 	})
+}
+
+// writeACRRegistryList emits a paginated {value, nextLink} envelope of the
+// registries matching keep. Pagination engages only when the client supplies an
+// explicit $top (armPage default otherwise returns the full list).
+func writeACRRegistryList(w http.ResponseWriter, r *http.Request, registries sim.Store[Registry], keep func(Registry) bool) {
+	matched := registries.Filter(keep)
+	sort.Slice(matched, func(i, j int) bool { return matched[i].ID < matched[j].ID })
+	page, next := armPage(r, matched)
+	if page == nil {
+		page = []Registry{}
+	}
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 // acrMintToken builds a deterministic, opaque token. The data plane never

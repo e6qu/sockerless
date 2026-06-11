@@ -182,16 +182,22 @@ func eventGridEndpointHost(r *http.Request, topic string) string {
 	return strings.Join([]string{topic, "eventgrid", hostname}, ".") + portSuffix
 }
 
+// eventGridTopicWithEndpoint returns a copy of topic whose properties carry the
+// data-plane endpoint. The endpoint is a stable per-topic property: once stamped
+// (at create) it is preserved, so reads are pure and never overwrite stored
+// state with a request-Host-derived value. The returned topic shares no maps
+// with the input, so callers may safely persist the original unchanged.
 func eventGridTopicWithEndpoint(r *http.Request, topic EventGridTopic) EventGridTopic {
-	props := topic.Properties
-	if props == nil {
-		props = map[string]any{}
+	props := make(map[string]any, len(topic.Properties)+1)
+	for k, v := range topic.Properties {
+		props[k] = v
 	}
-	if endpoint := azureEventGridEndpointURL(r, topic.Name); endpoint != "" {
-		props["endpoint"] = endpoint
-		topic.Properties = props
-	} else {
-		props["endpoint"] = fmt.Sprintf("%s://%s/api/events", azureRequestScheme(r), eventGridEndpointHost(r, topic.Name))
+	if _, ok := props["endpoint"]; !ok {
+		if endpoint := azureEventGridEndpointURL(r, topic.Name); endpoint != "" {
+			props["endpoint"] = endpoint
+		} else {
+			props["endpoint"] = fmt.Sprintf("%s://%s/api/events", azureRequestScheme(r), eventGridEndpointHost(r, topic.Name))
+		}
 	}
 	topic.Properties = props
 	return topic
@@ -237,6 +243,8 @@ func handleEventGridCreateTopic(w http.ResponseWriter, r *http.Request) {
 		Tags:       tags,
 		Properties: props,
 	}
+	// Stamp the endpoint once, at create, so it becomes a stable property of
+	// the topic that later reads return verbatim.
 	topic = eventGridTopicWithEndpoint(r, topic)
 	eventGridTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusCreated, topic)
@@ -249,8 +257,9 @@ func handleEventGridGetTopic(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "topic %q not found", id)
 		return
 	}
+	// Pure read: derive the endpoint into the response copy without persisting
+	// a request-Host-derived value back into the store.
 	topic = eventGridTopicWithEndpoint(r, topic)
-	eventGridTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusOK, topic)
 }
 

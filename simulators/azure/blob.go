@@ -474,31 +474,71 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 			LastModified  string `xml:"Last-Modified"`
 		} `xml:"Properties"`
 	}
-	type enum struct {
-		XMLName         xml.Name    `xml:"EnumerationResults"`
-		ServiceEndpoint string      `xml:"ServiceEndpoint,attr"`
-		ContainerName   string      `xml:"ContainerName,attr"`
-		Blobs           []blobEntry `xml:"Blobs>Blob"`
-		NextMarker      string      `xml:"NextMarker"`
+	type blobPrefixEntry struct {
+		Name string `xml:"Name"`
 	}
-	prefix := account + "/" + container + "/"
+	type enum struct {
+		XMLName         xml.Name          `xml:"EnumerationResults"`
+		ServiceEndpoint string            `xml:"ServiceEndpoint,attr"`
+		ContainerName   string            `xml:"ContainerName,attr"`
+		Prefix          string            `xml:"Prefix,omitempty"`
+		Delimiter       string            `xml:"Delimiter,omitempty"`
+		Blobs           []blobEntry       `xml:"Blobs>Blob"`
+		BlobPrefixes    []blobPrefixEntry `xml:"Blobs>BlobPrefix"`
+		NextMarker      string            `xml:"NextMarker"`
+	}
+
+	reqPrefix := r.URL.Query().Get("prefix")
+	delimiter := r.URL.Query().Get("delimiter")
+
+	storeKeyPrefix := account + "/" + container + "/"
 	var all []blobEntry
 	for _, b := range blobObjects.List() {
-		if strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), prefix) {
-			be := blobEntry{Name: b.Name}
-			be.Properties.ContentLength = len(b.Data)
-			be.Properties.ETag = b.ETag
-			be.Properties.LastModified = b.LastModified
-			all = append(all, be)
+		if !strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), storeKeyPrefix) {
+			continue
 		}
+		if reqPrefix != "" && !strings.HasPrefix(b.Name, reqPrefix) {
+			continue
+		}
+		be := blobEntry{Name: b.Name}
+		be.Properties.ContentLength = len(b.Data)
+		be.Properties.ETag = b.ETag
+		be.Properties.LastModified = b.LastModified
+		all = append(all, be)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+
+	// With a delimiter, roll names that contain it (past the request prefix)
+	// into virtual directories surfaced as <BlobPrefix> entries; only names
+	// without a further delimiter are listed as blobs.
+	var prefixEntries []blobPrefixEntry
+	if delimiter != "" {
+		seenPrefix := map[string]bool{}
+		var flat []blobEntry
+		for _, be := range all {
+			rest := strings.TrimPrefix(be.Name, reqPrefix)
+			if idx := strings.Index(rest, delimiter); idx >= 0 {
+				virtual := reqPrefix + rest[:idx+len(delimiter)]
+				if !seenPrefix[virtual] {
+					seenPrefix[virtual] = true
+					prefixEntries = append(prefixEntries, blobPrefixEntry{Name: virtual})
+				}
+				continue
+			}
+			flat = append(flat, be)
+		}
+		all = flat
+		sort.Slice(prefixEntries, func(i, j int) bool { return prefixEntries[i].Name < prefixEntries[j].Name })
+	}
 
 	page, marker := blobStoragePage(r, all, func(e blobEntry) string { return e.Name })
 	out := enum{
 		ServiceEndpoint: azureStorageEndpointURL(r, account, "blob"),
 		ContainerName:   container,
+		Prefix:          reqPrefix,
+		Delimiter:       delimiter,
 		Blobs:           page,
+		BlobPrefixes:    prefixEntries,
 		NextMarker:      marker,
 	}
 	writeStorageXML(w, http.StatusOK, out)

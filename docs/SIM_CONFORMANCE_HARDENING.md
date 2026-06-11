@@ -31,7 +31,7 @@ When in doubt about a wire shape, verify with `--debug` / serializer source (`go
 |---|---|---|
 | 1 | AWS conformance sweep + fixes + regression tests | **DONE** — Batch 1 (PR #537, merged); Batches 2-4 (this branch) |
 | 2 | GCP conformance sweep + fixes + regression tests | **DONE** — G1-G4 (BUG-1637/1638/1639/1640); on PR #538 (merged) + this branch (G4) |
-| 3 | Azure conformance sweep + fixes + regression tests | pending |
+| 3 | Azure conformance sweep + fixes + regression tests | **DONE** — A1 (BUG-1641) + A2 (BUG-1642) |
 | 4 | Go type hardening across all sims (`docs/GOLANG_STRONG_TYPING.md`) | pending |
 | 5 | Simulator UI hardening (aws/azure/gcp UIs) | pending |
 | 6 | Wrap: coverage matrix + surface tables + continuity reconcile | pending |
@@ -81,7 +81,8 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
   Pagination/list: ServiceBus topics/subscriptions/namespaces + EventHub/EventGrid/LogicApps + storage ARM lists + RG list + Entra memberOf emit `{value}` with no nextLink/$top (only SB queues + ACA apps paginate); ListBlobs ignores prefix/delimiter (no BlobPrefix hierarchy) + list entries omit Properties/Metadata.
   Missing ops: ACR registries LIST (by-RG + by-sub) + listCredentials/regenerateCredential; Storage blobServices PUT (blob_properties versioning/changeFeed/deleteRetention/cors); Entra servicePrincipals/applications + collection lists (partly upstream-blocked, BUG-1345); Microsoft.Compute/disks advertised but no handler (no consumer — skip per no-speculative). Monitor alerting absent (no consumer — coverage note only).
 - **Batch A1 (round-trip drift):** ServiceBus ARM defaults, Storage account props, ACR registry props+sku.tier, VM/ACI write-only strip, private DNS provisioningState+SOA, Cosmos consistencyPolicy, Redis version, EventHub retention, EventGrid publicNetworkAccess+inputSchema. Then A2 (missing ops: ACR list+credentials, blobServices PUT), A3 (error fidelity + pagination: Tables OData, ListBlobs prefix/delimiter, EventGrid side-effect GET, list nextLink).
-- **Next:** implement A1 + regression tests; commit; A2; A3. Update this doc after the stage.
+- **Batch A1 — DONE (BUG-1641):** round-trip drift (ServiceBus ARM defaults, storage account props, ACR, VM/ACI write-only strip, DNS SOA, Cosmos, Redis, EventHub, EventGrid). 10 tests. FP: DNS record-set provisioningState.
+- **Batch A2 — DONE (BUG-1642):** missing ops + error fidelity + pagination (ACR list+listCredentials, blobServices PUT, Tables OData errors, EventGrid pure GET, ServiceBus list pagination, ListBlobs hierarchy). 7 tests. **Stage 3 COMPLETE.** Deferred (small collections): EventHub/EventGrid/LogicApps/storage-ARM/RG list nextLink.
 
 ### Stage 4 — Go type hardening
 - Not started. Candidates surface during stages 1-3 (stringly-typed states, bare-ID transposition, `map[string]any` request decode). Apply typed enums/IDs/sealed sums per `docs/GOLANG_STRONG_TYPING.md`.
