@@ -113,6 +113,11 @@ func handleACIContainerGroupPut(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ContainerGroupDeploymentFailed", http.StatusBadRequest, "%v", err)
 		return
 	}
+	// Real Azure never echoes osProfile/env secureValue back; strip it from
+	// the stored group once the runtime has consumed it.
+	aciContainerGroups.Update(id, func(stored *ACIContainerGroup) {
+		aciStripSecureValues(stored)
+	})
 	group, _ = aciContainerGroups.Get(id)
 	opID := issueAzureAsyncOperation(func() {
 		aciContainerGroups.Update(id, func(stored *ACIContainerGroup) {
@@ -473,6 +478,11 @@ func aciStartGroupContainers(group ACIContainerGroup) error {
 				m, _ := item.(map[string]any)
 				n, _ := m["name"].(string)
 				v, _ := m["value"].(string)
+				if v == "" {
+					if sv, ok := m["secureValue"].(string); ok {
+						v = sv
+					}
+				}
 				if n != "" {
 					env[n] = v
 				}
@@ -563,6 +573,27 @@ func aciContainers(group *ACIContainerGroup) []map[string]any {
 		}
 	}
 	return out
+}
+
+// aciStripSecureValues removes write-only env secureValue from every
+// container in the group. Real Azure accepts secureValue on PUT but never
+// returns it on GET.
+func aciStripSecureValues(group *ACIContainerGroup) {
+	for _, c := range aciContainers(group) {
+		props, _ := c["properties"].(map[string]any)
+		if props == nil {
+			continue
+		}
+		vals, ok := props["environmentVariables"].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range vals {
+			if m, ok := item.(map[string]any); ok {
+				delete(m, "secureValue")
+			}
+		}
+	}
 }
 
 func aciNormalizeContainer(c map[string]any) map[string]any {

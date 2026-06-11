@@ -318,7 +318,7 @@ func handleEHCreateEventHub(w http.ResponseWriter, r *http.Request) {
 	props := map[string]any{
 		"createdAt":              now.Format(time.RFC3339Nano),
 		"updatedAt":              now.Format(time.RFC3339Nano),
-		"messageRetentionInDays": 1,
+		"messageRetentionInDays": 7,
 		"partitionCount":         partitionCount,
 		"partitionIds":           ehPartitionIDs(partitionCount),
 		"status":                 "Active",

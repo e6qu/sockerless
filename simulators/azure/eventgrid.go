@@ -215,6 +215,16 @@ func handleEventGridCreateTopic(w http.ResponseWriter, r *http.Request) {
 	if _, ok := props["inputSchema"]; !ok {
 		props["inputSchema"] = "EventGridSchema"
 	}
+	switch fmt.Sprint(props["inputSchema"]) {
+	case "EventGridSchema", "CloudEventSchemaV1_0", "CustomEventSchema":
+	default:
+		sim.AzureErrorf(w, "InvalidRequestContent", http.StatusBadRequest,
+			"inputSchema %q is invalid; must be one of EventGridSchema, CloudEventSchemaV1_0, CustomEventSchema", props["inputSchema"])
+		return
+	}
+	if _, ok := props["publicNetworkAccess"]; !ok {
+		props["publicNetworkAccess"] = "Enabled"
+	}
 	tags := req.Tags
 	if tags == nil {
 		tags = map[string]string{}

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -29,12 +30,16 @@ type RegistrySku struct {
 
 // RegistryProperties holds the properties of a container registry.
 type RegistryProperties struct {
-	LoginServer              string `json:"loginServer"`
-	ProvisioningState        string `json:"provisioningState"`
-	AdminUserEnabled         bool   `json:"adminUserEnabled"`
-	PublicNetworkAccess      string `json:"publicNetworkAccess,omitempty"`
-	NetworkRuleBypassOptions string `json:"networkRuleBypassOptions,omitempty"`
-	ZoneRedundancy           string `json:"zoneRedundancy,omitempty"`
+	LoginServer              string          `json:"loginServer"`
+	ProvisioningState        string          `json:"provisioningState"`
+	AdminUserEnabled         bool            `json:"adminUserEnabled"`
+	PublicNetworkAccess      string          `json:"publicNetworkAccess,omitempty"`
+	NetworkRuleBypassOptions string          `json:"networkRuleBypassOptions,omitempty"`
+	ZoneRedundancy           string          `json:"zoneRedundancy,omitempty"`
+	AnonymousPullEnabled     *bool           `json:"anonymousPullEnabled,omitempty"`
+	DataEndpointEnabled      *bool           `json:"dataEndpointEnabled,omitempty"`
+	Policies                 json.RawMessage `json:"policies,omitempty"`
+	Encryption               json.RawMessage `json:"encryption,omitempty"`
 }
 
 // ACRCacheRule models an Azure Container Registry cache rule
@@ -117,7 +122,12 @@ func registerACR(srv *sim.Server) {
 
 		sku := req.Sku
 		if sku == nil {
-			sku = &RegistrySku{Name: "Basic", Tier: "Basic"}
+			sku = &RegistrySku{Name: "Basic"}
+		}
+		// Azure echoes sku.tier equal to sku.name when the client sends only
+		// the name (Basic/Standard/Premium).
+		if sku.Tier == "" {
+			sku.Tier = sku.Name
 		}
 
 		// networkRuleBypassOptions defaults to "AzureServices" when the request
@@ -125,6 +135,16 @@ func registerACR(srv *sim.Server) {
 		bypass := req.Properties.NetworkRuleBypassOptions
 		if bypass == "" {
 			bypass = "AzureServices"
+		}
+		// publicNetworkAccess / zoneRedundancy default to Enabled / Disabled
+		// but are honored when the client specifies them.
+		publicNetworkAccess := req.Properties.PublicNetworkAccess
+		if publicNetworkAccess == "" {
+			publicNetworkAccess = "Enabled"
+		}
+		zoneRedundancy := req.Properties.ZoneRedundancy
+		if zoneRedundancy == "" {
+			zoneRedundancy = "Disabled"
 		}
 
 		reg := Registry{
@@ -138,9 +158,13 @@ func registerACR(srv *sim.Server) {
 				LoginServer:              strings.ToLower(name) + ".azurecr.io",
 				ProvisioningState:        "Succeeded",
 				AdminUserEnabled:         req.Properties.AdminUserEnabled,
-				PublicNetworkAccess:      "Enabled",
+				PublicNetworkAccess:      publicNetworkAccess,
 				NetworkRuleBypassOptions: bypass,
-				ZoneRedundancy:           "Disabled",
+				ZoneRedundancy:           zoneRedundancy,
+				AnonymousPullEnabled:     req.Properties.AnonymousPullEnabled,
+				DataEndpointEnabled:      req.Properties.DataEndpointEnabled,
+				Policies:                 req.Properties.Policies,
+				Encryption:               req.Properties.Encryption,
 			},
 		}
 

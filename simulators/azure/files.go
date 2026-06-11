@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,6 +115,14 @@ type StorageAccountProperties struct {
 	PrimaryLocation          string                   `json:"primaryLocation,omitempty"`
 	SupportsHttpsTrafficOnly *bool                    `json:"supportsHttpsTrafficOnly,omitempty"`
 	MinimumTLSVersion        string                   `json:"minimumTlsVersion,omitempty"`
+	AccessTier               string                   `json:"accessTier,omitempty"`
+	AllowBlobPublicAccess    *bool                    `json:"allowBlobPublicAccess,omitempty"`
+	AllowSharedKeyAccess     *bool                    `json:"allowSharedKeyAccess,omitempty"`
+	PublicNetworkAccess      string                   `json:"publicNetworkAccess,omitempty"`
+	IsHnsEnabled             *bool                    `json:"isHnsEnabled,omitempty"`
+	LargeFileSharesState     string                   `json:"largeFileSharesState,omitempty"`
+	Encryption               json.RawMessage          `json:"encryption,omitempty"`
+	NetworkAcls              json.RawMessage          `json:"networkAcls,omitempty"`
 	PrimaryEndpoints         *StoragePrimaryEndpoints `json:"primaryEndpoints,omitempty"`
 	CreationTime             string                   `json:"creationTime,omitempty"`
 }
@@ -271,6 +280,14 @@ func registerAzureFiles(srv *sim.Server) {
 				PrimaryLocation:          req.Location,
 				SupportsHttpsTrafficOnly: httpsOnly,
 				MinimumTLSVersion:        minTLS,
+				AccessTier:               req.Properties.AccessTier,
+				AllowBlobPublicAccess:    req.Properties.AllowBlobPublicAccess,
+				AllowSharedKeyAccess:     req.Properties.AllowSharedKeyAccess,
+				PublicNetworkAccess:      req.Properties.PublicNetworkAccess,
+				IsHnsEnabled:             req.Properties.IsHnsEnabled,
+				LargeFileSharesState:     req.Properties.LargeFileSharesState,
+				Encryption:               req.Properties.Encryption,
+				NetworkAcls:              req.Properties.NetworkAcls,
 				CreationTime:             time.Now().UTC().Format(time.RFC3339),
 			},
 		}

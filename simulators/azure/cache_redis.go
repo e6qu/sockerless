@@ -182,7 +182,7 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 		Tags:     req.Tags,
 		Properties: map[string]any{
 			"provisioningState": "Creating",
-			"redisVersion":      "7.0",
+			"redisVersion":      "6.0",
 			"sslPort":           6380,
 			"port":              6379,
 			"hostName":          azureEndpointHostname(r, name, "redis", "cache"),

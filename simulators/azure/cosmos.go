@@ -182,6 +182,7 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	cosmosNormalizeLocations(props, name, req.Location)
 	cosmosEnsureBackupPolicy(props)
+	cosmosEnsureConsistencyPolicy(props)
 	a := CosmosAccount{
 		ID:         id,
 		Name:       name,
@@ -193,6 +194,19 @@ func handleCosmosCreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	cosmosAccounts.Put(id, a)
 	sim.WriteJSON(w, http.StatusOK, a)
+}
+
+// cosmosEnsureConsistencyPolicy injects the default Session consistency
+// policy real Azure GET always returns when the create body omits it.
+func cosmosEnsureConsistencyPolicy(props map[string]any) {
+	if cp, ok := props["consistencyPolicy"].(map[string]any); ok && cp["defaultConsistencyLevel"] != nil {
+		return
+	}
+	props["consistencyPolicy"] = map[string]any{
+		"defaultConsistencyLevel": "Session",
+		"maxIntervalInSeconds":    5,
+		"maxStalenessPrefix":      100,
+	}
 }
 
 func cosmosEnsureBackupPolicy(props map[string]any) {

@@ -401,10 +401,7 @@ func handleSBCreateQueue(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/queues/" + qName
 	q := SBQueue{
 		ID: id, Name: qName, Type: "Microsoft.ServiceBus/namespaces/queues",
-		Properties: map[string]any{
-			"maxSizeInMegabytes": 1024,
-			"status":             "Active",
-		},
+		Properties: sbDefaultQueueProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -469,10 +466,7 @@ func handleSBCreateTopic(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/topics/" + tName
 	t := SBTopic{
 		ID: id, Name: tName, Type: "Microsoft.ServiceBus/namespaces/topics",
-		Properties: map[string]any{
-			"maxSizeInMegabytes": 1024,
-			"status":             "Active",
-		},
+		Properties: sbDefaultTopicProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -546,9 +540,7 @@ func handleSBCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/subscriptions/" + sName
 	s := SBSubscription{
 		ID: id, Name: sName, Type: "Microsoft.ServiceBus/namespaces/topics/subscriptions",
-		Properties: map[string]any{
-			"status": "Active",
-		},
+		Properties: sbDefaultSubscriptionProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
