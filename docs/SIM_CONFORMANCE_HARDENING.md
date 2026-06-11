@@ -90,8 +90,8 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
 - **Caught + fixed BUG-1643** (a Batch-G4 GCS regression on main: metadata PATCH bypassed `persistGCSObject`) + filed **BUG-1644** (CI doesn't run sim-module unit tests — the gap that let 1643 ship green; fix in Stage 6).
 - All 3 sim modules: build + module unit tests + golangci-lint (new config) + dupl all green.
 
-### Stage 5 — Simulator UI hardening
-- Not started. 3 UIs (`ui/packages/simulator-{aws,gcp,azure}`, ~8 TS files each on a shared core). Tighten types, fix bugs, verify.
+### Stage 5 — Simulator UI hardening — DONE
+- Cross-checked all 3 sim UIs' `api.ts` against the Go dashboard wire shapes; fixed BUG-1645 (gcp `severity` should be optional — server omits for DEFAULT; azure `MonitorLogRow` values are `string` not `unknown`). Narrowed stringly enums to unions matching the values the server actually emits (aws ECSTask.status to the real 5, LambdaFunction.state; gcp CloudFunction.state, LogEntry.severity LogSeverity) — accuracy over breadth (a too-wide union is worse than `string`). typecheck + build green for all 3.
 
 ### Stage 6 — Wrap
 - Not started. Reconcile `specs/SIM_TEST_COVERAGE_MATRIX.md` + surface tables; final continuity pass.

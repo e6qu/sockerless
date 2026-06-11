@@ -4,19 +4,30 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ECS task lifecycle states the simulator emits (simulators/aws/ecs.go ECSTaskStatus).
+export type ECSTaskStatus =
+  | "PROVISIONING"
+  | "PENDING"
+  | "RUNNING"
+  | "STOPPED"
+  | "DEPROVISIONING";
+
 export interface ECSTask {
   taskArn: string;
-  status: string;
+  status: ECSTaskStatus;
   clusterArn: string;
   launchType: string;
   cpu: string;
   memory: string;
 }
 
+// Lambda function lifecycle states (AWS State enum).
+export type LambdaState = "Pending" | "Active" | "Inactive" | "Failed";
+
 export interface LambdaFunction {
   name: string;
   runtime: string;
-  state: string;
+  state: LambdaState;
   memorySize: number;
   timeout: number;
   lastModified: string;
