@@ -145,6 +145,18 @@ func (s *Server) RoutePatterns() []string {
 	return s.routePatterns
 }
 
+// WrapHandler wraps the server's final handler chain. Host-addressed cloud
+// data planes and the spec-validation capture use this to observe or route
+// requests before generic path handlers.
+func (s *Server) WrapHandler(middleware func(http.Handler) http.Handler) {
+	s.handler = middleware(s.handler)
+}
+
+// ServeHTTP serves through the same final handler chain as ListenAndServe.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.handler.ServeHTTP(w, r)
+}
+
 // Mux returns the underlying ServeMux for direct registration.
 func (s *Server) Mux() *http.ServeMux {
 	return s.mux

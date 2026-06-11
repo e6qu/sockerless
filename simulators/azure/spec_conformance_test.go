@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -105,66 +104,9 @@ func loadSwaggerPaths(t *testing.T) (all []swaggerPath, byFile map[string][]swag
 	return all, byFile
 }
 
-var azureParamSegment = regexp.MustCompile(`\{[^}]+\}`)
-
-// splitAzureSegs normalizes one path for comparison: parameters collapse
-// to {} ({...}-style greedy mux labels to {+}), everything lowercases
-// (ARM routing is case-insensitive and AzurePathNormalizationMiddleware
-// lowercases action verbs), and the leading/trailing slashes drop.
-func splitAzureSegs(p string) []string {
-	p = azureParamSegment.ReplaceAllStringFunc(p, func(s string) string {
-		if strings.HasSuffix(s[1:len(s)-1], "...") {
-			return "{+}"
-		}
-		return "{}"
-	})
-	p = strings.ToLower(strings.Trim(p, "/"))
-	if p == "" {
-		return nil
-	}
-	return strings.Split(p, "/")
-}
-
-// matchAzureSegs reports whether a simulator mux pattern is a valid
-// spelling of a Swagger path. Rules mirror the GCP matcher:
-//   - a spec "{}" in FIRST position is a scope parameter
-//     (x-ms-skip-url-encoding resource IDs like
-//     "/{scope}/providers/Microsoft.Authorization/...") and consumes one
-//     or more simulator segments;
-//   - elsewhere spec "{}" consumes exactly one simulator segment of any
-//     kind (a simulator literal narrows the parameter — valid);
-//   - a spec literal requires the identical (lowercased) simulator
-//     literal;
-//   - a simulator trailing "{+}" consumes any remaining spec segments
-//     (greedy fan-in accepts a superset).
-func matchAzureSegs(simSegs, spec []string, specFirst bool) bool {
-	if len(spec) == 0 {
-		return len(simSegs) == 0
-	}
-	if len(simSegs) == 0 {
-		return false
-	}
-	if simSegs[0] == "{+}" && len(simSegs) == 1 {
-		return true
-	}
-	// Scope expansion applies only to ARM scope paths
-	// ("/{scope}/providers/Microsoft.X/..."): the scope resource ID
-	// spans several segments. A leading parameter in a data-plane spec
-	// ("/{containerName}/{blob}") stays single-segment — expanding it
-	// would let almost any route match.
-	if spec[0] == "{}" && specFirst && len(spec) > 1 && spec[1] == "providers" {
-		for i := 1; i <= len(simSegs); i++ {
-			if matchAzureSegs(simSegs[i:], spec[1:], false) {
-				return true
-			}
-		}
-		return false
-	}
-	if spec[0] == "{}" || spec[0] == simSegs[0] {
-		return matchAzureSegs(simSegs[1:], spec[1:], false)
-	}
-	return false
-}
+// Path normalization + matching (splitAzureSegs / matchAzureSegs) live
+// in spec_validator.go — the runtime wire-shape validator and this
+// static gate share one matcher.
 
 func matchesAnySwagger(specs []swaggerPath, method, path string) bool {
 	simSegs := splitAzureSegs(path)

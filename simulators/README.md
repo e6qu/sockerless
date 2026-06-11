@@ -151,6 +151,26 @@ make test-integration             # Simulator-backend integration tests (every G
 
 CI runs all four on every PR — see `.github/workflows/ci.yml` `sim (aws)`, `sim (gcp)`, `sim (azure)` jobs.
 
+### Spec-based validation
+
+On top of the real-client suites, every simulator is validated against the
+official machine-readable API specs vendored under
+[`specs/cloud-api/`](../specs/cloud-api/README.md) (AWS Smithy models, GCP
+Discovery documents, Azure Swagger):
+
+- **Static surface conformance** (`spec_conformance_test.go`, runs with
+  `make unit-test`): every registered operation/route must exist in the
+  vendored spec — the simulator cannot invent paths or wire keys under a
+  cloud's namespace. Real-but-unspecified surfaces (IMDS, OCI registry
+  data planes, LRO polling URLs) live in justified in-test allowlists.
+- **Runtime wire-shape validation** (armed via
+  `SOCKERLESS_SPEC_VALIDATE=<report.jsonl>` +
+  `SOCKERLESS_SPEC_DIR=specs/cloud-api/<cloud>`): responses are checked
+  member-by-member against the spec's output shapes while the SDK/CLI
+  suites run; `scripts/check-spec-violations.sh` gates the report against
+  `simulators/<cloud>/spec-violation-allowlist.txt` (every entry a filed
+  BUG; the list only shrinks).
+
 ### Test counts (approximate)
 
 | Cloud | SDK tests | CLI tests | Bash tests | Terraform tests |

@@ -161,5 +161,11 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
+	// Runtime wire-shape validation (armed only when
+	// SOCKERLESS_SPEC_VALIDATE is set; see spec_validator.go).
+	if err := armSpecValidator(srv); err != nil {
+		return nil, nil, nil, err
+	}
+
 	return srv, awsRouter, queryRouter, nil
 }

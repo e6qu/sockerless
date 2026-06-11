@@ -4,6 +4,7 @@ Specification documents for sockerless. [`SOCKERLESS_SPEC.md`](SOCKERLESS_SPEC.m
 
 - [`CLOUD_RESOURCE_MAPPING.md`](CLOUD_RESOURCE_MAPPING.md) — the authoritative "how does sockerless model X on cloud Y" mapping and the source of truth for the stateless-backend invariant.
 - [`SIM_TEST_COVERAGE_MATRIX.md`](SIM_TEST_COVERAGE_MATRIX.md) + [`SIM_SURFACE_TABLES/`](SIM_SURFACE_TABLES/README.md) — the maintained simulator coverage index, enforced in CI.
+- [`cloud-api/`](cloud-api/README.md) — vendored official cloud API specs (AWS Smithy models, GCP Discovery documents, Azure Swagger), pinned + provenance-tracked; the ground truth behind the simulator spec-conformance gates and the runtime wire-shape validator.
 
 ## Core spec + configuration
 
