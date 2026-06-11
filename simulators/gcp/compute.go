@@ -348,6 +348,19 @@ type ComputeDisk struct {
 	PhysicalBlockSize string            `json:"physicalBlockSizeBytes,omitempty"`
 }
 
+// ComputeInstanceStatus is a Compute Engine instance lifecycle status. Using a
+// named type makes a mistyped status literal a compile error.
+type ComputeInstanceStatus string
+
+const (
+	ComputeInstanceProvisioning ComputeInstanceStatus = "PROVISIONING"
+	ComputeInstanceStaging      ComputeInstanceStatus = "STAGING"
+	ComputeInstanceRunning      ComputeInstanceStatus = "RUNNING"
+	ComputeInstanceStopping     ComputeInstanceStatus = "STOPPING"
+	ComputeInstanceStopped      ComputeInstanceStatus = "STOPPED"
+	ComputeInstanceTerminated   ComputeInstanceStatus = "TERMINATED"
+)
+
 type ComputeInstance struct {
 	Kind              string                    `json:"kind,omitempty"`
 	Id                string                    `json:"id,omitempty"`
@@ -357,7 +370,7 @@ type ComputeInstance struct {
 	Description       string                    `json:"description,omitempty"`
 	Zone              string                    `json:"zone,omitempty"`
 	MachineType       string                    `json:"machineType,omitempty"`
-	Status            string                    `json:"status,omitempty"`
+	Status            ComputeInstanceStatus     `json:"status,omitempty"`
 	StatusMessage     string                    `json:"statusMessage,omitempty"`
 	Tags              *ComputeInstanceTags      `json:"tags,omitempty"`
 	Labels            map[string]string         `json:"labels,omitempty"`
@@ -1969,7 +1982,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		} else if !strings.Contains(inst.MachineType, "/") {
 			inst.MachineType = fmt.Sprintf("projects/%s/zones/%s/machineTypes/%s", project, zone, inst.MachineType)
 		}
-		inst.Status = "RUNNING"
+		inst.Status = ComputeInstanceRunning
 		if inst.LabelFingerprint == "" {
 			inst.LabelFingerprint = generateUUID()[:8]
 		}
@@ -2103,7 +2116,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to boot real Compute Engine instance: %v", err)
 			return
 		}
-		inst.Status = "RUNNING"
+		inst.Status = ComputeInstanceRunning
 		instances.Put(inst.SelfLink, inst)
 		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to apply real firewall filters: %v", err)
@@ -2122,8 +2135,8 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
 		}
-		if inst.Status == "RUNNING" && !gcpRealVMAlive(inst.SelfLink) {
-			inst.Status = "TERMINATED"
+		if inst.Status == ComputeInstanceRunning && !gcpRealVMAlive(inst.SelfLink) {
+			inst.Status = ComputeInstanceTerminated
 			instances.Put(selfLink, inst)
 		}
 		sim.WriteJSON(w, http.StatusOK, inst)
@@ -2196,7 +2209,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to stop real Compute Engine instance: %v", err)
 			return
 		}
-		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = "TERMINATED" }); !ok {
+		if ok := instances.Update(selfLink, func(inst *ComputeInstance) { inst.Status = ComputeInstanceTerminated }); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
 			return
 		}
@@ -2223,7 +2236,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusServiceUnavailable, "FAILED_PRECONDITION", "failed to start real Compute Engine instance: %v", err)
 			return
 		}
-		inst.Status = "RUNNING"
+		inst.Status = ComputeInstanceRunning
 		instances.Put(selfLink, inst)
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "start"))
 	})

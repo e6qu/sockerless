@@ -362,7 +362,6 @@ func invokeLambdaViaRuntimeAPI(fn LambdaFunction, payload []byte) ([]byte, bool,
 		if inv.errorObj != nil {
 			result = inv.errorObj
 			unhandled = true
-			exitCode = 0
 		} else {
 			result = inv.response
 			if len(result) == 0 {

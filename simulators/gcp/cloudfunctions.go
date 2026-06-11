@@ -595,7 +595,7 @@ func matchesFunctionFilter(fn *Function, filter string) bool {
 		}
 		c := parseClause(clause)
 		val := lookupFunctionField(fn, c.field)
-		matched := false
+		var matched bool
 		switch c.op {
 		case opEq:
 			matched = val == c.value
@@ -631,7 +631,7 @@ func lookupFunctionField(fn *Function, field string) string {
 	case "name":
 		return fn.Name
 	case "state":
-		return string(fn.State)
+		return fn.State
 	}
 	return ""
 }

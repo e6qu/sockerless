@@ -42,7 +42,7 @@ func handleDashboardECSTasks(w http.ResponseWriter, _ *http.Request) {
 	for i, t := range tasks {
 		out[i] = taskSummary{
 			TaskArn:    t.TaskArn,
-			Status:     t.LastStatus,
+			Status:     string(t.LastStatus),
 			Cluster:    t.ClusterArn,
 			LaunchType: t.LaunchType,
 			Cpu:        t.Cpu,

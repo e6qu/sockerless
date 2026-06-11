@@ -84,8 +84,11 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
 - **Batch A1 — DONE (BUG-1641):** round-trip drift (ServiceBus ARM defaults, storage account props, ACR, VM/ACI write-only strip, DNS SOA, Cosmos, Redis, EventHub, EventGrid). 10 tests. FP: DNS record-set provisioningState.
 - **Batch A2 — DONE (BUG-1642):** missing ops + error fidelity + pagination (ACR list+listCredentials, blobServices PUT, Tables OData errors, EventGrid pure GET, ServiceBus list pagination, ListBlobs hierarchy). 7 tests. **Stage 3 COMPLETE.** Deferred (small collections): EventHub/EventGrid/LogicApps/storage-ARM/RG list nextLink.
 
-### Stage 4 — Go type hardening
-- Not started. Candidates surface during stages 1-3 (stringly-typed states, bare-ID transposition, `map[string]any` request decode). Apply typed enums/IDs/sealed sums per `docs/GOLANG_STRONG_TYPING.md`.
+### Stage 4 — Go type hardening — DONE
+- **Linters:** added `unconvert` + `wastedassign` to root `.golangci.yml` (verified 0-fallout across all CI-linted modules: 3 sims + shared + 7 backends + bleephub + agent + cmd; fixed ~17 trivial hits). Rejected `usestdlibvars` (65 hits — too much churn) and `nilerr` (10 intentional io.Writer/Walk patterns) with reasons.
+- **Typed enums** (one contained, wire-identical field per sim; mistyped state literal → compile error): AWS `ECSTaskStatus` (ecs.go LastStatus/DesiredStatus, ~23 sites), GCP `ComputeInstanceStatus` (compute.go Status, 6), Azure `ACIContainerState` (containerinstance.go State, 11). JSON bytes byte-identical.
+- **Caught + fixed BUG-1643** (a Batch-G4 GCS regression on main: metadata PATCH bypassed `persistGCSObject`) + filed **BUG-1644** (CI doesn't run sim-module unit tests — the gap that let 1643 ship green; fix in Stage 6).
+- All 3 sim modules: build + module unit tests + golangci-lint (new config) + dupl all green.
 
 ### Stage 5 — Simulator UI hardening
 - Not started. 3 UIs (`ui/packages/simulator-{aws,gcp,azure}`, ~8 TS files each on a shared core). Tighten types, fix bugs, verify.

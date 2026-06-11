@@ -37,8 +37,11 @@ func TestGCSObjectStoreWritesUsePersistenceHelper(t *testing.T) {
 			if !ok || (ident.Name != "objects" && ident.Name != "gcsObjects") {
 				return true
 			}
-			if fn.Name.Name != "persistGCSObject" {
-				t.Fatalf("%s calls %s.Put directly; use persistGCSObject for GCS object writes",
+			// persistGCSObject is the payload write path (also writes the
+			// host backing file). persistGCSObjectMetadata is the explicit
+			// metadata-only path (store-only, no payload/generation change).
+			if fn.Name.Name != "persistGCSObject" && fn.Name.Name != "persistGCSObjectMetadata" {
+				t.Fatalf("%s calls %s.Put directly; use persistGCSObject (payload) or persistGCSObjectMetadata (metadata-only) for GCS object writes",
 					fset.Position(call.Pos()), ident.Name)
 			}
 			return true

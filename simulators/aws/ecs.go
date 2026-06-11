@@ -242,12 +242,24 @@ type ECSAttachment struct {
 	Details []ECSKeyValuePair `json:"details,omitempty"`
 }
 
+// ECSTaskStatus is the lifecycle status of an ECS task (lastStatus /
+// desiredStatus). Using a named type makes a mistyped literal a compile error.
+type ECSTaskStatus string
+
+const (
+	ECSTaskStatusProvisioning   ECSTaskStatus = "PROVISIONING"
+	ECSTaskStatusPending        ECSTaskStatus = "PENDING"
+	ECSTaskStatusRunning        ECSTaskStatus = "RUNNING"
+	ECSTaskStatusStopped        ECSTaskStatus = "STOPPED"
+	ECSTaskStatusDeprovisioning ECSTaskStatus = "DEPROVISIONING"
+)
+
 type ECSTask struct {
 	TaskArn              string                `json:"taskArn"`
 	TaskDefinitionArn    string                `json:"taskDefinitionArn"`
 	ClusterArn           string                `json:"clusterArn"`
-	LastStatus           string                `json:"lastStatus"`
-	DesiredStatus        string                `json:"desiredStatus"`
+	LastStatus           ECSTaskStatus         `json:"lastStatus"`
+	DesiredStatus        ECSTaskStatus         `json:"desiredStatus"`
 	Connectivity         string                `json:"connectivity,omitempty"`
 	Containers           []ECSTaskContainer    `json:"containers"`
 	CreatedAt            *float64              `json:"createdAt,omitempty"`
@@ -508,7 +520,7 @@ func handleECSDescribeClusters(w http.ResponseWriter, r *http.Request) {
 			// Update running task count
 			runningCount := 0
 			for _, t := range ecsTasks.List() {
-				if t.ClusterArn == cluster.ClusterArn && t.LastStatus == "RUNNING" {
+				if t.ClusterArn == cluster.ClusterArn && t.LastStatus == ECSTaskStatusRunning {
 					runningCount++
 				}
 			}
@@ -1151,8 +1163,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			TaskArn:              taskArn,
 			TaskDefinitionArn:    td.TaskDefinitionArn,
 			ClusterArn:           cluster.ClusterArn,
-			LastStatus:           "PROVISIONING",
-			DesiredStatus:        "RUNNING",
+			LastStatus:           ECSTaskStatusProvisioning,
+			DesiredStatus:        ECSTaskStatusRunning,
 			Containers:           containers,
 			CreatedAt:            &createdAt,
 			Tags:                 taskTags,
@@ -1193,7 +1205,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
 			ecsTasks.Update(id, func(t *ECSTask) {
-				t.LastStatus = "PENDING"
+				t.LastStatus = ECSTaskStatusPending
 				for j := range t.Containers {
 					t.Containers[j].LastStatus = "PENDING"
 				}
@@ -1205,7 +1217,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			// Mark task as RUNNING before starting containers
 			now := time.Now().Unix()
 			ecsTasks.Update(id, func(t *ECSTask) {
-				t.LastStatus = "RUNNING"
+				t.LastStatus = ECSTaskStatusRunning
 				t.Connectivity = "CONNECTED"
 				t.StartedAt = &now
 				for j := range t.Containers {
@@ -1273,8 +1285,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				stoppedAt := time.Now().Unix()
 				ecsTasks.Update(id, func(t *ECSTask) {
-					t.LastStatus = "STOPPED"
-					t.DesiredStatus = "STOPPED"
+					t.LastStatus = ECSTaskStatusStopped
+					t.DesiredStatus = ECSTaskStatusStopped
 					t.StoppedAt = &stoppedAt
 					t.StopCode = "EssentialContainerExited"
 					t.StoppedReason = fmt.Sprintf("Container start failed: %v", err)
@@ -1294,11 +1306,11 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						ecsProcessHandles.Delete(taskID)
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
-							if t.LastStatus == "STOPPED" {
+							if t.LastStatus == ECSTaskStatusStopped {
 								return // already stopped
 							}
-							t.LastStatus = "STOPPED"
-							t.DesiredStatus = "STOPPED"
+							t.LastStatus = ECSTaskStatusStopped
+							t.DesiredStatus = ECSTaskStatusStopped
 							t.StoppedAt = &stoppedAt
 							t.StopCode = "EssentialContainerExited"
 							t.StoppedReason = "Essential container in task exited"
@@ -1638,7 +1650,7 @@ func ecsTaskContainerMetadata(taskID string, task ECSTask, td ECSTaskDefinition,
 					return c.LastStatus
 				}
 			}
-			return task.LastStatus
+			return string(task.LastStatus)
 		}(),
 	}
 	if td.Cpu != "" || td.Memory != "" {
@@ -1813,8 +1825,8 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().Unix()
 	found := ecsTasks.Update(taskID, func(t *ECSTask) {
-		t.DesiredStatus = "STOPPED"
-		t.LastStatus = "STOPPED"
+		t.DesiredStatus = ECSTaskStatusStopped
+		t.LastStatus = ECSTaskStatusStopped
 		t.StoppedAt = &now
 		t.StopCode = "UserInitiated"
 		if req.Reason != "" {
@@ -1880,7 +1892,7 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 				return false
 			}
 		}
-		if req.DesiredStatus != "" && t.DesiredStatus != req.DesiredStatus {
+		if req.DesiredStatus != "" && string(t.DesiredStatus) != req.DesiredStatus {
 			return false
 		}
 		return true
@@ -1970,7 +1982,7 @@ func handleECSTagResource(w http.ResponseWriter, r *http.Request) {
 			sim.AWSError(w, "ClusterNotFoundException", "task not found: "+req.ResourceArn, http.StatusBadRequest)
 			return
 		}
-		if task.LastStatus == "STOPPED" || task.LastStatus == "DEPROVISIONING" {
+		if task.LastStatus == ECSTaskStatusStopped || task.LastStatus == ECSTaskStatusDeprovisioning {
 			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
 				"The specified task is not in a state to be tagged: %s", task.LastStatus)
 			return
@@ -2064,7 +2076,7 @@ func handleECSUntagResource(w http.ResponseWriter, r *http.Request) {
 			sim.AWSError(w, "ClusterNotFoundException", "task not found", http.StatusBadRequest)
 			return
 		}
-		if task.LastStatus == "STOPPED" || task.LastStatus == "DEPROVISIONING" {
+		if task.LastStatus == ECSTaskStatusStopped || task.LastStatus == ECSTaskStatusDeprovisioning {
 			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
 				"The specified task is not in a state to be tagged: %s", task.LastStatus)
 			return
@@ -2318,7 +2330,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 				"Task not found: %s", req.Task)
 			return
 		}
-		if task.LastStatus != "RUNNING" {
+		if task.LastStatus != ECSTaskStatusRunning {
 			sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
 				"Execute command is not supported on task in %s status", task.LastStatus)
 			return

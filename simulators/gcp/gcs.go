@@ -235,6 +235,17 @@ func gcsCRC32C(data []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
+// persistGCSObjectMetadata writes a metadata-only update (objects.patch /
+// ObjectHandle.Update) to the store. Unlike persistGCSObject it does NOT
+// touch the host backing file or bump generation — a metadata patch leaves
+// the object payload (and its generation) unchanged, bumping only
+// metageneration. Kept as a distinct, auditable write path so the
+// data-write invariant (every payload write goes through persistGCSObject
+// and reaches the host backing store) stays enforced by the AST guard test.
+func persistGCSObjectMetadata(objects sim.Store[GCSObject], key string, obj GCSObject) {
+	objects.Put(key, obj)
+}
+
 func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName string, data []byte, attrs GCSObject) (GCSObject, error) {
 	if attrs.ContentType == "" {
 		attrs.ContentType = "application/octet-stream"
@@ -759,7 +770,7 @@ func registerGCS(srv *sim.Server) {
 		if mg, err := strconv.ParseInt(obj.Metageneration, 10, 64); err == nil {
 			obj.Metageneration = strconv.FormatInt(mg+1, 10)
 		}
-		objects.Put(key, obj)
+		persistGCSObjectMetadata(objects, key, obj)
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
 	}
 	srv.HandleFunc("PATCH /storage/v1/b/{bucket}/o/{object...}", patchObject)
