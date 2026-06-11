@@ -416,16 +416,26 @@ jobs:
       - name: Run terraform tests
         run: |
           cd simulators/${{ matrix.cloud }}
+          export SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-tf-spec-violations.jsonl"
+          export SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}"
           if [ "${{ matrix.cloud }}" = "aws" ]; then
-            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+              SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
+              make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
           elif [ "${{ matrix.cloud }}" = "azure" ]; then
-            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-test TERRAFORM_TEST_TIMEOUT=600s
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+              SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
+              make terraform-test TERRAFORM_TEST_TIMEOUT=600s
           else
-            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+              SOCKERLESS_SPEC_VALIDATE="$SOCKERLESS_SPEC_VALIDATE" SOCKERLESS_SPEC_DIR="$SOCKERLESS_SPEC_DIR" \
+              make terraform-https-test
           fi
         # Must exceed the inner go-test deadline (TERRAFORM_TEST_TIMEOUT, 600s)
         # plus docker startup so the step never beats the test's own watchdog.
         timeout-minutes: 12
+      - name: Spec-shape ratchet (tf)
+        run: bash scripts/check-spec-violations.sh ${{ matrix.cloud }} "$RUNNER_TEMP/${{ matrix.cloud }}-tf-spec-violations.jsonl"
         env:
           GOWORK: "off"
 

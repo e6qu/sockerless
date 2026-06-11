@@ -38,8 +38,13 @@ Discovery documents, Azure Swagger; pinned + provenance-tracked):
    The knative surface now lives at the real
    `/apis/serving.knative.dev/v1/...` paths and postgres-flexible speaks
    the real 202+Azure-AsyncOperation LRO.
-4. **Next**: arm `SOCKERLESS_SPEC_VALIDATE` on the terraform-test CI jobs
-   (needs one armed dry-run per cloud first).
+4. **Armed everywhere (done — `feat/launch-hygiene`)**: the terraform CI
+   jobs run with `SOCKERLESS_SPEC_VALIDATE` + ratchet steps, and the AWS
+   validator covers the XML protocols (awsQuery/ec2Query/restXml). Every
+   test surface that drives a simulator now shape-validates its traffic.
+5. **Next candidates**: versioned releases + GHCR images (issue #363,
+   launch-gating for external users) and the live-cloud cells (BUG-1075 —
+   only Lambda is live-proven; decide launch labeling vs validation).
 
 Branch `feat/sim-spec-conformance`; see [STATUS.md](STATUS.md) for the
 snapshot and [BUGS.md](BUGS.md) for per-bug detail.

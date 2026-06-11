@@ -156,7 +156,21 @@ func handleSFNDescribeStateMachine(w http.ResponseWriter, r *http.Request) {
 		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+req.StateMachineArn)
 		return
 	}
-	sfnWriteJSON(w, http.StatusOK, sm)
+	sfnWriteJSON(w, http.StatusOK, sfnStateMachineWire{sm})
+}
+
+// sfnStateMachineWire strips store-only members from state-machine
+// responses: DescribeStateMachineOutput has no tags member — tags ride
+// ListTagsForResource, which reads them from the store.
+type sfnStateMachineWire struct {
+	SFNStateMachine
+}
+
+func (s sfnStateMachineWire) MarshalJSON() ([]byte, error) {
+	type alias SFNStateMachine
+	clean := alias(s.SFNStateMachine)
+	clean.Tags = nil
+	return json.Marshal(clean)
 }
 
 func handleSFNListStateMachines(w http.ResponseWriter, r *http.Request) {

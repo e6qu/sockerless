@@ -48,8 +48,11 @@ Two layers, both hermetic (CI never downloads specs):
    appends violations to the report. The simulator test suites run with
    validation armed; [`scripts/check-spec-violations.sh`](../../scripts/check-spec-violations.sh)
    then fails on any violation not in
-   `simulators/<cloud>/spec-violation-allowlist.txt`. Every allowlist
-   entry carries a BUG ID — the list only shrinks.
+   `simulators/<cloud>/spec-violation-allowlist.txt`. The allowlist only
+   shrinks: burn-down entries must carry a BUG ID, and the burn-down is
+   complete — AWS and Azure ship no allowlist, and GCP's carries only
+   two permanent, documented modeling exemptions (Firestore REST
+   server-streaming responses).
 
 ## Refreshing a spec
 

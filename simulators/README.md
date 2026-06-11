@@ -168,16 +168,20 @@ Discovery documents, Azure Swagger):
   `SOCKERLESS_SPEC_DIR=specs/cloud-api/<cloud>`): responses are checked
   member-by-member against the spec's output shapes while the SDK/CLI
   suites run; `scripts/check-spec-violations.sh` gates the report against
-  `simulators/<cloud>/spec-violation-allowlist.txt` (every entry a filed
-  BUG; the list only shrinks).
+  `simulators/<cloud>/spec-violation-allowlist.txt`. The allowlist only
+  shrinks: the bug burn-down is complete — AWS and Azure ship no
+  allowlist at all, and GCP's carries only two permanent, documented
+  modeling exemptions (Firestore REST server-streaming responses, which
+  are JSON arrays of stream elements on the real wire too). Any new
+  violation fails CI until the simulator is fixed.
 
 ### Test counts (approximate)
 
-| Cloud | SDK tests | CLI tests | Bash tests | Terraform tests |
+| Cloud | SDK test funcs | CLI test funcs | Bash checks | Terraform test funcs |
 |---|---|---|---|---|
-| AWS | 46 | 26 | 61 | `TestStackProductionShape` ≈ 90s end-to-end |
-| GCP | 36 | 21 | 33 | ≈ 5s apply/destroy |
-| Azure | 48 | 19 | 42 | ≈ 1s apply/destroy (TLS; macOS delegates to Docker) |
+| AWS | ≈ 370 | ≈ 170 | ≈ 40 | 9 (incl. `TestStackProductionShape`, ≈ 90s end-to-end) |
+| GCP | ≈ 190 | ≈ 50 | ≈ 34 | 4 |
+| Azure | ≈ 180 | ≈ 55 | ≈ 42 | 1 (TLS; macOS delegates to Docker) |
 
 ## Shared framework
 
