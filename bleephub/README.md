@@ -28,32 +28,88 @@ The audit artifact mapping bleephub's coverage to GitHub-real shapes (per-route 
 cd ui/packages/bleephub && bun install && bun run build      # → ui/packages/bleephub/dist/
 cd ../../../bleephub && make build                           # → ./bleephub-server (embeds dist/)
 
-# 2. Generate + trust a localhost TLS cert (gh requires HTTPS)
-openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
-  -keyout /tmp/bph.key -out /tmp/bph.crt \
-  -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-# macOS — trust the cert system-wide:
-sudo security add-trusted-cert -d -r trustRoot \
-  -k /Library/Keychains/System.keychain /tmp/bph.crt
-# Linux (Debian/Ubuntu):
-# sudo cp /tmp/bph.crt /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates
+# 2. Generate + trust a localhost TLS cert (gh requires HTTPS). Idempotent —
+#    safe to re-run any time; it only mints a new cert when none exists or the
+#    current one is within a day of expiry, and only touches the keychain when
+#    the cert isn't already trusted. Certs live under ~/.sockerless (durable),
+#    NOT /tmp — /tmp is purged on reboot, and a purged cert leaves orphaned
+#    trust in the keychain while the server can no longer start.
+BPH_TLS_DIR="$HOME/.sockerless/bleephub-tls"
+mkdir -p "$BPH_TLS_DIR"
+if ! openssl x509 -checkend 86400 -noout -in "$BPH_TLS_DIR/bph.crt" 2>/dev/null; then
+  openssl req -x509 -newkey rsa:2048 -days 825 -nodes \
+    -keyout "$BPH_TLS_DIR/bph.key" -out "$BPH_TLS_DIR/bph.crt" \
+    -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+fi
+# macOS — trust the cert in the system keychain. REQUIRED on macOS: gh is a
+# Go binary and Go on darwin reads trust ONLY from the keychain — the
+# SSL_CERT_FILE / SSL_CERT_DIR env vars are ignored there.
+if ! security verify-cert -c "$BPH_TLS_DIR/bph.crt" -p ssl -s localhost >/dev/null 2>&1; then
+  sudo security add-trusted-cert -d -r trustRoot \
+    -k /Library/Keychains/System.keychain "$BPH_TLS_DIR/bph.crt"
+fi
+# Linux (Debian/Ubuntu) — instead of the security commands:
+# sudo cp "$BPH_TLS_DIR/bph.crt" /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates
 
-# 3. Start bleephub on :443 with TLS  (use :8443 + --hostname localhost:8443 below if you prefer no sudo)
+# 3. Start bleephub on :8443 with TLS (no sudo needed — :8443 doesn't require root).
 #    BLEEPHUB_ADMIN_TOKEN is required — there is no default; pick any non-PAT-shaped value.
-sudo BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
-  BPH_TLS_CERT=/tmp/bph.crt BPH_TLS_KEY=/tmp/bph.key \
-  ./bleephub-server --addr :443 &
+BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
+  BPH_TLS_CERT="$BPH_TLS_DIR/bph.crt" BPH_TLS_KEY="$BPH_TLS_DIR/bph.key" \
+  ./bleephub-server --addr :8443 &
 
-# 4. Point gh at bleephub — --hostname is the key flag; the token is whatever you set above
-echo "bleephub-admin-token-00000000000000000000" \
-  | gh auth login --hostname localhost --with-token
-export GH_HOST=localhost                                     # make it the default host
+# 4. Point gh at bleephub via environment. Current gh rejects host:port in
+#    `gh auth login --hostname` ("error parsing hostname"), but GH_HOST
+#    accepts a port at runtime — pair it with GH_ENTERPRISE_TOKEN and the
+#    login step disappears entirely. (GH_ENTERPRISE_TOKEN, not GH_TOKEN:
+#    gh reads GH_TOKEN only for github.com; every other host reads
+#    GH_ENTERPRISE_TOKEN.)
+export GH_HOST=localhost:8443
+export GH_ENTERPRISE_TOKEN="bleephub-admin-token-00000000000000000000"
 
 # 5. Use real gh verbs against bleephub
 gh repo create demo --public
 gh issue create --repo admin/demo --title "first" --body "hi"
 gh issue list --repo admin/demo
 gh release create v1.0.0 --repo admin/demo --title "v1"
+```
+
+To bind the real `:443` instead (lets you use `gh auth login --hostname localhost`
+and a persistent `~/.config/gh/hosts.yml` entry, since the no-port hostname is
+the only shape `gh auth login` accepts): run step 3 with `--addr :443` under
+`sudo`, in its own foreground terminal — `sudo … &` backgrounds the process
+before the password prompt, so the server never actually starts and the next
+`gh` call fails with `connection refused` on 443.
+
+### Teardown
+
+Removes everything the quick start created, including the keychain trust.
+Safe to run in any state — each step tolerates the artifact already being
+gone (so a half-cleaned setup, e.g. after a /tmp-era cert purge, still
+tears down fully):
+
+```bash
+BPH_TLS_DIR="$HOME/.sockerless/bleephub-tls"
+
+# 1. Stop the server.
+pkill -f 'bleephub-server --addr' 2>/dev/null
+
+# 2. Remove the keychain trust (macOS). Deleting by SHA-1 fingerprint removes
+#    exactly this cert; if the cert file is already gone, list any leftover
+#    localhost entries and delete by the hash shown.
+if [ -f "$BPH_TLS_DIR/bph.crt" ]; then
+  sudo security delete-certificate \
+    -Z "$(openssl x509 -in "$BPH_TLS_DIR/bph.crt" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)" \
+    /Library/Keychains/System.keychain
+else
+  security find-certificate -a -c localhost -Z /Library/Keychains/System.keychain | grep "SHA-1"
+  # → sudo security delete-certificate -Z <HASH> /Library/Keychains/System.keychain
+fi
+# Linux: sudo rm -f /usr/local/share/ca-certificates/bleephub.crt && sudo update-ca-certificates --fresh
+
+# 3. Remove the cert material and the gh wiring.
+rm -rf "$BPH_TLS_DIR"
+unset GH_HOST GH_ENTERPRISE_TOKEN
+gh auth logout --hostname localhost 2>/dev/null   # only if you used the :443 login flow
 ```
 
 For an end-to-end smoke that wraps all five steps inside Docker (TLS, CA trust, gh CLI, harness) run [`make bleephub-gh-docker-test`](#integration-tests). For the full walkthrough — supported `gh` commands, endpoints without native verbs, token prefixes, body coercion, troubleshooting — see [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md).

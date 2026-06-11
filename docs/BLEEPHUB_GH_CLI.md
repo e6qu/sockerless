@@ -13,33 +13,41 @@ bleephub speaks the same REST + GraphQL surface as GitHub Enterprise Server (`/a
 
 So when you run `gh auth login --hostname localhost --with-token`, `gh` writes a record to `~/.config/gh/hosts.yml` under the key `localhost` and from that point on builds every API call as `https://localhost/api/v3/...`. bleephub serves both `/api/v3/` and `/api/graphql` — that's the entire wiring story.
 
-Two consequences:
+Three consequences:
 
-- **`gh` is HTTPS-only against any non-`github.com` host.** Plain HTTP on `:5555` will not work with `gh auth login`. Run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` (the Docker harness does this; bare-metal recipe in [`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)).
-- **Use `host:port` in `--hostname` if you can't bind to 443.** `gh auth login --hostname localhost:8443 --with-token` and `export GH_HOST=localhost:8443` both work — `gh` keys the hosts.yml entry by the full `host:port` string and derives `https://localhost:8443/api/v3/...`.
+- **`gh` is HTTPS-only against any non-`github.com` host.** Plain HTTP on `:5555` will not work. Run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` (the Docker harness does this; bare-metal recipe in [`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)).
+- **`gh auth login --hostname` accepts a bare hostname only.** Current `gh` (verified on 2.92.0) rejects `host:port` with `error parsing hostname: invalid hostname`, so the login flow requires bleephub on `:443`. If you can't (or don't want to) bind 443, skip `gh auth login` entirely: `export GH_HOST=localhost:8443` + `export GH_ENTERPRISE_TOKEN=<token>` — the runtime accepts a port in `GH_HOST` and the env token replaces the hosts.yml entry. The variable must be `GH_ENTERPRISE_TOKEN`: gh reads `GH_TOKEN` only for `github.com`, and sends nothing to other hosts when only `GH_TOKEN` is set (bleephub answers `401 Bad credentials`).
+- **macOS trust comes only from the keychain.** `gh` is a Go binary, and Go on darwin ignores `SSL_CERT_FILE`/`SSL_CERT_DIR` — the self-signed cert MUST be added to the system keychain (`sudo security add-trusted-cert …`, see the quick start). On Linux the usual CA-store mechanisms work.
 
 ## One-time auth
 
 ```bash
-# Pick the host:port string that matches how bleephub is listening.
-# :443 needs root to bind; :8443 (or any other) is fine for dev.
-export BLEEPHUB_HOST=localhost:8443     # or just `localhost` if you used :443
-
 # The admin user's token is whatever BLEEPHUB_ADMIN_TOKEN was set to when
 # bleephub started (required, no default — see bleephub/README.md § Usage).
 # The Docker harnesses use this value:
 TOKEN="bleephub-admin-token-00000000000000000000"
 
-# Register bleephub as a GHES host — --hostname is THE key flag here.
-echo "$TOKEN" | gh auth login --hostname "$BLEEPHUB_HOST" --with-token
+# Option A — bleephub on any port (e.g. :8443), no gh auth login needed.
+# GH_HOST accepts host:port at runtime; GH_ENTERPRISE_TOKEN is the env
+# credential gh uses for every non-github.com host (GH_TOKEN is
+# github.com-only and is silently ignored here).
+export GH_HOST=localhost:8443
+export GH_ENTERPRISE_TOKEN="$TOKEN"
 
-# Make it the default host so you don't have to pass --hostname on every call.
-export GH_HOST="$BLEEPHUB_HOST"
+# Option B — bleephub on :443: the bare hostname passes gh auth login's
+# validator, giving you a persistent ~/.config/gh/hosts.yml entry.
+echo "$TOKEN" | gh auth login --hostname localhost --with-token
+export GH_HOST=localhost
 ```
 
 Other tokens (OAuth user, installation server-to-server) can be minted via the OAuth flow or the real GitHub endpoint `POST /api/v3/app/installations/{installation_id}/access_tokens` (JWT-authenticated) — use the resulting token in place of `$TOKEN` on the `gh auth login` line.
 
 That's it. `gh` is now authenticated against bleephub.
+
+Setup and full teardown (server, cert material, keychain trust, gh wiring) are
+idempotent shell blocks in the quick start — see
+[`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)
+and its **Teardown** section.
 
 ## Supported commands
 
