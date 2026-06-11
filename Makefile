@@ -204,22 +204,22 @@ check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off
 # sim + backend + a tiny workload inside the container and asserts
 # the round-trip. Kept inline at the top level because the recipes
 # are short and don't share state with any per-app Makefile.
-.PHONY: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca smoke-test-act-all
+.PHONY: smoke-test-ecs smoke-test-cloudrun smoke-test-aca smoke-test-all
 .PHONY: smoke-test-gitlab smoke-test-gitlab-ecs smoke-test-gitlab-cloudrun smoke-test-gitlab-aca smoke-test-gitlab-all
 
-smoke-test-act:
-	docker build -t sockerless-smoke-act -f smoke-tests/act/Dockerfile.ecs .
-	docker run --rm sockerless-smoke-act
-smoke-test-act-ecs:
-	docker build -t sockerless-smoke-act-ecs -f smoke-tests/act/Dockerfile.ecs .
-	docker run --rm sockerless-smoke-act-ecs
-smoke-test-act-cloudrun:
-	docker build -t sockerless-smoke-act-cloudrun -f smoke-tests/act/Dockerfile.cloudrun .
-	docker run --rm sockerless-smoke-act-cloudrun
-smoke-test-act-aca:
-	docker build -t sockerless-smoke-act-aca -f smoke-tests/act/Dockerfile.aca .
-	docker run --rm sockerless-smoke-act-aca
-smoke-test-act-all: smoke-test-act smoke-test-act-ecs smoke-test-act-cloudrun smoke-test-act-aca
+# Same build + run shape as the `smoke` job in .github/workflows/ci.yml.
+# The host Docker socket mount is required: the simulator executes
+# workloads on the host daemon.
+smoke-test-ecs:
+	docker build -t sockerless-smoke-ecs -f smoke-tests/Dockerfile.ecs .
+	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-ecs
+smoke-test-cloudrun:
+	docker build -t sockerless-smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
+	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-cloudrun
+smoke-test-aca:
+	docker build -t sockerless-smoke-aca -f smoke-tests/Dockerfile.aca .
+	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-aca
+smoke-test-all: smoke-test-ecs smoke-test-cloudrun smoke-test-aca
 
 smoke-test-gitlab:
 	cd smoke-tests/gitlab && docker compose down -v 2>/dev/null; BACKEND=ecs docker compose up --build --abort-on-container-exit --exit-code-from orchestrator

@@ -475,7 +475,7 @@ make tests/test-integration       # Go e2e harness with simulator env
 
 # Smoke (Docker-in-Docker):
 make faas-smoke-test-all          # Go-package FaaS runner lifecycle smokes
-make smoke-test-act-ecs           # GitHub Actions (act) → ECS via sim
+make smoke-test-ecs               # Docker CLI round-trip → ECS via sim
 make smoke-test-gitlab-ecs        # GitLab Runner → ECS via sim
 ```
 
@@ -534,7 +534,8 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 
 | Document | Description |
 |----------|-------------|
-| [`specs/`](specs/) | Specifications: [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md) |
+| [`specs/README.md`](specs/README.md) | **Specification index** — [main spec](specs/SOCKERLESS_SPEC.md), [config](specs/CONFIG.md), [backends](specs/BACKENDS.md), [drivers](specs/DRIVERS.md), [API](specs/API_SURFACE.md), [images](specs/IMAGE_MANAGEMENT.md), [sim surface tables](specs/SIM_SURFACE_TABLES/) |
+| [`docs/README.md`](docs/README.md) | **Topic-guide index** — CI runners, build infrastructure, design notes, research references |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | System architecture, component diagrams, test architecture |
 | [`terraform/README.md`](terraform/README.md) | Terraform modules, state backends, and CI/CD deployment |
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
@@ -550,3 +551,8 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
 | [`manual-tests/`](manual-tests/) | Per-cloud live-infra manual test runbooks |
 | [`STATUS.md`](STATUS.md) | Project status and phase history |
+| [`ui/README.md`](ui/README.md) | UI monorepo: packages, build pipeline, design system (per-package READMEs under [`ui/packages/`](ui/packages/)) |
+| [`scripts/README.md`](scripts/README.md) | Index of repo scripts: CI guards, code-quality scans, maintenance helpers |
+| [`tools/README.md`](tools/README.md) | Standalone Go tools (backend coverage checker, HTTP trace) |
+| [`make/README.md`](make/README.md) | Shared make infrastructure map (see [`docs/MAKEFILE_STANDARD.md`](docs/MAKEFILE_STANDARD.md) for the spec) |
+| [`smoke-tests/README.md`](smoke-tests/README.md) | Docker-in-Docker smoke harness for act + gitlab-runner |

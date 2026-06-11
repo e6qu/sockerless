@@ -7,7 +7,7 @@ export default defineConfig({
   base: "/ui/",
   server: {
     proxy: {
-      "/internal": "http://localhost:9107",
+      "/internal": "http://localhost:3375",
     },
   },
 });

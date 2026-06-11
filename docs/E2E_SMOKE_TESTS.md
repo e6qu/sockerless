@@ -72,14 +72,19 @@ with `container: golang:1.25-alpine`, checks out this repo, runs
 `go test -count=1 ./simulators/testdata/eval-arithmetic`, and verifies
 `go run ./simulators/testdata/eval-arithmetic '(10 + 5) * 2'` returns `30`.
 
-The older `smoke-test-act-*` targets run the act-based smoke harness:
+The `smoke-test-*` targets run the Docker-CLI round-trip smoke images from
+[`smoke-tests/`](../smoke-tests/README.md) — the same build + run shape as the
+`smoke` job in CI:
 
 ```bash
-make smoke-test-act-ecs
-make smoke-test-act-cloudrun
-make smoke-test-act-aca
-make smoke-test-act-all
+make smoke-test-ecs
+make smoke-test-cloudrun
+make smoke-test-aca
+make smoke-test-all
 ```
+
+For act-based runs against the simulator backends, use the upstream harness
+under `tests/upstream/act/` (`make upstream-test-act-{ecs,lambda,cloudrun,gcf,aca,azf,all}`).
 
 ## GitLab runner smokes
 
