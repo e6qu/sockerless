@@ -16,7 +16,7 @@ So when you run `gh auth login --hostname localhost --with-token`, `gh` writes a
 Three consequences:
 
 - **`gh` is HTTPS-only against any non-`github.com` host.** Plain HTTP on `:5555` will not work. Run bleephub with `BPH_TLS_CERT` + `BPH_TLS_KEY` (the Docker harness does this; bare-metal recipe in [`bleephub/README.md`](../bleephub/README.md#quick-start--bleephub--gh-cli-in-5-steps)).
-- **`gh auth login --hostname` accepts a bare hostname only.** Current `gh` (verified on 2.92.0) rejects `host:port` with `error parsing hostname: invalid hostname`, so the login flow requires bleephub on `:443`. If you can't (or don't want to) bind 443, skip `gh auth login` entirely: `export GH_HOST=localhost:8443` + `export GH_TOKEN=<token>` — the runtime accepts a port in `GH_HOST` and the env token replaces the hosts.yml entry.
+- **`gh auth login --hostname` accepts a bare hostname only.** Current `gh` (verified on 2.92.0) rejects `host:port` with `error parsing hostname: invalid hostname`, so the login flow requires bleephub on `:443`. If you can't (or don't want to) bind 443, skip `gh auth login` entirely: `export GH_HOST=localhost:8443` + `export GH_ENTERPRISE_TOKEN=<token>` — the runtime accepts a port in `GH_HOST` and the env token replaces the hosts.yml entry. The variable must be `GH_ENTERPRISE_TOKEN`: gh reads `GH_TOKEN` only for `github.com`, and sends nothing to other hosts when only `GH_TOKEN` is set (bleephub answers `401 Bad credentials`).
 - **macOS trust comes only from the keychain.** `gh` is a Go binary, and Go on darwin ignores `SSL_CERT_FILE`/`SSL_CERT_DIR` — the self-signed cert MUST be added to the system keychain (`sudo security add-trusted-cert …`, see the quick start). On Linux the usual CA-store mechanisms work.
 
 ## One-time auth
@@ -28,10 +28,11 @@ Three consequences:
 TOKEN="bleephub-admin-token-00000000000000000000"
 
 # Option A — bleephub on any port (e.g. :8443), no gh auth login needed.
-# GH_HOST accepts host:port at runtime; GH_TOKEN replaces the hosts.yml
-# credential. This is also what the Docker harness relies on.
+# GH_HOST accepts host:port at runtime; GH_ENTERPRISE_TOKEN is the env
+# credential gh uses for every non-github.com host (GH_TOKEN is
+# github.com-only and is silently ignored here).
 export GH_HOST=localhost:8443
-export GH_TOKEN="$TOKEN"
+export GH_ENTERPRISE_TOKEN="$TOKEN"
 
 # Option B — bleephub on :443: the bare hostname passes gh auth login's
 # validator, giving you a persistent ~/.config/gh/hosts.yml entry.

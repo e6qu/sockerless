@@ -47,10 +47,13 @@ BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000" \
   ./bleephub-server --addr :8443 &
 
 # 4. Point gh at bleephub via environment. Current gh rejects host:port in
-#    `gh auth login --hostname` ("error parsing hostname"), but GH_HOST +
-#    GH_TOKEN accept a port and skip the login step entirely.
+#    `gh auth login --hostname` ("error parsing hostname"), but GH_HOST
+#    accepts a port at runtime — pair it with GH_ENTERPRISE_TOKEN and the
+#    login step disappears entirely. (GH_ENTERPRISE_TOKEN, not GH_TOKEN:
+#    gh reads GH_TOKEN only for github.com; every other host reads
+#    GH_ENTERPRISE_TOKEN.)
 export GH_HOST=localhost:8443
-export GH_TOKEN="bleephub-admin-token-00000000000000000000"
+export GH_ENTERPRISE_TOKEN="bleephub-admin-token-00000000000000000000"
 
 # 5. Use real gh verbs against bleephub
 gh repo create demo --public
