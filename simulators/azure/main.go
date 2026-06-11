@@ -50,9 +50,43 @@ func main() {
 	defer func() { _ = obs.Shutdown(context.Background()) }()
 	cfg.LogWriter = obs.LogWriter
 
-	srv, err := sim.NewServer(cfg)
+	srv, err := buildSimulator(cfg)
 	if err != nil {
 		log.Fatalf("simulator startup: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if addr, enabled, err := startAzureDNSFromEnv(ctx); err != nil {
+		log.Fatal(err)
+	} else if enabled {
+		log.Printf("Azure simulator DNS listening on %s", addr)
+	}
+	if amqpAddr := os.Getenv("SIM_SERVICEBUS_AMQP_LISTEN_ADDR"); amqpAddr != "" {
+		certFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_CERT", cfg.TLSCert)
+		keyFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_KEY", cfg.TLSKey)
+		ln, err := startSBAMQPTLSListener(ctx, amqpAddr, certFile, keyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+		log.Printf("Service Bus raw AMQP/TLS listening on %s", ln.Addr())
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// buildSimulator constructs the simulator server, applies the ARM
+// middleware chain, and registers every simulated Azure service. Split
+// from main so the spec-conformance tests can build the full route
+// table in-process and validate it against the vendored Swagger specs
+// (specs/cloud-api/azure/).
+func buildSimulator(cfg sim.Config) (*sim.Server, error) {
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// ARM request validation runs after path cleanup and after auth discovery
@@ -119,27 +153,7 @@ func main() {
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if addr, enabled, err := startAzureDNSFromEnv(ctx); err != nil {
-		log.Fatal(err)
-	} else if enabled {
-		log.Printf("Azure simulator DNS listening on %s", addr)
-	}
-	if amqpAddr := os.Getenv("SIM_SERVICEBUS_AMQP_LISTEN_ADDR"); amqpAddr != "" {
-		certFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_CERT", cfg.TLSCert)
-		keyFile := envOrDefault("SIM_SERVICEBUS_AMQP_TLS_KEY", cfg.TLSKey)
-		ln, err := startSBAMQPTLSListener(ctx, amqpAddr, certFile, keyFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer func() { _ = ln.Close() }()
-		log.Printf("Service Bus raw AMQP/TLS listening on %s", ln.Addr())
-	}
-
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	return srv, nil
 }
 
 func envOrDefault(key, fallback string) string {

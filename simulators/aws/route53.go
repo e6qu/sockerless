@@ -302,7 +302,7 @@ func registerRoute53(srv *sim.Server) {
 	r53Zones = sim.MakeStore[r53StoredZone](srv.DB(), "route53_zones")
 	r53Changes = sim.MakeStore[r53StoredChange](srv.DB(), "route53_changes")
 
-	mux := srv.Mux()
+	mux := srv
 	hostedZoneResource := cloudTrailRESTResource("AWS::Route53::HostedZone", "id", "resourceId")
 	changeResource := cloudTrailRESTResource("AWS::Route53::Change", "id")
 	mux.HandleFunc("POST /"+r53APIVersion+"/hostedzone", cloudTrailRecordedREST("CreateHostedZone", "route53.amazonaws.com", nil, handleR53CreateHostedZone))

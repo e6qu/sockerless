@@ -137,7 +137,7 @@ func registerEFS(srv *sim.Server) {
 	efsAccessPoints = sim.MakeStore[EFSAccessPoint](srv.DB(), "efs_access_points")
 	efsLifecyclePolicies = sim.MakeStore[[]EFSLifecyclePolicy](srv.DB(), "efs_lifecycle_policies")
 
-	mux := srv.Mux()
+	mux := srv
 
 	fsResource := cloudTrailRESTResource("AWS::EFS::FileSystem", "id")
 	mtResource := cloudTrailRESTResource("AWS::EFS::MountTarget", "id")

@@ -90,7 +90,7 @@ func registerS3(srv *sim.Server) {
 	s3Buckets_ = sim.MakeStore[S3Bucket](srv.DB(), "s3_buckets")
 	s3Objects = sim.MakeStore[S3Object](srv.DB(), "s3_objects")
 
-	mux := srv.Mux()
+	mux := srv
 
 	// S3 uses path-style URLs at the root of the endpoint:
 	//   GET    /                       ListBuckets

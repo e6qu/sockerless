@@ -85,7 +85,7 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	apigwv2Stages = sim.MakeStore[APIGWv2Stage](srv.DB(), "apigwv2_stages")
 	apigwv2Deployments = sim.MakeStore[APIGWv2Deployment](srv.DB(), "apigwv2_deployments")
 
-	mux := srv.Mux()
+	mux := srv
 	apiResource := cloudTrailRESTResource("AWS::ApiGatewayV2::Api", "apiId")
 	mux.HandleFunc("POST /v2/apis", cloudTrailRecordedREST("CreateApi", "apigateway.amazonaws.com", nil, handleAPIGWv2CreateApi))
 	mux.HandleFunc("GET /v2/apis", cloudTrailRecordedREST("GetApis", "apigateway.amazonaws.com", nil, handleAPIGWv2ListApis))

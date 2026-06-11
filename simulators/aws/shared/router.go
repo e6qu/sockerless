@@ -27,6 +27,17 @@ func (r *AWSRouter) Register(target string, handler http.HandlerFunc) {
 	r.handlers[target] = handler
 }
 
+// Targets returns every registered X-Amz-Target value. The
+// spec-conformance tests validate this table against the vendored
+// Smithy models (specs/cloud-api/aws/).
+func (r *AWSRouter) Targets() []string {
+	targets := make([]string, 0, len(r.handlers))
+	for t := range r.handlers {
+		targets = append(targets, t)
+	}
+	return targets
+}
+
 // ServeHTTP dispatches to the handler matching the X-Amz-Target header.
 func (r *AWSRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	target := req.Header.Get("X-Amz-Target")
@@ -150,6 +161,20 @@ func (r *AWSQueryRouter) RegisterVersioned(version, action string, handler http.
 		r.versioned[version] = make(map[string]http.HandlerFunc)
 	}
 	r.versioned[version][action] = handler
+}
+
+// VersionedActions returns every registered (version, action) pair;
+// actions registered through the legacy Register form appear under
+// the empty-string version. The spec-conformance tests validate this
+// table against the vendored Smithy models (specs/cloud-api/aws/).
+func (r *AWSQueryRouter) VersionedActions() map[string][]string {
+	out := make(map[string][]string, len(r.versioned))
+	for version, actions := range r.versioned {
+		for action := range actions {
+			out[version] = append(out[version], action)
+		}
+	}
+	return out
 }
 
 // ServeHTTP dispatches by (Version, Action). When Version is set

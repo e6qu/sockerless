@@ -224,7 +224,7 @@ func registerAmplify(srv *sim.Server) {
 	amplifyJobs = sim.MakeStore[amplifyStoredJob](srv.DB(), "amplify_jobs")
 	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](srv.DB(), "amplify_artifacts")
 
-	mux := srv.Mux()
+	mux := srv
 	appResource := cloudTrailRESTResource("AWS::Amplify::App", "appId", "arn")
 	branchResource := cloudTrailRESTResource("AWS::Amplify::Branch", "name", "arn")
 	webhookResource := cloudTrailRESTResource("AWS::Amplify::Webhook", "webhookId")

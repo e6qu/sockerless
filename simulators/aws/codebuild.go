@@ -76,9 +76,6 @@ func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CodeBuild_20161006.BatchGetBuilds", handleCBBatchGetBuilds)
 	r.Register("CodeBuild_20161006.ListBuildsForProject", handleCBListBuildsForProject)
 	r.Register("CodeBuild_20161006.ListBuilds", handleCBListBuilds)
-	r.Register("CodeBuild_20161006.TagResource", handleCBTagResource)
-	r.Register("CodeBuild_20161006.UntagResource", handleCBUntagResource)
-	r.Register("CodeBuild_20161006.ListTagsForResource", handleCBListTagsForResource)
 }
 
 func cbARN(resource string) string {
@@ -479,84 +476,6 @@ func handleCBListBuilds(w http.ResponseWriter, r *http.Request) {
 	cbWriteJSON(w, http.StatusOK, resp)
 }
 
-func handleCBTagResource(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ResourceArn string  `json:"resourceArn"`
-		Tags        []CBTag `json:"tags"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		cbWriteError(w, "InvalidInputException", "invalid JSON")
-		return
-	}
-
-	cbMu.Lock()
-	defer cbMu.Unlock()
-
-	name := cbNameFromARN(req.ResourceArn)
-	p, ok := cbProjects.Get(name)
-	if !ok {
-		cbWriteError(w, "ResourceNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
-	}
-	tagMap := cbTagsToMap(p.Tags)
-	for _, t := range req.Tags {
-		tagMap[t.Key] = t.Value
-	}
-	p.Tags = cbMapToTags(tagMap)
-	cbProjects.Put(name, p)
-	cbWriteJSON(w, http.StatusOK, map[string]any{})
-}
-
-func handleCBUntagResource(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ResourceArn string   `json:"resourceArn"`
-		TagKeys     []string `json:"tagKeys"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		cbWriteError(w, "InvalidInputException", "invalid JSON")
-		return
-	}
-
-	cbMu.Lock()
-	defer cbMu.Unlock()
-
-	name := cbNameFromARN(req.ResourceArn)
-	p, ok := cbProjects.Get(name)
-	if !ok {
-		cbWriteError(w, "ResourceNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
-	}
-	tagMap := cbTagsToMap(p.Tags)
-	for _, k := range req.TagKeys {
-		delete(tagMap, k)
-	}
-	p.Tags = cbMapToTags(tagMap)
-	cbProjects.Put(name, p)
-	cbWriteJSON(w, http.StatusOK, map[string]any{})
-}
-
-func handleCBListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ResourceArn string `json:"resourceArn"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		cbWriteError(w, "InvalidInputException", "invalid JSON")
-		return
-	}
-
-	name := cbNameFromARN(req.ResourceArn)
-	p, ok := cbProjects.Get(name)
-	if !ok {
-		cbWriteError(w, "ResourceNotFoundException", "Resource not found: "+req.ResourceArn)
-		return
-	}
-	tags := p.Tags
-	if tags == nil {
-		tags = []CBTag{}
-	}
-	cbWriteJSON(w, http.StatusOK, map[string]any{"tags": tags})
-}
-
 func cbNameFromARN(arn string) string {
 	// arn:aws:codebuild:us-east-1:123456789012:project/name
 	parts := strings.Split(arn, "/")
@@ -621,20 +540,4 @@ func cbEnvironmentValues(v any) map[string]string {
 		env[name] = value
 	}
 	return env
-}
-
-func cbTagsToMap(tags []CBTag) map[string]string {
-	m := make(map[string]string, len(tags))
-	for _, t := range tags {
-		m[t.Key] = t.Value
-	}
-	return m
-}
-
-func cbMapToTags(m map[string]string) []CBTag {
-	tags := make([]CBTag, 0, len(m))
-	for k, v := range m {
-		tags = append(tags, CBTag{Key: k, Value: v})
-	}
-	return tags
 }

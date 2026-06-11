@@ -145,6 +145,26 @@ func TestCloudFrontPublicKeyLifecycle(t *testing.T) {
 	}
 	assert.True(t, found)
 
+	// Update rides PUT /2020-05-31/public-key/{Id}/config — the /config
+	// suffix is part of the real operation URI.
+	updOut, err := c.UpdatePublicKey(ctx, &cloudfront.UpdatePublicKeyInput{
+		Id:      aws.String(id),
+		IfMatch: aws.String(etag),
+		PublicKeyConfig: &cftypes.PublicKeyConfig{
+			CallerReference: aws.String(caller),
+			Name:            aws.String(name),
+			EncodedKey:      aws.String(encoded),
+			Comment:         aws.String("sdk test updated"),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updOut.PublicKey)
+	etag = aws.ToString(updOut.ETag)
+
+	getOut, err = c.GetPublicKey(ctx, &cloudfront.GetPublicKeyInput{Id: aws.String(id)})
+	require.NoError(t, err)
+	assert.Equal(t, "sdk test updated", aws.ToString(getOut.PublicKey.PublicKeyConfig.Comment))
+
 	_, err = c.DeletePublicKey(ctx, &cloudfront.DeletePublicKeyInput{
 		Id:      aws.String(id),
 		IfMatch: aws.String(etag),

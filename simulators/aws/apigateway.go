@@ -114,7 +114,7 @@ func registerAPIGateway(srv *sim.Server) {
 	apigwMethodResponses = sim.MakeStore[APIGWMethodResponse](srv.DB(), "apigw_method_responses")
 	apigwIntegrationResponses = sim.MakeStore[APIGWIntegrationResponse](srv.DB(), "apigw_integration_responses")
 
-	mux := srv.Mux()
+	mux := srv
 	apiResource := cloudTrailRESTResource("AWS::ApiGateway::RestApi", "restApiId")
 	mux.HandleFunc("POST /restapis", cloudTrailRecordedREST("CreateRestApi", "apigateway.amazonaws.com", nil, handleAPIGWCreateRestApi))
 	mux.HandleFunc("GET /restapis", cloudTrailRecordedREST("GetRestApis", "apigateway.amazonaws.com", nil, handleAPIGWListRestApis))

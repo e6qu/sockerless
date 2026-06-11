@@ -53,9 +53,31 @@ func main() {
 	defer func() { _ = obs.Shutdown(context.Background()) }()
 	cfg.LogWriter = obs.LogWriter
 
-	srv, err := sim.NewServer(cfg)
+	srv, err := buildSimulator(cfg)
 	if err != nil {
 		log.Fatalf("simulator startup: %v", err)
+	}
+
+	// Start gRPC server for Cloud Logging
+	grpcPort := grpcPortFromConfig(cfg.ListenAddr)
+	if p := os.Getenv("SIM_GCP_GRPC_PORT"); p != "" {
+		grpcPort = p
+	}
+	go startGRPCServer(grpcPort)
+
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// buildSimulator constructs the simulator server and registers every
+// simulated GCP service on it. Split from main so the spec-conformance
+// tests can build the full route table in-process and validate it
+// against the vendored Discovery documents (specs/cloud-api/gcp/).
+func buildSimulator(cfg sim.Config) (*sim.Server, error) {
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	// Initialise the regional CPU quota tracker before route registration —
@@ -102,16 +124,7 @@ func main() {
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
-	// Start gRPC server for Cloud Logging
-	grpcPort := grpcPortFromConfig(cfg.ListenAddr)
-	if p := os.Getenv("SIM_GCP_GRPC_PORT"); p != "" {
-		grpcPort = p
-	}
-	go startGRPCServer(grpcPort)
-
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	return srv, nil
 }
 
 // grpcPortFromConfig derives the gRPC port from the HTTP listen address.
