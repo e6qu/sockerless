@@ -41,7 +41,11 @@ func TestAmplifyDomainAssociationLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, dom.DomainAssociation)
 	assert.Equal(t, "sdk-test.example.com", aws.ToString(dom.DomainAssociation.DomainName))
-	assert.Equal(t, amplifytypes.DomainStatusAvailable, dom.DomainAssociation.DomainStatus)
+	// No verification records exist in Route 53 → the association honestly
+	// reports PENDING_VERIFICATION (the route53-backed flip to AVAILABLE is
+	// covered by TestAmplifyDomainVerificationRoute53Flow).
+	assert.Equal(t, amplifytypes.DomainStatusPendingVerification, dom.DomainAssociation.DomainStatus)
+	require.NotEmpty(t, aws.ToString(dom.DomainAssociation.CertificateVerificationDNSRecord))
 	require.Len(t, dom.DomainAssociation.SubDomains, 2)
 
 	getDom, err := c.GetDomainAssociation(ctx, &amplify.GetDomainAssociationInput{
@@ -109,6 +113,51 @@ func TestAmplifyBackendEnvironmentLifecycle(t *testing.T) {
 		AppId: aws.String(appID), EnvironmentName: aws.String("staging"),
 	})
 	require.NoError(t, err)
+}
+
+func TestAmplifyDeleteAppCascadesDomainsAndBackends(t *testing.T) {
+	c := amplifyClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	app, err := c.CreateApp(ctx, &amplify.CreateAppInput{
+		Name: aws.String("cascade-" + time.Now().Format("150405.000000")),
+	})
+	require.NoError(t, err)
+	appID := aws.ToString(app.App.AppId)
+	_, err = c.CreateBranch(ctx, &amplify.CreateBranchInput{
+		AppId: aws.String(appID), BranchName: aws.String("main"),
+	})
+	require.NoError(t, err)
+	_, err = c.CreateDomainAssociation(ctx, &amplify.CreateDomainAssociationInput{
+		AppId:      aws.String(appID),
+		DomainName: aws.String("cascade.example.com"),
+		SubDomainSettings: []amplifytypes.SubDomainSetting{
+			{Prefix: aws.String("www"), BranchName: aws.String("main")},
+		},
+	})
+	require.NoError(t, err)
+	_, err = c.CreateBackendEnvironment(ctx, &amplify.CreateBackendEnvironmentInput{
+		AppId:           aws.String(appID),
+		EnvironmentName: aws.String("staging"),
+	})
+	require.NoError(t, err)
+
+	_, err = c.DeleteApp(ctx, &amplify.DeleteAppInput{AppId: aws.String(appID)})
+	require.NoError(t, err)
+
+	// The domain/backend stores must hold no orphans for the deleted app:
+	// the Get handlers consult only their own stores, so a leftover row
+	// would still be served here.
+	var notFound *amplifytypes.NotFoundException
+	_, err = c.GetDomainAssociation(ctx, &amplify.GetDomainAssociationInput{
+		AppId: aws.String(appID), DomainName: aws.String("cascade.example.com"),
+	})
+	require.ErrorAs(t, err, &notFound, "domain association must be cascade-deleted with the app")
+	_, err = c.GetBackendEnvironment(ctx, &amplify.GetBackendEnvironmentInput{
+		AppId: aws.String(appID), EnvironmentName: aws.String("staging"),
+	})
+	require.ErrorAs(t, err, &notFound, "backend environment must be cascade-deleted with the app")
 }
 
 func TestAmplifyAppCustomRulesRoundTrip(t *testing.T) {

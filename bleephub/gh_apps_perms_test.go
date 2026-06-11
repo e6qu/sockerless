@@ -138,3 +138,37 @@ func TestRequirePerm_GhoToken_ClassicScopesMap(t *testing.T) {
 		t.Fatalf("read:org expected 403, got %d body=%s", w.Code, w.Body.String())
 	}
 }
+
+// TestValidateRequestedPermissions pins the downscoping contract for
+// installation-token minting: every requested scope must be granted at >=
+// the requested level; metadata:read is implicit; level strings outside
+// read/write/admin are invalid.
+func TestValidateRequestedPermissions(t *testing.T) {
+	granted := map[string]string{"contents": "read", "issues": "write", "administration": "admin"}
+
+	cases := []struct {
+		name      string
+		requested map[string]string
+		ok        bool
+	}{
+		{"equal level", map[string]string{"contents": "read"}, true},
+		{"downscope", map[string]string{"issues": "read"}, true},
+		{"admin implies write", map[string]string{"administration": "write"}, true},
+		{"escalate read to write", map[string]string{"contents": "write"}, false},
+		{"escalate write to admin", map[string]string{"issues": "admin"}, false},
+		{"ungranted scope", map[string]string{"deployments": "read"}, false},
+		{"implicit metadata read", map[string]string{"metadata": "read"}, true},
+		{"metadata write not implicit", map[string]string{"metadata": "write"}, false},
+		{"invalid level string", map[string]string{"contents": "sudo"}, false},
+		{"empty request", map[string]string{}, true},
+		{"mixed valid and invalid", map[string]string{"issues": "read", "contents": "write"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok := validateRequestedPermissions(tc.requested, granted)
+			if ok != tc.ok {
+				t.Errorf("validateRequestedPermissions(%v) ok = %v, want %v", tc.requested, ok, tc.ok)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -63,6 +65,14 @@ type ContainerConfig struct {
 	OpenStdin    bool              // keep stdin open
 	Binds        []string          // bind mounts (e.g., "vol:/path")
 	ExtraHosts   []string          // --add-host entries (e.g., "host.docker.internal:host-gateway")
+	WorkingDir   string            // working directory inside the container (optional)
+
+	// PublishPorts maps containerPort → hostPort (bound on 127.0.0.1).
+	// Used by host-addressed data planes that must reach a workload's
+	// listener cross-platform: container IPs are only routable from the
+	// host on Linux, while a loopback port binding works on Docker
+	// Desktop (macOS/Windows) too. The caller allocates the host port.
+	PublishPorts map[int]int
 
 	// Sandbox: per-platform capability + permission restrictions. Each
 	// cloud-product handler picks the matching profile (SandboxLambda,
@@ -331,6 +341,10 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		Tty:         cfg.Tty,
 		OpenStdin:   cfg.OpenStdin,
 		AttachStdin: cfg.OpenStdin,
+		WorkingDir:  cfg.WorkingDir,
+	}
+	if len(cfg.PublishPorts) > 0 {
+		containerCfg.ExposedPorts = nat.PortSet{}
 	}
 
 	// Set entrypoint and command separately
@@ -347,6 +361,17 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 	if cfg.NetworkMode != "" {
 		hostCfg.NetworkMode = container.NetworkMode(cfg.NetworkMode)
+	}
+	for containerPort, hostPort := range cfg.PublishPorts {
+		port, err := nat.NewPort("tcp", strconv.Itoa(containerPort))
+		if err != nil {
+			return "", fmt.Errorf("publish port %d: %w", containerPort, err)
+		}
+		containerCfg.ExposedPorts[port] = struct{}{}
+		if hostCfg.PortBindings == nil {
+			hostCfg.PortBindings = nat.PortMap{}
+		}
+		hostCfg.PortBindings[port] = []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(hostPort)}}
 	}
 
 	// Enforce sandbox parity with the real cloud platform. Empty profile

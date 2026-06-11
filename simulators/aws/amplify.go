@@ -11,76 +11,155 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
 
 // AWS Amplify. Wire: REST + JSON, versionless paths (/apps, /apps/{id},
-// etc.). Sim covers the apps + branches + webhooks + jobs surface here;
-// domains + backendenvironments come in .
+// etc.). Sim covers the apps + branches + webhooks + jobs + deployments
+// surface here; domains + backendenvironments live in amplify_domains.go.
 //
 // Sim policy:
-//   - Jobs synthesise SUCCEEDED eagerly (real Amplify runs a real build
-// pipeline; sim doesn't have that). Per plan, out of scope.
+//   - RELEASE/RETRY/WEB_HOOK jobs run a REAL build (amplify_build.go) when
+//     the app has a clonable HTTP(S) git repository and a buildSpec (branch
+//     wins over app). Otherwise — the common control-plane-test case — jobs
+//     pass through the observable PENDING → RUNNING → SUCCEED states on a
+//     short synthetic timer (same shape as the ECS task PROVISIONING →
+//     PENDING → RUNNING flip) so clients see the documented state machine
+//     and StopJob has a real cancellation window. MANUAL deployment jobs
+//     (StartDeployment) never build: they deploy the uploaded content as-is.
+//   - Deployed branch content is served by the hosting data plane
+//     (amplify_dataplane.go) on the app's default-domain, cloudfront.net,
+//     and verified custom-domain hosts.
 
 // ---------- Types ----------
 
+// AmplifyJobStatus is the JobStatus enum subset the sim assigns. The full
+// model enum also carries CREATED/PROVISIONING/CANCELLING, which the sim's
+// pipelines never enter.
+type AmplifyJobStatus string
+
+const (
+	AmplifyJobStatusPending   AmplifyJobStatus = "PENDING"
+	AmplifyJobStatusRunning   AmplifyJobStatus = "RUNNING"
+	AmplifyJobStatusSucceed   AmplifyJobStatus = "SUCCEED"
+	AmplifyJobStatusFailed    AmplifyJobStatus = "FAILED"
+	AmplifyJobStatusCancelled AmplifyJobStatus = "CANCELLED"
+)
+
+// Terminal reports whether the job can no longer be stopped or advanced.
+func (s AmplifyJobStatus) Terminal() bool {
+	return s == AmplifyJobStatusSucceed || s == AmplifyJobStatusCancelled || s == AmplifyJobStatusFailed
+}
+
+// AmplifyBranchStage is the branch Stage enum. Real Amplify additionally
+// reads back "NONE" for branches created without a stage, even though the
+// model enum omits it.
+type AmplifyBranchStage string
+
+const (
+	AmplifyStageProduction AmplifyBranchStage = "PRODUCTION"
+	AmplifyStageNone       AmplifyBranchStage = "NONE"
+)
+
+// AmplifySourceUrlType is the SourceUrlType enum (ZIP | BUCKET_PREFIX).
+type AmplifySourceUrlType string
+
+const (
+	AmplifySourceUrlZip          AmplifySourceUrlType = "ZIP"
+	AmplifySourceUrlBucketPrefix AmplifySourceUrlType = "BUCKET_PREFIX"
+)
+
+type AmplifyCustomRule struct {
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Status    string `json:"status,omitempty"`
+	Condition string `json:"condition,omitempty"`
+}
+
+type AmplifyProductionBranch struct {
+	LastDeployTime float64          `json:"lastDeployTime,omitempty"`
+	Status         AmplifyJobStatus `json:"status,omitempty"`
+	ThumbnailUrl   string           `json:"thumbnailUrl,omitempty"` // external: real-AWS hosted thumbnail — sim doesn't serve screenshots, member stays absent
+	BranchName     string           `json:"branchName,omitempty"`
+}
+
+type AmplifyCacheConfig struct {
+	Type string `json:"type"`
+}
+
+type AmplifyJobConfig struct {
+	BuildComputeType string `json:"buildComputeType"`
+}
+
+type AmplifyBackend struct {
+	StackArn string `json:"stackArn,omitempty"`
+}
+
 type AmplifyApp struct {
-	AppArn                     string            `json:"appArn"`
-	AppId                      string            `json:"appId"`
-	Name                       string            `json:"name"`
-	Description                string            `json:"description,omitempty"`
-	Repository                 string            `json:"repository,omitempty"`
-	Platform                   string            `json:"platform"`
-	CreateTime                 float64           `json:"createTime"`
-	UpdateTime                 float64           `json:"updateTime"`
-	IamServiceRoleArn          string            `json:"iamServiceRoleArn,omitempty"`
-	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
-	DefaultDomain              string            `json:"defaultDomain"`
-	EnableBranchAutoBuild      bool              `json:"enableBranchAutoBuild"`
-	EnableBranchAutoDeletion   bool              `json:"enableBranchAutoDeletion"`
-	EnableBasicAuth            bool              `json:"enableBasicAuth"`
-	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
-	CustomRules                json.RawMessage   `json:"customRules,omitempty"`
-	BuildSpec                  string            `json:"buildSpec,omitempty"`
-	CustomHeaders              string            `json:"customHeaders,omitempty"`
-	EnableAutoBranchCreation   bool              `json:"enableAutoBranchCreation"`
-	AutoBranchCreationPatterns []string          `json:"autoBranchCreationPatterns,omitempty"`
-	AutoBranchCreationConfig   json.RawMessage   `json:"autoBranchCreationConfig,omitempty"`
-	Tags                       map[string]string `json:"tags,omitempty"`
-	ProductionBranch           json.RawMessage   `json:"productionBranch,omitempty"`
-	Repository_                string            `json:"-"`
+	AppArn                     string                   `json:"appArn"`
+	AppId                      string                   `json:"appId"`
+	Name                       string                   `json:"name"`
+	Description                string                   `json:"description,omitempty"`
+	Repository                 string                   `json:"repository,omitempty"`
+	RepositoryCloneMethod      string                   `json:"repositoryCloneMethod,omitempty"`
+	Platform                   string                   `json:"platform"`
+	CreateTime                 float64                  `json:"createTime"`
+	UpdateTime                 float64                  `json:"updateTime"`
+	ComputeRoleArn             string                   `json:"computeRoleArn,omitempty"`
+	IamServiceRoleArn          string                   `json:"iamServiceRoleArn,omitempty"`
+	EnvironmentVariables       map[string]string        `json:"environmentVariables,omitempty"`
+	DefaultDomain              string                   `json:"defaultDomain"`
+	EnableBranchAutoBuild      bool                     `json:"enableBranchAutoBuild"`
+	EnableBranchAutoDeletion   bool                     `json:"enableBranchAutoDeletion"`
+	EnableBasicAuth            bool                     `json:"enableBasicAuth"`
+	BasicAuthCredentials       string                   `json:"basicAuthCredentials,omitempty"`
+	CustomRules                []AmplifyCustomRule      `json:"customRules,omitempty"`
+	ProductionBranch           *AmplifyProductionBranch `json:"productionBranch,omitempty"`
+	BuildSpec                  string                   `json:"buildSpec,omitempty"`
+	CustomHeaders              string                   `json:"customHeaders,omitempty"`
+	EnableAutoBranchCreation   bool                     `json:"enableAutoBranchCreation"`
+	AutoBranchCreationPatterns []string                 `json:"autoBranchCreationPatterns,omitempty"`
+	AutoBranchCreationConfig   json.RawMessage          `json:"autoBranchCreationConfig,omitempty"`
+	CacheConfig                *AmplifyCacheConfig      `json:"cacheConfig,omitempty"`
+	JobConfig                  *AmplifyJobConfig        `json:"jobConfig,omitempty"`
+	WebhookCreateTime          float64                  `json:"webhookCreateTime,omitempty"`
+	Tags                       map[string]string        `json:"tags,omitempty"`
 }
 
 type AmplifyBranch struct {
-	BranchArn                  string            `json:"branchArn"`
-	BranchName                 string            `json:"branchName"`
-	Description                string            `json:"description,omitempty"`
-	Tags                       map[string]string `json:"tags,omitempty"`
-	Stage                      string            `json:"stage"`
-	DisplayName                string            `json:"displayName,omitempty"`
-	EnableNotification         bool              `json:"enableNotification"`
-	CreateTime                 float64           `json:"createTime"`
-	UpdateTime                 float64           `json:"updateTime"`
-	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
-	EnableAutoBuild            bool              `json:"enableAutoBuild"`
-	CustomDomains              []string          `json:"customDomains,omitempty"`
-	Framework                  string            `json:"framework,omitempty"`
-	ActiveJobId                string            `json:"activeJobId,omitempty"`
-	TotalNumberOfJobs          string            `json:"totalNumberOfJobs"`
-	EnableBasicAuth            bool              `json:"enableBasicAuth"`
-	EnablePerformanceMode      bool              `json:"enablePerformanceMode"`
-	ThumbnailUrl               string            `json:"thumbnailUrl,omitempty"` // external: real-AWS hosted thumbnail of the deployed Amplify app — sim doesn't serve screenshots
-	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
-	BuildSpec                  string            `json:"buildSpec,omitempty"`
-	TtL                        string            `json:"ttl"`
-	AssociatedResources        []string          `json:"associatedResources,omitempty"`
-	EnablePullRequestPreview   bool              `json:"enablePullRequestPreview"`
-	PullRequestEnvironmentName string            `json:"pullRequestEnvironmentName,omitempty"`
-	DestinationBranch          string            `json:"destinationBranch,omitempty"`
-	SourceBranch               string            `json:"sourceBranch,omitempty"`
-	BackendEnvironmentArn      string            `json:"backendEnvironmentArn,omitempty"`
+	BranchArn                  string             `json:"branchArn"`
+	BranchName                 string             `json:"branchName"`
+	Description                string             `json:"description,omitempty"`
+	Tags                       map[string]string  `json:"tags,omitempty"`
+	Stage                      AmplifyBranchStage `json:"stage"`
+	DisplayName                string             `json:"displayName,omitempty"`
+	EnableNotification         bool               `json:"enableNotification"`
+	CreateTime                 float64            `json:"createTime"`
+	UpdateTime                 float64            `json:"updateTime"`
+	EnvironmentVariables       map[string]string  `json:"environmentVariables,omitempty"`
+	EnableAutoBuild            bool               `json:"enableAutoBuild"`
+	EnableSkewProtection       bool               `json:"enableSkewProtection"`
+	CustomDomains              []string           `json:"customDomains,omitempty"`
+	Framework                  string             `json:"framework,omitempty"`
+	ActiveJobId                string             `json:"activeJobId,omitempty"`
+	TotalNumberOfJobs          string             `json:"totalNumberOfJobs"`
+	EnableBasicAuth            bool               `json:"enableBasicAuth"`
+	EnablePerformanceMode      bool               `json:"enablePerformanceMode"`
+	ThumbnailUrl               string             `json:"thumbnailUrl,omitempty"` // external: real-AWS hosted thumbnail of the deployed Amplify app — sim doesn't serve screenshots
+	BasicAuthCredentials       string             `json:"basicAuthCredentials,omitempty"`
+	BuildSpec                  string             `json:"buildSpec,omitempty"`
+	TtL                        string             `json:"ttl"`
+	AssociatedResources        []string           `json:"associatedResources,omitempty"`
+	EnablePullRequestPreview   bool               `json:"enablePullRequestPreview"`
+	PullRequestEnvironmentName string             `json:"pullRequestEnvironmentName,omitempty"`
+	DestinationBranch          string             `json:"destinationBranch,omitempty"`
+	SourceBranch               string             `json:"sourceBranch,omitempty"`
+	BackendEnvironmentArn      string             `json:"backendEnvironmentArn,omitempty"`
+	Backend                    *AmplifyBackend    `json:"backend,omitempty"`
+	ComputeRoleArn             string             `json:"computeRoleArn,omitempty"`
 }
 
 // AmplifyWebhook represents an Amplify webhook endpoint configured
@@ -98,23 +177,25 @@ type AmplifyWebhook struct {
 	WebhookArn  string  `json:"webhookArn"`
 	WebhookId   string  `json:"webhookId"`
 	WebhookUrl  string  `json:"webhookUrl"` // external: real AWS webhooks.amplify.<region>.amazonaws.com endpoint
+	AppId       string  `json:"appId"`
 	BranchName  string  `json:"branchName"`
 	Description string  `json:"description,omitempty"`
 	CreateTime  float64 `json:"createTime"`
 	UpdateTime  float64 `json:"updateTime"`
-	AppId       string  `json:"-"`
 }
 
 type AmplifyJobSummary struct {
-	JobArn        string  `json:"jobArn"`
-	JobId         string  `json:"jobId"`
-	CommitId      string  `json:"commitId,omitempty"`
-	CommitMessage string  `json:"commitMessage,omitempty"`
-	CommitTime    float64 `json:"commitTime,omitempty"`
-	StartTime     float64 `json:"startTime,omitempty"`
-	Status        string  `json:"status"`
-	EndTime       float64 `json:"endTime,omitempty"`
-	JobType       string  `json:"jobType"`
+	JobArn        string               `json:"jobArn"`
+	JobId         string               `json:"jobId"`
+	CommitId      string               `json:"commitId,omitempty"`
+	CommitMessage string               `json:"commitMessage,omitempty"`
+	CommitTime    float64              `json:"commitTime,omitempty"`
+	StartTime     float64              `json:"startTime,omitempty"`
+	Status        AmplifyJobStatus     `json:"status"`
+	EndTime       float64              `json:"endTime,omitempty"`
+	JobType       string               `json:"jobType"`
+	SourceUrl     string               `json:"sourceUrl,omitempty"`
+	SourceUrlType AmplifySourceUrlType `json:"sourceUrlType,omitempty"`
 }
 
 type AmplifyJob struct {
@@ -123,11 +204,11 @@ type AmplifyJob struct {
 }
 
 type AmplifyJobStep struct {
-	StepName  string  `json:"stepName"`
-	StartTime float64 `json:"startTime"`
-	EndTime   float64 `json:"endTime"`
-	Status    string  `json:"status"`
-	LogUrl    string  `json:"logUrl,omitempty"`
+	StepName  string           `json:"stepName"`
+	StartTime float64          `json:"startTime"`
+	EndTime   float64          `json:"endTime,omitempty"`
+	Status    AmplifyJobStatus `json:"status"`
+	LogUrl    string           `json:"logUrl,omitempty"`
 }
 
 type AmplifyArtifact struct {
@@ -160,11 +241,24 @@ type amplifyStoredArtifact struct {
 	URL        string
 }
 
+// amplifyStoredDeployment is a pending zip/file-map deployment created by
+// CreateDeployment and consumed by StartDeployment. The keys point into the
+// sim's own S3 bucket, where the presigned upload URLs land the bytes.
+type amplifyStoredDeployment struct {
+	JobId      string
+	AppId      string
+	BranchName string
+	ZipKey     string
+	FileKeys   map[string]string
+	CreateTime float64
+}
+
 var (
-	amplifyApps      sim.Store[amplifyStoredApp]
-	amplifyWebhooks  sim.Store[amplifyStoredWebhook]
-	amplifyJobs      sim.Store[amplifyStoredJob]
-	amplifyArtifacts sim.Store[amplifyStoredArtifact]
+	amplifyApps        sim.Store[amplifyStoredApp]
+	amplifyWebhooks    sim.Store[amplifyStoredWebhook]
+	amplifyJobs        sim.Store[amplifyStoredJob]
+	amplifyArtifacts   sim.Store[amplifyStoredArtifact]
+	amplifyDeployments sim.Store[amplifyStoredDeployment]
 )
 
 // ---------- Helpers ----------
@@ -216,6 +310,59 @@ func amplifyWriteError(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
+// amplifyPageQuery parses the restJson1 ?nextToken=&maxResults= pagination
+// query params every Amplify List* operation carries. On a malformed value
+// it writes a BadRequestException and reports !ok.
+func amplifyPageQuery(w http.ResponseWriter, r *http.Request) (token string, maxResults int, ok bool) {
+	token = r.URL.Query().Get("nextToken")
+	if token != "" {
+		if offset, err := strconv.Atoi(token); err != nil || offset < 0 {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid nextToken")
+			return "", 0, false
+		}
+	}
+	if raw := r.URL.Query().Get("maxResults"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid maxResults")
+			return "", 0, false
+		}
+		maxResults = parsed
+	}
+	return token, maxResults, true
+}
+
+// amplifyWriteListPage pages a sorted slice with awsPageExplicit (paginate
+// only on an explicit positive maxResults) and writes the {key: page[,
+// nextToken]} envelope.
+func amplifyWriteListPage[T any](w http.ResponseWriter, key string, items []T, token string, maxResults int) {
+	page, next := awsPageExplicit(items, token, maxResults)
+	out := map[string]any{key: page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	amplifyWriteJSON(w, http.StatusOK, out)
+}
+
+// amplifyRepositoryCloneMethod derives the read-only repositoryCloneMethod
+// member the way real Amplify documents it: TOKEN for GitHub, SIGV4 for
+// CodeCommit, SSH for GitLab and Bitbucket. Unrecognized hosts (and apps
+// without a repository) carry no clone method.
+func amplifyRepositoryCloneMethod(repository string) string {
+	repo := strings.ToLower(repository)
+	switch {
+	case repo == "":
+		return ""
+	case strings.Contains(repo, "github.com"):
+		return "TOKEN"
+	case strings.Contains(repo, "codecommit"):
+		return "SIGV4"
+	case strings.Contains(repo, "gitlab"), strings.Contains(repo, "bitbucket"):
+		return "SSH"
+	}
+	return ""
+}
+
 // ---------- Registration ----------
 
 func registerAmplify(srv *sim.Server) {
@@ -223,6 +370,7 @@ func registerAmplify(srv *sim.Server) {
 	amplifyWebhooks = sim.MakeStore[amplifyStoredWebhook](srv.DB(), "amplify_webhooks")
 	amplifyJobs = sim.MakeStore[amplifyStoredJob](srv.DB(), "amplify_jobs")
 	amplifyArtifacts = sim.MakeStore[amplifyStoredArtifact](srv.DB(), "amplify_artifacts")
+	amplifyDeployments = sim.MakeStore[amplifyStoredDeployment](srv.DB(), "amplify_deployments")
 
 	mux := srv
 	appResource := cloudTrailRESTResource("AWS::Amplify::App", "appId", "arn")
@@ -273,25 +421,28 @@ func registerAmplify(srv *sim.Server) {
 // ---------- Apps ----------
 
 type amplifyCreateAppReq struct {
-	Name                       string            `json:"name"`
-	Description                string            `json:"description,omitempty"`
-	Repository                 string            `json:"repository,omitempty"`
-	Platform                   string            `json:"platform,omitempty"`
-	IamServiceRoleArn          string            `json:"iamServiceRoleArn,omitempty"`
-	OauthToken                 string            `json:"oauthToken,omitempty"`
-	AccessToken                string            `json:"accessToken,omitempty"`
-	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
-	EnableBranchAutoBuild      *bool             `json:"enableBranchAutoBuild,omitempty"`
-	EnableBranchAutoDeletion   *bool             `json:"enableBranchAutoDeletion,omitempty"`
-	EnableBasicAuth            *bool             `json:"enableBasicAuth,omitempty"`
-	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
-	CustomRules                json.RawMessage   `json:"customRules,omitempty"`
-	Tags                       map[string]string `json:"tags,omitempty"`
-	BuildSpec                  string            `json:"buildSpec,omitempty"`
-	CustomHeaders              string            `json:"customHeaders,omitempty"`
-	EnableAutoBranchCreation   *bool             `json:"enableAutoBranchCreation,omitempty"`
-	AutoBranchCreationPatterns []string          `json:"autoBranchCreationPatterns,omitempty"`
-	AutoBranchCreationConfig   json.RawMessage   `json:"autoBranchCreationConfig,omitempty"`
+	Name                       string              `json:"name"`
+	Description                string              `json:"description,omitempty"`
+	Repository                 string              `json:"repository,omitempty"`
+	Platform                   string              `json:"platform,omitempty"`
+	ComputeRoleArn             string              `json:"computeRoleArn,omitempty"`
+	IamServiceRoleArn          string              `json:"iamServiceRoleArn,omitempty"`
+	OauthToken                 string              `json:"oauthToken,omitempty"`
+	AccessToken                string              `json:"accessToken,omitempty"`
+	EnvironmentVariables       map[string]string   `json:"environmentVariables,omitempty"`
+	EnableBranchAutoBuild      *bool               `json:"enableBranchAutoBuild,omitempty"`
+	EnableBranchAutoDeletion   *bool               `json:"enableBranchAutoDeletion,omitempty"`
+	EnableBasicAuth            *bool               `json:"enableBasicAuth,omitempty"`
+	BasicAuthCredentials       string              `json:"basicAuthCredentials,omitempty"`
+	CustomRules                []AmplifyCustomRule `json:"customRules,omitempty"`
+	Tags                       map[string]string   `json:"tags,omitempty"`
+	BuildSpec                  string              `json:"buildSpec,omitempty"`
+	CustomHeaders              string              `json:"customHeaders,omitempty"`
+	EnableAutoBranchCreation   *bool               `json:"enableAutoBranchCreation,omitempty"`
+	AutoBranchCreationPatterns []string            `json:"autoBranchCreationPatterns,omitempty"`
+	AutoBranchCreationConfig   json.RawMessage     `json:"autoBranchCreationConfig,omitempty"`
+	JobConfig                  *AmplifyJobConfig   `json:"jobConfig,omitempty"`
+	CacheConfig                *AmplifyCacheConfig `json:"cacheConfig,omitempty"`
 }
 
 func handleAmplifyCreateApp(w http.ResponseWriter, r *http.Request) {
@@ -310,19 +461,35 @@ func handleAmplifyCreateApp(w http.ResponseWriter, r *http.Request) {
 	if platform == "" {
 		platform = "WEB"
 	}
+	cacheConfig := req.CacheConfig
+	if cacheConfig == nil {
+		// Documented default: "If you don't specify the cache configuration
+		// type, Amplify uses the default AMPLIFY_MANAGED setting."
+		cacheConfig = &AmplifyCacheConfig{Type: "AMPLIFY_MANAGED"}
+	}
+	jobConfig := req.JobConfig
+	if jobConfig == nil {
+		// Documented default: "If you don't specify a value, Amplify uses the
+		// STANDARD_8GB default."
+		jobConfig = &AmplifyJobConfig{BuildComputeType: "STANDARD_8GB"}
+	}
 	app := AmplifyApp{
-		AppArn:                     amplifyAppARN(id),
-		AppId:                      id,
-		Name:                       req.Name,
-		Description:                req.Description,
-		Repository:                 req.Repository,
-		Platform:                   platform,
-		CreateTime:                 now,
-		UpdateTime:                 now,
-		IamServiceRoleArn:          req.IamServiceRoleArn,
-		EnvironmentVariables:       req.EnvironmentVariables,
-		DefaultDomain:              id + ".amplifyapp.com",
-		EnableBranchAutoBuild:      boolOr(req.EnableBranchAutoBuild, true),
+		AppArn:                amplifyAppARN(id),
+		AppId:                 id,
+		Name:                  req.Name,
+		Description:           req.Description,
+		Repository:            req.Repository,
+		RepositoryCloneMethod: amplifyRepositoryCloneMethod(req.Repository),
+		Platform:              platform,
+		CreateTime:            now,
+		UpdateTime:            now,
+		ComputeRoleArn:        req.ComputeRoleArn,
+		IamServiceRoleArn:     req.IamServiceRoleArn,
+		EnvironmentVariables:  req.EnvironmentVariables,
+		DefaultDomain:         id + ".amplifyapp.com",
+		// Unset reads back false (terraform-provider-aws only sends the
+		// member when true and trusts the read-back for idempotency).
+		EnableBranchAutoBuild:      boolOr(req.EnableBranchAutoBuild, false),
 		EnableBranchAutoDeletion:   boolOr(req.EnableBranchAutoDeletion, false),
 		EnableBasicAuth:            boolOr(req.EnableBasicAuth, false),
 		BasicAuthCredentials:       req.BasicAuthCredentials,
@@ -332,6 +499,8 @@ func handleAmplifyCreateApp(w http.ResponseWriter, r *http.Request) {
 		EnableAutoBranchCreation:   boolOr(req.EnableAutoBranchCreation, false),
 		AutoBranchCreationPatterns: req.AutoBranchCreationPatterns,
 		AutoBranchCreationConfig:   req.AutoBranchCreationConfig,
+		CacheConfig:                cacheConfig,
+		JobConfig:                  jobConfig,
 		Tags:                       req.Tags,
 	}
 	amplifyApps.Put(id, amplifyStoredApp{App: app, Branches: map[string]AmplifyBranch{}})
@@ -362,7 +531,9 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
-	// Cascade-delete: webhooks + jobs referencing this app go too.
+	// Cascade-delete every sub-resource keyed to this app: webhooks, jobs (+
+	// artifacts), pending deployments, domain associations, and backend
+	// environments. A later app reusing the ID must start clean.
 	for _, wh := range amplifyWebhooks.List() {
 		if wh.AppId == id {
 			amplifyWebhooks.Delete(wh.Webhook.WebhookId)
@@ -374,11 +545,55 @@ func handleAmplifyDeleteApp(w http.ResponseWriter, r *http.Request) {
 			amplifyJobs.Delete(jb.Job.Summary.JobId)
 		}
 	}
+	for _, dep := range amplifyDeployments.List() {
+		if dep.AppId == id {
+			amplifyDeleteDeployment(dep)
+		}
+	}
+	for branchName := range stored.Branches {
+		amplifyStopCompute(id, branchName)
+		amplifyInvalidateHostingCache(id, branchName)
+	}
+	for _, dom := range amplifyDomains.List() {
+		if dom.AppId == id {
+			amplifyDomains.Delete(amplifyDomainKey(id, dom.Domain.DomainName))
+		}
+	}
+	for _, be := range amplifyBackends.List() {
+		if be.AppId == id {
+			amplifyBackends.Delete(amplifyDomainKey(id, be.Env.EnvironmentName))
+		}
+	}
 	amplifyApps.Delete(id)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
 }
 
-type amplifyUpdateAppReq amplifyCreateAppReq
+// amplifyUpdateAppReq mirrors UpdateAppRequest with presence-tracking
+// members: a member is applied only when the client sent it, so explicit
+// empty values clear the stored value instead of being ignored.
+type amplifyUpdateAppReq struct {
+	Name                       *string              `json:"name"`
+	Description                *string              `json:"description"`
+	Platform                   *string              `json:"platform"`
+	ComputeRoleArn             *string              `json:"computeRoleArn"`
+	IamServiceRoleArn          *string              `json:"iamServiceRoleArn"`
+	EnvironmentVariables       map[string]string    `json:"environmentVariables"`
+	EnableBranchAutoBuild      *bool                `json:"enableBranchAutoBuild"`
+	EnableBranchAutoDeletion   *bool                `json:"enableBranchAutoDeletion"`
+	EnableBasicAuth            *bool                `json:"enableBasicAuth"`
+	BasicAuthCredentials       *string              `json:"basicAuthCredentials"`
+	CustomRules                *[]AmplifyCustomRule `json:"customRules"`
+	BuildSpec                  *string              `json:"buildSpec"`
+	CustomHeaders              *string              `json:"customHeaders"`
+	EnableAutoBranchCreation   *bool                `json:"enableAutoBranchCreation"`
+	AutoBranchCreationPatterns *[]string            `json:"autoBranchCreationPatterns"`
+	AutoBranchCreationConfig   json.RawMessage      `json:"autoBranchCreationConfig"`
+	Repository                 *string              `json:"repository"`
+	OauthToken                 *string              `json:"oauthToken"`
+	AccessToken                *string              `json:"accessToken"`
+	JobConfig                  *AmplifyJobConfig    `json:"jobConfig"`
+	CacheConfig                *AmplifyCacheConfig  `json:"cacheConfig"`
+}
 
 func handleAmplifyUpdateApp(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("appId")
@@ -393,20 +608,28 @@ func handleAmplifyUpdateApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := &stored.App
-	if req.Name != "" {
-		a.Name = req.Name
+	if req.Name != nil {
+		if *req.Name == "" {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "name cannot be empty")
+			return
+		}
+		a.Name = *req.Name
 	}
-	if req.Description != "" {
-		a.Description = req.Description
+	if req.Description != nil {
+		a.Description = *req.Description
 	}
-	if req.Repository != "" {
-		a.Repository = req.Repository
+	if req.Repository != nil {
+		a.Repository = *req.Repository
+		a.RepositoryCloneMethod = amplifyRepositoryCloneMethod(*req.Repository)
 	}
-	if req.Platform != "" {
-		a.Platform = req.Platform
+	if req.Platform != nil && *req.Platform != "" {
+		a.Platform = *req.Platform
 	}
-	if req.IamServiceRoleArn != "" {
-		a.IamServiceRoleArn = req.IamServiceRoleArn
+	if req.ComputeRoleArn != nil {
+		a.ComputeRoleArn = *req.ComputeRoleArn
+	}
+	if req.IamServiceRoleArn != nil {
+		a.IamServiceRoleArn = *req.IamServiceRoleArn
 	}
 	if req.EnvironmentVariables != nil {
 		a.EnvironmentVariables = req.EnvironmentVariables
@@ -420,51 +643,80 @@ func handleAmplifyUpdateApp(w http.ResponseWriter, r *http.Request) {
 	if req.EnableBasicAuth != nil {
 		a.EnableBasicAuth = *req.EnableBasicAuth
 	}
-	if req.BasicAuthCredentials != "" {
-		a.BasicAuthCredentials = req.BasicAuthCredentials
+	if req.BasicAuthCredentials != nil {
+		a.BasicAuthCredentials = *req.BasicAuthCredentials
 	}
-	if len(req.CustomRules) > 0 {
-		a.CustomRules = req.CustomRules
+	if req.CustomRules != nil {
+		a.CustomRules = *req.CustomRules
 	}
-	if req.BuildSpec != "" {
-		a.BuildSpec = req.BuildSpec
+	if req.BuildSpec != nil {
+		a.BuildSpec = *req.BuildSpec
 	}
-	if req.CustomHeaders != "" {
-		a.CustomHeaders = req.CustomHeaders
+	if req.CustomHeaders != nil {
+		a.CustomHeaders = *req.CustomHeaders
 	}
+	if req.EnableAutoBranchCreation != nil {
+		a.EnableAutoBranchCreation = *req.EnableAutoBranchCreation
+	}
+	if req.AutoBranchCreationPatterns != nil {
+		a.AutoBranchCreationPatterns = *req.AutoBranchCreationPatterns
+	}
+	if len(req.AutoBranchCreationConfig) > 0 {
+		if string(req.AutoBranchCreationConfig) == "null" {
+			a.AutoBranchCreationConfig = nil
+		} else {
+			a.AutoBranchCreationConfig = req.AutoBranchCreationConfig
+		}
+	}
+	if req.JobConfig != nil {
+		a.JobConfig = req.JobConfig
+	}
+	if req.CacheConfig != nil {
+		a.CacheConfig = req.CacheConfig
+	}
+	// oauthToken/accessToken are write-only credentials: accepted, never
+	// stored or echoed (the App shape has no such members).
 	a.UpdateTime = amplifyEpoch()
 	amplifyApps.Put(id, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyApp{"app": stored.App})
 }
 
 func handleAmplifyListApps(w http.ResponseWriter, r *http.Request) {
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	apps := []AmplifyApp{}
 	for _, s := range amplifyApps.List() {
 		apps = append(apps, s.App)
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"apps": apps})
+	sortBy(apps, func(a AmplifyApp) string { return a.AppId })
+	amplifyWriteListPage(w, "apps", apps, token, maxResults)
 }
 
 // ---------- Branches ----------
 
 type amplifyCreateBranchReq struct {
-	BranchName                 string            `json:"branchName"`
-	Description                string            `json:"description,omitempty"`
-	Stage                      string            `json:"stage,omitempty"`
-	Framework                  string            `json:"framework,omitempty"`
-	EnableNotification         *bool             `json:"enableNotification,omitempty"`
-	EnableAutoBuild            *bool             `json:"enableAutoBuild,omitempty"`
-	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
-	BasicAuthCredentials       string            `json:"basicAuthCredentials,omitempty"`
-	EnableBasicAuth            *bool             `json:"enableBasicAuth,omitempty"`
-	EnablePerformanceMode      *bool             `json:"enablePerformanceMode,omitempty"`
-	Tags                       map[string]string `json:"tags,omitempty"`
-	BuildSpec                  string            `json:"buildSpec,omitempty"`
-	Ttl                        string            `json:"ttl,omitempty"`
-	DisplayName                string            `json:"displayName,omitempty"`
-	EnablePullRequestPreview   *bool             `json:"enablePullRequestPreview,omitempty"`
-	PullRequestEnvironmentName string            `json:"pullRequestEnvironmentName,omitempty"`
-	BackendEnvironmentArn      string            `json:"backendEnvironmentArn,omitempty"`
+	BranchName                 string             `json:"branchName"`
+	Description                string             `json:"description,omitempty"`
+	Stage                      AmplifyBranchStage `json:"stage,omitempty"`
+	Framework                  string             `json:"framework,omitempty"`
+	EnableNotification         *bool              `json:"enableNotification,omitempty"`
+	EnableAutoBuild            *bool              `json:"enableAutoBuild,omitempty"`
+	EnableSkewProtection       *bool              `json:"enableSkewProtection,omitempty"`
+	EnvironmentVariables       map[string]string  `json:"environmentVariables,omitempty"`
+	BasicAuthCredentials       string             `json:"basicAuthCredentials,omitempty"`
+	EnableBasicAuth            *bool              `json:"enableBasicAuth,omitempty"`
+	EnablePerformanceMode      *bool              `json:"enablePerformanceMode,omitempty"`
+	Tags                       map[string]string  `json:"tags,omitempty"`
+	BuildSpec                  string             `json:"buildSpec,omitempty"`
+	Ttl                        string             `json:"ttl,omitempty"`
+	DisplayName                string             `json:"displayName,omitempty"`
+	EnablePullRequestPreview   *bool              `json:"enablePullRequestPreview,omitempty"`
+	PullRequestEnvironmentName string             `json:"pullRequestEnvironmentName,omitempty"`
+	BackendEnvironmentArn      string             `json:"backendEnvironmentArn,omitempty"`
+	Backend                    *AmplifyBackend    `json:"backend,omitempty"`
+	ComputeRoleArn             string             `json:"computeRoleArn,omitempty"`
 }
 
 func handleAmplifyCreateBranch(w http.ResponseWriter, r *http.Request) {
@@ -490,7 +742,7 @@ func handleAmplifyCreateBranch(w http.ResponseWriter, r *http.Request) {
 	now := amplifyEpoch()
 	stage := req.Stage
 	if stage == "" {
-		stage = "NONE"
+		stage = AmplifyStageNone
 	}
 	br := AmplifyBranch{
 		BranchArn:                  amplifyBranchARN(appID, req.BranchName),
@@ -501,6 +753,7 @@ func handleAmplifyCreateBranch(w http.ResponseWriter, r *http.Request) {
 		Framework:                  req.Framework,
 		EnableNotification:         boolOr(req.EnableNotification, false),
 		EnableAutoBuild:            boolOr(req.EnableAutoBuild, true),
+		EnableSkewProtection:       boolOr(req.EnableSkewProtection, false),
 		EnvironmentVariables:       req.EnvironmentVariables,
 		BasicAuthCredentials:       req.BasicAuthCredentials,
 		EnableBasicAuth:            boolOr(req.EnableBasicAuth, false),
@@ -511,6 +764,8 @@ func handleAmplifyCreateBranch(w http.ResponseWriter, r *http.Request) {
 		EnablePullRequestPreview:   boolOr(req.EnablePullRequestPreview, false),
 		PullRequestEnvironmentName: req.PullRequestEnvironmentName,
 		BackendEnvironmentArn:      req.BackendEnvironmentArn,
+		Backend:                    req.Backend,
+		ComputeRoleArn:             req.ComputeRoleArn,
 		CreateTime:                 now,
 		UpdateTime:                 now,
 		TotalNumberOfJobs:          "0",
@@ -541,6 +796,29 @@ func handleAmplifyGetBranch(w http.ResponseWriter, r *http.Request) {
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyBranch{"branch": br})
 }
 
+// amplifyUpdateBranchReq mirrors UpdateBranchRequest with presence-tracking
+// members (see amplifyUpdateAppReq).
+type amplifyUpdateBranchReq struct {
+	Description                *string             `json:"description"`
+	Framework                  *string             `json:"framework"`
+	Stage                      *AmplifyBranchStage `json:"stage"`
+	EnableNotification         *bool               `json:"enableNotification"`
+	EnableAutoBuild            *bool               `json:"enableAutoBuild"`
+	EnableSkewProtection       *bool               `json:"enableSkewProtection"`
+	EnvironmentVariables       map[string]string   `json:"environmentVariables"`
+	BasicAuthCredentials       *string             `json:"basicAuthCredentials"`
+	EnableBasicAuth            *bool               `json:"enableBasicAuth"`
+	EnablePerformanceMode      *bool               `json:"enablePerformanceMode"`
+	BuildSpec                  *string             `json:"buildSpec"`
+	Ttl                        *string             `json:"ttl"`
+	DisplayName                *string             `json:"displayName"`
+	EnablePullRequestPreview   *bool               `json:"enablePullRequestPreview"`
+	PullRequestEnvironmentName *string             `json:"pullRequestEnvironmentName"`
+	BackendEnvironmentArn      *string             `json:"backendEnvironmentArn"`
+	Backend                    *AmplifyBackend     `json:"backend"`
+	ComputeRoleArn             *string             `json:"computeRoleArn"`
+}
+
 func handleAmplifyUpdateBranch(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("appId")
 	name := r.PathValue("name")
@@ -554,19 +832,19 @@ func handleAmplifyUpdateBranch(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "branch not found")
 		return
 	}
-	var req amplifyCreateBranchReq
+	var req amplifyUpdateBranchReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode: "+err.Error())
 		return
 	}
-	if req.Description != "" {
-		br.Description = req.Description
+	if req.Description != nil {
+		br.Description = *req.Description
 	}
-	if req.Stage != "" {
-		br.Stage = req.Stage
+	if req.Framework != nil {
+		br.Framework = *req.Framework
 	}
-	if req.Framework != "" {
-		br.Framework = req.Framework
+	if req.Stage != nil && *req.Stage != "" {
+		br.Stage = *req.Stage
 	}
 	if req.EnableNotification != nil {
 		br.EnableNotification = *req.EnableNotification
@@ -574,20 +852,44 @@ func handleAmplifyUpdateBranch(w http.ResponseWriter, r *http.Request) {
 	if req.EnableAutoBuild != nil {
 		br.EnableAutoBuild = *req.EnableAutoBuild
 	}
+	if req.EnableSkewProtection != nil {
+		br.EnableSkewProtection = *req.EnableSkewProtection
+	}
 	if req.EnvironmentVariables != nil {
 		br.EnvironmentVariables = req.EnvironmentVariables
+	}
+	if req.BasicAuthCredentials != nil {
+		br.BasicAuthCredentials = *req.BasicAuthCredentials
 	}
 	if req.EnableBasicAuth != nil {
 		br.EnableBasicAuth = *req.EnableBasicAuth
 	}
-	if req.BuildSpec != "" {
-		br.BuildSpec = req.BuildSpec
+	if req.EnablePerformanceMode != nil {
+		br.EnablePerformanceMode = *req.EnablePerformanceMode
 	}
-	if req.Ttl != "" {
-		br.TtL = req.Ttl
+	if req.BuildSpec != nil {
+		br.BuildSpec = *req.BuildSpec
 	}
-	if req.DisplayName != "" {
-		br.DisplayName = req.DisplayName
+	if req.Ttl != nil && *req.Ttl != "" {
+		br.TtL = *req.Ttl
+	}
+	if req.DisplayName != nil {
+		br.DisplayName = *req.DisplayName
+	}
+	if req.EnablePullRequestPreview != nil {
+		br.EnablePullRequestPreview = *req.EnablePullRequestPreview
+	}
+	if req.PullRequestEnvironmentName != nil {
+		br.PullRequestEnvironmentName = *req.PullRequestEnvironmentName
+	}
+	if req.BackendEnvironmentArn != nil {
+		br.BackendEnvironmentArn = *req.BackendEnvironmentArn
+	}
+	if req.Backend != nil {
+		br.Backend = req.Backend
+	}
+	if req.ComputeRoleArn != nil {
+		br.ComputeRoleArn = *req.ComputeRoleArn
 	}
 	br.UpdateTime = amplifyEpoch()
 	stored.Branches[name] = br
@@ -614,6 +916,13 @@ func handleAmplifyDeleteBranch(w http.ResponseWriter, r *http.Request) {
 			amplifyJobs.Delete(jb.Job.Summary.JobId)
 		}
 	}
+	for _, dep := range amplifyDeployments.List() {
+		if dep.AppId == appID && dep.BranchName == name {
+			amplifyDeleteDeployment(dep)
+		}
+	}
+	amplifyStopCompute(appID, name)
+	amplifyInvalidateHostingCache(appID, name)
 	delete(stored.Branches, name)
 	amplifyApps.Put(appID, stored)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyBranch{"branch": br})
@@ -626,11 +935,16 @@ func handleAmplifyListBranches(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	branches := make([]AmplifyBranch, 0, len(stored.Branches))
 	for _, br := range stored.Branches {
 		branches = append(branches, br)
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"branches": branches})
+	sortBy(branches, func(b AmplifyBranch) string { return b.BranchName })
+	amplifyWriteListPage(w, "branches", branches, token, maxResults)
 }
 
 // ---------- Webhooks ----------
@@ -640,9 +954,20 @@ type amplifyCreateWebhookReq struct {
 	Description string `json:"description,omitempty"`
 }
 
+// amplifyWebhookWire is the response view of a stored webhook. The store
+// row's AppId is the authoritative linkage — persisted rows are not
+// guaranteed to carry appId inside the embedded wire struct — so the wire
+// view hydrates it on every read.
+func amplifyWebhookWire(stored amplifyStoredWebhook) AmplifyWebhook {
+	wh := stored.Webhook
+	wh.AppId = stored.AppId
+	return wh
+}
+
 func handleAmplifyCreateWebhook(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("appId")
-	if _, ok := amplifyApps.Get(appID); !ok {
+	app, ok := amplifyApps.Get(appID)
+	if !ok {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
@@ -661,12 +986,19 @@ func handleAmplifyCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		WebhookArn:  amplifyWebhookARN(id),
 		WebhookId:   id,
 		WebhookUrl:  "https://webhooks.amplify." + awsRegion() + ".amazonaws.com/prod/webhooks?id=" + id + "&token=" + amplifyRandomID(),
+		AppId:       appID,
 		BranchName:  req.BranchName,
 		Description: req.Description,
 		CreateTime:  now,
 		UpdateTime:  now,
 	}
 	amplifyWebhooks.Put(id, amplifyStoredWebhook{Webhook: wh, AppId: appID})
+	if app.App.WebhookCreateTime == 0 {
+		// webhookCreateTime: "A timestamp of when Amplify created the webhook
+		// in your Git repository" — real data exists once the app has one.
+		app.App.WebhookCreateTime = now
+		amplifyApps.Put(appID, app)
+	}
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": wh})
 }
 
@@ -677,7 +1009,7 @@ func handleAmplifyGetWebhook(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "webhook not found")
 		return
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": stored.Webhook})
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": amplifyWebhookWire(stored)})
 }
 
 func handleAmplifyUpdateWebhook(w http.ResponseWriter, r *http.Request) {
@@ -688,22 +1020,22 @@ func handleAmplifyUpdateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		BranchName  string `json:"branchName,omitempty"`
-		Description string `json:"description,omitempty"`
+		BranchName  *string `json:"branchName"`
+		Description *string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode: "+err.Error())
 		return
 	}
-	if req.BranchName != "" {
-		stored.Webhook.BranchName = req.BranchName
+	if req.BranchName != nil && *req.BranchName != "" {
+		stored.Webhook.BranchName = *req.BranchName
 	}
-	if req.Description != "" {
-		stored.Webhook.Description = req.Description
+	if req.Description != nil {
+		stored.Webhook.Description = *req.Description
 	}
 	stored.Webhook.UpdateTime = amplifyEpoch()
 	amplifyWebhooks.Put(id, stored)
-	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": stored.Webhook})
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": amplifyWebhookWire(stored)})
 }
 
 func handleAmplifyDeleteWebhook(w http.ResponseWriter, r *http.Request) {
@@ -714,7 +1046,7 @@ func handleAmplifyDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	amplifyWebhooks.Delete(id)
-	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": stored.Webhook})
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyWebhook{"webhook": amplifyWebhookWire(stored)})
 }
 
 func handleAmplifyListWebhooks(w http.ResponseWriter, r *http.Request) {
@@ -723,16 +1055,31 @@ func handleAmplifyListWebhooks(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	items := []AmplifyWebhook{}
 	for _, s := range amplifyWebhooks.List() {
 		if s.AppId == appID {
-			items = append(items, s.Webhook)
+			items = append(items, amplifyWebhookWire(s))
 		}
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"webhooks": items})
+	sortBy(items, func(wh AmplifyWebhook) string { return wh.WebhookId })
+	amplifyWriteListPage(w, "webhooks", items, token, maxResults)
 }
 
 // ---------- Jobs ----------
+
+// Synthetic job pipeline timing: PENDING → (running delay) → RUNNING →
+// (succeed delay) → SUCCEED. Short enough that polling clients settle
+// quickly, long enough that a StopJob issued right after StartJob — even
+// through a freshly spawned `aws` CLI process on a contended host — lands
+// inside the cancellation window.
+const (
+	amplifyJobRunningDelay = 200 * time.Millisecond
+	amplifyJobSucceedDelay = 1300 * time.Millisecond
+)
 
 type amplifyStartJobReq struct {
 	JobType       string  `json:"jobType"` // RELEASE / RETRY / MANUAL / WEB_HOOK
@@ -741,6 +1088,14 @@ type amplifyStartJobReq struct {
 	CommitMessage string  `json:"commitMessage,omitempty"`
 	CommitTime    float64 `json:"commitTime,omitempty"`
 	JobId         string  `json:"jobId,omitempty"`
+}
+
+func amplifyJobSteps(start float64, status AmplifyJobStatus) []AmplifyJobStep {
+	return []AmplifyJobStep{
+		{StepName: "PROVISION", StartTime: start, Status: status},
+		{StepName: "BUILD", StartTime: start, Status: status},
+		{StepName: "DEPLOY", StartTime: start, Status: status},
+	}
 }
 
 func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
@@ -769,8 +1124,6 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 	if req.JobId != "" {
 		jobID = req.JobId
 	}
-	// Per plan, sim synthesises SUCCEEDED eagerly. Real
-	// Amplify runs a real npm build pipeline; sim doesn't.
 	summary := AmplifyJobSummary{
 		JobArn:        amplifyJobARN(appID, branch, jobID),
 		JobId:         jobID,
@@ -778,27 +1131,121 @@ func handleAmplifyStartJob(w http.ResponseWriter, r *http.Request) {
 		CommitMessage: req.CommitMessage,
 		CommitTime:    req.CommitTime,
 		StartTime:     now,
-		EndTime:       now + 1,
-		Status:        "SUCCEED",
+		Status:        AmplifyJobStatusPending,
 		JobType:       req.JobType,
 	}
-	job := AmplifyJob{
-		Summary: summary,
-		Steps: []AmplifyJobStep{
-			{StepName: "PROVISION", StartTime: now, EndTime: now, Status: "SUCCEED"},
-			{StepName: "BUILD", StartTime: now, EndTime: now + 1, Status: "SUCCEED"},
-			{StepName: "DEPLOY", StartTime: now + 1, EndTime: now + 1, Status: "SUCCEED"},
-		},
-	}
+	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
 	amplifyJobs.Put(jobID, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
-	amplifyCreateJobArtifact(r, appID, branch, jobID, "e2e-test-artifacts.zip")
-	// Bump branch active job + count.
+	amplifyTrackJobStart(appID, branch, jobID)
+	// Only the build-shaped job types run a real build; a MANUAL StartJob
+	// deploys without building, like StartDeployment.
+	buildJobType := req.JobType == "RELEASE" || req.JobType == "RETRY" || req.JobType == "WEB_HOOK"
 	br := stored.Branches[branch]
+	if spec, repo, ok := amplifyRealBuildPlan(stored.App, br); ok && buildJobType {
+		amplifyScheduleRealBuild(appID, branch, jobID, amplifyURLBase(r), repo, spec,
+			amplifyBuildEnv(stored.App, br, jobID), req.CommitId)
+	} else {
+		amplifyScheduleJobRun(appID, branch, jobID, amplifyURLBase(r), nil, "e2e-test-artifacts.zip")
+	}
+	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
+}
+
+// amplifyTrackJobStart bumps the branch's active job + count.
+func amplifyTrackJobStart(appID, branch, jobID string) {
+	stored, ok := amplifyApps.Get(appID)
+	if !ok {
+		return
+	}
+	br, ok := stored.Branches[branch]
+	if !ok {
+		return
+	}
 	br.ActiveJobId = jobID
-	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
+	br.TotalNumberOfJobs = strconv.Itoa(amplifyBranchJobCount(appID, branch))
 	stored.Branches[branch] = br
 	amplifyApps.Put(appID, stored)
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"jobSummary": summary})
+}
+
+// amplifyUploadedArtifact is one client-uploaded deployment object the
+// finished job exposes as its build artifact.
+type amplifyUploadedArtifact struct {
+	FileName string
+	Key      string
+}
+
+// amplifyScheduleJobRun drives the synthetic PENDING → RUNNING → SUCCEED
+// transition. At SUCCEED it materializes the job artifacts — the uploaded
+// deployment objects when the client PUT real bytes, otherwise the
+// sim-shaped placeholder — and records the production-branch deploy.
+func amplifyScheduleJobRun(appID, branch, jobID, urlBase string, uploads []amplifyUploadedArtifact, syntheticName string) {
+	go func() {
+		time.Sleep(amplifyJobRunningDelay)
+		amplifyAdvanceJob(jobID, AmplifyJobStatusPending, AmplifyJobStatusRunning)
+		time.Sleep(amplifyJobSucceedDelay)
+		if !amplifyAdvanceJob(jobID, AmplifyJobStatusRunning, AmplifyJobStatusSucceed) {
+			return
+		}
+		if len(uploads) == 0 {
+			key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/" + syntheticName
+			artifactID := amplifyArtifactID(jobID)
+			amplifyPutS3Object(key, "application/zip", []byte("amplify artifact "+artifactID+"\n"))
+			amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, artifactID, syntheticName, key)
+		} else {
+			for _, up := range uploads {
+				amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, amplifyArtifactID(jobID), up.FileName, up.Key)
+			}
+		}
+		amplifyMarkProductionDeploy(appID, branch, jobID)
+	}()
+}
+
+// amplifyAdvanceJob moves a job from one status to the next, refusing to
+// clobber a job that left the expected state (stopped or deleted meanwhile).
+func amplifyAdvanceJob(jobID string, from, to AmplifyJobStatus) bool {
+	advanced := false
+	amplifyJobs.Update(jobID, func(j *amplifyStoredJob) {
+		if j.Job.Summary.Status != from {
+			return
+		}
+		j.Job.Summary.Status = to
+		now := amplifyEpoch()
+		if to.Terminal() {
+			j.Job.Summary.EndTime = now
+		}
+		for i := range j.Job.Steps {
+			j.Job.Steps[i].Status = to
+			if to.Terminal() {
+				j.Job.Steps[i].EndTime = now
+			}
+		}
+		advanced = true
+	})
+	return advanced
+}
+
+// amplifyMarkProductionDeploy records the app's productionBranch after a
+// successful job on a PRODUCTION-stage branch, the way real Amplify
+// populates it. thumbnailUrl stays absent (external, sim has no
+// screenshots).
+func amplifyMarkProductionDeploy(appID, branch, jobID string) {
+	job, ok := amplifyJobs.Get(jobID)
+	if !ok || job.Job.Summary.Status != AmplifyJobStatusSucceed {
+		return
+	}
+	stored, ok := amplifyApps.Get(appID)
+	if !ok {
+		return
+	}
+	br, ok := stored.Branches[branch]
+	if !ok || br.Stage != AmplifyStageProduction {
+		return
+	}
+	stored.App.ProductionBranch = &AmplifyProductionBranch{
+		BranchName:     branch,
+		LastDeployTime: job.Job.Summary.EndTime,
+		Status:         job.Job.Summary.Status,
+	}
+	amplifyApps.Put(appID, stored)
 }
 
 func amplifyBranchJobCount(appID, branch string) int {
@@ -811,23 +1258,18 @@ func amplifyBranchJobCount(appID, branch string) int {
 	return n
 }
 
-func amplifyCreateJobArtifact(r *http.Request, appID, branch, jobID, fileName string) AmplifyArtifact {
-	artifactID := amplifyArtifactID(jobID)
-	key := "artifacts/" + appID + "/" + branch + "/" + jobID + "/" + fileName
-	artifact := AmplifyArtifact{
-		ArtifactId:       artifactID,
-		ArtifactFileName: fileName,
-	}
-	amplifyPutS3Object(key, "application/zip", []byte("amplify artifact "+artifactID+"\n"))
+func amplifyRegisterJobArtifact(urlBase, appID, branch, jobID, artifactID, fileName, key string) {
 	amplifyArtifacts.Put(artifactID, amplifyStoredArtifact{
-		Artifact:   artifact,
+		Artifact: AmplifyArtifact{
+			ArtifactId:       artifactID,
+			ArtifactFileName: fileName,
+		},
 		AppId:      appID,
 		BranchName: branch,
 		JobId:      jobID,
 		Key:        key,
-		URL:        amplifyPresignedS3URL(r, key),
+		URL:        amplifyPresignedS3URLBase(urlBase, key),
 	})
-	return artifact
 }
 
 func amplifyDeleteArtifactsForJob(jobID string) {
@@ -837,6 +1279,17 @@ func amplifyDeleteArtifactsForJob(jobID string) {
 			amplifyArtifacts.Delete(artifact.Artifact.ArtifactId)
 		}
 	}
+}
+
+// amplifyDeleteDeployment removes a pending deployment row and any bytes the
+// client uploaded against its presigned URLs.
+func amplifyDeleteDeployment(dep amplifyStoredDeployment) {
+	bucket := amplifyArtifactBucketName()
+	s3Objects.Delete(s3ObjectKey(bucket, dep.ZipKey))
+	for _, key := range dep.FileKeys {
+		s3Objects.Delete(s3ObjectKey(bucket, key))
+	}
+	amplifyDeployments.Delete(dep.JobId)
 }
 
 func amplifyArtifactBucketName() string {
@@ -864,7 +1317,7 @@ func amplifyPutS3Object(key, contentType string, data []byte) {
 	})
 }
 
-func amplifyPresignedS3URL(r *http.Request, key string) string {
+func amplifyURLBase(r *http.Request) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -872,8 +1325,20 @@ func amplifyPresignedS3URL(r *http.Request, key string) string {
 	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded == "http" || forwarded == "https" {
 		scheme = forwarded
 	}
-	return fmt.Sprintf("%s://%s/%s/%s?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600",
-		scheme, r.Host, amplifyArtifactBucketName(), key)
+	return scheme + "://" + r.Host
+}
+
+// amplifyPresignedS3URLBase mints a presigned-shape URL into the sim's own
+// S3 data plane; the same URL services both the GET (artifact download) and
+// PUT (deployment upload) sides because the sim's S3 object routes don't
+// gate on the signature query params.
+func amplifyPresignedS3URLBase(urlBase, key string) string {
+	return fmt.Sprintf("%s/%s/%s?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600",
+		urlBase, amplifyArtifactBucketName(), key)
+}
+
+func amplifyPresignedS3URL(r *http.Request, key string) string {
+	return amplifyPresignedS3URLBase(amplifyURLBase(r), key)
 }
 
 func amplifyJobForRequest(r *http.Request) (amplifyStoredJob, bool) {
@@ -896,7 +1361,7 @@ func amplifyUpdateBranchAfterJobChange(appID, branch, changedJobID string) {
 	if !ok {
 		return
 	}
-	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
+	br.TotalNumberOfJobs = strconv.Itoa(amplifyBranchJobCount(appID, branch))
 	if br.ActiveJobId == changedJobID {
 		br.ActiveJobId = ""
 	}
@@ -920,9 +1385,28 @@ func handleAmplifyStopJob(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
 		return
 	}
-	stored.Job.Summary.Status = "CANCELLED"
-	stored.Job.Summary.EndTime = amplifyEpoch()
+	if status := stored.Job.Summary.Status; status.Terminal() {
+		// Real Amplify only stops jobs that are in progress; a finished job
+		// is rejected with a BadRequestException.
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			fmt.Sprintf("Job with id %s is already in status %s and cannot be stopped", jobID, status))
+		return
+	}
+	// Inline-settle: real Amplify passes through CANCELLING before
+	// CANCELLED; the sim has no build worker to wind down, so the stop
+	// lands terminal immediately.
+	now := amplifyEpoch()
+	stored.Job.Summary.Status = AmplifyJobStatusCancelled
+	stored.Job.Summary.EndTime = now
+	for i := range stored.Job.Steps {
+		if !stored.Job.Steps[i].Status.Terminal() {
+			stored.Job.Steps[i].Status = AmplifyJobStatusCancelled
+			stored.Job.Steps[i].EndTime = now
+		}
+	}
 	amplifyJobs.Put(jobID, stored)
+	// A real build in flight has a container to wind down.
+	amplifyCancelRunningBuild(jobID)
 	amplifyUpdateBranchAfterJobChange(stored.AppId, stored.BranchName, jobID)
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": stored.Job.Summary})
 }
@@ -947,13 +1431,24 @@ func handleAmplifyListJobs(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	summaries := []AmplifyJobSummary{}
 	for _, j := range amplifyJobs.List() {
 		if j.AppId == appID && j.BranchName == branch {
 			summaries = append(summaries, j.Job.Summary)
 		}
 	}
-	amplifyWriteJSON(w, http.StatusOK, map[string]any{"jobSummaries": summaries})
+	// Real ListJobs returns the newest job first.
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].StartTime != summaries[j].StartTime {
+			return summaries[i].StartTime > summaries[j].StartTime
+		}
+		return summaries[i].JobId < summaries[j].JobId
+	})
+	amplifyWriteListPage(w, "jobSummaries", summaries, token, maxResults)
 }
 
 func handleAmplifyListArtifacts(w http.ResponseWriter, r *http.Request) {
@@ -962,45 +1457,18 @@ func handleAmplifyListArtifacts(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "job not found")
 		return
 	}
+	token, maxResults, ok := amplifyPageQuery(w, r)
+	if !ok {
+		return
+	}
 	artifacts := []AmplifyArtifact{}
 	for _, stored := range amplifyArtifacts.List() {
 		if stored.AppId == storedJob.AppId && stored.BranchName == storedJob.BranchName && stored.JobId == storedJob.Job.Summary.JobId {
 			artifacts = append(artifacts, stored.Artifact)
 		}
 	}
-	sort.Slice(artifacts, func(i, j int) bool {
-		return artifacts[i].ArtifactId < artifacts[j].ArtifactId
-	})
-
-	start := 0
-	if token := r.URL.Query().Get("nextToken"); token != "" {
-		offset, err := strconv.Atoi(token)
-		if err != nil || offset < 0 {
-			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid nextToken")
-			return
-		}
-		start = offset
-	}
-	if start > len(artifacts) {
-		start = len(artifacts)
-	}
-	limit := len(artifacts) - start
-	if raw := r.URL.Query().Get("maxResults"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
-			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "invalid maxResults")
-			return
-		}
-		if parsed > 0 && parsed < limit {
-			limit = parsed
-		}
-	}
-	end := start + limit
-	out := map[string]any{"artifacts": artifacts[start:end]}
-	if end < len(artifacts) {
-		out["nextToken"] = strconv.Itoa(end)
-	}
-	amplifyWriteJSON(w, http.StatusOK, out)
+	sortBy(artifacts, func(a AmplifyArtifact) string { return a.ArtifactId })
+	amplifyWriteListPage(w, "artifacts", artifacts, token, maxResults)
 }
 
 func handleAmplifyGetArtifactURL(w http.ResponseWriter, r *http.Request) {
@@ -1061,20 +1529,61 @@ func amplifyAppOwnsDomain(stored amplifyStoredApp, domain string) bool {
 	return false
 }
 
-// CreateDeployment is for manual zip-upload deployments. The upload target is
-// an external Amplify-style presigned URL, matching the public response shape.
+// ---------- Deployments ----------
+
+type amplifyCreateDeploymentReq struct {
+	FileMap map[string]string `json:"fileMap,omitempty"`
+}
+
+// CreateDeployment mints presigned upload URLs into the sim's own S3 data
+// plane and parks a pending-deployment row that StartDeployment consumes.
+// Per the model, CreateDeployment carries no NotFoundException — unknown
+// app/branch surfaces as BadRequestException.
 func handleAmplifyCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	appID := r.PathValue("appId")
-	if _, ok := amplifyApps.Get(appID); !ok {
-		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "app not found")
+	branch := r.PathValue("name")
+	stored, ok := amplifyApps.Get(appID)
+	if !ok {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "app not found: "+appID)
+		return
+	}
+	if _, ok := stored.Branches[branch]; !ok {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "branch not found: "+branch)
+		return
+	}
+	var req amplifyCreateDeploymentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode body: "+err.Error())
 		return
 	}
 	jobID := amplifyJobID()
+	keyBase := "deployments/" + appID + "/" + branch + "/" + jobID
+	dep := amplifyStoredDeployment{
+		JobId:      jobID,
+		AppId:      appID,
+		BranchName: branch,
+		ZipKey:     keyBase + "/archive.zip",
+		FileKeys:   map[string]string{},
+		CreateTime: amplifyEpoch(),
+	}
+	fileUploadUrls := map[string]string{}
+	for name := range req.FileMap {
+		key := keyBase + "/files/" + name
+		dep.FileKeys[name] = key
+		fileUploadUrls[name] = amplifyPresignedS3URL(r, key)
+	}
+	amplifyDeployments.Put(jobID, dep)
 	amplifyWriteJSON(w, http.StatusOK, map[string]any{
 		"jobId":          jobID,
-		"fileUploadUrls": map[string]string{},
-		"zipUploadUrl":   "https://amplify-sim.example.com/upload/" + jobID,
+		"fileUploadUrls": fileUploadUrls,
+		"zipUploadUrl":   amplifyPresignedS3URL(r, dep.ZipKey),
 	})
+}
+
+type amplifyStartDeploymentReq struct {
+	JobId         string               `json:"jobId,omitempty"`
+	SourceUrl     string               `json:"sourceUrl,omitempty"`
+	SourceUrlType AmplifySourceUrlType `json:"sourceUrlType,omitempty"`
 }
 
 func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
@@ -1089,31 +1598,73 @@ func handleAmplifyStartDeployment(w http.ResponseWriter, r *http.Request) {
 		amplifyWriteError(w, http.StatusNotFound, "NotFoundException", "branch not found")
 		return
 	}
-	var req struct {
-		JobId     string `json:"jobId,omitempty"`
-		SourceUrl string `json:"sourceUrl,omitempty"`
-	}
+	var req amplifyStartDeploymentReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException", "could not decode body: "+err.Error())
 		return
 	}
-	jobID := req.JobId
-	if jobID == "" {
-		jobID = amplifyJobID()
+	if req.JobId == "" && req.SourceUrl == "" {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			"Must specify jobId or sourceUrl for StartDeploymentRequest")
+		return
+	}
+	if req.JobId != "" && req.SourceUrl != "" {
+		amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+			"Cannot specify both jobId and sourceUrl for StartDeploymentRequest")
+		return
 	}
 	now := amplifyEpoch()
 	summary := AmplifyJobSummary{
-		JobArn: amplifyJobARN(appID, branch, jobID), JobId: jobID,
-		StartTime: now, EndTime: now + 1,
-		Status: "SUCCEED", JobType: "MANUAL",
+		StartTime: now,
+		Status:    AmplifyJobStatusPending,
+		JobType:   "MANUAL",
 	}
-	amplifyJobs.Put(jobID, amplifyStoredJob{Job: AmplifyJob{Summary: summary}, AppId: appID, BranchName: branch})
-	amplifyCreateJobArtifact(r, appID, branch, jobID, "deployment-artifacts.zip")
-	br := stored.Branches[branch]
-	br.ActiveJobId = jobID
-	br.TotalNumberOfJobs = fmt.Sprintf("%d", amplifyBranchJobCount(appID, branch))
-	stored.Branches[branch] = br
-	amplifyApps.Put(appID, stored)
+	var uploads []amplifyUploadedArtifact
+	if req.JobId != "" {
+		dep, ok := amplifyDeployments.Get(req.JobId)
+		if !ok || dep.AppId != appID || dep.BranchName != branch {
+			amplifyWriteError(w, http.StatusNotFound, "NotFoundException",
+				"no deployment found for jobId "+req.JobId)
+			return
+		}
+		summary.JobId = dep.JobId
+		bucket := amplifyArtifactBucketName()
+		if _, ok := s3Objects.Get(s3ObjectKey(bucket, dep.ZipKey)); ok {
+			uploads = append(uploads, amplifyUploadedArtifact{FileName: "archive.zip", Key: dep.ZipKey})
+		}
+		for name, key := range dep.FileKeys {
+			if _, ok := s3Objects.Get(s3ObjectKey(bucket, key)); ok {
+				uploads = append(uploads, amplifyUploadedArtifact{FileName: name, Key: key})
+			}
+		}
+		sort.Slice(uploads, func(i, j int) bool { return uploads[i].FileName < uploads[j].FileName })
+		// Consumed: the uploaded objects now belong to the job's artifacts.
+		amplifyDeployments.Delete(dep.JobId)
+	} else {
+		sourceURLType := req.SourceUrlType
+		if sourceURLType == "" {
+			// Documented default: "If no value is specified, the default is ZIP."
+			sourceURLType = AmplifySourceUrlZip
+		}
+		if sourceURLType != AmplifySourceUrlZip && sourceURLType != AmplifySourceUrlBucketPrefix {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+				"sourceUrlType must be ZIP or BUCKET_PREFIX")
+			return
+		}
+		if !strings.HasPrefix(req.SourceUrl, "s3://") && !strings.HasPrefix(req.SourceUrl, "https://") && !strings.HasPrefix(req.SourceUrl, "http://") {
+			amplifyWriteError(w, http.StatusBadRequest, "BadRequestException",
+				"sourceUrl must start with s3://, https:// or http://")
+			return
+		}
+		summary.JobId = amplifyJobID()
+		summary.SourceUrl = req.SourceUrl
+		summary.SourceUrlType = sourceURLType
+	}
+	summary.JobArn = amplifyJobARN(appID, branch, summary.JobId)
+	job := AmplifyJob{Summary: summary, Steps: amplifyJobSteps(now, AmplifyJobStatusPending)}
+	amplifyJobs.Put(summary.JobId, amplifyStoredJob{Job: job, AppId: appID, BranchName: branch})
+	amplifyTrackJobStart(appID, branch, summary.JobId)
+	amplifyScheduleJobRun(appID, branch, summary.JobId, amplifyURLBase(r), uploads, "deployment-artifacts.zip")
 	amplifyWriteJSON(w, http.StatusOK, map[string]AmplifyJobSummary{"jobSummary": summary})
 }
 

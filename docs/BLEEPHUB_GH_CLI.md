@@ -79,6 +79,7 @@ These work natively (no `gh api` workaround needed):
 | `gh run list / view / cancel / rerun` | `GET/POST /repos/{o}/{r}/actions/runs*` (push-triggered runs resolve their `workflow_id`) |
 | `gh workflow run <wf> --ref <branch>` | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches`; version-gated on `GET /meta` |
 | `gh workflow list / view` | `GET /actions/workflows[/{id}]` (`enable` / `disable` not implemented — see [bleephub/README.md](../bleephub/README.md#what-it-does-not-implement-deferred)) |
+| `gh org list` | GraphQL `user(login:).organizations` connection |
 | `gh api /repos/{o}/{r}/...` | direct REST passthrough |
 
 ## Endpoints with no native `gh` verb

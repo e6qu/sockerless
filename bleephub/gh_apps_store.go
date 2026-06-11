@@ -483,7 +483,7 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 
 	b := make([]byte, 20)
 	_, _ = rand.Read(b)
-	tokenStr := "ghs_" + hex.EncodeToString(b)
+	tokenStr := tokenPrefixInstallation + hex.EncodeToString(b)
 
 	token := &InstallationToken{
 		Token:          tokenStr,

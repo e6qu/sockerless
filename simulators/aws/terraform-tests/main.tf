@@ -517,9 +517,21 @@ resource "aws_amplify_backend_environment" "tf_amplify_be" {
   stack_name       = "amplify-staging-stack"
 }
 
+# Domain verification is real: the association stays PENDING_VERIFICATION
+# until its certificate-verification CNAME exists in a Route 53 hosted zone
+# covering the domain. The association is created without waiting (the
+# record can only be derived from its exported
+# certificate_verification_dns_record), then the record flips it AVAILABLE
+# on the next read — the standard real-world terraform shape for Amplify
+# custom domains.
+resource "aws_route53_zone" "tf_amplify_zone" {
+  name = "tf-amplify.example.com"
+}
+
 resource "aws_amplify_domain_association" "tf_amplify_domain" {
-  app_id      = aws_amplify_app.tf_amplify.id
-  domain_name = "tf-amplify.example.com"
+  app_id                = aws_amplify_app.tf_amplify.id
+  domain_name           = "tf-amplify.example.com"
+  wait_for_verification = false
 
   sub_domain {
     branch_name = aws_amplify_branch.tf_amplify_main.branch_name
@@ -530,6 +542,14 @@ resource "aws_amplify_domain_association" "tf_amplify_domain" {
     branch_name = aws_amplify_branch.tf_amplify_main.branch_name
     prefix      = ""
   }
+}
+
+resource "aws_route53_record" "tf_amplify_cert_verification" {
+  zone_id = aws_route53_zone.tf_amplify_zone.zone_id
+  name    = split(" ", aws_amplify_domain_association.tf_amplify_domain.certificate_verification_dns_record)[0]
+  type    = split(" ", aws_amplify_domain_association.tf_amplify_domain.certificate_verification_dns_record)[1]
+  ttl     = 300
+  records = [split(" ", aws_amplify_domain_association.tf_amplify_domain.certificate_verification_dns_record)[2]]
 }
 
 resource "aws_wafv2_ip_set" "tf_ipset" {

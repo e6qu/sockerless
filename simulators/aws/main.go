@@ -117,8 +117,11 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerCloudWatchMetricsQuery(queryRouter)
 
 	// Host-addressed service data planes are registered outside the
-	// Query Protocol control-plane router.
+	// control-plane routers, AFTER armSpecValidator: a later WrapHandler
+	// wraps outside an earlier one, so data-plane traffic is intercepted
+	// before the validator (and the mux) ever see it.
 	registerELBv2DataPlane(srv)
+	registerAmplifyDataPlane(srv)
 
 	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
 	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).

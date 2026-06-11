@@ -524,13 +524,13 @@ func TestPersistenceReload_OrgMembershipAndTeams(t *testing.T) {
 		if org == nil {
 			t.Fatal("CreateOrg returned nil")
 		}
-		if !st.SetMembership("acme", dev.ID, "member") {
+		if st.SetMembership("acme", dev.ID, OrgRoleMember, MembershipStateActive) == nil {
 			t.Fatal("SetMembership failed")
 		}
-		team := st.CreateTeam("acme", "Platform", "", "closed", "push")
+		team := st.CreateTeam("acme", "Platform", TeamOptions{Privacy: TeamPrivacyClosed, Permission: TeamPermissionPush})
 		teamID = team.ID
-		st.AddTeamMember("acme", "platform", admin.ID)
-		st.AddTeamMember("acme", "platform", dev.ID)
+		st.AddTeamMember("acme", "platform", admin.ID, TeamRoleMaintainer)
+		st.AddTeamMember("acme", "platform", dev.ID, TeamRoleMember)
 		st.AddTeamRepo("acme", "platform", "acme/infra")
 		st.AddTeamRepo("acme", "platform", "acme/app")
 		st.RemoveTeamRepo("acme", "platform", "acme/infra")
@@ -770,5 +770,97 @@ func TestPersistenceReload_ProjectV2OptionSeed(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("expected 3 distinct option IDs, got %d", len(seen))
+	}
+}
+
+// Org-surface reload round-trip: membership pending state + public flag,
+// team hierarchy/roles/notification setting, org profile fields, and
+// org-level webhooks must all survive a restart.
+func TestPersistenceReload_OrgProfileMembershipFlagsAndOrgHooks(t *testing.T) {
+	var devID, parentID, childID, hookID int
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		dev := addTestUser(p, st, "orgdev")
+		devID = dev.ID
+
+		if st.CreateOrg(admin, "persist-org", "Persist", "") == nil {
+			t.Fatal("CreateOrg returned nil")
+		}
+		canCreate := false
+		if !st.UpdateOrg("persist-org", func(o *Org) {
+			o.Company = "ACME"
+			o.BillingEmail = "bill@example.test"
+			o.DefaultRepositoryPermission = "write"
+			o.MembersCanCreateRepositories = &canCreate
+		}) {
+			t.Fatal("UpdateOrg failed")
+		}
+
+		// Pending membership + a publicized admin membership.
+		if st.SetMembership("persist-org", dev.ID, OrgRoleMember, MembershipStatePending) == nil {
+			t.Fatal("SetMembership failed")
+		}
+		if !st.SetMembershipPublic("persist-org", admin.ID, true) {
+			t.Fatal("SetMembershipPublic failed")
+		}
+
+		parent := st.CreateTeam("persist-org", "Core", TeamOptions{
+			Permission:          TeamPermissionPush,
+			NotificationSetting: TeamNotificationsDisabled,
+		})
+		parentID = parent.ID
+		child := st.CreateTeam("persist-org", "Core Infra", TeamOptions{ParentID: parent.ID})
+		childID = child.ID
+		st.AddTeamMember("persist-org", "core", admin.ID, TeamRoleMaintainer)
+
+		hook := st.CreateOrgHook("persist-org", "https://hooks.example.test/x", "s3cret", "json", "0", []string{"push", "organization"}, true)
+		hookID = hook.ID
+	})
+
+	org := st2.GetOrg("persist-org")
+	if org == nil {
+		t.Fatal("org did not persist")
+	}
+	if org.Company != "ACME" || org.BillingEmail != "bill@example.test" || org.DefaultRepositoryPermission != "write" {
+		t.Errorf("org profile fields after reload = %+v", org)
+	}
+	if org.MembersCanCreateRepositories == nil || *org.MembersCanCreateRepositories {
+		t.Error("members_can_create_repositories=false did not persist")
+	}
+
+	dev := st2.GetMembership("persist-org", devID)
+	if dev == nil || dev.State != MembershipStatePending {
+		t.Errorf("pending membership after reload = %+v, want pending", dev)
+	}
+	adminM := st2.GetMembership("persist-org", st2.UsersByLogin["admin"].ID)
+	if adminM == nil || !adminM.Public {
+		t.Error("public membership flag did not persist")
+	}
+
+	parent := st2.GetTeamByID(parentID)
+	if parent == nil || parent.NotificationSetting != TeamNotificationsDisabled {
+		t.Errorf("team notification setting after reload = %+v", parent)
+	}
+	if role, ok := parent.roleOf(st2.UsersByLogin["admin"].ID); !ok || role != TeamRoleMaintainer {
+		t.Errorf("maintainer role after reload = %v/%v, want maintainer/true", role, ok)
+	}
+	child := st2.GetTeamByID(childID)
+	if child == nil || child.ParentID != parentID {
+		t.Errorf("team parent after reload = %+v, want ParentID=%d", child, parentID)
+	}
+
+	hook := st2.GetOrgHook("persist-org", hookID)
+	if hook == nil {
+		t.Fatal("org hook did not persist")
+	}
+	if hook.OrgLogin != "persist-org" {
+		t.Errorf("org hook OrgLogin not backfilled from bucket key: %q", hook.OrgLogin)
+	}
+	if hook.Secret != "s3cret" || hook.URL != "https://hooks.example.test/x" {
+		t.Errorf("org hook config after reload = %+v", hook)
+	}
+	if st2.NextHookID <= hookID {
+		t.Errorf("NextHookID after reload = %d, want > %d", st2.NextHookID, hookID)
 	}
 }

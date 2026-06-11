@@ -36,8 +36,16 @@ func computeHMACSignatureSHA1(secret string, payload []byte) string {
 }
 
 // emitWebhookEvent dispatches an event to matching webhooks (non-blocking).
+// Org-owned repos additionally fan the event out to the owner org's hooks —
+// real GitHub delivers every repo event on an org repository to matching
+// organization webhooks too.
 func (s *Server) emitWebhookEvent(repoKey, eventType, action string, payload interface{}) {
 	hooks := s.store.ListHooks(repoKey)
+	if ownerLogin, _, found := strings.Cut(repoKey, "/"); found {
+		if s.store.GetOrg(ownerLogin) != nil {
+			hooks = append(hooks, s.store.ListOrgHooks(ownerLogin)...)
+		}
+	}
 
 	// Org-owned repos carry a top-level `organization` object on event
 	// payloads (real GitHub adds it for every event on an org repo).
@@ -95,6 +103,8 @@ func (s *Server) deliverWebhook(hook *Webhook, event, action string, payloadByte
 		s.store.AddDelivery(delivery)
 		if hook.RepoKey != "" {
 			s.store.SetHookLastResponse(hook.RepoKey, hook.ID, deliveryLastResponse(delivery))
+		} else if hook.OrgLogin != "" {
+			s.store.SetOrgHookLastResponse(hook.OrgLogin, hook.ID, deliveryLastResponse(delivery))
 		}
 
 		if delivery.StatusCode >= 200 && delivery.StatusCode < 300 {
@@ -135,11 +145,17 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 	}
 	// Installation-target headers identify the resource that owns the hook.
 	// App-bound hooks (HookID < 0) target the GitHub App ("integration");
-	// repository hooks target the repository's id.
-	if hook.ID < 0 {
+	// org hooks target the organization's id; repository hooks the repo's.
+	switch {
+	case hook.ID < 0:
 		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "integration"
 		reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(-hook.ID)
-	} else {
+	case hook.OrgLogin != "":
+		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "organization"
+		if org := s.store.GetOrg(hook.OrgLogin); org != nil {
+			reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(org.ID)
+		}
+	default:
 		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "repository"
 		parts := splitRepoKeyParts(hook.RepoKey)
 		if parts[1] != "" {

@@ -18,6 +18,17 @@ const ctxApp contextKey = "gh-app"
 const ctxInstallation contextKey = "gh-installation"
 const ctxInstallationToken contextKey = "gh-installation-token"
 const ctxUserToServerToken contextKey = "gh-uts-token"
+const ctxSuspendedInstallation contextKey = "gh-suspended-installation"
+
+// GitHub token prefixes. Each prefix selects a different lookup table and
+// auth shape in authenticateRequest; using the named constants keeps the
+// middleware, stores and handlers agreeing on the exact prefix bytes.
+const (
+	tokenPrefixInstallation = "ghs_" // installation access token
+	tokenPrefixOAuthUser    = "gho_" // classic OAuth-App user token
+	tokenPrefixAppUser      = "ghu_" // GitHub-App user-to-server token
+	tokenPrefixRefresh      = "ghr_" // refresh token (never valid as auth)
+)
 
 // ghUserFromContext extracts the authenticated user from the request context.
 func ghUserFromContext(ctx context.Context) *User {
@@ -70,6 +81,14 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 		ctx := s.authenticateRequest(r)
 		r = r.WithContext(ctx)
 
+		// A suspended installation's tokens are dead for the entire API
+		// surface (real GitHub fails every request made with the app's
+		// credentials while suspended), not just for minting new tokens.
+		if susp, _ := ctx.Value(ctxSuspendedInstallation).(bool); susp {
+			writeGHError(w, http.StatusForbidden, "This installation has been suspended")
+			return
+		}
+
 		// Parse token for rate-limit header info
 		var token *Token
 		if auth := r.Header.Get("Authorization"); auth != "" {
@@ -78,7 +97,7 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 			if scheme == "token" || scheme == "bearer" {
 				tokenStr = cred
 			}
-			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, "ghs_") && !strings.HasPrefix(tokenStr, "gho_") && !strings.HasPrefix(tokenStr, "ghu_") && !strings.HasPrefix(tokenStr, "ghr_") {
+			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, tokenPrefixInstallation) && !strings.HasPrefix(tokenStr, tokenPrefixOAuthUser) && !strings.HasPrefix(tokenStr, tokenPrefixAppUser) && !strings.HasPrefix(tokenStr, tokenPrefixRefresh) {
 				token, _ = s.store.LookupToken(tokenStr)
 			} else if scheme == "basic" {
 				decoded, err := base64.StdEncoding.DecodeString(cred)
@@ -131,8 +150,12 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 				if app, err := s.store.parseAndVerifyAppJWT(tokenStr); err == nil {
 					ctx = context.WithValue(ctx, ctxApp, app)
 				}
-			case strings.HasPrefix(tokenStr, "ghs_"):
+			case strings.HasPrefix(tokenStr, tokenPrefixInstallation):
 				if instToken, inst := s.store.LookupInstallationToken(tokenStr); instToken != nil {
+					if inst != nil && inst.SuspendedAt != nil {
+						ctx = context.WithValue(ctx, ctxSuspendedInstallation, true)
+						break
+					}
 					ctx = context.WithValue(ctx, ctxInstallation, inst)
 					ctx = context.WithValue(ctx, ctxInstallationToken, instToken)
 					app := s.store.GetApp(instToken.AppID)
@@ -141,7 +164,7 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 						ctx = context.WithValue(ctx, ctxUser, botUser)
 					}
 				}
-			case strings.HasPrefix(tokenStr, "gho_"), strings.HasPrefix(tokenStr, "ghu_"):
+			case strings.HasPrefix(tokenStr, tokenPrefixOAuthUser), strings.HasPrefix(tokenStr, tokenPrefixAppUser):
 				if utsTok, u := s.store.LookupUserToServerToken(tokenStr); utsTok != nil {
 					ctx = context.WithValue(ctx, ctxUserToServerToken, utsTok)
 					if u != nil {
@@ -149,7 +172,7 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 						user = u
 					}
 				}
-			case strings.HasPrefix(tokenStr, "ghr_"):
+			case strings.HasPrefix(tokenStr, tokenPrefixRefresh):
 			default:
 				_, user = s.store.LookupToken(tokenStr)
 			}

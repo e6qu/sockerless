@@ -122,6 +122,7 @@ type Store struct {
 	PendingMessages    []*TaskAgentMessage           // messages awaiting delivery
 	RepoSecrets        map[string]map[string]*Secret // "owner/repo" → name → secret
 	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
+	OrgHooks           map[string][]*Webhook         // org login → org-level hooks
 	HookDeliveries     map[int][]*WebhookDelivery    // hookID → deliveries
 	Apps               map[int]*App                  // id → app
 	AppsBySlug         map[string]*App               // slug → app
@@ -263,6 +264,7 @@ func NewStore() *Store {
 		WorkflowFiles:      make(map[int64]*WorkflowFile),
 		RepoSecrets:        make(map[string]map[string]*Secret),
 		Hooks:              make(map[string][]*Webhook),
+		OrgHooks:           make(map[string][]*Webhook),
 		HookDeliveries:     make(map[int][]*WebhookDelivery),
 		Apps:               make(map[int]*App),
 		AppsBySlug:         make(map[string]*App),
@@ -341,7 +343,7 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	users, tokens, apps, oauth_apps, installations, installation_tokens,
 //	user_to_server_tokens, refresh_tokens, repos, orgs, teams, memberships,
 //	labels, milestones, issues, comments, pull_requests, pr_reviews,
-//	hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
+//	hooks, org_hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
 //	check_suites, check_runs, check_suite_prefs, workflow_files,
 //	releases, deployments, deployment_statuses, environments,
 //	pr_review_comments, reactions, projects_v2, project_v2_items,
@@ -628,6 +630,22 @@ func (st *Store) loadFromPersistence() error {
 				}
 			}
 			st.Hooks[key] = hooks
+			return nil
+		}},
+		{"org_hooks", func(key string, raw []byte) error {
+			var hooks []*Webhook
+			if err := loadJSON(raw, &hooks); err != nil {
+				return err
+			}
+			// OrgLogin is json:"-" (it duplicates the bucket key), so
+			// backfill it — deliveries and hook lookups key on it.
+			for _, h := range hooks {
+				h.OrgLogin = key
+				if h.ID >= st.NextHookID {
+					st.NextHookID = h.ID + 1
+				}
+			}
+			st.OrgHooks[key] = hooks
 			return nil
 		}},
 		{"hook_deliveries", func(_ string, raw []byte) error {

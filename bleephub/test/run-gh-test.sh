@@ -785,6 +785,44 @@ cd "$ORIG_DIR"
 log "Native gh verb coverage complete"
 
 # ============================================================
+# Org surface — gh org list (native verb) plus the membership /
+# team / global-list endpoints via gh api.
+# ============================================================
+log "Org surface…"
+
+if api -X POST "$BASE/api/v3/admin/organizations" \
+    -f login=gh-native-org -f admin=admin >/dev/null 2>&1; then
+    pass "create org via GHES admin API"
+else
+    fail "POST /admin/organizations gh-native-org"
+fi
+
+ORG_LIST=$(gh org list 2>/dev/null || echo "")
+assert_contains "gh org list shows the org" "$ORG_LIST" "gh-native-org"
+
+GLOBAL_ORGS=$(api "$BASE/api/v3/organizations" --jq '.[].login' 2>/dev/null || echo "")
+assert_contains "GET /organizations shows the org" "$GLOBAL_ORGS" "gh-native-org"
+
+MEMBER_STATE=$(api "$BASE/api/v3/user/memberships/orgs/gh-native-org" --jq .state 2>/dev/null || echo "")
+assert_eq "creator membership state" "active" "$MEMBER_STATE"
+
+if api -X GET "$BASE/api/v3/orgs/gh-native-org/members/admin" >/dev/null 2>&1; then
+    pass "member check (204)"
+else
+    fail "GET /orgs/gh-native-org/members/admin"
+fi
+
+if api -X POST "$BASE/api/v3/orgs/gh-native-org/teams" -f name=crew -f permission=push >/dev/null 2>&1; then
+    pass "create team via gh api"
+else
+    fail "POST /orgs/gh-native-org/teams"
+fi
+TEAM_ROLE=$(api -X PUT "$BASE/api/v3/orgs/gh-native-org/teams/crew/memberships/admin" -f role=maintainer --jq .role 2>/dev/null || echo "")
+assert_eq "team membership role" "maintainer" "$TEAM_ROLE"
+
+log "Org surface complete"
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""

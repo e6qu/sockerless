@@ -2,10 +2,11 @@ package bleephub
 
 import "strings"
 
-// canAdminOrg checks if a user is an admin of the given organization.
+// canAdminOrg checks if a user is an active admin of the given organization.
+// A pending (invited) admin has not accepted yet and holds no rights.
 func canAdminOrg(st *Store, user *User, org *Org) bool {
 	m := st.GetMembership(org.Login, user.ID)
-	return m != nil && m.Role == "admin"
+	return m != nil && m.Role == OrgRoleAdmin && m.State == MembershipStateActive
 }
 
 // canReadRepo checks if a user can read a repository.
@@ -62,7 +63,7 @@ func canAdminRepo(st *Store, user *User, repo *Repo) bool {
 
 // hasTeamAccess checks if a user has at least the given permission level
 // on a repo via team membership.
-func hasTeamAccess(st *Store, orgLogin string, userID int, repoFullName, minPermission string) bool {
+func hasTeamAccess(st *Store, orgLogin string, userID int, repoFullName string, minPermission TeamPermission) bool {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
@@ -126,7 +127,7 @@ func canPushRepo(st *Store, user *User, repo *Repo) bool {
 
 // permissionAtLeast returns true if perm is at least minPerm.
 // Permission hierarchy: pull < push < admin.
-func permissionAtLeast(perm, minPerm string) bool {
-	levels := map[string]int{"pull": 1, "push": 2, "admin": 3}
+func permissionAtLeast(perm, minPerm TeamPermission) bool {
+	levels := map[TeamPermission]int{TeamPermissionPull: 1, TeamPermissionPush: 2, TeamPermissionAdmin: 3}
 	return levels[perm] >= levels[minPerm]
 }
